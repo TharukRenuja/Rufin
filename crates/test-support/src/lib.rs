@@ -430,6 +430,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             name: (*name).to_string(),
             track_count: 25 + index as u32,
             duration_seconds: 4_500 + index as u32 * 300,
+            top_genres: Vec::new(),
             image_refs: Vec::new(),
             image_ref: Some(fake_image_ref("playlist", index + 1)),
         })

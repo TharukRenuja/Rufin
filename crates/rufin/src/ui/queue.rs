@@ -10,9 +10,11 @@ use crate::controller::AppController;
 use crate::i18n::tr;
 
 use super::{
-    FAVORITE_EMPTY_GLYPH, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
-    context_menu_playlist_label, context_menu_playlists, favorite_button_is_active,
-    favorite_icon_button, set_favorite_button_active, track_from_queue_entry,
+    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, FAVORITE_ADD_ICON, FAVORITE_EMPTY_GLYPH,
+    FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
+    context_menu_action, context_menu_box, context_menu_has_playlists, context_menu_picker_button,
+    context_popover, favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
+    track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -397,10 +399,15 @@ impl Shell {
         button.add_css_class("queue-favorite-button");
         set_favorite_button_active(&button, entry.favorite);
 
-        let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let track_id = entry.track_id.clone();
         button.connect_clicked(move |button| {
-            controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Track(track_id.clone()),
+                favorite,
+                Some(button),
+            );
         });
 
         cell.set_center_widget(Some(&button));
@@ -1003,6 +1010,24 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     });
     row.add_controller(click);
 
+    let press_shell = Rc::clone(&shell);
+    let press_entry = entry.clone();
+    let press_row = row.downgrade();
+    let press = gtk::GestureLongPress::new();
+    press.set_propagation_phase(gtk::PropagationPhase::Capture);
+    press.connect_pressed(move |press, x, y| {
+        press.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(row) = press_row.upgrade() {
+            show_queue_row_context_menu(
+                &row,
+                &press_shell,
+                &press_entry,
+                Some(gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)),
+            );
+        }
+    });
+    row.add_controller(press);
+
     let key_shell = Rc::clone(&shell);
     let key_entry = entry;
     let key_row = row.downgrade();
@@ -1028,45 +1053,70 @@ fn show_queue_row_context_menu(
     entry: &QueueEntry,
     pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
-    let playlists = context_menu_playlists(shell);
-    let menu = gio::Menu::new();
-    menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
-    menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
-    menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
+    let main_menu = context_menu_box();
+    main_menu.append(&context_menu_action(
+        "Remove from Queue",
+        "queue.remove",
+        "remove-minus",
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Now",
+        "queue.play-now",
+        "media-playback-start-symbolic",
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Next",
+        "queue.play-next",
+        PLAY_NEXT_ICON,
+    ));
 
     let track = track_from_queue_entry(entry);
-    if track.is_some() && !playlists.is_empty() {
-        let playlist_menu = gio::Menu::new();
-        for (index, playlist) in playlists.iter().enumerate() {
-            let label = context_menu_playlist_label(&playlist.name);
-            playlist_menu.append(
-                Some(&label),
-                Some(&format!("queue.add-to-playlist-{index}")),
-            );
-        }
-        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    if let Some(track) = track.as_ref()
+        && context_menu_has_playlists(shell)
+    {
+        let track_source: Rc<dyn Fn() -> Vec<domain::Track>> = Rc::new({
+            let track = track.clone();
+            move || vec![track.clone()]
+        });
+        main_menu.append(&context_menu_picker_button(
+            "Add to Playlist",
+            ADD_TO_PLAYLIST_ICON,
+            shell,
+            track_source,
+        ));
     }
 
-    menu.append(
-        Some(&tr(if entry.favorite {
+    main_menu.append(&context_menu_action(
+        if entry.favorite {
             "Remove from Favorites"
         } else {
             "Add to Favorites"
-        })),
-        Some("queue.favorite"),
-    );
+        },
+        "queue.favorite",
+        if entry.favorite {
+            FAVORITE_REMOVE_ICON
+        } else {
+            FAVORITE_ADD_ICON
+        },
+    ));
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
-        menu.append(Some(&tr("Go to Artist")), Some("queue.go-artist"));
+        main_menu.append(&context_menu_action(
+            "Go to Artist",
+            "queue.go-artist",
+            ARTIST_ICON,
+        ));
     }
     let album_route = entry.album_id.clone().map(Route::AlbumDetail);
     if album_route.is_some() {
-        menu.append(Some(&tr("Go to Album")), Some("queue.go-album"));
+        main_menu.append(&context_menu_action(
+            "Go to Album",
+            "queue.go-album",
+            ALBUM_ICON,
+        ));
     }
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("queue-context-menu");
-    popover.set_parent(row);
+    let popover = context_popover(row.upcast_ref(), "queue-context-menu", None, &main_menu);
     popover.set_pointing_to(pointing_to.as_ref());
     popover.connect_closed(|popover| {
         let popover = popover.clone();
@@ -1114,27 +1164,8 @@ fn show_queue_row_context_menu(
     });
     actions.add_action(&play_next);
 
-    if let Some(track) = track {
-        for (index, playlist) in playlists.iter().enumerate() {
-            let action_name = format!("add-to-playlist-{index}");
-            let add = gio::SimpleAction::new(&action_name, None);
-            let add_controller = controller.clone();
-            let playlist_id = playlist.id.clone();
-            let action_track = track.clone();
-            let add_popover = popover.downgrade();
-            add.connect_activate(move |_, _| {
-                if let Some(popover) = add_popover.upgrade() {
-                    popover.popdown();
-                }
-                add_controller
-                    .add_tracks_to_playlist(playlist_id.clone(), vec![action_track.clone()]);
-            });
-            actions.add_action(&add);
-        }
-    }
-
     let favorite = gio::SimpleAction::new("favorite", None);
-    let favorite_controller = controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let favorite_track_id = entry.track_id.clone();
     let favorite_value = !entry.favorite;
     let favorite_popover = popover.downgrade();
@@ -1142,7 +1173,11 @@ fn show_queue_row_context_menu(
         if let Some(popover) = favorite_popover.upgrade() {
             popover.popdown();
         }
-        favorite_controller.set_track_favorite(favorite_track_id.clone(), favorite_value);
+        favorite_shell.set_favorite_with_feedback(
+            source::FavoriteItemId::Track(favorite_track_id.clone()),
+            favorite_value,
+            None,
+        );
     });
     actions.add_action(&favorite);
 

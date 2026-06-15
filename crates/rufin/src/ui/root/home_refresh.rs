@@ -1,13 +1,27 @@
 use super::*;
 
-const CONTEXT_MENU_PLAYLIST_LABEL_CHARS: usize = 18;
-const CONTEXT_MENU_PLAYLIST_LABEL_TRAILER: &str = "...";
+const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
+const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
+const CONTEXT_PLAYLIST_ROW_COVER_SIZE: i32 = 48;
+const ADD_TO_PLAYLIST_DIALOG_WIDTH: i32 = 700;
+const ADD_TO_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
+pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "view-list-symbolic";
+pub(in crate::ui) const ALBUM_ICON: &str = "media-optical-symbolic";
+pub(in crate::ui) const ARTIST_ICON: &str = "avatar-default-symbolic";
+pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
+pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryContextMenuAction {
     pub(in crate::ui) playlist_id: PlaylistId,
     pub(in crate::ui) entry_id: String,
     pub(in crate::ui) title: String,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui) struct PlaylistEntryContextMenuState {
+    pub(in crate::ui) track: Track,
+    pub(in crate::ui) remove_action: PlaylistEntryContextMenuAction,
 }
 
 pub(in crate::ui) fn present_track_context_menu(
@@ -34,54 +48,71 @@ fn present_track_context_menu_inner(
     position: Option<(f64, f64)>,
     remove_action: Option<PlaylistEntryContextMenuAction>,
 ) {
-    let menu = gio::Menu::new();
-    menu.append_item(&menu_item(
+    let main_menu = context_menu_box();
+    main_menu.append(&context_menu_action(
         "Play",
         "track.play",
         "media-playback-start-symbolic",
     ));
-    menu.append_item(&menu_item("Play Next", "track.play-next", PLAY_NEXT_ICON));
-    menu.append_item(&menu_item("Play Later", "track.play-last", PLAY_LATER_ICON));
+    main_menu.append(&context_menu_action(
+        "Play Next",
+        "track.play-next",
+        PLAY_NEXT_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Later",
+        "track.play-last",
+        PLAY_LATER_ICON,
+    ));
 
-    let playlists = context_menu_playlists(shell);
-    if !playlists.is_empty() {
-        let playlist_menu = gio::Menu::new();
-        for (index, playlist) in playlists.iter().enumerate() {
-            let label = context_menu_playlist_label(&playlist.name);
-            playlist_menu.append(
-                Some(&label),
-                Some(&format!("track.add-to-playlist-{index}")),
-            );
-        }
-        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    if context_menu_has_playlists(shell) {
+        let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
+            let track = track.clone();
+            move || vec![track.clone()]
+        });
+        main_menu.append(&context_menu_picker_button(
+            "Add to Playlist",
+            ADD_TO_PLAYLIST_ICON,
+            shell,
+            track_source,
+        ));
     }
 
-    menu.append(
-        Some(&tr(if track.favorite {
+    main_menu.append(&context_menu_action(
+        if track.favorite {
             "Remove from Favorites"
         } else {
             "Add to Favorites"
-        })),
-        Some("track.favorite"),
-    );
+        },
+        "track.favorite",
+        if track.favorite {
+            FAVORITE_REMOVE_ICON
+        } else {
+            FAVORITE_ADD_ICON
+        },
+    ));
     let artist_route = track_artist_route(&track);
     if artist_route.is_some() {
-        menu.append(Some(&tr("Go to Artist")), Some("track.go-artist"));
+        main_menu.append(&context_menu_action(
+            "Go to Artist",
+            "track.go-artist",
+            ARTIST_ICON,
+        ));
     }
-    menu.append(Some(&tr("Go to Album")), Some("track.go-album"));
+    main_menu.append(&context_menu_action(
+        "Go to Album",
+        "track.go-album",
+        ALBUM_ICON,
+    ));
     if remove_action.is_some() {
-        menu.append(
-            Some(&tr("Remove from playlist")),
-            Some("track.remove-from-playlist"),
-        );
+        main_menu.append(&context_menu_action(
+            "Remove from playlist",
+            "track.remove-from-playlist",
+            "remove-minus",
+        ));
     }
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("track-context-menu");
-    popover.set_parent(target);
-    if let Some((x, y)) = position {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    }
+    let popover = context_popover(target, "track-context-menu", position, &main_menu);
 
     let actions = gio::SimpleActionGroup::new();
 
@@ -121,24 +152,8 @@ fn present_track_context_menu_inner(
     });
     actions.add_action(&play_last);
 
-    for (index, playlist) in playlists.into_iter().enumerate() {
-        let action_name = format!("add-to-playlist-{index}");
-        let add = gio::SimpleAction::new(&action_name, None);
-        let controller = shell.controller.clone();
-        let playlist_id = playlist.id;
-        let action_track = track.clone();
-        let action_popover = popover.downgrade();
-        add.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
-            }
-            controller.add_tracks_to_playlist(playlist_id.clone(), vec![action_track.clone()]);
-        });
-        actions.add_action(&add);
-    }
-
     let favorite_action = gio::SimpleAction::new("favorite", None);
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let track_id = track.id.clone();
     let favorite = !track.favorite;
     let action_popover = popover.downgrade();
@@ -146,7 +161,11 @@ fn present_track_context_menu_inner(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        controller.set_track_favorite(track_id.clone(), favorite);
+        favorite_shell.set_favorite_with_feedback(
+            FavoriteItemId::Track(track_id.clone()),
+            favorite,
+            None,
+        );
     });
     actions.add_action(&favorite_action);
 
@@ -212,48 +231,72 @@ pub(in crate::ui) fn present_album_context_menu(
     album: Album,
     position: Option<(f64, f64)>,
 ) {
-    let menu = gio::Menu::new();
-    menu.append_item(&menu_item(
+    let main_menu = context_menu_box();
+    main_menu.append(&context_menu_action(
         "Play",
         "album.play",
         "media-playback-start-symbolic",
     ));
-    menu.append_item(&menu_item("Play Next", "album.play-next", PLAY_NEXT_ICON));
-    menu.append_item(&menu_item("Play Later", "album.play-last", PLAY_LATER_ICON));
+    main_menu.append(&context_menu_action(
+        "Play Next",
+        "album.play-next",
+        PLAY_NEXT_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Later",
+        "album.play-last",
+        PLAY_LATER_ICON,
+    ));
 
-    let playlists = context_menu_playlists(shell);
-    if !playlists.is_empty() {
-        let playlist_menu = gio::Menu::new();
-        for (index, playlist) in playlists.iter().enumerate() {
-            let label = context_menu_playlist_label(&playlist.name);
-            playlist_menu.append(
-                Some(&label),
-                Some(&format!("album.add-to-playlist-{index}")),
-            );
-        }
-        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    if context_menu_has_playlists(shell) {
+        let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
+            let controller = shell.controller.clone();
+            let album_id = album.id.clone();
+            move || {
+                controller
+                    .cached_album_detail(&album_id)
+                    .ok()
+                    .flatten()
+                    .map(|(_, tracks)| tracks)
+                    .unwrap_or_default()
+            }
+        });
+        main_menu.append(&context_menu_picker_button(
+            "Add to Playlist",
+            ADD_TO_PLAYLIST_ICON,
+            shell,
+            track_source,
+        ));
     }
 
-    menu.append(
-        Some(&tr(if album.favorite {
+    main_menu.append(&context_menu_action(
+        if album.favorite {
             "Remove from Favorites"
         } else {
             "Add to Favorites"
-        })),
-        Some("album.favorite"),
-    );
+        },
+        "album.favorite",
+        if album.favorite {
+            FAVORITE_REMOVE_ICON
+        } else {
+            FAVORITE_ADD_ICON
+        },
+    ));
     let artist_route = album_artist_route(&album);
     if artist_route.is_some() {
-        menu.append(Some(&tr("Go to Artist")), Some("album.go-artist"));
+        main_menu.append(&context_menu_action(
+            "Go to Artist",
+            "album.go-artist",
+            ARTIST_ICON,
+        ));
     }
-    menu.append(Some(&tr("Go to Album")), Some("album.go-album"));
+    main_menu.append(&context_menu_action(
+        "Go to Album",
+        "album.go-album",
+        ALBUM_ICON,
+    ));
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("album-context-menu");
-    popover.set_parent(target);
-    if let Some((x, y)) = position {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    }
+    let popover = context_popover(target, "album-context-menu", position, &main_menu);
 
     let actions = gio::SimpleActionGroup::new();
 
@@ -299,26 +342,8 @@ pub(in crate::ui) fn present_album_context_menu(
     });
     actions.add_action(&play_last);
 
-    for (index, playlist) in playlists.into_iter().enumerate() {
-        let action_name = format!("add-to-playlist-{index}");
-        let add = gio::SimpleAction::new(&action_name, None);
-        let controller = shell.controller.clone();
-        let playlist_id = playlist.id;
-        let album_id = album.id.clone();
-        let action_popover = popover.downgrade();
-        add.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
-            }
-            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-                controller.add_tracks_to_playlist(playlist_id.clone(), tracks);
-            }
-        });
-        actions.add_action(&add);
-    }
-
     let favorite_action = gio::SimpleAction::new("favorite", None);
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let album_id = album.id.clone();
     let favorite = !album.favorite;
     let action_popover = popover.downgrade();
@@ -326,7 +351,11 @@ pub(in crate::ui) fn present_album_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        controller.set_album_favorite(album_id.clone(), favorite);
+        favorite_shell.set_favorite_with_feedback(
+            FavoriteItemId::Album(album_id.clone()),
+            favorite,
+            None,
+        );
     });
     actions.add_action(&favorite_action);
 
@@ -374,48 +403,57 @@ pub(in crate::ui) fn present_artist_context_menu(
     artist: Artist,
     position: Option<(f64, f64)>,
 ) {
-    let menu = gio::Menu::new();
-    menu.append_item(&menu_item(
+    let main_menu = context_menu_box();
+    main_menu.append(&context_menu_action(
         "Play",
         "artist.play",
         "media-playback-start-symbolic",
     ));
-    menu.append_item(&menu_item("Play Next", "artist.play-next", PLAY_NEXT_ICON));
-    menu.append_item(&menu_item(
+    main_menu.append(&context_menu_action(
+        "Play Next",
+        "artist.play-next",
+        PLAY_NEXT_ICON,
+    ));
+    main_menu.append(&context_menu_action(
         "Play Later",
         "artist.play-last",
         PLAY_LATER_ICON,
     ));
 
-    let playlists = context_menu_playlists(shell);
-    if !playlists.is_empty() {
-        let playlist_menu = gio::Menu::new();
-        for (index, playlist) in playlists.iter().enumerate() {
-            let label = context_menu_playlist_label(&playlist.name);
-            playlist_menu.append(
-                Some(&label),
-                Some(&format!("artist.add-to-playlist-{index}")),
-            );
-        }
-        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    if context_menu_has_playlists(shell) {
+        let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
+            let controller = shell.controller.clone();
+            let artist_id = artist.id.clone();
+            move || artist_tracks_for_context(&controller, &artist_id).unwrap_or_default()
+        });
+        main_menu.append(&context_menu_picker_button(
+            "Add to Playlist",
+            ADD_TO_PLAYLIST_ICON,
+            shell,
+            track_source,
+        ));
     }
 
-    menu.append(
-        Some(&tr(if artist.favorite {
+    main_menu.append(&context_menu_action(
+        if artist.favorite {
             "Remove from Favorites"
         } else {
             "Add to Favorites"
-        })),
-        Some("artist.favorite"),
-    );
-    menu.append(Some(&tr("Go to Artist")), Some("artist.go-artist"));
+        },
+        "artist.favorite",
+        if artist.favorite {
+            FAVORITE_REMOVE_ICON
+        } else {
+            FAVORITE_ADD_ICON
+        },
+    ));
+    main_menu.append(&context_menu_action(
+        "Go to Artist",
+        "artist.go-artist",
+        ARTIST_ICON,
+    ));
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("artist-context-menu");
-    popover.set_parent(target);
-    if let Some((x, y)) = position {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    }
+    let popover = context_popover(target, "artist-context-menu", position, &main_menu);
 
     let actions = gio::SimpleActionGroup::new();
 
@@ -478,26 +516,8 @@ pub(in crate::ui) fn present_artist_context_menu(
     });
     actions.add_action(&play_last);
 
-    for (index, playlist) in playlists.into_iter().enumerate() {
-        let action_name = format!("add-to-playlist-{index}");
-        let add = gio::SimpleAction::new(&action_name, None);
-        let controller = shell.controller.clone();
-        let playlist_id = playlist.id;
-        let artist_id = artist.id.clone();
-        let action_popover = popover.downgrade();
-        add.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
-            }
-            if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-                controller.add_tracks_to_playlist(playlist_id.clone(), tracks);
-            }
-        });
-        actions.add_action(&add);
-    }
-
     let favorite_action = gio::SimpleAction::new("favorite", None);
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let artist_id = artist.id.clone();
     let favorite = !artist.favorite;
     let action_popover = popover.downgrade();
@@ -505,7 +525,11 @@ pub(in crate::ui) fn present_artist_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        controller.set_artist_favorite(artist_id.clone(), favorite);
+        favorite_shell.set_favorite_with_feedback(
+            FavoriteItemId::Artist(artist_id.clone()),
+            favorite,
+            None,
+        );
     });
     actions.add_action(&favorite_action);
 
@@ -547,24 +571,19 @@ pub(in crate::ui) fn present_playlist_context_menu(
     playlist: Playlist,
     position: Option<(f64, f64)>,
 ) {
-    let menu = gio::Menu::new();
-    menu.append_item(&menu_item(
+    let menu = context_menu_box();
+    menu.append(&context_menu_action(
         "Play",
         "playlist.play",
         "media-playback-start-symbolic",
     ));
-    menu.append_item(&menu_item(
+    menu.append(&context_menu_action(
         "Delete",
         "playlist.delete",
         "user-trash-symbolic",
     ));
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("playlist-context-menu");
-    popover.set_parent(target);
-    if let Some((x, y)) = position {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    }
+    let popover = context_popover(target, "playlist-context-menu", position, &menu);
 
     let actions = gio::SimpleActionGroup::new();
     let play = gio::SimpleAction::new("play", None);
@@ -636,24 +655,19 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
     playlist: SmartPlaylist,
     position: Option<(f64, f64)>,
 ) {
-    let menu = gio::Menu::new();
-    menu.append_item(&menu_item(
+    let menu = context_menu_box();
+    menu.append(&context_menu_action(
         "Play",
         "smart-playlist.play",
         "media-playback-start-symbolic",
     ));
-    menu.append_item(&menu_item(
+    menu.append(&context_menu_action(
         "Delete",
         "smart-playlist.delete",
         "user-trash-symbolic",
     ));
 
-    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-    popover.add_css_class("playlist-context-menu");
-    popover.set_parent(target);
-    if let Some((x, y)) = position {
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    }
+    let popover = context_popover(target, "playlist-context-menu", position, &menu);
 
     let actions = gio::SimpleActionGroup::new();
     let play = gio::SimpleAction::new("play", None);
@@ -701,31 +715,423 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
     });
     popover.popup();
 }
-pub(in crate::ui) fn menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
-    let item = gio::MenuItem::new(Some(&tr(label)), Some(action));
-    item.set_icon(&gio::ThemedIcon::new(icon_name));
-    item
+pub(in crate::ui) fn context_menu_box() -> gtk::Box {
+    gtk::Box::new(gtk::Orientation::Vertical, 0)
 }
-pub(in crate::ui) fn context_menu_playlist_label(name: &str) -> String {
-    if name.chars().count() <= CONTEXT_MENU_PLAYLIST_LABEL_CHARS {
-        return name.to_string();
+pub(in crate::ui) fn context_menu_scroll_page(
+    child: &impl IsA<gtk::Widget>,
+) -> gtk::ScrolledWindow {
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_min_content_width(CONTEXT_MENU_PLAYLIST_MIN_WIDTH);
+    scroller.set_propagate_natural_width(true);
+    scroller.set_propagate_natural_height(false);
+    scroller.set_max_content_height(CONTEXT_MENU_PLAYLIST_MAX_HEIGHT);
+    scroller.set_vexpand(true);
+    scroller.set_child(Some(child));
+    scroller
+}
+#[derive(Clone)]
+pub(in crate::ui) struct PlaylistPickerRow {
+    playlist: Playlist,
+    row: gtk::Widget,
+    check: gtk::CheckButton,
+    haystack: String,
+}
+fn present_context_playlist_picker_dialog(
+    shell: &Rc<Shell>,
+    track_source: Rc<dyn Fn() -> Vec<Track>>,
+) {
+    let playlists = context_menu_playlists(shell);
+    if playlists.is_empty() {
+        return;
     }
 
-    let keep = CONTEXT_MENU_PLAYLIST_LABEL_CHARS - CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.len();
-    name.chars()
-        .take(keep)
-        .chain(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.chars())
+    let content = context_playlist_picker(shell, &playlists, track_source);
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Add to Playlist"), "")));
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&content));
+
+    let dialog = adw::Dialog::builder()
+        .title(tr("Add to Playlist"))
+        .content_width(ADD_TO_PLAYLIST_DIALOG_WIDTH)
+        .content_height(ADD_TO_PLAYLIST_DIALOG_HEIGHT)
+        .child(&toolbar)
+        .build();
+    dialog.present(Some(&shell.window));
+}
+fn context_playlist_picker(
+    shell: &Rc<Shell>,
+    playlists: &[Playlist],
+    track_source: Rc<dyn Fn() -> Vec<Track>>,
+) -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    root.add_css_class("context-playlist-picker");
+    root.set_margin_top(12);
+    root.set_margin_bottom(14);
+    root.set_margin_start(18);
+    root.set_margin_end(18);
+
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&tr("Type to search")));
+    root.append(&search);
+
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let rows = Rc::new(RefCell::new(Vec::<PlaylistPickerRow>::new()));
+    let add_button = gtk::Button::with_label(&tr("Add"));
+    add_button.add_css_class("suggested-action");
+    add_button.set_sensitive(false);
+    for playlist in playlists {
+        let (row, check, haystack) = playlist_picker_row(shell, playlist);
+        list.append(&row);
+        rows.borrow_mut().push(PlaylistPickerRow {
+            playlist: playlist.clone(),
+            row: row.upcast::<gtk::Widget>(),
+            check: check.clone(),
+            haystack,
+        });
+        let rows_for_check = Rc::clone(&rows);
+        let add_for_check = add_button.clone();
+        check.connect_toggled(move |_| {
+            update_playlist_picker_add_button(&rows_for_check, &add_for_check)
+        });
+    }
+    let scroller = context_menu_scroll_page(&list);
+    root.append(&scroller);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let skip = gtk::CheckButton::with_label(&tr("Don't duplicate"));
+    skip.set_active(true);
+    footer.append(&skip);
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    footer.append(&spacer);
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
+    cancel.connect_clicked(close_context_surface);
+    footer.append(&cancel);
+    footer.append(&add_button);
+    root.append(&footer);
+
+    let rows_for_search = Rc::clone(&rows);
+    let add_for_search = add_button.clone();
+    search.connect_search_changed(move |entry| {
+        let query = entry.text().trim().to_lowercase();
+        for row in rows_for_search.borrow().iter() {
+            row.row
+                .set_visible(query.is_empty() || row.haystack.contains(&query));
+        }
+        update_playlist_picker_add_button(&rows_for_search, &add_for_search);
+    });
+
+    let rows_for_add = Rc::clone(&rows);
+    let controller = shell.controller.clone();
+    let toast_overlay = shell.toast_overlay.clone();
+    add_button.connect_clicked(move |button| {
+        let tracks = track_source();
+        if tracks.is_empty() {
+            close_context_surface(button);
+            return;
+        }
+        let mut added_tracks = 0;
+        let mut changed_playlists = 0;
+        for row in rows_for_add
+            .borrow()
+            .iter()
+            .filter(|row| row.check.is_active())
+        {
+            let tracks =
+                playlist_tracks_to_add(&controller, &row.playlist.id, &tracks, skip.is_active());
+            if !tracks.is_empty() {
+                added_tracks += tracks.len();
+                changed_playlists += 1;
+                controller.add_tracks_to_playlist(row.playlist.id.clone(), tracks);
+            }
+        }
+        let toast = adw::Toast::new(&playlist_add_toast(added_tracks, changed_playlists));
+        toast.set_timeout(2);
+        toast_overlay.add_toast(toast);
+        close_context_surface(button);
+    });
+
+    root
+}
+fn playlist_picker_row(
+    shell: &Rc<Shell>,
+    playlist: &Playlist,
+) -> (gtk::Box, gtk::CheckButton, String) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("context-playlist-row");
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+
+    let check = gtk::CheckButton::new();
+    row.append(&check);
+    row.append(&playlist_picker_cover(shell, playlist));
+
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    text.set_hexpand(true);
+    let title = gtk::Label::new(Some(&playlist.name));
+    title.add_css_class("context-playlist-title");
+    title.set_xalign(0.0);
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    text.append(&title);
+
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    meta.add_css_class("context-playlist-meta");
+    meta.append(&playlist_picker_meta(
+        "audio-x-generic-symbolic",
+        &playlist.track_count.to_string(),
+    ));
+    meta.append(&playlist_picker_meta(
+        "appointment-soon-symbolic",
+        &playlist_picker_duration(playlist.duration_seconds),
+    ));
+    let genres = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    genres.add_css_class("context-playlist-genres");
+    for genre in playlist.top_genres.iter().take(2) {
+        genres.append(&playlist_genre_pill(genre));
+    }
+    genres.set_visible(genres.first_child().is_some());
+    meta.append(&genres);
+    text.append(&meta);
+    row.append(&text);
+
+    let haystack = format!(
+        "{} {} {}",
+        playlist.name,
+        playlist.track_count,
+        playlist_picker_duration(playlist.duration_seconds)
+    )
+    .to_lowercase();
+    (row, check, haystack)
+}
+fn playlist_picker_duration(seconds: u32) -> String {
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        return format!("{hours}h {minutes}m {seconds}s");
+    }
+    if minutes > 0 {
+        return format!("{minutes}m {seconds}s");
+    }
+    format!("{seconds}s")
+}
+fn playlist_genre_pill(name: &str) -> gtk::Label {
+    let pill = gtk::Label::new(Some(name));
+    pill.add_css_class("album-detail-genre-pill");
+    pill
+}
+fn playlist_picker_cover(shell: &Rc<Shell>, playlist: &Playlist) -> gtk::Widget {
+    let settings = shell.state.settings.borrow();
+    let image_refs = crate::cover_art_policy::selected_collection_refs(
+        &playlist.image_refs,
+        playlist.image_ref.as_ref(),
+        settings.prefer_server_playlist_covers,
+    );
+    let cover = shell.cover_collection_tile_for(
+        image_refs.first(),
+        stable_seed(playlist.id.as_str()),
+        CONTEXT_PLAYLIST_ROW_COVER_SIZE,
+        THUMB_COVER_SIZE,
+    );
+    cover.add_css_class("context-playlist-cover");
+    cover
+}
+fn playlist_picker_meta(icon_name: &str, text: &str) -> gtk::Box {
+    let item = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("muted");
+    icon.set_pixel_size(13);
+    item.append(&icon);
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("muted");
+    label.set_xalign(0.0);
+    item.append(&label);
+    item
+}
+fn playlist_add_toast(added_tracks: usize, playlist_count: usize) -> String {
+    if added_tracks == 0 {
+        return "No songs added".to_string();
+    }
+    let song = if added_tracks == 1 { "song" } else { "songs" };
+    let playlist = if playlist_count == 1 {
+        "playlist"
+    } else {
+        "playlists"
+    };
+    format!("{added_tracks} {song} added to {playlist_count} {playlist}")
+}
+fn playlist_tracks_to_add(
+    controller: &AppController,
+    playlist_id: &PlaylistId,
+    tracks: &[Track],
+    skip_duplicates: bool,
+) -> Vec<Track> {
+    if !skip_duplicates {
+        return tracks.to_vec();
+    }
+    let Ok(Some(detail)) = controller.cached_playlist_detail(playlist_id) else {
+        return tracks.to_vec();
+    };
+    if detail.entries.is_empty() {
+        filter_existing_tracks(tracks, &detail.tracks)
+    } else {
+        filter_duplicate_tracks(tracks, &detail.entries)
+    }
+}
+fn filter_duplicate_tracks(tracks: &[Track], entries: &[source::PlaylistEntry]) -> Vec<Track> {
+    filter_existing_tracks(
+        tracks,
+        &entries
+            .iter()
+            .map(|entry| entry.track.clone())
+            .collect::<Vec<_>>(),
+    )
+}
+fn filter_existing_tracks(tracks: &[Track], existing: &[Track]) -> Vec<Track> {
+    tracks
+        .iter()
+        .filter(|track| !existing.iter().any(|existing| existing.id == track.id))
+        .cloned()
         .collect()
+}
+fn update_playlist_picker_add_button(
+    rows: &Rc<RefCell<Vec<PlaylistPickerRow>>>,
+    button: &gtk::Button,
+) {
+    button.set_sensitive(rows.borrow().iter().any(|row| row.check.is_active()));
+}
+fn close_context_surface(widget: &impl IsA<gtk::Widget>) {
+    if let Some(popover) = widget
+        .as_ref()
+        .ancestor(gtk::Popover::static_type())
+        .and_then(|widget| widget.downcast::<gtk::Popover>().ok())
+    {
+        popover.popdown();
+        return;
+    }
+    if let Some(dialog) = widget
+        .as_ref()
+        .ancestor(adw::Dialog::static_type())
+        .and_then(|widget| widget.downcast::<adw::Dialog>().ok())
+    {
+        dialog.close();
+    }
+}
+pub(in crate::ui) fn context_menu_action(
+    label: &str,
+    action: &str,
+    icon_name: &str,
+) -> gtk::Button {
+    context_menu_action_with_label(&tr(label), action, icon_name)
+}
+pub(in crate::ui) fn context_menu_action_with_label(
+    label: &str,
+    action: &str,
+    icon_name: &str,
+) -> gtk::Button {
+    let button = context_menu_button(label, icon_name);
+    button.set_action_name(Some(action));
+    button
+}
+pub(in crate::ui) fn context_menu_picker_button(
+    label: &str,
+    icon_name: &str,
+    shell: &Rc<Shell>,
+    track_source: Rc<dyn Fn() -> Vec<Track>>,
+) -> gtk::Button {
+    let button = context_menu_button(&tr(label), icon_name);
+    let shell = Rc::clone(shell);
+    button.connect_clicked(move |button| {
+        close_context_surface(button);
+        present_context_playlist_picker_dialog(&shell, Rc::clone(&track_source));
+    });
+    button
+}
+pub(in crate::ui) fn context_popover(
+    target: &gtk::Widget,
+    css_class: &str,
+    position: Option<(f64, f64)>,
+    child: &impl IsA<gtk::Widget>,
+) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.add_css_class(css_class);
+    popover.set_has_arrow(false);
+    popover.set_parent(target);
+    popover.set_child(Some(child));
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+    popover
+}
+fn context_menu_button(label: &str, icon_name: &str) -> gtk::Button {
+    let row = context_menu_button_content(label, icon_name);
+    let button = gtk::Button::builder()
+        .child(&row)
+        .tooltip_text(label)
+        .halign(gtk::Align::Fill)
+        .hexpand(true)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("context-menu-button");
+    button
+}
+fn context_menu_button_content(label: &str, icon_name: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_halign(gtk::Align::Fill);
+    row.set_hexpand(true);
+
+    let icon = context_menu_icon(icon_name);
+    row.append(&icon);
+
+    let text = gtk::Label::new(Some(label));
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    row.append(&text);
+    row
+}
+fn context_menu_icon(icon_name: &str) -> gtk::Widget {
+    let icon = if icon_name == FAVORITE_REMOVE_ICON {
+        gtk::Label::new(Some(FAVORITE_FILLED_GLYPH)).upcast::<gtk::Widget>()
+    } else if icon_name == FAVORITE_ADD_ICON {
+        gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH)).upcast::<gtk::Widget>()
+    } else if icon_name == "remove-minus" {
+        gtk::Label::new(Some("−")).upcast::<gtk::Widget>()
+    } else {
+        let image = gtk::Image::from_icon_name(icon_name);
+        let pixel_size = if icon_name == "media-playback-start-symbolic" {
+            12
+        } else if icon_name == ADD_TO_PLAYLIST_ICON {
+            16
+        } else if matches!(
+            icon_name,
+            PLAY_NEXT_ICON | PLAY_LATER_ICON | ARTIST_ICON | ALBUM_ICON
+        ) {
+            20
+        } else {
+            18
+        };
+        image.set_pixel_size(pixel_size);
+        image.upcast::<gtk::Widget>()
+    };
+    icon.add_css_class("context-menu-icon");
+    icon.set_size_request(20, 20);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon
+}
+pub(in crate::ui) fn context_menu_has_playlists(shell: &Rc<Shell>) -> bool {
+    !shell.state.library.borrow().playlists.is_empty()
 }
 pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
     context_menu_playlist_items(&shell.state.library.borrow().playlists)
 }
 fn context_menu_playlist_items(playlists: &[Playlist]) -> Vec<Playlist> {
-    playlists
-        .iter()
-        .take(CONTEXT_MENU_PLAYLIST_LIMIT)
-        .cloned()
-        .collect()
+    playlists.to_vec()
 }
 pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
     let library = shell.state.library.borrow();
@@ -1353,41 +1759,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn context_menu_playlist_label_caps_long_names() {
-        let short = "Short list";
-        assert_eq!(context_menu_playlist_label(short), short);
-
-        let label =
-            context_menu_playlist_label("Playlist name that is intentionally long for layout");
-        assert_eq!(label.chars().count(), CONTEXT_MENU_PLAYLIST_LABEL_CHARS);
-        assert!(label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
-        assert!(label.starts_with("Playlist name "));
-
-        let wide_label = context_menu_playlist_label("混合文字列プレイリスト名が長い追加文字列");
-        assert_eq!(
-            wide_label.chars().count(),
-            CONTEXT_MENU_PLAYLIST_LABEL_CHARS
-        );
-        assert!(wide_label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
-    }
-
-    #[test]
-    fn context_menu_playlist_items_use_snapshot_order_with_limit() {
-        let playlists = (0..CONTEXT_MENU_PLAYLIST_LIMIT + 2)
-            .map(test_playlist)
-            .collect::<Vec<_>>();
+    fn context_menu_playlist_items_use_snapshot_order_without_limit() {
+        let playlists = (0..102).map(test_playlist).collect::<Vec<_>>();
 
         let items = context_menu_playlist_items(&playlists);
 
-        assert_eq!(items.len(), CONTEXT_MENU_PLAYLIST_LIMIT);
+        assert_eq!(items.len(), playlists.len());
         assert_eq!(
             items.first().map(|playlist| playlist.name.as_str()),
             Some("List 0")
         );
         assert_eq!(
             items.last().map(|playlist| playlist.name.as_str()),
-            Some("List 99")
+            Some("List 101")
         );
+    }
+
+    #[test]
+    fn filter_duplicate_tracks_skips_existing_playlist_entries() {
+        let tracks = vec![test_track(1, &[]), test_track(2, &[])];
+        let entries = vec![source::PlaylistEntry {
+            entry_id: "entry-1".to_string(),
+            track: test_track(1, &[]),
+        }];
+
+        let filtered = filter_duplicate_tracks(&tracks, &entries);
+
+        assert_eq!(filtered, vec![test_track(2, &[])]);
+    }
+
+    #[test]
+    fn playlist_add_toast_summarizes_added_tracks_and_playlists() {
+        assert_eq!(playlist_add_toast(24, 3), "24 songs added to 3 playlists");
+        assert_eq!(playlist_add_toast(1, 1), "1 song added to 1 playlist");
+        assert_eq!(playlist_add_toast(0, 0), "No songs added");
+    }
+    #[test]
+    fn playlist_picker_duration_uses_units() {
+        assert_eq!(playlist_picker_duration(41), "41s");
+        assert_eq!(playlist_picker_duration(743), "12m 23s");
+        assert_eq!(playlist_picker_duration(4_421), "1h 13m 41s");
     }
 
     fn test_playlist(index: usize) -> Playlist {
@@ -1396,8 +1807,39 @@ mod tests {
             name: format!("List {index}"),
             track_count: index as u32,
             duration_seconds: index as u32 * 60,
+            top_genres: Vec::new(),
             image_refs: Vec::new(),
             image_ref: None,
+        }
+    }
+    fn test_track(index: usize, genres: &[&str]) -> Track {
+        Track {
+            id: TrackId::fake(index),
+            album_id: AlbumId::fake(1),
+            title: format!("Track {index}"),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: "Album".to_string(),
+            year: 2024,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: index as u16,
+            image_ref: None,
+            genres: genres.iter().map(|genre| genre.to_string()).collect(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
         }
     }
 }

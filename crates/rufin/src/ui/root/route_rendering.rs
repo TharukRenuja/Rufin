@@ -103,12 +103,14 @@ impl Shell {
             Route::Playlists => RouteView::new(self.library_playlists_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Playlists)),
             Route::PlaylistDetail(playlist_id) => {
-                RouteView::settled_width(self.playlist_detail_view(playlist_id))
+                RouteView::new(self.playlist_detail_view(playlist_id))
+                    .with_resize(RouteResizePolicy::PlaylistDetailLayout)
             }
             Route::SmartPlaylists => RouteView::new(self.library_smart_playlists_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::SmartPlaylists)),
             Route::SmartPlaylistDetail(smart_playlist_id) => {
-                RouteView::settled_width(self.smart_playlist_detail_view(smart_playlist_id))
+                RouteView::new(self.smart_playlist_detail_view(smart_playlist_id))
+                    .with_resize(RouteResizePolicy::PlaylistDetailLayout)
             }
             Route::Search { query, .. } => {
                 let library = self.state.library.borrow().clone();
@@ -370,6 +372,9 @@ impl Shell {
         match policy {
             RouteResizePolicy::Stable => 0,
             RouteResizePolicy::SettledWidth => route_content_width(self),
+            RouteResizePolicy::PlaylistDetailLayout => {
+                playlist_detail_layout_signature(route_content_width(self))
+            }
             RouteResizePolicy::LayoutSignature => match route {
                 Route::Albums => self.library_layout_signature(LibraryListKey::Albums),
                 Route::Tracks => self.library_layout_signature(LibraryListKey::Tracks),
@@ -412,6 +417,18 @@ impl Shell {
 fn grid_metric_signature(columns: usize, card_size: i32) -> i32 {
     let columns = columns.min(i32::MAX as usize / 1024) as i32;
     columns.saturating_mul(1024).saturating_add(card_size)
+}
+
+fn playlist_detail_layout_signature(width: i32) -> i32 {
+    let compact = playlist_detail_view::playlist_detail_compact_for_width(width) as i32;
+    let margin = playlist_detail_view::playlist_route_margin(width);
+    let cover = playlist_detail_view::playlist_cover_size(width);
+    let sort = playlist_detail_view::playlist_sort_width(width);
+    compact
+        .saturating_mul(1_000_000)
+        .saturating_add(margin.saturating_mul(10_000))
+        .saturating_add(cover.saturating_mul(1_000))
+        .saturating_add(sort)
 }
 
 pub(in crate::ui) fn library_route_resize_policy_for(
@@ -594,6 +611,26 @@ mod tests {
         assert_eq!(
             library_route_resize_policy_for(LibraryListKey::Albums, &settings),
             RouteResizePolicy::SettledWidth
+        );
+    }
+
+    #[test]
+    fn playlist_detail_resize_tracks_actual_layout_values() {
+        assert_ne!(
+            playlist_detail_layout_signature(360),
+            playlist_detail_layout_signature(570)
+        );
+        assert_eq!(
+            playlist_detail_layout_signature(570),
+            playlist_detail_layout_signature(700)
+        );
+        assert_ne!(
+            playlist_detail_layout_signature(700),
+            playlist_detail_layout_signature(760)
+        );
+        assert_eq!(
+            playlist_detail_layout_signature(760),
+            playlist_detail_layout_signature(1_000)
         );
     }
 

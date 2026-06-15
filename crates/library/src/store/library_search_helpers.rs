@@ -532,7 +532,7 @@ impl Store {
         let mut statement = self.connection.prepare(
             "
             SELECT p.playlist_id, p.name, p.track_count, p.duration_seconds,
-                   p.image_item_id, p.image_tag
+                   p.top_genres_json, p.image_item_id, p.image_tag
             FROM library_fts f
             JOIN playlists p
                 ON p.server_id = f.server_id AND p.playlist_id = f.item_id
@@ -569,7 +569,8 @@ impl Store {
         )?;
         let mut statement = self.connection.prepare(
             "
-            SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+            SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
+                   image_item_id, image_tag
             FROM playlists
             WHERE server_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'

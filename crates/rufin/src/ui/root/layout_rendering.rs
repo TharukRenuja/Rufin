@@ -1,13 +1,13 @@
 use super::library::{
-    clear_list_item_child, configure_library_route_scroller, install_column_view_width_fit,
-    item_at, item_at_from_item, play_count_column_width,
-    route_column_view_initial_width_with_inset,
+    configure_library_route_scroller, install_column_view_width_fit, item_at, item_at_from_item,
+    play_count_column_width, route_column_view_initial_width_with_inset,
 };
 use super::*;
 
 const PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH: i32 = 30;
 const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
 const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
+const DETAIL_TRASH_ICON_SIZE: i32 = 18;
 
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
@@ -383,6 +383,21 @@ pub(in crate::ui) struct PlaylistEntryTableRow {
     pub(in crate::ui) original_index: usize,
     pub(in crate::ui) display_index: usize,
 }
+#[derive(Clone)]
+struct PlaylistEntryCellState {
+    menu: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
+    row: Rc<Cell<Option<usize>>>,
+}
+#[derive(Clone)]
+struct PlaylistEntryTitleCell {
+    cover: ArtworkTile,
+    title: gtk::Label,
+    artist: gtk::Label,
+}
+thread_local! {
+    static PLAYLIST_ENTRY_CELL_STATES: RefCell<HashMap<usize, PlaylistEntryCellState>> = RefCell::new(HashMap::new());
+    static PLAYLIST_ENTRY_TITLE_CELLS: RefCell<HashMap<usize, PlaylistEntryTitleCell>> = RefCell::new(HashMap::new());
+}
 pub(in crate::ui) fn playlist_entries_table_panel(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
@@ -511,13 +526,103 @@ fn playlist_entry_for_row<'a>(
 ) -> Option<&'a PlaylistEntry> {
     entries.get(row.original_index)
 }
+fn playlist_entry_cell_state() -> PlaylistEntryCellState {
+    PlaylistEntryCellState {
+        menu: Rc::new(RefCell::new(None)),
+        row: Rc::new(Cell::new(None)),
+    }
+}
+fn store_playlist_entry_cell_state(item: &gtk::ListItem, state: PlaylistEntryCellState) {
+    let key = list_item_storage_key(item);
+    PLAYLIST_ENTRY_CELL_STATES.with(|states| {
+        states.borrow_mut().insert(key, state);
+    });
+}
+fn playlist_entry_cell_state_for_item(item: &gtk::ListItem) -> Option<PlaylistEntryCellState> {
+    let key = list_item_storage_key(item);
+    PLAYLIST_ENTRY_CELL_STATES.with(|states| states.borrow().get(&key).cloned())
+}
+fn remove_playlist_entry_cell_state(item: &gtk::ListItem) {
+    let key = list_item_storage_key(item);
+    PLAYLIST_ENTRY_CELL_STATES.with(|states| {
+        states.borrow_mut().remove(&key);
+    });
+}
+fn bind_playlist_entry_cell_state(
+    state: &PlaylistEntryCellState,
+    row: PlaylistEntryTableRow,
+    entry: &PlaylistEntry,
+    playlist_id: &PlaylistId,
+) {
+    state.row.set(Some(row.original_index));
+    *state.menu.borrow_mut() = Some(PlaylistEntryContextMenuState {
+        track: entry.track.clone(),
+        remove_action: PlaylistEntryContextMenuAction {
+            playlist_id: playlist_id.clone(),
+            entry_id: entry.entry_id.clone(),
+            title: entry.track.title.clone(),
+        },
+    });
+}
+fn clear_playlist_entry_cell_state(state: &PlaylistEntryCellState) {
+    state.row.set(None);
+    state.menu.borrow_mut().take();
+}
+fn setup_playlist_entry_cell_actions(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+    state: &PlaylistEntryCellState,
+) {
+    install_dynamic_playlist_entry_context_menu(target, shell, Rc::clone(&state.menu));
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let controller = shell.controller.clone();
+    let target = target.as_ref().clone();
+    let target_for_drop = target.clone();
+    let row_state = Rc::clone(&state.row);
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(entry_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(target_index) = row_state.get() else {
+            return false;
+        };
+        let after = y > f64::from(target_for_drop.height()) / 2.0;
+        let Some(new_index) = playlist_drop_index(&entries, &entry_id, target_index, after) else {
+            return false;
+        };
+        controller.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
+        true
+    });
+    target.add_controller(drop_target);
+}
 fn playlist_entry_reorder_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
+    let setup_shell = Rc::clone(shell);
+    let setup_entries = Rc::clone(&entries);
+    let setup_playlist_id = playlist_id.clone();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let state = playlist_entry_cell_state();
+        let drag = playlist_entry_drag_handle(&state);
+        setup_playlist_entry_cell_actions(
+            &drag,
+            &setup_shell,
+            Rc::clone(&setup_entries),
+            setup_playlist_id.clone(),
+            &state,
+        );
+        item.set_child(Some(&drag));
+        store_playlist_entry_cell_state(item, state);
+    });
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -528,18 +633,23 @@ fn playlist_entry_reorder_column(
         let Some(entry) = playlist_entry_for_row(&entries, &row) else {
             return;
         };
-        let drag = playlist_entry_drag_handle(&entry.entry_id);
-        install_playlist_entry_cell_actions(
-            &drag,
-            &shell,
-            Rc::clone(&entries),
-            playlist_id.clone(),
-            row,
-            entry,
-        );
-        item.set_child(Some(&drag));
+        let Some(state) = playlist_entry_cell_state_for_item(item) else {
+            return;
+        };
+        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
     });
-    factory.connect_unbind(clear_list_item_child);
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(state) = playlist_entry_cell_state_for_item(item)
+        {
+            clear_playlist_entry_cell_state(&state);
+        }
+    });
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            remove_playlist_entry_cell_state(item);
+        }
+    });
     let column = gtk::ColumnViewColumn::new(None::<&str>, Some(factory));
     column.set_fixed_width(PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH);
     column.set_resizable(false);
@@ -551,7 +661,29 @@ fn playlist_entry_number_column(
     playlist_id: PlaylistId,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
+    let setup_shell = Rc::clone(shell);
+    let setup_entries = Rc::clone(&entries);
+    let setup_playlist_id = playlist_id.clone();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let state = playlist_entry_cell_state();
+        let label = gtk::Label::new(None);
+        label.add_css_class("muted");
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
+        setup_playlist_entry_cell_actions(
+            &label,
+            &setup_shell,
+            Rc::clone(&setup_entries),
+            setup_playlist_id.clone(),
+            &state,
+        );
+        item.set_child(Some(&label));
+        store_playlist_entry_cell_state(item, state);
+    });
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -562,23 +694,36 @@ fn playlist_entry_number_column(
         let Some(entry) = playlist_entry_for_row(&entries, &row) else {
             return;
         };
-
-        let label = gtk::Label::new(Some(&(row.display_index + 1).to_string()));
-        label.add_css_class("muted");
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
-        install_playlist_entry_cell_actions(
-            &label,
-            &shell,
-            Rc::clone(&entries),
-            playlist_id.clone(),
-            row,
-            entry,
-        );
-        item.set_child(Some(&label));
+        let Some(label) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        else {
+            return;
+        };
+        let Some(state) = playlist_entry_cell_state_for_item(item) else {
+            return;
+        };
+        label.set_text(&(row.display_index + 1).to_string());
+        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
     });
-    factory.connect_unbind(clear_list_item_child);
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            if let Some(label) = item
+                .child()
+                .and_then(|child| child.downcast::<gtk::Label>().ok())
+            {
+                label.set_text("");
+            }
+            if let Some(state) = playlist_entry_cell_state_for_item(item) {
+                clear_playlist_entry_cell_state(&state);
+            }
+        }
+    });
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            remove_playlist_entry_cell_state(item);
+        }
+    });
 
     let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
     column.set_fixed_width(PLAYLIST_ENTRY_NUMBER_WIDTH);
@@ -625,24 +770,21 @@ where
     F: Fn(&PlaylistEntry) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
     let value = Rc::new(value);
-    factory.connect_bind(move |_, item| {
+    let setup_shell = Rc::clone(shell);
+    let setup_entries = Rc::clone(&entries);
+    let setup_playlist_id = playlist_id.clone();
+    factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
-            return;
-        };
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
-            return;
-        };
+        let state = playlist_entry_cell_state();
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.set_valign(gtk::Align::Center);
         root.set_halign(gtk::Align::Fill);
         root.set_hexpand(true);
 
-        let label = gtk::Label::new(Some(&value(entry)));
+        let label = gtk::Label::new(None);
         label.add_css_class("table-link-label");
         label.add_css_class("muted");
         label.set_xalign(0.0);
@@ -653,17 +795,60 @@ where
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         root.append(&label);
 
-        install_playlist_entry_cell_actions(
+        setup_playlist_entry_cell_actions(
             &root,
-            &shell,
-            Rc::clone(&entries),
-            playlist_id.clone(),
-            row,
-            entry,
+            &setup_shell,
+            Rc::clone(&setup_entries),
+            setup_playlist_id.clone(),
+            &state,
         );
         item.set_child(Some(&root));
+        store_playlist_entry_cell_state(item, state);
     });
-    factory.connect_unbind(clear_list_item_child);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+            return;
+        };
+        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+            return;
+        };
+        let Some(label) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+            .and_then(|root| root.first_child())
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        else {
+            return;
+        };
+        let Some(state) = playlist_entry_cell_state_for_item(item) else {
+            return;
+        };
+        label.set_text(&(value)(entry));
+        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
+    });
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            if let Some(label) = item
+                .child()
+                .and_then(|child| child.downcast::<gtk::Box>().ok())
+                .and_then(|root| root.first_child())
+                .and_then(|child| child.downcast::<gtk::Label>().ok())
+            {
+                label.set_text("");
+            }
+            if let Some(state) = playlist_entry_cell_state_for_item(item) {
+                clear_playlist_entry_cell_state(&state);
+            }
+        }
+    });
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            remove_playlist_entry_cell_state(item);
+        }
+    });
 
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
@@ -676,6 +861,45 @@ fn playlist_entry_title_column(
     playlist_id: PlaylistId,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
+    let setup_shell = Rc::clone(shell);
+    let setup_entries = Rc::clone(&entries);
+    let setup_playlist_id = playlist_id.clone();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let state = playlist_entry_cell_state();
+        let cover = ArtworkTile::new(PLAYLIST_ENTRY_COVER_WIDTH, 0);
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_hexpand(true);
+        labels.set_halign(gtk::Align::Fill);
+        labels.set_width_request(1);
+        let title = playlist_entry_text_label("", "", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
+        let artist = playlist_entry_text_label("", "muted", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
+        labels.append(&title);
+        labels.append(&artist);
+        let cell = playlist_title_cell(cover.widget(), labels.upcast());
+        setup_playlist_entry_cell_actions(
+            &cell,
+            &setup_shell,
+            Rc::clone(&setup_entries),
+            setup_playlist_id.clone(),
+            &state,
+        );
+        item.set_child(Some(&cell));
+        store_playlist_entry_cell_state(item, state);
+        let key = list_item_storage_key(item);
+        PLAYLIST_ENTRY_TITLE_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                PlaylistEntryTitleCell {
+                    cover,
+                    title,
+                    artist,
+                },
+            );
+        });
+    });
     let shell = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -687,45 +911,55 @@ fn playlist_entry_title_column(
         let Some(entry) = playlist_entry_for_row(&entries, &row) else {
             return;
         };
-        let cover = shell.cover_tile_for(
+        let key = list_item_storage_key(item);
+        let Some(cell) = PLAYLIST_ENTRY_TITLE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+        else {
+            return;
+        };
+        shell.bind_cover_tile_for(
+            &cell.cover,
             entry.track.image_ref.as_ref(),
             stable_seed(entry.track.id.as_str()),
             PLAYLIST_ENTRY_COVER_WIDTH,
             THUMB_COVER_SIZE,
         );
-
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        labels.set_hexpand(true);
-        labels.set_halign(gtk::Align::Fill);
-        labels.set_width_request(1);
-        labels.append(&playlist_entry_text_label(
-            &entry.track.title,
-            "",
-            PLAYLIST_ENTRY_TITLE_MAX_CHARS,
-        ));
-        labels.append(&playlist_entry_text_label(
-            &entry.track.artist,
-            "muted",
-            PLAYLIST_ENTRY_TITLE_MAX_CHARS,
-        ));
-        let title = playlist_title_cell(cover, labels.upcast());
-        install_playlist_entry_cell_actions(
-            &title,
-            &shell,
-            Rc::clone(&entries),
-            playlist_id.clone(),
-            row,
-            entry,
-        );
-        item.set_child(Some(&title));
+        cell.title.set_text(&entry.track.title);
+        cell.artist.set_text(&entry.track.artist);
+        let Some(state) = playlist_entry_cell_state_for_item(item) else {
+            return;
+        };
+        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
     });
-    factory.connect_unbind(clear_list_item_child);
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = list_item_storage_key(item);
+            if let Some(cell) =
+                PLAYLIST_ENTRY_TITLE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+            {
+                cell.cover.bind_image(0, None);
+                cell.title.set_text("");
+                cell.artist.set_text("");
+            }
+            if let Some(state) = playlist_entry_cell_state_for_item(item) {
+                clear_playlist_entry_cell_state(&state);
+            }
+        }
+    });
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = list_item_storage_key(item);
+            PLAYLIST_ENTRY_TITLE_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+            remove_playlist_entry_cell_state(item);
+        }
+    });
     let column = gtk::ColumnViewColumn::new(Some(&tr("Title")), Some(factory));
     column.set_fixed_width(PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH);
     column.set_resizable(false);
     column
 }
-fn playlist_entry_drag_handle(entry_id: &str) -> gtk::Image {
+fn playlist_entry_drag_handle(state: &PlaylistEntryCellState) -> gtk::Image {
     let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
@@ -734,47 +968,16 @@ fn playlist_entry_drag_handle(entry_id: &str) -> gtk::Image {
     let drag_source = gtk::DragSource::builder()
         .actions(gtk::gdk::DragAction::MOVE)
         .build();
-    let entry_id = entry_id.to_string();
+    let menu_state = Rc::clone(&state.menu);
     drag_source.connect_prepare(move |_, _, _| {
+        let entry_id = menu_state
+            .borrow()
+            .as_ref()
+            .map(|state| state.remove_action.entry_id.clone())?;
         Some(gtk::gdk::ContentProvider::for_value(&entry_id.to_value()))
     });
     drag.add_controller(drag_source);
     drag
-}
-fn install_playlist_entry_cell_actions(
-    target: &impl IsA<gtk::Widget>,
-    shell: &Rc<Shell>,
-    entries: Rc<Vec<PlaylistEntry>>,
-    playlist_id: PlaylistId,
-    row: PlaylistEntryTableRow,
-    entry: &PlaylistEntry,
-) {
-    install_playlist_entry_context_menu(
-        target,
-        shell,
-        entry.track.clone(),
-        playlist_id.clone(),
-        entry.entry_id.clone(),
-        entry.track.title.clone(),
-    );
-
-    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-    let controller = shell.controller.clone();
-    let target = target.as_ref().clone();
-    let target_for_drop = target.clone();
-    drop_target.connect_drop(move |_, value, _, y| {
-        let Ok(entry_id) = value.get::<String>() else {
-            return false;
-        };
-        let after = y > f64::from(target_for_drop.height()) / 2.0;
-        let Some(new_index) = playlist_drop_index(&entries, &entry_id, row.original_index, after)
-        else {
-            return false;
-        };
-        controller.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
-        true
-    });
-    target.add_controller(drop_target);
 }
 pub(in crate::ui) fn compare_playlist_entry(
     entries: &[PlaylistEntry],
@@ -939,6 +1142,58 @@ pub(in crate::ui) fn detail_action_button(icon_name: &str, label: &str) -> gtk::
     let button = icon_button(icon_name, label);
     button.add_css_class("detail-showcase-action-button");
     button
+}
+pub(in crate::ui) fn detail_delete_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("detail-showcase-action-button");
+    button.set_valign(gtk::Align::Center);
+    button.set_tooltip_text(Some(&tr(label)));
+    button.set_child(Some(&detail_trash_icon()));
+    button
+}
+fn detail_trash_icon() -> gtk::DrawingArea {
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(DETAIL_TRASH_ICON_SIZE);
+    icon.set_content_height(DETAIL_TRASH_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(|area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        context.set_line_width((f64::from(width.min(height)) * 0.095).clamp(1.5, 1.9));
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let left = width * 0.29;
+        let right = width * 0.71;
+        let top = height * 0.36;
+        let bottom = height * 0.78;
+        context.rectangle(left, top, right - left, bottom - top);
+        let _ = context.stroke();
+
+        let lid_y = height * 0.28;
+        context.move_to(width * 0.23, lid_y);
+        context.line_to(width * 0.77, lid_y);
+        let _ = context.stroke();
+
+        context.move_to(width * 0.42, height * 0.20);
+        context.line_to(width * 0.58, height * 0.20);
+        context.line_to(width * 0.62, lid_y);
+        context.move_to(width * 0.42, height * 0.20);
+        context.line_to(width * 0.38, lid_y);
+        let _ = context.stroke();
+    });
+    icon
 }
 pub(in crate::ui) fn detail_action_row() -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);

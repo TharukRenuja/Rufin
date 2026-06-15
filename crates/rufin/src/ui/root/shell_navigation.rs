@@ -539,44 +539,52 @@ pub(in crate::ui) fn install_track_context_menu(
 ) {
     install_dynamic_track_context_menu(target, shell, Rc::new(RefCell::new(Some(track))));
 }
-pub(in crate::ui) fn install_playlist_entry_context_menu(
+pub(in crate::ui) fn install_dynamic_playlist_entry_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
-    track: Track,
-    playlist_id: PlaylistId,
-    entry_id: String,
-    title: String,
+    state: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
 ) {
-    let remove_action = PlaylistEntryContextMenuAction {
-        playlist_id,
-        entry_id,
-        title,
-    };
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
-    let click_track = track.clone();
-    let click_remove_action = remove_action.clone();
+    let click_state = Rc::clone(&state);
     let click = context_click_gesture();
     click.connect_pressed(move |click, _, x, y| {
         claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
+        let Some(state) = click_state.borrow().clone() else {
+            return;
+        };
         present_track_menu(
             &target,
             &click_shell,
-            context_track(&click_shell, &click_track),
-            click_remove_action.clone(),
+            context_track(&click_shell, &state.track),
+            state.remove_action,
             Some((x, y)),
         );
     });
     target.add_controller(click);
 
+    let long_shell = Rc::clone(shell);
+    let long_state = Rc::clone(&state);
+    install_context_long_press(target, move |target, x, y| {
+        let Some(state) = long_state.borrow().clone() else {
+            return;
+        };
+        present_track_menu(
+            target,
+            &long_shell,
+            context_track(&long_shell, &state.track),
+            state.remove_action,
+            Some((x, y)),
+        );
+    });
+
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
-    let key_track = track;
-    let key_remove_action = remove_action;
+    let key_state = state;
     let key = gtk::EventControllerKey::new();
     key.connect_key_pressed(move |_, key, _, state| {
         let opens_menu = key == gtk::gdk::Key::Menu
@@ -584,12 +592,14 @@ pub(in crate::ui) fn install_playlist_entry_context_menu(
         if !opens_menu {
             return glib::Propagation::Proceed;
         }
-        if let Some(target) = target_weak.upgrade() {
+        if let Some(target) = target_weak.upgrade()
+            && let Some(state) = key_state.borrow().clone()
+        {
             present_track_menu(
                 &target,
                 &key_shell,
-                context_track(&key_shell, &key_track),
-                key_remove_action.clone(),
+                context_track(&key_shell, &state.track),
+                state.remove_action,
                 None,
             );
         }
@@ -623,6 +633,20 @@ pub(in crate::ui) fn install_dynamic_track_context_menu(
         );
     });
     target.add_controller(click);
+
+    let long_shell = Rc::clone(shell);
+    let long_track = Rc::clone(&track);
+    install_context_long_press(target, move |target, x, y| {
+        let Some(track) = long_track.borrow().clone() else {
+            return;
+        };
+        present_track_context_menu(
+            target,
+            &long_shell,
+            context_track(&long_shell, &track),
+            Some((x, y)),
+        );
+    });
 
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
@@ -682,6 +706,20 @@ pub(in crate::ui) fn install_dynamic_album_context_menu(
     });
     target.add_controller(click);
 
+    let long_shell = Rc::clone(shell);
+    let long_album = Rc::clone(&album);
+    install_context_long_press(target, move |target, x, y| {
+        let Some(album) = long_album.borrow().clone() else {
+            return;
+        };
+        present_album_context_menu(
+            target,
+            &long_shell,
+            context_album(&long_shell, &album),
+            Some((x, y)),
+        );
+    });
+
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
     let key_album = album;
@@ -729,6 +767,12 @@ pub(in crate::ui) fn install_playlist_context_menu(
     });
     target.add_controller(click);
 
+    let long_shell = Rc::clone(shell);
+    let long_playlist = playlist.clone();
+    install_context_long_press(target, move |target, x, y| {
+        present_playlist_context_menu(target, &long_shell, long_playlist.clone(), Some((x, y)));
+    });
+
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
     let key = gtk::EventControllerKey::new();
@@ -767,6 +811,17 @@ pub(in crate::ui) fn install_smart_playlist_context_menu(
         }
     });
     target.add_controller(click);
+
+    let long_shell = Rc::clone(shell);
+    let long_playlist = playlist.clone();
+    install_context_long_press(target, move |target, x, y| {
+        present_smart_playlist_context_menu(
+            target,
+            &long_shell,
+            long_playlist.clone(),
+            Some((x, y)),
+        );
+    });
 
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
@@ -807,6 +862,17 @@ pub(in crate::ui) fn install_artist_context_menu(
         );
     });
     target.add_controller(click);
+
+    let long_shell = Rc::clone(shell);
+    let long_artist = artist.clone();
+    install_context_long_press(target, move |target, x, y| {
+        present_artist_context_menu(
+            target,
+            &long_shell,
+            context_artist(&long_shell, &long_artist),
+            Some((x, y)),
+        );
+    });
 
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
@@ -849,6 +915,13 @@ pub(in crate::ui) fn install_current_track_context_menu(
     });
     target.add_controller(click);
 
+    let long_shell = Rc::clone(shell);
+    install_context_long_press(target, move |target, x, y| {
+        if let Some(track) = current_player_track(&long_shell) {
+            present_track_context_menu(target, &long_shell, track, Some((x, y)));
+        }
+    });
+
     let target_weak = target.downgrade();
     let key_shell = Rc::clone(shell);
     let key = gtk::EventControllerKey::new();
@@ -886,6 +959,22 @@ fn context_click_gesture() -> gtk::GestureClick {
 
 fn claim_context_click(click: &gtk::GestureClick) {
     click.set_state(gtk::EventSequenceState::Claimed);
+}
+
+fn install_context_long_press(
+    target: &gtk::Widget,
+    open: impl Fn(&gtk::Widget, f64, f64) + 'static,
+) {
+    let target_weak = target.downgrade();
+    let press = gtk::GestureLongPress::new();
+    press.set_propagation_phase(gtk::PropagationPhase::Capture);
+    press.connect_pressed(move |press, x, y| {
+        press.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(target) = target_weak.upgrade() {
+            open(&target, x, y);
+        }
+    });
+    target.add_controller(press);
 }
 
 #[cfg(test)]

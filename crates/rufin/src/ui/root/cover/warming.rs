@@ -130,6 +130,14 @@ impl Shell {
         self.schedule_cover_decode_resume();
     }
 
+    pub(in crate::ui) fn pause_cover_warm_for_nav(self: &Rc<Self>) {
+        let now = Instant::now();
+        self.state.cover_warm_paused_until.set(Some(
+            now + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
+        ));
+        self.schedule_cover_decode_resume();
+    }
+
     pub(in crate::ui) fn cover_warm_is_paused(&self) -> bool {
         self.cover_warm_pause_remaining().is_some()
     }

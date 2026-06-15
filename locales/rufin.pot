@@ -2241,6 +2241,18 @@ msgstr ""
 msgid "Add to Playlist"
 msgstr ""
 
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:404
+msgid "Add current"
+msgstr ""
+
+#: crates/rufin/src/ui/root/home_refresh.rs:805
+msgid "Don't duplicate"
+msgstr ""
+
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:232
+msgid "Edit"
+msgstr ""
+
 #: crates/rufin/src/ui/root/home_refresh.rs:602
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:328
 msgid "Delete Playlist"

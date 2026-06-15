@@ -673,7 +673,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let sections = snapshot.home_sections.clone();
-                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.replace_library_snapshot(*snapshot);
                     if snapshot_outcome.entered_first_run {
                         shell.state.server_discovery_started.set(false);
                         shell.state.server_discovery_running.set(false);
@@ -775,6 +775,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let toast_message = preferences_login_status_toast_message(&status.sync_status)
                         .map(str::to_string);
                     let delta = status.delta.clone();
+                    let tracks_changed = delta.reset.is_some() || !delta.tracks.is_empty();
                     let apply_started = Instant::now();
                     let applied = {
                         let mut library = shell.state.library.borrow_mut();
@@ -783,6 +784,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let apply_ms = apply_started.elapsed().as_millis() as u64;
                     if !applied {
                         continue;
+                    }
+                    if tracks_changed {
+                        shell.rebuild_track_index();
                     }
                     let sync_complete = login_status_marks_sync_complete(&sync_status);
                     if sync_complete && shell.state.first_run_connection_pending.get() {
@@ -854,7 +858,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let snapshot = *snapshot;
                     let sections = snapshot.home_sections.clone();
-                    *shell.state.library.borrow_mut() = snapshot;
+                    shell.replace_library_snapshot(snapshot);
                     shell.update_prefetched_explore_from_snapshot(
                         server_id,
                         prefetched_explore,
@@ -901,7 +905,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     playlist_id,
                     snapshot,
                 } => {
-                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.replace_library_snapshot(*snapshot);
                     shell.update_server_selector();
                     let route = shell.state.routes.borrow().current().clone();
                     let playlist_route_changed = matches!(route, Route::Playlists)
@@ -914,7 +918,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     smart_playlist_id,
                     snapshot,
                 } => {
-                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.replace_library_snapshot(*snapshot);
                     shell.state.smart_playlists.borrow_mut().clear();
                     shell.state.smart_playlists_loaded.set(false);
                     shell.update_server_selector();

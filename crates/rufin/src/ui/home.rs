@@ -424,6 +424,7 @@ mod tests {
             album_artists: Vec::new(),
             genres: Vec::new(),
             playlists: Vec::new(),
+            playlist_entry_keys: std::collections::HashMap::new(),
             favorites: Vec::new(),
             search: SearchResults::default(),
         }

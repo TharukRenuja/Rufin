@@ -211,6 +211,13 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let mut album_artists = album_artist_page.items;
     let mut genres = genre_page.items;
     let mut playlists = playlist_page.items;
+    let playlist_ids = playlists
+        .iter()
+        .map(|playlist| playlist.id.clone())
+        .collect::<Vec<_>>();
+    let playlist_entry_keys = store.with_store(|store| {
+        store.playlist_entry_keys_for_playlists(&saved.server.id, &playlist_ids)
+    })?;
     let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
     scrub_snapshot_image_refs(
         &saved,
@@ -291,6 +298,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         album_artists,
         genres,
         playlists,
+        playlist_entry_keys,
         favorites,
         search: SearchResults::default(),
     })

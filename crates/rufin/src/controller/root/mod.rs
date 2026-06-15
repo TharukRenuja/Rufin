@@ -179,6 +179,7 @@ pub struct LibrarySnapshot {
     pub album_artists: Vec<Artist>,
     pub genres: Vec<Genre>,
     pub playlists: Vec<Playlist>,
+    pub playlist_entry_keys: HashMap<PlaylistId, Vec<(String, TrackId)>>,
     pub favorites: Vec<Track>,
     pub search: SearchResults,
 }
@@ -307,6 +308,7 @@ impl LibrarySnapshot {
             album_artists: Vec::new(),
             genres: Vec::new(),
             playlists: Vec::new(),
+            playlist_entry_keys: HashMap::new(),
             favorites: Vec::new(),
             search: SearchResults::default(),
         }

@@ -1805,6 +1805,7 @@ pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapsh
         album_artists: Vec::new(),
         genres: Vec::new(),
         playlists: Vec::new(),
+        playlist_entry_keys: HashMap::new(),
         favorites: Vec::new(),
         search: SearchResults::default(),
     }
@@ -1837,6 +1838,7 @@ fn test_playlist(name: &str, image_ref: ImageRef) -> Playlist {
         name: name.to_string(),
         track_count: 1,
         duration_seconds: 180,
+        top_genres: Vec::new(),
         image_refs: vec![image_ref],
         image_ref: None,
     }

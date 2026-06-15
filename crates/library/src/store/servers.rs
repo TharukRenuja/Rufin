@@ -181,6 +181,25 @@ pub(super) fn album_release_types_from_json(
     })?;
     Ok(normalize_release_types(types))
 }
+pub(super) fn string_vec_json(values: &[String]) -> StoreResult<String> {
+    Ok(serde_json::to_string(values)?)
+}
+pub(super) fn string_vec_from_json(
+    value: Option<String>,
+    index: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let values = serde_json::from_str::<Vec<String>>(&value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    Ok(values)
+}
 pub(super) fn image_ref_from_row(
     row: &Row<'_>,
     item_index: usize,
@@ -702,8 +721,9 @@ pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
         name: row.get(1)?,
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
+        top_genres: string_vec_from_json(row.get(4)?, 4)?,
         image_refs: Vec::new(),
-        image_ref: image_ref_from_row(row, 4, 5)?,
+        image_ref: image_ref_from_row(row, 5, 6)?,
     })
 }
 pub(super) fn stable_seed(value: &str) -> u32 {

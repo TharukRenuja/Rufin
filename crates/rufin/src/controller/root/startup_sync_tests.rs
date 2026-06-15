@@ -4034,6 +4034,7 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         name: "Old Playlist".to_string(),
         track_count: 1,
         duration_seconds: stale_track.duration_seconds,
+        top_genres: Vec::new(),
         image_refs: Vec::new(),
         image_ref: stale_track.image_ref.clone(),
     };

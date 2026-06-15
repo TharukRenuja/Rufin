@@ -49,6 +49,43 @@ listview.album-detail-list row:selected {
   background: transparent;
 }
 
+listview row:selected,
+listview row:selected:focus,
+listview row:focus,
+columnview row:selected,
+columnview row:selected:focus,
+columnview row:focus,
+gridview child:selected,
+gridview child:selected:focus,
+gridview child:focus,
+flowboxchild:selected,
+flowboxchild:selected:focus,
+flowboxchild:focus,
+list row:selected,
+list row:selected:focus,
+list row:focus,
+row:selected,
+row:selected:focus,
+row:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.flat:focus,
+.album-cover-button:focus,
+.cover-hover-button:focus,
+.pill-button:focus,
+.album-detail-genre-pill:focus,
+.detail-showcase-link-button:focus,
+.detail-external-link-button:focus,
+.context-menu-button:focus,
+.server-option:focus,
+.queue-link:focus,
+.queue-favorite-button:focus,
+.favorite-toggle:focus {
+  outline: none;
+}
+
 .album-detail-track-cells {
   border-radius: 8px;
 }
@@ -237,6 +274,42 @@ button.suggested-action:disabled {
   color: @dim_label_color;
   background: color-mix(in srgb, @window_fg_color 8%, transparent);
   box-shadow: none;
+}
+
+.context-menu-icon {
+  min-width: 18px;
+  min-height: 18px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+popover.track-context-menu > contents,
+popover.album-context-menu > contents,
+popover.artist-context-menu > contents,
+popover.playlist-context-menu > contents,
+popover.queue-context-menu > contents {
+  padding: 2px;
+}
+
+.context-playlist-row {
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, @window_fg_color 18%, transparent);
+}
+
+.context-playlist-cover {
+  border-radius: 6px;
+}
+
+.context-playlist-title {
+  font-size: 15px;
+}
+
+.context-playlist-meta {
+  margin-top: 1px;
+}
+
+.context-playlist-genres {
+  margin-left: 2px;
 }
 
 .settings-group {
@@ -786,15 +859,11 @@ scale.volume-slider trough {
   box-shadow: none;
 }
 
-.detail-showcase-actions,
-.album-detail-actions,
-.playlist-detail-actions {
+.detail-showcase-actions {
   margin-top: 4px;
 }
 
-.detail-showcase-action-button,
-.album-detail-action-button,
-.playlist-detail-action-button {
+.detail-showcase-action-button {
   min-width: 48px;
   min-height: 48px;
   padding: 0;
@@ -810,9 +879,7 @@ scale.volume-slider trough {
     transform 120ms ease-out;
 }
 
-.detail-showcase-action-button:hover,
-.album-detail-action-button:hover,
-.playlist-detail-action-button:hover {
+.detail-showcase-action-button:hover {
   background: #f7f7f7;
   box-shadow:
     0 10px 26px rgba(0, 0, 0, 0.26),
@@ -820,24 +887,8 @@ scale.volume-slider trough {
   transform: scale(1.08);
 }
 
-.detail-showcase-action-button:active,
-.album-detail-action-button:active,
-.playlist-detail-action-button:active {
+.detail-showcase-action-button:active {
   transform: scale(0.96);
-}
-
-.album-detail-play-button,
-.playlist-detail-play-button {
-  min-width: 56px;
-  min-height: 56px;
-  background: color-mix(in srgb, @window_fg_color 92%, transparent);
-  color: @window_bg_color;
-  -gtk-icon-size: 18px;
-}
-
-.album-detail-play-button:hover,
-.playlist-detail-play-button:hover {
-  background: @window_fg_color;
 }
 
 .detail-showcase-play-button {

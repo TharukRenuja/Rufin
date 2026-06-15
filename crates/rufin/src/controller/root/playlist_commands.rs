@@ -47,6 +47,7 @@ impl AppController {
                 name: name.trim().to_string(),
                 track_count: tracks.len() as u32,
                 duration_seconds: tracks.iter().map(|track| track.duration_seconds).sum(),
+                top_genres: Vec::new(),
                 image_refs: track_cover_refs_for_items(&tracks),
                 image_ref: tracks.iter().find_map(|track| track.image_ref.clone()),
             };

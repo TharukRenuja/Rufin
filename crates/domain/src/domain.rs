@@ -485,6 +485,8 @@ pub struct Playlist {
     pub track_count: u32,
     pub duration_seconds: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_genres: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_refs: Vec<ImageRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
