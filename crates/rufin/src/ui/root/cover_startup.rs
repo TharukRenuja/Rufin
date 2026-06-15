@@ -616,6 +616,7 @@ fn playlist_snapshot_changed(delta: &LibraryDelta) -> bool {
     !delta.playlists.added.is_empty()
         || !delta.playlists.deleted.is_empty()
         || !delta.playlists.fields.is_empty()
+        || !delta.playlists.entries.is_empty()
         || !delta.playlists.cover_refs.is_empty()
 }
 

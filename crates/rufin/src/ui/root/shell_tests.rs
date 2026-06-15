@@ -325,7 +325,7 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
 }
 
 #[test]
-pub(in crate::ui) fn shell_apply_sync_playlist_entries_keep_playlist_page() {
+pub(in crate::ui) fn shell_apply_sync_playlist_entries_invalidate_playlist_page() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
     let playlist = test_playlist("Regular", test_image_ref("playlist"));
@@ -355,7 +355,7 @@ pub(in crate::ui) fn shell_apply_sync_playlist_entries_keep_playlist_page() {
     );
 
     assert!(applied);
-    assert_eq!(library.playlists, vec![playlist]);
+    assert!(library.playlists.is_empty());
     assert_eq!(library.cached_playlist_count, 1);
 }
 #[test]

@@ -60,6 +60,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
+        let mut playlist_stat_track_ids = Vec::<TrackId>::new();
         for track in tracks {
             match self.load_track_for_delta(server_id, &track.id)? {
                 Some(existing) => {
@@ -77,6 +78,11 @@ impl Store {
                     }
                     if track_fields_changed(&existing, track) {
                         delta.tracks.fields.push(track.id.clone());
+                    }
+                    if existing.duration_seconds != track.duration_seconds
+                        || existing.genres != track.genres
+                    {
+                        playlist_stat_track_ids.push(track.id.clone());
                     }
                     if existing.album_id != track.album_id {
                         delta.albums.links.push(existing.album_id.clone());
@@ -102,6 +108,7 @@ impl Store {
                 }
                 None => {
                     delta.tracks.added.push(track.id.clone());
+                    playlist_stat_track_ids.push(track.id.clone());
                     delta.albums.links.push(track.album_id.clone());
                     if let Some(artist_id) = track.artist_id.clone() {
                         delta.artists.links.push(artist_id);
@@ -113,7 +120,10 @@ impl Store {
                 }
             }
         }
+        let playlist_stats_before =
+            self.playlists_for_track_stat_changes(server_id, &playlist_stat_track_ids)?;
         self.upsert_tracks(server_id, tracks, generation)?;
+        self.refresh_track_dependent_playlist_stats(server_id, playlist_stats_before, &mut delta)?;
         Ok(delta)
     }
 
@@ -253,8 +263,10 @@ impl Store {
         server_id: &ServerId,
         generation: i64,
     ) -> StoreResult<Vec<CoverCacheEntry>> {
-        self.write_batch(|_| {
+        self.write_batch(|connection| {
             self.prune_missing_items(server_id, generation)?;
+            repair_linked_genres(connection, server_id, generation)?;
+            refresh_genre_counts_on_connection(connection, server_id)?;
             self.bind_album_fallback_image_refs(server_id)?;
             self.bind_album_external_identity_image_refs(server_id)?;
             self.bind_track_album_fallback_image_refs(server_id)?;
@@ -275,6 +287,80 @@ impl Store {
                 params![server_id.as_str(), generation],
             )?;
             Ok(pruned_cover_entries)
+        })
+    }
+
+    fn playlists_for_track_stat_changes(
+        &self,
+        server_id: &ServerId,
+        track_ids: &[TrackId],
+    ) -> StoreResult<Vec<(PlaylistId, Option<Playlist>)>> {
+        if track_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut playlist_ids = Vec::<PlaylistId>::new();
+        let mut seen = HashSet::<PlaylistId>::new();
+        for chunk in track_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT DISTINCT playlist_id
+                FROM playlist_tracks
+                WHERE server_id = ?
+                  AND track_id IN ({placeholders})
+                ORDER BY playlist_id
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(TrackId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                row.get::<_, String>(0).map(PlaylistId::new)
+            })?;
+            for row in rows {
+                let playlist_id = row?;
+                if seen.insert(playlist_id.clone()) {
+                    playlist_ids.push(playlist_id);
+                }
+            }
+        }
+        playlist_ids
+            .into_iter()
+            .map(|playlist_id| {
+                let playlist = self.load_playlist_for_delta(server_id, &playlist_id)?;
+                Ok((playlist_id, playlist))
+            })
+            .collect()
+    }
+
+    fn refresh_track_dependent_playlist_stats(
+        &self,
+        server_id: &ServerId,
+        before: Vec<(PlaylistId, Option<Playlist>)>,
+        delta: &mut LibraryDelta,
+    ) -> StoreResult<()> {
+        if before.is_empty() {
+            return Ok(());
+        }
+        self.write_batch(|connection| {
+            for (playlist_id, before_playlist) in before {
+                super::library_auxiliary_cache::refresh_playlist_stats(
+                    connection,
+                    server_id,
+                    &playlist_id,
+                )?;
+                let after_playlist = self.load_playlist_for_delta(server_id, &playlist_id)?;
+                if super::library_auxiliary_cache::playlist_stats_changed(
+                    before_playlist,
+                    after_playlist,
+                ) {
+                    delta.playlists.entries.push(playlist_id);
+                }
+            }
+            Ok(())
         })
     }
 
@@ -965,6 +1051,16 @@ impl Store {
                     image_tag,
                     generation,
                 ])?;
+                connection.execute(
+                    "
+                    DELETE FROM genres
+                    WHERE server_id = ?1
+                      AND genre_id != ?2
+                      AND genre_id LIKE 'linked:genre:%'
+                      AND name = ?3
+                    ",
+                    params![server_id.as_str(), genre.id.as_str(), genre.name],
+                )?;
                 let cover_refs = if genre.image_refs.is_empty() {
                     genre.image_ref.iter().cloned().collect::<Vec<_>>()
                 } else {
