@@ -6,7 +6,9 @@ const TOOLTIP_FOREGROUND: &str = "white";
 const TOAST_BACKGROUND: &str = "color-mix(in srgb, @window_bg_color 88%, @card_bg_color 12%)";
 const TOAST_FOREGROUND: &str = "@window_fg_color";
 const TOAST_RADIUS: &str = "999px";
+const TOAST_BOTTOM_MARGIN: &str = "108px";
 const TOAST_CLOSE_OPACITY: &str = "0";
+const TOAST_CLOSE_ICON_SIZE: &str = "0";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]
@@ -208,12 +210,24 @@ mod tests {
             Some(TOAST_FOREGROUND.to_string())
         );
         assert_eq!(
+            selector_property(APP_STYLE, ".app-toast-overlay toast", "margin-bottom"),
+            Some(TOAST_BOTTOM_MARGIN.to_string())
+        );
+        assert_eq!(
             selector_property(
                 APP_STYLE,
                 ".quick-toast-overlay toast button.circular.flat",
                 "opacity"
             ),
             Some(TOAST_CLOSE_OPACITY.to_string())
+        );
+        assert_eq!(
+            selector_property(
+                APP_STYLE,
+                ".quick-toast-overlay toast button.circular.flat image",
+                "-gtk-icon-size"
+            ),
+            Some(TOAST_CLOSE_ICON_SIZE.to_string())
         );
     }
 }

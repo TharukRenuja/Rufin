@@ -4007,6 +4007,124 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
 }
 
 #[test]
+fn source_artist_image_seeds_album_before_external_identity() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+    let artist_image = image_ref("artist-source-cover", "artist-source-tag");
+    let artist = artist(1, Some(artist_image.clone()));
+    let mut album = album(1);
+    album.musicbrainz_release_group_id = Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
+    let track = track(1, &album);
+
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist");
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let detail = store
+        .load_album_detail(&saved.server.id, &album.id)
+        .expect("load detail")
+        .expect("detail");
+
+    assert_eq!(detail.0.image_ref, Some(artist_image.clone()));
+    assert_eq!(detail.1[0].image_ref, Some(artist_image));
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "albums",
+            "album_id",
+            album.id.as_str(),
+        ),
+        "fallback"
+    );
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "tracks",
+            "track_id",
+            track.id.as_str(),
+        ),
+        "fallback"
+    );
+}
+
+#[test]
+fn fallback_artist_image_does_not_seed_album_fallback() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+    let album = album(1);
+    let artist = artist(1, None);
+    let track = track(1, &album);
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist");
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .connection
+        .execute(
+            "
+            UPDATE artists
+            SET image_item_id = 'derived-artist-cover',
+                image_tag = 'derived-artist-tag',
+                image_origin = 'fallback'
+            WHERE server_id = ?1 AND artist_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), artist.id.as_str()],
+        )
+        .expect("mark derived artist image");
+
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+
+    let album_image: Option<String> = store
+        .connection
+        .query_row(
+            "
+            SELECT image_item_id
+            FROM albums
+            WHERE server_id = ?1 AND album_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), album.id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("album image");
+
+    assert_eq!(album_image, None);
+}
+
+#[test]
 fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();

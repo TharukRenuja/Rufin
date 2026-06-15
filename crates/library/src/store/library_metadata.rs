@@ -612,6 +612,130 @@ impl Store {
         Ok(bound)
     }
 
+    pub(super) fn bind_album_artist_fallback_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<usize> {
+        let mut fallback_statement = self.connection.prepare(
+            "
+            WITH candidates AS (
+                SELECT a.album_id, ar.image_item_id, ar.image_tag,
+                       0 AS priority, 0 AS position, ar.name, ar.artist_id
+                FROM albums a
+                JOIN artists ar
+                  ON ar.server_id = a.server_id
+                 AND ar.artist_id = a.artist_id
+                WHERE a.server_id = ?1
+                  AND (
+                      a.image_item_id IS NULL
+                      OR a.image_item_id LIKE 'external:%'
+                  )
+                  AND ar.image_item_id IS NOT NULL
+                  AND ar.image_origin = 'source'
+                UNION ALL
+                SELECT a.album_id, aa.image_item_id, aa.image_tag,
+                       1 AS priority, aal.position, aa.name, aa.artist_id
+                FROM albums a
+                JOIN album_artist_links aal
+                  ON aal.server_id = a.server_id
+                 AND aal.album_id = a.album_id
+                JOIN album_artists aa
+                  ON aa.server_id = aal.server_id
+                 AND aa.artist_id = aal.artist_id
+                WHERE a.server_id = ?1
+                  AND (
+                      a.image_item_id IS NULL
+                      OR a.image_item_id LIKE 'external:%'
+                  )
+                  AND aa.image_item_id IS NOT NULL
+                  AND aa.image_origin = 'source'
+                UNION ALL
+                SELECT a.album_id, aa.image_item_id, aa.image_tag,
+                       2 AS priority, 0 AS position, aa.name, aa.artist_id
+                FROM albums a
+                JOIN album_artists aa
+                  ON aa.server_id = a.server_id
+                 AND aa.artist_id = a.artist_id
+                WHERE a.server_id = ?1
+                  AND (
+                      a.image_item_id IS NULL
+                      OR a.image_item_id LIKE 'external:%'
+                  )
+                  AND aa.image_item_id IS NOT NULL
+                  AND aa.image_origin = 'source'
+            )
+            SELECT c.album_id, c.image_item_id, c.image_tag
+            FROM candidates c
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM candidates earlier
+                WHERE earlier.album_id = c.album_id
+                  AND (
+                      earlier.priority < c.priority
+                      OR (
+                          earlier.priority = c.priority
+                          AND earlier.position < c.position
+                      )
+                      OR (
+                          earlier.priority = c.priority
+                          AND earlier.position = c.position
+                          AND earlier.name COLLATE NOCASE < c.name COLLATE NOCASE
+                      )
+                      OR (
+                          earlier.priority = c.priority
+                          AND earlier.position = c.position
+                          AND earlier.name = c.name
+                          AND earlier.artist_id < c.artist_id
+                      )
+                  )
+            )
+            ORDER BY c.album_id
+            ",
+        )?;
+        let fallbacks = collect_rows(fallback_statement.query_map(
+            params![server_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    optional_string_column(row, 2)?,
+                ))
+            },
+        )?)?;
+        if fallbacks.is_empty() {
+            return Ok(0);
+        }
+
+        let mut bound = 0;
+        let mut update_statement = self.connection.prepare(
+            "
+            UPDATE albums
+            SET image_item_id = ?3,
+                image_tag = ?4,
+                image_origin = 'fallback'
+            WHERE server_id = ?1
+              AND album_id = ?2
+              AND (
+                  image_item_id IS NULL
+                  OR image_item_id LIKE 'external:%'
+              )
+              AND (
+                  image_item_id IS NOT ?3
+                  OR image_tag IS NOT ?4
+              )
+            ",
+        )?;
+        for (album_id, image_item_id, image_tag) in fallbacks {
+            bound += update_statement.execute(params![
+                server_id.as_str(),
+                album_id,
+                image_item_id,
+                image_tag,
+            ])?;
+        }
+        Ok(bound)
+    }
+
     pub fn load_album_image_refs(
         &self,
         server_id: &ServerId,

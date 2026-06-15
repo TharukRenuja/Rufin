@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::root::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -52,6 +52,9 @@ pub(super) struct JellyfinItem {
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
     image_tags: Option<HashMap<String, String>>,
+    backdrop_image_tags: Option<Vec<String>>,
+    parent_backdrop_item_id: Option<String>,
+    parent_backdrop_image_tags: Option<Vec<String>>,
     pub(super) playlist_item_id: Option<String>,
 }
 
@@ -80,6 +83,8 @@ struct UserData {
 
 pub(super) fn album_from_item(item: JellyfinItem) -> Album {
     let item_id = item.id.clone();
+    let image_ref = primary_image_ref("album", &item.id, &item.image_tags)
+        .or_else(|| backdrop_image_ref(&item));
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
     let artist_id = album_artist_credits.first().map(|artist| artist.id.clone());
@@ -115,7 +120,7 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         duration_seconds: duration_seconds(item.run_time_ticks),
         favorite: favorite(&item.user_data),
         color_seed: color_seed(&item_id),
-        image_ref: primary_image_ref("album", &item.id, &item.image_tags),
+        image_ref,
         genres: item.genres.unwrap_or_default(),
         release_types: Vec::new(),
         is_compilation: None,
@@ -125,8 +130,9 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
 }
 
 pub(super) fn track_from_item(item: JellyfinItem) -> Track {
-    let image_ref =
-        album_image_ref(&item).or_else(|| primary_image_ref("track", &item.id, &item.image_tags));
+    let image_ref = album_image_ref(&item)
+        .or_else(|| primary_image_ref("track", &item.id, &item.image_tags))
+        .or_else(|| backdrop_image_ref(&item));
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
     let artist_id = artist_credits
@@ -407,4 +413,32 @@ fn album_image_ref(item: &JellyfinItem) -> Option<ImageRef> {
         item_id: jellyfin_id("album", album_id),
         tag: Some(tag.to_string()),
     })
+}
+
+fn backdrop_image_ref(item: &JellyfinItem) -> Option<ImageRef> {
+    let item_tag = first_image_tag(item.backdrop_image_tags.as_deref());
+    if let Some(tag) = item_tag {
+        return Some(ImageRef {
+            item_id: jellyfin_id("backdrop", &item.id),
+            tag: Some(tag),
+        });
+    }
+
+    let parent_id = item.parent_backdrop_item_id.as_deref()?.trim();
+    let tag = first_image_tag(item.parent_backdrop_image_tags.as_deref())?;
+    if parent_id.is_empty() {
+        return None;
+    }
+    Some(ImageRef {
+        item_id: jellyfin_id("backdrop", parent_id),
+        tag: Some(tag),
+    })
+}
+
+fn first_image_tag(tags: Option<&[String]>) -> Option<String> {
+    tags.unwrap_or_default()
+        .iter()
+        .map(|tag| tag.trim())
+        .find(|tag| !tag.is_empty())
+        .map(ToString::to_string)
 }

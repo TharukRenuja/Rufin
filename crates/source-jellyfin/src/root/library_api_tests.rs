@@ -178,6 +178,43 @@ async fn library_album_artist() {
         }]
     );
 }
+
+#[tokio::test]
+async fn library_album_uses_parent_backdrop_when_primary_missing() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "MusicAlbum"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{
+                "Id": "album-one",
+                "Name": "Blue Rooms",
+                "Type": "MusicAlbum",
+                "AlbumArtist": "Artist One",
+                "ChildCount": 9,
+                "ParentBackdropItemId": "artist-one",
+                "ParentBackdropImageTags": ["backdrop-tag-one"]
+            }]
+        })))
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let page = provider
+        .albums(PagedRequest::new(0, 50))
+        .await
+        .expect("albums");
+
+    assert_eq!(
+        page.items[0].image_ref,
+        Some(ImageRef {
+            item_id: "jellyfin:backdrop:artist-one".to_string(),
+            tag: Some("backdrop-tag-one".to_string()),
+        })
+    );
+}
+
 #[tokio::test]
 async fn library_image_params() {
     let server = MockServer::start().await;
@@ -210,6 +247,40 @@ async fn library_image_params() {
     assert_eq!(image.bytes, vec![1, 2, 3]);
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
 }
+
+#[tokio::test]
+async fn library_backdrop_image_params() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items/artist-one/Images/Backdrop"))
+        .and(query_param("fillWidth", "256"))
+        .and(query_param("fillHeight", "256"))
+        .and(query_param("quality", "90"))
+        .and(query_param("tag", "backdrop-tag-one"))
+        .and(header_regex("authorization", "Token=\"secret-token\""))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/jpeg")
+                .set_body_bytes(vec![1_u8, 2, 3]),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "secret-token");
+
+    let image = provider
+        .image_bytes(ImageRequest {
+            item_id: "jellyfin:backdrop:artist-one".to_string(),
+            kind: ImageKind::Backdrop,
+            tag: Some("backdrop-tag-one".to_string()),
+            size: 256,
+        })
+        .await
+        .expect("image bytes");
+
+    assert_eq!(image.bytes, vec![1, 2, 3]);
+    assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+}
+
 #[tokio::test]
 async fn image_bytes_rejects_oversized_response() {
     let server = MockServer::start().await;

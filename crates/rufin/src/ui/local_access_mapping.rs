@@ -482,7 +482,11 @@ fn server_actions_group(
     let resync = button_row("Resync Library", "view-refresh-symbolic");
     let controller = shell.controller.clone();
     let server_id = server.id.clone();
-    resync.connect_activated(move |_| controller.resync_server(server_id.clone()));
+    let preferences_dialog_for_resync = preferences_dialog.clone();
+    resync.connect_activated(move |_| {
+        controller.resync_server(server_id.clone());
+        preferences_dialog_for_resync.close();
+    });
     group.add(&resync);
 
     let clear_cache = button_row("Clear Cached Library", "edit-clear-symbolic");

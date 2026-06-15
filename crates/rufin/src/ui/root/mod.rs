@@ -274,6 +274,8 @@ pub(in crate::ui) struct AppState {
     context_playlist_picker: RefCell<Option<PlaylistPickerHandle>>,
     preferences_dialog: RefCell<Option<adw::Dialog>>,
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
+    library_sync_toast: RefCell<Option<adw::Toast>>,
+    library_sync_toast_suppressed: Cell<bool>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
@@ -560,6 +562,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         context_playlist_picker: RefCell::new(None),
         preferences_dialog: RefCell::new(None),
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
+        library_sync_toast: RefCell::new(None),
+        library_sync_toast_suppressed: Cell::new(false),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]
@@ -771,6 +775,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     quick_toast_overlay.add_css_class("quick-toast-overlay");
     quick_toast_overlay.set_child(Some(&root_stack));
     let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.add_css_class("app-toast-overlay");
     toast_overlay.set_child(Some(&quick_toast_overlay));
     window.set_content(Some(&toast_overlay));
 

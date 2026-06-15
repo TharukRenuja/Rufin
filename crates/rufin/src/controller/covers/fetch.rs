@@ -68,7 +68,7 @@ pub(super) fn fetch_and_cache_provider_cover(
     let image = runtime
         .block_on(provider.image_bytes(ImageRequest {
             item_id: image_ref.item_id.clone(),
-            kind: ImageKind::Primary,
+            kind: provider_image_kind(&image_ref),
             tag: image_ref.tag.clone(),
             size,
         }))
@@ -158,6 +158,14 @@ fn normalize_cover_bytes(bytes: Vec<u8>, size: u32) -> Vec<u8> {
         .unwrap_or(bytes)
 }
 
+fn provider_image_kind(image_ref: &ImageRef) -> ImageKind {
+    if image_ref.item_id.starts_with("jellyfin:backdrop:") {
+        ImageKind::Backdrop
+    } else {
+        ImageKind::Primary
+    }
+}
+
 pub(in crate::controller) fn is_provider_not_found_error(error: &str) -> bool {
     error == "provider item was not found"
 }
@@ -166,7 +174,9 @@ pub(in crate::controller) fn is_provider_not_found_error(error: &str) -> bool {
 mod tests {
     use gdk_pixbuf::{Colorspace, Pixbuf};
 
-    use super::normalize_cover_bytes;
+    use super::{normalize_cover_bytes, provider_image_kind};
+    use domain::ImageRef;
+    use source::ImageKind;
 
     #[test]
     fn fetch_normalize_image() {
@@ -182,5 +192,19 @@ mod tests {
             normalized_pixbuf.width().max(normalized_pixbuf.height()),
             96
         );
+    }
+
+    #[test]
+    fn provider_image_kind_uses_jellyfin_backdrop_refs() {
+        let image_ref = ImageRef::new("jellyfin:backdrop:item-one", Some("tag-one".to_string()));
+
+        assert_eq!(provider_image_kind(&image_ref), ImageKind::Backdrop);
+    }
+
+    #[test]
+    fn provider_image_kind_keeps_primary_default() {
+        let image_ref = ImageRef::new("jellyfin:album:item-one", Some("tag-one".to_string()));
+
+        assert_eq!(provider_image_kind(&image_ref), ImageKind::Primary);
     }
 }
