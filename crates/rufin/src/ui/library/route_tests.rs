@@ -549,6 +549,43 @@ fn album_header_order() {
     ));
 }
 #[test]
+fn album_detail_cover_refs_use_lead_rows() {
+    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
+    let album = Album {
+        image_ref: Some(ImageRef::new("cover-one".to_string(), None)),
+        ..test_album(1, "A Album")
+    };
+    let duplicate = Album {
+        image_ref: Some(ImageRef::new("cover-one".to_string(), None)),
+        ..test_album(2, "B Album")
+    };
+    model.append(&gtk::glib::BoxedAnyObject::new(
+        super::AlbumDetailItem::Lead {
+            album,
+            inline_tracks: vec![test_track_with_image(1, "Track", "track-cover")],
+            last_in_album: false,
+        },
+    ));
+    model.append(&gtk::glib::BoxedAnyObject::new(
+        super::AlbumDetailItem::Track {
+            track: test_track_with_image(2, "Later Track", "track-cover"),
+            index: 1,
+            last_in_album: false,
+        },
+    ));
+    model.append(&gtk::glib::BoxedAnyObject::new(
+        super::AlbumDetailItem::Lead {
+            album: duplicate,
+            inline_tracks: Vec::new(),
+            last_in_album: true,
+        },
+    ));
+
+    let refs = super::album_cover_refs(&model, 0, 3);
+
+    assert_eq!(refs, vec![ImageRef::new("cover-one".to_string(), None)]);
+}
+#[test]
 fn route_keep_visible() {
     let rows = vec![
         test_virtual_row(0, 100),
