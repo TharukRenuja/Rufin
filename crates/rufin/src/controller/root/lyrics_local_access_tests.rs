@@ -92,6 +92,29 @@ pub(in crate::controller) fn lyrics_remove_entry() {
     );
 }
 #[test]
+pub(in crate::controller) fn playlist_create_empty() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    controller.create_playlist("Empty Playlist".to_string(), Vec::new());
+    let snapshot = wait_for_snapshot(&events);
+    let playlist = snapshot
+        .playlists
+        .iter()
+        .find(|playlist| playlist.name == "Empty Playlist")
+        .expect("created playlist");
+
+    assert_eq!(playlist.track_count, 0);
+    assert_eq!(playlist.duration_seconds, 0);
+    assert!(
+        controller
+            .cached_playlist_detail(&playlist.id)
+            .expect("playlist detail")
+            .expect("playlist detail")
+            .entries
+            .is_empty()
+    );
+}
+#[test]
 pub(in crate::controller) fn lyrics_emit_event() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);

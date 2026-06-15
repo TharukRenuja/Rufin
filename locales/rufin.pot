@@ -1288,6 +1288,10 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
+#: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/root/home_refresh.rs:772
+msgid "Type to search or create a new playlist"
+msgstr ""
+
 #: crates/rufin/src/i18n.rs:668 crates/rufin/src/ui/preferences/root/mod.rs:205
 #: crates/rufin/src/i18n.rs:700
 msgid "Show tray icon"
@@ -2295,10 +2299,6 @@ msgstr ""
 
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:6
 msgid "New Playlist"
-msgstr ""
-
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:8
-msgid "Create a playlist. If a track is playing, it will be added."
 msgstr ""
 
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:15

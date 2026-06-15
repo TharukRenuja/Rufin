@@ -1211,6 +1211,11 @@ msgstr "Rakenduse aken"
 msgid "Type to search"
 msgstr "Otsimiseks siesta midagi"
 
+#: crates/rufin/src/i18n.rs:482
+#: crates/rufin/src/ui/root/home_refresh.rs:772
+msgid "Type to search or create a new playlist"
+msgstr "Sisesta otsimiseks või uue esitusloendi loomiseks"
+
 #: crates/rufin/src/i18n.rs:668
 #: crates/rufin/src/ui/preferences/root/mod.rs:205
 msgid "Show tray icon"
@@ -2106,10 +2111,6 @@ msgstr "Selle loo jaoks pole laulusõnu."
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:6
 msgid "New Playlist"
 msgstr "Uus esitusloend"
-
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:8
-msgid "Create a playlist. If a track is playing, it will be added."
-msgstr "Koosta esitusloend. Kui lugu on esitamisel, siis ta lisatakse."
 
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:15
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:255

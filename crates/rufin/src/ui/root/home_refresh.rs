@@ -65,7 +65,7 @@ fn present_track_context_menu_inner(
         PLAY_LATER_ICON,
     ));
 
-    if context_menu_has_playlists(shell) {
+    if context_menu_can_add_to_playlist(shell) {
         let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
             let track = track.clone();
             move || vec![track.clone()]
@@ -248,7 +248,7 @@ pub(in crate::ui) fn present_album_context_menu(
         PLAY_LATER_ICON,
     ));
 
-    if context_menu_has_playlists(shell) {
+    if context_menu_can_add_to_playlist(shell) {
         let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
             let controller = shell.controller.clone();
             let album_id = album.id.clone();
@@ -420,7 +420,7 @@ pub(in crate::ui) fn present_artist_context_menu(
         PLAY_LATER_ICON,
     ));
 
-    if context_menu_has_playlists(shell) {
+    if context_menu_can_add_to_playlist(shell) {
         let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new({
             let controller = shell.controller.clone();
             let artist_id = artist.id.clone();
@@ -738,16 +738,19 @@ pub(in crate::ui) struct PlaylistPickerRow {
     check: gtk::CheckButton,
     haystack: String,
 }
+#[derive(Clone)]
+pub(in crate::ui) struct PlaylistPickerHandle {
+    list: gtk::Box,
+    rows: Rc<RefCell<Vec<PlaylistPickerRow>>>,
+    create: gtk::Button,
+    search: gtk::SearchEntry,
+    add_button: gtk::Button,
+}
 fn present_context_playlist_picker_dialog(
     shell: &Rc<Shell>,
     track_source: Rc<dyn Fn() -> Vec<Track>>,
 ) {
-    let playlists = context_menu_playlists(shell);
-    if playlists.is_empty() {
-        return;
-    }
-
-    let content = context_playlist_picker(shell, &playlists, track_source);
+    let content = context_playlist_picker(shell, track_source);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Add to Playlist"), "")));
@@ -760,11 +763,14 @@ fn present_context_playlist_picker_dialog(
         .content_height(ADD_TO_PLAYLIST_DIALOG_HEIGHT)
         .child(&toolbar)
         .build();
+    let shell_for_close = Rc::clone(shell);
+    dialog.connect_closed(move |_| {
+        *shell_for_close.state.context_playlist_picker.borrow_mut() = None;
+    });
     dialog.present(Some(&shell.window));
 }
 fn context_playlist_picker(
     shell: &Rc<Shell>,
-    playlists: &[Playlist],
     track_source: Rc<dyn Fn() -> Vec<Track>>,
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -775,29 +781,17 @@ fn context_playlist_picker(
     root.set_margin_end(18);
 
     let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some(&tr("Type to search")));
+    search.set_placeholder_text(Some(&tr("Type to search or create a new playlist")));
     root.append(&search);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let rows = Rc::new(RefCell::new(Vec::<PlaylistPickerRow>::new()));
+    let create = playlist_create_row("");
+    create.set_visible(false);
+    list.append(&create);
     let add_button = gtk::Button::with_label(&tr("Add"));
     add_button.add_css_class("suggested-action");
     add_button.set_sensitive(false);
-    for playlist in playlists {
-        let (row, check, haystack) = playlist_picker_row(shell, playlist);
-        list.append(&row);
-        rows.borrow_mut().push(PlaylistPickerRow {
-            playlist: playlist.clone(),
-            row: row.upcast::<gtk::Widget>(),
-            check: check.clone(),
-            haystack,
-        });
-        let rows_for_check = Rc::clone(&rows);
-        let add_for_check = add_button.clone();
-        check.connect_toggled(move |_| {
-            update_playlist_picker_add_button(&rows_for_check, &add_for_check)
-        });
-    }
     let scroller = context_menu_scroll_page(&list);
     root.append(&scroller);
 
@@ -814,20 +808,38 @@ fn context_playlist_picker(
     footer.append(&add_button);
     root.append(&footer);
 
-    let rows_for_search = Rc::clone(&rows);
-    let add_for_search = add_button.clone();
+    let handle = PlaylistPickerHandle {
+        list: list.clone(),
+        rows: Rc::clone(&rows),
+        create: create.clone(),
+        search: search.clone(),
+        add_button: add_button.clone(),
+    };
+    refresh_playlist_picker_rows(shell, &handle, &context_menu_playlists(shell));
+    *shell.state.context_playlist_picker.borrow_mut() = Some(handle.clone());
+
+    let handle_for_search = handle.clone();
     search.connect_search_changed(move |entry| {
-        let query = entry.text().trim().to_lowercase();
-        for row in rows_for_search.borrow().iter() {
-            row.row
-                .set_visible(query.is_empty() || row.haystack.contains(&query));
+        let text = entry.text();
+        let label = create_playlist_label(text.trim());
+        let query = text.trim().to_lowercase();
+        handle_for_search.create.set_label(&label);
+        sync_playlist_picker_filter(&handle_for_search, &query);
+    });
+
+    let controller = shell.controller.clone();
+    let track_source_for_create = Rc::clone(&track_source);
+    create.connect_clicked(move |_| {
+        let name = search.text().trim().to_string();
+        if !name.is_empty() {
+            controller.create_playlist(name, track_source_for_create());
+            search.set_text("");
         }
-        update_playlist_picker_add_button(&rows_for_search, &add_for_search);
     });
 
     let rows_for_add = Rc::clone(&rows);
     let controller = shell.controller.clone();
-    let toast_overlay = shell.toast_overlay.clone();
+    let toast_overlay = shell.quick_toast_overlay.clone();
     add_button.connect_clicked(move |button| {
         let tracks = track_source();
         if tracks.is_empty() {
@@ -856,6 +868,62 @@ fn context_playlist_picker(
     });
 
     root
+}
+pub(in crate::ui) fn refresh_context_playlist_picker(shell: &Rc<Shell>) {
+    let Some(handle) = shell.state.context_playlist_picker.borrow().clone() else {
+        return;
+    };
+    refresh_playlist_picker_rows(shell, &handle, &context_menu_playlists(shell));
+}
+fn refresh_playlist_picker_rows(
+    shell: &Rc<Shell>,
+    handle: &PlaylistPickerHandle,
+    playlists: &[Playlist],
+) {
+    while let Some(child) = handle.list.first_child() {
+        handle.list.remove(&child);
+    }
+    handle.list.append(&handle.create);
+    handle.rows.borrow_mut().clear();
+    for playlist in playlists {
+        let (row, check, haystack) = playlist_picker_row(shell, playlist);
+        handle.list.append(&row);
+        handle.rows.borrow_mut().push(PlaylistPickerRow {
+            playlist: playlist.clone(),
+            row: row.upcast::<gtk::Widget>(),
+            check: check.clone(),
+            haystack,
+        });
+        let rows_for_check = Rc::clone(&handle.rows);
+        let add_for_check = handle.add_button.clone();
+        check.connect_toggled(move |_| {
+            update_playlist_picker_add_button(&rows_for_check, &add_for_check)
+        });
+    }
+    let query = handle.search.text().trim().to_lowercase();
+    sync_playlist_picker_filter(handle, &query);
+}
+fn sync_playlist_picker_filter(handle: &PlaylistPickerHandle, query: &str) {
+    handle.create.set_visible(show_create_playlist_row(query));
+    for row in handle.rows.borrow().iter() {
+        row.row
+            .set_visible(query.is_empty() || row.haystack.contains(query));
+    }
+    update_playlist_picker_add_button(&handle.rows, &handle.add_button);
+}
+fn playlist_create_row(name: &str) -> gtk::Button {
+    let button = gtk::Button::with_label(&create_playlist_label(name));
+    button.add_css_class("flat");
+    button.add_css_class("context-playlist-row");
+    button.add_css_class("context-playlist-create-row");
+    button.set_halign(gtk::Align::Fill);
+    button
+}
+fn create_playlist_label(name: &str) -> String {
+    format!("+ {} {}", tr("Create"), name)
+}
+fn show_create_playlist_row(query: &str) -> bool {
+    !query.trim().is_empty()
 }
 fn playlist_picker_row(
     shell: &Rc<Shell>,
@@ -1124,8 +1192,8 @@ fn context_menu_icon(icon_name: &str) -> gtk::Widget {
     icon.set_valign(gtk::Align::Center);
     icon
 }
-pub(in crate::ui) fn context_menu_has_playlists(shell: &Rc<Shell>) -> bool {
-    !shell.state.library.borrow().playlists.is_empty()
+pub(in crate::ui) fn context_menu_can_add_to_playlist(shell: &Rc<Shell>) -> bool {
+    shell.state.library.borrow().server.is_some()
 }
 pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
     context_menu_playlist_items(&shell.state.library.borrow().playlists)
@@ -1794,6 +1862,15 @@ mod tests {
         assert_eq!(playlist_add_toast(1, 1), "1 song added to 1 playlist");
         assert_eq!(playlist_add_toast(0, 0), "No songs added");
     }
+
+    #[test]
+    fn playlist_create_row_uses_search_text() {
+        assert!(!show_create_playlist_row(""));
+        assert!(!show_create_playlist_row("   "));
+        assert!(show_create_playlist_row("driving"));
+        assert_eq!(create_playlist_label("Driving"), "+ Create Driving");
+    }
+
     #[test]
     fn playlist_picker_duration_uses_units() {
         assert_eq!(playlist_picker_duration(41), "41s");
