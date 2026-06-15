@@ -459,10 +459,11 @@ fn library_track_range(model: &gio::ListStore, start: usize, end: usize) -> Vec<
 fn album_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
     let mut refs = Vec::new();
     for index in start..end.min(model.n_items() as usize) {
-        let Some(album) = item_at::<Album>(model, index as u32) else {
-            continue;
-        };
-        let Some(image_ref) = album.image_ref else {
+        let Some(image_ref) = model
+            .item(index as u32)
+            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+            .and_then(|boxed| album_model_image_ref(&boxed))
+        else {
             continue;
         };
         if refs.iter().any(|existing| existing == &image_ref) {
@@ -471,6 +472,17 @@ fn album_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<Ima
         refs.push(image_ref);
     }
     refs
+}
+fn album_model_image_ref(boxed: &glib::BoxedAnyObject) -> Option<ImageRef> {
+    if let Ok(album) = boxed.try_borrow::<Album>() {
+        return album.image_ref.clone();
+    }
+
+    let row = boxed.try_borrow::<AlbumDetailItem>().ok()?;
+    match &*row {
+        AlbumDetailItem::Lead { album, .. } => album.image_ref.clone(),
+        AlbumDetailItem::Track { .. } => None,
+    }
 }
 fn artist_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
     let mut refs = Vec::new();
