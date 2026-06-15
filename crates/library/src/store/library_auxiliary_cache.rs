@@ -1875,7 +1875,7 @@ pub(super) fn refresh_playlist_refs(
     )
 }
 
-fn refresh_playlist_stats(
+pub(super) fn refresh_playlist_stats(
     connection: &Connection,
     server_id: &ServerId,
     playlist_id: &PlaylistId,
@@ -1928,7 +1928,7 @@ fn playlist_top_genres_json(
     string_vec_json(&genres)
 }
 
-fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> bool {
+pub(super) fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> bool {
     match (before, after) {
         (Some(before), Some(after)) => {
             before.track_count != after.track_count

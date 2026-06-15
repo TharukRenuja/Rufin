@@ -599,6 +599,55 @@ fn relation_repair_genre() {
     assert_eq!(genres.items[0].name, "Dream Pop");
     assert_eq!(genres.items[0].album_count, 1);
     assert_eq!(genres.items[0].track_count, 1);
+
+    let source_genre = Genre {
+        id: GenreId::new("jellyfin:genre:dream-pop"),
+        name: "Dream Pop".to_string(),
+        album_count: 1,
+        track_count: 1,
+        image_refs: Vec::new(),
+        image_ref: None,
+    };
+    store
+        .upsert_genres(
+            &saved.server.id,
+            std::slice::from_ref(&source_genre),
+            generation,
+        )
+        .expect("upsert source genre");
+    let genres = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load genres");
+    assert_eq!(genres.total, 1);
+    assert_eq!(genres.items[0].id, source_genre.id);
+}
+
+#[test]
+fn relation_complete_sync_repairs_genre() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.genres = vec!["Dream Pop".to_string()];
+    let track = track(1, &album);
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let genres = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load genres");
+    assert_eq!(genres.total, 1);
+    assert_eq!(genres.items[0].name, "Dream Pop");
+    assert_eq!(genres.items[0].album_count, 1);
+    assert_eq!(genres.items[0].track_count, 1);
 }
 #[test]
 fn relation_track_missing() {

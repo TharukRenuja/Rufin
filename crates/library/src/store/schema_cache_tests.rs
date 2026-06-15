@@ -4183,3 +4183,67 @@ fn playlist_entries_derive_cached_stats() {
     assert_eq!(detail.playlist.duration_seconds, 330);
     assert_eq!(detail.playlist.top_genres, vec!["Rock", "Pop"]);
 }
+
+#[test]
+fn track_genre_change_refreshes_playlist_top_genres() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track_one = track(1, &album);
+    track_one.genres = vec!["Rock".to_string()];
+    let mut track_two = track(2, &album);
+    track_two.genres = vec!["Rock".to_string()];
+    let playlist = playlist(1, None);
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[track_one.clone(), track_two.clone()],
+            generation,
+        )
+        .expect("upsert tracks");
+    store
+        .upsert_playlists(
+            &saved.server.id,
+            std::slice::from_ref(&playlist),
+            generation,
+        )
+        .expect("upsert playlist");
+    store
+        .upsert_playlist_entries_delta(
+            &saved.server.id,
+            &playlist.id,
+            &[
+                PlaylistEntry {
+                    entry_id: "entry-one".to_string(),
+                    track: track_one,
+                },
+                PlaylistEntry {
+                    entry_id: "entry-two".to_string(),
+                    track: track_two.clone(),
+                },
+            ],
+            generation,
+        )
+        .expect("upsert entries");
+
+    track_two.genres = vec!["Pop".to_string()];
+    let delta = store
+        .upsert_tracks_delta(
+            &saved.server.id,
+            std::slice::from_ref(&track_two),
+            generation,
+        )
+        .expect("update track");
+
+    assert_eq!(delta.playlists.entries, vec![playlist.id.clone()]);
+    let detail = store
+        .load_playlist_detail(&saved.server.id, &playlist.id)
+        .expect("load playlist detail")
+        .expect("playlist detail");
+    assert_eq!(detail.playlist.top_genres, vec!["Pop", "Rock"]);
+}
