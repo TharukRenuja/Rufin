@@ -19,7 +19,7 @@ use domain::{
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 17;
+const SCHEMA_VERSION: i64 = 18;
 const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;

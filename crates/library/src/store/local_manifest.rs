@@ -1,6 +1,6 @@
 use super::servers::{
-    COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_ref_from_row, image_ref_parts,
-    u32_from_i64,
+    COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_origin_for_source_ref,
+    image_ref_from_row, image_ref_parts, u32_from_i64,
 };
 use super::*;
 
@@ -534,17 +534,20 @@ impl Store {
                 UPDATE tracks
                 SET image_item_id = ?3,
                     image_tag = ?4,
-                    sync_generation = ?5
+                    image_origin = ?5,
+                    sync_generation = ?6
                 WHERE server_id = ?1 AND track_id = ?2
                 ",
             )?;
             for track in tracks {
                 let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
+                let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
                 update_track.execute(params![
                     server_id.as_str(),
                     track.id.as_str(),
                     image_item_id,
                     image_tag,
+                    image_origin,
                     generation,
                 ])?;
             }
@@ -584,16 +587,18 @@ impl Store {
                         track_number = ?17,
                         image_item_id = ?18,
                         image_tag = ?19,
-                        local_path = ?20,
-                        source_format = ?21,
-                        comment = ?22,
-                        skip_count = ?23,
-                        sync_generation = ?24
+                        image_origin = ?20,
+                        local_path = ?21,
+                        source_format = ?22,
+                        comment = ?23,
+                        skip_count = ?24,
+                        sync_generation = ?25
                     WHERE server_id = ?1 AND track_id = ?2
                     ",
                 )?;
                 for track in tracks {
                     let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
+                    let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
                     let updated = update_track.execute(params![
                         server_id.as_str(),
                         track.id.as_str(),
@@ -614,6 +619,7 @@ impl Store {
                         i64::from(track.track_number),
                         image_item_id,
                         image_tag,
+                        image_origin,
                         track.local_path.as_deref(),
                         track.source_format.as_deref(),
                         track.comment.as_deref(),

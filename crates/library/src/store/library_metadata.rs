@@ -414,6 +414,7 @@ impl Store {
                 WHERE server_id = ?
                   AND album_id IN ({placeholders})
                   AND image_item_id IS NOT NULL
+                  AND image_origin IN ('source', 'unknown', 'external')
                 ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
                 "
             );
@@ -467,6 +468,7 @@ impl Store {
                       OR a.image_item_id LIKE 'external:%'
                   )
                   AND t.image_item_id IS NOT NULL
+                  AND t.image_origin IN ('source', 'unknown', 'external')
                   AND (
                       a.image_item_id IS NULL
                       OR t.image_item_id NOT LIKE 'external:%'
@@ -526,7 +528,8 @@ impl Store {
             "
             UPDATE albums
             SET image_item_id = ?3,
-                image_tag = ?4
+                image_tag = ?4,
+                image_origin = 'fallback'
             WHERE server_id = ?1
               AND album_id = ?2
               AND (
@@ -584,7 +587,8 @@ impl Store {
             "
             UPDATE albums
             SET image_item_id = ?3,
-                image_tag = ?4
+                image_tag = ?4,
+                image_origin = 'external'
             WHERE server_id = ?1
               AND album_id = ?2
               AND image_item_id IS NULL
@@ -672,6 +676,7 @@ impl Store {
                 WHERE server_id = ?
                   AND album_id IN ({placeholders})
                   AND image_item_id IS NOT NULL
+                  AND image_origin IN ('source', 'unknown', 'external')
                 ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
                 "
             );
@@ -770,7 +775,8 @@ impl Store {
                         WHERE a.server_id = tracks.server_id
                           AND a.album_id = tracks.album_id
                           AND a.image_item_id IS NOT NULL
-                    )
+                    ),
+                    image_origin = 'fallback'
                 WHERE server_id = ?1
                   AND image_item_id IS NULL
                   AND EXISTS (
@@ -850,7 +856,8 @@ impl Store {
             "
             UPDATE {table}
             SET image_item_id = ?3,
-                image_tag = ?4
+                image_tag = ?4,
+                image_origin = 'fallback'
             WHERE server_id = ?1
               AND artist_id = ?2
               AND (
