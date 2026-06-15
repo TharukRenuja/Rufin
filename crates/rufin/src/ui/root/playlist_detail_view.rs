@@ -6,6 +6,7 @@ const PLAYLIST_DETAIL_COMPACT_WIDTH: i32 = 760;
 const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
 const PLAYLIST_DETAIL_COMPACT_COVER_SIZE: i32 = 182;
 const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
+const PLAYLIST_DETAIL_GENRE_LIMIT: usize = 2;
 
 pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
     width < PLAYLIST_DETAIL_COMPACT_WIDTH
@@ -18,6 +19,7 @@ pub(in crate::ui) fn playlist_route_margin(width: i32) -> i32 {
         PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN
     }
 }
+
 pub(in crate::ui) fn playlist_header_orientation(_width: i32) -> gtk::Orientation {
     gtk::Orientation::Horizontal
 }
@@ -42,16 +44,98 @@ pub(in crate::ui) fn playlist_cover_size(width: i32) -> i32 {
     }
 }
 
-fn playlist_detail_action_button(icon: &str, label: &str, primary: bool) -> gtk::Button {
-    let button = icon_button(icon, label);
-    button.add_css_class("playlist-detail-action-button");
-    if primary {
-        button.add_css_class("playlist-detail-play-button");
+fn playlist_detail_from_loaded_tracks(
+    playlist: Playlist,
+    tracks: &[Track],
+    cached_track_count: usize,
+    tracks_by_id: &HashMap<TrackId, usize>,
+    entry_keys: Vec<(String, TrackId)>,
+) -> Option<source::PlaylistDetail> {
+    if cached_track_count > tracks.len() {
+        return None;
     }
-    button
+    let mut detail_tracks = Vec::with_capacity(entry_keys.len());
+    let mut entries = Vec::with_capacity(entry_keys.len());
+    for (entry_id, track_id) in entry_keys {
+        let track = tracks.get(*tracks_by_id.get(&track_id)?)?;
+        if track.id != track_id {
+            return None;
+        }
+        let track = track.clone();
+        detail_tracks.push(track.clone());
+        entries.push(PlaylistEntry { entry_id, track });
+    }
+    Some(source::PlaylistDetail {
+        playlist,
+        tracks: detail_tracks,
+        entries,
+    })
 }
 
 impl Shell {
+    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::Box {
+        let kind = gtk::Label::new(Some(&tr("Playlist")));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.0);
+        kind.set_halign(gtk::Align::Start);
+        kind.set_valign(gtk::Align::Center);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("album-detail-kind-row");
+        row.set_halign(gtk::Align::Start);
+        row.append(&kind);
+        if let Some(genre_links) = self.playlist_detail_genre_links(genres) {
+            row.append(&genre_links);
+        }
+        row
+    }
+
+    fn playlist_detail_genre_links(self: &Rc<Self>, genres: &[String]) -> Option<gtk::Widget> {
+        let flow = gtk::FlowBox::new();
+        flow.add_css_class("album-detail-genre-row");
+        flow.set_column_spacing(2);
+        flow.set_row_spacing(2);
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_max_children_per_line(PLAYLIST_DETAIL_GENRE_LIMIT as u32);
+        flow.set_valign(gtk::Align::Center);
+
+        for genre_name in genres {
+            let button = gtk::Button::with_label(genre_name);
+            button.add_css_class("flat");
+            button.add_css_class("album-detail-genre-pill");
+            if let Some(genre_id) = self.playlist_detail_genre_id(genre_name) {
+                let shell = Rc::clone(self);
+                button
+                    .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
+            } else {
+                button.set_sensitive(false);
+            }
+            flow.insert(&button, -1);
+        }
+
+        flow.first_child().is_some().then(|| flow.upcast())
+    }
+
+    fn playlist_detail_genre_id(&self, name: &str) -> Option<domain::GenreId> {
+        let library = self.state.library.borrow();
+        if let Some(genre) = library
+            .genres
+            .iter()
+            .find(|genre| genre.name.eq_ignore_ascii_case(name))
+        {
+            return Some(genre.id.clone());
+        }
+        drop(library);
+
+        self.controller
+            .cached_genres_page_matching(name, 0, 8)
+            .ok()
+            .into_iter()
+            .flat_map(|page| page.items)
+            .find(|genre| genre.name.eq_ignore_ascii_case(name))
+            .map(|genre| genre.id)
+    }
+
     pub(in crate::ui) fn smart_playlist_detail_view(
         self: &Rc<Self>,
         smart_playlist_id: SmartPlaylistId,
@@ -123,12 +207,14 @@ impl Shell {
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        let kind_row = self.playlist_detail_kind_row(&[]);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.add_css_class("playlist-detail-actions");
-        let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+        let play = detail_action_button("media-playback-start-symbolic", "Play");
+        play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
         let source_key =
             smart_playlist_play_source_key(&detail.smart_playlist, selected_music_folder_id(self));
@@ -143,16 +229,17 @@ impl Shell {
             }
         });
         actions.append(&play);
-        let edit = playlist_detail_action_button("document-edit-symbolic", "Edit", false);
+        let edit = detail_action_button("document-edit-symbolic", "Edit");
         let shell = Rc::clone(self);
         let playlist_for_edit = detail.smart_playlist.clone();
         edit.connect_clicked(move |_| shell.edit_smart_playlist_dialog(playlist_for_edit.clone()));
         actions.append(&edit);
-        let delete = playlist_detail_action_button("user-trash-symbolic", "Delete", false);
+        let delete = detail_delete_button("Delete");
         let controller = self.controller.clone();
         let delete_id = detail.smart_playlist.id.clone();
         delete.connect_clicked(move |_| controller.delete_smart_playlist(delete_id.clone()));
         actions.append(&delete);
+        metadata.append(&kind_row);
         metadata.append(&title);
         metadata.append(&summary);
         metadata.append(&actions);
@@ -190,13 +277,25 @@ impl Shell {
         let server = self.state.library.borrow().server.clone();
         let detail = server
             .as_ref()
-            .map(|server| {
-                self.controller
-                    .cached_playlist_detail_for_server(&playlist_id, server, &settings)
+            .and_then(|_| self.playlist_detail_from_loaded_tracks(&playlist_id))
+            .or_else(|| {
+                server.as_ref().and_then(|server| {
+                    self.controller
+                        .cached_playlist_detail_for_server(&playlist_id, server, &settings)
+                        .ok()
+                        .flatten()
+                })
             })
-            .unwrap_or_else(|| self.controller.cached_playlist_detail(&playlist_id))
-            .ok()
-            .flatten()
+            .or_else(|| {
+                (server.is_none())
+                    .then(|| {
+                        self.controller
+                            .cached_playlist_detail(&playlist_id)
+                            .ok()
+                            .flatten()
+                    })
+                    .flatten()
+            })
             .or_else(|| {
                 let library = self.state.library.borrow();
                 let playlist = library
@@ -270,12 +369,14 @@ impl Shell {
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        let kind_row = self.playlist_detail_kind_row(&detail.playlist.top_genres);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.add_css_class("playlist-detail-actions");
-        let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+        let play = detail_action_button("media-playback-start-symbolic", "Play");
+        play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
         let playlist_id_for_play = detail.playlist.id.clone();
         let entry_for_play = detail.entries.first().cloned();
@@ -292,7 +393,7 @@ impl Shell {
             }
         });
         actions.append(&play);
-        let rename = playlist_detail_action_button("document-edit-symbolic", "Rename", false);
+        let rename = detail_action_button("document-edit-symbolic", "Rename");
         let shell = Rc::clone(self);
         let playlist_id_for_rename = detail.playlist.id.clone();
         let current_name = detail.playlist.name.clone();
@@ -300,7 +401,7 @@ impl Shell {
             shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
         });
         actions.append(&rename);
-        let add_current = playlist_detail_action_button("list-add-symbolic", "Add current", false);
+        let add_current = detail_action_button("list-add-symbolic", "Add current");
         let current_track = self
             .state
             .player
@@ -308,13 +409,11 @@ impl Shell {
             .current
             .as_ref()
             .and_then(|entry| {
-                self.state
-                    .library
-                    .borrow()
-                    .tracks
-                    .iter()
-                    .find(|track| track.id == entry.track_id)
-                    .cloned()
+                let track_id = entry.track_id.clone();
+                let index = self.state.track_index.borrow().get(&track_id).copied()?;
+                let library = self.state.library.borrow();
+                let track = library.tracks.get(index)?;
+                (track.id == track_id).then(|| track.clone())
             });
         add_current.set_sensitive(current_track.is_some());
         let controller = self.controller.clone();
@@ -325,7 +424,7 @@ impl Shell {
             }
         });
         actions.append(&add_current);
-        let delete = playlist_detail_action_button("user-trash-symbolic", "Delete", false);
+        let delete = detail_delete_button("Delete");
         let controller = self.controller.clone();
         let window = self.window.clone();
         let playlist_id_for_delete = detail.playlist.id.clone();
@@ -348,6 +447,7 @@ impl Shell {
             dialog.present(Some(&window));
         });
         actions.append(&delete);
+        metadata.append(&kind_row);
         metadata.append(&title);
         metadata.append(&summary);
         metadata.append(&actions);
@@ -362,6 +462,28 @@ impl Shell {
         }
         wrapper.upcast()
     }
+
+    fn playlist_detail_from_loaded_tracks(
+        self: &Rc<Self>,
+        playlist_id: &PlaylistId,
+    ) -> Option<source::PlaylistDetail> {
+        let library = self.state.library.borrow();
+        let playlist = library
+            .playlists
+            .iter()
+            .find(|playlist| playlist.id == *playlist_id)
+            .cloned()?;
+        let entry_keys = library.playlist_entry_keys.get(playlist_id).cloned()?;
+        let track_index = self.state.track_index.borrow();
+        playlist_detail_from_loaded_tracks(
+            playlist,
+            &library.tracks,
+            library.cached_track_count,
+            &track_index,
+            entry_keys,
+        )
+    }
+
     pub(in crate::ui) fn playlist_entries_view(
         self: &Rc<Self>,
         detail: &source::PlaylistDetail,
@@ -456,5 +578,115 @@ impl Shell {
         }
         wrapper.append(&table);
         wrapper.upcast()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_detail_from_loaded_tracks_preserves_entry_order() {
+        let first = test_track(1, &["Rock"]);
+        let second = test_track(2, &["Folk"]);
+        let playlist = test_playlist(1);
+        let detail = playlist_detail_from_loaded_tracks(
+            playlist,
+            &[first.clone(), second.clone()],
+            2,
+            &track_index_for(&[first.clone(), second.clone()]),
+            vec![
+                ("entry-two".to_string(), second.id.clone()),
+                ("entry-one".to_string(), first.id.clone()),
+            ],
+        )
+        .expect("playlist detail");
+
+        assert_eq!(
+            detail
+                .entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["entry-two", "entry-one"]
+        );
+        assert_eq!(detail.tracks, vec![second, first]);
+    }
+
+    #[test]
+    fn playlist_detail_from_loaded_tracks_rejects_partial_snapshot() {
+        let track = test_track(1, &["Rock"]);
+
+        assert!(
+            playlist_detail_from_loaded_tracks(
+                test_playlist(1),
+                std::slice::from_ref(&track),
+                2,
+                &track_index_for(std::slice::from_ref(&track)),
+                vec![("entry-one".to_string(), track.id.clone())],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn playlist_detail_from_loaded_tracks_rejects_stale_index() {
+        let first = test_track(1, &["Rock"]);
+        let second = test_track(2, &["Folk"]);
+        let playlist = test_playlist(1);
+
+        assert!(
+            playlist_detail_from_loaded_tracks(
+                playlist,
+                &[first.clone(), second.clone()],
+                2,
+                &track_index_for(&[second.clone(), first.clone()]),
+                vec![("entry-one".to_string(), first.id.clone())],
+            )
+            .is_none()
+        );
+    }
+
+    fn test_track(index: usize, genres: &[&str]) -> Track {
+        Track {
+            id: TrackId::fake(index),
+            album_id: AlbumId::fake(1),
+            title: format!("Track {index}"),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: "Album".to_string(),
+            year: 2024,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: index as u16,
+            image_ref: None,
+            genres: genres.iter().map(|genre| genre.to_string()).collect(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+        }
+    }
+
+    fn test_playlist(index: usize) -> Playlist {
+        Playlist {
+            id: PlaylistId::fake(index),
+            name: format!("Playlist {index}"),
+            track_count: 0,
+            duration_seconds: 0,
+            top_genres: Vec::new(),
+            image_refs: Vec::new(),
+            image_ref: None,
+        }
     }
 }

@@ -355,6 +355,7 @@ pub(super) fn playlist_from_dto(
             .unwrap_or_else(|| "Untitled Playlist".to_string()),
         track_count: playlist.song_count.unwrap_or_default(),
         duration_seconds: playlist.duration.unwrap_or_default(),
+        top_genres: Vec::new(),
         image_refs: Vec::new(),
         image_ref: image_ref(provider, playlist.cover_art),
     }

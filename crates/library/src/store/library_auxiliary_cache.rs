@@ -144,7 +144,8 @@ impl Store {
         let total = self.count("playlists", server_id)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+            SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
+                   image_item_id, image_tag
             FROM playlists
             WHERE server_id = ?1
             ORDER BY name COLLATE NOCASE
@@ -256,7 +257,7 @@ impl Store {
         })
     }
 
-    fn playlist_entry_keys(
+    pub fn playlist_entry_keys(
         &self,
         server_id: &ServerId,
         playlist_id: &PlaylistId,
@@ -279,6 +280,51 @@ impl Store {
             },
         )?)
     }
+
+    pub fn playlist_entry_keys_for_playlists(
+        &self,
+        server_id: &ServerId,
+        playlist_ids: &[PlaylistId],
+    ) -> StoreResult<HashMap<PlaylistId, Vec<(String, TrackId)>>> {
+        if playlist_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders = std::iter::repeat_n("?", playlist_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT playlist_id, entry_id, track_id
+            FROM playlist_tracks
+            WHERE server_id = ?1
+              AND playlist_id IN ({placeholders})
+            ORDER BY playlist_id, position
+            "
+        );
+        let mut parameters = Vec::with_capacity(playlist_ids.len() + 1);
+        parameters.push(server_id.as_str().to_string());
+        parameters.extend(
+            playlist_ids
+                .iter()
+                .map(|playlist_id| playlist_id.as_str().to_string()),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let mut keys = HashMap::<PlaylistId, Vec<(String, TrackId)>>::new();
+        for row in statement.query_map(params_from_iter(parameters.iter()), |row| {
+            Ok((
+                PlaylistId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+                TrackId::new(row.get::<_, String>(2)?),
+            ))
+        })? {
+            let (playlist_id, entry_id, track_id) = row?;
+            keys.entry(playlist_id)
+                .or_default()
+                .push((entry_id, track_id));
+        }
+        Ok(keys)
+    }
+
     pub fn load_playlist_detail(
         &self,
         server_id: &ServerId,
@@ -288,7 +334,8 @@ impl Store {
             .connection
             .query_row(
                 "
-                SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+                SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
+                       image_item_id, image_tag
                 FROM playlists
                 WHERE server_id = ?1 AND playlist_id = ?2
                 ",
@@ -1833,6 +1880,7 @@ fn refresh_playlist_stats(
     server_id: &ServerId,
     playlist_id: &PlaylistId,
 ) -> StoreResult<()> {
+    let top_genres = playlist_top_genres_json(connection, server_id, playlist_id)?;
     connection.execute(
         "
         UPDATE playlists
@@ -1847,12 +1895,37 @@ fn refresh_playlist_stats(
                 JOIN tracks t
                     ON t.server_id = pt.server_id AND t.track_id = pt.track_id
                 WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
-            )
+            ),
+            top_genres_json = ?3
         WHERE server_id = ?1 AND playlist_id = ?2
         ",
-        params![server_id.as_str(), playlist_id.as_str()],
+        params![server_id.as_str(), playlist_id.as_str(), top_genres],
     )?;
     Ok(())
+}
+fn playlist_top_genres_json(
+    connection: &Connection,
+    server_id: &ServerId,
+    playlist_id: &PlaylistId,
+) -> StoreResult<String> {
+    let mut statement = connection.prepare(
+        "
+        SELECT tg.genre_name
+        FROM playlist_tracks pt
+        JOIN track_genres tg
+            ON tg.server_id = pt.server_id AND tg.track_id = pt.track_id
+        WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
+        GROUP BY tg.genre_name
+        ORDER BY COUNT(*) DESC, LOWER(tg.genre_name)
+        LIMIT 2
+        ",
+    )?;
+    let genres = collect_rows(
+        statement.query_map(params![server_id.as_str(), playlist_id.as_str()], |row| {
+            row.get::<_, String>(0)
+        })?,
+    )?;
+    string_vec_json(&genres)
 }
 
 fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> bool {
@@ -1860,9 +1933,14 @@ fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> 
         (Some(before), Some(after)) => {
             before.track_count != after.track_count
                 || before.duration_seconds != after.duration_seconds
+                || before.top_genres != after.top_genres
         }
-        (None, Some(after)) => after.track_count > 0 || after.duration_seconds > 0,
-        (Some(before), None) => before.track_count > 0 || before.duration_seconds > 0,
+        (None, Some(after)) => {
+            after.track_count > 0 || after.duration_seconds > 0 || !after.top_genres.is_empty()
+        }
+        (Some(before), None) => {
+            before.track_count > 0 || before.duration_seconds > 0 || !before.top_genres.is_empty()
+        }
         (None, None) => false,
     }
 }

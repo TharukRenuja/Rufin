@@ -675,6 +675,7 @@ fn test_playlist_with_refs(
         name: name.to_string(),
         track_count: 1,
         duration_seconds: 180,
+        top_genres: Vec::new(),
         image_refs,
         image_ref,
     }

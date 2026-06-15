@@ -193,10 +193,15 @@ impl Shell {
         favorite.add_css_class("detail-showcase-action-button");
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
-        let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let album_id = album.id.clone();
         favorite.connect_clicked(move |button| {
-            controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            shell.set_favorite_with_feedback(
+                FavoriteItemId::Album(album_id.clone()),
+                favorite,
+                Some(button),
+            );
         });
         actions.append(&favorite);
 
@@ -228,8 +233,8 @@ impl Shell {
     fn album_genre_links(self: &Rc<Self>, album: &Album) -> Option<gtk::Widget> {
         let flow = gtk::FlowBox::new();
         flow.add_css_class("album-detail-genre-row");
-        flow.set_column_spacing(6);
-        flow.set_row_spacing(6);
+        flow.set_column_spacing(2);
+        flow.set_row_spacing(2);
         flow.set_selection_mode(gtk::SelectionMode::None);
         flow.set_max_children_per_line(3);
         flow.set_valign(gtk::Align::Center);

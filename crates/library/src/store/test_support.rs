@@ -112,6 +112,7 @@ pub(super) fn playlist(number: u32, image_ref: Option<ImageRef>) -> Playlist {
         name: format!("Playlist {number}"),
         track_count: 2,
         duration_seconds: 360,
+        top_genres: Vec::new(),
         image_refs: Vec::new(),
         image_ref,
     }

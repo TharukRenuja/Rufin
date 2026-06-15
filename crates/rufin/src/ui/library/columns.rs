@@ -1094,9 +1094,14 @@ pub(in crate::ui) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         let button = favorite_icon_button("Favorite album");
         set_favorite_button_active(&button, album.favorite);
         install_album_context_menu(&button, &shell, album.clone());
-        let controller = shell.controller.clone();
+        let favorite_shell = Rc::clone(&shell);
         button.connect_clicked(move |button| {
-            controller.set_album_favorite(album.id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Album(album.id.clone()),
+                favorite,
+                Some(button),
+            );
         });
         item.set_child(Some(&button));
     });
@@ -1118,9 +1123,14 @@ pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnVie
         let button = favorite_icon_button("Favorite artist");
         set_favorite_button_active(&button, artist.favorite);
         install_artist_context_menu(&button, &shell, artist.clone());
-        let controller = shell.controller.clone();
+        let favorite_shell = Rc::clone(&shell);
         button.connect_clicked(move |button| {
-            controller.set_artist_favorite(artist.id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Artist(artist.id.clone()),
+                favorite,
+                Some(button),
+            );
         });
         item.set_child(Some(&button));
     });
@@ -1141,13 +1151,18 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let button = favorite_icon_button("Favorite track");
         install_dynamic_track_context_menu(&button, &setup_shell, Rc::clone(&current_track));
-        let controller = setup_shell.controller.clone();
+        let favorite_shell = Rc::clone(&setup_shell);
         let click_track = Rc::clone(&current_track);
         button.connect_clicked(move |button| {
             let Some(track) = click_track.borrow().as_ref().cloned() else {
                 return;
             };
-            controller.set_track_favorite(track.id, !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Track(track.id),
+                favorite,
+                Some(button),
+            );
         });
         item.set_child(Some(&button));
         let key = library_list_item_storage_key(item);

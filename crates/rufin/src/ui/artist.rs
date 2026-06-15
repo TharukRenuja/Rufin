@@ -317,10 +317,15 @@ impl Shell {
         favorite.add_css_class("detail-showcase-action-button");
         set_favorite_button_active(&favorite, artist.favorite);
         self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
-        let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let artist_id = artist.id.clone();
         favorite.connect_clicked(move |button| {
-            controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            shell.set_favorite_with_feedback(
+                FavoriteItemId::Artist(artist_id.clone()),
+                favorite,
+                Some(button),
+            );
         });
         actions.append(&favorite);
 

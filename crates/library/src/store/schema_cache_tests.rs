@@ -14,7 +14,7 @@ use domain::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -68,6 +68,12 @@ fn current_schema_initializes_empty_database() {
     assert!(
         !store.table_exists("album_identity").expect("table lookup"),
         "album identity should use shared entity tables"
+    );
+    assert!(
+        store
+            .table_has_column("playlists", "top_genres_json")
+            .expect("column lookup"),
+        "playlists.top_genres_json should exist"
     );
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
@@ -324,7 +330,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -376,7 +382,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -402,7 +408,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -445,7 +451,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -533,7 +539,7 @@ fn schema_v13_local_manifest_without_identity_columns_migrates() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -569,12 +575,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 17)
+        .pragma_update(None, "user_version", 18)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(store.schema_version().expect("schema version"), 17);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -4120,8 +4126,10 @@ fn playlist_entries_derive_cached_stats() {
     let album = album(1);
     let mut track_one = track(1, &album);
     track_one.duration_seconds = 120;
+    track_one.genres = vec!["Rock".to_string(), "Pop".to_string()];
     let mut track_two = track(2, &album);
     track_two.duration_seconds = 210;
+    track_two.genres = vec!["Rock".to_string()];
     let mut playlist = playlist(1, None);
     playlist.track_count = 0;
     playlist.duration_seconds = 0;
@@ -4166,10 +4174,12 @@ fn playlist_entries_derive_cached_stats() {
         .expect("load playlists");
     assert_eq!(page.items[0].track_count, 2);
     assert_eq!(page.items[0].duration_seconds, 330);
+    assert_eq!(page.items[0].top_genres, vec!["Rock", "Pop"]);
     let detail = store
         .load_playlist_detail(&saved.server.id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
     assert_eq!(detail.playlist.track_count, 2);
     assert_eq!(detail.playlist.duration_seconds, 330);
+    assert_eq!(detail.playlist.top_genres, vec!["Rock", "Pop"]);
 }

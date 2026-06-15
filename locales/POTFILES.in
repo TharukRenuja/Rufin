@@ -37,8 +37,6 @@ crates/rufin/src/ui/root/playlist_rename_dialog.rs
 crates/rufin/src/ui/root/route_rendering.rs
 crates/rufin/src/ui/root/shell_navigation.rs
 crates/rufin/src/ui/root/startup_reveal.rs
-crates/rufin/src/ui/root/track_table.rs
-crates/rufin/src/ui/root/track_table_popover.rs
 crates/rufin/src/ui/root/tray.rs
 crates/rufin/src/ui/settings_persistence.rs
 crates/rufin/src/ui/source_selector.rs

@@ -609,6 +609,7 @@ mod tests {
             name: "Playlist".to_string(),
             track_count: 3,
             duration_seconds: 540,
+            top_genres: Vec::new(),
             image_refs: Vec::new(),
             image_ref: None,
         };

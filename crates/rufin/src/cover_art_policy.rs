@@ -724,6 +724,7 @@ mod tests {
             name: "Example Playlist".to_string(),
             track_count: 2,
             duration_seconds: 120,
+            top_genres: Vec::new(),
             image_refs,
             image_ref,
         }

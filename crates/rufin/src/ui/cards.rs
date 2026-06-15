@@ -5,6 +5,7 @@ use domain::{
     Album, HomeSectionKind, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, Route,
     SmartPlaylist, Track,
 };
+use source::FavoriteItemId;
 
 use super::favorites::{album_favorite_key, track_favorite_key};
 use super::layout::{
@@ -254,11 +255,16 @@ pub(super) fn album_cover_tile(
     }
     let favorite = controls.favorite.as_ref().expect("favorite button");
     shell.register_favorite_button(album_favorite_key(&album.id), favorite);
-    if let Some(controller) = controller {
-        let controller = controller.clone();
+    if controller.is_some() {
+        let shell = Rc::clone(shell);
         let album_id = album.id.clone();
         favorite.connect_clicked(move |button| {
-            controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+            let favorite = !favorite_button_is_active(button);
+            shell.set_favorite_with_feedback(
+                FavoriteItemId::Album(album_id.clone()),
+                favorite,
+                Some(button),
+            );
         });
     }
     controls.add_to_overlay(&overlay);
@@ -373,10 +379,15 @@ pub(super) fn track_play_tile(
 
     let favorite = controls.favorite.as_ref().expect("favorite button");
     shell.register_favorite_button(track_favorite_key(&track.id), favorite);
-    let controller = shell.controller.clone();
+    let shell = Rc::clone(shell);
     let track_id = track.id.clone();
     favorite.connect_clicked(move |button| {
-        controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+        let favorite = !favorite_button_is_active(button);
+        shell.set_favorite_with_feedback(
+            FavoriteItemId::Track(track_id.clone()),
+            favorite,
+            Some(button),
+        );
     });
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);

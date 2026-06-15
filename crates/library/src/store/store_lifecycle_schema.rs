@@ -26,6 +26,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 15,
         run: migrate_to_entity_identity_schema,
     },
+    SchemaMigration {
+        from_version: 16,
+        run: migrate_to_playlist_top_genres_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -262,6 +266,7 @@ const ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
     ("content_cache_entries", "cache_scope"),
     ("content_cache_entries", "variant"),
 ];
+const PLAYLIST_TOP_GENRES_COLUMNS: &[(&str, &str)] = &[("playlists", "top_genres_json")];
 
 struct SchemaMigration {
     from_version: i64,
@@ -376,6 +381,9 @@ fn migrate_to_album_release_type_lookup_schema(store: &Store) -> StoreResult<()>
 }
 fn migrate_to_entity_identity_schema(store: &Store) -> StoreResult<()> {
     store.create_entity_identity_schema()
+}
+fn migrate_to_playlist_top_genres_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")
 }
 
 impl Store {
@@ -498,6 +506,8 @@ impl Store {
                 && self.schema_has_required_parts(&[], LOCAL_MANIFEST_ENTITY_IDENTITY_COLUMNS)?
                 && self
                     .schema_has_required_parts(ENTITY_IDENTITY_TABLES, ENTITY_IDENTITY_COLUMNS)?),
+            17 => Ok(self.schema_is_complete_for_version(16)?
+                && self.schema_has_required_parts(&[], PLAYLIST_TOP_GENRES_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -769,6 +779,7 @@ impl Store {
                 name TEXT NOT NULL,
                 track_count INTEGER NOT NULL,
                 duration_seconds INTEGER NOT NULL,
+                top_genres_json TEXT NOT NULL DEFAULT '[]',
                 image_item_id TEXT,
                 image_tag TEXT,
                 sync_generation INTEGER NOT NULL,
@@ -952,6 +963,7 @@ impl Store {
         self.ensure_column("albums", "is_compilation", "INTEGER")?;
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
+        self.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")?;
         self.create_entity_identity_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;

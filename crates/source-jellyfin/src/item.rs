@@ -279,6 +279,7 @@ pub(super) fn playlist_from_item(item: JellyfinItem) -> Playlist {
         name: item.name.unwrap_or_else(|| "Untitled Playlist".to_string()),
         track_count: u32_from_option(item.child_count),
         duration_seconds: duration_seconds(item.run_time_ticks),
+        top_genres: Vec::new(),
         image_refs: Vec::new(),
         image_ref: primary_image_ref("playlist", &item.id, &item.image_tags),
     }

@@ -16,6 +16,28 @@ impl Shell {
         let key = favorite_control_key(item_id);
         update_favorite_controls(&self.state.favorite_controls, &key, favorite);
     }
+    pub(in crate::ui) fn set_favorite_with_feedback(
+        self: &Rc<Self>,
+        item_id: FavoriteItemId,
+        favorite: bool,
+        button: Option<&gtk::Button>,
+    ) {
+        if let Some(button) = button {
+            set_favorite_button_active(button, favorite);
+        }
+        self.update_visible_favorite_buttons(&item_id, favorite);
+        match item_id {
+            FavoriteItemId::Album(album_id) => {
+                self.controller.set_album_favorite(album_id, favorite)
+            }
+            FavoriteItemId::Track(track_id) => {
+                self.controller.set_track_favorite(track_id, favorite)
+            }
+            FavoriteItemId::Artist(artist_id) => {
+                self.controller.set_artist_favorite(artist_id, favorite)
+            }
+        }
+    }
     pub(in crate::ui) fn apply_favorite_changed(
         self: &Rc<Self>,
         item_id: FavoriteItemId,

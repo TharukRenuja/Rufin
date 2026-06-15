@@ -209,7 +209,7 @@ impl Store {
         let mut delta = LibraryDelta::default();
         for playlist in playlists {
             match self.load_playlist_for_delta(server_id, &playlist.id)? {
-                Some(existing) if existing == *playlist => {}
+                Some(existing) if playlist_summary_matches(&existing, playlist) => {}
                 Some(existing) => {
                     if !self.playlist_has_entries(server_id, &playlist.id)?
                         && (existing.track_count != playlist.track_count
@@ -993,9 +993,9 @@ impl Store {
                 "
                 INSERT INTO playlists (
                     server_id, playlist_id, name, track_count, duration_seconds,
-                    image_item_id, image_tag, sync_generation
+                    top_genres_json, image_item_id, image_tag, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ON CONFLICT(server_id, playlist_id) DO UPDATE SET
                     name = excluded.name,
                     track_count = CASE
@@ -1015,6 +1015,15 @@ impl Store {
                                 AND playlist_id = excluded.playlist_id
                         ) THEN playlists.duration_seconds
                         ELSE excluded.duration_seconds
+                    END,
+                    top_genres_json = CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM playlist_tracks
+                            WHERE server_id = excluded.server_id
+                                AND playlist_id = excluded.playlist_id
+                        ) THEN playlists.top_genres_json
+                        ELSE excluded.top_genres_json
                     END,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
@@ -1039,6 +1048,7 @@ impl Store {
                     playlist.name,
                     i64::from(playlist.track_count),
                     i64::from(playlist.duration_seconds),
+                    string_vec_json(&playlist.top_genres)?,
                     image_item_id,
                     image_tag,
                     generation,
@@ -1389,7 +1399,8 @@ impl Store {
             .connection
             .query_row(
                 "
-                SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+                SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
+                       image_item_id, image_tag
                 FROM playlists
                 WHERE server_id = ?1 AND playlist_id = ?2
                 ",
@@ -1484,6 +1495,15 @@ fn album_stats_changed(left: &Album, right: &Album) -> bool {
         || left.play_count != right.play_count
         || left.last_played != right.last_played
         || left.user_rating != right.user_rating
+}
+
+fn playlist_summary_matches(left: &Playlist, right: &Playlist) -> bool {
+    left.id == right.id
+        && left.name == right.name
+        && left.track_count == right.track_count
+        && left.duration_seconds == right.duration_seconds
+        && left.image_refs == right.image_refs
+        && left.image_ref == right.image_ref
 }
 
 fn album_links_changed(left: &Album, right: &Album) -> bool {

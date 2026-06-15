@@ -1079,10 +1079,15 @@ pub(in crate::ui) fn artist_cover_tile(
     });
     let favorite = controls.favorite.as_ref().expect("favorite button");
     shell.register_favorite_button(artist_favorite_key(&artist.id), favorite);
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let artist_id = artist.id.clone();
     favorite.connect_clicked(move |button| {
-        controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
+        let favorite = !favorite_button_is_active(button);
+        favorite_shell.set_favorite_with_feedback(
+            source::FavoriteItemId::Artist(artist_id.clone()),
+            favorite,
+            Some(button),
+        );
     });
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);

@@ -182,7 +182,6 @@ pub(in crate::ui) use shell_navigation::*;
 
 pub(in crate::ui) const GRID_ROUTE_PAGE_SIZE: usize = 16;
 pub(in crate::ui) const TRACK_ROUTE_PAGE_SIZE: usize = 64;
-pub(in crate::ui) const CONTEXT_MENU_PLAYLIST_LIMIT: usize = 100;
 pub(in crate::ui) const GRID_COVER_SIZE: u32 = 256;
 pub(in crate::ui) const DETAIL_COVER_SIZE: u32 = 512;
 pub(in crate::ui) const THUMB_COVER_SIZE: u32 = 96;
@@ -243,6 +242,7 @@ pub(in crate::ui) fn route_resize_diagnostics_enabled() -> bool {
 pub(in crate::ui) enum RouteResizePolicy {
     Stable,
     LayoutSignature,
+    PlaylistDetailLayout,
     SettledWidth,
 }
 #[derive(Clone, Debug, Default)]
@@ -263,6 +263,7 @@ pub(in crate::ui) struct AppState {
     resolved_right_sidebar_width: Cell<i32>,
     main_content_width: Cell<i32>,
     library: RefCell<LibrarySnapshot>,
+    track_index: RefCell<HashMap<TrackId, usize>>,
     queue: RefCell<Option<QueueSnapshot>>,
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
@@ -464,6 +465,28 @@ pub(in crate::ui) struct Shell {
     fullscreen_player: FullscreenPlayerParts,
     player_controls: PlayerControls,
 }
+
+pub(in crate::ui) fn track_index_for(tracks: &[Track]) -> HashMap<TrackId, usize> {
+    let mut index = HashMap::with_capacity(tracks.len());
+    for (position, track) in tracks.iter().enumerate() {
+        index.insert(track.id.clone(), position);
+    }
+    index
+}
+
+impl Shell {
+    pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
+        let track_index = track_index_for(&snapshot.tracks);
+        *self.state.library.borrow_mut() = snapshot;
+        *self.state.track_index.borrow_mut() = track_index;
+    }
+
+    pub(in crate::ui) fn rebuild_track_index(&self) {
+        let index = track_index_for(&self.state.library.borrow().tracks);
+        *self.state.track_index.borrow_mut() = index;
+    }
+}
+
 fn sidebar_scroll_slot(width: i32, child: &gtk::Box) -> gtk::ScrolledWindow {
     let slot = gtk::ScrolledWindow::new();
     slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
@@ -514,6 +537,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let language_preference = i18n::effective_language_preference(&settings.language);
     i18n::set_language_preference(&language_preference);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
+    let track_index = track_index_for(&library.tracks);
 
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
@@ -523,6 +547,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         resolved_right_sidebar_width: Cell::new(0),
         main_content_width: Cell::new(1),
         library: RefCell::new(library),
+        track_index: RefCell::new(track_index),
         queue: RefCell::new(queue),
         player: RefCell::new(player),
         lyrics: RefCell::new(None),

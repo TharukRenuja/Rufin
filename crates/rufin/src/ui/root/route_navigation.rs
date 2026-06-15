@@ -38,6 +38,7 @@ impl Shell {
     pub(in crate::ui) fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
         let previous = self.state.routes.borrow().current().clone();
+        self.pause_cover_warm_for_nav();
         self.refresh_search_results_for_route(&route);
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
@@ -51,6 +52,7 @@ impl Shell {
         let route = self.state.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate back");
+            self.pause_cover_warm_for_nav();
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();
@@ -64,6 +66,7 @@ impl Shell {
         let route = self.state.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate forward");
+            self.pause_cover_warm_for_nav();
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();

@@ -548,10 +548,15 @@ pub(in crate::ui) fn album_detail_cover_tile(
 
     let favorite = controls.favorite.as_ref().expect("favorite button");
     shell.register_favorite_button(album_favorite_key(&album.id), favorite);
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     let album_id = album.id.clone();
     favorite.connect_clicked(move |button| {
-        controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+        let favorite = !favorite_button_is_active(button);
+        favorite_shell.set_favorite_with_feedback(
+            source::FavoriteItemId::Album(album_id.clone()),
+            favorite,
+            Some(button),
+        );
     });
 
     controls.add_to_overlay(&overlay);
@@ -689,10 +694,15 @@ pub(in crate::ui) fn album_detail_track_cell(
         LibraryField::Favorite => {
             let button = favorite_icon_button("Favorite track");
             set_favorite_button_active(&button, track.favorite);
-            let controller = shell.controller.clone();
+            let favorite_shell = Rc::clone(shell);
             let track_id = track.id.clone();
             button.connect_clicked(move |button| {
-                controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+                let favorite = !favorite_button_is_active(button);
+                favorite_shell.set_favorite_with_feedback(
+                    source::FavoriteItemId::Track(track_id.clone()),
+                    favorite,
+                    Some(button),
+                );
             });
             button.set_halign(gtk::Align::Center);
             album_detail_fixed_cell(width, button.upcast())

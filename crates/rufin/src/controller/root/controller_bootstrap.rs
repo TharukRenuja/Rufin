@@ -354,6 +354,7 @@ fn fake_snapshot(
         album_artists: album_artist_page.items,
         genres: genre_page.items,
         playlists: playlist_page.items,
+        playlist_entry_keys: HashMap::new(),
         favorites: Vec::new(),
         search: SearchResults::default(),
     })
