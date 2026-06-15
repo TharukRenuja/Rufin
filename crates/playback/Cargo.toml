@@ -4,15 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+readme.workspace = true
+publish.workspace = true
 
 [dependencies]
-gstreamer = { version = "0.25.2", features = ["v1_26"] }
-gstreamer-audio = { version = "0.25.2", features = ["v1_26"] }
-gstreamer-play = { version = "0.25.0", features = ["v1_26"] }
-domain = { path = "../domain" }
-rustfft = "6.2.0"
-thiserror = "2.0.18"
-tracing = "0.1.41"
+gstreamer = { workspace = true, features = ["v1_26"] }
+gstreamer-audio = { workspace = true, features = ["v1_26"] }
+gstreamer-play = { workspace = true, features = ["v1_26"] }
+domain.workspace = true
+rustfft.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
