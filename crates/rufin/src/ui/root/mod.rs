@@ -271,6 +271,7 @@ pub(in crate::ui) struct AppState {
     lyrics_auto_search_attempted: RefCell<HashSet<domain::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     type_to_search: RefCell<Option<gtk::SearchEntry>>,
+    context_playlist_picker: RefCell<Option<PlaylistPickerHandle>>,
     preferences_dialog: RefCell<Option<adw::Dialog>>,
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
     lyrics_timing_generation: Cell<u64>,
@@ -436,6 +437,7 @@ pub(in crate::ui) struct Shell {
     application: adw::Application,
     window: adw::ApplicationWindow,
     toast_overlay: adw::ToastOverlay,
+    quick_toast_overlay: adw::ToastOverlay,
     root_stack: gtk::Stack,
     app_root_overlay: gtk::Overlay,
     app_root: gtk::Box,
@@ -555,6 +557,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
         type_to_search: RefCell::new(None),
+        context_playlist_picker: RefCell::new(None),
         preferences_dialog: RefCell::new(None),
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
         lyrics_timing_generation: Cell::new(0),
@@ -764,8 +767,11 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     app_root_overlay.set_child(Some(&app_root));
 
     root_stack.add_named(&app_root_overlay, Some("app"));
+    let quick_toast_overlay = adw::ToastOverlay::new();
+    quick_toast_overlay.add_css_class("quick-toast-overlay");
+    quick_toast_overlay.set_child(Some(&root_stack));
     let toast_overlay = adw::ToastOverlay::new();
-    toast_overlay.set_child(Some(&root_stack));
+    toast_overlay.set_child(Some(&quick_toast_overlay));
     window.set_content(Some(&toast_overlay));
 
     let shell = Rc::new(Shell {
@@ -774,6 +780,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         application: app.clone(),
         window,
         toast_overlay,
+        quick_toast_overlay,
         root_stack,
         app_root_overlay,
         app_root,

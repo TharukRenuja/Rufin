@@ -479,6 +479,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("General");
     let _ = tr("App window");
     let _ = tr("Type to search");
+    let _ = tr("Type to search or create a new playlist");
+    let _ = tr("Create");
     let _ = tr("Interface");
     let _ = tr("Library");
     let _ = tr("Actions");

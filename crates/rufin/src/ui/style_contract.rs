@@ -3,6 +3,10 @@ const SECONDARY_METADATA_COLOR: &str = "color-mix(in srgb, @window_fg_color 95%,
 const METADATA_LINK_HOVER_COLOR: &str = "color-mix(in srgb, @accent_color 72%, @window_fg_color)";
 const TOOLTIP_BACKGROUND: &str = "rgba(0, 0, 0, 0.88)";
 const TOOLTIP_FOREGROUND: &str = "white";
+const TOAST_BACKGROUND: &str = "color-mix(in srgb, @window_bg_color 88%, @card_bg_color 12%)";
+const TOAST_FOREGROUND: &str = "@window_fg_color";
+const TOAST_RADIUS: &str = "999px";
+const TOAST_CLOSE_OPACITY: &str = "0";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]
@@ -182,6 +186,34 @@ mod tests {
         assert!(
             contrast >= MIN_BODY_TEXT_CONTRAST,
             "tooltip contrast {contrast:.2} is below {MIN_BODY_TEXT_CONTRAST}"
+        );
+    }
+
+    #[test]
+    fn style_toasts() {
+        assert_eq!(
+            selector_property(APP_STYLE, "toastoverlay toast", "background"),
+            Some(TOAST_BACKGROUND.to_string())
+        );
+        assert_eq!(
+            selector_color(APP_STYLE, "toastoverlay toast"),
+            Some(TOAST_FOREGROUND.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, "toastoverlay toast", "border-radius"),
+            Some(TOAST_RADIUS.to_string())
+        );
+        assert_eq!(
+            selector_color(APP_STYLE, "toastoverlay toast label"),
+            Some(TOAST_FOREGROUND.to_string())
+        );
+        assert_eq!(
+            selector_property(
+                APP_STYLE,
+                ".quick-toast-overlay toast button.circular.flat",
+                "opacity"
+            ),
+            Some(TOAST_CLOSE_OPACITY.to_string())
         );
     }
 }

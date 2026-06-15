@@ -12,9 +12,9 @@ use crate::i18n::tr;
 use super::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, FAVORITE_ADD_ICON, FAVORITE_EMPTY_GLYPH,
     FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
-    context_menu_action, context_menu_box, context_menu_has_playlists, context_menu_picker_button,
-    context_popover, favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
-    track_from_queue_entry,
+    context_menu_action, context_menu_box, context_menu_can_add_to_playlist,
+    context_menu_picker_button, context_popover, favorite_button_is_active, favorite_icon_button,
+    set_favorite_button_active, track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -1072,7 +1072,7 @@ fn show_queue_row_context_menu(
 
     let track = track_from_queue_entry(entry);
     if let Some(track) = track.as_ref()
-        && context_menu_has_playlists(shell)
+        && context_menu_can_add_to_playlist(shell)
     {
         let track_source: Rc<dyn Fn() -> Vec<domain::Track>> = Rc::new({
             let track = track.clone();

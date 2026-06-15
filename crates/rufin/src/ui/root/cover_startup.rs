@@ -687,6 +687,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         prefetched_explore,
                         &sections,
                     );
+                    refresh_context_playlist_picker(&shell);
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
                     match local_gate_action {
@@ -908,6 +909,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 } => {
                     shell.replace_library_snapshot(*snapshot);
                     shell.update_server_selector();
+                    refresh_context_playlist_picker(&shell);
                     let route = shell.state.routes.borrow().current().clone();
                     let playlist_route_changed = matches!(route, Route::Playlists)
                         || matches!(route, Route::PlaylistDetail(id) if id == playlist_id);

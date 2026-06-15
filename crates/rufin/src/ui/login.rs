@@ -447,7 +447,7 @@ impl Shell {
         };
         let mut shown = self.state.reconnect_toasts_shown.borrow_mut();
         if shown.insert(preset.server_id) {
-            self.toast_overlay
+            self.quick_toast_overlay
                 .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
         }
     }
