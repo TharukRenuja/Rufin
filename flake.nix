@@ -52,7 +52,7 @@
                 ]);
             };
 
-            cargoHash = "sha256-CByT/Sx7Y0CIfLqQVERKiRfQYEsWdG96jM2Ne7cZxGg=";
+            cargoHash = "sha256-8yOOj4Stug/TXQMmOiWdA2qJFTcjqjKtLgcABTCiwIM=";
 
             strictDeps = true;
 
