@@ -30,36 +30,101 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.4" date="2026-06-16">
+      <description>
+        <p>This release touches a lot of areas, and fixes 2 biggest problems of the app: UI freezes on playing/skipping, and unreliable window resize reactions. There were a lot of improvements in playback thanks to this and solving these 2 problems will make the future easier. There are several improvements and bug fixes in other areas as well:</p>
+        <ul>
+          <li>Context menu got reworked, and now can also be accessed by long press or touchscreen hold</li>
+        </ul>
+        <ul>
+          <li>Albums and playlists now have most common 2 genres show up as pills</li>
+        </ul>
+        <ul>
+          <li>Source select menu now lies inside app window at all sizes</li>
+        </ul>
+        <ul>
+          <li>Showcase card doesn't have rough edges anymore, and grids/gradients have shadows on their edges</li>
+        </ul>
+        <ul>
+          <li>Add to playlist is no longer the boring submenu, but it now opens a powerful popup where you can create a playlist, add to multiple playlists at once and decide to skip duplicates</li>
+        </ul>
+        <ul>
+          <li>Playlists now have an index, so they are faster to load</li>
+        </ul>
+        <ul>
+          <li>Toast notifications now use custom style. Server resync button gives progress as a toast notification.</li>
+        </ul>
+        <ul>
+          <li>On artist and album pages clicking artwork now opens it on a bigger view</li>
+        </ul>
+        <ul>
+          <li>Audio fades on clicking play/pause to create a more immersive experience, can be disabled from configs</li>
+        </ul>
+        <ul>
+          <li>Queue items are now re-orderable by dragging</li>
+        </ul>
+        <ul>
+          <li>UI feedback for favorite action is now instant</li>
+        </ul>
+        <ul>
+          <li>Bottom player is now updated immediately on track changes</li>
+        </ul>
+        <ul>
+          <li>Play/pause and other buttons on cards now react on hover</li>
+        </ul>
+        <ul>
+          <li>Solved an edge case where an album without a cover on Jellyfin and on Rufin (MusicBrainz fetch) showed a stale art despite Jellyfin using the artist cover as fallback. Rufin also does this now, while still respecting to Jellyfin source</li>
+        </ul>
+        <ul>
+          <li>Adjusted minimal window size to have song titles to be shown as much as it can, and adjusted equalizer to fit to the fullscreen player properly</li>
+        </ul>
+        <ul>
+          <li>Fixed the momentarily UI freeze on song playing and or playing a new track, which also fixed the case where repeteadly skipping songs stacked these freezes</li>
+        </ul>
+        <ul>
+          <li>Fixed several bugs in queue about rendering, scroll setting not being applied</li>
+        </ul>
+        <ul>
+          <li>Fixed a regression that equalizer settings were only applied on next app launch</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug that visualizer would not show up for the current song in some conditions</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where albums page in detail view crashed the app</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.3" date="2026-06-14">
       <description>
         <p>More UI polish, and now you can use system keyring for saved secrets, changeable from Preferences, under Privacy &amp; Security.</p>

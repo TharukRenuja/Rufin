@@ -16,12 +16,12 @@ body:
       label: Rufin version
       description: You can check which version you are running from Main Menu/About Rufin
       options:
-        - 0.7.3 (latest)
+        - 0.7.4 (latest)
+        - 0.7.3
         - 0.7.2
         - 0.7.1
         - 0.7.0
         - 0.6.5
-        - 0.6.3
       default: 0
     validations:
       required: true
