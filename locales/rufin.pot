@@ -1128,7 +1128,7 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:639
 #: crates/rufin/src/ui/preferences/root/general.rs:42
 #: crates/rufin/src/i18n.rs:671
-msgid ". You only need ot fill email and an application name parts"
+msgid ". You only need to fill email and an application name parts"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:640
