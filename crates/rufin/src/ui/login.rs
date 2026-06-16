@@ -14,7 +14,6 @@ use domain::ServerId;
 use super::{
     AddServerDialogHandle, Shell,
     chrome::window_close_controls,
-    icon_button,
     layout::{large_popup_content_height, large_popup_content_width},
     startup_reveal::connection_progress_status_label,
     text_button,
@@ -51,8 +50,6 @@ impl Shell {
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Add Server"), "");
         header.set_title_widget(Some(&title));
-        let close = icon_button("window-close-symbolic", "Close");
-        header.pack_end(&close);
         toolbar.add_top_bar(&header);
 
         let dialog = adw::Dialog::builder()
@@ -80,10 +77,6 @@ impl Shell {
         let shell = Rc::clone(self);
         dialog.connect_closed(move |_| {
             shell.state.add_server_dialog.borrow_mut().take();
-        });
-        let dialog_for_close = dialog.clone();
-        close.connect_clicked(move |_| {
-            dialog_for_close.close();
         });
         dialog.present(Some(&self.window));
     }
