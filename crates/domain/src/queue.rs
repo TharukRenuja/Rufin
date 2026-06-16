@@ -666,6 +666,17 @@ impl QueueEngine {
         self.progress_seconds = 0;
     }
 
+    pub fn clear_except_current(&mut self) -> bool {
+        let Some(current) = self.current().cloned() else {
+            self.clear();
+            return false;
+        };
+        self.entries = vec![current];
+        self.current_index = Some(0);
+        self.rebuild_shuffle_order();
+        true
+    }
+
     pub fn reorder(&mut self, entry_id: &QueueEntryId, new_index: usize) -> bool {
         let Some(old_index) = self.entries.iter().position(|entry| entry.id == *entry_id) else {
             return false;
@@ -1851,5 +1862,25 @@ mod tests {
 
         assert!(queue.entries().is_empty());
         assert!(queue.current().is_none());
+    }
+
+    #[test]
+    fn clear_keeps_current() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let _first = queue.append(&track(1));
+        let current = queue.append(&track(2));
+        let _third = queue.append(&track(3));
+        assert!(queue.activate(&current));
+        queue.set_progress_seconds(42);
+
+        assert!(queue.clear_except_current());
+
+        assert_eq!(queue.entries().len(), 1);
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+        assert_eq!(queue.snapshot().current_index, Some(0));
+        assert_eq!(queue.progress_seconds(), 42);
     }
 }

@@ -224,18 +224,12 @@ impl Shell {
         if matches!(route, Route::Home) {
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         }
-        if matches!(route, Route::Playlists) {
-            self.state.playlist_refresh_started_for_visit.set(false);
-        }
         if matches!(route, Route::Search { .. }) {
             self.start_search_for_route(&route);
         }
         let render_started = Instant::now();
         self.render_current_route_preserving_scroll();
         let render_ms = render_started.elapsed().as_millis() as u64;
-        if matches!(route, Route::Playlists) {
-            self.refresh_playlists_for_current_visit();
-        }
         let total_ms = refresh_started.elapsed().as_millis() as u64;
         if total_ms >= SLOW_SYNC_ROUTE_REFRESH_MS {
             warn!(

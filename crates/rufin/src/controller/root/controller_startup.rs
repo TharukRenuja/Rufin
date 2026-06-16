@@ -632,42 +632,6 @@ pub(in crate::controller) fn start_home_refresh_thread(
         }
     });
 }
-pub(in crate::controller) fn start_playlist_refresh_thread(
-    context: PlaylistRefreshContext,
-    saved: SavedServer,
-) {
-    if saved.server.provider == "fake" || saved.server.provider == LOCAL_PROVIDER_ID {
-        return;
-    }
-
-    let server_id = saved.server.id.clone();
-    if sync_is_running(&context.sync_in_flight, &server_id) {
-        return;
-    }
-    let permit = match context.playlist_refresh_in_flight.acquire(server_id) {
-        Ok(Some(permit)) => permit,
-        Ok(None) => return,
-        Err(error) => {
-            let _sent = context.events.send(ControllerEvent::Error(error));
-            return;
-        }
-    };
-
-    thread::spawn(move || {
-        let result =
-            refresh_playlists_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
-                .and_then(|()| load_snapshot(&context.store).map(Box::new));
-        drop(permit);
-        match result {
-            Ok(snapshot) => {
-                let _sent = context.events.send(ControllerEvent::Snapshot(snapshot));
-            }
-            Err(error) => {
-                warn!(%error, "failed to refresh playlists");
-            }
-        }
-    });
-}
 pub(in crate::controller) fn home_refresh_completed_event(
     target: HomeRefreshTarget,
     snapshot: Box<LibrarySnapshot>,
@@ -1249,19 +1213,6 @@ fn local_library_delta(
         manifest_entries: scan.entries.clone(),
         cue_track_sources: scan.cue_track_sources.clone(),
     }
-}
-pub(in crate::controller) fn refresh_playlists_for_saved(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
-) -> Result<(), String> {
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(refresh_playlist_pages(
-        store,
-        &saved.server.id,
-        provider.as_music_provider(),
-    ))
 }
 pub(in crate::controller) fn refresh_home_section_for_saved(
     store: &StoreHandle,
@@ -2280,6 +2231,7 @@ async fn sync_playlist_pages(
         }
     }
 }
+#[cfg(test)]
 pub(in crate::controller) async fn refresh_playlist_pages(
     store: &StoreHandle,
     server_id: &ServerId,

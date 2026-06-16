@@ -1770,7 +1770,6 @@ pub(in crate::controller) fn controller_from_store_for_test(
         events,
         sync_in_flight: InFlightGuards::new("Sync"),
         home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-        playlist_refresh_in_flight: InFlightGuards::new("Playlist refresh"),
         explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
         cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
         external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashMap::new())),

@@ -43,9 +43,6 @@ impl Shell {
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
         self.request_current_route_render();
-        if matches!(route, Route::Playlists) {
-            self.refresh_playlists_for_current_visit();
-        }
     }
     pub(in crate::ui) fn go_back(self: &Rc<Self>) {
         let previous = self.state.routes.borrow().current().clone();
@@ -56,9 +53,6 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();
-            if matches!(route, Route::Playlists) {
-                self.refresh_playlists_for_current_visit();
-            }
         }
     }
     pub(in crate::ui) fn go_forward(self: &Rc<Self>) {
@@ -70,9 +64,6 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();
-            if matches!(route, Route::Playlists) {
-                self.refresh_playlists_for_current_visit();
-            }
         }
     }
     pub(in crate::ui) fn refresh_search_results_for_route(self: &Rc<Self>, route: &Route) {
