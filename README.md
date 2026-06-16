@@ -73,15 +73,22 @@ yay -S rufin-git
 
 ## Nix
 
-To use Rufin directly without building, run:
+To run the latest stable release:
 
 ```bash
-nix run github:screwys/Rufin
+nix run github:screwys/Rufin/v0.7.4
 ```
-This downloads the binary through project cache. You can also add it to your profile:
+
+To run the current `main` branch:
 
 ```bash
-nix profile install github:screwys/Rufin
+nix run github:screwys/Rufin/main
+```
+
+Release tags and `main` builds are cached. You can also add either ref to your profile:
+
+```bash
+nix profile install github:screwys/Rufin/v0.7.4
 ```
 
 ## Building locally

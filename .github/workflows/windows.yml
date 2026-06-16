@@ -128,6 +128,10 @@ jobs:
           $msysPrefix = Join-Path $env:MSYS2_LOCATION "ucrt64"
           ./packaging/windows/package.ps1 -MsysPrefix $msysPrefix
 
+      - name: Verify staged package layout
+        shell: msys2 {0}
+        run: bash .github/scripts/verify-package-layout.sh dist/windows/Rufin /
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -190,12 +194,15 @@ jobs:
             $env:PATH = "$installDir;$env:PATH"
             $runtimeProcess = Start-Process `
               -FilePath $installedExe `
-              -ArgumentList "--validate-runtime" `
+              -ArgumentList "--startup-check" `
               -WorkingDirectory $installDir `
               -RedirectStandardOutput $runtimeStdout `
               -RedirectStandardError $runtimeStderr `
-              -Wait `
               -PassThru
+            if (-not $runtimeProcess.WaitForExit(30000)) {
+              Stop-Process -Id $runtimeProcess.Id -Force
+              throw "Installed Rufin executable startup check timed out"
+            }
           } catch {
             Get-ChildItem $installDir | Select-Object Name, Length
             throw "Installed Rufin executable failed to start: $_"

@@ -45,7 +45,7 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
             &tr("If you do not have API keys, create them"),
             LASTFM_API_CREATE_URL,
             &tr("here"),
-            &tr(". You only need ot fill email and an application name parts"),
+            &tr(". You only need to fill email and an application name parts"),
         ))
         .use_markup(true)
         .build();

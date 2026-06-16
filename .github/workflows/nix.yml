@@ -82,6 +82,11 @@ jobs:
           test "$version" = "$cargo_version"
           test "$version" = "$metainfo_version"
 
+      - name: Install runtime check tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y dbus-x11 xvfb
+
       - name: Install Nix
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
@@ -101,5 +106,11 @@ jobs:
       - name: Check flake
         run: bash .github/scripts/retry-nix-command.sh nix flake check --print-build-logs
 
+      - name: Build app
+        run: bash .github/scripts/retry-nix-command.sh nix build .#rufin --print-build-logs
+
+      - name: Verify package layout
+        run: bash .github/scripts/verify-package-layout.sh result /
+
       - name: Verify wrapped app
-        run: bash .github/scripts/retry-nix-command.sh nix run .# -- --help
+        run: timeout 30s xvfb-run -a dbus-run-session -- bash .github/scripts/retry-nix-command.sh nix run .# -- --startup-check

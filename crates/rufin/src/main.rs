@@ -37,7 +37,7 @@ struct Cli {
     forget_active_server: bool,
 
     #[arg(long, hide = true)]
-    validate_runtime: bool,
+    startup_check: bool,
 }
 
 #[cfg(feature = "dev-tools")]
@@ -63,9 +63,6 @@ impl From<FakeScaleArg> for FakeScale {
 
 fn main() {
     let cli = Cli::parse();
-    if cli.validate_runtime {
-        return;
-    }
 
     init_tracing();
     i18n::init(&i18n::startup_language_preference());
@@ -114,8 +111,22 @@ fn main() {
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::empty())
         .build();
-    app.connect_startup(|_| configure_app_icon());
-    app.connect_activate(move |app| ui::build(app, options.clone()));
+    let startup_check = cli.startup_check;
+    app.connect_startup(move |app| {
+        let display_ready = configure_app_icon();
+        if startup_check {
+            if !display_ready {
+                eprintln!("GTK display is not available.");
+                std::process::exit(1);
+            }
+            app.quit();
+        }
+    });
+    if startup_check {
+        app.connect_activate(|app| app.quit());
+    } else {
+        app.connect_activate(move |app| ui::build(app, options.clone()));
+    }
 
     let program = std::env::args()
         .next()
@@ -123,11 +134,11 @@ fn main() {
     let _exit_code = app.run_with_args(&[program]);
 }
 
-fn configure_app_icon() {
+fn configure_app_icon() -> bool {
     gtk::Window::set_default_icon_name(APP_ICON_NAME);
 
     let Some(display) = gtk::gdk::Display::default() else {
-        return;
+        return false;
     };
     let icon_theme = gtk::IconTheme::for_display(&display);
     for path in app_icon_search_paths() {
@@ -135,6 +146,7 @@ fn configure_app_icon() {
             icon_theme.add_search_path(path);
         }
     }
+    true
 }
 
 fn app_icon_search_paths() -> Vec<PathBuf> {
