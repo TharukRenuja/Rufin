@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 use std::rc::Rc;
 
-use domain::{QueueEntry, RepeatMode};
+use domain::{QueueEntry, RepeatMode, TrackId};
 use gtk::glib;
 use mpris_server::{
     LoopStatus, Metadata, PlaybackStatus, Player as MprisPlayer, Time, TrackId as MprisTrackId,
@@ -13,11 +13,22 @@ use crate::controller::PlaybackSnapshot;
 
 use super::{Shell, THUMB_COVER_SIZE};
 
+const MPRIS_POSITION_REGRESSION_TOLERANCE_MS: u64 = 1_500;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct MprisPositionState {
+    track_id: Option<TrackId>,
+    position_millis: u64,
+}
+
 impl Shell {
     pub(super) fn update_mpris_player(&self) {
         let Some(player) = self.state.mpris_player.borrow().as_ref().cloned() else {
             return;
         };
+        let generation = self.state.mpris_update_generation.get().saturating_add(1);
+        self.state.mpris_update_generation.set(generation);
+        let update_generation = Rc::clone(&self.state.mpris_update_generation);
         let snapshot = self.state.player.borrow().clone();
         let metadata = self.mpris_metadata_update(&snapshot);
         let playback_status = match snapshot.state {
@@ -32,6 +43,13 @@ impl Shell {
         };
         let has_current = snapshot.current.is_some();
         let position = Time::from_millis(snapshot.position_millis.min(i64::MAX as u64) as i64);
+        let emit_seeked = {
+            let previous = self.state.mpris_position_state.borrow().clone();
+            let next = mpris_position_state(&snapshot);
+            let emit_seeked = mpris_seeked_required(previous.as_ref(), &next);
+            *self.state.mpris_position_state.borrow_mut() = Some(next);
+            emit_seeked
+        };
         let volume = snapshot.volume.clamp(0.0, 1.0);
 
         glib::spawn_future_local(async move {
@@ -47,7 +65,13 @@ impl Shell {
             let _updated = player.set_can_seek(has_current).await;
             let _updated = player.set_can_go_next(has_current).await;
             let _updated = player.set_can_go_previous(has_current).await;
+            if update_generation.get() != generation {
+                return;
+            }
             player.set_position(position);
+            if emit_seeked {
+                let _updated = player.seeked(position).await;
+            }
         });
     }
 
@@ -190,6 +214,35 @@ fn mpris_metadata_key(snapshot: &PlaybackSnapshot, art_url: Option<&str>) -> Str
     )
 }
 
+fn mpris_position_state(snapshot: &PlaybackSnapshot) -> MprisPositionState {
+    MprisPositionState {
+        track_id: snapshot
+            .current
+            .as_ref()
+            .map(|entry| entry.track_id.clone()),
+        position_millis: snapshot.position_millis,
+    }
+}
+
+fn mpris_seeked_required(
+    previous: Option<&MprisPositionState>,
+    current: &MprisPositionState,
+) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if current.track_id.is_none() {
+        return false;
+    }
+    if previous.track_id != current.track_id {
+        return true;
+    }
+    previous.position_millis
+        > current
+            .position_millis
+            .saturating_add(MPRIS_POSITION_REGRESSION_TOLERANCE_MS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +274,30 @@ mod tests {
             mpris_metadata_key(&snapshot, None),
             mpris_metadata_key(&snapshot, Some("file:///tmp/cover.png"))
         );
+    }
+
+    #[test]
+    fn mpris_seeked_on_track_or_position_reset() {
+        let first = MprisPositionState {
+            track_id: Some(TrackId::new("track-one")),
+            position_millis: 180_000,
+        };
+        let next_track = MprisPositionState {
+            track_id: Some(TrackId::new("track-two")),
+            position_millis: 0,
+        };
+        let same_track_reset = MprisPositionState {
+            track_id: Some(TrackId::new("track-one")),
+            position_millis: 0,
+        };
+        let normal_tick = MprisPositionState {
+            track_id: Some(TrackId::new("track-one")),
+            position_millis: 181_000,
+        };
+
+        assert!(mpris_seeked_required(Some(&first), &next_track));
+        assert!(mpris_seeked_required(Some(&first), &same_track_reset));
+        assert!(!mpris_seeked_required(Some(&first), &normal_tick));
+        assert!(!mpris_seeked_required(None, &next_track));
     }
 }

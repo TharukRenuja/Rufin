@@ -20,14 +20,14 @@ mod waveform;
 
 pub use fake_backend::FakePlaybackBackend;
 pub use gstreamer_backend::{GStreamerPlaybackBackend, LazyGStreamerPlaybackBackend};
-pub use waveform::generate_waveform_peaks;
+pub use waveform::{generate_waveform_peaks, generate_waveform_peaks_cancellable};
 
 #[cfg(test)]
 use gstreamer_backend::{
     AboutToFinishAction, CrossfadeState, GstEngine, PendingSeek, PlayerPipeline,
     SharedPlaybackState, Slot, StatusFade, StatusFadeTarget, VisualizerAnalyzer,
     about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
-    same_album_crossfade_is_skipped,
+    clear_prepared_next_state, same_album_crossfade_is_skipped,
 };
 use gstreamer_backend::{clock_seconds_from_millis, position_event, position_event_for_track};
 

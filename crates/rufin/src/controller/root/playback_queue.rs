@@ -812,7 +812,7 @@ pub(in crate::controller) fn cancel_sync_if_running(
     sync_in_flight: &InFlightGuards<ServerId>,
     server_id: &ServerId,
 ) -> Result<bool, String> {
-    sync_in_flight.remove(server_id)
+    sync_in_flight.cancel(server_id)
 }
 
 pub(in crate::controller) fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {

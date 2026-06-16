@@ -284,6 +284,10 @@ pub(in crate::ui) struct AppState {
     #[cfg(unix)]
     mpris_metadata_key: RefCell<Option<String>>,
     #[cfg(unix)]
+    mpris_position_state: RefCell<Option<mpris::MprisPositionState>>,
+    #[cfg(unix)]
+    mpris_update_generation: Rc<Cell<u64>>,
+    #[cfg(unix)]
     tray_handle: RefCell<Option<tray::TrayHandle>>,
     #[cfg(unix)]
     tray_command_source: RefCell<Option<glib::SourceId>>,
@@ -571,6 +575,10 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         mpris_player: RefCell::new(None),
         #[cfg(unix)]
         mpris_metadata_key: RefCell::new(None),
+        #[cfg(unix)]
+        mpris_position_state: RefCell::new(None),
+        #[cfg(unix)]
+        mpris_update_generation: Rc::new(Cell::new(0)),
         #[cfg(unix)]
         tray_handle: RefCell::new(None),
         #[cfg(unix)]

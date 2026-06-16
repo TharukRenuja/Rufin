@@ -233,6 +233,10 @@ impl SharedPlaybackState {
         }
     }
 }
+pub(super) struct PreparedNextClear {
+    pub(super) gapless_current: Option<(Slot, PreparedPlaybackItem)>,
+    pub(super) crossfade: Option<CrossfadeState>,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StatusFadeTarget {
     Pause,
@@ -731,10 +735,7 @@ impl GstEngine {
 
     fn prepare_next(&mut self, next: Option<PreparedPlaybackItem>) -> Result<(), String> {
         let Some(next) = next else {
-            if let Ok(mut shared) = self.shared.lock() {
-                shared.next = None;
-                shared.about_to_finish_pending = false;
-            }
+            self.clear_prepared_next();
             return Ok(());
         };
 
@@ -768,6 +769,36 @@ impl GstEngine {
                 .set_property("uri", item.stream.uri());
         }
         Ok(())
+    }
+
+    fn clear_prepared_next(&mut self) {
+        let clear = self
+            .shared
+            .lock()
+            .map(|mut shared| clear_prepared_next_state(&mut shared))
+            .unwrap_or_else(|_| PreparedNextClear {
+                gapless_current: None,
+                crossfade: None,
+            });
+        if let Some((slot, current)) = clear.gapless_current {
+            debug!(
+                track_id = %current.track.id.as_str(),
+                "cleared pending gapless next stream"
+            );
+            self.pipeline_for_slot(slot)
+                .pipeline
+                .set_property("uri", current.stream.uri());
+        }
+        if let Some(crossfade) = clear.crossfade {
+            debug!(
+                track_id = %crossfade.item.track.id.as_str(),
+                "cleared pending crossfade next stream"
+            );
+            self.pipeline_for_slot(crossfade.to).stop();
+            let (volume, muted) = self.output_state();
+            self.pipeline_for_slot(crossfade.from)
+                .set_output_volume(volume, muted);
+        }
     }
 
     fn start_seek(&mut self, millis: u64) -> Result<(), String> {
@@ -1782,6 +1813,22 @@ pub(super) fn cancel_crossfade_next(
     shared.gapless_pending = None;
     shared.about_to_finish_pending = false;
     Some(crossfade)
+}
+
+pub(super) fn clear_prepared_next_state(shared: &mut SharedPlaybackState) -> PreparedNextClear {
+    let gapless_current = shared.gapless_pending.take().and_then(|_| {
+        shared
+            .current
+            .clone()
+            .map(|current| (shared.active, current))
+    });
+    let crossfade = shared.crossfade.take();
+    shared.next = None;
+    shared.about_to_finish_pending = false;
+    PreparedNextClear {
+        gapless_current,
+        crossfade,
+    }
 }
 
 fn gapless_preload_should_run(shared: &SharedPlaybackState, next: &PreparedPlaybackItem) -> bool {

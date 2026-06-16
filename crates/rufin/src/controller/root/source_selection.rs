@@ -12,6 +12,15 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
+            let previous_active = match store
+                .with_store(|store| Ok(store.active_server()?.map(|saved| saved.server.id)))
+            {
+                Ok(previous_active) => previous_active,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
             let mut settings = load_settings_from_store(&store);
             settings.sources.selected = Some(source.clone());
             settings.migrate_defaults();
@@ -29,6 +38,12 @@ impl AppController {
                             return;
                         }
                     };
+                    if let Err(error) =
+                        cancel_previous_source_sync(&sync_context, previous_active.as_ref(), &saved)
+                    {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
                     if let Err(error) =
                         store.with_store(|store| store.set_active_server(&saved.server.id))
                     {
@@ -78,6 +93,12 @@ impl AppController {
                             return;
                         }
                     };
+                    if let Err(error) =
+                        cancel_previous_source_sync(&sync_context, previous_active.as_ref(), &saved)
+                    {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
                     if saved_server_needs_auth(&sync_context.secrets, &saved) {
                         clear_queue_and_stop_playback(
                             &queue,
@@ -118,4 +139,18 @@ impl AppController {
             }
         });
     }
+}
+
+fn cancel_previous_source_sync(
+    sync_context: &SyncContext,
+    previous_active: Option<&ServerId>,
+    selected: &SavedServer,
+) -> Result<(), String> {
+    let Some(previous_id) = previous_active else {
+        return Ok(());
+    };
+    if previous_id == &selected.server.id {
+        return Ok(());
+    }
+    cancel_sync_if_running(&sync_context.sync_in_flight, previous_id).map(|_| ())
 }

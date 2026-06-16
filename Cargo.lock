@@ -2656,6 +2656,7 @@ dependencies = [
 name = "rufin"
 version = "0.7.4"
 dependencies = [
+ "async-trait",
  "clap",
  "directories",
  "domain",

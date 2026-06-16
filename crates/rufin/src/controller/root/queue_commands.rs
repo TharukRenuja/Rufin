@@ -502,6 +502,7 @@ impl AppController {
             return;
         }
         self.persist_and_emit_playback();
+        self.prepare_next_stream();
     }
 }
 

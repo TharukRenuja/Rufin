@@ -41,6 +41,7 @@ impl AppController {
                 &store,
                 &matched_server_id,
                 None,
+                None,
             )) {
                 warn!(%error, "failed to refresh local track matches");
             }

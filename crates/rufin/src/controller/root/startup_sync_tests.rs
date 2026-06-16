@@ -7,9 +7,11 @@ use super::{
     load_runtime_snapshot, load_snapshot, prefetch_home_section, promote_prefetched_home_section,
     refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
     refresh_playlist_pages, sync_local_provider_outcome, sync_local_provider_with_events,
-    sync_page_finished, sync_provider, sync_provider_outcome, sync_provider_with_events,
+    sync_page_finished, sync_provider, sync_provider_outcome,
+    sync_provider_outcome_with_cancellation, sync_provider_with_events,
 };
 use ::test_support::{FakeProvider, FakeScale};
+use async_trait::async_trait;
 use domain::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibrarySourceSelection, LocalLibraryFolder, Playlist, PlaylistId, ServerId,
@@ -19,7 +21,12 @@ use library::{SavedServer, ServerLocalAccess};
 use playback::{PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState};
 use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
-use source::{MusicProvider, PagedRequest, PlaylistEntry, ProviderSession};
+use source::{
+    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
+    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SearchResults,
+    StreamDescriptor,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -1891,6 +1898,169 @@ pub(in crate::controller) fn startup_sync_total() {
     assert!(sync_page_finished(120, 0, 620));
     assert!(!sync_page_finished(120, 1_000, 620));
     assert!(sync_page_finished(500, 1_000, 1_000));
+}
+struct CancellingAlbumProvider {
+    identity: ProviderIdentity,
+    capabilities: ProviderCapabilities,
+    album: Album,
+    cancellation: CancellationToken,
+}
+
+impl CancellingAlbumProvider {
+    fn new(cancellation: CancellationToken) -> Self {
+        Self {
+            identity: ProviderIdentity {
+                server: ServerIdentity {
+                    id: ServerId::new("test:server:cancel"),
+                    provider: "test".to_string(),
+                    name: "Cancel Test".to_string(),
+                    base_url: "http://cancel.example.test".to_string(),
+                },
+            },
+            capabilities: ProviderCapabilities {
+                albums: true,
+                tracks: false,
+                artists: false,
+                album_artists: false,
+                genres: false,
+                playlists: false,
+                favorites: false,
+                lyrics: false,
+                playback_reporting: false,
+                playlist_mutations: false,
+                playlist_delete: false,
+                favorite_mutations: false,
+                auto_dj: false,
+                random_tracks: false,
+                random_played_filter: false,
+                search: false,
+                image_metadata: false,
+                music_folders: false,
+                folder_browsing: false,
+            },
+            album: remote_album_with_image_ref(ImageRef::new("test:cover:one", None)),
+            cancellation,
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl MusicProvider for CancellingAlbumProvider {
+    fn identity(&self) -> &ProviderIdentity {
+        &self.identity
+    }
+
+    fn capabilities(&self) -> &ProviderCapabilities {
+        &self.capabilities
+    }
+
+    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn albums(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+        self.cancellation.cancel();
+        Ok(PagedResponse::new(vec![self.album.clone()], 1))
+    }
+
+    async fn album_detail(&self, _album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn tracks(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
+        Err(ProviderError::Other(
+            "tracks fetched after cancellation".to_string(),
+        ))
+    }
+
+    async fn artists(
+        &self,
+        _request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<domain::Artist>> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn album_artists(
+        &self,
+        _request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<domain::Artist>> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn genres(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn playlists(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn playlist_detail(&self, _playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn genre_detail(&self, _genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn track(&self, _track_id: &TrackId) -> ProviderResult<Track> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn stream(&self, _track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn search(&self, _query: &str) -> ProviderResult<SearchResults> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn image_metadata(
+        &self,
+        _item_id: &str,
+        _kind: ImageKind,
+    ) -> ProviderResult<ImageMetadata> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+
+    async fn image_bytes(&self, _request: ImageRequest) -> ProviderResult<ImageBytes> {
+        Err(ProviderError::Unsupported("cancel test"))
+    }
+}
+
+#[test]
+pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let cancellation = CancellationToken::new();
+    let provider = CancellingAlbumProvider::new(cancellation.clone());
+    let server_id = provider.identity().server.id.clone();
+    store
+        .with_store(|store| {
+            store.save_server(&SavedServer {
+                server: provider.identity().server.clone(),
+                user_id: "cancel-user".to_string(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+            })?;
+            store.set_active_server(&server_id)
+        })
+        .expect("save server");
+
+    let error = runtime
+        .block_on(sync_provider_outcome_with_cancellation(
+            &store,
+            &server_id,
+            &provider,
+            &cancellation,
+        ))
+        .expect_err("sync should cancel");
+
+    assert_eq!(error, "Sync cancelled.");
+    let albums = store
+        .with_store(|store| store.load_albums(&server_id, 0, 10))
+        .expect("load albums");
+    assert_eq!(albums.total, 0);
 }
 #[test]
 pub(in crate::controller) fn startup_large_window() {
