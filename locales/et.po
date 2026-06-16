@@ -1070,7 +1070,7 @@ msgstr "siin"
 
 #: crates/rufin/src/i18n.rs:639
 #: crates/rufin/src/ui/preferences/root/general.rs:42
-msgid ". You only need ot fill email and an application name parts"
+msgid ". You only need to fill email and an application name parts"
 msgstr ". Sa pead vaid sisestama e-posti aadressi ja rakenduse nime"
 
 #: crates/rufin/src/i18n.rs:640
