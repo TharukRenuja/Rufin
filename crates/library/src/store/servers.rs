@@ -1078,6 +1078,13 @@ fn canonical_album_artist_id_for_write(
     {
         return Ok(Some(ArtistId::new(entity_id)));
     }
+    if let Some(artist_id) = clean_artist_identity_value(artist.musicbrainz_artist_id.as_deref())
+        && let Some(entity_id) =
+            relation_backed_album_artist_alias_target(connection, server_id, artist, artist_id)?
+        && entity_id != artist.id
+    {
+        return Ok(Some(entity_id));
+    }
     if let Some(entity_id) = connection
         .query_row(
             "
@@ -1098,6 +1105,59 @@ fn canonical_album_artist_id_for_write(
         return Ok(Some(ArtistId::new(entity_id)));
     }
     Ok(None)
+}
+
+fn relation_backed_album_artist_alias_target(
+    connection: &Connection,
+    server_id: &ServerId,
+    artist: &Artist,
+    musicbrainz_artist_id: &str,
+) -> StoreResult<Option<ArtistId>> {
+    let name = artist.name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let mut statement = connection.prepare(
+        "
+        WITH relation_artists AS (
+            SELECT artist_id, name
+            FROM album_artist_links
+            WHERE server_id = ?1
+              AND artist_id <> ?2
+            UNION
+            SELECT artist_id, artist AS name
+            FROM albums
+            WHERE server_id = ?1
+              AND artist_id IS NOT NULL
+              AND artist_id <> ?2
+        )
+        SELECT artist_id
+        FROM relation_artists candidate
+        WHERE LOWER(TRIM(candidate.name)) = LOWER(TRIM(?3))
+          AND NOT EXISTS (
+              SELECT 1
+              FROM entity_identity_keys key
+              WHERE key.server_id = ?1
+                AND key.entity_kind = 'album_artist'
+                AND key.namespace = 'musicbrainz:artist'
+                AND key.entity_id = candidate.artist_id
+                AND key.value <> ?4
+          )
+        GROUP BY artist_id
+        ORDER BY artist_id
+        LIMIT 2
+        ",
+    )?;
+    let ids = collect_rows(statement.query_map(
+        params![
+            server_id.as_str(),
+            artist.id.as_str(),
+            name,
+            musicbrainz_artist_id
+        ],
+        |row| row.get::<_, String>(0).map(ArtistId::new),
+    )?)?;
+    Ok((ids.len() == 1).then(|| ids[0].clone()))
 }
 
 fn clean_artist_identity_value(value: Option<&str>) -> Option<&str> {

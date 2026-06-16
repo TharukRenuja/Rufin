@@ -2006,6 +2006,98 @@ fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
 }
 
 #[test]
+fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let linked_id = ArtistId::new("jellyfin:artist:linked-credit");
+    let page_id = ArtistId::new("jellyfin:artist:provider-page");
+    let mut album = album(12);
+    album.artist = "Credit Artist".to_string();
+    album.artist_id = Some(linked_id.clone());
+    album.album_artist_credits = vec![credit(linked_id.clone(), "Credit Artist")];
+    let mut track = track(1, &album);
+    track.album_artist_credits = album.album_artist_credits.clone();
+    let mut page_artist = artist(92, None);
+    page_artist.id = page_id.clone();
+    page_artist.name = "Credit Artist".to_string();
+    page_artist.musicbrainz_artist_id = Some("mb-credit-artist".to_string());
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("repair linked album artist");
+    let delta = store
+        .upsert_artists_delta(
+            &saved.server.id,
+            std::slice::from_ref(&page_artist),
+            true,
+            generation,
+        )
+        .expect("upsert provider page artist");
+    let loaded = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists");
+    let alias_entity_id: String = store
+        .connection
+        .query_row(
+            "
+            SELECT entity_id
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'source:artist_id'
+              AND value = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), page_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("alias identity");
+    let linked_mbid_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'musicbrainz:artist'
+              AND entity_id = ?2
+              AND value = 'mb-credit-artist'
+            ",
+            rusqlite::params![saved.server.id.as_str(), linked_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("linked mbid keys");
+    let alias_row_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM album_artists
+            WHERE server_id = ?1
+              AND artist_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), page_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("alias rows");
+
+    assert!(delta.album_artists.is_empty());
+    assert_eq!(loaded.total, 1);
+    assert_eq!(loaded.items[0].id, linked_id);
+    assert_eq!(alias_entity_id, loaded.items[0].id.as_str());
+    assert_eq!(linked_mbid_count, 1);
+    assert_eq!(alias_row_count, 0);
+}
+
+#[test]
 fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
