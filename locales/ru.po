@@ -7,15 +7,16 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: 2026-06-14 11:14+0300\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-06-16 23:23+0000\n"
+"Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
+"Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=3; plural=n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
-"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+"X-Generator: Weblate 2026.7.dev0\n"
 
 #: crates/rufin/src/i18n.rs:60 crates/rufin/src/i18n.rs:419
 #: crates/rufin/src/ui/preferences/root/general.rs:811
@@ -26,7 +27,7 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:421 crates/rufin/src/ui/preferences/root/mod.rs:164
 #: crates/rufin/src/ui/preferences/root/mod.rs:173 crates/rufin/src/i18n.rs:434
 msgid "Language"
-msgstr ""
+msgstr "Язык"
 
 #: crates/rufin/src/i18n.rs:422 crates/rufin/src/i18n.rs:435
 msgid "Home"
@@ -38,7 +39,7 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:424 crates/rufin/src/i18n.rs:437
 msgid "Albums"
-msgstr ""
+msgstr "Альбомы"
 
 #: crates/rufin/src/i18n.rs:425
 #: crates/rufin/src/ui/preferences/root/general.rs:534
@@ -46,7 +47,7 @@ msgstr ""
 #: crates/rufin/src/ui/root/album_detail_view.rs:66
 #: crates/rufin/src/i18n.rs:438
 msgid "Album"
-msgstr ""
+msgstr "Альбом"
 
 #: crates/rufin/src/i18n.rs:426 crates/rufin/src/i18n.rs:447
 msgid "Tracks"
@@ -55,42 +56,42 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:427 crates/rufin/src/ui/artist.rs:229
 #: crates/rufin/src/ui/root/lyrics_panel.rs:82 crates/rufin/src/i18n.rs:448
 msgid "Artist"
-msgstr ""
+msgstr "Артист"
 
 #: crates/rufin/src/i18n.rs:428 crates/rufin/src/i18n.rs:449
 msgid "Artists"
-msgstr ""
+msgstr "Артисты"
 
 #: crates/rufin/src/i18n.rs:429 crates/rufin/src/i18n.rs:450
 msgid "Album Artists"
-msgstr ""
+msgstr "Артисты Альбома"
 
 #: crates/rufin/src/i18n.rs:430 crates/rufin/src/ui/random_play.rs:81
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:938
 #: crates/rufin/src/i18n.rs:451
 msgid "Genre"
-msgstr ""
+msgstr "Жанр"
 
 #: crates/rufin/src/i18n.rs:431 crates/rufin/src/i18n.rs:452
 msgid "Genres"
-msgstr ""
+msgstr "Жанры"
 
 #: crates/rufin/src/i18n.rs:432 crates/rufin/src/i18n.rs:453
 msgid "Folders"
-msgstr ""
+msgstr "Папки"
 
 #: crates/rufin/src/i18n.rs:433 crates/rufin/src/ui/folders.rs:373
 #: crates/rufin/src/i18n.rs:454
 msgid "Folder"
-msgstr ""
+msgstr "Папка"
 
 #: crates/rufin/src/i18n.rs:434 crates/rufin/src/i18n.rs:455
 msgid "Playlist"
-msgstr ""
+msgstr "Плейлист"
 
 #: crates/rufin/src/i18n.rs:435 crates/rufin/src/i18n.rs:456
 msgid "Playlists"
-msgstr ""
+msgstr "Плейлисты"
 
 #: crates/rufin/src/i18n.rs:436 crates/rufin/src/ui/library/route_shell.rs:32
 #: crates/rufin/src/ui/library/route_shell.rs:76
@@ -103,15 +104,15 @@ msgstr ""
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:377
 #: crates/rufin/src/ui/root/track_table.rs:54 crates/rufin/src/i18n.rs:457
 msgid "Search"
-msgstr ""
+msgstr "Поиск"
 
 #: crates/rufin/src/i18n.rs:437 crates/rufin/src/i18n.rs:458
 msgid "Settings"
-msgstr ""
+msgstr "Настройки"
 
 #: crates/rufin/src/i18n.rs:438 crates/rufin/src/i18n.rs:459
 msgid "Explore"
-msgstr ""
+msgstr "Исследовать"
 
 #: crates/rufin/src/i18n.rs:439 crates/rufin/src/i18n.rs:460
 msgid "Most played"
@@ -119,32 +120,32 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:440 crates/rufin/src/i18n.rs:461
 msgid "Newly added"
-msgstr ""
+msgstr "Недавно Добавлено"
 
 #: crates/rufin/src/i18n.rs:441 crates/rufin/src/i18n.rs:462
 msgid "Recently played"
-msgstr ""
+msgstr "Воспроизведено недавно"
 
 #: crates/rufin/src/i18n.rs:442 crates/rufin/src/i18n.rs:463
 msgid "Recently released"
-msgstr ""
+msgstr "Выпущено недавно"
 
 #: crates/rufin/src/i18n.rs:443 crates/rufin/src/i18n.rs:464
 msgid "Favorite tracks"
-msgstr ""
+msgstr "Любимые треки"
 
 #: crates/rufin/src/i18n.rs:444 crates/rufin/src/i18n.rs:465
 msgid "Appears On"
-msgstr ""
+msgstr "Появляется в"
 
 #: crates/rufin/src/i18n.rs:445 crates/rufin/src/ui/artist.rs:427
 #: crates/rufin/src/i18n.rs:466
 msgid "appears on"
-msgstr ""
+msgstr "появляется в"
 
 #: crates/rufin/src/i18n.rs:446 crates/rufin/src/i18n.rs:467
 msgid "Discography"
-msgstr ""
+msgstr "Дискография"
 
 #: crates/rufin/src/i18n.rs:447 crates/rufin/src/i18n.rs:468
 msgid "View all tracks"
@@ -156,7 +157,7 @@ msgstr ""
 #: crates/rufin/src/ui/library/cards.rs:206
 #: crates/rufin/src/ui/preferences/library.rs:225 crates/rufin/src/i18n.rs:469
 msgid "albums"
-msgstr ""
+msgstr "альбомы"
 
 #: crates/rufin/src/i18n.rs:449 crates/rufin/src/ui/artist.rs:419
 #: crates/rufin/src/ui/artist.rs:429 crates/rufin/src/ui/home.rs:59
@@ -173,27 +174,27 @@ msgstr ""
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:218
 #: crates/rufin/src/i18n.rs:470
 msgid "tracks"
-msgstr ""
+msgstr "треки"
 
 #: crates/rufin/src/i18n.rs:450 crates/rufin/src/ui/root/cover_startup.rs:426
 #: crates/rufin/src/i18n.rs:471
 msgid "Back"
-msgstr ""
+msgstr "назад"
 
 #: crates/rufin/src/i18n.rs:451 crates/rufin/src/ui/root/cover_startup.rs:428
 #: crates/rufin/src/i18n.rs:472
 msgid "Forward"
-msgstr ""
+msgstr "вперед"
 
 #: crates/rufin/src/i18n.rs:452 crates/rufin/src/i18n.rs:473
 msgid "Menu"
-msgstr ""
+msgstr "Меню"
 
 #: crates/rufin/src/i18n.rs:453 crates/rufin/src/ui/chrome.rs:116
 #: crates/rufin/src/ui/chrome.rs:124
 #: crates/rufin/src/ui/root/cover_startup.rs:431 crates/rufin/src/i18n.rs:474
 msgid "Main Menu"
-msgstr ""
+msgstr "Главное Меню"
 
 #: crates/rufin/src/i18n.rs:454 crates/rufin/src/ui/chrome.rs:140
 #: crates/rufin/src/ui/preferences/root/mod.rs:59
@@ -201,58 +202,58 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/mod.rs:92
 #: crates/rufin/src/ui/root/cover_startup.rs:433 crates/rufin/src/i18n.rs:475
 msgid "Preferences"
-msgstr ""
+msgstr "Предпочтения"
 
 #: crates/rufin/src/i18n.rs:455 crates/rufin/src/ui/chrome.rs:141
 #: crates/rufin/src/ui/root/cover_startup.rs:423
 #: crates/rufin/src/ui/root/cover_startup.rs:437 crates/rufin/src/i18n.rs:476
 msgid "Keyboard Shortcuts"
-msgstr ""
+msgstr "Сочетания Клавиш"
 
 #: crates/rufin/src/i18n.rs:456 crates/rufin/src/ui/chrome.rs:134
 #: crates/rufin/src/ui/root/cover_startup.rs:441 crates/rufin/src/i18n.rs:477
 msgid "Toggle Fullscreen"
-msgstr ""
+msgstr "Переключить Полноэкранный Режим"
 
 #: crates/rufin/src/i18n.rs:457 crates/rufin/src/ui/chrome.rs:145
 #: crates/rufin/src/i18n.rs:478
 msgid "About Rufin"
-msgstr ""
+msgstr "О Rufin"
 
 #: crates/rufin/src/i18n.rs:458 crates/rufin/src/ui/preferences/root/mod.rs:122
 #: crates/rufin/src/ui/preferences/root/mod.rs:157
 #: crates/rufin/src/ui/root/cover_startup.rs:425 crates/rufin/src/i18n.rs:479
 msgid "General"
-msgstr ""
+msgstr "Основное"
 
 #: crates/rufin/src/i18n.rs:459 crates/rufin/src/ui/preferences/root/mod.rs:407
 #: crates/rufin/src/i18n.rs:482
 msgid "Interface"
-msgstr ""
+msgstr "Интерфейс"
 
 #: crates/rufin/src/i18n.rs:460 crates/rufin/src/ui/preferences/library.rs:16
 #: crates/rufin/src/ui/preferences/library.rs:27
 #: crates/rufin/src/ui/preferences/root/mod.rs:146 crates/rufin/src/i18n.rs:483
 msgid "Library"
-msgstr ""
+msgstr "Библиотека"
 
 #: crates/rufin/src/i18n.rs:461 crates/rufin/src/i18n.rs:484
 msgid "Actions"
-msgstr ""
+msgstr "Действия"
 
 #: crates/rufin/src/i18n.rs:462 crates/rufin/src/i18n.rs:485
 msgid "Sync Status"
-msgstr ""
+msgstr "Статус Синхронизации"
 
 #: crates/rufin/src/i18n.rs:463 crates/rufin/src/ui/preferences/root/mod.rs:246
 #: crates/rufin/src/i18n.rs:486
 msgid "Metadata"
-msgstr ""
+msgstr "Метаданные"
 
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/ui/preferences/root/mod.rs:259
 #: crates/rufin/src/i18n.rs:489
 msgid "Prefer server playlist covers"
-msgstr ""
+msgstr "Предпочитать обложки плейлистов с сервера"
 
 #: crates/rufin/src/i18n.rs:464 crates/rufin/src/ui/preferences/root/mod.rs:259
 #: crates/rufin/src/i18n.rs:487
@@ -267,12 +268,12 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/ui/preferences/root/mod.rs:294
 #: crates/rufin/src/i18n.rs:490
 msgid "External site links"
-msgstr ""
+msgstr "Внешние ссылки"
 
 #: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/preferences/root/mod.rs:297
 #: crates/rufin/src/i18n.rs:491
 msgid "Show external site links"
-msgstr ""
+msgstr "Показать внешние ссылки"
 
 #: crates/rufin/src/i18n.rs:483 crates/rufin/src/ui/preferences/root/mod.rs:298
 #: crates/rufin/src/i18n.rs:492
@@ -284,18 +285,18 @@ msgstr ""
 #: crates/rufin/src/ui/root/layout_rendering.rs:1021
 #: crates/rufin/src/i18n.rs:495
 msgid "Open on Last.fm"
-msgstr ""
+msgstr "Открыть в Last.fm"
 
 #: crates/rufin/src/i18n.rs:488
 #: crates/rufin/src/ui/root/layout_rendering.rs:989
 #: crates/rufin/src/ui/root/layout_rendering.rs:1032
 #: crates/rufin/src/i18n.rs:496
 msgid "Open on MusicBrainz"
-msgstr ""
+msgstr "Открыть в MusicBrainz"
 
 #: crates/rufin/src/i18n.rs:489 crates/rufin/src/i18n.rs:497
 msgid "Open on Jellyfin"
-msgstr ""
+msgstr "Открыть в Jellyfin"
 
 #: crates/rufin/src/i18n.rs:466 crates/rufin/src/i18n.rs:498
 msgid "Does MusicBrainz and Cover Art Archive lookups"
@@ -308,12 +309,12 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:468 crates/rufin/src/ui/local_access_mapping.rs:506
 #: crates/rufin/src/i18n.rs:500
 msgid "Clear Cached Library"
-msgstr ""
+msgstr "Очистить кэшированную библиотеку"
 
 #: crates/rufin/src/i18n.rs:469 crates/rufin/src/ui/local_access_mapping.rs:514
 #: crates/rufin/src/i18n.rs:501
 msgid "Clear Cache"
-msgstr ""
+msgstr "Очистить Кэш"
 
 #: crates/rufin/src/i18n.rs:470 crates/rufin/src/ui/local_access_mapping.rs:509
 #: crates/rufin/src/i18n.rs:502
@@ -333,17 +334,17 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:474 crates/rufin/src/i18n.rs:506
 msgid "No active server"
-msgstr ""
+msgstr "Нет активного сервера"
 
 #: crates/rufin/src/i18n.rs:475 crates/rufin/src/ui/login.rs:50
 #: crates/rufin/src/ui/source_selector.rs:316 crates/rufin/src/i18n.rs:507
 msgid "Add Server"
-msgstr ""
+msgstr "Добавить Сервер"
 
 #: crates/rufin/src/i18n.rs:476 crates/rufin/src/ui/local_access_mapping.rs:72
 #: crates/rufin/src/i18n.rs:508
 msgid "Manage Server"
-msgstr ""
+msgstr "Управление Сервером"
 
 #: crates/rufin/src/i18n.rs:477 crates/rufin/src/i18n.rs:509
 msgid "Configure local folder access"
@@ -352,26 +353,26 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:478 crates/rufin/src/ui/source_selector.rs:115
 #: crates/rufin/src/i18n.rs:510
 msgid "Source"
-msgstr ""
+msgstr "Источник"
 
 #: crates/rufin/src/i18n.rs:479 crates/rufin/src/ui/source_selector.rs:234
 #: crates/rufin/src/i18n.rs:511
 msgid "Select Source"
-msgstr ""
+msgstr "Выбрать Источник"
 
 #: crates/rufin/src/i18n.rs:480 crates/rufin/src/ui/source_selector.rs:147
 #: crates/rufin/src/i18n.rs:512
 msgid "No source"
-msgstr ""
+msgstr "Нет источника"
 
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/i18n.rs:513
 msgid "Sources"
-msgstr ""
+msgstr "Источники"
 
 #: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/preferences/library.rs:34
 #: crates/rufin/src/i18n.rs:514
 msgid "Servers"
-msgstr ""
+msgstr "Серверы"
 
 #: crates/rufin/src/i18n.rs:483 crates/rufin/src/i18n.rs:515
 msgid "Configure saved music servers and local playback mappings"
@@ -380,17 +381,17 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:484 crates/rufin/src/ui/preferences/library.rs:42
 #: crates/rufin/src/ui/source_selector.rs:236 crates/rufin/src/i18n.rs:516
 msgid "No servers configured"
-msgstr ""
+msgstr "Нет настроенных серверов"
 
 #: crates/rufin/src/i18n.rs:485 crates/rufin/src/ui/source_selector.rs:286
 #: crates/rufin/src/i18n.rs:517
 msgid "Server Library"
-msgstr ""
+msgstr "Библиотека Сервера"
 
 #: crates/rufin/src/i18n.rs:486 crates/rufin/src/ui/preferences/library.rs:205
 #: crates/rufin/src/ui/source_selector.rs:348 crates/rufin/src/i18n.rs:518
 msgid "All Music"
-msgstr ""
+msgstr "Вся Музыка"
 
 #: crates/rufin/src/i18n.rs:487 crates/rufin/src/ui/source_selector.rs:298
 #: crates/rufin/src/i18n.rs:519
@@ -400,71 +401,71 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:488 crates/rufin/src/ui/preferences/library.rs:99
 #: crates/rufin/src/i18n.rs:520
 msgid "Local Folders"
-msgstr ""
+msgstr "Локальные Папки"
 
 #: crates/rufin/src/i18n.rs:489 crates/rufin/src/ui/preferences/library.rs:106
 #: crates/rufin/src/ui/source_selector.rs:334 crates/rufin/src/i18n.rs:521
 msgid "No local folders configured"
-msgstr ""
+msgstr "Нет настроенных локальных папок"
 
 #: crates/rufin/src/i18n.rs:490 crates/rufin/src/i18n.rs:522
 msgid "Add Local Folder"
-msgstr ""
+msgstr "Добавить Локальную Папку"
 
 #: crates/rufin/src/i18n.rs:491 crates/rufin/src/i18n.rs:523
 msgid "Active Source Actions"
-msgstr ""
+msgstr "Действия с Активными Источниками"
 
 #: crates/rufin/src/i18n.rs:492 crates/rufin/src/i18n.rs:524
 msgid "Map Local"
-msgstr ""
+msgstr "Локальный Маппинг"
 
 #: crates/rufin/src/i18n.rs:493 crates/rufin/src/i18n.rs:525
 msgid "Edit Mapping"
-msgstr ""
+msgstr "Изменить Маппинг"
 
 #: crates/rufin/src/i18n.rs:494 crates/rufin/src/ui/local_access_mapping.rs:349
 #: crates/rufin/src/i18n.rs:526
 msgid "Server Settings"
-msgstr ""
+msgstr "Настройки Сервера"
 
 #: crates/rufin/src/i18n.rs:495 crates/rufin/src/ui/local_access_mapping.rs:432
 #: crates/rufin/src/i18n.rs:527
 msgid "Server Actions"
-msgstr ""
+msgstr "Действия Сервера"
 
 #: crates/rufin/src/i18n.rs:496 crates/rufin/src/i18n.rs:528
 msgid "Use This Source"
-msgstr ""
+msgstr "Использовать Этот Источник"
 
 #: crates/rufin/src/i18n.rs:497 crates/rufin/src/i18n.rs:529
 msgid "Selected Source"
-msgstr ""
+msgstr "Выбранный Источник"
 
 #: crates/rufin/src/i18n.rs:498 crates/rufin/src/ui/folders.rs:331
 #: crates/rufin/src/ui/local_access_mapping.rs:358 crates/rufin/src/i18n.rs:530
 msgid "Name"
-msgstr ""
+msgstr "Название"
 
 #: crates/rufin/src/i18n.rs:499 crates/rufin/src/ui/local_access_mapping.rs:489
 #: crates/rufin/src/i18n.rs:531
 msgid "Not set"
-msgstr ""
+msgstr "Не выбрано"
 
 #: crates/rufin/src/i18n.rs:500 crates/rufin/src/i18n.rs:749
 #: crates/rufin/src/i18n.rs:532 crates/rufin/src/i18n.rs:796
 msgid "Yes"
-msgstr ""
+msgstr "Да"
 
 #: crates/rufin/src/i18n.rs:501 crates/rufin/src/i18n.rs:734
 #: crates/rufin/src/i18n.rs:533 crates/rufin/src/i18n.rs:781
 msgid "No"
-msgstr ""
+msgstr "Нет"
 
 #: crates/rufin/src/i18n.rs:502 crates/rufin/src/ui/preferences/library.rs:260
 #: crates/rufin/src/i18n.rs:534
 msgid "Local mapping"
-msgstr ""
+msgstr "Локальный маппинг"
 
 #: crates/rufin/src/i18n.rs:503 crates/rufin/src/ui/preferences/library.rs:249
 #: crates/rufin/src/ui/preferences/library.rs:252 crates/rufin/src/i18n.rs:535
@@ -491,11 +492,11 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:508 crates/rufin/src/i18n.rs:540
 msgid "Choose Folder"
-msgstr ""
+msgstr "Выбрать Папку"
 
 #: crates/rufin/src/i18n.rs:509 crates/rufin/src/i18n.rs:541
 msgid "Add local folder access"
-msgstr ""
+msgstr "Добавить доступ к локальной папке"
 
 #: crates/rufin/src/i18n.rs:510 crates/rufin/src/ui/preferences/library.rs:162
 #: crates/rufin/src/i18n.rs:542
@@ -514,11 +515,11 @@ msgstr ""
 #: crates/rufin/src/ui/root/lyrics_panel.rs:218 crates/rufin/src/i18n.rs:545
 #: crates/rufin/src/i18n.rs:654
 msgid "Save"
-msgstr ""
+msgstr "Сохранить"
 
 #: crates/rufin/src/i18n.rs:514 crates/rufin/src/i18n.rs:546
 msgid "Save Mapping"
-msgstr ""
+msgstr "Сохранить Маппинг"
 
 #: crates/rufin/src/i18n.rs:515 crates/rufin/src/i18n.rs:547
 msgid "Save Server Settings"
@@ -529,7 +530,7 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/general.rs:193
 #: crates/rufin/src/i18n.rs:548 crates/rufin/src/i18n.rs:675
 msgid "Connect"
-msgstr ""
+msgstr "Подключить"
 
 #: crates/rufin/src/i18n.rs:517 crates/rufin/src/ui/login.rs:114
 #: crates/rufin/src/ui/root/route_rendering.rs:21 crates/rufin/src/i18n.rs:549
@@ -538,11 +539,11 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:518 crates/rufin/src/i18n.rs:550
 msgid "Preparing library…"
-msgstr ""
+msgstr "Подготовка библиотеки…"
 
 #: crates/rufin/src/i18n.rs:519 crates/rufin/src/i18n.rs:551
 msgid "Library sync complete"
-msgstr ""
+msgstr "Синхронизация библиотеки завершена"
 
 #: crates/rufin/src/i18n.rs:520 crates/rufin/src/i18n.rs:552
 msgid "Choose a provider, pick a server, or enter the address manually"
@@ -557,32 +558,32 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:522 crates/rufin/src/ui/login.rs:138
 #: crates/rufin/src/i18n.rs:554
 msgid "Provider"
-msgstr ""
+msgstr "Провайдер"
 
 #: crates/rufin/src/i18n.rs:523 crates/rufin/src/ui/local_access_mapping.rs:371
 #: crates/rufin/src/ui/login.rs:154 crates/rufin/src/i18n.rs:555
 msgid "Username"
-msgstr ""
+msgstr "Имя пользователя"
 
 #: crates/rufin/src/i18n.rs:524 crates/rufin/src/ui/local_access_mapping.rs:378
 #: crates/rufin/src/ui/login.rs:159 crates/rufin/src/i18n.rs:556
 msgid "Password"
-msgstr ""
+msgstr "Пароль"
 
 #: crates/rufin/src/i18n.rs:525 crates/rufin/src/ui/preferences/library.rs:279
 #: crates/rufin/src/ui/source_selector.rs:199 crates/rufin/src/i18n.rs:557
 msgid "Jellyfin"
-msgstr ""
+msgstr "Jellyfin"
 
 #: crates/rufin/src/i18n.rs:526 crates/rufin/src/ui/preferences/library.rs:280
 #: crates/rufin/src/ui/source_selector.rs:200 crates/rufin/src/i18n.rs:558
 msgid "Navidrome"
-msgstr ""
+msgstr "Navidrome"
 
 #: crates/rufin/src/i18n.rs:527 crates/rufin/src/ui/preferences/library.rs:281
 #: crates/rufin/src/ui/source_selector.rs:201 crates/rufin/src/i18n.rs:559
 msgid "Subsonic / OpenSubsonic"
-msgstr ""
+msgstr "Subsonic / OpenSubsonic"
 
 #: crates/rufin/src/i18n.rs:528 crates/rufin/src/i18n.rs:753
 #: crates/rufin/src/ui/preferences/library.rs:282
@@ -590,12 +591,12 @@ msgstr ""
 #: crates/rufin/src/ui/source_selector.rs:264 crates/rufin/src/i18n.rs:560
 #: crates/rufin/src/i18n.rs:800
 msgid "Local"
-msgstr ""
+msgstr "Локальный источник"
 
 #: crates/rufin/src/i18n.rs:529 crates/rufin/src/ui/local_access_mapping.rs:182
 #: crates/rufin/src/ui/login.rs:184 crates/rufin/src/i18n.rs:561
 msgid "Local Library"
-msgstr ""
+msgstr "Локальная Библиотека"
 
 #: crates/rufin/src/i18n.rs:531 crates/rufin/src/i18n.rs:563
 msgid ""
@@ -617,47 +618,49 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:535 crates/rufin/src/ui/local_access_mapping.rs:138
 #: crates/rufin/src/i18n.rs:567
 msgid "No folder selected"
-msgstr ""
+msgstr "Папка не выбрана"
 
 #: crates/rufin/src/i18n.rs:536 crates/rufin/src/ui/login.rs:787
 #: crates/rufin/src/i18n.rs:568
 msgid "No folders selected"
-msgstr ""
+msgstr "Папки не выбраны"
 
 #: crates/rufin/src/i18n.rs:537 crates/rufin/src/ui/login.rs:789
 #: crates/rufin/src/i18n.rs:569
 msgid "folders selected"
-msgstr ""
+msgstr "папок выбрано"
 
 #: crates/rufin/src/i18n.rs:538 crates/rufin/src/ui/login.rs:202
 #: crates/rufin/src/i18n.rs:570
 msgid "Add"
-msgstr ""
+msgstr "Добавить"
 
 #: crates/rufin/src/i18n.rs:539 crates/rufin/src/ui/login.rs:199
 #: crates/rufin/src/i18n.rs:571
 msgid "Add Folder"
-msgstr ""
+msgstr "Добавить Папку"
 
 #: crates/rufin/src/i18n.rs:540 crates/rufin/src/ui/login.rs:200
 #: crates/rufin/src/i18n.rs:572
 msgid "Add another folder to the Local source"
-msgstr ""
+msgstr "Добавить другую папку в Локальный источник"
 
 #: crates/rufin/src/i18n.rs:541 crates/rufin/src/ui/login.rs:186
 #: crates/rufin/src/i18n.rs:573
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
+"Выберите одну или несколько папок чтобы сканировать и воспроизводить музыку "
+"напрямую с этого компьютера"
 
 #: crates/rufin/src/i18n.rs:542 crates/rufin/src/ui/login.rs:264
 #: crates/rufin/src/i18n.rs:574
 msgid "Choose at least one local music folder"
-msgstr ""
+msgstr "Выберите хотя бы одну папку с музыкой"
 
 #: crates/rufin/src/i18n.rs:543 crates/rufin/src/ui/local_access_mapping.rs:141
 #: crates/rufin/src/ui/login.rs:193 crates/rufin/src/i18n.rs:575
 msgid "Choose"
-msgstr ""
+msgstr "Выбрать"
 
 #: crates/rufin/src/i18n.rs:544 crates/rufin/src/ui/local_access_mapping.rs:180
 #: crates/rufin/src/i18n.rs:576
