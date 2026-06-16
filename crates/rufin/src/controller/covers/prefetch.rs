@@ -84,6 +84,7 @@ struct CoverPrefetchContext<'a> {
     runtime: &'a Runtime,
     secrets: &'a Arc<dyn SecretStore>,
     events: &'a Sender<ControllerEvent>,
+    emit_status: bool,
     cover_in_flight: &'a Arc<Mutex<HashMap<String, u64>>>,
     external_cover_retry_generation: &'a Arc<AtomicU64>,
     retry_generation: u64,
@@ -104,6 +105,7 @@ pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
     pub(in crate::controller) saved: &'a SavedServer,
     pub(in crate::controller) provider: &'a dyn MusicProvider,
     pub(in crate::controller) cancellation: Option<&'a CancellationToken>,
+    pub(in crate::controller) emit_status: bool,
 }
 
 fn mark_prefetch_flight(
@@ -191,6 +193,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
             runtime: &runtime,
             secrets: &secrets,
             events: &events,
+            emit_status: true,
             cover_in_flight: &cover_in_flight,
             external_cover_retry_generation: &external_cover_retry_generation,
             retry_generation,
@@ -259,6 +262,7 @@ pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
         store: request.store,
         runtime: request.runtime,
         events: request.events,
+        emit_status: request.emit_status,
         secrets: request.secrets,
         cover_in_flight: request.cover_in_flight,
         external_cover_retry_generation: request.external_cover_retry_generation,
@@ -336,7 +340,7 @@ fn emit_initial_cover_prefetch_status(
     processed: usize,
     total: usize,
 ) {
-    if total == 0 {
+    if total == 0 || !context.emit_status {
         return;
     }
     let _sent = context.events.send(ControllerEvent::LoginStatus(format!(

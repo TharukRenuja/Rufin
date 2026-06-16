@@ -2165,6 +2165,59 @@ pub(in crate::controller) fn startup_cache_total() {
     assert!(status.contains("620 fetched, 620 cached"));
     assert!(!status.contains("620/"));
 }
+
+#[test]
+pub(in crate::controller) fn startup_progress_reporter_can_be_silent() {
+    let (events, receiver) = channel();
+    let mut progress =
+        SyncProgressReporter::new(Some(events), "Music".to_string(), "Jellyfin".to_string());
+    progress.page_written(SyncPageProgress {
+        collection: SyncCollection::Albums,
+        page_number: 1,
+        fetched: 10,
+        written: 10,
+        total: Some(10),
+        finished: true,
+        fetch_elapsed: Duration::from_millis(5),
+        write_elapsed: Duration::from_millis(5),
+    });
+    assert!(wait_for_status(&receiver).contains("Cached albums page 1/1"));
+
+    let (_events, receiver) = channel::<ControllerEvent>();
+    let mut silent = SyncProgressReporter::new(None, "Music".to_string(), "Jellyfin".to_string());
+    silent.page_written(SyncPageProgress {
+        collection: SyncCollection::Albums,
+        page_number: 1,
+        fetched: 10,
+        written: 10,
+        total: Some(10),
+        finished: true,
+        fetch_elapsed: Duration::from_millis(5),
+        write_elapsed: Duration::from_millis(5),
+    });
+    assert!(receiver.try_iter().next().is_none());
+}
+
+#[test]
+pub(in crate::controller) fn startup_background_sync_mutes_running_status() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let saved = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("active server");
+    let _permit = controller
+        .sync_in_flight
+        .acquire(saved.server.id.clone())
+        .expect("sync guard")
+        .expect("sync permit");
+
+    start_background_sync_thread(controller.sync_context(), saved);
+
+    assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+}
+
 #[test]
 pub(in crate::controller) fn startup_local_cache() {
     let store = StoreHandle::open_memory().expect("memory store");

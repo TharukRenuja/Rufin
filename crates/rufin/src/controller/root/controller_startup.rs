@@ -69,14 +69,21 @@ where
 }
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
-    start_sync_thread_inner(context, saved, false, false);
+    start_sync_thread_inner(context, saved, false, false, true);
+}
+
+pub(in crate::controller) fn start_background_sync_thread(
+    context: SyncContext,
+    saved: SavedServer,
+) {
+    start_sync_thread_inner(context, saved, false, false, false);
 }
 
 pub(in crate::controller) fn start_sync_thread_with_snapshots(
     context: SyncContext,
     saved: SavedServer,
 ) {
-    start_sync_thread_inner(context, saved, true, false);
+    start_sync_thread_inner(context, saved, true, false, true);
 }
 
 pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved: SavedServer) {
@@ -96,7 +103,7 @@ pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved
         ));
         return;
     }
-    start_sync_thread_inner(context, saved, false, true);
+    start_sync_thread_inner(context, saved, false, true, true);
 }
 
 fn start_sync_thread_inner(
@@ -104,6 +111,7 @@ fn start_sync_thread_inner(
     saved: SavedServer,
     force_snapshots: bool,
     completion_snapshot: bool,
+    emit_progress: bool,
 ) {
     let server_id = saved.server.id.clone();
     let cached_current = sync_target_is_current(&context.store, &server_id)
@@ -112,9 +120,11 @@ fn start_sync_thread_inner(
     let permit = match context.sync_in_flight.acquire(server_id.clone()) {
         Ok(Some(permit)) => permit,
         Ok(None) => {
-            let _sent = context.events.send(ControllerEvent::LoginStatus(
-                "Sync already running.".to_string(),
-            ));
+            if emit_progress {
+                let _sent = context.events.send(ControllerEvent::LoginStatus(
+                    "Sync already running.".to_string(),
+                ));
+            }
             if force_snapshots {
                 emit_runtime_snapshot(&context.store, &context.secrets, &context.events);
             }
@@ -157,9 +167,11 @@ fn start_sync_thread_inner(
     thread::spawn(move || {
         let _permit = permit;
         let provider_name = provider_display_name(&saved.server.provider);
-        let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
-            "Syncing {provider_name} library…"
-        )));
+        if emit_progress {
+            let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
+                "Syncing {provider_name} library…"
+            )));
+        }
         let sync_result = if cancellation.cancelled() {
             Err(SYNC_CANCELLED_ERROR.to_string())
         } else {
@@ -169,6 +181,7 @@ fn start_sync_thread_inner(
                 generation,
                 prefetch_initial_covers,
                 skip_sync_snapshots,
+                emit_progress,
                 &cancellation,
             )
         };
@@ -755,11 +768,13 @@ pub(in crate::controller) fn run_sync_job(
     generation: i64,
     prefetch_initial_covers: bool,
     detect_unchanged: bool,
+    emit_progress: bool,
     cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
     check_sync_cancelled(cancellation)?;
+    let events = emit_progress.then(|| context.events.clone());
     let mut progress = SyncProgressReporter::new(
-        Some(context.events.clone()),
+        events,
         saved.server.name.clone(),
         provider_display_name(&saved.server.provider).to_string(),
     );
@@ -783,9 +798,11 @@ pub(in crate::controller) fn run_sync_job(
     )?;
     if prefetch_initial_covers {
         check_sync_cancelled(cancellation)?;
-        let _sent = context.events.send(ControllerEvent::LoginStatus(
-            "Caching library artwork…".to_string(),
-        ));
+        if emit_progress {
+            let _sent = context.events.send(ControllerEvent::LoginStatus(
+                "Caching library artwork…".to_string(),
+            ));
+        }
         covers::prefetch_initial_provider_cover_cache(covers::ProviderCoverPrefetchRequest {
             store: &context.store,
             runtime: &context.runtime,
@@ -800,6 +817,7 @@ pub(in crate::controller) fn run_sync_job(
             saved,
             provider: provider.as_music_provider(),
             cancellation: Some(cancellation),
+            emit_status: emit_progress,
         })?;
     }
     Ok(outcome)
