@@ -17,9 +17,9 @@ use super::player_icons::{
 use super::{
     ArtworkTile, CoverDecodePriority, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
     add_label_click, add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
-    favorite_icon_button, icon_button, icon_button_with_image, install_current_track_context_menu,
-    present_current_track_context_menu, seekbar_target_seconds, set_active_class,
-    set_favorite_button_active,
+    favorite_button_is_active, favorite_icon_button, icon_button, icon_button_with_image,
+    install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
+    set_active_class, set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -888,6 +888,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     configure_player_action_button(&queue_button);
     root.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
+    favorite_button.add_css_class("player-favorite-button");
     configure_player_action_button(&favorite_button);
     root.append(&favorite_button);
 
@@ -1157,11 +1158,21 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .lyrics_button
         .connect_clicked(move |_| lyrics_shell.toggle_lyrics_panel());
 
-    let controller = shell.controller.clone();
+    let favorite_shell = Rc::clone(shell);
     shell
         .player_controls
         .favorite_button
-        .connect_clicked(move |_| controller.toggle_current_favorite());
+        .connect_clicked(move |button| {
+            let Some(entry) = favorite_shell.state.player.borrow().current.clone() else {
+                return;
+            };
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Track(entry.track_id),
+                favorite,
+                Some(button),
+            );
+        });
 
     let title_shell = Rc::clone(shell);
     add_label_click(&shell.player_controls.title, move || {

@@ -10,20 +10,6 @@ impl AppController {
     pub fn set_artist_favorite(&self, artist_id: ArtistId, favorite: bool) {
         self.set_favorite(FavoriteItemId::Artist(artist_id), favorite);
     }
-    pub fn toggle_current_favorite(&self) {
-        let Some(entry) = self
-            .playback_snapshot
-            .lock()
-            .ok()
-            .and_then(|snapshot| snapshot.current.clone())
-        else {
-            let _sent = self
-                .events
-                .send(ControllerEvent::Error("No track is playing.".to_string()));
-            return;
-        };
-        self.set_favorite(FavoriteItemId::Track(entry.track_id), !entry.favorite);
-    }
     pub(in crate::controller) fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
