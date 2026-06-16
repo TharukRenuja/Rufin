@@ -28,7 +28,8 @@ use library::{
 };
 use playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
-    PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem, generate_waveform_peaks,
+    PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem,
+    generate_waveform_peaks_cancellable,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use secrets::MemorySecretStore;
@@ -55,7 +56,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -473,7 +474,11 @@ where
     K: Eq + Hash,
 {
     name: &'static str,
-    inner: Arc<Mutex<HashSet<K>>>,
+    inner: Arc<Mutex<HashMap<K, CancellationToken>>>,
+}
+#[derive(Clone, Debug)]
+pub(in crate::controller) struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
 }
 pub(in crate::controller) struct InFlightPermit<K>
 where
@@ -481,6 +486,22 @@ where
 {
     guards: InFlightGuards<K>,
     key: Option<K>,
+    token: CancellationToken,
+}
+impl CancellationToken {
+    pub(in crate::controller) fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(in crate::controller) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub(in crate::controller) fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
 }
 impl<K> InFlightGuards<K>
 where
@@ -489,22 +510,36 @@ where
     fn new(name: &'static str) -> Self {
         Self {
             name,
-            inner: Arc::new(Mutex::new(HashSet::new())),
+            inner: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     fn contains_or_blocked(&self, key: &K) -> bool {
         self.inner
             .lock()
-            .map(|running| running.contains(key))
+            .map(|running| running.contains_key(key))
             .unwrap_or(true)
     }
 
-    fn remove(&self, key: &K) -> Result<bool, String> {
+    fn cancel(&self, key: &K) -> Result<bool, String> {
         self.inner
             .lock()
-            .map(|mut running| running.remove(key))
+            .map(|running| {
+                let Some(token) = running.get(key) else {
+                    return false;
+                };
+                token.cancel();
+                true
+            })
             .map_err(|_| self.poisoned_message())
+    }
+
+    #[cfg(test)]
+    fn cancellation_requested(&self, key: &K) -> bool {
+        self.inner
+            .lock()
+            .map(|running| running.get(key).is_some_and(CancellationToken::cancelled))
+            .unwrap_or(true)
     }
 
     fn poisoned_message(&self) -> String {
@@ -517,13 +552,24 @@ where
 {
     fn acquire(&self, key: K) -> Result<Option<InFlightPermit<K>>, String> {
         let mut running = self.inner.lock().map_err(|_| self.poisoned_message())?;
-        if !running.insert(key.clone()) {
+        if running.contains_key(&key) {
             return Ok(None);
         }
+        let token = CancellationToken::new();
+        running.insert(key.clone(), token.clone());
         Ok(Some(InFlightPermit {
             guards: self.clone(),
             key: Some(key),
+            token,
         }))
+    }
+}
+impl<K> InFlightPermit<K>
+where
+    K: Eq + Hash,
+{
+    fn cancellation_token(&self) -> CancellationToken {
+        self.token.clone()
     }
 }
 impl<K> Drop for InFlightPermit<K>

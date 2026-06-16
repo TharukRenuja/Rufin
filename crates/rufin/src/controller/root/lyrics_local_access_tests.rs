@@ -1101,6 +1101,7 @@ pub(in crate::controller) fn access_match_use() {
             &store,
             &saved.server.id,
             Some(generation),
+            None,
         ))
         .expect("refresh local matches");
 

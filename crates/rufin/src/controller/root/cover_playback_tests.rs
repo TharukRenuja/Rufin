@@ -623,7 +623,7 @@ pub(in crate::controller) fn cover_emit_run() {
         .secrets
         .save_token(&server_id, "token")
         .expect("save token");
-    let _permit = controller
+    let permit = controller
         .sync_in_flight
         .acquire(server_id.clone())
         .expect("sync guard")
@@ -642,6 +642,9 @@ pub(in crate::controller) fn cover_emit_run() {
             .expect("servers"),
         Vec::new()
     );
+    assert!(controller.sync_in_flight.contains_or_blocked(&server_id));
+    assert!(controller.sync_in_flight.cancellation_requested(&server_id));
+    drop(permit);
     assert!(!controller.sync_in_flight.contains_or_blocked(&server_id));
     wait_for_token_deleted(&controller.secrets, &server_id);
 }
@@ -1380,6 +1383,37 @@ pub(in crate::controller) fn playback_modes_do_not_emit_queue() {
     controller.toggle_shuffle();
     let playback = wait_for_shuffle_without_queue(&events, true);
     assert!(playback.shuffle_enabled);
+}
+
+#[test]
+pub(in crate::controller) fn repeat_one_clears_prepared_next() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+
+    controller.play_tracks_now(vec![first, second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_repeat(&events, RepeatMode::All);
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
+    commands.lock().expect("commands").clear();
+
+    controller.cycle_repeat();
+    let playback = wait_for_repeat_without_queue(&events, RepeatMode::One);
+    assert_eq!(playback.repeat_mode, RepeatMode::One);
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(None))
+    });
+    assert_eq!(command, PlaybackCommand::PrepareNext(None));
 }
 
 #[test]

@@ -46,6 +46,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+async-trait.workspace = true
 rusqlite.workspace = true
 test_support.workspace = true
 

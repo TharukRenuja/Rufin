@@ -5,8 +5,68 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const SYNC_PROGRESS_MIN_INTERVAL: Duration = Duration::from_secs(2);
+const SYNC_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RELEASE_TYPE_LOOKUP_LIMIT: usize = 500;
+const SYNC_CANCELLED_ERROR: &str = "Sync cancelled.";
 static RELEASE_TYPE_LOOKUPS_IN_FLIGHT: OnceLock<Mutex<HashSet<ServerId>>> = OnceLock::new();
+
+fn check_sync_cancelled(cancellation: &CancellationToken) -> Result<(), String> {
+    if cancellation.cancelled() {
+        return Err(SYNC_CANCELLED_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn check_optional_sync_cancelled(cancellation: Option<&CancellationToken>) -> Result<(), String> {
+    if let Some(cancellation) = cancellation {
+        check_sync_cancelled(cancellation)?;
+    }
+    Ok(())
+}
+
+fn sync_result_was_cancelled(
+    result: &Result<SyncJobOutcome, String>,
+    cancellation: &CancellationToken,
+) -> bool {
+    cancellation.cancelled()
+        || matches!(result, Err(error) if error.as_str() == SYNC_CANCELLED_ERROR)
+}
+
+fn mark_sync_cancelled(store: &StoreHandle, server_id: &ServerId, generation: i64) {
+    if let Err(error) = store.with_store(|store| store.cancel_sync(server_id, generation)) {
+        warn!(%error, server_id = %server_id.as_str(), generation, "failed to mark sync cancelled");
+    }
+}
+
+async fn await_provider<T, Fut>(
+    cancellation: &CancellationToken,
+    operation: Fut,
+) -> Result<T, String>
+where
+    Fut: Future<Output = source::ProviderResult<T>>,
+{
+    tokio::pin!(operation);
+    loop {
+        check_sync_cancelled(cancellation)?;
+        tokio::select! {
+            result = &mut operation => return result.map_err(|error| error.to_string()),
+            _ = tokio::time::sleep(SYNC_CANCEL_POLL_INTERVAL) => {}
+        }
+    }
+}
+
+async fn await_optional_provider<T, Fut>(
+    cancellation: Option<&CancellationToken>,
+    operation: Fut,
+) -> Result<T, String>
+where
+    Fut: Future<Output = source::ProviderResult<T>>,
+{
+    match cancellation {
+        Some(cancellation) => await_provider(cancellation, operation).await,
+        None => operation.await.map_err(|error| error.to_string()),
+    }
+}
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     start_sync_thread_inner(context, saved, false, false);
@@ -71,6 +131,7 @@ fn start_sync_thread_inner(
             return;
         }
     };
+    let cancellation = permit.cancellation_token();
 
     let prefetch_initial_covers = initial_cover_cache_required(&context.store, &server_id);
     let generation = match context
@@ -94,21 +155,34 @@ fn start_sync_thread_inner(
     }
 
     thread::spawn(move || {
+        let _permit = permit;
         let provider_name = provider_display_name(&saved.server.provider);
         let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
             "Syncing {provider_name} library…"
         )));
-        let sync_result = run_sync_job(
-            &context,
-            &saved,
-            generation,
-            prefetch_initial_covers,
-            skip_sync_snapshots,
-        );
-        drop(permit);
+        let sync_result = if cancellation.cancelled() {
+            Err(SYNC_CANCELLED_ERROR.to_string())
+        } else {
+            run_sync_job(
+                &context,
+                &saved,
+                generation,
+                prefetch_initial_covers,
+                skip_sync_snapshots,
+                &cancellation,
+            )
+        };
+        if sync_result_was_cancelled(&sync_result, &cancellation) {
+            mark_sync_cancelled(&context.store, &server_id, generation);
+            return;
+        }
         match sync_result {
             Ok(outcome) => {
                 if !sync_target_is_current(&context.store, &server_id) {
+                    return;
+                }
+                if cancellation.cancelled() {
+                    mark_sync_cancelled(&context.store, &server_id, generation);
                     return;
                 }
                 if outcome.post_sync_work {
@@ -681,7 +755,9 @@ pub(in crate::controller) fn run_sync_job(
     generation: i64,
     prefetch_initial_covers: bool,
     detect_unchanged: bool,
+    cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
+    check_sync_cancelled(cancellation)?;
     let mut progress = SyncProgressReporter::new(
         Some(context.events.clone()),
         saved.server.name.clone(),
@@ -695,6 +771,7 @@ pub(in crate::controller) fn run_sync_job(
         saved,
         Some(&mut local_scan_progress),
     )?;
+    check_sync_cancelled(cancellation)?;
     let outcome = sync_loaded_provider_generation(
         context,
         saved,
@@ -702,8 +779,10 @@ pub(in crate::controller) fn run_sync_job(
         &provider,
         progress,
         detect_unchanged,
+        cancellation,
     )?;
     if prefetch_initial_covers {
+        check_sync_cancelled(cancellation)?;
         let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Caching library artwork…".to_string(),
         ));
@@ -720,6 +799,7 @@ pub(in crate::controller) fn run_sync_job(
             cover_slots: &context.cover_slots,
             saved,
             provider: provider.as_music_provider(),
+            cancellation: Some(cancellation),
         })?;
     }
     Ok(outcome)
@@ -731,11 +811,17 @@ fn sync_loaded_provider_generation(
     provider: &LoadedProvider,
     progress: SyncProgressReporter,
     detect_unchanged: bool,
+    cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
     match provider {
-        LoadedProvider::Local(local) => {
-            sync_local_provider_generation(context, &saved.server.id, local, generation, progress)
-        }
+        LoadedProvider::Local(local) => sync_local_provider_generation(
+            context,
+            &saved.server.id,
+            local,
+            generation,
+            progress,
+            cancellation,
+        ),
         _ => context.runtime.block_on(sync_provider_generation(
             &context.store,
             &saved.server.id,
@@ -743,6 +829,7 @@ fn sync_loaded_provider_generation(
             generation,
             progress,
             detect_unchanged,
+            cancellation,
         )),
     }
 }
@@ -752,7 +839,9 @@ fn sync_local_provider_generation(
     provider: &LocalProvider,
     generation: i64,
     progress: SyncProgressReporter,
+    cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
+    check_sync_cancelled(cancellation)?;
     let scan = provider.manifest_scan();
     info!(
         generation,
@@ -772,6 +861,7 @@ fn sync_local_provider_generation(
             provider,
             generation,
             progress,
+            cancellation,
         ))
 }
 async fn sync_local_provider_store_generation(
@@ -780,11 +870,16 @@ async fn sync_local_provider_store_generation(
     provider: &LocalProvider,
     generation: i64,
     mut progress: SyncProgressReporter,
+    cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
+    check_sync_cancelled(cancellation)?;
     let scan = provider.manifest_scan();
-    let snapshot = collect_local_provider_snapshot(provider, &mut progress).await?;
+    let snapshot = collect_local_provider_snapshot(provider, &mut progress, cancellation).await?;
+    check_sync_cancelled(cancellation)?;
     let aggregate_dirty = local_aggregate_image_dirty(store, server_id, &snapshot)?;
+    check_sync_cancelled(cancellation)?;
     if !scan.library_changed && aggregate_dirty.is_empty() {
+        check_sync_cancelled(cancellation)?;
         let pruned_cover_entries =
             store.with_store(|store| store.complete_unchanged_local_sync(server_id, generation))?;
         prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
@@ -807,6 +902,7 @@ async fn sync_local_provider_store_generation(
     let finalize_started = Instant::now();
     let delta = local_library_delta(provider.manifest_scan(), snapshot, aggregate_dirty);
     let sync_delta = local_store_delta(&delta, scan.library_changed);
+    check_sync_cancelled(cancellation)?;
     let pruned_cover_entries =
         store.with_store(|store| store.commit_local_library_delta(server_id, generation, delta))?;
     prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
@@ -895,22 +991,20 @@ impl LocalAggregateDirty {
 async fn collect_local_provider_snapshot(
     provider: &LocalProvider,
     progress: &mut SyncProgressReporter,
+    cancellation: &CancellationToken,
 ) -> Result<LocalProviderSnapshot, String> {
     progress.collection_started(SyncCollection::Tracks);
-    let tracks = load_match_tracks(provider).await?;
+    let tracks = load_match_tracks(provider, Some(cancellation)).await?;
     progress.collection_started(SyncCollection::Albums);
-    let albums = load_all_local_albums(provider).await?;
+    let albums = load_all_local_albums(provider, cancellation).await?;
     progress.collection_started(SyncCollection::Artists);
-    let artists = load_all_local_artists(provider, false).await?;
+    let artists = load_all_local_artists(provider, false, cancellation).await?;
     progress.collection_started(SyncCollection::AlbumArtists);
-    let album_artists = load_all_local_artists(provider, true).await?;
+    let album_artists = load_all_local_artists(provider, true, cancellation).await?;
     progress.collection_started(SyncCollection::Genres);
-    let genres = load_all_local_genres(provider).await?;
+    let genres = load_all_local_genres(provider, cancellation).await?;
     progress.collection_started(SyncCollection::HomeSections);
-    let home_sections = provider
-        .home_sections()
-        .await
-        .map_err(|error| error.to_string())?;
+    let home_sections = await_provider(cancellation, provider.home_sections()).await?;
     Ok(LocalProviderSnapshot {
         tracks,
         albums,
@@ -920,14 +1014,18 @@ async fn collect_local_provider_snapshot(
         home_sections,
     })
 }
-async fn load_all_local_albums(provider: &LocalProvider) -> Result<Vec<Album>, String> {
+async fn load_all_local_albums(
+    provider: &LocalProvider,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Album>, String> {
     let mut albums = Vec::new();
     let mut offset = 0;
     loop {
-        let page = provider
-            .albums(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        let page = await_provider(
+            cancellation,
+            provider.albums(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await?;
         let item_count = page.items.len();
         albums.extend(page.items);
         offset += item_count;
@@ -939,18 +1037,24 @@ async fn load_all_local_albums(provider: &LocalProvider) -> Result<Vec<Album>, S
 async fn load_all_local_artists(
     provider: &LocalProvider,
     album_artist: bool,
+    cancellation: &CancellationToken,
 ) -> Result<Vec<Artist>, String> {
     let mut artists = Vec::new();
     let mut offset = 0;
     loop {
         let page = if album_artist {
-            provider
-                .album_artists(PagedRequest::new(offset, PAGE_SIZE))
-                .await
+            await_provider(
+                cancellation,
+                provider.album_artists(PagedRequest::new(offset, PAGE_SIZE)),
+            )
+            .await
         } else {
-            provider.artists(PagedRequest::new(offset, PAGE_SIZE)).await
-        }
-        .map_err(|error| error.to_string())?;
+            await_provider(
+                cancellation,
+                provider.artists(PagedRequest::new(offset, PAGE_SIZE)),
+            )
+            .await
+        }?;
         let item_count = page.items.len();
         artists.extend(page.items);
         offset += item_count;
@@ -959,14 +1063,18 @@ async fn load_all_local_artists(
         }
     }
 }
-async fn load_all_local_genres(provider: &LocalProvider) -> Result<Vec<Genre>, String> {
+async fn load_all_local_genres(
+    provider: &LocalProvider,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Genre>, String> {
     let mut genres = Vec::new();
     let mut offset = 0;
     loop {
-        let page = provider
-            .genres(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        let page = await_provider(
+            cancellation,
+            provider.genres(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await?;
         let item_count = page.items.len();
         genres.extend(page.items);
         offset += item_count;
@@ -1177,6 +1285,7 @@ pub(in crate::controller) async fn sync_provider(
     provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
     sync_provider_generation(
         store,
         server_id,
@@ -1184,6 +1293,7 @@ pub(in crate::controller) async fn sync_provider(
         generation,
         SyncProgressReporter::silent(provider),
         false,
+        &cancellation,
     )
     .await
     .map(|_| ())
@@ -1196,6 +1306,7 @@ pub(in crate::controller) async fn sync_provider_with_events(
     events: Sender<ControllerEvent>,
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
     sync_provider_generation(
         store,
         server_id,
@@ -1203,6 +1314,7 @@ pub(in crate::controller) async fn sync_provider_with_events(
         generation,
         SyncProgressReporter::for_provider(provider, Some(events)),
         false,
+        &cancellation,
     )
     .await
     .map(|_| ())
@@ -1214,6 +1326,7 @@ pub(in crate::controller) async fn sync_provider_outcome(
     provider: &(impl MusicProvider + ?Sized),
 ) -> Result<SyncJobOutcome, String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
     sync_provider_generation(
         store,
         server_id,
@@ -1221,6 +1334,26 @@ pub(in crate::controller) async fn sync_provider_outcome(
         generation,
         SyncProgressReporter::silent(provider),
         true,
+        &cancellation,
+    )
+    .await
+}
+#[cfg(test)]
+pub(in crate::controller) async fn sync_provider_outcome_with_cancellation(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+    cancellation: &CancellationToken,
+) -> Result<SyncJobOutcome, String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_provider_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::silent(provider),
+        true,
+        cancellation,
     )
     .await
 }
@@ -1232,12 +1365,14 @@ pub(in crate::controller) async fn sync_local_provider_with_events(
     events: Sender<ControllerEvent>,
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
     sync_local_provider_store_generation(
         store,
         server_id,
         provider,
         generation,
         SyncProgressReporter::for_provider(provider, Some(events)),
+        &cancellation,
     )
     .await
     .map(|_| ())
@@ -1249,12 +1384,14 @@ pub(in crate::controller) async fn sync_local_provider_outcome(
     provider: &LocalProvider,
 ) -> Result<SyncJobOutcome, String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
     sync_local_provider_store_generation(
         store,
         server_id,
         provider,
         generation,
         SyncProgressReporter::silent(provider),
+        &cancellation,
     )
     .await
 }
@@ -1266,7 +1403,9 @@ async fn sync_provider_generation(
     generation: i64,
     mut progress: SyncProgressReporter,
     _detect_unchanged: bool,
+    cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
+    check_sync_cancelled(cancellation)?;
     let mut collector = LibraryDeltaCollector::new();
     info!(generation, "started provider cache sync");
     sync_album_pages(
@@ -1276,8 +1415,10 @@ async fn sync_provider_generation(
         generation,
         &mut progress,
         &mut collector,
+        cancellation,
     )
     .await?;
+    check_sync_cancelled(cancellation)?;
     sync_track_pages(
         store,
         server_id,
@@ -1285,16 +1426,20 @@ async fn sync_provider_generation(
         generation,
         &mut progress,
         &mut collector,
+        cancellation,
     )
     .await?;
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::MusicFolders);
-    let folders_changed = sync_music_folders(store, server_id, provider, generation).await?;
+    let folders_changed =
+        sync_music_folders(store, server_id, provider, generation, cancellation).await?;
     if folders_changed {
         collector.merge(LibraryDelta {
             folders_changed: true,
             ..LibraryDelta::default()
         });
     }
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::Artists);
     sync_artist_pages(
         store,
@@ -1303,26 +1448,62 @@ async fn sync_provider_generation(
         generation,
         false,
         &mut collector,
+        cancellation,
     )
     .await?;
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::AlbumArtists);
-    sync_artist_pages(store, server_id, provider, generation, true, &mut collector).await?;
+    sync_artist_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        true,
+        &mut collector,
+        cancellation,
+    )
+    .await?;
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::Genres);
-    sync_genre_pages(store, server_id, provider, generation, &mut collector).await?;
+    sync_genre_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        &mut collector,
+        cancellation,
+    )
+    .await?;
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::Playlists);
-    sync_playlist_pages(store, server_id, provider, generation, &mut collector).await?;
+    sync_playlist_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        &mut collector,
+        cancellation,
+    )
+    .await?;
+    check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::HomeSections);
-    collector.merge(sync_home_sections(store, server_id, provider, generation).await?);
+    collector
+        .merge(sync_home_sections(store, server_id, provider, generation, cancellation).await?);
     progress.finalizing();
     let finalize_started = Instant::now();
+    check_sync_cancelled(cancellation)?;
     store.with_store(|store| store.refresh_library_counts(server_id))?;
+    check_sync_cancelled(cancellation)?;
     let completion = store.with_store(|store| store.complete_sync_delta(server_id, generation))?;
     collector.merge(completion.delta);
     prune_successful_sync_image_cache(store, server_id, completion.pruned_cover_entries);
     let finalize_elapsed = finalize_started.elapsed();
     progress.finished();
-    if let Err(error) = refresh_local_track_matches(store, server_id, Some(generation)).await {
-        warn!(%error, "failed to refresh local track matches");
+    match refresh_local_track_matches(store, server_id, Some(generation), Some(cancellation)).await
+    {
+        Ok(_) => {}
+        Err(error) if error == SYNC_CANCELLED_ERROR => return Err(error),
+        Err(error) => warn!(%error, "failed to refresh local track matches"),
     }
     let delta = collector.finish();
     prune_disk_waveform_cache_entries(server_id, &delta.tracks.deleted);
@@ -1565,17 +1746,20 @@ async fn fetch_page_with_progress<T, Fut>(
     page_number: usize,
     fetched: usize,
     total: Option<usize>,
+    cancellation: &CancellationToken,
     page: Fut,
-) -> source::ProviderResult<source::PagedResponse<T>>
+) -> Result<source::PagedResponse<T>, String>
 where
     Fut: Future<Output = source::ProviderResult<source::PagedResponse<T>>>,
 {
     progress.page_fetching(collection, page_number, fetched, total);
     tokio::pin!(page);
     loop {
+        check_sync_cancelled(cancellation)?;
         tokio::select! {
-            result = &mut page => return result,
-            _ = tokio::time::sleep(progress.min_interval) => {
+            result = &mut page => return result.map_err(|error| error.to_string()),
+            _ = tokio::time::sleep(SYNC_CANCEL_POLL_INTERVAL) => {
+                check_sync_cancelled(cancellation)?;
                 progress.page_fetching(collection, page_number, fetched, total);
             }
         }
@@ -1623,11 +1807,13 @@ async fn sync_album_pages(
     generation: i64,
     progress: &mut SyncProgressReporter,
     collector: &mut LibraryDeltaCollector,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     progress.collection_started(SyncCollection::Albums);
     let mut offset = 0;
     let mut page_number = 0;
     loop {
+        check_sync_cancelled(cancellation)?;
         page_number += 1;
         let fetch_started = Instant::now();
         let page = fetch_page_with_progress(
@@ -1636,10 +1822,11 @@ async fn sync_album_pages(
             page_number,
             offset,
             None,
+            cancellation,
             provider.albums(PagedRequest::new(offset, PAGE_SIZE)),
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
+        check_sync_cancelled(cancellation)?;
         let fetch_elapsed = fetch_started.elapsed();
         let write_started = Instant::now();
         collector.merge(
@@ -1673,11 +1860,13 @@ async fn sync_track_pages(
     generation: i64,
     progress: &mut SyncProgressReporter,
     collector: &mut LibraryDeltaCollector,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     progress.collection_started(SyncCollection::Tracks);
     let mut offset = 0;
     let mut page_number = 0;
     loop {
+        check_sync_cancelled(cancellation)?;
         page_number += 1;
         let fetch_started = Instant::now();
         let page = fetch_page_with_progress(
@@ -1686,10 +1875,11 @@ async fn sync_track_pages(
             page_number,
             offset,
             None,
+            cancellation,
             provider.tracks(PagedRequest::new(offset, PAGE_SIZE)),
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
+        check_sync_cancelled(cancellation)?;
         let fetch_elapsed = fetch_started.elapsed();
         let write_started = Instant::now();
         collector.merge(
@@ -1721,25 +1911,30 @@ async fn sync_music_folders(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    cancellation: &CancellationToken,
 ) -> Result<bool, String> {
     if !provider.capabilities().music_folders {
         return Ok(false);
     }
+    check_sync_cancelled(cancellation)?;
     let before = store.with_store(|store| store.list_music_folders(server_id))?;
-    let folders = provider
-        .music_folders()
-        .await
-        .map_err(|error| error.to_string())?;
+    let folders = await_provider(cancellation, provider.music_folders()).await?;
+    check_sync_cancelled(cancellation)?;
     let changed = before != folders;
+    check_sync_cancelled(cancellation)?;
     store.with_store(|store| store.upsert_music_folders(server_id, &folders, generation))?;
     for folder in folders {
         let mut offset = 0;
         loop {
-            let page = provider
-                .tracks_in_music_folder(&folder.id, PagedRequest::new(offset, PAGE_SIZE))
-                .await
-                .map_err(|error| error.to_string())?;
+            check_sync_cancelled(cancellation)?;
+            let page = await_provider(
+                cancellation,
+                provider.tracks_in_music_folder(&folder.id, PagedRequest::new(offset, PAGE_SIZE)),
+            )
+            .await?;
+            check_sync_cancelled(cancellation)?;
             store.with_store(|store| store.upsert_tracks(server_id, &page.items, generation))?;
+            check_sync_cancelled(cancellation)?;
             store.with_store(|store| {
                 store.upsert_track_music_folder_memberships(
                     server_id,
@@ -1761,10 +1956,13 @@ pub(in crate::controller) async fn refresh_local_track_matches(
     store: &StoreHandle,
     server_id: &ServerId,
     manifest_generation: Option<i64>,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<usize, String> {
+    check_optional_sync_cancelled(cancellation)?;
     let Some(access) = store.with_store(|store| store.server_local_access(server_id))? else {
         return Ok(0);
     };
+    check_optional_sync_cancelled(cancellation)?;
     let saved = store
         .with_store(|store| {
             store.list_servers().map(|servers| {
@@ -1777,19 +1975,24 @@ pub(in crate::controller) async fn refresh_local_track_matches(
     if saved.server.provider == "local" {
         return Ok(0);
     }
+    check_optional_sync_cancelled(cancellation)?;
     let remote_tracks =
         store.with_store(|store| store.load_tracks_for_local_matching(server_id))?;
     if remote_tracks.is_empty() {
+        check_optional_sync_cancelled(cancellation)?;
         store.with_store(|store| store.replace_track_local_matches(server_id, &[]))?;
         return Ok(0);
     }
+    check_optional_sync_cancelled(cancellation)?;
     let root = PathBuf::from(&access.root_path);
     let manifest_cache = store.with_store(|store| store.load_local_manifest(server_id))?;
     let local_identity =
         LocalProvider::identity_for_root(&root).map_err(|error| error.to_string())?;
+    check_optional_sync_cancelled(cancellation)?;
     let local_provider =
         LocalProvider::from_roots_with_manifest_cache(vec![root], local_identity, manifest_cache)
             .map_err(|error| error.to_string())?;
+    check_optional_sync_cancelled(cancellation)?;
     let scan = local_provider.manifest_scan();
     info!(
         server_id = %server_id,
@@ -1800,11 +2003,14 @@ pub(in crate::controller) async fn refresh_local_track_matches(
         manifest_compare_elapsed_ms = scan.counters.manifest_compare_elapsed_ms,
         "completed manifest-backed local-access scan"
     );
-    let local_tracks = load_match_tracks(&local_provider).await?;
+    let local_tracks = load_match_tracks(&local_provider, cancellation).await?;
+    check_optional_sync_cancelled(cancellation)?;
     let matches = conservative_local_matches(&remote_tracks, &local_tracks);
     let count = matches.len();
+    check_optional_sync_cancelled(cancellation)?;
+    store.with_store(|store| store.replace_track_local_matches(server_id, &matches))?;
+    check_optional_sync_cancelled(cancellation)?;
     store.with_store(|store| {
-        store.replace_track_local_matches(server_id, &matches)?;
         store.replace_local_manifest(
             server_id,
             manifest_generation.unwrap_or_default(),
@@ -1814,14 +2020,20 @@ pub(in crate::controller) async fn refresh_local_track_matches(
     debug!(server_id = %server_id, count, "refreshed local track matches");
     Ok(count)
 }
-async fn load_match_tracks(provider: &LocalProvider) -> Result<Vec<Track>, String> {
+async fn load_match_tracks(
+    provider: &LocalProvider,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Vec<Track>, String> {
     let mut tracks = Vec::new();
     let mut offset = 0;
     loop {
-        let page = provider
-            .tracks(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        check_optional_sync_cancelled(cancellation)?;
+        let page = await_optional_provider(
+            cancellation,
+            provider.tracks(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await?;
+        check_optional_sync_cancelled(cancellation)?;
         let item_count = page.items.len();
         tracks.extend(page.items);
         offset += item_count;
@@ -1947,17 +2159,25 @@ async fn sync_artist_pages(
     generation: i64,
     album_artist: bool,
     collector: &mut LibraryDeltaCollector,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
+        check_sync_cancelled(cancellation)?;
         let page = if album_artist {
-            provider
-                .album_artists(PagedRequest::new(offset, PAGE_SIZE))
-                .await
+            await_provider(
+                cancellation,
+                provider.album_artists(PagedRequest::new(offset, PAGE_SIZE)),
+            )
+            .await
         } else {
-            provider.artists(PagedRequest::new(offset, PAGE_SIZE)).await
-        }
-        .map_err(|error| error.to_string())?;
+            await_provider(
+                cancellation,
+                provider.artists(PagedRequest::new(offset, PAGE_SIZE)),
+            )
+            .await
+        }?;
+        check_sync_cancelled(cancellation)?;
         collector.merge(store.with_store(|store| {
             store.upsert_artists_delta(server_id, &page.items, album_artist, generation)
         })?);
@@ -1974,13 +2194,17 @@ async fn sync_genre_pages(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     collector: &mut LibraryDeltaCollector,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
-        let page = provider
-            .genres(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        check_sync_cancelled(cancellation)?;
+        let page = await_provider(
+            cancellation,
+            provider.genres(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await?;
+        check_sync_cancelled(cancellation)?;
         collector.merge(
             store.with_store(|store| {
                 store.upsert_genres_delta(server_id, &page.items, generation)
@@ -1999,37 +2223,37 @@ async fn sync_playlist_pages(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     collector: &mut LibraryDeltaCollector,
+    cancellation: &CancellationToken,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
-        let page = provider
-            .playlists(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        check_sync_cancelled(cancellation)?;
+        let page = await_provider(
+            cancellation,
+            provider.playlists(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await?;
+        check_sync_cancelled(cancellation)?;
         collector.merge(store.with_store(|store| {
             store.upsert_playlists_delta(server_id, &page.items, generation)
         })?);
         for playlist in &page.items {
-            let detail = provider
-                .playlist_detail(&playlist.id)
-                .await
-                .map_err(|error| error.to_string())?;
-            store
-                .with_store(|store| {
-                    Ok((
-                        store.upsert_tracks_delta(server_id, &detail.tracks, generation)?,
-                        store.upsert_playlist_entries_delta(
-                            server_id,
-                            &detail.playlist.id,
-                            &detail.entries,
-                            generation,
-                        )?,
-                    ))
-                })
-                .map(|(track_delta, entries_delta)| {
-                    collector.merge(track_delta);
-                    collector.merge(entries_delta);
-                })?;
+            check_sync_cancelled(cancellation)?;
+            let detail =
+                await_provider(cancellation, provider.playlist_detail(&playlist.id)).await?;
+            check_sync_cancelled(cancellation)?;
+            collector.merge(store.with_store(|store| {
+                store.upsert_tracks_delta(server_id, &detail.tracks, generation)
+            })?);
+            check_sync_cancelled(cancellation)?;
+            collector.merge(store.with_store(|store| {
+                store.upsert_playlist_entries_delta(
+                    server_id,
+                    &detail.playlist.id,
+                    &detail.entries,
+                    generation,
+                )
+            })?);
         }
         let item_count = page.items.len();
         offset += item_count;
@@ -2085,11 +2309,11 @@ async fn sync_home_sections(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    cancellation: &CancellationToken,
 ) -> Result<LibraryDelta, String> {
-    let sections = provider
-        .home_sections()
-        .await
-        .map_err(|error| error.to_string())?;
+    check_sync_cancelled(cancellation)?;
+    let sections = await_provider(cancellation, provider.home_sections()).await?;
+    check_sync_cancelled(cancellation)?;
     store.with_store(|store| store.upsert_home_sections_delta(server_id, &sections, generation))
 }
 #[cfg(test)]

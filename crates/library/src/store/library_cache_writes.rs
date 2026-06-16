@@ -394,6 +394,20 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn cancel_sync(&self, server_id: &ServerId, generation: i64) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            UPDATE sync_state
+            SET status = 'idle',
+                last_error = NULL
+            WHERE server_id = ?1
+              AND generation = ?2
+              AND status = 'running'
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        Ok(())
+    }
     pub fn clear_library_cache(&self, server_id: &ServerId) -> StoreResult<()> {
         self.write_batch(|connection| {
             clear_library_cache_on_connection(connection, server_id)?;

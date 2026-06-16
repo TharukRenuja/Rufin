@@ -12,8 +12,8 @@ use tokio::runtime::Runtime;
 use tracing::{debug, info, warn};
 
 use crate::controller::{
-    ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot, load_settings_from_store,
-    release_cover_slot,
+    CancellationToken, ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot,
+    load_settings_from_store, release_cover_slot,
 };
 use crate::external_metadata;
 
@@ -89,6 +89,7 @@ struct CoverPrefetchContext<'a> {
     retry_generation: u64,
     cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     saved: &'a SavedServer,
+    cancellation: Option<&'a CancellationToken>,
 }
 
 pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
@@ -102,6 +103,7 @@ pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
     pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     pub(in crate::controller) saved: &'a SavedServer,
     pub(in crate::controller) provider: &'a dyn MusicProvider,
+    pub(in crate::controller) cancellation: Option<&'a CancellationToken>,
 }
 
 fn mark_prefetch_flight(
@@ -194,6 +196,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
             retry_generation,
             cover_slots: &cover_slots,
             saved: &saved,
+            cancellation: None,
         };
         let result = prefetch_synced_images(&context, &mut stats);
         match result {
@@ -262,6 +265,7 @@ pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
         retry_generation: request.retry_generation,
         cover_slots: request.cover_slots,
         saved,
+        cancellation: request.cancellation,
     };
     prefetch_synced_provider_covers(&context, request.provider, &mut provider_stats)?;
     info!(
@@ -298,10 +302,18 @@ fn prefetch_synced_provider_covers(
     stats: &mut ProviderCoverPrefetchStats,
 ) -> Result<(), String> {
     let mut seen = HashSet::new();
-    let image_refs = synced_provider_cover_refs(context.store, context.saved, &mut seen, stats)?;
+    check_prefetch_cancelled(context.cancellation)?;
+    let image_refs = synced_provider_cover_refs(
+        context.store,
+        context.saved,
+        context.cancellation,
+        &mut seen,
+        stats,
+    )?;
     stats.image_refs = image_refs.len();
     emit_initial_cover_prefetch_status(context, 0, stats.image_refs);
     for (index, image_ref) in image_refs.into_iter().enumerate() {
+        check_prefetch_cancelled(context.cancellation)?;
         if active_server_changed(context.store, context.saved)? {
             info!(
                 server_id = %context.saved.server.id,
@@ -335,12 +347,14 @@ fn emit_initial_cover_prefetch_status(
 fn synced_provider_cover_refs(
     store: &StoreHandle,
     saved: &SavedServer,
+    cancellation: Option<&CancellationToken>,
     seen: &mut HashSet<(String, String)>,
     stats: &mut ProviderCoverPrefetchStats,
 ) -> Result<Vec<ImageRef>, String> {
     let mut image_refs = Vec::new();
     let mut offset = 0;
     loop {
+        check_prefetch_cancelled(cancellation)?;
         let page = store.with_store(|store| {
             store.load_albums(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
         })?;
@@ -355,6 +369,7 @@ fn synced_provider_cover_refs(
 
     let mut offset = 0;
     loop {
+        check_prefetch_cancelled(cancellation)?;
         let page = store.with_store(|store| {
             store.load_tracks(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
         })?;
@@ -370,6 +385,7 @@ fn synced_provider_cover_refs(
     for album_artist in [false, true] {
         let mut offset = 0;
         loop {
+            check_prefetch_cancelled(cancellation)?;
             let page = store.with_store(|store| {
                 store.load_artists(
                     &saved.server.id,
@@ -394,6 +410,7 @@ fn synced_provider_cover_refs(
 
     let mut offset = 0;
     loop {
+        check_prefetch_cancelled(cancellation)?;
         let page = store.with_store(|store| {
             store.load_genres(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
         })?;
@@ -408,6 +425,7 @@ fn synced_provider_cover_refs(
 
     let mut offset = 0;
     loop {
+        check_prefetch_cancelled(cancellation)?;
         let page = store.with_store(|store| {
             store.load_playlists(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
         })?;
@@ -428,6 +446,7 @@ fn prefetch_provider_image_ref(
     provider: &dyn MusicProvider,
     image_ref: ImageRef,
 ) -> Result<SyncedImagePrefetchOutcome, String> {
+    check_prefetch_cancelled(context.cancellation)?;
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(
         &context.saved.server.id,
@@ -450,9 +469,15 @@ fn prefetch_provider_image_ref(
         return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
 
+    check_prefetch_cancelled(context.cancellation)?;
     if !acquire_cover_slot(context.cover_slots) {
         unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
         return Ok(SyncedImagePrefetchOutcome::Skipped);
+    }
+    if let Err(error) = check_prefetch_cancelled(context.cancellation) {
+        release_cover_slot(context.cover_slots);
+        unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
+        return Err(error);
     }
     let result = fetch_and_cache_provider_cover(
         context.store,
@@ -711,6 +736,13 @@ fn active_server_changed(store: &StoreHandle, saved: &SavedServer) -> Result<boo
     Ok(store
         .with_store(|store| store.active_server())?
         .is_none_or(|active| active.server.id != saved.server.id))
+}
+
+fn check_prefetch_cancelled(cancellation: Option<&CancellationToken>) -> Result<(), String> {
+    if cancellation.is_some_and(|token| token.cancelled()) {
+        return Err("Sync cancelled.".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

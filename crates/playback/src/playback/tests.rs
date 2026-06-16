@@ -4,7 +4,7 @@ use super::{
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
     Slot, StatusFade, StatusFadeTarget, StreamDescriptor, VisualizerAnalyzer,
     about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
-    same_album_crossfade_is_skipped,
+    clear_prepared_next_state, same_album_crossfade_is_skipped,
 };
 use domain::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -232,6 +232,43 @@ fn crossfade_cancel_restores_next() {
     assert!(shared.crossfade.is_none());
     assert!(shared.gapless_pending.is_none());
     assert!(!shared.about_to_finish_pending);
+}
+#[test]
+fn prepared_next_clear_drops_pending_transitions() {
+    let current = PreparedPlaybackItem::new(
+        track(1),
+        StreamDescriptor::new("https://music.example/current"),
+    );
+    let gapless = PreparedPlaybackItem::new(
+        track(2),
+        StreamDescriptor::new("https://music.example/gapless"),
+    );
+    let crossfade_item = PreparedPlaybackItem::new(
+        track(3),
+        StreamDescriptor::new("https://music.example/crossfade"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.current = Some(current.clone());
+    shared.next = Some(gapless.clone());
+    shared.gapless_pending = Some(gapless);
+    shared.about_to_finish_pending = true;
+    shared.active = Slot::Primary;
+    shared.crossfade = Some(CrossfadeState {
+        from: Slot::Primary,
+        to: Slot::Secondary,
+        started_at: Instant::now(),
+        duration: Duration::from_secs(5),
+        item: crossfade_item.clone(),
+    });
+
+    let clear = clear_prepared_next_state(&mut shared);
+
+    assert_eq!(clear.gapless_current, Some((Slot::Primary, current)));
+    assert_eq!(clear.crossfade.expect("crossfade").item, crossfade_item);
+    assert!(shared.next.is_none());
+    assert!(shared.gapless_pending.is_none());
+    assert!(!shared.about_to_finish_pending);
+    assert!(shared.crossfade.is_none());
 }
 #[test]
 fn album_crossfade_about() {

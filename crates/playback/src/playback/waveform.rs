@@ -6,7 +6,17 @@ const WAVEFORM_GENERATION_TIMEOUT: Duration = Duration::from_secs(180);
 const WAVEFORM_BUS_POLL: gst::ClockTime = gst::ClockTime::from_mseconds(250);
 
 pub fn generate_waveform_peaks(uri: &str) -> Result<Vec<(f64, f64)>, String> {
+    generate_waveform_peaks_cancellable(uri, || false)
+}
+
+pub fn generate_waveform_peaks_cancellable(
+    uri: &str,
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<(f64, f64)>, String> {
     gst::init().map_err(|error| error.to_string())?;
+    if cancelled() {
+        return Err("waveform generation cancelled".to_string());
+    }
 
     let pipeline =
         gst::parse::launch("uridecodebin name=decoder ! audioconvert ! audio/x-raw,channels=2 ! level name=level interval=250000000 ! fakesink name=sink")
@@ -37,6 +47,9 @@ pub fn generate_waveform_peaks(uri: &str) -> Result<Vec<(f64, f64)>, String> {
     let mut peaks = Vec::new();
     let started = Instant::now();
     let result = loop {
+        if cancelled() {
+            break Err("waveform generation cancelled".to_string());
+        }
         if started.elapsed() > WAVEFORM_GENERATION_TIMEOUT {
             break Err("waveform generation timed out".to_string());
         }
