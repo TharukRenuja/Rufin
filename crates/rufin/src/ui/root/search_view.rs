@@ -4,7 +4,9 @@ impl Shell {
     pub(in crate::ui) fn search_view(
         self: &Rc<Self>,
         query: &str,
-        library: LibrarySnapshot,
+        results: SearchResults,
+        loading: bool,
+        error: Option<String>,
     ) -> gtk::Widget {
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -17,11 +19,11 @@ impl Shell {
         content.set_width_request(1);
         content.set_vexpand(true);
 
-        let has_albums = !library.search.albums.is_empty();
-        let has_tracks = !library.search.tracks.is_empty();
-        let has_artists = !library.search.artists.is_empty();
-        let has_playlists = !library.search.playlists.is_empty();
-        let albums = library.search.albums;
+        let has_albums = !results.albums.is_empty();
+        let has_tracks = !results.tracks.is_empty();
+        let has_artists = !results.artists.is_empty();
+        let has_playlists = !results.playlists.is_empty();
+        let albums = results.albums;
         if !albums.is_empty() {
             let section = HomeSection {
                 kind: domain::HomeSectionKind::Explore,
@@ -33,7 +35,7 @@ impl Shell {
 
         if has_tracks {
             content.append(&self.library_tracks_panel_with_source(
-                library.search.tracks,
+                results.tracks,
                 LibraryListKey::Tracks,
                 "search",
                 Some(PlaySourceDescriptor::SearchResults {
@@ -42,6 +44,10 @@ impl Shell {
                 }),
                 PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END + DETAIL_ROUTE_SCROLL_GUTTER,
             ));
+        } else if loading {
+            content.append(&self.route_empty_view("Searching..."));
+        } else if error.is_some() {
+            content.append(&self.route_empty_view("Search failed."));
         } else if !has_albums && !has_artists && !has_playlists {
             content.append(&self.route_empty_view("No cached results found."));
         }

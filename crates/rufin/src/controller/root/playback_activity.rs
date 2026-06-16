@@ -398,6 +398,8 @@ mod tests {
                 | ControllerEvent::Lyrics { .. }
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSearchFailed { .. }
+                | ControllerEvent::SearchLoaded { .. }
+                | ControllerEvent::SearchFailed { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::FolderLoaded { .. }
                 | ControllerEvent::FolderLoadFailed { .. }

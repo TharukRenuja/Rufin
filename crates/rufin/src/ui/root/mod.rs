@@ -59,7 +59,7 @@ use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
     LibrarySyncStatus, LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
-    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
+    PlaybackSnapshot, SearchRequestKey, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
 use crate::i18n::{self, tr};
@@ -84,9 +84,10 @@ use domain::{
     TrackTableSettings, format_duration, sanitized_window_size,
 };
 use favorites::{
-    FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
-    clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
-    merge_favorite_snapshot, register_favorite_control, update_favorite_controls,
+    FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,
+    artist_favorite_key, clear_favorite_controls, favorite_change_needs_route_render,
+    favorite_control_key, merge_favorite_snapshot, register_favorite_control,
+    update_favorite_controls,
 };
 use fullscreen_player::{
     FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
@@ -117,7 +118,7 @@ use preferences::{present_library_preferences_dialog, present_preferences_dialog
 use queue::connect_queue_panel_controls;
 use release_kind::album_release_kind_label;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
-use source::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
+use source::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use source_selector::{ServerSelector, build_server_selector};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -152,6 +153,7 @@ mod responsive_layout_state;
 mod responsive_route_render;
 mod route_navigation;
 mod route_rendering;
+mod search_route_state;
 mod search_view;
 mod shell_navigation;
 mod sidebar_route_controls;
@@ -360,6 +362,8 @@ pub(in crate::ui) struct AppState {
     favorite_controls: FavoriteControls,
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
+    search_request_generation: Cell<u64>,
+    search_state: RefCell<SearchRouteState>,
 }
 #[derive(Clone)]
 pub(in crate::ui) struct LyricsSearchDialog {
@@ -427,6 +431,13 @@ pub(in crate::ui) struct FolderRouteState {
     path: Vec<FolderPathItem>,
     loading: bool,
     detail: Option<FolderDetail>,
+    error: Option<String>,
+}
+#[derive(Clone, Default)]
+pub(in crate::ui) struct SearchRouteState {
+    key: Option<SearchRequestKey>,
+    loading: bool,
+    results: SearchResults,
     error: Option<String>,
 }
 pub(in crate::ui) struct GroupedDetailData {
@@ -652,6 +663,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         favorite_controls: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),
+        search_request_generation: Cell::new(0),
+        search_state: RefCell::new(SearchRouteState::default()),
     };
 
     let (window_width, window_height) =

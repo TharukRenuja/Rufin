@@ -17,9 +17,10 @@ use domain::{
     GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder,
     LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
     PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueReplacement, QueueSnapshot, RepeatMode, SecretStorageMode, ServerId, ServerIdentity,
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
-    SmartPlaylistId, SourceOrder, StreamDescriptor, StreamQuality, Track, TrackId,
+    QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode, ServerId,
+    ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SourceOrder, StreamDescriptor, StreamQuality, Track,
+    TrackId,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
@@ -208,6 +209,14 @@ pub struct LibrarySyncStatus {
     pub delta: LibraryDelta,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchRequestKey {
+    pub request_id: u64,
+    pub query: String,
+    pub kind: SearchKind,
+    pub server_id: Option<ServerId>,
+    pub selected_music_folder_id: Option<MusicFolderId>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerLocalAccessSnapshot {
     pub server_id: ServerId,
     pub access: Option<ServerLocalAccess>,
@@ -358,6 +367,14 @@ pub enum ControllerEvent {
         track_id: TrackId,
         artist_name: String,
         track_name: String,
+        error: String,
+    },
+    SearchLoaded {
+        key: SearchRequestKey,
+        results: SearchResults,
+    },
+    SearchFailed {
+        key: SearchRequestKey,
         error: String,
     },
     LyricsSaved {

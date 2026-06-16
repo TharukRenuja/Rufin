@@ -241,21 +241,6 @@ impl AppController {
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
-    pub fn cached_search_results(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<SearchResults, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
-            return Ok(SearchResults::default());
-        };
-        let settings = load_settings_for_saved(&self.store, &saved);
-        let mut results = self
-            .store
-            .with_store(|store| store.search_library(&saved.server.id, query, limit))?;
-        cover_art_policy::bind_search_results(&mut results, &settings);
-        Ok(results)
-    }
     pub fn cached_artists_page(
         &self,
         album_artist: bool,

@@ -1105,6 +1105,12 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 } => {
                     shell.apply_lyrics_search_failed(track_id, artist_name, track_name, error);
                 }
+                ControllerEvent::SearchLoaded { key, results } => {
+                    shell.apply_search_loaded(key, results);
+                }
+                ControllerEvent::SearchFailed { key, error } => {
+                    shell.apply_search_failed(key, error);
+                }
                 ControllerEvent::LyricsSaved { path, lyrics } => {
                     shell.apply_lyrics_saved(path, lyrics);
                 }

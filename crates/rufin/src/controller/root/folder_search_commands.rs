@@ -46,31 +46,40 @@ impl AppController {
             }
         });
     }
-    pub fn search(&self, query: String) {
+    pub fn load_search_for_active(&self, expected: SearchRequestKey) {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
             let settings = load_settings_for_active_server(&store);
-            let mut snapshot = match load_snapshot(&store) {
-                Ok(snapshot) => snapshot,
+            let query = expected.query.clone();
+            let kind = expected.kind.clone();
+            let (key, mut results) = match store.with_store(|store| {
+                let Some(saved) = store.active_server()? else {
+                    return Ok((expected.clone(), SearchResults::default()));
+                };
+                let server_id = saved.server.id.clone();
+                let selected_music_folder_id = store.selected_music_folder_id(&server_id)?;
+                let key = SearchRequestKey {
+                    request_id: expected.request_id,
+                    query: query.clone(),
+                    kind: kind.clone(),
+                    server_id: Some(server_id.clone()),
+                    selected_music_folder_id,
+                };
+                let results = store.search_library(&server_id, &query, 50)?;
+                Ok((key, results))
+            }) {
+                Ok(result) => result,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent = events.send(ControllerEvent::SearchFailed {
+                        key: expected,
+                        error,
+                    });
                     return;
                 }
             };
-            if let Some(server) = &snapshot.server {
-                match store.with_store(|store| store.search_library(&server.id, &query, 50)) {
-                    Ok(mut results) => {
-                        cover_art_policy::bind_search_results(&mut results, &settings);
-                        snapshot.search = results;
-                    }
-                    Err(error) => {
-                        let _sent = events.send(ControllerEvent::Error(error));
-                        return;
-                    }
-                }
-            }
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+            cover_art_policy::bind_search_results(&mut results, &settings);
+            let _sent = events.send(ControllerEvent::SearchLoaded { key, results });
         });
     }
 }

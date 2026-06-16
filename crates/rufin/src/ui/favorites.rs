@@ -6,7 +6,7 @@ use domain::{
     Album, AlbumId, Artist, ArtistId, LibraryListKey, Route, Track, TrackId, TrackSortKey,
 };
 use gtk::glib;
-use source::FavoriteItemId;
+use source::{FavoriteItemId, SearchResults};
 
 use crate::controller::LibrarySnapshot;
 
@@ -149,6 +149,20 @@ fn apply_favorite_change(library: &mut LibrarySnapshot, item_id: &FavoriteItemId
             update_artists(&mut library.artists, artist_id, favorite);
             update_artists(&mut library.album_artists, artist_id, favorite);
             update_artists(&mut library.search.artists, artist_id, favorite);
+        }
+    }
+}
+
+pub(super) fn apply_search_favorite_change(
+    results: &mut SearchResults,
+    item_id: &FavoriteItemId,
+    favorite: bool,
+) {
+    match item_id {
+        FavoriteItemId::Album(album_id) => update_albums(&mut results.albums, album_id, favorite),
+        FavoriteItemId::Track(track_id) => update_tracks(&mut results.tracks, track_id, favorite),
+        FavoriteItemId::Artist(artist_id) => {
+            update_artists(&mut results.artists, artist_id, favorite)
         }
     }
 }
