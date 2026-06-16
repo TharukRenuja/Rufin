@@ -28,15 +28,15 @@ use super::{
 };
 use crate::controller::{
     LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, NormalizedPlayTarget,
-    PlayAnchor, PlayTarget, normalize_loaded_source_activation,
+    PlayAnchor, PlayTarget, SearchRequestKey, normalize_loaded_source_activation,
 };
 use domain::{
     Album, AlbumId, AppSettings, ArtistId, Genre, GenreId, HomeBlockKind, HomeSection,
-    HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, Playlist, PlaylistId,
-    QueueAnchor, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId,
-    ServerIdentity, ShuffleState, SidebarRouteItem, SmartPlaylist, SmartPlaylistDefinition,
-    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track,
-    TrackId, TrackSortKey, TrackTableSettings,
+    HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, MusicFolderId, Playlist,
+    PlaylistId, QueueAnchor, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route,
+    SearchKind, ServerId, ServerIdentity, ShuffleState, SidebarRouteItem, SmartPlaylist,
+    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
+    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableSettings,
 };
 use domain::{ExternalLyricsProvider, LibraryListKey, LibraryListSettings};
 use gdk_pixbuf::{Colorspace, Pixbuf};
@@ -323,6 +323,73 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
     assert_eq!(library.cached_track_count, 30_000);
     assert_eq!(library.cached_playlist_count, 40);
     assert_eq!(library.home_sections, vec![section]);
+}
+
+#[test]
+pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() {
+    let server_id = ServerId::new("server:active");
+    let folder_id = MusicFolderId::new("folder:music");
+    let current = SearchRequestKey {
+        request_id: 2,
+        query: "needle".to_string(),
+        kind: SearchKind::All,
+        server_id: Some(server_id.clone()),
+        selected_music_folder_id: Some(folder_id.clone()),
+    };
+
+    assert!(super::search_route_state::search_event_matches(
+        Some(&current),
+        &current,
+        "needle",
+        &SearchKind::All,
+        Some(&server_id),
+        Some(&folder_id),
+    ));
+
+    let stale_request = SearchRequestKey {
+        request_id: 1,
+        ..current.clone()
+    };
+    assert!(!super::search_route_state::search_event_matches(
+        Some(&current),
+        &stale_request,
+        "needle",
+        &SearchKind::All,
+        Some(&server_id),
+        Some(&folder_id),
+    ));
+    assert!(!super::search_route_state::search_event_matches(
+        Some(&current),
+        &current,
+        "other",
+        &SearchKind::All,
+        Some(&server_id),
+        Some(&folder_id),
+    ));
+    assert!(!super::search_route_state::search_event_matches(
+        Some(&current),
+        &current,
+        "needle",
+        &SearchKind::Tracks,
+        Some(&server_id),
+        Some(&folder_id),
+    ));
+    assert!(!super::search_route_state::search_event_matches(
+        Some(&current),
+        &current,
+        "needle",
+        &SearchKind::All,
+        Some(&ServerId::new("server:other")),
+        Some(&folder_id),
+    ));
+    assert!(!super::search_route_state::search_event_matches(
+        Some(&current),
+        &current,
+        "needle",
+        &SearchKind::All,
+        Some(&server_id),
+        Some(&MusicFolderId::new("folder:other")),
+    ));
 }
 
 #[test]

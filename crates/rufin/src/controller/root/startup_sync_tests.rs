@@ -1778,6 +1778,8 @@ fn wait_for_sync_status_without_snapshot(
             | ControllerEvent::Lyrics { .. }
             | ControllerEvent::LyricsSearchResults { .. }
             | ControllerEvent::LyricsSearchFailed { .. }
+            | ControllerEvent::SearchLoaded { .. }
+            | ControllerEvent::SearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }

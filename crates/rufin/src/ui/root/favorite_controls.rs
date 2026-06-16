@@ -56,6 +56,7 @@ impl Shell {
             );
         }
 
+        self.update_search_favorite(&item_id, favorite);
         self.update_visible_favorite_buttons(&item_id, favorite);
         let track_sort_key = self.state.settings.borrow().track_table.sort_key;
         if favorite_change_needs_route_render(&route, &item_id, track_sort_key) {

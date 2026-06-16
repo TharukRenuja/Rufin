@@ -75,9 +75,7 @@ impl Shell {
             }
         }
     }
-    pub(in crate::ui) fn refresh_search_results_for_route(&self, route: &Route) {
-        if let Route::Search { query, .. } = route {
-            self.controller.search(query.clone());
-        }
+    pub(in crate::ui) fn refresh_search_results_for_route(self: &Rc<Self>, route: &Route) {
+        self.start_search_for_route(route);
     }
 }

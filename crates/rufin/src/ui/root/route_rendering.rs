@@ -112,9 +112,9 @@ impl Shell {
                 RouteView::new(self.smart_playlist_detail_view(smart_playlist_id))
                     .with_resize(RouteResizePolicy::PlaylistDetailLayout)
             }
-            Route::Search { query, .. } => {
-                let library = self.state.library.borrow().clone();
-                RouteView::settled_width(self.search_view(&query, library))
+            Route::Search { query, kind } => {
+                let (results, loading, error) = self.current_search_view(&query, &kind);
+                RouteView::settled_width(self.search_view(&query, results, loading, error))
             }
         };
 
@@ -227,15 +227,8 @@ impl Shell {
         if matches!(route, Route::Playlists) {
             self.state.playlist_refresh_started_for_visit.set(false);
         }
-        if let Route::Search { query, .. } = &route {
-            match self.controller.cached_search_results(query, 50) {
-                Ok(results) => {
-                    self.state.library.borrow_mut().search = results;
-                }
-                Err(error) => {
-                    warn!(%error, "failed to refresh cached search results after sync");
-                }
-            }
+        if matches!(route, Route::Search { .. }) {
+            self.start_search_for_route(&route);
         }
         let render_started = Instant::now();
         self.render_current_route_preserving_scroll();
