@@ -325,7 +325,9 @@ verify_nix_flake() {
   fi
 
   bash .github/scripts/retry-nix-command.sh \
-    nix flake check --no-write-lock-file --print-build-logs
+    nix --accept-flake-config \
+      --extra-experimental-features "nix-command flakes" \
+      flake check --no-write-lock-file --print-build-logs
 }
 
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
