@@ -62,18 +62,6 @@ impl AppController {
             self.start_home_refresh_for_saved(saved, HomeRefreshTarget::Section(kind));
         }
     }
-    pub fn refresh_playlists_for_active(&self) {
-        let active = self
-            .store
-            .with_store(|store| store.active_server())
-            .unwrap_or(None);
-        if let Some(saved) = active {
-            if saved_server_needs_auth(&self.secrets, &saved) {
-                return;
-            }
-            self.start_playlist_refresh_for_saved(saved);
-        }
-    }
     pub fn prefetch_explore_for_active(&self) {
         let active = self
             .store
@@ -133,19 +121,6 @@ impl AppController {
             },
             saved,
             target,
-        );
-    }
-    pub(in crate::controller) fn start_playlist_refresh_for_saved(&self, saved: SavedServer) {
-        start_playlist_refresh_thread(
-            PlaylistRefreshContext {
-                store: self.store.clone(),
-                runtime: Arc::clone(&self.runtime),
-                secrets: Arc::clone(&self.secrets),
-                events: self.events.clone(),
-                sync_in_flight: self.sync_in_flight.clone(),
-                playlist_refresh_in_flight: self.playlist_refresh_in_flight.clone(),
-            },
-            saved,
         );
     }
     pub(in crate::controller) fn sync_context(&self) -> SyncContext {

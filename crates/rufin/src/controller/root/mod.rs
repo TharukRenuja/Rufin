@@ -446,7 +446,6 @@ pub struct AppController {
     pub(in crate::controller) events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<ServerId>,
     home_refresh_in_flight: InFlightGuards<ServerId>,
-    playlist_refresh_in_flight: InFlightGuards<ServerId>,
     explore_prefetch_in_flight: InFlightGuards<ServerId>,
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
@@ -617,14 +616,6 @@ pub(in crate::controller) struct HomeRefreshContext {
     events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<ServerId>,
     home_refresh_in_flight: InFlightGuards<ServerId>,
-}
-pub(in crate::controller) struct PlaylistRefreshContext {
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
-    events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<ServerId>,
-    playlist_refresh_in_flight: InFlightGuards<ServerId>,
 }
 #[derive(Clone)]
 pub(in crate::controller) struct SyncContext {

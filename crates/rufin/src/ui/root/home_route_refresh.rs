@@ -8,16 +8,11 @@ impl Shell {
     ) {
         let was_home = matches!(previous, Route::Home);
         let is_home = matches!(next, Route::Home);
-        let was_playlists = matches!(previous, Route::Playlists);
-        let is_playlists = matches!(next, Route::Playlists);
 
         if is_home && !was_home {
             self.state.home_showcase_seed.set(next_home_showcase_seed());
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
             self.prepare_cached_home_entry();
-        }
-        if is_playlists && !was_playlists {
-            self.state.playlist_refresh_started_for_visit.set(false);
         }
     }
     pub(in crate::ui) fn prepare_cached_home_entry(&self) {
@@ -62,15 +57,6 @@ impl Shell {
             section
         };
         upsert_snapshot_home_section(&mut self.state.library.borrow_mut().home_sections, section);
-    }
-    pub(in crate::ui) fn refresh_playlists_for_current_visit(self: &Rc<Self>) {
-        if !matches!(self.state.routes.borrow().current(), Route::Playlists) {
-            return;
-        }
-        if self.state.playlist_refresh_started_for_visit.replace(true) {
-            return;
-        }
-        self.controller.refresh_playlists_for_active();
     }
     pub(in crate::ui) fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
         if let Some(state) = self

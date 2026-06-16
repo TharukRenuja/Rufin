@@ -1316,7 +1316,9 @@ pub(in crate::controller) fn cover_keep_sync() {
     );
     controller.clear_queue();
     let queue = wait_for_queue(&events).expect("clear queue");
-    assert!(queue.entries.is_empty());
+    assert_eq!(queue.entries.len(), 1);
+    assert_eq!(queue.current_index, Some(0));
+    assert_eq!(queue.entries[0].track_id, first.id);
 }
 #[test]
 pub(in crate::controller) fn cover_track_first() {

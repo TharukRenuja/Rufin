@@ -447,27 +447,24 @@ impl AppController {
     }
     pub fn clear_queue(&self) {
         self.invalidate_play_activation_requests();
-        let had_current = self
-            .queue
-            .lock()
-            .ok()
-            .and_then(|queue| queue.as_ref()?.current().map(|entry| entry.id.clone()))
-            .is_some();
+        let mut kept_current = false;
         let result = self.with_queue_mut(|queue| {
-            queue.clear();
+            kept_current = queue.clear_except_current();
             Ok(())
         });
         if let Err(error) = result {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        if had_current {
-            invalidate_playback_requests(&self.playback_request_generation);
-            self.record_current_skip_if_needed();
-            self.clear_playback_activity();
+        if kept_current {
+            self.start_queue_emit();
+            let _result = self.send_playback_command(PlaybackCommand::PrepareNext(None));
+            return;
         }
-        let _result = self.send_playback_command(PlaybackCommand::Stop);
         self.persist_and_emit_queue();
+        invalidate_playback_requests(&self.playback_request_generation);
+        self.clear_playback_activity();
+        let _result = self.send_playback_command(PlaybackCommand::Stop);
     }
     pub fn toggle_shuffle(&self) {
         let result = self.with_queue_mut(|queue| {
@@ -587,6 +584,21 @@ mod tests {
     use super::*;
     use domain::{AlbumId, Playlist, PlaylistEntrySortDescriptor, ServerIdentity};
     use source::PlaylistEntry;
+
+    struct RecordingPlaybackBackend {
+        commands: Arc<Mutex<Vec<PlaybackCommand>>>,
+    }
+
+    impl PlaybackBackend for RecordingPlaybackBackend {
+        fn send(&mut self, command: PlaybackCommand) -> Result<(), playback::PlaybackError> {
+            self.commands.lock().expect("commands").push(command);
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+            Vec::new()
+        }
+    }
 
     #[test]
     fn queue_replace_occurrence() {
@@ -942,7 +954,9 @@ mod tests {
 
         controller.clear_queue();
         let queue = wait_for_queue(&events).expect("cleared queue");
-        assert!(queue.entries.is_empty());
+        assert_eq!(queue.entries.len(), 1);
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(queue.entries[0].track_id, current.id);
 
         controller.finish_store_backed_source_activation(
             &saved.server.id,
@@ -950,7 +964,56 @@ mod tests {
             generation,
         );
         let queue = controller.queue_snapshot().expect("queue snapshot");
-        assert!(queue.entries.is_empty());
+        assert_eq!(queue.entries.len(), 1);
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(queue.entries[0].track_id, current.id);
+    }
+
+    #[test]
+    fn queue_clear_keeps_current_playback() {
+        let (mut controller, events, snapshot, ..) =
+            AppController::bootstrap_with_fake(FakeScale::Small);
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        controller.playback = Arc::new(Mutex::new(Box::new(RecordingPlaybackBackend {
+            commands: Arc::clone(&commands),
+        })));
+        let saved = snapshot.server.expect("server");
+        let current = snapshot.tracks[0].clone();
+        let next = snapshot.tracks[1].clone();
+        let mut queue = QueueEngine::new(saved.id);
+        queue.append(&current);
+        queue.append(&next);
+        *controller.queue.lock().expect("queue") = Some(queue);
+
+        controller.clear_queue();
+
+        let queue = wait_for_queue(&events).expect("cleared queue");
+        assert_eq!(queue.entries.len(), 1);
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(queue.entries[0].track_id, current.id);
+        assert!(
+            !commands
+                .lock()
+                .expect("commands")
+                .iter()
+                .any(|command| matches!(command, PlaybackCommand::Stop))
+        );
+        assert_eq!(
+            commands
+                .lock()
+                .expect("commands")
+                .iter()
+                .filter(|command| matches!(command, PlaybackCommand::PrepareNext(None)))
+                .count(),
+            1
+        );
+        assert!(
+            !commands
+                .lock()
+                .expect("commands")
+                .iter()
+                .any(|command| matches!(command, PlaybackCommand::PrepareNext(Some(_))))
+        );
     }
 
     #[test]
