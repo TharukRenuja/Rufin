@@ -670,7 +670,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("API keys");
     let _ = tr("If you do not have API keys, create them");
     let _ = tr("here");
-    let _ = tr(". You only need ot fill email and an application name parts");
+    let _ = tr(". You only need to fill email and an application name parts");
     let _ = tr("API key");
     let _ = tr("Shared secret");
     let _ = tr("Connection");

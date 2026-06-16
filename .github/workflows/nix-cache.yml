@@ -1,0 +1,62 @@
+name: Nix Cache
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CACHIX_CACHE_NAME: screwys-rufin
+
+jobs:
+  build:
+    name: Build current flake
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install runtime check tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y dbus-x11 xvfb
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+            connect-timeout = 10
+            download-attempts = 5
+            max-substitution-jobs = 4
+            stalled-download-timeout = 90
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: ${{ env.CACHIX_CACHE_NAME }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Check flake
+        run: bash .github/scripts/retry-nix-command.sh nix flake check --print-build-logs
+
+      - name: Build app
+        run: bash .github/scripts/retry-nix-command.sh nix build .#rufin --print-build-logs
+
+      - name: Verify package layout
+        run: bash .github/scripts/verify-package-layout.sh result /
+
+      - name: Verify wrapped app startup
+        run: timeout 30s xvfb-run -a dbus-run-session -- bash .github/scripts/retry-nix-command.sh nix run .# -- --startup-check
