@@ -17,6 +17,7 @@ use domain::{
 };
 use library::{SavedServer, ServerLocalAccess};
 use playback::{PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState};
+use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
 use source::{MusicProvider, PagedRequest, PlaylistEntry, ProviderSession};
 use std::collections::HashMap;
@@ -39,6 +40,28 @@ impl SecretStore for SaveFailingSecretStore {
 
     fn delete_secret(&self, _key: &secrets::SecretKey) -> secrets::SecretResult<()> {
         Ok(())
+    }
+}
+
+fn disk_store_for_test(label: &str) -> (StoreHandle, PathBuf) {
+    let root = unique_test_dir(label);
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create store root");
+    let store = StoreHandle::Path {
+        cache_database_path: root.join(CACHE_DATABASE_FILE_NAME),
+        settings_path: root.join("config").join(SETTINGS_FILE_NAME),
+    };
+    store.with_store(|_| Ok(())).expect("open disk store");
+    (store, root)
+}
+
+fn disk_store_database_path(store: &StoreHandle) -> PathBuf {
+    match store {
+        StoreHandle::Path {
+            cache_database_path,
+            ..
+        } => cache_database_path.clone(),
+        StoreHandle::Memory { .. } => panic!("expected disk store"),
     }
 }
 
@@ -746,6 +769,76 @@ pub(in crate::controller) fn startup_login_sync_reuses_current_cache() {
     assert!(status.delta.is_empty());
     assert_eq!(wait_for_status(&events), "Cached library ready");
     let _cleanup = fs::remove_dir_all(root);
+}
+
+#[test]
+pub(in crate::controller) fn startup_login_sync_reuses_current_disk_cache() {
+    let (store, store_root) = disk_store_for_test("login-sync-disk-cache");
+    let local = local_source_saved();
+    let root = unique_test_dir("login-sync-disk-root");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    seed_cached_library(
+        &store,
+        &local,
+        &[local_album_with_image_ref(ImageRef::new(
+            "local:cover:file%3A%2F%2Flogin-sync-disk-cover",
+            None,
+        ))],
+        &[],
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
+
+    start_login_sync_thread(controller.sync_context(), local);
+
+    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+    assert_eq!(status.last_error, None);
+    assert!(status.delta.is_empty());
+    assert_eq!(wait_for_status(&events), "Cached library ready");
+    let _cleanup = fs::remove_dir_all(root);
+    let _cleanup = fs::remove_dir_all(store_root);
+}
+
+#[test]
+pub(in crate::controller) fn startup_disk_store_waits_for_short_write_lock() {
+    let (store, store_root) = disk_store_for_test("startup-disk-lock");
+    let local = local_source_saved();
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("seed active server");
+    let database_path = disk_store_database_path(&store);
+    let lock = Connection::open(database_path).expect("open lock connection");
+    lock.execute_batch("BEGIN IMMEDIATE")
+        .expect("hold write lock");
+    let writer = {
+        let store = store.clone();
+        let server_id = local.server.id.clone();
+        thread::spawn(move || store.with_store(|store| store.begin_sync(&server_id)))
+    };
+
+    thread::sleep(Duration::from_millis(50));
+    lock.execute_batch("COMMIT").expect("release write lock");
+
+    let generation = writer
+        .join()
+        .expect("join writer")
+        .expect("begin sync after lock release");
+    assert_eq!(generation, 1);
+    let state = store
+        .with_store(|store| store.sync_state(&local.server.id))
+        .expect("sync state");
+    assert_eq!(state.status, "running");
+    assert_eq!(state.generation, generation);
+    let _cleanup = fs::remove_dir_all(store_root);
 }
 #[test]
 pub(in crate::controller) fn startup_source_sync_running_emits_snapshot() {

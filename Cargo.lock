@@ -2670,6 +2670,7 @@ dependencies = [
  "mpris-server",
  "playback",
  "reqwest",
+ "rusqlite",
  "secrets",
  "serde",
  "serde_json",
