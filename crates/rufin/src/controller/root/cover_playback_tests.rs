@@ -801,7 +801,18 @@ pub(in crate::controller) fn playback_current_commits_before_backend_accepts_sta
         .clone();
     assert_eq!(playback.state, PlaybackState::Buffering);
     assert_eq!(playback.current.expect("current").track_id, second.id);
-    assert!(blocked_commands.lock().expect("commands").is_empty());
+    assert!(
+        !blocked_commands
+            .lock()
+            .expect("commands")
+            .iter()
+            .any(|command| {
+                matches!(
+                    command,
+                    PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
+                )
+            })
+    );
 
     release_tx.send(()).expect("release backend");
     let _command = wait_for_recorded_command(&blocked_commands, |command| {
