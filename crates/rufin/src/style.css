@@ -648,6 +648,10 @@ scale.volume-slider trough {
   background: color-mix(in srgb, @accent_bg_color 10%, transparent);
 }
 
+.player-favorite-button.favorite-toggle:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
 .player-play-button {
   background: color-mix(in srgb, @window_fg_color 92%, transparent);
   color: @window_bg_color;

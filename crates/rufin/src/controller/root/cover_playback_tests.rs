@@ -2040,7 +2040,7 @@ pub(in crate::controller) fn cover_update_snapshot() {
         .clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    controller.toggle_current_favorite();
+    controller.set_track_favorite(track.id.clone(), true);
     let playback = wait_for_playback_current_favorite(&controller, &events, true);
     assert_eq!(playback.current.expect("current").track_id, track.id);
     let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
