@@ -226,6 +226,10 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
             queue_lyrics_restore_available_height(shell),
             saved_height,
         ));
+    let resize_shell = Rc::clone(shell);
+    shell
+        .queue_lyrics_split
+        .connect_position_notify(move |_| resize_shell.schedule_queue_panel_render());
 }
 
 pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
@@ -245,6 +249,7 @@ pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
             shell.queue_lyrics_split.set_position(split_height);
         }
     }
+    shell.schedule_queue_panel_render();
 }
 
 fn queue_lyrics_restore_available_height(shell: &Shell) -> i32 {

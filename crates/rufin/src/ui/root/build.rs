@@ -48,6 +48,7 @@ impl InitialRouteCoverMetrics {
 
 const STARTUP_QUEUE_ROW_HEIGHT: i32 = 58;
 const STARTUP_QUEUE_COVER_SIZE: i32 = 50;
+const STARTUP_QUEUE_FALLBACK_APP_HEIGHT: i32 = 900;
 const SOURCE_BACKGROUND_COVER_WARM_LIMIT: usize = DECODED_COVER_CACHE_LIMIT;
 
 pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
@@ -106,7 +107,7 @@ pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<CoverWarm
         shell.state.queue_filter.borrow().trim(),
         shell.state.resolved_right_sidebar.get().is_visible(),
         shell.state.fullscreen_player_visible.get(),
-        shell.app_root.height(),
+        startup_queue_app_height(shell),
         shell
             .state
             .library
@@ -192,12 +193,19 @@ fn push_queue_entry_targets(
     filter: &str,
     count: usize,
 ) {
-    for entry in queue
+    let entries = queue
         .entries
         .iter()
         .filter(|entry| queue_entry_matches_startup_filter(entry, filter))
-        .take(count)
-    {
+        .collect::<Vec<_>>();
+    let current_id = queue
+        .current_index
+        .and_then(|index| queue.entries.get(index))
+        .map(|entry| &entry.id);
+    let current_row =
+        current_id.and_then(|current_id| entries.iter().position(|entry| &entry.id == current_id));
+    let (start, end) = queue_startup_target_range(entries.len(), count, current_row);
+    for entry in entries[start..end].iter() {
         push_startup_cover_target(
             targets,
             entry.image_ref.as_ref(),
@@ -205,6 +213,25 @@ fn push_queue_entry_targets(
             STARTUP_QUEUE_COVER_SIZE,
         );
     }
+}
+
+fn queue_startup_target_range(
+    total: usize,
+    count: usize,
+    current_row: Option<usize>,
+) -> (usize, usize) {
+    if total == 0 || count == 0 {
+        return (0, 0);
+    }
+    let count = count.min(total);
+    let Some(current_row) = current_row else {
+        return (0, count);
+    };
+    let lead = ((count as f64) * 0.42).ceil() as usize;
+    let start = current_row
+        .saturating_sub(lead)
+        .min(total.saturating_sub(count));
+    (start, start + count)
 }
 
 fn queue_entry_matches_startup_filter(entry: &QueueEntry, filter: &str) -> bool {
@@ -220,6 +247,34 @@ fn startup_queue_visible_count(app_height: i32) -> usize {
         .saturating_sub(player::BOTTOM_PLAYER_HEIGHT)
         .max(STARTUP_QUEUE_ROW_HEIGHT);
     (height / STARTUP_QUEUE_ROW_HEIGHT).saturating_add(2) as usize
+}
+
+fn startup_queue_app_height(shell: &Shell) -> i32 {
+    startup_queue_prime_height(
+        shell.app_root.height(),
+        shell.window.height(),
+        shell.state.settings.borrow().window_height,
+    )
+}
+
+pub(in crate::ui) fn startup_queue_prime_height(
+    app_height: i32,
+    window_height: i32,
+    saved_window_height: Option<i32>,
+) -> i32 {
+    let min_height = player::BOTTOM_PLAYER_HEIGHT.saturating_add(STARTUP_QUEUE_ROW_HEIGHT);
+    if app_height > min_height {
+        return app_height;
+    }
+    if window_height > min_height {
+        return window_height;
+    }
+    if let Some(saved_window_height) = saved_window_height
+        && saved_window_height > min_height
+    {
+        return saved_window_height;
+    }
+    STARTUP_QUEUE_FALLBACK_APP_HEIGHT
 }
 
 fn startup_route_cover_targets(shell: &Shell, route: &Route) -> Vec<CoverWarmTarget> {

@@ -772,6 +772,8 @@ pub(in crate::ui) fn shell_startup_playback_cover_target() {
 pub(in crate::ui) fn shell_startup_queue_cover_targets() {
     let first_ref = test_image_ref("queue-first");
     let second_ref = test_image_ref("queue-second");
+    let current_ref = test_image_ref("queue-current");
+    let skipped_ref = test_image_ref("queue-0");
     let queue = QueueSnapshot {
         server_id: ServerId::new("server:active"),
         entries: vec![
@@ -824,6 +826,87 @@ pub(in crate::ui) fn shell_startup_queue_cover_targets() {
         Some(&ServerId::new("server:stale")),
     );
     assert!(targets.is_empty());
+
+    let entries = (0..12)
+        .map(|index| {
+            let image_ref = if index == 8 {
+                current_ref.clone()
+            } else if index == 0 {
+                skipped_ref.clone()
+            } else {
+                test_image_ref(&format!("queue-{index}"))
+            };
+            test_queue_entry(&format!("Track {index}"), image_ref)
+        })
+        .collect::<Vec<_>>();
+    let current_queue = QueueSnapshot {
+        server_id: ServerId::new("server:active"),
+        entries,
+        current_index: Some(8),
+        repeat_mode: RepeatMode::Off,
+        shuffle: ShuffleState::default(),
+        shuffle_order: Vec::new(),
+        progress_seconds: 0,
+    };
+    super::push_startup_queue_targets(
+        &mut targets,
+        Some(&current_queue),
+        "",
+        true,
+        false,
+        280,
+        Some(&ServerId::new("server:active")),
+    );
+
+    let target_refs = targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(target_refs.contains(&current_ref.item_id.as_str()));
+    assert!(!target_refs.contains(&skipped_ref.item_id.as_str()));
+
+    targets.clear();
+    let tall_first_ref = test_image_ref("queue-0");
+    let tall_entries = (0..30)
+        .map(|index| {
+            let image_ref = if index == 0 {
+                tall_first_ref.clone()
+            } else {
+                test_image_ref(&format!("queue-{index}"))
+            };
+            test_queue_entry(&format!("Track {index}"), image_ref)
+        })
+        .collect::<Vec<_>>();
+    let tall_queue = QueueSnapshot {
+        server_id: ServerId::new("server:active"),
+        entries: tall_entries,
+        current_index: Some(8),
+        repeat_mode: RepeatMode::Off,
+        shuffle: ShuffleState::default(),
+        shuffle_order: Vec::new(),
+        progress_seconds: 0,
+    };
+    super::push_startup_queue_targets(
+        &mut targets,
+        Some(&tall_queue),
+        "",
+        true,
+        false,
+        1028,
+        Some(&ServerId::new("server:active")),
+    );
+    let target_refs = targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(target_refs.contains(&tall_first_ref.item_id.as_str()));
+}
+
+#[test]
+pub(in crate::ui) fn shell_startup_queue_height_falls_back_before_allocation() {
+    assert_eq!(super::startup_queue_prime_height(0, 720, Some(640)), 720);
+    assert_eq!(super::startup_queue_prime_height(0, 0, Some(640)), 640);
+    assert_eq!(super::startup_queue_prime_height(0, 0, None), 900);
 }
 
 #[test]

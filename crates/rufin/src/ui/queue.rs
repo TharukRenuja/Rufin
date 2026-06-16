@@ -30,6 +30,9 @@ const QUEUE_DURATION_COLUMN_WIDTH: i32 = 82;
 const QUEUE_YEAR_COLUMN_WIDTH: i32 = 64;
 const QUEUE_FAVORITE_COLUMN_WIDTH: i32 = 64;
 const QUEUE_ROW_HEIGHT: i32 = 58;
+const QUEUE_CURRENT_COMFORT_TOP: f64 = 0.25;
+const QUEUE_CURRENT_COMFORT_BOTTOM: f64 = 0.70;
+const QUEUE_CURRENT_TARGET: f64 = 0.42;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
@@ -177,6 +180,7 @@ impl Shell {
                         && previous.same_rows_as(&render_state)
                     {
                         update_queue_current_rows(&state.model, &previous, &render_state);
+                        reveal_queue_current_row_later(&queue_scroller, render_state.current_row);
                         state.render = Some(render_state.clone());
                         true
                     } else {
@@ -203,6 +207,7 @@ impl Shell {
         match scroll_behavior {
             QueueScrollBehavior::Preserve => {
                 restore_queue_scroll_position(&queue_scroller, previous_scroll);
+                reveal_queue_current_row_later(&queue_scroller, render_state.current_row);
             }
             QueueScrollBehavior::Reset => {
                 restore_queue_scroll_position(&queue_scroller, 0.0);
@@ -707,6 +712,53 @@ fn restore_queue_scroll_position(scroller: &gtk::ScrolledWindow, value: f64) {
     let lower = adjustment.lower();
     let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
     adjustment.set_value(value.clamp(lower, upper));
+}
+
+fn reveal_queue_current_row_later(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) {
+    let idle_scroller = scroller.clone();
+    glib::idle_add_local_once(move || reveal_queue_current_row(&idle_scroller, current_row));
+
+    let settled_scroller = scroller.clone();
+    glib::timeout_add_local_once(Duration::from_millis(80), move || {
+        reveal_queue_current_row(&settled_scroller, current_row)
+    });
+}
+
+fn reveal_queue_current_row(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) {
+    let Some(current_row) = current_row else {
+        return;
+    };
+    let adjustment = scroller.vadjustment();
+    let page_size = adjustment.page_size();
+    if page_size <= 1.0 {
+        return;
+    }
+    let Some(target) = queue_current_row_scroll_target(current_row, adjustment.value(), page_size)
+    else {
+        return;
+    };
+    restore_queue_scroll_position(scroller, target);
+}
+
+fn queue_current_row_scroll_target(
+    current_row: usize,
+    scroll_value: f64,
+    page_size: f64,
+) -> Option<f64> {
+    let row_height = f64::from(QUEUE_ROW_HEIGHT);
+    let row_top = current_row as f64 * row_height;
+    let row_bottom = row_top + row_height;
+    let comfort_top = scroll_value + page_size * QUEUE_CURRENT_COMFORT_TOP;
+    let comfort_bottom = scroll_value + page_size * QUEUE_CURRENT_COMFORT_BOTTOM;
+    if row_top >= comfort_top && row_bottom <= comfort_bottom {
+        return None;
+    }
+    let target_offset = if page_size >= row_height * 3.0 {
+        page_size * QUEUE_CURRENT_TARGET
+    } else {
+        (page_size - row_height).max(0.0) / 2.0
+    };
+    Some(row_top - target_offset)
 }
 
 fn queue_header_row(
@@ -1360,6 +1412,25 @@ mod tests {
         assert_eq!(
             queue_current_update_positions(&previous, &next),
             vec![10, 900]
+        );
+    }
+
+    #[test]
+    fn queue_current_reveal_prefers_comfort_band_when_possible() {
+        let row = 10usize;
+        let row_top = row as f64 * f64::from(QUEUE_ROW_HEIGHT);
+
+        assert_eq!(
+            queue_current_row_scroll_target(row, 0.0, 400.0),
+            Some(row_top - 400.0 * QUEUE_CURRENT_TARGET)
+        );
+        assert_eq!(
+            queue_current_row_scroll_target(row, row_top - 140.0, 400.0),
+            None
+        );
+        assert_eq!(
+            queue_current_row_scroll_target(row, 0.0, 80.0),
+            Some(row_top - 11.0)
         );
     }
 
