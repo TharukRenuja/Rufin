@@ -172,8 +172,12 @@ jobs:
             )"
             test -n "$pkgfile"
 
+            pkgroot="$(mktemp -d)"
+            bsdtar -xf "$pkgfile" -C "$pkgroot"
+            bash .github/scripts/verify-package-layout.sh "$pkgroot" /usr
+            rm -rf "$pkgroot"
+
             pacman -U --noconfirm "$pkgfile"
-            bash .github/scripts/verify-package-layout.sh / /usr
             timeout 30s xvfb-run -a dbus-run-session -- rufin --startup-check
             desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
             appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml

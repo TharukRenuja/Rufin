@@ -7,6 +7,7 @@
     "org.freedesktop.Sdk.Extension.rust-stable"
   ],
   "command": "rufin",
+  "separate-locales": false,
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": {

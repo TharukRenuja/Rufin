@@ -173,6 +173,35 @@ first_merged_pr_for_author() {
   fi
 }
 
+github_author_for_commit() {
+  local repo_slug="$1"
+  local commit="$2"
+  local output
+
+  if output="$(gh api --method GET "repos/$repo_slug/commits/$commit" \
+    --jq '.author.login // empty' \
+    2>/dev/null)"; then
+    printf '%s\n' "$output"
+  fi
+}
+
+first_commit_for_author() {
+  local repo_slug="$1"
+  local author="$2"
+  local output
+
+  if output="$(gh api --method GET search/commits \
+    -H 'Accept: application/vnd.github.cloak-preview+json' \
+    -f q="repo:$repo_slug author:$author" \
+    -f sort=author-date \
+    -f order=asc \
+    -f per_page=1 \
+    --jq '.items[0].sha // empty' \
+    2>/dev/null)"; then
+    printf '%s\n' "$output"
+  fi
+}
+
 format_release_note_author() {
   local author="$1"
 
@@ -186,11 +215,12 @@ format_release_note_author() {
 }
 
 is_release_note_bot_author() {
-  [[ "$1" == *"[bot]" ]]
+  [[ "$1" == *"[bot]" || "$1" == "weblate" ]]
 }
 
 is_release_publish_pr_title() {
-  [[ "$1" == "chore(release): publish v"* ]]
+  [[ "$1" == "release: publish prep for v"* ||
+    "$1" == "chore(release): publish v"* ]]
 }
 
 write_changelog() {
@@ -204,6 +234,7 @@ write_changelog() {
 
   declare -A seen_prs=()
   declare -A first_pr_by_author=()
+  declare -A first_commit_by_author=()
   declare -A new_contributor_seen=()
   local new_contributors=()
 
@@ -212,10 +243,16 @@ write_changelog() {
       "chore(release): bump version to "*)
         continue
         ;;
+      "release: publish prep for v"*)
+        continue
+        ;;
       "chore(flatpak): update Flathub manifest for v"*)
         continue
         ;;
       "chore(aur): update stable package for v"*)
+        continue
+        ;;
+      "release: publish stable packages for v"*)
         continue
         ;;
       "Merge pull request #"*)
@@ -251,6 +288,22 @@ write_changelog() {
             -z "${new_contributor_seen[$pr_author]+x}" ]]; then
             new_contributor_seen[$pr_author]=1
             new_contributors+=("$pr_author"$'\t'"$pr_number")
+          fi
+        fi
+      fi
+
+      if is_release_note_bot_author "$pr_author"; then
+        local commit_author
+        commit_author="$(github_author_for_commit "$repo_slug" "$commit")"
+        if [[ -n "$commit_author" ]] && ! is_release_note_bot_author "$commit_author"; then
+          if [[ -z "${first_commit_by_author[$commit_author]+x}" ]]; then
+            first_commit_by_author[$commit_author]="$(first_commit_for_author "$repo_slug" "$commit_author")"
+          fi
+
+          if [[ "${first_commit_by_author[$commit_author]}" == "$commit" &&
+            -z "${new_contributor_seen[$commit_author]+x}" ]]; then
+            new_contributor_seen[$commit_author]=1
+            new_contributors+=("$commit_author"$'\t'"$pr_number")
           fi
         fi
       fi
@@ -294,7 +347,7 @@ write_notes() {
     write_changelog "$repo_url" "$repo_slug"
     if [[ -n "$repo_url" ]]; then
       echo
-      printf 'Full Changelog: [%s...%s](%s/compare/%s...%s)\n' \
+      printf '**Full Changelog:** [%s...%s](%s/compare/%s...%s)\n' \
         "$base_tag" "$version" "$repo_url" "$base_tag" "$version"
     fi
     echo
@@ -357,7 +410,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   if [[ -f flake.nix ]]; then
     git add flake.nix
   fi
-  git commit -m "chore(release): bump version to $plain_version"
+  git commit -m "release: publish prep for $version"
 fi
 
 write_notes
