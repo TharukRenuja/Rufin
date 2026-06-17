@@ -614,6 +614,11 @@ impl GstEngine {
             PlaybackCommand::SetVisualizerEnabled(enabled) => self.set_visualizer_enabled(enabled),
             PlaybackCommand::Resume => self.start_status_resume(),
             PlaybackCommand::Pause => self.start_status_pause(),
+            PlaybackCommand::Silence => {
+                self.primary.set_output_volume(0.0, true);
+                self.secondary.set_output_volume(0.0, true);
+                Ok(())
+            }
             PlaybackCommand::Stop => {
                 self.cancel_status_fade();
                 self.pending_seek = None;

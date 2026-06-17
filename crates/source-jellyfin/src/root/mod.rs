@@ -152,6 +152,25 @@ impl JellyfinProvider {
         })
     }
 
+    pub fn stream_descriptor_from_saved_session(
+        session: &SavedProviderSession,
+        request: &StreamRequest,
+    ) -> ProviderResult<StreamDescriptor> {
+        let config = JellyfinClientConfig::new(
+            &session.server.base_url,
+            session.trust_invalid_cert,
+            session.device_id.clone(),
+        );
+        let base_url = normalize_base_url(&config.base_url)?;
+        stream_descriptor(
+            &base_url,
+            &session.user_id,
+            &config.device_id,
+            &session.access_token,
+            request,
+        )
+    }
+
     pub fn image_url(
         &self,
         item_id: &str,

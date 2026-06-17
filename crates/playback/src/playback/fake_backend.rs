@@ -105,6 +105,7 @@ impl PlaybackBackend for FakePlaybackBackend {
             }
             PlaybackCommand::Resume => self.set_state(PlaybackState::Playing),
             PlaybackCommand::Pause => self.set_state(PlaybackState::Paused),
+            PlaybackCommand::Silence => {}
             PlaybackCommand::Stop => {
                 self.position_seconds = 0;
                 self.position_millis = 0;

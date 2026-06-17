@@ -790,7 +790,7 @@ pub(in crate::controller) fn lyrics_require_access() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-pub(in crate::controller) fn lyrics_resolve_access() {
+pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-playback-stream");
@@ -816,7 +816,11 @@ pub(in crate::controller) fn lyrics_resolve_access() {
         .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let secrets = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.server.id, "test-token")
+        .expect("save token");
+    let secrets: Arc<dyn SecretStore> = secrets;
     let stream = super::resolve_stream(
         &store,
         &runtime,
@@ -826,10 +830,11 @@ pub(in crate::controller) fn lyrics_resolve_access() {
         &PlaybackSettings::default(),
     )
     .expect("stream");
-    assert!(stream.uri().starts_with("file://"));
-    assert!(stream.uri().contains("Track.flac"));
+    assert!(stream.uri().starts_with("https://music.example/Audio/"));
+    assert!(stream.uri().contains("api_key=test-token"));
     let _cleanup = fs::remove_dir_all(root);
 }
+
 #[test]
 pub(in crate::controller) fn lyrics_change_source() {
     let store = StoreHandle::open_memory().expect("memory store");
@@ -889,6 +894,46 @@ pub(in crate::controller) fn lyrics_use_source() {
     store
         .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
         .expect("upsert track");
+    let runtime = Arc::new(Runtime::new().expect("runtime"));
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let stream = super::resolve_stream(
+        &store,
+        &runtime,
+        &secrets,
+        &saved.server.id,
+        &track.id,
+        &PlaybackSettings::default(),
+    )
+    .expect("stream");
+
+    assert!(stream.uri().starts_with("file://"));
+    assert!(stream.uri().contains("Track.flac"));
+    let _cleanup = fs::remove_dir_all(root);
+}
+
+#[test]
+pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let root = self::unique_test_dir("local-source-stale-stream");
+    let audio = root.join("Album/Track.flac");
+    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+    fs::write(&audio, []).expect("audio");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    let mut track = restored_track();
+    track.id = TrackId::new("local:track:stale-stream");
+    track.local_path = Some(audio.to_string_lossy().into_owned());
+    store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .expect("upsert track");
+    fs::remove_file(&audio).expect("remove audio");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
 

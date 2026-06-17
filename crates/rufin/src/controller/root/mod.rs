@@ -3,7 +3,8 @@ pub use super::discovery::DiscoveredServer;
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
 use crate::external_scrobbling::{self, ExternalScrobbleState};
 use crate::providers::{
-    JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
+    JellyfinLyricsSearch, LoadedProvider, StreamingProvider,
+    jellyfin_stream_descriptor_from_saved_session, login_provider, provider_display_name,
     provider_from_saved,
 };
 use crate::{cover_art_policy, external_metadata};
@@ -701,6 +702,28 @@ impl StoreHandle {
                 ..
             } => {
                 let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
+                operation(&store).map_err(|error| error.to_string())
+            }
+            Self::Memory { store, .. } => {
+                let store = store
+                    .lock()
+                    .map_err(|_| "store lock was poisoned".to_string())?;
+                operation(&store).map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    pub(in crate::controller) fn with_store_fast<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> Result<T, StoreError>,
+    ) -> Result<T, String> {
+        match self {
+            Self::Path {
+                cache_database_path,
+                ..
+            } => {
+                let store = Store::open_fast_read(cache_database_path)
+                    .map_err(|error| error.to_string())?;
                 operation(&store).map_err(|error| error.to_string())
             }
             Self::Memory { store, .. } => {

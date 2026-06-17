@@ -644,6 +644,26 @@ fn store_configures_busy_timeout() {
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 5_000);
 }
 #[test]
+fn store_fast_read_has_no_busy_timeout() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "fast-read"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    {
+        let store = Store::open(&path).expect("open file store");
+        assert_eq!(store.schema_version().expect("schema version"), 18);
+    }
+    let store = Store::open_fast_read(&path).expect("open fast read store");
+    assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+#[test]
 fn schema_trip_server() {
     let store = Store::open_memory().expect("open store");
     let server_id = ServerId::fake(1);

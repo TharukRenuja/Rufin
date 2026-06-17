@@ -2122,14 +2122,20 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
                 return;
             }
         };
-        info!(
-            track_id = %ticket.request.next_entry.track_id.as_str(),
-            elapsed_ms = preload_started_at.elapsed().as_millis(),
-            "resolved next playback stream"
-        );
+        let elapsed_ms = preload_started_at.elapsed().as_millis();
         if !next_preload_ticket_valid(&next_preload, &ticket) {
+            debug!(
+                track_id = %ticket.request.next_entry.track_id.as_str(),
+                elapsed_ms,
+                "discarded stale next playback stream"
+            );
             return;
         }
+        info!(
+            track_id = %ticket.request.next_entry.track_id.as_str(),
+            elapsed_ms,
+            "resolved next playback stream"
+        );
         if !send_prepared_next(&playback, &queue, &events, &ticket.request, prepared) {
             clear_matching_next_preload(&next_preload, &ticket);
         }
