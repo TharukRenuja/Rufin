@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 
 const JELLYFIN_DEVICE_ID_RANDOM_BYTES: usize = 16;
 const NETEASE_INSTRUMENTAL_TEXT: &str = "纯音乐，请欣赏";
+const NETEASE_NO_TEXT_LYRICS_MARKER: &str = "暂无文本歌词";
 const NETEASE_CREDIT_LABELS: &[&str] = &["作词", "作曲", "编曲", "制作人"];
 
 #[cfg(test)]
@@ -53,6 +54,7 @@ fn netease_line_has_content(text: &str) -> bool {
     let text = text.trim();
     !text.is_empty()
         && text != NETEASE_INSTRUMENTAL_TEXT
+        && !text.contains(NETEASE_NO_TEXT_LYRICS_MARKER)
         && !NETEASE_CREDIT_LABELS
             .iter()
             .any(|label| netease_credit_line(text, label))
