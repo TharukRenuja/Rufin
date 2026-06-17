@@ -755,6 +755,16 @@ impl QueueEngine {
         self.rebuild_shuffle_order();
     }
 
+    pub fn start_first_shuffled(&mut self) {
+        if !self.shuffle.enabled || self.entries.is_empty() {
+            return;
+        }
+        self.rebuild_shuffle_order_unpinned();
+        self.current_index = self.shuffle_order.first().copied();
+        self.progress_seconds = 0;
+        self.sync_shuffle_position();
+    }
+
     fn entry_from_track(&mut self, track: &Track) -> QueueEntry {
         let id = QueueEntryId::new(format!("queue-{}", self.next_entry_number));
         self.next_entry_number += 1;
@@ -1015,11 +1025,7 @@ impl QueueEngine {
     }
 
     fn rebuild_shuffle_order(&mut self) {
-        self.shuffle_order = (0..self.entries.len()).collect();
-        let seed = self.shuffle.seed;
-        self.shuffle_order.sort_by_key(|index| {
-            stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
-        });
+        self.rebuild_shuffle_order_unpinned();
         if self.shuffle.enabled
             && let Some(current_index) = self.current_index
             && let Some(position) = self
@@ -1031,6 +1037,14 @@ impl QueueEngine {
             self.shuffle_order.insert(0, current_index);
         }
         self.sync_shuffle_position();
+    }
+
+    fn rebuild_shuffle_order_unpinned(&mut self) {
+        self.shuffle_order = (0..self.entries.len()).collect();
+        let seed = self.shuffle.seed;
+        self.shuffle_order.sort_by_key(|index| {
+            stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
+        });
     }
 
     fn sync_shuffle_position(&mut self) {

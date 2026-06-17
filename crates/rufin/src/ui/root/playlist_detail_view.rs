@@ -388,6 +388,7 @@ impl Shell {
                     0,
                     &PlaylistEntryListState::default(),
                 )
+                .map(PlayActivation::shuffled_start)
             {
                 controller.play_activation(activation);
             }

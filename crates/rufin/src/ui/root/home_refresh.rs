@@ -605,6 +605,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
                 )
             } else {
                 playlist_entry_play_activation(playlist_id.clone(), &detail.entries[0], 0, &state)
+                    .map(PlayActivation::shuffled_start)
             };
             if let Some(activation) = activation {
                 controller.play_activation(activation);

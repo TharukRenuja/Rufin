@@ -112,7 +112,7 @@ pub(in crate::ui) fn loaded_tracks_window_play_activation(
     let anchor_track = items
         .get(anchor_index.saturating_sub(start))
         .map(|item| item.track.clone())?;
-    Some(PlayActivation {
+    let activation = PlayActivation {
         target: PlayTarget::LoadedSource {
             source_key,
             completeness,
@@ -123,6 +123,11 @@ pub(in crate::ui) fn loaded_tracks_window_play_activation(
                 source_item_id: None,
             },
         },
+    };
+    Some(if anchor_index == 0 {
+        activation.shuffled_start()
+    } else {
+        activation
     })
 }
 fn bounded_loaded_window(total_items: usize, anchor_index: usize) -> (usize, usize) {
