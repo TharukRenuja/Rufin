@@ -292,6 +292,11 @@ write_notes() {
     echo "## Changelog"
     echo
     write_changelog "$repo_url" "$repo_slug"
+    if [[ -n "$repo_url" ]]; then
+      echo
+      printf 'Full Changelog: [%s...%s](%s/compare/%s...%s)\n' \
+        "$base_tag" "$version" "$repo_url" "$base_tag" "$version"
+    fi
     echo
   } > "$notes_file"
 }
