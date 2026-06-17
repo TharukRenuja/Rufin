@@ -45,11 +45,11 @@ const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
 const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
 const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 8;
-const BOTTOM_PLAYER_TINY_WIDTH: i32 = 550;
 const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
 const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
+const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
 const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
@@ -1559,10 +1559,10 @@ mod tests {
     }
 
     #[test]
-    fn player_enters_tiny_mode_below_old_minimum() {
+    fn player_enters_tiny_mode_until_compact_width() {
         assert!(super::bottom_player_tiny(450));
-        assert!(super::bottom_player_tiny(549));
-        assert!(!super::bottom_player_tiny(550));
+        assert!(super::bottom_player_tiny(613));
+        assert!(!super::bottom_player_tiny(614));
     }
 
     #[test]

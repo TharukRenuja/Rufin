@@ -47,15 +47,15 @@ const FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT: i32 = 286;
 const FULLSCREEN_EQUALIZER_ROW_HEIGHT: i32 = 240;
 const FULLSCREEN_EQUALIZER_TINY_ROW_HEIGHT: i32 =
     FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT + FULLSCREEN_EQUALIZER_LABEL_HEIGHT;
-const FULLSCREEN_EQUALIZER_LEVEL_WIDTH: i32 = 42;
-const FULLSCREEN_EQUALIZER_ROW_GAP: i32 = 12;
+const FULLSCREEN_EQUALIZER_LEVEL_WIDTH: i32 = 48;
+const FULLSCREEN_EQUALIZER_ROW_GAP: i32 = 16;
 const FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH: i32 = 14;
 const FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH: i32 = 44;
 const FULLSCREEN_EQUALIZER_MIN_BAND_GAP: i32 = 2;
 const FULLSCREEN_EQUALIZER_MAX_BAND_GAP: i32 = 10;
 const FULLSCREEN_EQUALIZER_LABEL_HEIGHT: i32 = 50;
-const FULLSCREEN_EQUALIZER_MIN_FIT_INSET: i32 = 24;
-const FULLSCREEN_EQUALIZER_MAX_FIT_INSET: i32 = 96;
+const FULLSCREEN_EQUALIZER_MIN_FIT_INSET: i32 = 16;
+const FULLSCREEN_EQUALIZER_MAX_FIT_INSET: i32 = 24;
 
 pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
@@ -198,14 +198,15 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     stack.add_titled(&equalizer.root, Some("equalizer"), &tr("Equalizer"));
     stack.set_visible_child_name("lyrics");
 
-    let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let switcher_bar = gtk::CenterBox::new();
     switcher_bar.add_css_class("fullscreen-player-tab-bar");
-    switcher_bar.set_halign(gtk::Align::Center);
+    switcher_bar.set_margin_start(14);
+    switcher_bar.set_hexpand(true);
     let inline_close_button = icon_button("go-down-symbolic", "Close fullscreen player");
     inline_close_button.add_css_class("fullscreen-player-close-button");
     inline_close_button.set_visible(false);
-    switcher_bar.append(&inline_close_button);
-    switcher_bar.append(&fullscreen_player_switcher(&stack));
+    switcher_bar.set_start_widget(Some(&inline_close_button));
+    switcher_bar.set_center_widget(Some(&fullscreen_player_switcher(&stack)));
     body.append(&switcher_bar);
     body.append(&stack);
     root.append(&body);
@@ -1197,28 +1198,25 @@ impl Shell {
     }
 
     fn apply_fullscreen_responsive_layout(&self) {
-        let tiny = self.window.width() < MIN_USEFUL_MAIN_WIDTH;
         let show_hero = fullscreen_show_hero_for(self.window.height());
+        let compact_equalizer =
+            fullscreen_equalizer_compact_for(self.window.width(), self.window.height());
         self.fullscreen_player.close_button.set_visible(show_hero);
         self.fullscreen_player
             .inline_close_button
             .set_visible(!show_hero);
         self.fullscreen_player.hero.set_visible(show_hero);
-        self.fullscreen_player.equalizer_band_row.set_vexpand(!tiny);
+        self.fullscreen_player.equalizer_band_row.set_vexpand(true);
         self.fullscreen_player
             .equalizer_band_row
-            .set_height_request(if tiny {
+            .set_height_request(if compact_equalizer {
                 FULLSCREEN_EQUALIZER_TINY_ROW_HEIGHT
             } else {
                 FULLSCREEN_EQUALIZER_ROW_HEIGHT
             });
         self.fullscreen_player
             .equalizer_band_row
-            .set_valign(if tiny {
-                gtk::Align::Start
-            } else {
-                gtk::Align::Fill
-            });
+            .set_valign(gtk::Align::Fill);
         let cover_size = self.fullscreen_player_cover_size();
         self.fullscreen_player.cover.set_square_size(cover_size);
         let equalizer_width = self.apply_fullscreen_equalizer_fit();
@@ -1232,9 +1230,18 @@ impl Shell {
             self.app_content_stack.width(),
             self.window.width(),
         ]);
+        let height = if fullscreen_equalizer_compact_for(self.window.width(), self.window.height())
+        {
+            self.fullscreen_player
+                .equalizer_band_row
+                .height()
+                .min(FULLSCREEN_EQUALIZER_TINY_ROW_HEIGHT)
+        } else {
+            self.fullscreen_player.equalizer_band_row.height()
+        };
         apply_fullscreen_equalizer_fit(
             width,
-            self.fullscreen_player.equalizer_band_row.height(),
+            height,
             &self.fullscreen_player.equalizer_graph,
             &self.fullscreen_player.equalizer_bands,
             &self.fullscreen_player.equalizer_band_widgets,
@@ -1920,6 +1927,10 @@ fn fullscreen_show_hero_for(height: i32) -> bool {
     height >= FULLSCREEN_PLAYER_HERO_MIN_WINDOW_HEIGHT
 }
 
+fn fullscreen_equalizer_compact_for(width: i32, height: i32) -> bool {
+    width < MIN_USEFUL_MAIN_WIDTH || !fullscreen_show_hero_for(height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::equalizer::equalizer_presets;
@@ -1947,6 +1958,13 @@ mod tests {
     fn fullscreen_hero_uses_height_not_tiny_width() {
         assert!(super::fullscreen_show_hero_for(900));
         assert!(!super::fullscreen_show_hero_for(400));
+    }
+
+    #[test]
+    fn fullscreen_equalizer_compacts_for_short_windows() {
+        assert!(super::fullscreen_equalizer_compact_for(630, 408));
+        assert!(super::fullscreen_equalizer_compact_for(549, 900));
+        assert!(!super::fullscreen_equalizer_compact_for(630, 900));
     }
 
     #[test]
