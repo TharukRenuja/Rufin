@@ -1,5 +1,8 @@
 use super::*;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const PLAYBACK_REQUEST_SETTLE: Duration = Duration::from_millis(150);
+const PLAYBACK_LOCK_RETRY: Duration = Duration::from_millis(150);
 
 impl AppController {
     pub(in crate::controller) fn send_playback_command(
@@ -91,6 +94,9 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let events = self.events.clone();
         thread::spawn(move || {
+            if restart {
+                thread::sleep(PLAYBACK_REQUEST_SETTLE);
+            }
             if !request_generation_match(
                 &playback_request_generation,
                 request_generation,
@@ -98,37 +104,59 @@ impl AppController {
                 &server_id,
                 &entry,
             ) {
+                debug!(
+                    request_generation,
+                    track_id = %entry.track_id.as_str(),
+                    "discarded stale playback request before resolve"
+                );
                 return;
             }
             let resolve_started = Instant::now();
-            let item = match resolve_prepared_item(
-                &store,
-                &runtime,
-                &secrets,
-                &server_id,
-                &entry,
-                &playback_settings,
-            ) {
-                Ok(item) => item,
-                Err(error) => {
-                    if request_generation_match(
-                        &playback_request_generation,
-                        request_generation,
-                        &queue,
-                        &server_id,
-                        &entry,
-                    ) {
-                        controller.report_playback(PlaybackReportKind::Stopped, true);
-                        controller.clear_playback_activity();
-                        if let Ok(mut snapshot) = playback_snapshot.lock() {
-                            snapshot.state = PlaybackState::Stopped;
-                            snapshot.buffering_percent = None;
-                            snapshot.last_error = Some(error.clone());
+            let mut lock_retried = false;
+            let item = loop {
+                match resolve_prepared_item(
+                    &store,
+                    &runtime,
+                    &secrets,
+                    &server_id,
+                    &entry,
+                    &playback_settings,
+                ) {
+                    Ok(item) => break item,
+                    Err(error) => {
+                        if request_generation_match(
+                            &playback_request_generation,
+                            request_generation,
+                            &queue,
+                            &server_id,
+                            &entry,
+                        ) && !lock_retried
+                            && playback_resolve_error_is_transient(&error)
+                        {
+                            lock_retried = true;
+                            debug!(%error, "retrying playback resolve while store is busy");
+                            thread::sleep(PLAYBACK_LOCK_RETRY);
+                            continue;
                         }
-                        controller.emit_playback_snapshot();
-                        let _sent = events.send(ControllerEvent::Error(error));
+                        if request_generation_match(
+                            &playback_request_generation,
+                            request_generation,
+                            &queue,
+                            &server_id,
+                            &entry,
+                        ) {
+                            controller.report_playback(PlaybackReportKind::Stopped, true);
+                            controller.clear_playback_activity();
+                            if let Ok(mut snapshot) = playback_snapshot.lock() {
+                                snapshot.state = PlaybackState::Stopped;
+                                snapshot.buffering_percent = None;
+                                snapshot.last_error = Some(error.clone());
+                            }
+                            controller.emit_playback_snapshot();
+                            let _sent = events.send(ControllerEvent::Error(error));
+                        }
+                        return;
                     }
-                    return;
                 }
             };
             if !request_generation_match(
@@ -138,14 +166,15 @@ impl AppController {
                 &server_id,
                 &entry,
             ) {
+                debug!(
+                    request_generation,
+                    track_id = %entry.track_id.as_str(),
+                    elapsed_ms = resolve_started.elapsed().as_millis(),
+                    "discarded stale playback request after resolve"
+                );
                 return;
             }
             debug!(
-                track_id = %entry.track_id.as_str(),
-                elapsed_ms = resolve_started.elapsed().as_millis(),
-                "resolved current playback stream"
-            );
-            info!(
                 track_id = %entry.track_id.as_str(),
                 elapsed_ms = resolve_started.elapsed().as_millis(),
                 "resolved current playback stream"
@@ -342,4 +371,26 @@ fn queue_current_matches(queue: &QueueEngine, server_id: &ServerId, entry: &Queu
         && queue
             .current()
             .is_some_and(|current| current.id == entry.id && current.track_id == entry.track_id)
+}
+
+fn playback_resolve_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playback_resolve_transient_error() {
+        assert!(playback_resolve_error_is_transient(
+            "sqlite failed: database is locked"
+        ));
+        assert!(playback_resolve_error_is_transient(
+            "sqlite failed: database table is locked"
+        ));
+        assert!(!playback_resolve_error_is_transient(
+            "sqlite failed: disk I/O"
+        ));
+    }
 }

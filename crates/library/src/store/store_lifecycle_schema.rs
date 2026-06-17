@@ -1,5 +1,6 @@
 use super::servers::*;
 use super::*;
+use std::time::Duration;
 
 const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
     SchemaMigration {
@@ -419,6 +420,13 @@ impl Store {
         store.configure_pragmas(true)?;
         store.initialize_schema()?;
         Ok(store)
+    }
+    pub fn open_fast_read(path: impl AsRef<Path>) -> StoreResult<Self> {
+        let connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.busy_timeout(Duration::ZERO)?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+        Ok(Self { connection })
     }
     pub fn migrate(&self) -> StoreResult<()> {
         if !self.database_has_objects()? {

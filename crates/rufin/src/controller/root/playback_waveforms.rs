@@ -371,6 +371,9 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmReque
     if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
         return;
     }
+    if !waveform_warm_resolve_can_run(&worker.playback_snapshot) {
+        return;
+    }
     let Some((uri, redacted_uri)) =
         waveform_source_for_track(&worker.store, &worker.runtime, &worker.secrets, &request)
     else {
@@ -421,13 +424,17 @@ fn waveform_source_for_track(
     Some((stream.uri().to_string(), stream.redacted_uri().to_string()))
 }
 
-fn remote_waveform_warm_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>) -> bool {
+fn waveform_warm_resolve_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>) -> bool {
     playback_snapshot
         .lock()
         .map(|snapshot| {
             snapshot.state != PlaybackState::Buffering && snapshot.buffering_percent.is_none()
         })
         .unwrap_or(false)
+}
+
+fn remote_waveform_warm_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>) -> bool {
+    waveform_warm_resolve_can_run(playback_snapshot)
 }
 
 fn waveform_warm_requests(

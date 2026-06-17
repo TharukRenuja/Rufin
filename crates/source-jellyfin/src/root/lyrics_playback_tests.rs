@@ -253,6 +253,42 @@ async fn lyrics_redact_token() {
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
+
+#[test]
+fn direct_stream_from_saved_session() {
+    let session = SavedProviderSession {
+        server: ServerIdentity {
+            id: ServerId::new("jellyfin:server:test"),
+            provider: "jellyfin".to_string(),
+            name: "Test".to_string(),
+            base_url: "https://library.example.test".to_string(),
+        },
+        user_id: "user-one".to_string(),
+        username: "demo".to_string(),
+        trust_invalid_cert: false,
+        access_token: "secret-token".to_string(),
+        device_id: Some("rufin-install-one".to_string()),
+    };
+
+    let stream = JellyfinProvider::stream_descriptor_from_saved_session(
+        &session,
+        &source::StreamRequest::new(
+            TrackId::new("jellyfin:track:track-one"),
+            domain::StreamQuality::MaxBitrateKbps(192),
+        ),
+    )
+    .expect("stream");
+
+    assert!(
+        stream
+            .uri()
+            .starts_with("https://library.example.test/Audio/track-one/stream?")
+    );
+    assert!(stream.uri().contains("api_key=secret-token"));
+    assert!(stream.uri().contains("MaxStreamingBitrate=192000"));
+    assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+}
+
 #[tokio::test]
 async fn lyrics_add_limited() {
     let server = MockServer::start().await;

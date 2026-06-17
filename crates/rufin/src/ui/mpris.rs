@@ -31,24 +31,22 @@ impl Shell {
         let update_generation = Rc::clone(&self.state.mpris_update_generation);
         let snapshot = self.state.player.borrow().clone();
         let metadata = self.mpris_metadata_update(&snapshot);
-        let playback_status = match snapshot.state {
-            PlaybackState::Playing | PlaybackState::Buffering => PlaybackStatus::Playing,
-            PlaybackState::Paused => PlaybackStatus::Paused,
-            PlaybackState::Stopped => PlaybackStatus::Stopped,
-        };
+        let playback_status = mpris_playback_status(snapshot.state);
         let loop_status = match snapshot.repeat_mode {
             RepeatMode::Off => LoopStatus::None,
             RepeatMode::One => LoopStatus::Track,
             RepeatMode::All => LoopStatus::Playlist,
         };
         let has_current = snapshot.current.is_some();
-        let position = Time::from_millis(snapshot.position_millis.min(i64::MAX as u64) as i64);
-        let emit_seeked = {
+        let position = mpris_position_update(&snapshot);
+        let emit_seeked = if position.is_some() {
             let previous = self.state.mpris_position_state.borrow().clone();
             let next = mpris_position_state(&snapshot);
             let emit_seeked = mpris_seeked_required(previous.as_ref(), &next);
             *self.state.mpris_position_state.borrow_mut() = Some(next);
             emit_seeked
+        } else {
+            false
         };
         let volume = snapshot.volume.clamp(0.0, 1.0);
 
@@ -68,9 +66,11 @@ impl Shell {
             if update_generation.get() != generation {
                 return;
             }
-            player.set_position(position);
-            if emit_seeked {
-                let _updated = player.seeked(position).await;
+            if let Some(position) = position {
+                player.set_position(position);
+                if emit_seeked {
+                    let _updated = player.seeked(position).await;
+                }
             }
         });
     }
@@ -224,6 +224,25 @@ fn mpris_position_state(snapshot: &PlaybackSnapshot) -> MprisPositionState {
     }
 }
 
+fn mpris_position_update(snapshot: &PlaybackSnapshot) -> Option<Time> {
+    if snapshot.state == PlaybackState::Buffering
+        || (snapshot.state == PlaybackState::Playing && snapshot.position_millis == 0)
+    {
+        return None;
+    }
+    Some(Time::from_millis(
+        snapshot.position_millis.min(i64::MAX as u64) as i64,
+    ))
+}
+
+fn mpris_playback_status(state: PlaybackState) -> PlaybackStatus {
+    match state {
+        PlaybackState::Playing => PlaybackStatus::Playing,
+        PlaybackState::Buffering | PlaybackState::Paused => PlaybackStatus::Paused,
+        PlaybackState::Stopped => PlaybackStatus::Stopped,
+    }
+}
+
 fn mpris_seeked_required(
     previous: Option<&MprisPositionState>,
     current: &MprisPositionState,
@@ -299,5 +318,39 @@ mod tests {
         assert!(mpris_seeked_required(Some(&first), &same_track_reset));
         assert!(!mpris_seeked_required(Some(&first), &normal_tick));
         assert!(!mpris_seeked_required(None, &next_track));
+    }
+
+    #[test]
+    fn mpris_buffering_does_not_publish_position_reset() {
+        let buffering = PlaybackSnapshot {
+            state: PlaybackState::Buffering,
+            position_millis: 0,
+            ..PlaybackSnapshot::default()
+        };
+        let playing_before_tick = PlaybackSnapshot {
+            state: PlaybackState::Playing,
+            position_millis: 0,
+            ..PlaybackSnapshot::default()
+        };
+        let playing = PlaybackSnapshot {
+            state: PlaybackState::Playing,
+            position_millis: 1_000,
+            ..PlaybackSnapshot::default()
+        };
+
+        assert_eq!(
+            mpris_playback_status(PlaybackState::Buffering),
+            PlaybackStatus::Paused
+        );
+        assert_eq!(
+            mpris_playback_status(PlaybackState::Playing),
+            PlaybackStatus::Playing
+        );
+        assert_eq!(mpris_position_update(&buffering), None);
+        assert_eq!(mpris_position_update(&playing_before_tick), None);
+        assert_eq!(
+            mpris_position_update(&playing),
+            Some(Time::from_millis(1_000))
+        );
     }
 }

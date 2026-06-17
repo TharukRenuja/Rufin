@@ -90,7 +90,7 @@ impl AppController {
                     }
                 }
                 if !moved {
-                    self.seek(0);
+                    self.restart_or_seek_current_start();
                     return;
                 }
             } else {
@@ -100,6 +100,7 @@ impl AppController {
         }
         self.record_current_skip_if_needed();
         self.start_queue_emit();
+        self.silence_backend_for_manual_transition();
         self.restart_current_track();
         self.auto_dj_top_up_deferred();
     }
@@ -124,12 +125,30 @@ impl AppController {
             return;
         }
         if !moved {
-            self.seek(0);
+            self.restart_or_seek_current_start();
             return;
         }
         self.start_queue_emit();
+        self.silence_backend_for_manual_transition();
         self.restart_current_track();
         self.auto_dj_top_up_deferred();
+    }
+    fn silence_backend_for_manual_transition(&self) {
+        if let Err(error) = self.send_playback_command(PlaybackCommand::Silence) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+    fn restart_or_seek_current_start(&self) {
+        let state = self
+            .playback_snapshot
+            .lock()
+            .map(|snapshot| snapshot.state)
+            .unwrap_or(PlaybackState::Stopped);
+        if state == PlaybackState::Stopped {
+            self.restart_current_track();
+        } else {
+            self.seek(0);
+        }
     }
     pub fn seek(&self, seconds: u32) {
         self.seek_millis(u64::from(seconds) * 1_000);

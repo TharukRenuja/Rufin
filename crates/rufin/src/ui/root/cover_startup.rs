@@ -174,6 +174,10 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     }
 }
 
+pub(in crate::ui) fn controller_error_is_user_visible(error: &str) -> bool {
+    !error.contains("Element failed to change its state")
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum LibrarySyncToastState {
     Progress,
@@ -1206,6 +1210,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                 }
                 ControllerEvent::Error(error) => {
+                    if !controller_error_is_user_visible(&error) {
+                        debug!(%error, "suppressed controller error");
+                        continue;
+                    }
                     warn!(%error, "controller error");
                     shell.dismiss_library_sync_toast();
                     shell.show_preferences_toast(&error);

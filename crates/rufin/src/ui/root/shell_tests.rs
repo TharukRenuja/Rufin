@@ -1740,6 +1740,12 @@ pub(in crate::ui) fn shell_use_statuses() {
         preferences_login_status_toast_message("No changes to save."),
         Some("No changes to save.")
     );
+    assert!(!super::controller_error_is_user_visible(
+        "Element failed to change its state"
+    ));
+    assert!(super::controller_error_is_user_visible(
+        "No saved token found for the active server."
+    ));
     assert_eq!(
         library_sync_toast_state("Syncing Jellyfin library…"),
         Some(LibrarySyncToastState::Progress)

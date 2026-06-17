@@ -84,6 +84,7 @@ pub enum PlaybackCommand {
     UpdateSettings(PlaybackSettings),
     Resume,
     Pause,
+    Silence,
     Stop,
     Seek(u32),
     SeekMillis(u64),

@@ -410,51 +410,13 @@ impl MusicProvider for JellyfinProvider {
         &self,
         request: &StreamRequest,
     ) -> ProviderResult<StreamDescriptor> {
-        let raw_track_id = raw_item_id(request.track_id.as_str());
-        let mut url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/stream"))?;
-        let max_bitrate = request
-            .quality
-            .max_bitrate_kbps()
-            .map(|kbps| kbps.saturating_mul(1_000).to_string());
-        let static_stream = if max_bitrate.is_some() {
-            "false"
-        } else {
-            "true"
-        };
-        {
-            let mut query = url.query_pairs_mut();
-            query
-                .append_pair("UserId", &self.user_id)
-                .append_pair("DeviceId", &self.device_id)
-                .append_pair("Static", static_stream)
-                .append_pair("api_key", &self.access_token);
-            if let Some(max_bitrate) = &max_bitrate {
-                query
-                    .append_pair("MaxStreamingBitrate", max_bitrate)
-                    .append_pair("TranscodingContainer", "mp3")
-                    .append_pair("AudioCodec", "mp3");
-            }
-        }
-        let mut redacted_url = url.clone();
-        {
-            let mut redacted_query = redacted_url.query_pairs_mut();
-            redacted_query
-                .clear()
-                .append_pair("UserId", &self.user_id)
-                .append_pair("DeviceId", &self.device_id)
-                .append_pair("Static", static_stream)
-                .append_pair("api_key", "<redacted>");
-            if let Some(max_bitrate) = &max_bitrate {
-                redacted_query
-                    .append_pair("MaxStreamingBitrate", max_bitrate)
-                    .append_pair("TranscodingContainer", "mp3")
-                    .append_pair("AudioCodec", "mp3");
-            }
-        }
-        Ok(StreamDescriptor::with_redacted(
-            url.to_string(),
-            redacted_url.to_string(),
-        ))
+        stream_descriptor(
+            &self.base_url,
+            &self.user_id,
+            &self.device_id,
+            &self.access_token,
+            request,
+        )
     }
 
     async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
@@ -818,6 +780,61 @@ pub(super) fn build_client_with_timeouts(
         .build()
         .map_err(map_reqwest_error)
 }
+
+pub(super) fn stream_descriptor(
+    base_url: &Url,
+    user_id: &str,
+    device_id: &str,
+    access_token: &str,
+    request: &StreamRequest,
+) -> ProviderResult<StreamDescriptor> {
+    let raw_track_id = raw_item_id(request.track_id.as_str());
+    let mut url = endpoint(base_url, &format!("Audio/{raw_track_id}/stream"))?;
+    let max_bitrate = request
+        .quality
+        .max_bitrate_kbps()
+        .map(|kbps| kbps.saturating_mul(1_000).to_string());
+    let static_stream = if max_bitrate.is_some() {
+        "false"
+    } else {
+        "true"
+    };
+    {
+        let mut query = url.query_pairs_mut();
+        query
+            .append_pair("UserId", user_id)
+            .append_pair("DeviceId", device_id)
+            .append_pair("Static", static_stream)
+            .append_pair("api_key", access_token);
+        if let Some(max_bitrate) = &max_bitrate {
+            query
+                .append_pair("MaxStreamingBitrate", max_bitrate)
+                .append_pair("TranscodingContainer", "mp3")
+                .append_pair("AudioCodec", "mp3");
+        }
+    }
+    let mut redacted_url = url.clone();
+    {
+        let mut redacted_query = redacted_url.query_pairs_mut();
+        redacted_query
+            .clear()
+            .append_pair("UserId", user_id)
+            .append_pair("DeviceId", device_id)
+            .append_pair("Static", static_stream)
+            .append_pair("api_key", "<redacted>");
+        if let Some(max_bitrate) = &max_bitrate {
+            redacted_query
+                .append_pair("MaxStreamingBitrate", max_bitrate)
+                .append_pair("TranscodingContainer", "mp3")
+                .append_pair("AudioCodec", "mp3");
+        }
+    }
+    Ok(StreamDescriptor::with_redacted(
+        url.to_string(),
+        redacted_url.to_string(),
+    ))
+}
+
 pub(crate) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     let trimmed = raw.trim().trim_end_matches('/');
     let candidate = if trimmed.contains("://") {

@@ -1,4 +1,7 @@
-use source::{MusicProvider, ProviderResult, ProviderSession, SavedProviderSession};
+use source::{
+    MusicProvider, ProviderResult, ProviderSession, SavedProviderSession, StreamDescriptor,
+    StreamRequest,
+};
 use source_jellyfin::JellyfinProvider;
 pub use source_jellyfin::{
     DiscoveredJellyfinServer, JellyfinLyricsSearch, discover_jellyfin_servers,
@@ -151,6 +154,13 @@ pub fn provider_from_saved(session: SavedProviderSession) -> ProviderResult<Load
         }
         None => Err(source::ProviderError::Unsupported("saved provider type")),
     }
+}
+
+pub fn jellyfin_stream_descriptor_from_saved_session(
+    session: &SavedProviderSession,
+    request: &StreamRequest,
+) -> ProviderResult<StreamDescriptor> {
+    JellyfinProvider::stream_descriptor_from_saved_session(session, request)
 }
 
 pub fn provider_display_name(provider_id: &str) -> &'static str {

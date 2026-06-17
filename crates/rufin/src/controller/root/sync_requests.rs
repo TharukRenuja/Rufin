@@ -1,11 +1,13 @@
 use super::*;
 
+use library::SourceObject;
 use std::io::{self, Read};
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const LRCLIB_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
+const SLOW_STREAM_RESOLVE_STAGE_MS: u128 = 250;
 pub(in crate::controller) const LOCAL_LYRICS_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 pub(in crate::controller) fn resolve_stream(
@@ -16,19 +18,24 @@ pub(in crate::controller) fn resolve_stream(
     track_id: &TrackId,
     playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
-    let saved = store
-        .with_store(|store| store.saved_server(server_id))?
-        .ok_or_else(|| "No matching saved server is saved.".to_string())?;
+    let started = Instant::now();
+    let PlaybackStreamLookup {
+        saved,
+        cue_source,
+        local_path,
+    } = playback_stream_lookup(store, server_id, track_id)?;
     if saved.server.provider == "fake" {
         return Ok(StreamDescriptor::new(format!(
             "fake://local/stream/{}",
             track_id.as_str()
         )));
     }
-    if let Some(stream) = cue_track_stream(store, server_id, track_id)? {
+    if let Some(source) = cue_source.as_ref()
+        && let Some(stream) = cue_track_stream_from_source(source)?
+    {
         return Ok(stream);
     }
-    if let Some(local_path) = saved_track_path(store, &saved.server, server_id, track_id) {
+    if let Some(local_path) = local_path {
         let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
             format!(
                 "Could not turn local track path into a file URI: {}",
@@ -51,6 +58,19 @@ pub(in crate::controller) fn resolve_stream(
         ));
     }
 
+    if saved.server.provider == "jellyfin" {
+        let stream =
+            jellyfin_stream_descriptor(store, secrets, &saved, track_id, playback_settings)?;
+        debug!(
+            server_id = %server_id,
+            provider = %saved.server.provider,
+            track_id = %track_id.as_str(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "resolved direct Jellyfin playback descriptor"
+        );
+        return Ok(stream);
+    }
+
     let provider = provider_for_saved(store, runtime, secrets, &saved)?;
     runtime
         .block_on(
@@ -64,17 +84,102 @@ pub(in crate::controller) fn resolve_stream(
         .map_err(|error| error.to_string())
 }
 
-fn cue_track_stream(
+fn jellyfin_stream_descriptor(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+    track_id: &TrackId,
+    playback_settings: &PlaybackSettings,
+) -> Result<StreamDescriptor, String> {
+    let stage_started = Instant::now();
+    let device_id = ensure_jellyfin_device_id(store)?;
+    log_slow_stream_stage(
+        "jellyfin-device-id",
+        stage_started.elapsed(),
+        &saved.server.id,
+        track_id,
+    );
+    let stage_started = Instant::now();
+    let token = secrets
+        .load_token(&saved.server.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
+    log_slow_stream_stage(
+        "jellyfin-token",
+        stage_started.elapsed(),
+        &saved.server.id,
+        track_id,
+    );
+    let session = SavedProviderSession {
+        server: saved.server.clone(),
+        user_id: saved.user_id.clone(),
+        username: saved.username.clone(),
+        trust_invalid_cert: saved.trust_invalid_cert,
+        access_token: token,
+        device_id: Some(device_id),
+    };
+    jellyfin_stream_descriptor_from_saved_session(
+        &session,
+        &StreamRequest::new(track_id.clone(), playback_settings.stream_quality),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn log_slow_stream_stage(stage: &str, elapsed: Duration, server_id: &ServerId, track_id: &TrackId) {
+    let elapsed_ms = elapsed.as_millis();
+    if elapsed_ms > SLOW_STREAM_RESOLVE_STAGE_MS {
+        info!(
+            stage,
+            elapsed_ms,
+            server_id = %server_id,
+            track_id = %track_id.as_str(),
+            "slow playback stream resolve stage"
+        );
+    }
+}
+
+struct PlaybackStreamLookup {
+    saved: SavedServer,
+    cue_source: Option<SourceObject>,
+    local_path: Option<PathBuf>,
+}
+
+fn playback_stream_lookup(
     store: &StoreHandle,
     server_id: &ServerId,
     track_id: &TrackId,
-) -> Result<Option<StreamDescriptor>, String> {
-    let source = store
-        .with_store(|store| store.load_track_source_object(server_id, track_id))?
-        .filter(|source| source.source_kind == "cue_track");
-    let Some(source) = source else {
-        return Ok(None);
-    };
+) -> Result<PlaybackStreamLookup, String> {
+    let stage_started = Instant::now();
+    let lookup = store
+        .with_store_fast(|store| {
+            let Some(saved) = store.saved_server(server_id)? else {
+                return Ok(None);
+            };
+            let cue_source = if saved.server.provider == LOCAL_PROVIDER_ID {
+                store
+                    .load_track_source_object(server_id, track_id)?
+                    .filter(|source| source.source_kind == "cue_track")
+            } else {
+                None
+            };
+            let local_path = playback_audio_path(store, &saved.server, server_id, track_id)?;
+            Ok(Some(PlaybackStreamLookup {
+                saved,
+                cue_source,
+                local_path,
+            }))
+        })?
+        .ok_or_else(|| "No matching saved server is saved.".to_string())?;
+    log_slow_stream_stage(
+        "cached-playback-source",
+        stage_started.elapsed(),
+        server_id,
+        track_id,
+    );
+    Ok(lookup)
+}
+
+fn cue_track_stream_from_source(source: &SourceObject) -> Result<Option<StreamDescriptor>, String> {
     let Some(path) = source.source_path.as_deref().map(PathBuf::from) else {
         return Ok(None);
     };
@@ -1214,17 +1319,20 @@ pub(in crate::controller) fn local_audio_path_for_track(
         .flatten()?;
     local_audio_path_from_lookup(&lookup)
 }
-fn saved_track_path(
-    store: &StoreHandle,
+fn playback_audio_path(
+    store: &Store,
     server: &ServerIdentity,
     server_id: &ServerId,
     track_id: &TrackId,
-) -> Option<PathBuf> {
-    let lookup = store
-        .with_store(|store| local_audio_path_lookup(store, server, server_id, track_id))
-        .ok()
-        .flatten()?;
-    local_audio_path_from_lookup(&lookup)
+) -> StoreResult<Option<PathBuf>> {
+    if server.provider == LOCAL_PROVIDER_ID {
+        return Ok(store
+            .track_local_path(server_id, track_id)?
+            .map(PathBuf::from));
+    }
+    Ok(store
+        .track_local_match_path(server_id, track_id)?
+        .map(PathBuf::from))
 }
 struct LocalAudioPathLookup {
     provider_is_local: bool,
@@ -1265,17 +1373,27 @@ fn local_audio_path_from_lookup(lookup: &LocalAudioPathLookup) -> Option<PathBuf
     }
     let access = lookup.access.as_ref()?;
     if let Some(matched) = lookup.matched_path.as_deref().map(PathBuf::from)
-        && matched.is_file()
+        && timed_is_file(&matched, "matched")
     {
         return Some(matched);
     }
     let raw = lookup.raw_path.as_deref()?;
     let direct = PathBuf::from(&raw);
-    if direct.is_file() {
+    if timed_is_file(&direct, "raw") {
         return Some(direct);
     }
     let mapped = map_server_path_to_local(raw, access)?;
-    mapped.is_file().then_some(mapped)
+    timed_is_file(&mapped, "mapped").then_some(mapped)
+}
+
+fn timed_is_file(path: &Path, kind: &str) -> bool {
+    let started = Instant::now();
+    let exists = path.is_file();
+    let elapsed_ms = started.elapsed().as_millis();
+    if elapsed_ms > 250 {
+        info!(kind, elapsed_ms, exists, "slow local audio file check");
+    }
+    exists
 }
 fn read_response_text_bounded(
     response: reqwest::blocking::Response,

@@ -739,6 +739,66 @@ pub(in crate::controller) fn cover_start_stream() {
     };
     assert_eq!(item.track.id, second.id);
 }
+
+#[test]
+pub(in crate::controller) fn stopped_next_restarts_current() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    controller.play_now(snapshot.tracks[0].clone());
+    let _play = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    controller.cycle_repeat();
+    controller.cycle_repeat();
+    controller.stop();
+    commands.lock().expect("commands").clear();
+
+    controller.next_track();
+
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(
+            command,
+            PlaybackCommand::PlayPrepared { .. } | PlaybackCommand::SeekMillis(0)
+        )
+    });
+    assert!(matches!(command, PlaybackCommand::PlayPrepared { .. }));
+}
+
+#[test]
+pub(in crate::controller) fn manual_next_silences_current_audio_before_start() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    controller.play_tracks_now(vec![snapshot.tracks[0].clone(), snapshot.tracks[1].clone()]);
+    let _play = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    commands.lock().expect("commands").clear();
+
+    controller.next_track();
+
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::Silence)
+    });
+    assert_eq!(command, PlaybackCommand::Silence);
+    assert!(
+        !commands
+            .lock()
+            .expect("commands")
+            .iter()
+            .any(|command| matches!(command, PlaybackCommand::Stop))
+    );
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    assert!(matches!(command, PlaybackCommand::PlayPrepared { .. }));
+}
+
 #[test]
 pub(in crate::controller) fn playback_duplicate_current_start_ignored() {
     let (controller, _events, snapshot, _queue, _player) =
