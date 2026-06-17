@@ -742,10 +742,8 @@ fn build_now_playing_controls() -> NowPlayingControls {
     menu_button.set_sensitive(false);
     let title_row = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_TITLE_MENU_GAP);
     title_row.add_css_class("player-title-row");
-    title_row.set_halign(gtk::Align::Fill);
+    title_row.set_halign(gtk::Align::Start);
     title_row.set_valign(gtk::Align::Center);
-    title_row.set_hexpand(true);
-    title_row.set_width_request(1);
     title_row.append(&title);
     title_row.append(&menu_button);
     let artist = player_link("player-primary");
