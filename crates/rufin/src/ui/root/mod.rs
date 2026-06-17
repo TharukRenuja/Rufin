@@ -283,6 +283,7 @@ pub(in crate::ui) struct AppState {
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
     library_sync_toast: RefCell<Option<adw::Toast>>,
     library_sync_toast_suppressed: Cell<bool>,
+    control_feedback_toast: RefCell<Option<adw::Toast>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
@@ -585,6 +586,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
         library_sync_toast: RefCell::new(None),
         library_sync_toast_suppressed: Cell::new(false),
+        control_feedback_toast: RefCell::new(None),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]

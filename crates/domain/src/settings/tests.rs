@@ -162,6 +162,7 @@ fn settings_restore_without_window_geometry() {
     assert!(restored.external_site_links.musicbrainz);
     assert!(restored.external_site_links.server);
     assert!(restored.type_to_search_enabled);
+    assert!(restored.control_notifications_enabled);
     assert!(restored.release_notifications_enabled);
 }
 
