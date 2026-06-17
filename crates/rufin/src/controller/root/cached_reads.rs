@@ -1056,21 +1056,20 @@ pub(in crate::controller) struct SourceSyncReadinessInput<'a> {
 pub(in crate::controller) fn source_sync_readiness(
     input: SourceSyncReadinessInput<'_>,
 ) -> SourceSyncReadiness {
+    let stale = input
+        .sync_completed_age_seconds
+        .is_none_or(|age| age >= STARTUP_CACHE_STALE_SECONDS);
     let sync_required_reason = if input.sync_status == Some("error") {
         Some(SyncRequiredReason::PreviousSyncError)
     } else if input.cached_item_count == 0 && input.sync_completed_age_seconds.is_none() {
         Some(SyncRequiredReason::EmptyCache)
-    } else if input
-        .sync_completed_age_seconds
-        .is_none_or(|age| age >= STARTUP_CACHE_STALE_SECONDS)
-        && input.provider != LOCAL_PROVIDER_ID
-    {
-        Some(SyncRequiredReason::RemoteCacheStale)
     } else if input.provider == LOCAL_PROVIDER_ID
         && input.local_library_configured
-        && input.cached_item_count == 0
+        && (input.cached_item_count == 0 || stale)
     {
         Some(SyncRequiredReason::LocalManifestRefresh)
+    } else if stale && input.provider != LOCAL_PROVIDER_ID {
+        Some(SyncRequiredReason::RemoteCacheStale)
     } else {
         None
     };
