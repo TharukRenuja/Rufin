@@ -2450,7 +2450,7 @@ pub(in crate::controller) fn startup_local_artwork() {
 pub(in crate::controller) fn startup_ignore_ready() {
     let stale_age = Some(STARTUP_CACHE_STALE_SECONDS + 60);
 
-    let local_ready = source_sync_readiness(SourceSyncReadinessInput {
+    let local_unconfigured = source_sync_readiness(SourceSyncReadinessInput {
         provider: LOCAL_PROVIDER_ID,
         cached_item_count: 42,
         sync_status: Some("idle"),
@@ -2458,10 +2458,26 @@ pub(in crate::controller) fn startup_ignore_ready() {
         local_library_configured: false,
         local_artwork_missing: false,
     });
-    assert_eq!(local_ready.sync_required_reason, None);
-    assert_eq!(local_ready.startup_delay_ms, None);
-    assert!(local_ready.metadata_fresh);
-    assert!(local_ready.artwork_fresh);
+    assert_eq!(local_unconfigured.sync_required_reason, None);
+    assert_eq!(local_unconfigured.startup_delay_ms, None);
+    assert!(local_unconfigured.metadata_fresh);
+    assert!(local_unconfigured.artwork_fresh);
+
+    let local_stale = source_sync_readiness(SourceSyncReadinessInput {
+        provider: LOCAL_PROVIDER_ID,
+        cached_item_count: 42,
+        sync_status: Some("idle"),
+        sync_completed_age_seconds: stale_age,
+        local_library_configured: true,
+        local_artwork_missing: false,
+    });
+    assert_eq!(
+        local_stale.sync_required_reason,
+        Some(SyncRequiredReason::LocalManifestRefresh)
+    );
+    assert_eq!(local_stale.startup_delay_ms, Some(8_000));
+    assert!(local_stale.metadata_fresh);
+    assert!(local_stale.artwork_fresh);
 
     let remote_stale = source_sync_readiness(SourceSyncReadinessInput {
         provider: "jellyfin",
