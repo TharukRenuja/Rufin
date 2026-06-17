@@ -16,6 +16,30 @@ impl Shell {
     pub(super) fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
         let detail = self.artist_detail_data(&artist_id);
         let Some(detail) = detail else {
+            let active_server_id = self
+                .state
+                .library
+                .borrow()
+                .server
+                .as_ref()
+                .map(|server| server.id.to_string());
+            let queue_server_id = self
+                .state
+                .queue
+                .borrow()
+                .as_ref()
+                .map(|queue| queue.server_id.to_string());
+            let player_server_id = self
+                .state
+                .player
+                .borrow()
+                .current_server_id
+                .as_ref()
+                .map(ToString::to_string);
+            warn!(
+                artist_id = artist_id.as_str(),
+                active_server_id, queue_server_id, player_server_id, "cached artist route missing"
+            );
             return self.placeholder_view("Artist", "The selected cached artist was not found.");
         };
         let artist = detail.artist;
