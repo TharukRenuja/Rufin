@@ -200,9 +200,24 @@ fn append_auto_dj(
     if candidates.is_empty() {
         return Ok(false);
     }
-    for track in candidates {
-        queue.append(track);
-    }
+    queue.trim_auto_dj_history(AUTO_DJ_HISTORY_LIMIT);
+    let items = candidates
+        .iter()
+        .enumerate()
+        .map(|(generated_index, track)| QueueItemInput::Generated {
+            track: (*track).clone(),
+            generated_index,
+        })
+        .collect::<Vec<_>>();
+    queue
+        .append_last(QueueInsertion {
+            source: QueueInsertionSource::AutoDj {
+                generated_from_track_id: state.current.track_id.clone(),
+                reason: AutoDjReason::Similarity,
+            },
+            items,
+        })
+        .map_err(|error| format!("auto dj queue append failed: {error:?}"))?;
     Ok(true)
 }
 

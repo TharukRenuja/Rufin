@@ -2707,6 +2707,10 @@ pub(in crate::controller) fn auto_dj_candidate() {
             .find(|track| track.id == entry.track_id)
             .expect("auto dj track");
         assert_eq!(entry.image_ref.as_ref(), track.image_ref.as_ref());
+        assert!(matches!(
+            entry.origin.as_ref(),
+            Some(domain::QueueEntryOrigin::AutoDj { .. })
+        ));
     }
 }
 
