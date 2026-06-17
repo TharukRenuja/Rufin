@@ -20,7 +20,7 @@ pub enum FakeScale {
 impl FakeScale {
     pub fn album_count(self) -> usize {
         match self {
-            Self::Small => 240,
+            Self::Small => 80,
             Self::Large => 20_000,
             Self::Stress => 1_000,
             Self::ThirtyK => 1_000,
@@ -29,7 +29,7 @@ impl FakeScale {
 
     pub fn track_count(self) -> usize {
         match self {
-            Self::Small => 2_400,
+            Self::Small => 240,
             Self::Large => 100_000,
             Self::Stress => 6_000,
             Self::ThirtyK => 30_000,
@@ -591,10 +591,10 @@ mod tests {
         let albums = block_on(provider.albums(PagedRequest::new(10, 3))).expect("albums");
         let tracks = block_on(provider.tracks(PagedRequest::new(10, 3))).expect("tracks");
 
-        assert_eq!(albums.total, 240);
+        assert_eq!(albums.total, 80);
         assert_eq!(albums.items.len(), 3);
         assert_eq!(albums.items[0].id, AlbumId::fake(11));
-        assert_eq!(tracks.total, 2_400);
+        assert_eq!(tracks.total, 240);
         assert_eq!(tracks.items.len(), 3);
     }
 
@@ -618,7 +618,7 @@ mod tests {
         let detail = block_on(provider.album_detail(&AlbumId::fake(1))).expect("album detail");
 
         assert_eq!(detail.album.id, AlbumId::fake(1));
-        assert_eq!(detail.tracks.len(), 10);
+        assert_eq!(detail.tracks.len(), detail.album.track_count as usize);
         assert!(
             detail
                 .tracks
