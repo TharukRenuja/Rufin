@@ -1763,6 +1763,10 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some(LibrarySyncToastState::Clear)
     );
     assert_eq!(
+        library_sync_toast_state("Library cache ready for Test (Jellyfin) in 44s elapsed"),
+        Some(LibrarySyncToastState::Clear)
+    );
+    assert_eq!(
         library_sync_toast_message("Caching library… This may take some time."),
         "Caching library… This may take some time."
     );

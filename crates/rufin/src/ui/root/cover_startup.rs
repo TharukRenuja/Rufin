@@ -186,7 +186,7 @@ pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyn
     if status == LIBRARY_SYNC_COMPLETE_STATUS {
         return Some(LibrarySyncToastState::Complete);
     }
-    if status == "Cached library ready" {
+    if status == "Cached library ready" || status.starts_with("Library cache ready for ") {
         return Some(LibrarySyncToastState::Clear);
     }
     if status.starts_with("Syncing ") && status.ends_with(" library…") {
