@@ -1229,11 +1229,12 @@ listview.queue-list row {
 }
 
 .fullscreen-player-equalizer-scroller {
+  margin: 0 12px 6px;
   min-height: 0;
 }
 
 .fullscreen-player-equalizer {
-  padding-bottom: 34px;
+  padding-bottom: 0;
 }
 
 .equalizer-preset-menu,
@@ -1267,7 +1268,7 @@ scale.fullscreen-player-equalizer-scale trough {
 }
 
 .fullscreen-player-equalizer-levels {
-  min-width: 42px;
+  min-width: 48px;
 }
 
 .fullscreen-player-equalizer-level-label {

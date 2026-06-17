@@ -37,6 +37,7 @@ impl Shell {
 
     pub(in crate::ui) fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
+        self.close_fullscreen_player();
         let previous = self.state.routes.borrow().current().clone();
         self.pause_cover_warm_for_nav();
         self.refresh_search_results_for_route(&route);
