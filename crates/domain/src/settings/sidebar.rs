@@ -438,6 +438,8 @@ pub struct AppSettings {
     pub private_mode: bool,
     pub notifications_enabled: bool,
     #[serde(default = "default_true")]
+    pub control_notifications_enabled: bool,
+    #[serde(default = "default_true")]
     pub release_notifications_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notification_seen_version: Option<String>,
@@ -522,6 +524,7 @@ impl Default for AppSettings {
             language: default_language_preference(),
             private_mode: false,
             notifications_enabled: false,
+            control_notifications_enabled: true,
             release_notifications_enabled: true,
             release_notification_seen_version: None,
             secret_storage_mode: SecretStorageMode::default(),

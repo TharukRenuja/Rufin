@@ -213,6 +213,34 @@ msgstr ""
 msgid "Toggle Fullscreen"
 msgstr ""
 
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Seek Backward"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Seek Forward"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Repeat"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Volume Up"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Volume Down"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Show/hide right sidebar"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Show/hide lyrics"
+msgstr ""
+
 #: crates/rufin/src/i18n.rs:457 crates/rufin/src/ui/chrome.rs:145
 #: crates/rufin/src/i18n.rs:478
 msgid "About Rufin"
@@ -857,6 +885,10 @@ msgstr ""
 msgid "Shuffle on"
 msgstr ""
 
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Shuffle off"
+msgstr ""
+
 #: crates/rufin/src/i18n.rs:584 crates/rufin/src/i18n.rs:615
 msgid "Auto DJ"
 msgstr ""
@@ -875,6 +907,18 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:587 crates/rufin/src/i18n.rs:618
 msgid "Auto DJ on"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Auto DJ off"
+msgstr ""
+
+#: crates/rufin/src/ui/root/favorite_controls.rs
+msgid "Added to favorites"
+msgstr ""
+
+#: crates/rufin/src/ui/root/favorite_controls.rs
+msgid "Removed from favorites"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:588 crates/rufin/src/ui/random_play.rs:45
@@ -936,6 +980,14 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:600 crates/rufin/src/i18n.rs:631
 msgid "Repeat all"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Muted"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs
+msgid "Unmuted"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:601 crates/rufin/src/i18n.rs:632
@@ -1305,6 +1357,14 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:670 crates/rufin/src/ui/preferences/root/mod.rs:213
 #: crates/rufin/src/i18n.rs:702
 msgid "Start minimized"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs
+msgid "Notifications"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs
+msgid "Control notifications"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:671 crates/rufin/src/ui/root/tray.rs:50

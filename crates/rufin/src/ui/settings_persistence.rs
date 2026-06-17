@@ -312,6 +312,16 @@ impl Shell {
         });
     }
 
+    pub(super) fn set_control_notifications_enabled(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("control notification setting", |settings| {
+            if settings.control_notifications_enabled == enabled {
+                return false;
+            }
+            settings.control_notifications_enabled = enabled;
+            true
+        });
+    }
+
     pub(super) fn set_release_notifications_enabled(self: &Rc<Self>, enabled: bool) {
         self.update_app_settings("release notification setting", |settings| {
             if settings.release_notifications_enabled == enabled {

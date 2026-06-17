@@ -6,6 +6,9 @@ const SLOW_EVENT_BATCH_MS: u64 = 100;
 const SLOW_LIBRARY_SYNC_STATUS_MS: u64 = 100;
 const SLOW_PLAYBACK_EVENT_POLL_MS: u64 = 100;
 const TRANSLATOR_CREDITS: &str = include_str!(concat!(env!("OUT_DIR"), "/translator_credits.txt"));
+const KEY_SEEK_SECONDS: i32 = 10;
+const KEY_VOLUME_STEP: f64 = 0.05;
+const CONTROL_TOAST_TIMEOUT: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum FullscreenPlaybackRefresh {
@@ -504,6 +507,62 @@ pub(in crate::ui) fn install_window_actions(shell: &Rc<Shell>) {
     });
     shell.window.add_action(&fullscreen);
 
+    add_window_action(shell, "play-pause", &["<Control>space"], {
+        let controller = shell.controller.clone();
+        move || controller.play_pause()
+    });
+    add_window_action(shell, "previous-track", &["<Control>b"], {
+        let controller = shell.controller.clone();
+        move || controller.previous_track()
+    });
+    add_window_action(shell, "next-track", &["<Control>n"], {
+        let controller = shell.controller.clone();
+        move || controller.next_track()
+    });
+    add_window_action(shell, "seek-backward", &["<Control>Left"], {
+        let shell = Rc::clone(shell);
+        move || seek_by(&shell, -KEY_SEEK_SECONDS)
+    });
+    add_window_action(shell, "seek-forward", &["<Control>Right"], {
+        let shell = Rc::clone(shell);
+        move || seek_by(&shell, KEY_SEEK_SECONDS)
+    });
+    add_window_action(shell, "toggle-shuffle", &["<Control>s"], {
+        let shell = Rc::clone(shell);
+        move || toggle_shuffle_shortcut(&shell)
+    });
+    add_window_action(shell, "cycle-repeat", &["<Control>r"], {
+        let shell = Rc::clone(shell);
+        move || cycle_repeat_shortcut(&shell)
+    });
+    add_window_action(shell, "toggle-favorite", &["<Control>f"], {
+        let shell = Rc::clone(shell);
+        move || toggle_favorite_shortcut(&shell)
+    });
+    add_window_action(shell, "toggle-auto-dj", &["<Control>d"], {
+        let shell = Rc::clone(shell);
+        move || toggle_auto_dj_shortcut(&shell)
+    });
+    add_window_action(shell, "mute", &["<Control>m"], {
+        let shell = Rc::clone(shell);
+        move || toggle_mute_shortcut(&shell)
+    });
+    add_window_action(shell, "volume-up", &["<Control>plus", "<Control>equal"], {
+        let shell = Rc::clone(shell);
+        move || adjust_volume(&shell, KEY_VOLUME_STEP)
+    });
+    add_window_action(shell, "volume-down", &["<Control>minus"], {
+        let shell = Rc::clone(shell);
+        move || adjust_volume(&shell, -KEY_VOLUME_STEP)
+    });
+    add_window_action(shell, "toggle-queue", &["F9"], {
+        let shell = Rc::clone(shell);
+        move || shell.toggle_right_panel()
+    });
+    add_window_action(shell, "toggle-lyrics", &["<Control>l"], {
+        let shell = Rc::clone(shell);
+        move || shell.toggle_lyrics_panel()
+    });
     let about = gio::SimpleAction::new("about", None);
     let about_shell = Rc::clone(shell);
     about.connect_activate(move |_, _| show_about_dialog(&about_shell));
@@ -530,6 +589,95 @@ pub(in crate::ui) fn install_window_actions(shell: &Rc<Shell>) {
         .application
         .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
 }
+
+fn add_window_action(
+    shell: &Rc<Shell>,
+    name: &str,
+    accels: &[&str],
+    activate: impl Fn() + 'static,
+) {
+    let action = gio::SimpleAction::new(name, None);
+    action.connect_activate(move |_, _| activate());
+    shell.window.add_action(&action);
+    if !accels.is_empty() {
+        shell
+            .application
+            .set_accels_for_action(&format!("win.{name}"), accels);
+    }
+}
+
+fn seek_by(shell: &Shell, delta_seconds: i32) {
+    let Some(seconds) = ({
+        let player = shell.state.player.borrow();
+        if player.current.is_none() || player.duration_seconds == 0 {
+            None
+        } else {
+            let target = player.position_seconds as i32 + delta_seconds;
+            Some(target.clamp(0, player.duration_seconds as i32) as u32)
+        }
+    }) else {
+        return;
+    };
+    shell.controller.seek(seconds);
+}
+
+fn adjust_volume(shell: &Shell, delta: f64) {
+    let volume = {
+        let player = shell.state.player.borrow();
+        (player.volume + delta).clamp(0.0, 1.0)
+    };
+    shell.controller.set_volume(volume);
+}
+
+fn toggle_shuffle_shortcut(shell: &Shell) {
+    let enabled = !shell.state.player.borrow().shuffle_enabled;
+    shell.controller.toggle_shuffle();
+    let title = if enabled {
+        tr("Shuffle on")
+    } else {
+        tr("Shuffle off")
+    };
+    shell.show_control_feedback_toast(title);
+}
+
+fn cycle_repeat_shortcut(shell: &Shell) {
+    let title = match shell.state.player.borrow().repeat_mode {
+        domain::RepeatMode::Off => tr("Repeat all"),
+        domain::RepeatMode::All => tr("Repeat one"),
+        domain::RepeatMode::One => tr("Repeat off"),
+    };
+    shell.controller.cycle_repeat();
+    shell.show_control_feedback_toast(title);
+}
+
+fn toggle_auto_dj_shortcut(shell: &Shell) {
+    let enabled = !shell.state.player.borrow().auto_dj_enabled;
+    shell.controller.toggle_auto_dj();
+    let title = if enabled {
+        tr("Auto DJ on")
+    } else {
+        tr("Auto DJ off")
+    };
+    shell.show_control_feedback_toast(title);
+}
+
+fn toggle_mute_shortcut(shell: &Shell) {
+    let muted = !shell.state.player.borrow().muted;
+    shell.controller.toggle_mute();
+    let title = if muted { tr("Muted") } else { tr("Unmuted") };
+    shell.show_control_feedback_toast(title);
+}
+
+fn toggle_favorite_shortcut(shell: &Rc<Shell>) {
+    let Some(entry) = shell.state.player.borrow().current.clone() else {
+        return;
+    };
+    shell.set_favorite_with_feedback(
+        source::FavoriteItemId::Track(entry.track_id),
+        !entry.favorite,
+        Some(&shell.player_controls.favorite_button),
+    );
+}
 pub(in crate::ui) fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let key_controller = gtk::EventControllerKey::new();
     key_controller.connect_key_pressed(move |_, key, _, state| {
@@ -547,10 +695,10 @@ pub(in crate::ui) fn show_shortcuts_dialog(shell: &Shell) {
         .title(tr("Keyboard Shortcuts"))
         .build();
     let section = adw::ShortcutsSection::new(Some(&tr("General")));
-    section.add(adw::ShortcutsItem::from_action(&tr("Back"), "win.go-back"));
-    section.add(adw::ShortcutsItem::from_action(
+    section.add(adw::ShortcutsItem::new(&tr("Back"), "Back <Alt>Left"));
+    section.add(adw::ShortcutsItem::new(
         &tr("Forward"),
-        "win.go-forward",
+        "Forward <Alt>Right",
     ));
     section.add(adw::ShortcutsItem::new(&tr("Main Menu"), "F10"));
     section.add(adw::ShortcutsItem::from_action(
@@ -564,6 +712,62 @@ pub(in crate::ui) fn show_shortcuts_dialog(shell: &Shell) {
     section.add(adw::ShortcutsItem::from_action(
         &tr("Toggle Fullscreen"),
         "win.toggle-fullscreen",
+    ));
+    dialog.add(section);
+
+    let section = adw::ShortcutsSection::new(Some(&tr("Playback")));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Play/Pause"),
+        "win.play-pause",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Previous"),
+        "win.previous-track",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Next"),
+        "win.next-track",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Seek Backward"),
+        "win.seek-backward",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Seek Forward"),
+        "win.seek-forward",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Shuffle"),
+        "win.toggle-shuffle",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Repeat"),
+        "win.cycle-repeat",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Favorite"),
+        "win.toggle-favorite",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Auto DJ"),
+        "win.toggle-auto-dj",
+    ));
+    section.add(adw::ShortcutsItem::from_action(&tr("Mute"), "win.mute"));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Volume Up"),
+        "win.volume-up",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Volume Down"),
+        "win.volume-down",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Show/hide right sidebar"),
+        "win.toggle-queue",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Show/hide lyrics"),
+        "win.toggle-lyrics",
     ));
     dialog.add(section);
     dialog.present(Some(&shell.window));
@@ -1046,7 +1250,14 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         .current
                         .as_ref()
                         .map(|entry| entry.track_id.clone());
-                    let next_snapshot = *player;
+                    let mut next_snapshot = *player;
+                    if let (Some(previous), Some(next)) = (
+                        previous_player.current.as_ref(),
+                        next_snapshot.current.as_mut(),
+                    ) && previous.track_id == next.track_id
+                    {
+                        next.favorite = previous.favorite;
+                    }
                     let next_track = next_snapshot
                         .current
                         .as_ref()
@@ -1277,6 +1488,19 @@ struct VisibleCoverWindow {
 }
 
 impl Shell {
+    pub(in crate::ui) fn show_control_feedback_toast(&self, title: String) {
+        if !self.state.settings.borrow().control_notifications_enabled {
+            return;
+        }
+        if let Some(toast) = self.state.control_feedback_toast.borrow_mut().take() {
+            toast.dismiss();
+        }
+        let toast = adw::Toast::new(&title);
+        toast.set_timeout(CONTROL_TOAST_TIMEOUT);
+        self.quick_toast_overlay.add_toast(toast.clone());
+        *self.state.control_feedback_toast.borrow_mut() = Some(toast);
+    }
+
     pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {
         self.toast_overlay.add_toast(adw::Toast::new(message));
     }

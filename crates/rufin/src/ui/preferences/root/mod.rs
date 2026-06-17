@@ -246,6 +246,40 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         page.add(&window_group);
     }
 
+    let notifications_group = adw::PreferencesGroup::builder()
+        .title(tr("Notifications"))
+        .build();
+    let control_notifications_row = adw::SwitchRow::builder()
+        .title(tr("Control notifications"))
+        .active(settings.control_notifications_enabled)
+        .build();
+    let control_notifications_shell = Rc::clone(shell);
+    control_notifications_row.connect_active_notify(move |row| {
+        control_notifications_shell.set_control_notifications_enabled(row.is_active());
+    });
+    notifications_group.add(&control_notifications_row);
+
+    let notifications_row = adw::SwitchRow::builder()
+        .title(tr("Now playing notifications"))
+        .active(settings.notifications_enabled)
+        .build();
+    let notifications_shell = Rc::clone(shell);
+    notifications_row.connect_active_notify(move |row| {
+        notifications_shell.set_notifications_enabled(row.is_active());
+    });
+    notifications_group.add(&notifications_row);
+
+    let release_notifications_row = adw::SwitchRow::builder()
+        .title(tr("Release notifications"))
+        .active(settings.release_notifications_enabled)
+        .build();
+    let release_notifications_shell = Rc::clone(shell);
+    release_notifications_row.connect_active_notify(move |row| {
+        release_notifications_shell.set_release_notifications_enabled(row.is_active());
+    });
+    notifications_group.add(&release_notifications_row);
+    page.add(&notifications_group);
+
     let metadata_group = adw::PreferencesGroup::builder()
         .title(tr("Metadata"))
         .build();
@@ -479,26 +513,6 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         private_shell.set_private_mode(row.is_active());
     });
     privacy_group.add(&private_row);
-
-    let notifications_row = adw::SwitchRow::builder()
-        .title(tr("Now playing notifications"))
-        .active(settings.notifications_enabled)
-        .build();
-    let notifications_shell = Rc::clone(shell);
-    notifications_row.connect_active_notify(move |row| {
-        notifications_shell.set_notifications_enabled(row.is_active());
-    });
-    privacy_group.add(&notifications_row);
-
-    let release_notifications_row = adw::SwitchRow::builder()
-        .title(tr("Release notifications"))
-        .active(settings.release_notifications_enabled)
-        .build();
-    let release_notifications_shell = Rc::clone(shell);
-    release_notifications_row.connect_active_notify(move |row| {
-        release_notifications_shell.set_release_notifications_enabled(row.is_active());
-    });
-    privacy_group.add(&release_notifications_row);
 
     let secret_storage_titles = [tr("Legacy"), tr("Secure storage")];
     let secret_storage_refs = secret_storage_titles

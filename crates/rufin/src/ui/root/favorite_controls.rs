@@ -25,6 +25,12 @@ impl Shell {
         if let Some(button) = button {
             set_favorite_button_active(button, favorite);
         }
+        if let FavoriteItemId::Track(track_id) = &item_id
+            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
+            && current.track_id == *track_id
+        {
+            current.favorite = favorite;
+        }
         self.update_visible_favorite_buttons(&item_id, favorite);
         match item_id {
             FavoriteItemId::Album(album_id) => {
@@ -37,6 +43,12 @@ impl Shell {
                 self.controller.set_artist_favorite(artist_id, favorite)
             }
         }
+        let title = if favorite {
+            tr("Added to favorites")
+        } else {
+            tr("Removed from favorites")
+        };
+        self.show_control_feedback_toast(title);
     }
     pub(in crate::ui) fn apply_favorite_changed(
         self: &Rc<Self>,
@@ -57,6 +69,13 @@ impl Shell {
         }
 
         self.update_search_favorite(&item_id, favorite);
+        if let FavoriteItemId::Track(track_id) = &item_id
+            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
+            && current.track_id == *track_id
+        {
+            current.favorite = favorite;
+            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+        }
         self.update_visible_favorite_buttons(&item_id, favorite);
         let track_sort_key = self.state.settings.borrow().track_table.sort_key;
         if favorite_change_needs_route_render(&route, &item_id, track_sort_key) {
