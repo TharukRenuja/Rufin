@@ -7,38 +7,39 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: 2026-06-14 11:14+0300\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-06-17 17:43+0000\n"
+"Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
+"Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n % 10 == 0 || n % 100 >= 11 && n % 100 <= "
 "19) ? 0 : ((n % 10 == 1 && n % 100 != 11) ? 1 : 2);\n"
+"X-Generator: Weblate 2026.7.dev0\n"
 
 #: crates/rufin/src/i18n.rs:60 crates/rufin/src/i18n.rs:419
 #: crates/rufin/src/ui/preferences/root/general.rs:811
 #: crates/rufin/src/i18n.rs:118 crates/rufin/src/i18n.rs:433
 msgid "System default"
-msgstr ""
+msgstr "Sistēmas noklusējums"
 
 #: crates/rufin/src/i18n.rs:421 crates/rufin/src/ui/preferences/root/mod.rs:164
 #: crates/rufin/src/ui/preferences/root/mod.rs:173 crates/rufin/src/i18n.rs:434
 msgid "Language"
-msgstr ""
+msgstr "Valoda"
 
 #: crates/rufin/src/i18n.rs:422 crates/rufin/src/i18n.rs:435
 msgid "Home"
-msgstr ""
+msgstr "Sākums"
 
 #: crates/rufin/src/i18n.rs:423 crates/rufin/src/i18n.rs:436
 msgid "Favorites"
-msgstr ""
+msgstr "Favorīti"
 
 #: crates/rufin/src/i18n.rs:424 crates/rufin/src/i18n.rs:437
 msgid "Albums"
-msgstr ""
+msgstr "Albumi"
 
 #: crates/rufin/src/i18n.rs:425
 #: crates/rufin/src/ui/preferences/root/general.rs:534
@@ -46,51 +47,51 @@ msgstr ""
 #: crates/rufin/src/ui/root/album_detail_view.rs:66
 #: crates/rufin/src/i18n.rs:438
 msgid "Album"
-msgstr ""
+msgstr "Albums"
 
 #: crates/rufin/src/i18n.rs:426 crates/rufin/src/i18n.rs:447
 msgid "Tracks"
-msgstr ""
+msgstr "Celiņi"
 
 #: crates/rufin/src/i18n.rs:427 crates/rufin/src/ui/artist.rs:229
 #: crates/rufin/src/ui/root/lyrics_panel.rs:82 crates/rufin/src/i18n.rs:448
 msgid "Artist"
-msgstr ""
+msgstr "Mākslinieks"
 
 #: crates/rufin/src/i18n.rs:428 crates/rufin/src/i18n.rs:449
 msgid "Artists"
-msgstr ""
+msgstr "Mākslinieki"
 
 #: crates/rufin/src/i18n.rs:429 crates/rufin/src/i18n.rs:450
 msgid "Album Artists"
-msgstr ""
+msgstr "Albumu mākslinieki"
 
 #: crates/rufin/src/i18n.rs:430 crates/rufin/src/ui/random_play.rs:81
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:938
 #: crates/rufin/src/i18n.rs:451
 msgid "Genre"
-msgstr ""
+msgstr "Žanrs"
 
 #: crates/rufin/src/i18n.rs:431 crates/rufin/src/i18n.rs:452
 msgid "Genres"
-msgstr ""
+msgstr "Žanri"
 
 #: crates/rufin/src/i18n.rs:432 crates/rufin/src/i18n.rs:453
 msgid "Folders"
-msgstr ""
+msgstr "Mapes"
 
 #: crates/rufin/src/i18n.rs:433 crates/rufin/src/ui/folders.rs:373
 #: crates/rufin/src/i18n.rs:454
 msgid "Folder"
-msgstr ""
+msgstr "Mape"
 
 #: crates/rufin/src/i18n.rs:434 crates/rufin/src/i18n.rs:455
 msgid "Playlist"
-msgstr ""
+msgstr "Atskaņošanas saraksts"
 
 #: crates/rufin/src/i18n.rs:435 crates/rufin/src/i18n.rs:456
 msgid "Playlists"
-msgstr ""
+msgstr "Atskaņošanas saraksti"
 
 #: crates/rufin/src/i18n.rs:436 crates/rufin/src/ui/library/route_shell.rs:32
 #: crates/rufin/src/ui/library/route_shell.rs:76
@@ -103,52 +104,52 @@ msgstr ""
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:377
 #: crates/rufin/src/ui/root/track_table.rs:54 crates/rufin/src/i18n.rs:457
 msgid "Search"
-msgstr ""
+msgstr "Meklēt"
 
 #: crates/rufin/src/i18n.rs:437 crates/rufin/src/i18n.rs:458
 msgid "Settings"
-msgstr ""
+msgstr "Iestatījumi"
 
 #: crates/rufin/src/i18n.rs:438 crates/rufin/src/i18n.rs:459
 msgid "Explore"
-msgstr ""
+msgstr "Izpētīt"
 
 #: crates/rufin/src/i18n.rs:439 crates/rufin/src/i18n.rs:460
 msgid "Most played"
-msgstr ""
+msgstr "Visbiežāk atskaņotie"
 
 #: crates/rufin/src/i18n.rs:440 crates/rufin/src/i18n.rs:461
 msgid "Newly added"
-msgstr ""
+msgstr "Nesen pievienotie"
 
 #: crates/rufin/src/i18n.rs:441 crates/rufin/src/i18n.rs:462
 msgid "Recently played"
-msgstr ""
+msgstr "Nesen atskaņotie"
 
 #: crates/rufin/src/i18n.rs:442 crates/rufin/src/i18n.rs:463
 msgid "Recently released"
-msgstr ""
+msgstr "Nesen izdotie"
 
 #: crates/rufin/src/i18n.rs:443 crates/rufin/src/i18n.rs:464
 msgid "Favorite tracks"
-msgstr ""
+msgstr "Iecienītākie celiņi"
 
 #: crates/rufin/src/i18n.rs:444 crates/rufin/src/i18n.rs:465
 msgid "Appears On"
-msgstr ""
+msgstr "Parādās ierakstos"
 
 #: crates/rufin/src/i18n.rs:445 crates/rufin/src/ui/artist.rs:427
 #: crates/rufin/src/i18n.rs:466
 msgid "appears on"
-msgstr ""
+msgstr "parādās ierakstos"
 
 #: crates/rufin/src/i18n.rs:446 crates/rufin/src/i18n.rs:467
 msgid "Discography"
-msgstr ""
+msgstr "Diskogrāfija"
 
 #: crates/rufin/src/i18n.rs:447 crates/rufin/src/i18n.rs:468
 msgid "View all tracks"
-msgstr ""
+msgstr "Skatīt visus celiņus"
 
 #: crates/rufin/src/i18n.rs:448 crates/rufin/src/ui/artist.rs:417
 #: crates/rufin/src/ui/artist.rs:425 crates/rufin/src/ui/home.rs:255
@@ -156,7 +157,7 @@ msgstr ""
 #: crates/rufin/src/ui/library/cards.rs:206
 #: crates/rufin/src/ui/preferences/library.rs:225 crates/rufin/src/i18n.rs:469
 msgid "albums"
-msgstr ""
+msgstr "albumi"
 
 #: crates/rufin/src/i18n.rs:449 crates/rufin/src/ui/artist.rs:419
 #: crates/rufin/src/ui/artist.rs:429 crates/rufin/src/ui/home.rs:59
@@ -173,27 +174,27 @@ msgstr ""
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:218
 #: crates/rufin/src/i18n.rs:470
 msgid "tracks"
-msgstr ""
+msgstr "celiņi"
 
 #: crates/rufin/src/i18n.rs:450 crates/rufin/src/ui/root/cover_startup.rs:426
 #: crates/rufin/src/i18n.rs:471
 msgid "Back"
-msgstr ""
+msgstr "Atpakaļ"
 
 #: crates/rufin/src/i18n.rs:451 crates/rufin/src/ui/root/cover_startup.rs:428
 #: crates/rufin/src/i18n.rs:472
 msgid "Forward"
-msgstr ""
+msgstr "Uz priekšu"
 
 #: crates/rufin/src/i18n.rs:452 crates/rufin/src/i18n.rs:473
 msgid "Menu"
-msgstr ""
+msgstr "Izvēlne"
 
 #: crates/rufin/src/i18n.rs:453 crates/rufin/src/ui/chrome.rs:116
 #: crates/rufin/src/ui/chrome.rs:124
 #: crates/rufin/src/ui/root/cover_startup.rs:431 crates/rufin/src/i18n.rs:474
 msgid "Main Menu"
-msgstr ""
+msgstr "Galvenā izvēlne"
 
 #: crates/rufin/src/i18n.rs:454 crates/rufin/src/ui/chrome.rs:140
 #: crates/rufin/src/ui/preferences/root/mod.rs:59
@@ -201,124 +202,124 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/mod.rs:92
 #: crates/rufin/src/ui/root/cover_startup.rs:433 crates/rufin/src/i18n.rs:475
 msgid "Preferences"
-msgstr ""
+msgstr "preferences"
 
 #: crates/rufin/src/i18n.rs:455 crates/rufin/src/ui/chrome.rs:141
 #: crates/rufin/src/ui/root/cover_startup.rs:423
 #: crates/rufin/src/ui/root/cover_startup.rs:437 crates/rufin/src/i18n.rs:476
 msgid "Keyboard Shortcuts"
-msgstr ""
+msgstr "Tastatūras saīsnes"
 
 #: crates/rufin/src/i18n.rs:456 crates/rufin/src/ui/chrome.rs:134
 #: crates/rufin/src/ui/root/cover_startup.rs:441 crates/rufin/src/i18n.rs:477
 msgid "Toggle Fullscreen"
-msgstr ""
+msgstr "Pārslēgt pilnekrāna režīmu"
 
 #: crates/rufin/src/i18n.rs:457 crates/rufin/src/ui/chrome.rs:145
 #: crates/rufin/src/i18n.rs:478
 msgid "About Rufin"
-msgstr ""
+msgstr "Par Rufin"
 
 #: crates/rufin/src/i18n.rs:458 crates/rufin/src/ui/preferences/root/mod.rs:122
 #: crates/rufin/src/ui/preferences/root/mod.rs:157
 #: crates/rufin/src/ui/root/cover_startup.rs:425 crates/rufin/src/i18n.rs:479
 msgid "General"
-msgstr ""
+msgstr "Vispārīgi"
 
 #: crates/rufin/src/i18n.rs:459 crates/rufin/src/ui/preferences/root/mod.rs:407
 #: crates/rufin/src/i18n.rs:482
 msgid "Interface"
-msgstr ""
+msgstr "Saskarne"
 
 #: crates/rufin/src/i18n.rs:460 crates/rufin/src/ui/preferences/library.rs:16
 #: crates/rufin/src/ui/preferences/library.rs:27
 #: crates/rufin/src/ui/preferences/root/mod.rs:146 crates/rufin/src/i18n.rs:483
 msgid "Library"
-msgstr ""
+msgstr "Bibliotēka"
 
 #: crates/rufin/src/i18n.rs:461 crates/rufin/src/i18n.rs:484
 msgid "Actions"
-msgstr ""
+msgstr "Darbības"
 
 #: crates/rufin/src/i18n.rs:462 crates/rufin/src/i18n.rs:485
 msgid "Sync Status"
-msgstr ""
+msgstr "Sinhronizācijas statuss"
 
 #: crates/rufin/src/i18n.rs:463 crates/rufin/src/ui/preferences/root/mod.rs:246
 #: crates/rufin/src/i18n.rs:486
 msgid "Metadata"
-msgstr ""
+msgstr "Metadati"
 
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/ui/preferences/root/mod.rs:259
 #: crates/rufin/src/i18n.rs:489
 msgid "Prefer server playlist covers"
-msgstr ""
+msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
 
 #: crates/rufin/src/i18n.rs:464 crates/rufin/src/ui/preferences/root/mod.rs:259
 #: crates/rufin/src/i18n.rs:487
 msgid "External lyric lookup"
-msgstr ""
+msgstr "Ārējais tekstu meklējums"
 
 #: crates/rufin/src/i18n.rs:465 crates/rufin/src/ui/preferences/root/mod.rs:249
 #: crates/rufin/src/i18n.rs:488
 msgid "External cover lookup"
-msgstr ""
+msgstr "Ārējais vāka meklējums"
 
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/ui/preferences/root/mod.rs:294
 #: crates/rufin/src/i18n.rs:490
 msgid "External site links"
-msgstr ""
+msgstr "Ārējās saites"
 
 #: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/preferences/root/mod.rs:297
 #: crates/rufin/src/i18n.rs:491
 msgid "Show external site links"
-msgstr ""
+msgstr "Rādīt ārējās saites"
 
 #: crates/rufin/src/i18n.rs:483 crates/rufin/src/ui/preferences/root/mod.rs:298
 #: crates/rufin/src/i18n.rs:492
 msgid "Show external service icons on album and artist pages"
-msgstr ""
+msgstr "Rādīt ārējo pakalpojumu ikonas albumu un mākslinieku lapās"
 
 #: crates/rufin/src/i18n.rs:487
 #: crates/rufin/src/ui/root/layout_rendering.rs:978
 #: crates/rufin/src/ui/root/layout_rendering.rs:1021
 #: crates/rufin/src/i18n.rs:495
 msgid "Open on Last.fm"
-msgstr ""
+msgstr "Atvērt vietnē Last.fm"
 
 #: crates/rufin/src/i18n.rs:488
 #: crates/rufin/src/ui/root/layout_rendering.rs:989
 #: crates/rufin/src/ui/root/layout_rendering.rs:1032
 #: crates/rufin/src/i18n.rs:496
 msgid "Open on MusicBrainz"
-msgstr ""
+msgstr "Atvērt vietnē MusicBrainz"
 
 #: crates/rufin/src/i18n.rs:489 crates/rufin/src/i18n.rs:497
 msgid "Open on Jellyfin"
-msgstr ""
+msgstr "Atvērt vietnē Jellyfin"
 
 #: crates/rufin/src/i18n.rs:466 crates/rufin/src/i18n.rs:498
 msgid "Does MusicBrainz and Cover Art Archive lookups"
-msgstr ""
+msgstr "Veic MusicBrainz un Cover Art Archive meklējumus"
 
 #: crates/rufin/src/i18n.rs:467 crates/rufin/src/i18n.rs:499
 msgid "Try to fetch artwork from internet when server artwork is missing"
-msgstr ""
+msgstr "Mēģina ielādēt attēlus no interneta, ja servera attēli nav pieejami"
 
 #: crates/rufin/src/i18n.rs:468 crates/rufin/src/ui/local_access_mapping.rs:506
 #: crates/rufin/src/i18n.rs:500
 msgid "Clear Cached Library"
-msgstr ""
+msgstr "Notīrīt kešoto bibliotēku"
 
 #: crates/rufin/src/i18n.rs:469 crates/rufin/src/ui/local_access_mapping.rs:514
 #: crates/rufin/src/i18n.rs:501
 msgid "Clear Cache"
-msgstr ""
+msgstr "Notīrīt kešatmiņu"
 
 #: crates/rufin/src/i18n.rs:470 crates/rufin/src/ui/local_access_mapping.rs:509
 #: crates/rufin/src/i18n.rs:502
 msgid "This removes cached library metadata for"
-msgstr ""
+msgstr "Tas noņem kešotos bibliotēkas metadatus priekš"
 
 #: crates/rufin/src/i18n.rs:472 crates/rufin/src/ui/local_access_mapping.rs:542
 #: crates/rufin/src/i18n.rs:504
@@ -326,263 +327,273 @@ msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
+"Tas noņem serveri, kešotos bibliotēkas metadatus, rindas momentuzņēmumu un "
+"saglabāto žetonu priekš"
 
 #: crates/rufin/src/i18n.rs:473 crates/rufin/src/i18n.rs:505
 msgid "Clears cached data for the server, login stays saved"
-msgstr ""
+msgstr "Notīra kešotos datus serverim, pieteikšanās paliek saglabāta"
 
 #: crates/rufin/src/i18n.rs:474 crates/rufin/src/i18n.rs:506
 msgid "No active server"
-msgstr ""
+msgstr "Nav aktīva servera"
 
 #: crates/rufin/src/i18n.rs:475 crates/rufin/src/ui/login.rs:50
 #: crates/rufin/src/ui/source_selector.rs:316 crates/rufin/src/i18n.rs:507
 msgid "Add Server"
-msgstr ""
+msgstr "Pievienot serveri"
 
 #: crates/rufin/src/i18n.rs:476 crates/rufin/src/ui/local_access_mapping.rs:72
 #: crates/rufin/src/i18n.rs:508
 msgid "Manage Server"
-msgstr ""
+msgstr "Pārvaldīt serveri"
 
 #: crates/rufin/src/i18n.rs:477 crates/rufin/src/i18n.rs:509
 msgid "Configure local folder access"
-msgstr ""
+msgstr "Konfigurēt piekļuvi lokālajām mapēm"
 
 #: crates/rufin/src/i18n.rs:478 crates/rufin/src/ui/source_selector.rs:115
 #: crates/rufin/src/i18n.rs:510
 msgid "Source"
-msgstr ""
+msgstr "Avots"
 
 #: crates/rufin/src/i18n.rs:479 crates/rufin/src/ui/source_selector.rs:234
 #: crates/rufin/src/i18n.rs:511
 msgid "Select Source"
-msgstr ""
+msgstr "Izvēlēties avotu"
 
 #: crates/rufin/src/i18n.rs:480 crates/rufin/src/ui/source_selector.rs:147
 #: crates/rufin/src/i18n.rs:512
 msgid "No source"
-msgstr ""
+msgstr "Nav avota"
 
 #: crates/rufin/src/i18n.rs:481 crates/rufin/src/i18n.rs:513
 msgid "Sources"
-msgstr ""
+msgstr "Avoti"
 
 #: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/preferences/library.rs:34
 #: crates/rufin/src/i18n.rs:514
 msgid "Servers"
-msgstr ""
+msgstr "Serveri"
 
 #: crates/rufin/src/i18n.rs:483 crates/rufin/src/i18n.rs:515
 msgid "Configure saved music servers and local playback mappings"
 msgstr ""
+"Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas sarakstus"
 
 #: crates/rufin/src/i18n.rs:484 crates/rufin/src/ui/preferences/library.rs:42
 #: crates/rufin/src/ui/source_selector.rs:236 crates/rufin/src/i18n.rs:516
 msgid "No servers configured"
-msgstr ""
+msgstr "Nav konfigurēti serveri"
 
 #: crates/rufin/src/i18n.rs:485 crates/rufin/src/ui/source_selector.rs:286
 #: crates/rufin/src/i18n.rs:517
 msgid "Server Library"
-msgstr ""
+msgstr "Servera bibliotēka"
 
 #: crates/rufin/src/i18n.rs:486 crates/rufin/src/ui/preferences/library.rs:205
 #: crates/rufin/src/ui/source_selector.rs:348 crates/rufin/src/i18n.rs:518
 msgid "All Music"
-msgstr ""
+msgstr "Visa mūzika"
 
 #: crates/rufin/src/i18n.rs:487 crates/rufin/src/ui/source_selector.rs:298
 #: crates/rufin/src/i18n.rs:519
 msgid "Manage"
-msgstr ""
+msgstr "Pārvaldīt"
 
 #: crates/rufin/src/i18n.rs:488 crates/rufin/src/ui/preferences/library.rs:99
 #: crates/rufin/src/i18n.rs:520
 msgid "Local Folders"
-msgstr ""
+msgstr "Lokālās mapes"
 
 #: crates/rufin/src/i18n.rs:489 crates/rufin/src/ui/preferences/library.rs:106
 #: crates/rufin/src/ui/source_selector.rs:334 crates/rufin/src/i18n.rs:521
 msgid "No local folders configured"
-msgstr ""
+msgstr "Nav konfigurētas lokālās mapes"
 
 #: crates/rufin/src/i18n.rs:490 crates/rufin/src/i18n.rs:522
 msgid "Add Local Folder"
-msgstr ""
+msgstr "Pievienot lokālo mapi"
 
 #: crates/rufin/src/i18n.rs:491 crates/rufin/src/i18n.rs:523
 msgid "Active Source Actions"
-msgstr ""
+msgstr "Aktīvā avota darbības"
 
 #: crates/rufin/src/i18n.rs:492 crates/rufin/src/i18n.rs:524
 msgid "Map Local"
-msgstr ""
+msgstr "Kartēt lokālo"
 
 #: crates/rufin/src/i18n.rs:493 crates/rufin/src/i18n.rs:525
 msgid "Edit Mapping"
-msgstr ""
+msgstr "Rediģēt kartējumu"
 
 #: crates/rufin/src/i18n.rs:494 crates/rufin/src/ui/local_access_mapping.rs:349
 #: crates/rufin/src/i18n.rs:526
 msgid "Server Settings"
-msgstr ""
+msgstr "Servera iestatījumi"
 
 #: crates/rufin/src/i18n.rs:495 crates/rufin/src/ui/local_access_mapping.rs:432
 #: crates/rufin/src/i18n.rs:527
 msgid "Server Actions"
-msgstr ""
+msgstr "Servera darbības"
 
 #: crates/rufin/src/i18n.rs:496 crates/rufin/src/i18n.rs:528
 msgid "Use This Source"
-msgstr ""
+msgstr "Izmantot šo avotu"
 
 #: crates/rufin/src/i18n.rs:497 crates/rufin/src/i18n.rs:529
 msgid "Selected Source"
-msgstr ""
+msgstr "Izvēlētais avots"
 
 #: crates/rufin/src/i18n.rs:498 crates/rufin/src/ui/folders.rs:331
 #: crates/rufin/src/ui/local_access_mapping.rs:358 crates/rufin/src/i18n.rs:530
 msgid "Name"
-msgstr ""
+msgstr "Nosaukums"
 
 #: crates/rufin/src/i18n.rs:499 crates/rufin/src/ui/local_access_mapping.rs:489
 #: crates/rufin/src/i18n.rs:531
 msgid "Not set"
-msgstr ""
+msgstr "Nav iestatīts"
 
 #: crates/rufin/src/i18n.rs:500 crates/rufin/src/i18n.rs:749
 #: crates/rufin/src/i18n.rs:532 crates/rufin/src/i18n.rs:796
 msgid "Yes"
-msgstr ""
+msgstr "Jā"
 
 #: crates/rufin/src/i18n.rs:501 crates/rufin/src/i18n.rs:734
 #: crates/rufin/src/i18n.rs:533 crates/rufin/src/i18n.rs:781
 msgid "No"
-msgstr ""
+msgstr "Nē"
 
 #: crates/rufin/src/i18n.rs:502 crates/rufin/src/ui/preferences/library.rs:260
 #: crates/rufin/src/i18n.rs:534
 msgid "Local mapping"
-msgstr ""
+msgstr "Lokālā kartēšana"
 
 #: crates/rufin/src/i18n.rs:503 crates/rufin/src/ui/preferences/library.rs:249
 #: crates/rufin/src/ui/preferences/library.rs:252 crates/rufin/src/i18n.rs:535
 msgid "No local playback mapping"
-msgstr ""
+msgstr "Nav lokālās atskaņošanas kartēšanas"
 
 #: crates/rufin/src/i18n.rs:504 crates/rufin/src/i18n.rs:536
 msgid "Local mapping saved. Sync to preview matches"
 msgstr ""
+"Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības"
 
 #: crates/rufin/src/i18n.rs:505 crates/rufin/src/ui/preferences/library.rs:207
 #: crates/rufin/src/i18n.rs:537
 msgid "Saved per server"
-msgstr ""
+msgstr "Saglabāts katram serverim"
 
 #: crates/rufin/src/i18n.rs:506 crates/rufin/src/ui/preferences/root/mod.rs:315
 #: crates/rufin/src/i18n.rs:538
 msgid "None"
-msgstr ""
+msgstr "Nav"
 
 #: crates/rufin/src/i18n.rs:507 crates/rufin/src/i18n.rs:539
 msgid "Use server streams only"
-msgstr ""
+msgstr "Izmantot tikai servera straumes"
 
 #: crates/rufin/src/i18n.rs:508 crates/rufin/src/i18n.rs:540
 msgid "Choose Folder"
-msgstr ""
+msgstr "Izvēlēties mapi"
 
 #: crates/rufin/src/i18n.rs:509 crates/rufin/src/i18n.rs:541
 msgid "Add local folder access"
-msgstr ""
+msgstr "Pievienot piekļuvi lokālajai mapei"
 
 #: crates/rufin/src/i18n.rs:510 crates/rufin/src/ui/preferences/library.rs:162
 #: crates/rufin/src/i18n.rs:542
 msgid "Remove Local Folder"
-msgstr ""
+msgstr "Noņemt lokālo mapi"
 
 #: crates/rufin/src/i18n.rs:511 crates/rufin/src/i18n.rs:543
 msgid "This removes the folder from the Local source"
-msgstr ""
+msgstr "Tas noņem mapi no lokālā avota"
 
 #: crates/rufin/src/i18n.rs:512 crates/rufin/src/i18n.rs:544
 msgid "Clear Mapping"
-msgstr ""
+msgstr "Notīrīt kartēšanu"
 
 #: crates/rufin/src/i18n.rs:513 crates/rufin/src/i18n.rs:622
 #: crates/rufin/src/ui/root/lyrics_panel.rs:218 crates/rufin/src/i18n.rs:545
 #: crates/rufin/src/i18n.rs:654
 msgid "Save"
-msgstr ""
+msgstr "Saglabāt"
 
 #: crates/rufin/src/i18n.rs:514 crates/rufin/src/i18n.rs:546
 msgid "Save Mapping"
-msgstr ""
+msgstr "Saglabāt kartēšanu"
 
 #: crates/rufin/src/i18n.rs:515 crates/rufin/src/i18n.rs:547
 msgid "Save Server Settings"
-msgstr ""
+msgstr "Saglabāt servera iestatījumus"
 
 #: crates/rufin/src/i18n.rs:516 crates/rufin/src/i18n.rs:643
 #: crates/rufin/src/ui/preferences/root/general.rs:104
 #: crates/rufin/src/ui/preferences/root/general.rs:193
 #: crates/rufin/src/i18n.rs:548 crates/rufin/src/i18n.rs:675
 msgid "Connect"
-msgstr ""
+msgstr "Savienoties"
 
 #: crates/rufin/src/i18n.rs:517 crates/rufin/src/ui/login.rs:114
 #: crates/rufin/src/ui/root/route_rendering.rs:21 crates/rufin/src/i18n.rs:549
 msgid "Connect to Music Server"
-msgstr ""
+msgstr "Savienoties ar mūzikas serveri"
 
 #: crates/rufin/src/i18n.rs:518 crates/rufin/src/i18n.rs:550
 msgid "Preparing library…"
-msgstr ""
+msgstr "Gatavo bibliotēku…"
 
 #: crates/rufin/src/i18n.rs:519 crates/rufin/src/i18n.rs:551
 msgid "Library sync complete"
-msgstr ""
+msgstr "Bibliotēkas sinhronizēšana pabeigta"
 
 #: crates/rufin/src/i18n.rs:520 crates/rufin/src/i18n.rs:552
 msgid "Choose a provider, pick a server, or enter the address manually"
 msgstr ""
+"Izvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet adresi "
+"manuāliIzvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet "
+"adresi manuāli"
 
 #: crates/rufin/src/i18n.rs:521 crates/rufin/src/ui/login.rs:119
 #: crates/rufin/src/i18n.rs:553
 msgid ""
 "Choose a provider, pick a discovered server, or enter the address manually"
 msgstr ""
+"Izvēlieties pakalpojuma sniedzēju, izvēlieties atklātu serveri vai ievadiet "
+"adresi manuāliIzvēlieties pakalpojuma sniedzēju, izvēlieties atklātu serveri "
+"vai ievadiet adresi manuāli"
 
 #: crates/rufin/src/i18n.rs:522 crates/rufin/src/ui/login.rs:138
 #: crates/rufin/src/i18n.rs:554
 msgid "Provider"
-msgstr ""
+msgstr "Pakalpojuma sniedzējs"
 
 #: crates/rufin/src/i18n.rs:523 crates/rufin/src/ui/local_access_mapping.rs:371
 #: crates/rufin/src/ui/login.rs:154 crates/rufin/src/i18n.rs:555
 msgid "Username"
-msgstr ""
+msgstr "Lietotājvārds"
 
 #: crates/rufin/src/i18n.rs:524 crates/rufin/src/ui/local_access_mapping.rs:378
 #: crates/rufin/src/ui/login.rs:159 crates/rufin/src/i18n.rs:556
 msgid "Password"
-msgstr ""
+msgstr "Parole"
 
 #: crates/rufin/src/i18n.rs:525 crates/rufin/src/ui/preferences/library.rs:279
 #: crates/rufin/src/ui/source_selector.rs:199 crates/rufin/src/i18n.rs:557
 msgid "Jellyfin"
-msgstr ""
+msgstr "Jellyfin"
 
 #: crates/rufin/src/i18n.rs:526 crates/rufin/src/ui/preferences/library.rs:280
 #: crates/rufin/src/ui/source_selector.rs:200 crates/rufin/src/i18n.rs:558
 msgid "Navidrome"
-msgstr ""
+msgstr "Navidrome"
 
 #: crates/rufin/src/i18n.rs:527 crates/rufin/src/ui/preferences/library.rs:281
 #: crates/rufin/src/ui/source_selector.rs:201 crates/rufin/src/i18n.rs:559
 msgid "Subsonic / OpenSubsonic"
-msgstr ""
+msgstr "Subsonic / OpenSubsonic"
 
 #: crates/rufin/src/i18n.rs:528 crates/rufin/src/i18n.rs:753
 #: crates/rufin/src/ui/preferences/library.rs:282
@@ -590,12 +601,12 @@ msgstr ""
 #: crates/rufin/src/ui/source_selector.rs:264 crates/rufin/src/i18n.rs:560
 #: crates/rufin/src/i18n.rs:800
 msgid "Local"
-msgstr ""
+msgstr "Lokāls"
 
 #: crates/rufin/src/i18n.rs:529 crates/rufin/src/ui/local_access_mapping.rs:182
 #: crates/rufin/src/ui/login.rs:184 crates/rufin/src/i18n.rs:561
 msgid "Local Library"
-msgstr ""
+msgstr "Lokālā bibliotēka"
 
 #: crates/rufin/src/i18n.rs:531 crates/rufin/src/i18n.rs:563
 msgid ""
@@ -603,553 +614,561 @@ msgid ""
 "users, if the folder is not in ~/Music, you need to give folder permissions "
 "from Flatseal)"
 msgstr ""
+"Izvēlieties mapi, ko skenēt un atskaņot lokāli no datora (Flatpak "
+"lietotājiem, ja mape nav ~/Music, jums jāpiešķir mapes atļaujas no Flatseal)"
+"Izvēlieties mapi, ko skenēt un atskaņot lokāli no datora (Flatpak "
+"lietotājiem, ja mape nav ~/Music, jums jāpiešķir mapes atļaujas no Flatseal)"
 
 #: crates/rufin/src/i18n.rs:533 crates/rufin/src/ui/preferences/library.rs:237
 #: crates/rufin/src/i18n.rs:565
 msgid "Music Folder"
-msgstr ""
+msgstr "Mūzikas mape"
 
 #: crates/rufin/src/i18n.rs:534 crates/rufin/src/ui/login.rs:190
 #: crates/rufin/src/i18n.rs:566
 msgid "Music Folders"
-msgstr ""
+msgstr "Mūzikas mapes"
 
 #: crates/rufin/src/i18n.rs:535 crates/rufin/src/ui/local_access_mapping.rs:138
 #: crates/rufin/src/i18n.rs:567
 msgid "No folder selected"
-msgstr ""
+msgstr "Nav izvēlētas mapes"
 
 #: crates/rufin/src/i18n.rs:536 crates/rufin/src/ui/login.rs:787
 #: crates/rufin/src/i18n.rs:568
 msgid "No folders selected"
-msgstr ""
+msgstr "Nav izvēlētu mapu"
 
 #: crates/rufin/src/i18n.rs:537 crates/rufin/src/ui/login.rs:789
 #: crates/rufin/src/i18n.rs:569
 msgid "folders selected"
-msgstr ""
+msgstr "mapes izvēlētas"
 
 #: crates/rufin/src/i18n.rs:538 crates/rufin/src/ui/login.rs:202
 #: crates/rufin/src/i18n.rs:570
 msgid "Add"
-msgstr ""
+msgstr "Pievienot"
 
 #: crates/rufin/src/i18n.rs:539 crates/rufin/src/ui/login.rs:199
 #: crates/rufin/src/i18n.rs:571
 msgid "Add Folder"
-msgstr ""
+msgstr "Pievienot mapi"
 
 #: crates/rufin/src/i18n.rs:540 crates/rufin/src/ui/login.rs:200
 #: crates/rufin/src/i18n.rs:572
 msgid "Add another folder to the Local source"
-msgstr ""
+msgstr "Pievienot vēl vienu mapi lokālajam avotam"
 
 #: crates/rufin/src/i18n.rs:541 crates/rufin/src/ui/login.rs:186
 #: crates/rufin/src/i18n.rs:573
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
+"Izvēlieties vienu vai vairākas mapes, ko skenēt un atskaņot tieši no šī "
+"datora"
 
 #: crates/rufin/src/i18n.rs:542 crates/rufin/src/ui/login.rs:264
 #: crates/rufin/src/i18n.rs:574
 msgid "Choose at least one local music folder"
-msgstr ""
+msgstr "Izvēlieties vismaz vienu lokālo mūzikas mapi"
 
 #: crates/rufin/src/i18n.rs:543 crates/rufin/src/ui/local_access_mapping.rs:141
 #: crates/rufin/src/ui/login.rs:193 crates/rufin/src/i18n.rs:575
 msgid "Choose"
-msgstr ""
+msgstr "Izvēlēties"
 
 #: crates/rufin/src/i18n.rs:544 crates/rufin/src/ui/local_access_mapping.rs:180
 #: crates/rufin/src/i18n.rs:576
 msgid "Local Playback Access"
-msgstr ""
+msgstr "Lokālā atskaņošanas piekļuve"
 
 #: crates/rufin/src/i18n.rs:545 crates/rufin/src/ui/local_access_mapping.rs:185
 #: crates/rufin/src/i18n.rs:577
 msgid "Optionally map server tracks to files on this computer"
-msgstr ""
+msgstr "Pēc izvēles kartējiet servera celiņus uz failiem šajā datorā"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:199
 msgid "Local playback mapping configured"
-msgstr ""
+msgstr "Lokālā atskaņošanas kartēšana konfigurēta"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:201
 msgid "Map server tracks to local files"
-msgstr ""
+msgstr "Kartēt servera celiņus uz lokālajiem failiem"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:205
 msgid "Local Playback Mapping"
-msgstr ""
+msgstr "Lokālā atskaņošanas kartēšana"
 
 #: crates/rufin/src/i18n.rs:546 crates/rufin/src/ui/local_access_mapping.rs:133
 #: crates/rufin/src/i18n.rs:578
 msgid "Local Folder"
-msgstr ""
+msgstr "Lokālā mape"
 
 #: crates/rufin/src/i18n.rs:547 crates/rufin/src/ui/local_access_mapping.rs:147
 #: crates/rufin/src/i18n.rs:579
 msgid "Server Prefix"
-msgstr ""
+msgstr "Servera prefikss"
 
 #: crates/rufin/src/i18n.rs:548 crates/rufin/src/ui/local_access_mapping.rs:153
 #: crates/rufin/src/i18n.rs:580
 msgid "Local Prefix"
-msgstr ""
+msgstr "Lokālais prefikss"
 
 #: crates/rufin/src/i18n.rs:549 crates/rufin/src/ui/local_access_mapping.rs:163
 #: crates/rufin/src/i18n.rs:581
 msgid "Server Sample"
-msgstr ""
+msgstr "Servera paraugs"
 
 #: crates/rufin/src/i18n.rs:550 crates/rufin/src/ui/local_access_mapping.rs:161
 #: crates/rufin/src/ui/local_access_mapping.rs:644 crates/rufin/src/i18n.rs:582
 msgid "No cached server path yet"
-msgstr ""
+msgstr "Vēl nav kešota servera ceļa"
 
 #: crates/rufin/src/i18n.rs:551 crates/rufin/src/ui/local_access_mapping.rs:169
 #: crates/rufin/src/i18n.rs:583
 msgid "Mapped Local Path"
-msgstr ""
+msgstr "Nokartētais lokālais ceļš"
 
 #: crates/rufin/src/i18n.rs:552 crates/rufin/src/ui/local_access_mapping.rs:665
 #: crates/rufin/src/i18n.rs:584
 msgid "Server sample does not match the server prefix."
-msgstr ""
+msgstr "Servera paraugs neatbilst servera prefiksam."
 
 #: crates/rufin/src/i18n.rs:553 crates/rufin/src/ui/local_access_mapping.rs:693
 #: crates/rufin/src/i18n.rs:585
 msgid "Enter a matching server prefix to map this path."
-msgstr ""
+msgstr "Ievadiet atbilstošu servera prefiksu, lai kartētu šo ceļu."
 
 #: crates/rufin/src/i18n.rs:554 crates/rufin/src/ui/local_access_mapping.rs:709
 #: crates/rufin/src/i18n.rs:586
 msgid "Save to rescan this local library."
-msgstr ""
+msgstr "Saglabājiet, lai pārskenētu šo lokālo bibliotēku."
 
 #: crates/rufin/src/i18n.rs:555 crates/rufin/src/ui/local_access_mapping.rs:711
 #: crates/rufin/src/i18n.rs:587
 msgid "Local library folder is saved."
-msgstr ""
+msgstr "Lokālās bibliotēkas mape saglabāta."
 
 #: crates/rufin/src/i18n.rs:556 crates/rufin/src/ui/local_access_mapping.rs:653
 #: crates/rufin/src/ui/local_access_mapping.rs:715 crates/rufin/src/i18n.rs:588
 msgid "Choose a local prefix."
-msgstr ""
+msgstr "Izvēlieties lokālo prefiksu."
 
 #: crates/rufin/src/i18n.rs:557 crates/rufin/src/ui/local_access_mapping.rs:718
 #: crates/rufin/src/i18n.rs:589
 msgid "Choose an existing local prefix."
-msgstr ""
+msgstr "Izvēlieties esošu lokālo prefiksu."
 
 #: crates/rufin/src/i18n.rs:558 crates/rufin/src/ui/local_access_mapping.rs:308
 #: crates/rufin/src/i18n.rs:590
 msgid "Enter a local prefix."
-msgstr ""
+msgstr "Ievadiet lokālo prefiksu."
 
 #: crates/rufin/src/i18n.rs:559 crates/rufin/src/ui/local_access_mapping.rs:722
 #: crates/rufin/src/i18n.rs:591
 msgid "Save to apply this mapping after the next sync."
-msgstr ""
+msgstr "Saglabājiet, lai pielietotu šo kartēšanu pēc nākamās sinhronizācijas."
 
 #: crates/rufin/src/i18n.rs:560 crates/rufin/src/ui/local_access_mapping.rs:724
 #: crates/rufin/src/i18n.rs:592
 msgid "No cached tracks yet. Sync the server to preview matches."
 msgstr ""
+"Vēl nav kešotu celiņu. Sinhronizējiet serveri, lai priekšskatītu atbilstības."
 
 #: crates/rufin/src/i18n.rs:561 crates/rufin/src/ui/local_access_mapping.rs:729
 #: crates/rufin/src/i18n.rs:593
 msgid "Unsaved changes."
-msgstr ""
+msgstr "Nesaglabātas izmaiņas."
 
 #: crates/rufin/src/i18n.rs:562 crates/rufin/src/ui/local_access_mapping.rs:731
 #: crates/rufin/src/i18n.rs:594
 msgid "Saved mapping."
-msgstr ""
+msgstr "Saglabāta kartēšana."
 
 #: crates/rufin/src/i18n.rs:563 crates/rufin/src/ui/login.rs:834
 #: crates/rufin/src/ui/login.rs:872
 #: crates/rufin/src/ui/preferences/library.rs:142 crates/rufin/src/i18n.rs:595
 msgid "Select Music Folder"
-msgstr ""
+msgstr "Izvēlēties mūzikas mapi"
 
 #: crates/rufin/src/i18n.rs:564 crates/rufin/src/ui/local_access_mapping.rs:299
 #: crates/rufin/src/ui/local_access_mapping.rs:705 crates/rufin/src/i18n.rs:596
 msgid "Choose a local music folder"
-msgstr ""
+msgstr "Izvēlieties lokālo mūzikas mapi"
 
 #: crates/rufin/src/i18n.rs:565 crates/rufin/src/ui/login.rs:274
 #: crates/rufin/src/i18n.rs:597
 msgid "Enter a server address, username, and password"
-msgstr ""
+msgstr "Ievadiet servera adresi, lietotājvārdu un paroli"
 
 #: crates/rufin/src/i18n.rs:566 crates/rufin/src/ui/local_access_mapping.rs:364
 #: crates/rufin/src/ui/login.rs:147 crates/rufin/src/i18n.rs:598
 msgid "Server Address"
-msgstr ""
+msgstr "Servera adrese"
 
 #: crates/rufin/src/i18n.rs:567 crates/rufin/src/ui/local_access_mapping.rs:417
 #: crates/rufin/src/ui/login.rs:179 crates/rufin/src/i18n.rs:599
 msgid "Verify server certificate"
-msgstr ""
+msgstr "Pārbaudīt servera sertifikātu"
 
 #: crates/rufin/src/i18n.rs:568 crates/rufin/src/ui/local_access_mapping.rs:418
 #: crates/rufin/src/ui/login.rs:180 crates/rufin/src/i18n.rs:600
 msgid "Turn off only for a server you control"
-msgstr ""
+msgstr "Izslēdziet tikai serverim, ko pārvaldāt"
 
 #: crates/rufin/src/i18n.rs:570 crates/rufin/src/ui/login.rs:544
 #: crates/rufin/src/i18n.rs:601
 msgid "Found Servers"
-msgstr ""
+msgstr "Atrasti serveri"
 
 #: crates/rufin/src/i18n.rs:571 crates/rufin/src/ui/login.rs:550
 #: crates/rufin/src/i18n.rs:602
 msgid "Searching Local Network"
-msgstr ""
+msgstr "Meklē lokālajā tīklā"
 
 #: crates/rufin/src/i18n.rs:572 crates/rufin/src/ui/login.rs:552
 #: crates/rufin/src/i18n.rs:603
 msgid "No Servers Found"
-msgstr ""
+msgstr "Serveri nav atrasti"
 
 #: crates/rufin/src/i18n.rs:573 crates/rufin/src/ui/login.rs:585
 #: crates/rufin/src/i18n.rs:604
 msgid "Search Again"
-msgstr ""
+msgstr "Meklēt vēlreiz"
 
 #: crates/rufin/src/i18n.rs:574 crates/rufin/src/i18n.rs:605
 msgid "Resync Library"
-msgstr ""
+msgstr "Pārsinhronizēt bibliotēku"
 
 #: crates/rufin/src/i18n.rs:575 crates/rufin/src/i18n.rs:606
 msgid "Play"
-msgstr ""
+msgstr "Atskaņot"
 
 #: crates/rufin/src/i18n.rs:576 crates/rufin/src/i18n.rs:607
 msgid "Resume"
-msgstr ""
+msgstr "Turpināt"
 
 #: crates/rufin/src/i18n.rs:577 crates/rufin/src/i18n.rs:608
 msgid "Pause"
-msgstr ""
+msgstr "Pauzēt"
 
 #: crates/rufin/src/i18n.rs:578 crates/rufin/src/i18n.rs:609
 msgid "Stop"
-msgstr ""
+msgstr "Apturēt"
 
 #: crates/rufin/src/i18n.rs:579 crates/rufin/src/i18n.rs:610
 msgid "Previous"
-msgstr ""
+msgstr "Iepriekšējais"
 
 #: crates/rufin/src/i18n.rs:580 crates/rufin/src/i18n.rs:611
 msgid "Next"
-msgstr ""
+msgstr "Nākamais"
 
 #: crates/rufin/src/i18n.rs:581 crates/rufin/src/ui/root/home_refresh.rs:932
 #: crates/rufin/src/i18n.rs:612
 msgid "Favorite"
-msgstr ""
+msgstr "Favorīts"
 
 #: crates/rufin/src/i18n.rs:582 crates/rufin/src/i18n.rs:613
 msgid "Shuffle"
-msgstr ""
+msgstr "Sajaukt"
 
 #: crates/rufin/src/i18n.rs:583 crates/rufin/src/i18n.rs:614
 msgid "Shuffle on"
-msgstr ""
+msgstr "Sajaukt ieslēgts"
 
 #: crates/rufin/src/i18n.rs:584 crates/rufin/src/i18n.rs:615
 msgid "Auto DJ"
-msgstr ""
+msgstr "Automātiskais DJ"
 
 #: crates/rufin/src/i18n.rs:585
 #: crates/rufin/src/ui/preferences/root/general.rs:502
 #: crates/rufin/src/i18n.rs:616
 msgid "Auto DJ refill threshold"
-msgstr ""
+msgstr "Automātiskā DJ papildināšanas slieksnis"
 
 #: crates/rufin/src/i18n.rs:586
 #: crates/rufin/src/ui/preferences/root/general.rs:503
 #: crates/rufin/src/i18n.rs:617
 msgid "Add tracks when fewer than this many remain"
-msgstr ""
+msgstr "Pievienot celiņus, kad paliek mazāk par šo skaitu"
 
 #: crates/rufin/src/i18n.rs:587 crates/rufin/src/i18n.rs:618
 msgid "Auto DJ on"
-msgstr ""
+msgstr "Automātiskais DJ ieslēgts"
 
 #: crates/rufin/src/i18n.rs:588 crates/rufin/src/ui/random_play.rs:45
 #: crates/rufin/src/i18n.rs:619
 msgid "Play random"
-msgstr ""
+msgstr "Atskaņot nejaušā secībā"
 
 #: crates/rufin/src/i18n.rs:589 crates/rufin/src/ui/random_play.rs:70
 #: crates/rufin/src/i18n.rs:620
 msgid "Number of songs"
-msgstr ""
+msgstr "Dziesmu skaits"
 
 #: crates/rufin/src/i18n.rs:590 crates/rufin/src/ui/random_play.rs:72
 #: crates/rufin/src/i18n.rs:621
 msgid "Minimum year"
-msgstr ""
+msgstr "Minimālais gads"
 
 #: crates/rufin/src/i18n.rs:591 crates/rufin/src/ui/random_play.rs:77
 #: crates/rufin/src/i18n.rs:622
 msgid "Maximum year"
-msgstr ""
+msgstr "Maksimālais gads"
 
 #: crates/rufin/src/i18n.rs:592 crates/rufin/src/ui/random_play.rs:146
 #: crates/rufin/src/i18n.rs:623
 msgid "Any genre"
-msgstr ""
+msgstr "Jebkurš žanrs"
 
 #: crates/rufin/src/i18n.rs:593 crates/rufin/src/ui/random_play.rs:82
 #: crates/rufin/src/i18n.rs:624
 msgid "Play filter"
-msgstr ""
+msgstr "Atskaņošanas filtrs"
 
 #: crates/rufin/src/i18n.rs:594 crates/rufin/src/ui/random_play.rs:157
 #: crates/rufin/src/i18n.rs:625
 msgid "All tracks"
-msgstr ""
+msgstr "Visi celiņi"
 
 #: crates/rufin/src/i18n.rs:595 crates/rufin/src/ui/random_play.rs:158
 #: crates/rufin/src/i18n.rs:626
 msgid "Only unplayed tracks"
-msgstr ""
+msgstr "Tikai neatskaņotie celiņi"
 
 #: crates/rufin/src/i18n.rs:596 crates/rufin/src/ui/random_play.rs:159
 #: crates/rufin/src/i18n.rs:627
 msgid "Only played tracks"
-msgstr ""
+msgstr "Tikai atskaņotie celiņi"
 
 #: crates/rufin/src/i18n.rs:597 crates/rufin/src/i18n.rs:628
 msgid "Add Last"
-msgstr ""
+msgstr "Pievienot pēdējo"
 
 #: crates/rufin/src/i18n.rs:598 crates/rufin/src/i18n.rs:629
 msgid "Repeat off"
-msgstr ""
+msgstr "Atkārtošana izslēgta"
 
 #: crates/rufin/src/i18n.rs:599 crates/rufin/src/i18n.rs:630
 msgid "Repeat one"
-msgstr ""
+msgstr "Atkārtot vienu"
 
 #: crates/rufin/src/i18n.rs:600 crates/rufin/src/i18n.rs:631
 msgid "Repeat all"
-msgstr ""
+msgstr "Atkārtot visus"
 
 #: crates/rufin/src/i18n.rs:601 crates/rufin/src/i18n.rs:632
 msgid "Show sidebar"
-msgstr ""
+msgstr "Rādīt sānu paneli"
 
 #: crates/rufin/src/i18n.rs:602 crates/rufin/src/i18n.rs:633
 msgid "Hide sidebar"
-msgstr ""
+msgstr "Paslēpt sānu paneli"
 
 #: crates/rufin/src/i18n.rs:603 crates/rufin/src/i18n.rs:634
 msgid "Show lyrics"
-msgstr ""
+msgstr "Rādīt tekstus"
 
 #: crates/rufin/src/i18n.rs:604 crates/rufin/src/i18n.rs:635
 msgid "Hide lyrics"
-msgstr ""
+msgstr "Paslēpt tekstus"
 
 #: crates/rufin/src/i18n.rs:605 crates/rufin/src/ui/root/lyrics_panel.rs:19
 #: crates/rufin/src/i18n.rs:636
 msgid "Search lyrics"
-msgstr ""
+msgstr "Meklēt tekstus"
 
 #: crates/rufin/src/i18n.rs:606 crates/rufin/src/ui/root/lyrics_panel.rs:64
 #: crates/rufin/src/i18n.rs:637
 msgid "Search Lyrics"
-msgstr ""
+msgstr "Meklēt tekstus"
 
 #: crates/rufin/src/i18n.rs:607 crates/rufin/src/ui/root/lyrics_panel.rs:248
 #: crates/rufin/src/i18n.rs:638
 msgid "Save Lyrics"
-msgstr ""
+msgstr "Saglabāt tekstus"
 
 #: crates/rufin/src/i18n.rs:608 crates/rufin/src/i18n.rs:639
 msgid "Close"
-msgstr ""
+msgstr "Aizvērt"
 
 #: crates/rufin/src/i18n.rs:609 crates/rufin/src/i18n.rs:640
 msgid "Disable automatic lyric search for this track"
-msgstr ""
+msgstr "Atslēgt automātisko tekstu meklēšanu šim celiņam"
 
 #: crates/rufin/src/i18n.rs:610 crates/rufin/src/ui/root/lyrics_panel.rs:21
 #: crates/rufin/src/i18n.rs:641
 msgid "No track playing"
-msgstr ""
+msgstr "Nav atskaņojama celiņa"
 
 #: crates/rufin/src/i18n.rs:611 crates/rufin/src/ui/root/lyrics_panel.rs:88
 #: crates/rufin/src/i18n.rs:642
 msgid "Song"
-msgstr ""
+msgstr "Dziesma"
 
 #: crates/rufin/src/i18n.rs:612 crates/rufin/src/ui/root/lyrics_panel.rs:93
 #: crates/rufin/src/ui/root/lyrics_panel.rs:337 crates/rufin/src/i18n.rs:643
 msgid "Ready"
-msgstr ""
+msgstr "Gatavs"
 
 #: crates/rufin/src/i18n.rs:613 crates/rufin/src/ui/root/cover_startup.rs:73
 #: crates/rufin/src/i18n.rs:644
 msgid "Enter an artist or song."
-msgstr ""
+msgstr "Ievadiet mākslinieku vai dziesmu."
 
 #: crates/rufin/src/i18n.rs:614 crates/rufin/src/ui/login.rs:583
 #: crates/rufin/src/ui/root/cover_startup.rs:77 crates/rufin/src/i18n.rs:645
 msgid "Searching…"
-msgstr ""
+msgstr "Meklē…"
 
 #: crates/rufin/src/i18n.rs:615 crates/rufin/src/ui/root/lyrics_panel.rs:194
 #: crates/rufin/src/i18n.rs:646
 msgid "No lyrics found."
-msgstr ""
+msgstr "Teksti nav atrasti."
 
 #: crates/rufin/src/i18n.rs:616 crates/rufin/src/ui/root/lyrics_panel.rs:306
 #: crates/rufin/src/i18n.rs:647
 msgid "Search failed."
-msgstr ""
+msgstr "Meklēšana neizdevās."
 
 #: crates/rufin/src/i18n.rs:617 crates/rufin/src/ui/root/lyrics_panel.rs:200
 #: crates/rufin/src/i18n.rs:648
 msgid "results"
-msgstr ""
+msgstr "rezultāti"
 
 #: crates/rufin/src/i18n.rs:618 crates/rufin/src/ui/root/cover_startup.rs:302
 #: crates/rufin/src/i18n.rs:649
 msgid "Synced lyrics"
-msgstr ""
+msgstr "Sinhronizēti teksti"
 
 #: crates/rufin/src/i18n.rs:619 crates/rufin/src/ui/root/cover_startup.rs:308
 #: crates/rufin/src/i18n.rs:650
 msgid "Plain lyrics"
-msgstr ""
+msgstr "Vienkārši teksti"
 
 #: crates/rufin/src/i18n.rs:643 crates/rufin/src/ui/root/cover_startup.rs:351
 #: crates/rufin/src/i18n.rs:651
 msgid "Remote lyrics"
-msgstr ""
+msgstr "Attālināti teksti"
 
 #: crates/rufin/src/i18n.rs:620 crates/rufin/src/ui/root/cover_startup.rs:310
 #: crates/rufin/src/i18n.rs:652
 msgid "No lyrics"
-msgstr ""
+msgstr "Nav teksta"
 
 #: crates/rufin/src/i18n.rs:621 crates/rufin/src/ui/root/lyrics_panel.rs:235
 #: crates/rufin/src/i18n.rs:653
 msgid "Loaded in lyrics panel."
-msgstr ""
+msgstr "Ielādēts tekstu panelī."
 
 #: crates/rufin/src/i18n.rs:623 crates/rufin/src/ui/root/lyrics_panel.rs:347
 #: crates/rufin/src/i18n.rs:655
 msgid "Saved to"
-msgstr ""
+msgstr "Saglabāts:"
 
 #: crates/rufin/src/i18n.rs:624 crates/rufin/src/ui/preferences/root/mod.rs:451
 #: crates/rufin/src/i18n.rs:656
 msgid "Show Lyrics Panel"
-msgstr ""
+msgstr "Rādīt tekstu paneli"
 
 #: crates/rufin/src/i18n.rs:625 crates/rufin/src/i18n.rs:657
 msgid "Keep the lyrics section visible below the queue"
-msgstr ""
+msgstr "Turēt tekstu sadaļu redzamu zem rindas"
 
 #: crates/rufin/src/i18n.rs:626 crates/rufin/src/i18n.rs:658
 msgid "Keep the queue sidebar visible in the main window"
-msgstr ""
+msgstr "Turēt rindas sānu paneli redzamu galvenajā logā"
 
 #: crates/rufin/src/i18n.rs:627 crates/rufin/src/ui/preferences/root/mod.rs:264
 #: crates/rufin/src/i18n.rs:659
 msgid "Prefer server lyrics"
-msgstr ""
+msgstr "Dot priekšroku servera tekstiem"
 
 #: crates/rufin/src/i18n.rs:628 crates/rufin/src/i18n.rs:660
 msgid "Search server lyrics before external providers"
-msgstr ""
+msgstr "Meklēt servera tekstus pirms ārējiem pakalpojuma sniedzējiem"
 
 #: crates/rufin/src/i18n.rs:629 crates/rufin/src/i18n.rs:661
 msgid "Use remote lyric providers when server lyrics are unavailable"
 msgstr ""
+"Izmantot attālinātos tekstu pakalpojumus, ja servera teksti nav pieejami"
 
 #: crates/rufin/src/i18n.rs:630
 #: crates/rufin/src/ui/preferences/root/general.rs:5
 #: crates/rufin/src/ui/preferences/root/mod.rs:134 crates/rufin/src/i18n.rs:662
 msgid "Scrobbling"
-msgstr ""
+msgstr "Skroblēšana"
 
 #: crates/rufin/src/i18n.rs:631
 #: crates/rufin/src/ui/preferences/root/general.rs:18
 #: crates/rufin/src/ui/preferences/root/mod.rs:316 crates/rufin/src/i18n.rs:663
 msgid "Last.fm"
-msgstr ""
+msgstr "Last.fm"
 
 #: crates/rufin/src/i18n.rs:632
 #: crates/rufin/src/ui/preferences/root/general.rs:21
 #: crates/rufin/src/i18n.rs:664
 msgid "Last.fm scrobbling"
-msgstr ""
+msgstr "Last.fm skroblēšana"
 
 #: crates/rufin/src/i18n.rs:633 crates/rufin/src/ui/preferences/root/mod.rs:318
 #: crates/rufin/src/i18n.rs:665
 msgid "MusicBrainz + Last.fm"
-msgstr ""
+msgstr "MusicBrainz + Last.fm"
 
 #: crates/rufin/src/i18n.rs:634 crates/rufin/src/ui/preferences/root/mod.rs:344
 #: crates/rufin/src/i18n.rs:666
 msgid "Use listening activity"
-msgstr ""
+msgstr "Izmantot klausīšanās aktivitāti"
 
 #: crates/rufin/src/i18n.rs:635 crates/rufin/src/ui/preferences/root/mod.rs:345
 #: crates/rufin/src/i18n.rs:667
 msgid "Set the Discord activity type to Listening"
-msgstr ""
+msgstr "Iestatīt Discord aktivitātes veidu uz Klausīšanās"
 
 #: crates/rufin/src/i18n.rs:636
 #: crates/rufin/src/ui/preferences/root/general.rs:37
 #: crates/rufin/src/i18n.rs:668
 msgid "API keys"
-msgstr ""
+msgstr "API atslēgas"
 
 #: crates/rufin/src/i18n.rs:637
 #: crates/rufin/src/ui/preferences/root/general.rs:39
 #: crates/rufin/src/i18n.rs:669
 msgid "If you do not have API keys, create them"
-msgstr ""
+msgstr "Ja jums nav API atslēgu, izveidojiet tās"
 
 #: crates/rufin/src/i18n.rs:638
 #: crates/rufin/src/ui/preferences/root/general.rs:41
 #: crates/rufin/src/ui/preferences/root/general.rs:271
 #: crates/rufin/src/i18n.rs:670
 msgid "here"
-msgstr ""
+msgstr "šeit"
 
 #: crates/rufin/src/i18n.rs:639
 #: crates/rufin/src/ui/preferences/root/general.rs:42
 #: crates/rufin/src/i18n.rs:671
 msgid ". You only need to fill email and an application name parts"
-msgstr ""
+msgstr ". Jums jāaizpilda tikai e-pasta un lietojumprogrammas nosaukuma daļas"
 
 #: crates/rufin/src/i18n.rs:640
 #: crates/rufin/src/ui/preferences/root/general.rs:49
 #: crates/rufin/src/i18n.rs:672
 msgid "API key"
-msgstr ""
+msgstr "API atslēga"
 
 #: crates/rufin/src/i18n.rs:641
 #: crates/rufin/src/ui/preferences/root/general.rs:77
 #: crates/rufin/src/i18n.rs:673
 msgid "Shared secret"
-msgstr ""
+msgstr "Kopīgais noslēpums"
 
 #: crates/rufin/src/i18n.rs:642
 #: crates/rufin/src/ui/preferences/root/general.rs:100
 #: crates/rufin/src/ui/preferences/root/general.rs:189
 #: crates/rufin/src/i18n.rs:674
 msgid "Connection"
-msgstr ""
+msgstr "Savienojums"
 
 #: crates/rufin/src/i18n.rs:644
 #: crates/rufin/src/ui/preferences/root/general.rs:106
@@ -1158,43 +1177,43 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/general.rs:213
 #: crates/rufin/src/i18n.rs:676
 msgid "Reconnect"
-msgstr ""
+msgstr "Atjaunot savienojumu"
 
 #: crates/rufin/src/i18n.rs:645
 #: crates/rufin/src/ui/preferences/root/general.rs:325
 #: crates/rufin/src/i18n.rs:677
 msgid "Not connected"
-msgstr ""
+msgstr "Nav savienots"
 
 #: crates/rufin/src/i18n.rs:646
 #: crates/rufin/src/ui/preferences/root/general.rs:333
 #: crates/rufin/src/i18n.rs:678
 msgid "Connected"
-msgstr ""
+msgstr "Savienots"
 
 #: crates/rufin/src/i18n.rs:647
 #: crates/rufin/src/ui/preferences/root/general.rs:335
 #: crates/rufin/src/i18n.rs:679
 msgid "Connected as"
-msgstr ""
+msgstr "Savienots kā"
 
 #: crates/rufin/src/i18n.rs:648
 #: crates/rufin/src/ui/preferences/root/general.rs:120
 #: crates/rufin/src/i18n.rs:680
 msgid "Enter API credentials first"
-msgstr ""
+msgstr "Vispirms ievadiet API autentifikācijas datus"
 
 #: crates/rufin/src/i18n.rs:649
 #: crates/rufin/src/ui/preferences/root/general.rs:124
 #: crates/rufin/src/i18n.rs:681
 msgid "Opening Last.fm authorization…"
-msgstr ""
+msgstr "Atver Last.fm autorizāciju…"
 
 #: crates/rufin/src/i18n.rs:650
 #: crates/rufin/src/ui/preferences/root/general.rs:401
 #: crates/rufin/src/i18n.rs:682
 msgid "Timed out waiting for Last.fm authorization."
-msgstr ""
+msgstr "Beidzies gaidīšanas laiks, gaidot Last.fm autorizāciju."
 
 #: crates/rufin/src/i18n.rs:651
 #: crates/rufin/src/ui/preferences/root/general.rs:144
@@ -1202,572 +1221,576 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/general.rs:300
 #: crates/rufin/src/i18n.rs:683
 msgid "Now playing updates"
-msgstr ""
+msgstr "Atjauninājumi par pašreiz atskaņoto"
 
 #: crates/rufin/src/i18n.rs:652
 #: crates/rufin/src/ui/preferences/root/general.rs:164
 #: crates/rufin/src/i18n.rs:684
 msgid "Libre.fm"
-msgstr ""
+msgstr "Libre.fm"
 
 #: crates/rufin/src/i18n.rs:653
 #: crates/rufin/src/ui/preferences/root/general.rs:166
 #: crates/rufin/src/i18n.rs:685
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
-msgstr ""
+msgstr "Ja lapa neielādējas, tad Libre.fm bloķē jūsu IP adrešu diapazonu/VPN"
 
 #: crates/rufin/src/i18n.rs:654
 #: crates/rufin/src/ui/preferences/root/general.rs:170
 #: crates/rufin/src/i18n.rs:686
 msgid "Libre.fm scrobbling"
-msgstr ""
+msgstr "Libre.fm skroblēšana"
 
 #: crates/rufin/src/i18n.rs:655
 #: crates/rufin/src/ui/preferences/root/general.rs:205
 #: crates/rufin/src/i18n.rs:687
 msgid "Opening Libre.fm authorization…"
-msgstr ""
+msgstr "Atver Libre.fm autorizāciju…"
 
 #: crates/rufin/src/i18n.rs:656
 #: crates/rufin/src/ui/preferences/root/general.rs:434
 #: crates/rufin/src/i18n.rs:688
 msgid "Timed out waiting for Libre.fm authorization"
-msgstr ""
+msgstr "Beidzies gaidīšanas laiks, gaidot Libre.fm autorizāciju"
 
 #: crates/rufin/src/i18n.rs:657
 #: crates/rufin/src/ui/preferences/root/general.rs:245
 #: crates/rufin/src/i18n.rs:689
 msgid "ListenBrainz"
-msgstr ""
+msgstr "ListenBrainz"
 
 #: crates/rufin/src/i18n.rs:658
 #: crates/rufin/src/ui/preferences/root/general.rs:248
 #: crates/rufin/src/i18n.rs:690
 msgid "ListenBrainz scrobbling"
-msgstr ""
+msgstr "ListenBrainz skroblēšana"
 
 #: crates/rufin/src/i18n.rs:659
 #: crates/rufin/src/ui/preferences/root/general.rs:267
 #: crates/rufin/src/i18n.rs:691
 msgid "Get token"
-msgstr ""
+msgstr "Iegūt žetonu"
 
 #: crates/rufin/src/i18n.rs:660
 #: crates/rufin/src/ui/preferences/root/general.rs:269
 #: crates/rufin/src/i18n.rs:692
 msgid "Find your ListenBrainz user token"
-msgstr ""
+msgstr "Atrodiet savu ListenBrainz lietotāja žetonu"
 
 #: crates/rufin/src/i18n.rs:661
 #: crates/rufin/src/ui/preferences/root/general.rs:279
 #: crates/rufin/src/i18n.rs:693
 msgid "User token"
-msgstr ""
+msgstr "Lietotāja žetons"
 
 #: crates/rufin/src/i18n.rs:663 crates/rufin/src/i18n.rs:695
 msgid ""
 "Stop playback reporting, external lyrics, external metadata, notifications, "
 "and Discord IPC"
 msgstr ""
+"Pārtraukt atskaņošanas pārskatu, ārējo tekstu, ārējo metadatu, paziņojumu un "
+"Discord IPC darbību"
 
 #: crates/rufin/src/i18n.rs:665 crates/rufin/src/i18n.rs:697
 msgid "Music Server"
-msgstr ""
+msgstr "Mūzikas serveris"
 
 #: crates/rufin/src/i18n.rs:666 crates/rufin/src/ui/root/lyrics_panel.rs:17
 #: crates/rufin/src/i18n.rs:698
 msgid "Private mode is on"
-msgstr ""
+msgstr "Privātais režīms ir ieslēgts"
 
 #: crates/rufin/src/i18n.rs:667 crates/rufin/src/ui/preferences/root/mod.rs:202
 #: crates/rufin/src/i18n.rs:480 crates/rufin/src/i18n.rs:699
 msgid "App window"
-msgstr ""
+msgstr "Lietotnes logs"
 
 #: crates/rufin/src/i18n.rs:668 crates/rufin/src/ui/preferences/root/mod.rs:217
 #: crates/rufin/src/i18n.rs:481
 msgid "Type to search"
-msgstr ""
+msgstr "Ierakstiet, lai meklētu"
 
 #: crates/rufin/src/i18n.rs:482 crates/rufin/src/ui/root/home_refresh.rs:772
 msgid "Type to search or create a new playlist"
-msgstr ""
+msgstr "Ierakstiet, lai meklētu vai izveidotu jaunu atskaņošanas sarakstu"
 
 #: crates/rufin/src/i18n.rs:668 crates/rufin/src/ui/preferences/root/mod.rs:205
 #: crates/rufin/src/i18n.rs:700
 msgid "Show tray icon"
-msgstr ""
+msgstr "Rādīt sistēmas joslas ikonu"
 
 #: crates/rufin/src/i18n.rs:669 crates/rufin/src/ui/preferences/root/mod.rs:209
 #: crates/rufin/src/i18n.rs:701
 msgid "Exit to tray"
-msgstr ""
+msgstr "Iziet uz sistēmas joslu"
 
 #: crates/rufin/src/i18n.rs:670 crates/rufin/src/ui/preferences/root/mod.rs:213
 #: crates/rufin/src/i18n.rs:702
 msgid "Start minimized"
-msgstr ""
+msgstr "Sākt minimizētu"
 
 #: crates/rufin/src/i18n.rs:671 crates/rufin/src/ui/root/tray.rs:50
 #: crates/rufin/src/i18n.rs:703
 msgid "Show Rufin"
-msgstr ""
+msgstr "Rādīt Rufin"
 
 #: crates/rufin/src/i18n.rs:672 crates/rufin/src/ui/root/tray.rs:51
 #: crates/rufin/src/i18n.rs:704
 msgid "Play/Pause"
-msgstr ""
+msgstr "Atskaņot/Pauzēt"
 
 #: crates/rufin/src/i18n.rs:673 crates/rufin/src/ui/root/tray.rs:52
 #: crates/rufin/src/i18n.rs:705
 msgid "Previous Track"
-msgstr ""
+msgstr "Iepriekšējais celiņš"
 
 #: crates/rufin/src/i18n.rs:674 crates/rufin/src/ui/root/tray.rs:53
 #: crates/rufin/src/i18n.rs:706
 msgid "Next Track"
-msgstr ""
+msgstr "Nākamais celiņš"
 
 #: crates/rufin/src/i18n.rs:675 crates/rufin/src/ui/root/tray.rs:54
 #: crates/rufin/src/i18n.rs:707
 msgid "Enable private mode"
-msgstr ""
+msgstr "Ieslēgt privāto režīmu"
 
 #: crates/rufin/src/i18n.rs:676 crates/rufin/src/ui/root/tray.rs:55
 #: crates/rufin/src/i18n.rs:708
 msgid "Disable private mode"
-msgstr ""
+msgstr "Atslēgt privāto režīmu"
 
 #: crates/rufin/src/i18n.rs:677 crates/rufin/src/ui/root/tray.rs:56
 #: crates/rufin/src/i18n.rs:709
 msgid "Quit"
-msgstr ""
+msgstr "Iziet"
 
 #: crates/rufin/src/i18n.rs:678 crates/rufin/src/ui/root/tray.rs:57
 #: crates/rufin/src/i18n.rs:710
 msgid "Rufin is running in the tray"
-msgstr ""
+msgstr "Rufin darbojas sistēmas joslā"
 
 #: crates/rufin/src/i18n.rs:679 crates/rufin/src/i18n.rs:711
 msgid "Left sidebar density"
-msgstr ""
+msgstr "Kreisā sānu paneļa blīvums"
 
 #: crates/rufin/src/i18n.rs:680 crates/rufin/src/i18n.rs:712
 msgid "Choose when the left sidebar uses compact navigation"
-msgstr ""
+msgstr "Izvēlieties, kad kreisais sānu panelis izmanto kompakto navigāciju"
 
 #: crates/rufin/src/i18n.rs:681 crates/rufin/src/i18n.rs:713
 msgid "Plays"
-msgstr ""
+msgstr "Atskaņo"
 
 #: crates/rufin/src/i18n.rs:682 crates/rufin/src/ui/root/home_refresh.rs:70
 #: crates/rufin/src/i18n.rs:714
 msgid "Remove from playlist"
-msgstr ""
+msgstr "Noņemt no atskaņošanas saraksta"
 
 #: crates/rufin/src/i18n.rs:683 crates/rufin/src/i18n.rs:715
 msgid "Remove from queue"
-msgstr ""
+msgstr "Noņemt no rindas"
 
 #: crates/rufin/src/i18n.rs:684 crates/rufin/src/ui/queue.rs:544
 #: crates/rufin/src/i18n.rs:716
 msgid "Remove from Queue"
-msgstr ""
+msgstr "Noņemt no rindas"
 
 #: crates/rufin/src/i18n.rs:685 crates/rufin/src/i18n.rs:717
 msgid "Mute"
-msgstr ""
+msgstr "Izslēgt skaņu"
 
 #: crates/rufin/src/i18n.rs:686 crates/rufin/src/i18n.rs:718
 msgid "Seek playback"
-msgstr ""
+msgstr "Meklēt atskaņošanā"
 
 #: crates/rufin/src/i18n.rs:687 crates/rufin/src/i18n.rs:719
 msgid "Seekbar"
-msgstr ""
+msgstr "Pozīcijas josla"
 
 #: crates/rufin/src/i18n.rs:688
 #: crates/rufin/src/ui/preferences/root/general.rs:446
 #: crates/rufin/src/i18n.rs:720
 msgid "Queue and transitions"
-msgstr ""
+msgstr "Rindas un pārejas"
 
 #: crates/rufin/src/i18n.rs:689
 #: crates/rufin/src/ui/preferences/root/general.rs:533
 #: crates/rufin/src/i18n.rs:721
 msgid "Audio"
-msgstr ""
+msgstr "Skaņa"
 
 #: crates/rufin/src/i18n.rs:690
 #: crates/rufin/src/ui/preferences/root/general.rs:489
 #: crates/rufin/src/i18n.rs:722
 msgid "Skip same-album crossfade"
-msgstr ""
+msgstr "Izlaist pāreju starp celiņiem no viena un tā paša albuma"
 
 #: crates/rufin/src/i18n.rs:691
 #: crates/rufin/src/ui/preferences/root/general.rs:490
 #: crates/rufin/src/i18n.rs:723
 msgid "Keep album transitions gapless when possible"
-msgstr ""
+msgstr "Turēt albumu pārejas bez pauzēm, ja iespējams"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:507
 msgid "Audio fade on play/pause"
-msgstr ""
+msgstr "Skaņas pakāpeniska izdzišana atskaņošanā/pauzē"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:508
 msgid "Fade audio when playback is paused or resumed"
-msgstr ""
+msgstr "Samazināt skaņas skaļumu, kad atskaņošana tiek pauzēta vai atsākta"
 
 #: crates/rufin/src/i18n.rs:692
 #: crates/rufin/src/ui/preferences/root/general.rs:579
 #: crates/rufin/src/i18n.rs:724
 msgid "Waveform seekbar"
-msgstr ""
+msgstr "Viļņa formas meklēšanas josla"
 
 #: crates/rufin/src/i18n.rs:693
 #: crates/rufin/src/ui/preferences/root/general.rs:580
 #: crates/rufin/src/i18n.rs:725
 msgid "Generate and cache waveforms for the current track"
-msgstr ""
+msgstr "Ģenerēt un kešot viļņa formas pašreizējam celiņam"
 
 #: crates/rufin/src/i18n.rs:694 crates/rufin/src/i18n.rs:741
 msgid "Play now"
-msgstr ""
+msgstr "Atskaņot tagad"
 
 #: crates/rufin/src/i18n.rs:695 crates/rufin/src/ui/queue.rs:545
 #: crates/rufin/src/i18n.rs:742
 msgid "Play Now"
-msgstr ""
+msgstr "Atskaņot tagad"
 
 #: crates/rufin/src/i18n.rs:696 crates/rufin/src/i18n.rs:743
 msgid "Play next"
-msgstr ""
+msgstr "Atskaņot nākamo"
 
 #: crates/rufin/src/i18n.rs:697 crates/rufin/src/ui/queue.rs:546
 #: crates/rufin/src/i18n.rs:744
 msgid "Play Next"
-msgstr ""
+msgstr "Atskaņot nākamo"
 
 #: crates/rufin/src/i18n.rs:698 crates/rufin/src/i18n.rs:745
 msgid "Play Later"
-msgstr ""
+msgstr "Atskaņot vēlāk"
 
 #: crates/rufin/src/i18n.rs:699 crates/rufin/src/i18n.rs:746
 msgid "Play album"
-msgstr ""
+msgstr "Atskaņot albumu"
 
 #: crates/rufin/src/i18n.rs:700 crates/rufin/src/i18n.rs:747
 msgid "Play track"
-msgstr ""
+msgstr "Atskaņot celiņu"
 
 #: crates/rufin/src/i18n.rs:701 crates/rufin/src/i18n.rs:748
 msgid "Play artist"
-msgstr ""
+msgstr "Atskaņot mākslinieku"
 
 #: crates/rufin/src/i18n.rs:702 crates/rufin/src/i18n.rs:749
 msgid "Add to Favorites"
-msgstr ""
+msgstr "Pievienot favorītiem"
 
 #: crates/rufin/src/i18n.rs:703 crates/rufin/src/i18n.rs:750
 msgid "Remove from Favorites"
-msgstr ""
+msgstr "Noņemt no favorītiem"
 
 #: crates/rufin/src/i18n.rs:704 crates/rufin/src/ui/queue.rs:557
 #: crates/rufin/src/ui/root/home_refresh.rs:65
 #: crates/rufin/src/ui/root/home_refresh.rs:242
 #: crates/rufin/src/ui/root/home_refresh.rs:405 crates/rufin/src/i18n.rs:751
 msgid "Go to Artist"
-msgstr ""
+msgstr "Doties pie mākslinieka"
 
 #: crates/rufin/src/i18n.rs:705 crates/rufin/src/ui/queue.rs:561
 #: crates/rufin/src/ui/root/home_refresh.rs:67
 #: crates/rufin/src/ui/root/home_refresh.rs:244 crates/rufin/src/i18n.rs:752
 msgid "Go to Album"
-msgstr ""
+msgstr "Pāriet uz albumu"
 
 #: crates/rufin/src/i18n.rs:706 crates/rufin/src/i18n.rs:753
 msgid "Add to queue"
-msgstr ""
+msgstr "Pievienot rindai"
 
 #: crates/rufin/src/i18n.rs:707 crates/rufin/src/i18n.rs:754
 msgid "Clear queue"
-msgstr ""
+msgstr "Notīrīt rindu"
 
 #: crates/rufin/src/i18n.rs:708 crates/rufin/src/i18n.rs:755
 msgid "Previous page"
-msgstr ""
+msgstr "Iepriekšējā lapa"
 
 #: crates/rufin/src/i18n.rs:709 crates/rufin/src/i18n.rs:756
 msgid "Next page"
-msgstr ""
+msgstr "Nākamā lapa"
 
 #: crates/rufin/src/i18n.rs:710 crates/rufin/src/i18n.rs:757
 msgid "Refresh section"
-msgstr ""
+msgstr "Atsvaidzināt sadaļu"
 
 #: crates/rufin/src/i18n.rs:711 crates/rufin/src/i18n.rs:758
 msgid "Reset display"
-msgstr ""
+msgstr "Atiestatīt displeju"
 
 #: crates/rufin/src/i18n.rs:712 crates/rufin/src/i18n.rs:759
 msgid "New Smart Playlist"
-msgstr ""
+msgstr "Jauns viedais atskaņošanas saraksts"
 
 #: crates/rufin/src/i18n.rs:713 crates/rufin/src/i18n.rs:760
 msgid "Edit Smart Playlist"
-msgstr ""
+msgstr "Rediģēt viedo atskaņošanas sarakstu"
 
 #: crates/rufin/src/i18n.rs:714 crates/rufin/src/i18n.rs:761
 msgid "Restore Default"
-msgstr ""
+msgstr "Atjaunot noklusējuma iestatījumus"
 
 #: crates/rufin/src/i18n.rs:715
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:12
 #: crates/rufin/src/i18n.rs:762
 msgid "Create"
-msgstr ""
+msgstr "Izveidot"
 
 #: crates/rufin/src/i18n.rs:716 crates/rufin/src/i18n.rs:763
 msgid "Restore"
-msgstr ""
+msgstr "Atjaunot"
 
 #: crates/rufin/src/i18n.rs:717 crates/rufin/src/i18n.rs:764
 msgid "Match"
-msgstr ""
+msgstr "Atbilstība"
 
 #: crates/rufin/src/i18n.rs:718 crates/rufin/src/i18n.rs:765
 msgid "Sort"
-msgstr ""
+msgstr "Kārtot"
 
 #: crates/rufin/src/i18n.rs:719 crates/rufin/src/i18n.rs:766
 msgid "Limit"
-msgstr ""
+msgstr "Ierobežojums"
 
 #: crates/rufin/src/i18n.rs:720 crates/rufin/src/i18n.rs:767
 msgid "Add Rule"
-msgstr ""
+msgstr "Pievienot noteikumu"
 
 #: crates/rufin/src/i18n.rs:721 crates/rufin/src/ui/queue.rs:374
 #: crates/rufin/src/ui/queue.rs:396
 #: crates/rufin/src/ui/root/shell_navigation.rs:785
 #: crates/rufin/src/i18n.rs:768
 msgid "Title"
-msgstr ""
+msgstr "Nosaukums"
 
 #: crates/rufin/src/i18n.rs:722 crates/rufin/src/i18n.rs:769
 msgid "Title (merged)"
-msgstr ""
+msgstr "Nosaukums (apvienots)"
 
 #: crates/rufin/src/i18n.rs:723 crates/rufin/src/ui/queue.rs:380
 #: crates/rufin/src/ui/queue.rs:408 crates/rufin/src/i18n.rs:770
 msgid "Year"
-msgstr ""
+msgstr "Gads"
 
 #: crates/rufin/src/i18n.rs:724 crates/rufin/src/ui/folders.rs:350
 #: crates/rufin/src/ui/queue.rs:449 crates/rufin/src/i18n.rs:771
 msgid "Duration"
-msgstr ""
+msgstr "Ilgums"
 
 #: crates/rufin/src/i18n.rs:725 crates/rufin/src/i18n.rs:772
 msgid "Comment"
-msgstr ""
+msgstr "Komentārs"
 
 #: crates/rufin/src/i18n.rs:726 crates/rufin/src/i18n.rs:773
 msgid "Rating"
-msgstr ""
+msgstr "Vērtējums"
 
 #: crates/rufin/src/i18n.rs:727 crates/rufin/src/i18n.rs:774
 msgid "Played"
-msgstr ""
+msgstr "Atskaņots"
 
 #: crates/rufin/src/i18n.rs:728 crates/rufin/src/i18n.rs:775
 msgid "Play count"
-msgstr ""
+msgstr "Atskaņošanas skaits"
 
 #: crates/rufin/src/i18n.rs:729 crates/rufin/src/i18n.rs:776
 msgid "Skip count"
-msgstr ""
+msgstr "Izlaišanas skaits"
 
 #: crates/rufin/src/i18n.rs:730 crates/rufin/src/i18n.rs:777
 msgid "Last played"
-msgstr ""
+msgstr "Pēdējoreiz atskaņots"
 
 #: crates/rufin/src/i18n.rs:731 crates/rufin/src/i18n.rs:778
 msgid "Date added"
-msgstr ""
+msgstr "Pievienošanas datums"
 
 #: crates/rufin/src/i18n.rs:732 crates/rufin/src/i18n.rs:779
 msgid "All"
-msgstr ""
+msgstr "Visi"
 
 #: crates/rufin/src/i18n.rs:733 crates/rufin/src/i18n.rs:780
 msgid "Any"
-msgstr ""
+msgstr "Jebkurš"
 
 #: crates/rufin/src/i18n.rs:735 crates/rufin/src/i18n.rs:782
 msgid "contains"
-msgstr ""
+msgstr "satur"
 
 #: crates/rufin/src/i18n.rs:736 crates/rufin/src/i18n.rs:783
 msgid "equals"
-msgstr ""
+msgstr "ir vienāds ar"
 
 #: crates/rufin/src/i18n.rs:737 crates/rufin/src/i18n.rs:784
 msgid "does not contain"
-msgstr ""
+msgstr "nesatur"
 
 #: crates/rufin/src/i18n.rs:738 crates/rufin/src/i18n.rs:785
 msgid "does not equal"
-msgstr ""
+msgstr "nav vienāds ar"
 
 #: crates/rufin/src/i18n.rs:739 crates/rufin/src/i18n.rs:786
 msgid "is empty"
-msgstr ""
+msgstr "ir tukšs"
 
 #: crates/rufin/src/i18n.rs:740 crates/rufin/src/i18n.rs:787
 msgid "is not empty"
-msgstr ""
+msgstr "nav tukšs"
 
 #: crates/rufin/src/i18n.rs:741 crates/rufin/src/i18n.rs:788
 msgid "excludes"
-msgstr ""
+msgstr "izslēdz"
 
 #: crates/rufin/src/i18n.rs:742 crates/rufin/src/i18n.rs:789
 msgid "is not"
-msgstr ""
+msgstr "nav"
 
 #: crates/rufin/src/i18n.rs:743 crates/rufin/src/i18n.rs:790
 msgid "above"
-msgstr ""
+msgstr "virs"
 
 #: crates/rufin/src/i18n.rs:744 crates/rufin/src/i18n.rs:791
 msgid "below"
-msgstr ""
+msgstr "zem"
 
 #: crates/rufin/src/i18n.rs:745 crates/rufin/src/i18n.rs:792
 msgid "range"
-msgstr ""
+msgstr "diapazons"
 
 #: crates/rufin/src/i18n.rs:746 crates/rufin/src/i18n.rs:793
 msgid "is"
-msgstr ""
+msgstr "ir"
 
 #: crates/rufin/src/i18n.rs:747 crates/rufin/src/i18n.rs:794
 msgid "after"
-msgstr ""
+msgstr "pēc"
 
 #: crates/rufin/src/i18n.rs:748 crates/rufin/src/i18n.rs:795
 msgid "before"
-msgstr ""
+msgstr "pirms"
 
 #: crates/rufin/src/i18n.rs:750 crates/rufin/src/ui/login.rs:171
 #: crates/rufin/src/i18n.rs:494 crates/rufin/src/i18n.rs:797
 msgid "Server"
-msgstr ""
+msgstr "Serveris"
 
 #: crates/rufin/src/i18n.rs:751 crates/rufin/src/i18n.rs:798
 msgid "No server"
-msgstr ""
+msgstr "Nav servera"
 
 #: crates/rufin/src/i18n.rs:752 crates/rufin/src/i18n.rs:799
 msgid "Current server"
-msgstr ""
+msgstr "Pašreizējais serveris"
 
 #: crates/rufin/src/i18n.rs:754 crates/rufin/src/i18n.rs:801
 msgid "no account"
-msgstr ""
+msgstr "nav konta"
 
 #: crates/rufin/src/i18n.rs:755 crates/rufin/src/ui/fullscreen_player.rs:304
 #: crates/rufin/src/i18n.rs:802
 msgid "Nothing playing"
-msgstr ""
+msgstr "Nekas netiek atskaņots"
 
 #: crates/rufin/src/i18n.rs:756 crates/rufin/src/ui/fullscreen_player.rs:310
 #: crates/rufin/src/i18n.rs:803
 msgid "Queue a track to begin"
-msgstr ""
+msgstr "Pievienojiet celiņu rindai, lai sāktu"
 
 #: crates/rufin/src/i18n.rs:757 crates/rufin/src/ui/settings_persistence.rs:269
 #: crates/rufin/src/i18n.rs:804
 msgid "Open fullscreen player"
-msgstr ""
+msgstr "Atvērt pilnekrāna atskaņotāju"
 
 #: crates/rufin/src/ui/cards.rs:557 crates/rufin/src/ui/player.rs:730
 #: crates/rufin/src/ui/settings_persistence.rs:402
 msgid "More actions"
-msgstr ""
+msgstr "Vēl darbības"
 
 #: crates/rufin/src/i18n.rs:758 crates/rufin/src/i18n.rs:805
 msgid "Close fullscreen player"
-msgstr ""
+msgstr "Aizvērt pilnekrāna atskaņotāju"
 
 #: crates/rufin/src/i18n.rs:759 crates/rufin/src/ui/fullscreen_player.rs:106
 #: crates/rufin/src/ui/settings_persistence.rs:300 crates/rufin/src/i18n.rs:806
 msgid "Queue"
-msgstr ""
+msgstr "Rinda"
 
 #: crates/rufin/src/i18n.rs:760 crates/rufin/src/i18n.rs:807
 msgid "No queue items match the search"
-msgstr ""
+msgstr "Neviena rindas vieta neatbilst meklējumam"
 
 #: crates/rufin/src/i18n.rs:761 crates/rufin/src/i18n.rs:808
 msgid "Artist detail will use cached album and track groups"
-msgstr ""
+msgstr "Mākslinieka detaļas izmantos kešotos albumu un celiņu grupas"
 
 #: crates/rufin/src/i18n.rs:762 crates/rufin/src/i18n.rs:809
 msgid "Genre detail keeps albums above tracks"
-msgstr ""
+msgstr "Žanra detaļas tur albumus virs celiņiem"
 
 #: crates/rufin/src/i18n.rs:763 crates/rufin/src/i18n.rs:810
 msgid "Playlist detail will use the track table"
-msgstr ""
+msgstr "Atskaņošanas saraksta detaļas izmantos celiņu tabulu"
 
 #: crates/rufin/src/i18n.rs:764 crates/rufin/src/i18n.rs:811
 msgid "Loading…"
-msgstr ""
+msgstr "Ielādē…"
 
 #: crates/rufin/src/i18n.rs:765 crates/rufin/src/i18n.rs:812
 msgid "Loading folders…"
-msgstr ""
+msgstr "Ielādē mapes…"
 
 #: crates/rufin/src/i18n.rs:766 crates/rufin/src/ui/folders.rs:60
 #: crates/rufin/src/i18n.rs:813
 msgid "Search current folder"
-msgstr ""
+msgstr "Meklēt pašreizējā mapē"
 
 #: crates/rufin/src/i18n.rs:767 crates/rufin/src/i18n.rs:814
 msgid "Artist / Album"
-msgstr ""
+msgstr "Mākslinieks / Albums"
 
 #: crates/rufin/src/i18n.rs:768 crates/rufin/src/ui/folders.rs:518
 #: crates/rufin/src/i18n.rs:815
 msgid "Folder browsing failed"
-msgstr ""
+msgstr "Mapes pārlūkošana neizdevās"
 
 #: crates/rufin/src/i18n.rs:769 crates/rufin/src/ui/folders.rs:505
 #: crates/rufin/src/i18n.rs:816
 msgid "No folder contents found."
-msgstr ""
+msgstr "Mapes saturs nav atrasts."
 
 #: crates/rufin/src/i18n.rs:770 crates/rufin/src/i18n.rs:817
 msgid "Cached library data will appear here as sync pages finish"
 msgstr ""
+"Kešotie bibliotēkas dati parādīsies šeit, kad sinhronizācijas lapas tiks "
+"pabeigtas"
 
 #: crates/rufin/src/i18n.rs:771 crates/rufin/src/i18n.rs:818
 msgid "The selected cached album was not found"
-msgstr ""
+msgstr "Izvēlētais kešotais albums netika atrasts"
 
 #: crates/rufin/src/i18n.rs:772 crates/rufin/src/i18n.rs:819
 msgid "No cached results found"
-msgstr ""
+msgstr "Kešoti rezultāti nav atrasti"
 
 #: crates/rufin/src/i18n.rs:773 crates/rufin/src/i18n.rs:820
 msgid "Cached rows will appear here after the background sync finishes"
-msgstr ""
+msgstr "Kešotās rindas parādīsies šeit pēc fona sinhronizācijas pabeigšanas"
 
 #: crates/rufin/src/i18n.rs:774 crates/rufin/src/i18n.rs:821
 msgid "Type a query in the sidebar search field to search the local cache"
-msgstr ""
+msgstr "Ievadiet vaicājumu sānu meklēšanas laukā, lai meklētu lokālo kešatmiņu"
 
 #: crates/rufin/src/i18n.rs:776 crates/rufin/src/i18n.rs:823
 msgid ""
@@ -1775,16 +1798,19 @@ msgid ""
 "development. If you have problems or suggestions, please open an issue in "
 "Github."
 msgstr ""
+"Paldies, ka izmēģinājāt Rufin! Šī ir jauna lietotne, un tās aktīvā izstrāde "
+"vēl turpinās. Ja jums rodas problēmas vai idejas, lūdzu, atveriet ziņojumu "
+"Github."
 
 #: crates/rufin/src/i18n.rs:778 crates/rufin/src/ui/root/cover_startup.rs:457
 #: crates/rufin/src/i18n.rs:825
 msgid "Website"
-msgstr ""
+msgstr "Tīmekļa vietne"
 
 #: crates/rufin/src/i18n.rs:779 crates/rufin/src/ui/root/cover_startup.rs:458
 #: crates/rufin/src/i18n.rs:826
 msgid "Issues"
-msgstr ""
+msgstr "Problēmas"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:88
 #: crates/rufin/src/ui/fullscreen_player.rs:94
@@ -1792,64 +1818,64 @@ msgstr ""
 #: crates/rufin/src/ui/settings_persistence.rs:294
 #: crates/rufin/src/ui/settings_persistence.rs:295
 msgid "Lyrics"
-msgstr ""
+msgstr "Teksti"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:135
 #: crates/rufin/src/ui/fullscreen_player.rs:201
 #: crates/rufin/src/ui/fullscreen_player.rs:202 crates/rufin/src/i18n.rs:726
 msgid "Visualizer"
-msgstr ""
+msgstr "Vizualizācija"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:706 crates/rufin/src/i18n.rs:731
 msgid "Flat"
-msgstr ""
+msgstr "Plakans"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:708 crates/rufin/src/i18n.rs:732
 msgid "Classical"
-msgstr ""
+msgstr "Klasiskais"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:712 crates/rufin/src/i18n.rs:733
 msgid "Club"
-msgstr ""
+msgstr "Klubs"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:716 crates/rufin/src/i18n.rs:734
 msgid "Dance"
-msgstr ""
+msgstr "Dejas"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:720 crates/rufin/src/i18n.rs:735
 msgid "Full Bass"
-msgstr ""
+msgstr "Pilns bass"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:724 crates/rufin/src/i18n.rs:736
 msgid "Full Treble"
-msgstr ""
+msgstr "Pilns augšējais"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:728 crates/rufin/src/i18n.rs:737
 msgid "Laptop/Headphones"
-msgstr ""
+msgstr "Klēpjdators/Austiņas"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:732 crates/rufin/src/i18n.rs:739
 msgid "Rock"
-msgstr ""
+msgstr "Roks"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:736 crates/rufin/src/i18n.rs:738
 msgid "Pop"
-msgstr ""
+msgstr "Popmūzika"
 
 #: crates/rufin/src/ui/fullscreen_player.rs:740 crates/rufin/src/i18n.rs:740
 msgid "Techno"
-msgstr ""
+msgstr "Tehno"
 
 #: crates/rufin/src/ui/library/album_detail.rs:815
 msgid "Image"
-msgstr ""
+msgstr "Attēls"
 
 #: crates/rufin/src/ui/library/cards.rs:441
 #: crates/rufin/src/ui/preferences/root/layout.rs:178
 #: crates/rufin/src/ui/preferences/root/mod.rs:589
 #: crates/rufin/src/ui/preferences/root/mod.rs:628
 msgid "Visible"
-msgstr ""
+msgstr "Redzams"
 
 #: crates/rufin/src/ui/library/cards.rs:441
 #: crates/rufin/src/ui/preferences/root/layout.rs:179
@@ -1857,7 +1883,7 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/mod.rs:591
 #: crates/rufin/src/ui/preferences/root/mod.rs:630
 msgid "Hidden"
-msgstr ""
+msgstr "Paslēpts"
 
 #: crates/rufin/src/ui/library/cards.rs:446
 #: crates/rufin/src/ui/library/collections.rs:1510
@@ -1865,48 +1891,48 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/mod.rs:636
 #: crates/rufin/src/ui/root/layout_rendering.rs:587
 msgid "Drag to reorder"
-msgstr ""
+msgstr "Pārvelciet, lai mainītu secību"
 
 #: crates/rufin/src/ui/library/cards.rs:458
 #: crates/rufin/src/ui/preferences/root/layout.rs:31
 #: crates/rufin/src/ui/preferences/root/mod.rs:645
 msgid "Move up"
-msgstr ""
+msgstr "Pārvietot augšup"
 
 #: crates/rufin/src/ui/library/cards.rs:465
 #: crates/rufin/src/ui/preferences/root/layout.rs:51
 #: crates/rufin/src/ui/preferences/root/mod.rs:651
 msgid "Move down"
-msgstr ""
+msgstr "Pārvietot lejup"
 
 #: crates/rufin/src/ui/library/route_shell.rs:332
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:395
 msgid "Change sort order"
-msgstr ""
+msgstr "Mainīt kārtības secību"
 
 #: crates/rufin/src/ui/library/route_shell.rs:348
 #: crates/rufin/src/ui/library/route_shell.rs:393
 #: crates/rufin/src/ui/preferences/root/general.rs:749
 #: crates/rufin/src/ui/preferences/root/mod.rs:128
 msgid "Layout"
-msgstr ""
+msgstr "Izkārtojums"
 
 #: crates/rufin/src/ui/library/route_shell.rs:364
 #: crates/rufin/src/ui/library/route_shell.rs:380
 msgid "Customize display"
-msgstr ""
+msgstr "Pielāgot displeju"
 
 #: crates/rufin/src/ui/library/route_shell.rs:394
 msgid "Choose the current page layout."
-msgstr ""
+msgstr "Izvēlieties pašreizējās lapas izkārtojumu."
 
 #: crates/rufin/src/ui/library/route_shell.rs:396
 msgid "View"
-msgstr ""
+msgstr "Skats"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:187
 msgid "Choose the folder to scan and play directly from this computer"
-msgstr ""
+msgstr "Izvēlieties mapi, ko skenēt un atskaņot tieši no šī datora"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:513
 #: crates/rufin/src/ui/local_access_mapping.rs:546
@@ -1917,491 +1943,507 @@ msgstr ""
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:331
 #: crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
 msgid "Cancel"
-msgstr ""
+msgstr "Atcelt"
 
 #: crates/rufin/src/ui/local_access_mapping.rs:539
 #: crates/rufin/src/ui/local_access_mapping.rs:547
 msgid "Forget Server"
-msgstr ""
+msgstr "Aizmirst serveri"
 
 #: crates/rufin/src/ui/login.rs:268
 #: crates/rufin/src/ui/root/startup_reveal.rs:561
 msgid "Caching local library…"
-msgstr ""
+msgstr "Kešo lokālo bibliotēku…"
 
 #: crates/rufin/src/ui/login.rs:278
 msgid "Connecting to music server…"
-msgstr ""
+msgstr "Savienojas ar mūzikas serveri…"
 
 #: crates/rufin/src/ui/login.rs:491
 msgid "Caching Library"
-msgstr ""
+msgstr "Kešo bibliotēku"
 
 #: crates/rufin/src/ui/preferences/library.rs:36
 msgid "Configure saved music servers and local playback mappings."
 msgstr ""
+"Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas kartējumus."
 
 #: crates/rufin/src/ui/preferences/library.rs:44
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
+"Pievienojiet serveri, lai izmantotu Jellyfin, Subsonic vai OpenSubsonic."
 
 #: crates/rufin/src/ui/preferences/library.rs:101
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing."
 msgstr ""
+"Šīs mapes tiek apvienotas lokālajā avotā un parādītas, izmantojot mapes "
+"pārlūkošanu."
 
 #: crates/rufin/src/ui/preferences/library.rs:107
 msgid "Add folders to use the Local source."
-msgstr ""
+msgstr "Pievienojiet mapes, lai izmantotu lokālo avotu."
 
 #: crates/rufin/src/ui/preferences/library.rs:118
 #: crates/rufin/src/ui/preferences/library.rs:170
 #: crates/rufin/src/ui/root/layout_rendering.rs:753
 msgid "Remove"
-msgstr ""
+msgstr "Noņemt"
 
 #: crates/rufin/src/ui/preferences/library.rs:165
 msgid "This removes the folder from the Local source."
-msgstr ""
+msgstr "Tas noņem mapi no lokālā avota."
 
 #: crates/rufin/src/ui/preferences/library.rs:215
 msgid "User"
-msgstr ""
+msgstr "Lietotājs"
 
 #: crates/rufin/src/ui/preferences/library.rs:223
 msgid "Cached"
-msgstr ""
+msgstr "Kešots"
 
 #: crates/rufin/src/ui/preferences/library.rs:256
 msgid "Local mapping saved. Sync to preview matches."
 msgstr ""
+"Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības."
 
 #: crates/rufin/src/ui/preferences/root/general.rs:438
 #: crates/rufin/src/ui/preferences/root/mod.rs:140
 msgid "Playback"
-msgstr ""
+msgstr "Atskaņošana"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:448
 msgid "Gapless"
-msgstr ""
+msgstr "Bez pauzēm"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:448
 msgid "Crossfade"
-msgstr ""
+msgstr "Sajaukšana"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:455
 msgid "Transition mode"
-msgstr ""
+msgstr "Pārejas režīms"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:468
 msgid "Crossfade duration"
-msgstr ""
+msgstr "Sajaukšanas ilgums"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:469
 msgid "Seconds"
-msgstr ""
+msgstr "Sekundes"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:534
 msgid "Off"
-msgstr ""
+msgstr "Izslēgts"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:534
 msgid "Track"
-msgstr ""
+msgstr "Celiņš"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:541
 msgid "ReplayGain"
-msgstr ""
+msgstr "ReplayGain"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:554
 msgid "Original"
-msgstr ""
+msgstr "Oriģināls"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:555
 msgid "320 kbps"
-msgstr ""
+msgstr "320 kbps"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:556
 msgid "256 kbps"
-msgstr ""
+msgstr "256 kbps"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:557
 msgid "192 kbps"
-msgstr ""
+msgstr "192 kbps"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:558
 msgid "128 kbps"
-msgstr ""
+msgstr "128 kbps"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:566
 msgid "Stream quality"
-msgstr ""
+msgstr "Straumes kvalitāte"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:596
 msgid "Audio output"
-msgstr ""
+msgstr "Skaņas izvade"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:616
 msgid "Equalizer"
-msgstr ""
+msgstr "Ekvalaizers"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:620
 #: crates/rufin/src/i18n.rs:727
 msgid "Enable equalizer"
-msgstr ""
+msgstr "Iespējot ekvalaizeru"
 
 #: crates/rufin/src/i18n.rs:728
 msgid "Preset"
-msgstr ""
+msgstr "Iepriekš iestatīts"
 
 #: crates/rufin/src/i18n.rs:729
 msgid "Custom"
-msgstr ""
+msgstr "Pielāgots"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:671
 msgid "Reset equalizer"
-msgstr ""
+msgstr "Atiestatīt ekvalaizeru"
 
 #: crates/rufin/src/i18n.rs:730
 msgid "Restore selected preset to default bands."
-msgstr ""
+msgstr "Atjaunot izvēlēto iestatījumu uz noklusējuma joslām."
 
 #: crates/rufin/src/ui/preferences/root/general.rs:672
 msgid "Restore neutral bands and disable equalizer."
-msgstr ""
+msgstr "Atjaunot neitrālās joslas un atslēgt ekvalaizeru."
 
 #: crates/rufin/src/ui/preferences/root/general.rs:674
 msgid "Reset"
-msgstr ""
+msgstr "Atiestatīt"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:757
 msgid "Home Blocks"
-msgstr ""
+msgstr "Sākuma bloki"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:174
 msgid "Position"
-msgstr ""
+msgstr "Pozīcija"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:177
 msgid "Hidden server section"
-msgstr ""
+msgstr "Paslēpta servera sadaļa"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:230
 msgid "Full"
-msgstr ""
+msgstr "Pilns"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:230
 #: crates/rufin/src/ui/preferences/root/layout.rs:253
 msgid "Compact"
-msgstr ""
+msgstr "Kompakts"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:254
 msgid "Default"
-msgstr ""
+msgstr "Noklusējums"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:255
 msgid "Comfortable"
-msgstr ""
+msgstr "Ērts"
 
 #: crates/rufin/src/ui/preferences/root/layout.rs:256
 msgid "Spacious"
-msgstr ""
+msgstr "Plašs"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:285
 msgid "Discord"
-msgstr ""
+msgstr "Discord"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:288
 msgid "Rich presence"
-msgstr ""
+msgstr "Bagātīga klātbūtne"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:297
 msgid "Application name"
-msgstr ""
+msgstr "Lietotnes nosaukums"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:297
 msgid "Song title"
-msgstr ""
+msgstr "Dziesmas nosaukums"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:297
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:940
 msgid "Artist name"
-msgstr ""
+msgstr "Mākslinieka nosaukums"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:304
 msgid "Status display"
-msgstr ""
+msgstr "Statuss"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:317 crates/rufin/src/i18n.rs:493
 msgid "MusicBrainz"
-msgstr ""
+msgstr "MusicBrainz"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:323
 msgid "Activity links and MusicBrainz covers"
-msgstr ""
+msgstr "Aktivitātes saites un MusicBrainz vāki"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:334
 msgid "Show paused status"
-msgstr ""
+msgstr "Rādīt pauzes statusu"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:355
 msgid "Show playback icon"
-msgstr ""
+msgstr "Rādīt atskaņošanas ikonu"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:365
 msgid "Last.fm API key"
-msgstr ""
+msgstr "Last.fm API atslēga"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:472
 msgid "Privacy and Security"
-msgstr ""
+msgstr "Privātums un drošība"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:381
 msgid "Private mode"
-msgstr ""
+msgstr "Privātais režīms"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:391
 msgid "Now playing notifications"
-msgstr ""
+msgstr "Paziņojumi par pašreiz atskaņoto"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:494
 msgid "Legacy"
-msgstr ""
+msgstr "Vecā versija"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:494
 msgid "Secure storage"
-msgstr ""
+msgstr "Droša krātuve"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:500
 msgid "Secret storage"
-msgstr ""
+msgstr "Slēptā krātuve"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:522
 msgid "Change Secret Storage"
-msgstr ""
+msgstr "Mainīt slepeno krātuvi"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:523
 msgid "Changing secret backend removes legacy config secrets and signs you out everywhere, including API secrets. App cache is not affected."
 msgstr ""
+"Mainot konfidenciālo aizkulises iestatījumu, tiks dzēstas vecās "
+"konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
+"ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:527
 msgid "Change"
-msgstr ""
+msgstr "Mainīt"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:411
 msgid "Default left sidebar"
-msgstr ""
+msgstr "Noklusējuma kreisais sānu panelis"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:429
 msgid "Default right sidebar"
-msgstr ""
+msgstr "Noklusējuma labais sānu panelis"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:461
 msgid "Use different layout below a threshold width"
-msgstr ""
+msgstr "Izmantot citu izkārtojumu zem sliekšņa platuma"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:475
 msgid "Narrow layout threshold"
-msgstr ""
+msgstr "Šaurā izkārtojuma slieksnis"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:500
 msgid "Narrow left sidebar"
-msgstr ""
+msgstr "Šaurais kreisais sānu panelis"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:519
 msgid "Narrow right sidebar"
-msgstr ""
+msgstr "Šaurais labais sānu panelis"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:564
 msgid "Sidebar Items"
-msgstr ""
+msgstr "Sānu paneļa vienumi"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:587
 msgid "Server selector"
-msgstr ""
+msgstr "Servera izvēlētājs"
 
 #: crates/rufin/src/ui/queue.rs:121
 msgid "No queue items match the search."
-msgstr ""
+msgstr "Neviena rindas vieta neatbilst meklējumam."
 
 #: crates/rufin/src/ui/queue.rs:123
 msgid "Add music to start a queue."
-msgstr ""
+msgstr "Pievienojiet mūziku, lai sāktu rindu."
 
 #: crates/rufin/src/ui/right_panel.rs:47
 #: crates/rufin/src/ui/settings_persistence.rs:290
 msgid "Search queue"
-msgstr ""
+msgstr "Meklēt rindā"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:454
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
 msgstr ""
+"Paldies, ka izmēģināt Rufin! Ja jums ir problēmas vai ierosinājumi, lūdzu, "
+"atveriet problēmu vietnē Github."
 
 #: crates/rufin/src/ui/root/home_refresh.rs:52
 #: crates/rufin/src/ui/root/home_refresh.rs:229
 #: crates/rufin/src/ui/root/home_refresh.rs:394
 msgid "Add to Playlist"
-msgstr ""
+msgstr "Pievienot atskaņošanas sarakstam"
 
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:404
 msgid "Add current"
-msgstr ""
+msgstr "Pievienot pašreizējo"
 
 #: crates/rufin/src/ui/root/home_refresh.rs:805
 msgid "Don't duplicate"
-msgstr ""
+msgstr "Nedublēt"
 
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:232
 msgid "Edit"
-msgstr ""
+msgstr "Rediģēt"
 
 #: crates/rufin/src/ui/root/home_refresh.rs:602
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:328
 msgid "Delete Playlist"
-msgstr ""
+msgstr "Dzēst atskaņošanas sarakstu"
 
 #: crates/rufin/src/ui/root/home_refresh.rs:606
 #: crates/rufin/src/ui/root/playlist_detail_view.rs:332
 msgid "Delete"
-msgstr ""
+msgstr "Dzēst"
 
 #: crates/rufin/src/ui/root/layout_rendering.rs:411
 msgid "No tracks match the search."
-msgstr ""
+msgstr "Neviens celiņš neatbilst meklējumam."
 
 #: crates/rufin/src/ui/root/layout_rendering.rs:749
 msgid "Remove from Playlist"
-msgstr ""
+msgstr "Noņemt no atskaņošanas saraksta"
 
 #: crates/rufin/src/ui/root/lyrics_panel.rs:29
 msgid "Clear fetched lyrics for this track"
-msgstr ""
+msgstr "Notīrīt ielādētos tekstus šim celiņam"
 
 #: crates/rufin/src/ui/root/lyrics_panel.rs:74
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
 "only if you also want to save it in your music folder"
 msgstr ""
+"Pieskarieties ierakstam, lai ielādētu dziesmas tekstu un saglabātu to "
+"lietotnes kešatmiņā; noklikšķiniet uz Saglabāt”, ja vēlaties to saglabāt arī "
+"savā mūzikas mapē"
 
 #: crates/rufin/src/ui/root/lyrics_playback_state.rs:115
 msgid "No server lyrics for the current track. Private mode is on."
-msgstr ""
+msgstr "Nav servera tekstu pašreizējam celiņam. Privātais režīms ir ieslēgts."
 
 #: crates/rufin/src/ui/root/lyrics_playback_state.rs:117
 msgid "No server lyrics for the current track. External lyric lookup is off."
 msgstr ""
+"Nav servera tekstu pašreizējam celiņam. Ārējais tekstu meklējums ir izslēgts."
 
 #: crates/rufin/src/ui/root/lyrics_playback_state.rs:119
 msgid "No lyrics for the current track."
-msgstr ""
+msgstr "Nav tekstu pašreizējam celiņam."
 
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:6
 msgid "New Playlist"
-msgstr ""
+msgstr "Jauns atskaņošanas saraksts"
 
 #: crates/rufin/src/ui/root/new_playlist_dialog.rs:15
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:255
 msgid "Playlist name"
-msgstr ""
+msgstr "Atskaņošanas saraksta nosaukums"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:268
 msgid "Descending"
-msgstr ""
+msgstr "Dilstošā secībā"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:271
 msgid "No limit"
-msgstr ""
+msgstr "Nav ierobežojuma"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:418
 msgid ""
 "This playlist uses nested rule groups. Rule editing is unavailable in this "
 "editor."
 msgstr ""
+"Šis atskaņošanas saraksts izmanto ligzdotu kārtulu grupas. Kārtulu "
+"rediģēšana šajā redaktorā nav pieejama."
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:483
 msgid "Remove rule"
-msgstr ""
+msgstr "Noņemt noteikumu"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:551
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:583
 msgid "to"
-msgstr ""
+msgstr "uz"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:939
 msgid "Comment text"
-msgstr ""
+msgstr "Komentāra teksts"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:941
 msgid "Album title"
-msgstr ""
+msgstr "Albuma nosaukums"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:942
 msgid "Text"
-msgstr ""
+msgstr "Teksts"
 
 #: crates/rufin/src/ui/root/playlist_rename_dialog.rs:10
 msgid "Rename Playlist"
-msgstr ""
+msgstr "Pārdēvēt atskaņošanas sarakstu"
 
 #: crates/rufin/src/ui/root/playlist_rename_dialog.rs:11
 msgid "Enter a new playlist name."
-msgstr ""
+msgstr "Ievadiet jaunu atskaņošanas saraksta nosaukumu."
 
 #: crates/rufin/src/ui/root/playlist_rename_dialog.rs:14
 msgid "Rename"
-msgstr ""
+msgstr "Pārdēvēt"
 
 #: crates/rufin/src/ui/root/startup_reveal.rs:86
 msgid "Switching library…"
-msgstr ""
+msgstr "Pārslēdz bibliotēku…"
 
 #: crates/rufin/src/ui/root/track_table.rs:67
 msgid "Configure columns"
-msgstr ""
+msgstr "Konfigurēt kolonnas"
 
 #: crates/rufin/src/ui/root/track_table_popover.rs:34
 msgid "Sort by"
-msgstr ""
+msgstr "Kārtot pēc"
 
 #: crates/rufin/src/ui/root/track_table_popover.rs:82
 msgid "Columns"
-msgstr ""
+msgstr "Kolonnas"
 
 #: crates/rufin/src/ui/source_selector.rs:336
 msgid "folders"
-msgstr ""
+msgstr "mapes"
 
 #: crates/rufin/src/i18n.rs:439
 msgid "EPs"
-msgstr ""
+msgstr "EP"
 
 #: crates/rufin/src/i18n.rs:440
 msgid "EP"
-msgstr ""
+msgstr "EP"
 
 #: crates/rufin/src/i18n.rs:441
 msgid "Singles"
-msgstr ""
+msgstr "Singli"
 
 #: crates/rufin/src/i18n.rs:442
 msgid "Single"
-msgstr ""
+msgstr "Singls"
 
 #: crates/rufin/src/i18n.rs:443
 msgid "Collections"
-msgstr ""
+msgstr "Kolekcijas"
 
 #: crates/rufin/src/i18n.rs:444
 msgid "Collection"
-msgstr ""
+msgstr "Kolekcija"
 
 #: crates/rufin/src/i18n.rs:445
 msgid "Other"
-msgstr ""
+msgstr "Cits"
 
 #: crates/rufin/src/i18n.rs:446
 msgid "Release"
-msgstr ""
+msgstr "Izdevums"
