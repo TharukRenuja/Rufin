@@ -49,17 +49,12 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_button.set_always_show_arrow(false);
     normal_button.set_can_shrink(true);
     normal_button.set_direction(gtk::ArrowType::Up);
-    normal_button.set_margin_start(8);
-    normal_button.set_margin_end(8);
     normal_button.set_margin_bottom(4);
-    normal_button.set_size_request(NORMAL_SELECTOR_BUTTON_WIDTH, -1);
 
     let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     normal_content.set_halign(gtk::Align::Fill);
     normal_content.set_valign(gtk::Align::Center);
     let normal_icon = gtk::Image::from_icon_name("network-server-symbolic");
-    normal_icon.set_pixel_size(20);
-    normal_icon.set_size_request(20, 20);
     normal_icon.set_valign(gtk::Align::Center);
     normal_content.append(&normal_icon);
 
