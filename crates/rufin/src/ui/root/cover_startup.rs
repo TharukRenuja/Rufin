@@ -5,6 +5,7 @@ const MOUSE_FORWARD_BUTTON: u32 = 9;
 const SLOW_EVENT_BATCH_MS: u64 = 100;
 const SLOW_LIBRARY_SYNC_STATUS_MS: u64 = 100;
 const SLOW_PLAYBACK_EVENT_POLL_MS: u64 = 100;
+const TRANSLATOR_CREDITS: &str = include_str!(concat!(env!("OUT_DIR"), "/translator_credits.txt"));
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum FullscreenPlaybackRefresh {
@@ -508,6 +509,11 @@ pub(in crate::ui) fn install_window_actions(shell: &Rc<Shell>) {
     about.connect_activate(move |_, _| show_about_dialog(&about_shell));
     shell.window.add_action(&about);
 
+    let release_notes = gio::SimpleAction::new("show-release-notes", None);
+    let release_notes_shell = Rc::clone(shell);
+    release_notes.connect_activate(move |_, _| release_notes_shell.present_release_notes());
+    shell.window.add_action(&release_notes);
+
     shell
         .application
         .set_accels_for_action("win.go-back", &["<Alt>Left"]);
@@ -567,15 +573,25 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
         .application_name("Rufin")
         .application_icon("io.github.screwys.Rufin")
         .developer_name("screwys")
+        .developers(["screwy https://github.com/screwys"])
+        .translator_credits(TRANSLATOR_CREDITS)
         .version(env!("CARGO_PKG_VERSION"))
+        .website("https://github.com/screwys/Rufin")
+        .issue_url("https://github.com/screwys/Rufin/issues")
+        .copyright("© 2026 screwy")
+        .license_type(gtk::License::Custom)
+        .license(
+            "This application comes with absolutely no warranty and is licensed under GNU General Public Licence, version 3 or later.",
+        )
+        .release_notes_version(format!("v{}", env!("CARGO_PKG_VERSION")))
+        .release_notes(about_release_notes())
         .comments(tr(
             "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
         ))
         .build();
-    dialog.add_link(&tr("Website"), "https://github.com/screwys/Rufin");
-    dialog.add_link(&tr("Issues"), "https://github.com/screwys/Rufin/issues");
     dialog.present(Some(&shell.window));
 }
+
 pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
     let Some(delay_ms) = shell.controller.startup_sync_delay_ms() else {
         return;

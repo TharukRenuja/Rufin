@@ -27,6 +27,12 @@ cargo generate-lockfile --offline
 
 perl -0pi -e '
   my $version = $ENV{"VERSION"};
+  my $count = s{github:screwys/Rufin/v[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?}{github:screwys/Rufin/v$version}g;
+  die "expected two README Nix release refs, updated $count\n" unless $count == 2;
+' README.md
+
+perl -0pi -e '
+  my $version = $ENV{"VERSION"};
   my $date = $ENV{"RELEASE_DATE"};
   my $notes = $ENV{"RELEASE_NOTES"};
 

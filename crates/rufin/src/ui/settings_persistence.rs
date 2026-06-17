@@ -312,6 +312,30 @@ impl Shell {
         });
     }
 
+    pub(super) fn set_release_notifications_enabled(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("release notification setting", |settings| {
+            if settings.release_notifications_enabled == enabled {
+                return false;
+            }
+            settings.release_notifications_enabled = enabled;
+            true
+        });
+    }
+
+    pub(super) fn mark_release_notification_seen(self: &Rc<Self>, version: &str) {
+        let version = version.trim().to_string();
+        if version.is_empty() {
+            return;
+        }
+        self.update_app_settings("release notification seen state", |settings| {
+            if settings.release_notification_seen_version.as_deref() == Some(version.as_str()) {
+                return false;
+            }
+            settings.release_notification_seen_version = Some(version);
+            true
+        });
+    }
+
     pub(super) fn set_secret_storage_mode(self: &Rc<Self>, mode: SecretStorageMode) -> bool {
         match self.controller.set_secret_storage_mode(mode) {
             Ok(settings) => {

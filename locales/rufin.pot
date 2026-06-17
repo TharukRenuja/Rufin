@@ -2404,3 +2404,19 @@ msgstr ""
 #: crates/rufin/src/i18n.rs:446
 msgid "Release"
 msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:494
+msgid "Release notifications"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs:814
+msgid "Open release notes"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs:900
+msgid "Release notes"
+msgstr ""
+
+#: crates/rufin/src/ui/root/cover_startup.rs:911
+msgid "Current version:"
+msgstr ""

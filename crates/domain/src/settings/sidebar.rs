@@ -437,6 +437,10 @@ pub struct AppSettings {
     pub language: String,
     pub private_mode: bool,
     pub notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    pub release_notifications_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notification_seen_version: Option<String>,
     #[serde(default = "legacy_secret_storage_mode")]
     pub secret_storage_mode: SecretStorageMode,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -518,6 +522,8 @@ impl Default for AppSettings {
             language: default_language_preference(),
             private_mode: false,
             notifications_enabled: false,
+            release_notifications_enabled: true,
+            release_notification_seen_version: None,
             secret_storage_mode: SecretStorageMode::default(),
             secret_scope_id: String::new(),
             external_lyrics_enabled: true,
@@ -599,6 +605,12 @@ impl AppSettings {
         self.scrobbling.sanitize();
         self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
         self.language = sanitize_language_preference(&self.language);
+        self.release_notification_seen_version = self
+            .release_notification_seen_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|version| !version.is_empty())
+            .map(str::to_string);
         if self.lastfm_api_key.is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
             self.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
         }

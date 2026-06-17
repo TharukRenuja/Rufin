@@ -101,7 +101,8 @@ use layout::{
     MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout, ResolvedLeftSidebarMode,
     SidebarWidths, configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
-    detail_showcase_cover_size, resolve_layout_with_sidebar_widths, route_content_width,
+    detail_showcase_cover_size, large_popup_content_height, large_popup_content_width,
+    resolve_layout_with_sidebar_widths, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -149,6 +150,7 @@ mod new_playlist_dialog;
 mod new_smart_playlist_dialog;
 mod playlist_detail_view;
 mod playlist_rename_dialog;
+mod release_notes;
 mod responsive_layout_state;
 mod responsive_route_render;
 mod route_navigation;
@@ -182,6 +184,7 @@ pub(in crate::ui) use playlist_detail_view::{
     playlist_cover_size, playlist_detail_compact_for_width, playlist_route_margin,
     playlist_sort_width,
 };
+pub(in crate::ui) use release_notes::*;
 pub(in crate::ui) use shell_navigation::*;
 
 pub(in crate::ui) const GRID_ROUTE_PAGE_SIZE: usize = 16;
@@ -907,6 +910,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     tray::present_initial_window(&shell);
     #[cfg(not(unix))]
     shell.window.present();
+    schedule_release_toast(&shell);
     if defer_initial_route {
         shell.schedule_startup_route_reveal();
     }
