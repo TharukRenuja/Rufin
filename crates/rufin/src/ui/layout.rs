@@ -10,8 +10,8 @@ pub(super) const RIGHT_SIDEBAR_DEFAULT_WIDTH: i32 = 300;
 pub(super) const RIGHT_SIDEBAR_COMFORTABLE_WIDTH: i32 = 400;
 pub(super) const RIGHT_SIDEBAR_SPACIOUS_WIDTH: i32 = 500;
 pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
-pub(super) const MIN_APP_WINDOW_WIDTH: i32 = MIN_USEFUL_MAIN_WIDTH;
-pub(super) const MIN_APP_WINDOW_HEIGHT: i32 = 634;
+pub(super) const MIN_APP_WINDOW_WIDTH: i32 = 450;
+pub(super) const MIN_APP_WINDOW_HEIGHT: i32 = 400;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
 pub(super) const DETAIL_ROUTE_SCROLL_GUTTER: i32 = 24;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
@@ -26,6 +26,7 @@ const ALBUM_GRID_MIN_COLUMNS: usize = 2;
 const ALBUM_GRID_MAX_COLUMNS: usize = 40;
 pub(super) const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
 pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
+pub(super) const ROUTE_TOP_MARGIN: i32 = 4;
 const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 const CARD_LABEL_LINE_HEIGHT: i32 = 20;
 pub(super) const HOME_ALBUM_CARD_LABEL_GAP: i32 = 2;
@@ -99,6 +100,7 @@ pub(super) enum ActiveLayoutProfile {
 pub(in crate::ui) enum ResolvedLeftSidebarMode {
     Full,
     Compact,
+    Hidden,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,6 +138,7 @@ fn resolved_sidebar_width(mode: ResolvedLeftSidebarMode, widths: SidebarWidths) 
     match mode {
         ResolvedLeftSidebarMode::Full => widths.full,
         ResolvedLeftSidebarMode::Compact => widths.compact,
+        ResolvedLeftSidebarMode::Hidden => 0,
     }
 }
 
@@ -197,6 +200,12 @@ fn resolve_layout_for_profile(
         main_width = window_width
             - resolved_sidebar_width(left_sidebar, sidebar_widths)
             - resolved_right_sidebar_width;
+    }
+    if window_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == ResolvedLeftSidebarMode::Compact {
+        left_sidebar = ResolvedLeftSidebarMode::Hidden;
+        right_sidebar = RightSidebarMode::Hidden;
+        resolved_right_sidebar_width = 0;
+        main_width = window_width;
     }
     ResolvedLayout {
         profile,
@@ -445,7 +454,10 @@ mod tests {
         let four_columns = ALBUM_GRID_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
         let very_wide = ALBUM_GRID_TARGET_SIZE * 20 + HOME_ALBUM_GAP * 19;
         let extreme = ALBUM_GRID_TARGET_SIZE * 80 + HOME_ALBUM_GAP * 79;
+        let tiny_route_width = MIN_APP_WINDOW_WIDTH - HOME_ALBUM_HORIZONTAL_MARGINS;
 
+        assert_eq!(home_album_page_size(tiny_route_width, None), 2);
+        assert_eq!(album_grid_page_size(tiny_route_width, None), 2);
         assert_eq!(album_grid_page_size(previous_three_card_width, None), 2);
         assert_eq!(
             album_grid_card_size(
@@ -527,11 +539,21 @@ mod tests {
         let settings = LayoutSettings::default();
         let resolved = resolve_layout(&settings, 1);
 
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
+        assert_eq!(resolved.main_width, MIN_APP_WINDOW_WIDTH);
+    }
+
+    #[test]
+    fn layout_keeps_current_minimum_compact_rail() {
+        let settings = LayoutSettings::default();
+        let resolved = resolve_layout(&settings, MIN_USEFUL_MAIN_WIDTH);
+
         assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
         assert_eq!(
             resolved.main_width,
-            MIN_APP_WINDOW_WIDTH - COMPACT_RAIL_WIDTH
+            MIN_USEFUL_MAIN_WIDTH - COMPACT_RAIL_WIDTH
         );
     }
 

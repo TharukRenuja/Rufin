@@ -1278,6 +1278,12 @@ pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header
 }
 
+pub(in crate::ui) fn mark_tiny_detail_showcase(widget: &impl IsA<gtk::Widget>, width: i32) {
+    if width < 520 {
+        widget.add_css_class("detail-showcase-tiny");
+    }
+}
+
 pub(in crate::ui) fn fit_detail_text(label: &gtk::Label, text: &str) {
     let count = text.chars().count();
     if count >= 42 {

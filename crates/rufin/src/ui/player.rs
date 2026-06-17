@@ -45,6 +45,10 @@ const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
 const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
 const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 8;
+const BOTTOM_PLAYER_TINY_WIDTH: i32 = 550;
+const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
+const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
+const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
 const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
 const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
@@ -70,6 +74,13 @@ pub(super) struct PlayerControls {
     pub(super) menu_button: gtk::Button,
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
+    now_playing_wall: gtk::Box,
+    tiny_row: gtk::Box,
+    tiny_controls: gtk::Box,
+    tiny_layout: Cell<bool>,
+    transport: gtk::Box,
+    transport_slot: gtk::Box,
+    transport_buttons: gtk::Fixed,
     pub(super) random_button: gtk::Button,
     pub(super) previous_button: gtk::Button,
     pub(super) play_button: gtk::Button,
@@ -86,6 +97,7 @@ pub(super) struct PlayerControls {
     pub(super) lyrics_icon: gtk::DrawingArea,
     pub(super) lyrics_icon_open: Rc<Cell<bool>>,
     pub(super) favorite_button: gtk::Button,
+    progress_row: gtk::Box,
     pub(super) elapsed: gtk::Label,
     pub(super) progress_stack: gtk::Stack,
     pub(super) progress: gtk::Scale,
@@ -93,6 +105,7 @@ pub(super) struct PlayerControls {
     pub(super) waveform_key: RefCell<Option<String>>,
     pub(super) waveform_peak_count: Cell<usize>,
     pub(super) duration: gtk::Label,
+    actions: gtk::Box,
     pub(super) mute_button: gtk::Button,
     pub(super) mute_icon: gtk::Image,
     pub(super) volume: gtk::Scale,
@@ -109,6 +122,7 @@ struct NowPlayingControls {
 
 struct TransportControls {
     root: gtk::Box,
+    buttons: gtk::Fixed,
     random_button: gtk::Button,
     previous_button: gtk::Button,
     play_button: gtk::Button,
@@ -118,6 +132,7 @@ struct TransportControls {
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
     dj_button: gtk::Button,
+    progress_row: gtk::Box,
     elapsed: gtk::Label,
     progress_stack: gtk::Stack,
     progress: gtk::Scale,
@@ -559,11 +574,8 @@ impl Shell {
             .duration
             .set_text(&format_duration(player.duration_seconds));
 
-        controls.mute_icon.set_icon_name(Some(if player.muted {
-            "audio-volume-muted-symbolic"
-        } else {
-            "audio-volume-high-symbolic"
-        }));
+        let volume_icon = volume_icon_name(player.muted, player.volume);
+        controls.mute_icon.set_icon_name(Some(volume_icon));
         controls.volume.set_value(player.volume);
         self.state.updating_player_controls.set(false);
     }
@@ -617,6 +629,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
 
     let TransportControls {
         root: transport,
+        buttons: transport_buttons,
         random_button,
         previous_button,
         play_button,
@@ -626,6 +639,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         shuffle_button,
         repeat_button,
         dj_button,
+        progress_row,
         elapsed,
         progress_stack,
         progress,
@@ -662,6 +676,21 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     transport_slot.set_valign(gtk::Align::Center);
     transport_slot.append(&transport);
 
+    let tiny_controls = gtk::Box::new(
+        gtk::Orientation::Horizontal,
+        BOTTOM_PLAYER_TINY_CONTROL_SPACING,
+    );
+    tiny_controls.set_halign(gtk::Align::End);
+    tiny_controls.set_valign(gtk::Align::Center);
+    tiny_controls.set_width_request(BOTTOM_PLAYER_TINY_CONTROLS_WIDTH);
+
+    let tiny_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    tiny_row.set_hexpand(true);
+    tiny_row.set_halign(gtk::Align::Fill);
+    tiny_row.set_valign(gtk::Align::Center);
+    tiny_row.set_width_request(1);
+    tiny_row.append(&tiny_controls);
+
     root.set_start_widget(Some(&now_playing_wall));
     root.set_center_widget(Some(&transport_slot));
     root.set_end_widget(Some(&actions));
@@ -674,6 +703,13 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         menu_button,
         artist,
         album,
+        now_playing_wall,
+        tiny_row,
+        tiny_controls,
+        tiny_layout: Cell::new(false),
+        transport,
+        transport_slot,
+        transport_buttons,
         random_button,
         previous_button,
         play_button,
@@ -690,6 +726,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         lyrics_icon,
         lyrics_icon_open,
         favorite_button,
+        progress_row,
         elapsed,
         progress_stack,
         progress,
@@ -697,6 +734,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         waveform_key: RefCell::new(None),
         waveform_peak_count: Cell::new(0),
         duration,
+        actions,
         mute_button,
         mute_icon,
         volume,
@@ -798,30 +836,52 @@ fn build_transport_controls() -> TransportControls {
     configure_transport_side_button(&repeat_button);
     configure_transport_side_button(&random_button);
 
-    put_transport_button(&buttons, &dj_button, -3.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
+    put_transport_button(
+        &buttons,
+        &dj_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
+        -3.0,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
     put_transport_button(
         &buttons,
         &shuffle_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
         -2.0,
         BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
     );
     put_transport_button(
         &buttons,
         &previous_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
         -1.0,
         BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
     );
-    put_transport_button(&buttons, &play_button, 0.0, BOTTOM_PLAYER_PLAY_BUTTON_SIZE);
-    put_transport_button(&buttons, &next_button, 1.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
+    put_transport_button(
+        &buttons,
+        &play_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
+        0.0,
+        BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
+    );
+    put_transport_button(
+        &buttons,
+        &next_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
+        1.0,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
     put_transport_button(
         &buttons,
         &repeat_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
         2.0,
         BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
     );
     put_transport_button(
         &buttons,
         &random_button,
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
         3.0,
         BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
     );
@@ -858,6 +918,7 @@ fn build_transport_controls() -> TransportControls {
 
     TransportControls {
         root,
+        buttons,
         random_button,
         previous_button,
         play_button,
@@ -867,6 +928,7 @@ fn build_transport_controls() -> TransportControls {
         shuffle_button,
         repeat_button,
         dj_button,
+        progress_row,
         elapsed,
         progress_stack,
         progress,
@@ -987,12 +1049,45 @@ fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
     }
 }
 
-fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, size: i32) {
-    let center_x =
-        f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0 + BOTTOM_PLAYER_BUTTON_STEP * slot;
+fn bottom_player_tiny(player_width: i32) -> bool {
+    player_width < BOTTOM_PLAYER_TINY_WIDTH
+}
+
+fn volume_icon_name(muted: bool, volume: f64) -> &'static str {
+    if muted || volume <= 0.0 {
+        "audio-volume-muted-symbolic"
+    } else {
+        "audio-volume-high-symbolic"
+    }
+}
+
+fn put_transport_button(
+    buttons: &gtk::Fixed,
+    button: &gtk::Button,
+    width: i32,
+    slot: f64,
+    size: i32,
+) {
+    let (x, y) = transport_button_position(width, slot, size);
+    buttons.put(button, x, y);
+}
+
+fn move_transport_button(
+    buttons: &gtk::Fixed,
+    button: &gtk::Button,
+    width: i32,
+    slot: f64,
+    size: i32,
+) {
+    let (x, y) = transport_button_position(width, slot, size);
+    buttons.move_(button, x, y);
+}
+
+fn transport_button_position(width: i32, slot: f64, size: i32) -> (f64, f64) {
+    let center_x = f64::from(width) / 2.0 + BOTTOM_PLAYER_BUTTON_STEP * slot;
     let radius = f64::from(size) / 2.0;
     let y = f64::from(BOTTOM_PLAYER_BUTTON_ROW_HEIGHT - size) / 2.0 + BOTTOM_PLAYER_BUTTON_OFFSET_Y;
-    buttons.put(button, center_x - radius, y);
+    (center_x - radius, y)
 }
 
 fn player_link(css_class: &str) -> gtk::Label {
@@ -1222,7 +1317,6 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .mute_button
         .connect_clicked(move |_| controller.toggle_mute());
-
     let seek_shell = Rc::clone(shell);
     shell
         .player_controls
@@ -1329,7 +1423,74 @@ impl Shell {
             self.player_controls
                 .volume
                 .set_width_request(bottom_player_volume_width(player_width));
+            self.apply_bottom_player_tiny(bottom_player_tiny(player_width));
             self.apply_bottom_player_actions(bottom_player_actions(player_width));
+        }
+    }
+
+    fn apply_bottom_player_tiny(&self, tiny: bool) {
+        let player = &self.player_controls;
+        let transport_width = if tiny {
+            BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH
+        } else {
+            BOTTOM_PLAYER_TRANSPORT_WIDTH
+        };
+        player.transport.set_width_request(transport_width);
+        player.transport_slot.set_width_request(transport_width);
+        player
+            .transport_buttons
+            .set_size_request(transport_width, BOTTOM_PLAYER_BUTTON_ROW_HEIGHT);
+        player.tiny_row.set_width_request(1);
+        player.now_playing_wall.set_width_request(1);
+        player.transport_slot.set_halign(if tiny {
+            gtk::Align::End
+        } else {
+            gtk::Align::Center
+        });
+        move_transport_button(
+            &player.transport_buttons,
+            &player.previous_button,
+            transport_width,
+            -1.0,
+            BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+        );
+        move_transport_button(
+            &player.transport_buttons,
+            &player.play_button,
+            transport_width,
+            0.0,
+            BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
+        );
+        move_transport_button(
+            &player.transport_buttons,
+            &player.next_button,
+            transport_width,
+            1.0,
+            BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+        );
+        player.dj_button.set_visible(!tiny);
+        player.shuffle_button.set_visible(!tiny);
+        player.repeat_button.set_visible(!tiny);
+        player.random_button.set_visible(!tiny);
+        player.progress_row.set_visible(!tiny);
+        player.actions.set_visible(!tiny);
+        if player.tiny_layout.replace(tiny) == tiny {
+            return;
+        }
+        if tiny {
+            player.root.set_start_widget(None::<&gtk::Widget>);
+            player.root.set_center_widget(None::<&gtk::Widget>);
+            player.root.set_end_widget(None::<&gtk::Widget>);
+            player.tiny_row.prepend(&player.now_playing_wall);
+            player.tiny_controls.prepend(&player.transport_slot);
+            player.root.set_start_widget(Some(&player.tiny_row));
+        } else {
+            player.root.set_start_widget(None::<&gtk::Widget>);
+            player.tiny_row.remove(&player.now_playing_wall);
+            player.tiny_controls.remove(&player.transport_slot);
+            player.root.set_start_widget(Some(&player.now_playing_wall));
+            player.root.set_center_widget(Some(&player.transport_slot));
+            player.root.set_end_widget(Some(&player.actions));
         }
     }
 
@@ -1394,6 +1555,29 @@ mod tests {
         assert_eq!(
             super::bottom_player_actions(900),
             super::BottomPlayerActions::Queue
+        );
+    }
+
+    #[test]
+    fn player_enters_tiny_mode_below_old_minimum() {
+        assert!(super::bottom_player_tiny(450));
+        assert!(super::bottom_player_tiny(549));
+        assert!(!super::bottom_player_tiny(550));
+    }
+
+    #[test]
+    fn player_volume_zero_uses_muted_icon() {
+        assert_eq!(
+            super::volume_icon_name(false, 0.0),
+            "audio-volume-muted-symbolic"
+        );
+        assert_eq!(
+            super::volume_icon_name(false, 0.01),
+            "audio-volume-high-symbolic"
+        );
+        assert_eq!(
+            super::volume_icon_name(true, 1.0),
+            "audio-volume-muted-symbolic"
         );
     }
 }

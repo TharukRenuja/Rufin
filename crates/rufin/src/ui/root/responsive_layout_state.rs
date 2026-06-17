@@ -70,6 +70,7 @@ impl Shell {
 
         let app_active = !login_active && !startup_loading_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
+        let hidden_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Hidden;
         self.split_view.set_collapsed(!app_active || !full_sidebar);
         if app_active && full_sidebar {
             self.split_view.set_show_sidebar(true);
@@ -79,6 +80,8 @@ impl Shell {
         self.normal_nav_slot.set_visible(app_active);
         self.compact_nav_slot
             .set_visible(app_active && resolved.left_sidebar == ResolvedLeftSidebarMode::Compact);
+        self.tiny_nav_button
+            .set_visible(app_active && hidden_sidebar);
         self.right_panel_slot.set_visible(
             !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
         );

@@ -10,7 +10,7 @@ impl Shell {
     ) -> gtk::Widget {
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.set_margin_top(24);
+        content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(28);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);

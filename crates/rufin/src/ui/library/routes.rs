@@ -1303,7 +1303,7 @@ impl Shell {
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);

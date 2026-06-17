@@ -847,6 +847,10 @@ scale.volume-slider trough {
   padding: 22px;
 }
 
+.detail-showcase-tiny {
+  padding: 18px 20px 18px 14px;
+}
+
 .detail-showcase .detail-title,
 .album-detail-showcase .detail-title {
   font-size: 34px;
@@ -1144,11 +1148,6 @@ listview.queue-list row {
   color: @window_fg_color;
 }
 
-.fullscreen-player-top-bar {
-  min-height: 40px;
-  padding: 2px 10px;
-}
-
 .fullscreen-player-close-button {
   margin-top: 0;
 }
@@ -1158,7 +1157,7 @@ listview.queue-list row {
 }
 
 .fullscreen-player-hero {
-  margin: 2px 24px 0;
+  margin: 12px 24px 0;
   min-width: 0;
 }
 
@@ -1246,6 +1245,8 @@ scale.fullscreen-player-equalizer-scale {
 scale.fullscreen-player-equalizer-scale slider {
   min-width: 14px;
   min-height: 14px;
+  margin: 0;
+  padding: 0;
 }
 
 scale.fullscreen-player-equalizer-scale trough {

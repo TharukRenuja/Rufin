@@ -5,16 +5,17 @@ use domain::{Folder, FolderPathItem, PlaySourceKey, Route, Track, format_duratio
 use source::FolderDetail;
 
 use super::{
-    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
-    configure_exact_width_clip, configure_fill_width_clip, folder_play_source_key,
-    install_track_context_menu, loaded_tracks_window_play_activation, mark_route_scroll_owner,
-    route_content_width, selected_music_folder_id, sort_tracks_with_options, stable_seed,
-    track_matches_query,
+    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, Shell,
+    THUMB_COVER_SIZE, configure_exact_width_clip, configure_fill_width_clip,
+    folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
+    mark_route_scroll_owner, route_content_width, selected_music_folder_id,
+    sort_tracks_with_options, stable_seed, track_matches_query,
 };
 use crate::i18n::tr;
 
 const FOLDER_TREE_WIDTH: i32 = 260;
 const FOLDER_TREE_MIN_WIDTH: i32 = 132;
+const FOLDER_TREE_HIDE_WIDTH: i32 = 550;
 const FOLDER_DURATION_COLUMN_WIDTH: i32 = 72;
 const FOLDER_NAME_COLUMN_MIN_WIDTH: i32 = 112;
 const FOLDER_NAME_COLUMN_MAX_WIDTH: i32 = 280;
@@ -35,7 +36,7 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("route-content");
         wrapper.add_css_class("folders-route");
-        wrapper.set_margin_top(18);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(28);
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
@@ -66,26 +67,12 @@ impl Shell {
         self.install_type_to_search(&search);
 
         let route_width = route_content_width(self);
-        let tree_width = folder_tree_width(route_width);
-        let content = gtk::Paned::new(gtk::Orientation::Horizontal);
-        content.add_css_class("folders-split");
-        content.set_position(tree_width);
-        content.set_wide_handle(false);
-        content.set_hexpand(true);
-        content.set_vexpand(true);
-
-        let tree = folder_tree(self, &path, &detail, tree_width);
-        let tree_scroller = gtk::ScrolledWindow::new();
-        tree_scroller.add_css_class("folders-tree-pane");
-        tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        tree_scroller.set_min_content_width(tree_width);
-        tree_scroller.set_size_request(tree_width, -1);
-        tree_scroller.set_hexpand(false);
-        tree_scroller.set_vexpand(true);
-        tree_scroller.set_child(Some(&tree));
-        content.set_start_child(Some(&tree_scroller));
-        content.set_resize_start_child(false);
-        content.set_shrink_start_child(false);
+        let tree_visible = folder_tree_visible(route_width);
+        let tree_width = if tree_visible {
+            folder_tree_width(route_width)
+        } else {
+            0
+        };
 
         let table = gtk::ListBox::new();
         table.add_css_class("folders-table");
@@ -100,9 +87,6 @@ impl Shell {
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);
         table_scroller.set_child(Some(&table));
-        content.set_end_child(Some(&table_scroller));
-        content.set_resize_end_child(true);
-        content.set_shrink_end_child(true);
 
         let table_for_search = table.clone();
         let detail_for_search = detail.clone();
@@ -119,7 +103,33 @@ impl Shell {
             );
         });
 
-        wrapper.append(&content);
+        if tree_visible {
+            let content = gtk::Paned::new(gtk::Orientation::Horizontal);
+            content.add_css_class("folders-split");
+            content.set_position(tree_width);
+            content.set_wide_handle(false);
+            content.set_hexpand(true);
+            content.set_vexpand(true);
+
+            let tree = folder_tree(self, &path, &detail, tree_width);
+            let tree_scroller = gtk::ScrolledWindow::new();
+            tree_scroller.add_css_class("folders-tree-pane");
+            tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            tree_scroller.set_min_content_width(tree_width);
+            tree_scroller.set_size_request(tree_width, -1);
+            tree_scroller.set_hexpand(false);
+            tree_scroller.set_vexpand(true);
+            tree_scroller.set_child(Some(&tree));
+            content.set_start_child(Some(&tree_scroller));
+            content.set_resize_start_child(false);
+            content.set_shrink_start_child(false);
+            content.set_end_child(Some(&table_scroller));
+            content.set_resize_end_child(true);
+            content.set_shrink_end_child(true);
+            wrapper.append(&content);
+        } else {
+            wrapper.append(&table_scroller);
+        }
         wrapper.upcast()
     }
 }
@@ -525,6 +535,10 @@ fn folder_tree_width(route_width: i32) -> i32 {
     }
 }
 
+fn folder_tree_visible(route_width: i32) -> bool {
+    route_width >= FOLDER_TREE_HIDE_WIDTH
+}
+
 fn name_column_width(shell: &Shell, tree_width: i32, folders: &[Folder], tracks: &[Track]) -> i32 {
     name_column_width_for(route_content_width(shell), tree_width, folders, tracks)
 }
@@ -759,6 +773,13 @@ mod tests {
 
         assert!(tree_width < super::FOLDER_TREE_WIDTH);
         assert!(width < super::FOLDER_NAME_COLUMN_MIN_WIDTH + 40);
+    }
+
+    #[test]
+    fn folders_hide_tree_at_tiny_width() {
+        assert!(!super::folder_tree_visible(450));
+        assert!(!super::folder_tree_visible(549));
+        assert!(super::folder_tree_visible(550));
     }
 
     fn track(number: u32) -> Track {

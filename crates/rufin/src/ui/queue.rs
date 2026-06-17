@@ -18,6 +18,7 @@ use super::{
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
+const QUEUE_FULLSCREEN_HORIZONTAL_MARGIN: i32 = 72;
 const QUEUE_FULLSCREEN_COLUMN_SPACING: i32 = 16;
 const QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING: i32 = 12;
 const QUEUE_DRAG_HANDLE_WIDTH: i32 = 16;
@@ -917,7 +918,9 @@ fn fullscreen_queue_fixed_spacer(width: i32) -> gtk::Box {
 }
 
 fn fullscreen_queue_available_width(panel: &gtk::Box, window_width: i32) -> i32 {
-    let window_width = window_width.saturating_sub(72).max(1);
+    let window_width = window_width
+        .saturating_sub(QUEUE_FULLSCREEN_HORIZONTAL_MARGIN)
+        .max(1);
     let panel_width = panel.width();
     if panel_width > 1 {
         panel_width.min(window_width).max(1)
@@ -941,9 +944,7 @@ fn fullscreen_queue_column_widths(available_width: i32) -> QueueFullscreenColumn
 
     let title_fixed = fullscreen_queue_fixed_width(false, false);
     QueueFullscreenColumnWidths {
-        title: available_width
-            .saturating_sub(title_fixed)
-            .max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH),
+        title: available_width.saturating_sub(title_fixed).max(1),
         album: 0,
         show_album: false,
         show_year: false,
@@ -1323,6 +1324,7 @@ fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::layout::MIN_APP_WINDOW_WIDTH;
     use super::*;
     use domain::{QueueSnapshot, RepeatMode, ServerId, ShuffleState, TrackId};
 
@@ -1413,6 +1415,19 @@ mod tests {
             queue_current_update_positions(&previous, &next),
             vec![10, 900]
         );
+    }
+
+    #[test]
+    fn fullscreen_queue_widths_fit_tiny_window() {
+        let available = MIN_APP_WINDOW_WIDTH - QUEUE_FULLSCREEN_HORIZONTAL_MARGIN;
+        let widths = fullscreen_queue_column_widths(available);
+        let total = fullscreen_queue_fixed_width(widths.show_album, widths.show_year)
+            + widths.title
+            + widths.album;
+
+        assert!(!widths.show_album);
+        assert!(!widths.show_year);
+        assert!(total <= available);
     }
 
     #[test]
