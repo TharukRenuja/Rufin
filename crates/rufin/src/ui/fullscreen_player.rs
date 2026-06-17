@@ -19,8 +19,8 @@ use crate::ui::{
 
 use super::{
     ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE,
-    cover_artwork_id_for_key, cover_request_id_for_key, icon_button, player::BOTTOM_PLAYER_HEIGHT,
-    player_icons::lyrics_icon_area,
+    cover_artwork_id_for_key, cover_request_id_for_key, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
+    player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
 };
 
 const FULLSCREEN_PLAYER_OPEN_TRANSITION_MS: u32 = 420;
@@ -31,8 +31,9 @@ const FULLSCREEN_PLAYER_DEFERRED_COVER_MS: u64 =
 const FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
-const FULLSCREEN_PLAYER_HORIZONTAL_MARGIN: i32 = 64;
+const FULLSCREEN_PLAYER_HORIZONTAL_RESERVED: i32 = 186;
 const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 430;
+const FULLSCREEN_PLAYER_HERO_MIN_WINDOW_HEIGHT: i32 = 560;
 const FULLSCREEN_ICON_SIZE: i32 = 18;
 const FULLSCREEN_VISUALIZER_BANDS: usize = 320;
 const FULLSCREEN_VISUALIZER_MIN_RATIO: f64 = 20.0 / 24_000.0;
@@ -43,9 +44,12 @@ const FULLSCREEN_VISUALIZER_MAX_COLUMNS: usize = 128;
 const FULLSCREEN_VISUALIZER_TOP_GAP: f64 = 50.0;
 const FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT: i32 = 124;
 const FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT: i32 = 286;
+const FULLSCREEN_EQUALIZER_ROW_HEIGHT: i32 = 240;
+const FULLSCREEN_EQUALIZER_TINY_ROW_HEIGHT: i32 =
+    FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT + FULLSCREEN_EQUALIZER_LABEL_HEIGHT;
 const FULLSCREEN_EQUALIZER_LEVEL_WIDTH: i32 = 42;
 const FULLSCREEN_EQUALIZER_ROW_GAP: i32 = 12;
-const FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH: i32 = 12;
+const FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH: i32 = 14;
 const FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH: i32 = 44;
 const FULLSCREEN_EQUALIZER_MIN_BAND_GAP: i32 = 2;
 const FULLSCREEN_EQUALIZER_MAX_BAND_GAP: i32 = 10;
@@ -57,6 +61,8 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
     pub(super) animation_tick: RefCell<Option<gtk::TickCallbackId>>,
     pub(super) close_button: gtk::Button,
+    pub(super) inline_close_button: gtk::Button,
+    pub(super) hero: gtk::Box,
     pub(super) cover: ArtworkTile,
     pub(super) cover_key: RefCell<Option<String>>,
     pub(super) title: gtk::Label,
@@ -113,17 +119,9 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     root.set_sensitive(false);
     root.set_opacity(0.0);
 
-    let top_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    top_bar.add_css_class("fullscreen-player-top-bar");
-    top_bar.set_valign(gtk::Align::Center);
-
     let close_button = icon_button("go-down-symbolic", "Close fullscreen player");
     close_button.add_css_class("fullscreen-player-close-button");
-    top_bar.append(&close_button);
-
-    let top_bar_handle = gtk::WindowHandle::new();
-    top_bar_handle.set_child(Some(&top_bar));
-    root.append(&top_bar_handle);
+    close_button.set_valign(gtk::Align::Start);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.add_css_class("fullscreen-player-body");
@@ -136,6 +134,7 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     hero.set_valign(gtk::Align::Center);
     hero.set_hexpand(true);
     hero.set_width_request(1);
+    hero.append(&close_button);
 
     let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE, 42);
     cover.area.add_css_class("fullscreen-player-cover");
@@ -202,6 +201,10 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     switcher_bar.add_css_class("fullscreen-player-tab-bar");
     switcher_bar.set_halign(gtk::Align::Center);
+    let inline_close_button = icon_button("go-down-symbolic", "Close fullscreen player");
+    inline_close_button.add_css_class("fullscreen-player-close-button");
+    inline_close_button.set_visible(false);
+    switcher_bar.append(&inline_close_button);
     switcher_bar.append(&fullscreen_player_switcher(&stack));
     body.append(&switcher_bar);
     body.append(&stack);
@@ -211,6 +214,8 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         root,
         animation_tick: RefCell::new(None),
         close_button,
+        inline_close_button,
+        hero,
         cover,
         cover_key: RefCell::new(None),
         title,
@@ -662,7 +667,7 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     band_row.set_hexpand(true);
     band_row.set_vexpand(true);
     band_row.set_width_request(1);
-    band_row.set_height_request(240);
+    band_row.set_height_request(FULLSCREEN_EQUALIZER_ROW_HEIGHT);
     band_row.set_margin_bottom(6);
 
     let graph = gtk::Box::new(gtk::Orientation::Horizontal, FULLSCREEN_EQUALIZER_ROW_GAP);
@@ -972,6 +977,11 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         .fullscreen_player
         .close_button
         .connect_clicked(move |_| close_shell.close_fullscreen_player());
+    let close_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .inline_close_button
+        .connect_clicked(move |_| close_shell.close_fullscreen_player());
 
     let key_shell = Rc::clone(shell);
     let key = gtk::EventControllerKey::new();
@@ -1181,9 +1191,34 @@ impl Shell {
             return;
         }
         self.apply_fullscreen_responsive_layout();
+        if self.fullscreen_player.stack.visible_child_name().as_deref() == Some("queue") {
+            self.schedule_queue_panel_render();
+        }
     }
 
     fn apply_fullscreen_responsive_layout(&self) {
+        let tiny = self.window.width() < MIN_USEFUL_MAIN_WIDTH;
+        let show_hero = fullscreen_show_hero_for(self.window.height());
+        self.fullscreen_player.close_button.set_visible(show_hero);
+        self.fullscreen_player
+            .inline_close_button
+            .set_visible(!show_hero);
+        self.fullscreen_player.hero.set_visible(show_hero);
+        self.fullscreen_player.equalizer_band_row.set_vexpand(!tiny);
+        self.fullscreen_player
+            .equalizer_band_row
+            .set_height_request(if tiny {
+                FULLSCREEN_EQUALIZER_TINY_ROW_HEIGHT
+            } else {
+                FULLSCREEN_EQUALIZER_ROW_HEIGHT
+            });
+        self.fullscreen_player
+            .equalizer_band_row
+            .set_valign(if tiny {
+                gtk::Align::Start
+            } else {
+                gtk::Align::Fill
+            });
         let cover_size = self.fullscreen_player_cover_size();
         self.fullscreen_player.cover.set_square_size(cover_size);
         let equalizer_width = self.apply_fullscreen_equalizer_fit();
@@ -1873,12 +1908,16 @@ fn fullscreen_cover_preview_sizes(fetch_size: u32) -> Vec<u32> {
 }
 
 pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
-    let width_limit = (width - FULLSCREEN_PLAYER_HORIZONTAL_MARGIN).max(1);
+    let width_limit = (width - FULLSCREEN_PLAYER_HORIZONTAL_RESERVED).max(1);
     let height_limit = (height - FULLSCREEN_PLAYER_VERTICAL_RESERVED).max(1);
     width_limit.min(height_limit).clamp(
         FULLSCREEN_PLAYER_MIN_COVER_SIZE,
         FULLSCREEN_PLAYER_MAX_COVER_SIZE,
     )
+}
+
+fn fullscreen_show_hero_for(height: i32) -> bool {
+    height >= FULLSCREEN_PLAYER_HERO_MIN_WINDOW_HEIGHT
 }
 
 #[cfg(test)]
@@ -1901,6 +1940,13 @@ mod tests {
     fn fullscreen_use_width() {
         assert_eq!(fullscreen_artwork_size_for(900, 560), 140);
         assert_eq!(fullscreen_artwork_size_for(900, 700), 270);
+        assert_eq!(fullscreen_artwork_size_for(450, 900), 264);
+    }
+
+    #[test]
+    fn fullscreen_hero_uses_height_not_tiny_width() {
+        assert!(super::fullscreen_show_hero_for(900));
+        assert!(!super::fullscreen_show_hero_for(400));
     }
 
     #[test]

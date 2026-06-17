@@ -21,7 +21,7 @@ impl Shell {
         let route_margin = playlist_route_margin(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
@@ -30,6 +30,7 @@ impl Shell {
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
         header.add_css_class("playlist-detail-showcase");
+        mark_tiny_detail_showcase(&header, content_width);
         add_album_seed_gradient_class(&header, seed);
         header.set_margin_start(route_margin);
         header.set_margin_end(route_margin);

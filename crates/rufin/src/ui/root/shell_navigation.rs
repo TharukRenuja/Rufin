@@ -946,7 +946,7 @@ pub(in crate::ui) fn present_current_track_context_menu(
 ) {
     let target = target.as_ref();
     if let Some(track) = current_player_track(shell) {
-        present_track_context_menu(target, shell, track, None);
+        present_track_context_menu_above(target, shell, track, None);
     }
 }
 

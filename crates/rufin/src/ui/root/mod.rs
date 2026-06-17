@@ -99,8 +99,8 @@ use gtk::glib;
 use layout::{
     COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_HEIGHT,
     MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, ResolvedLeftSidebarMode, SidebarWidths,
-    configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
+    PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout, ResolvedLeftSidebarMode,
+    SidebarWidths, configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
     detail_showcase_cover_size, resolve_layout_with_sidebar_widths, route_content_width,
 };
 #[cfg(unix)]
@@ -179,7 +179,8 @@ pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
-    playlist_detail_compact_for_width, playlist_route_margin, playlist_sort_width,
+    playlist_cover_size, playlist_detail_compact_for_width, playlist_route_margin,
+    playlist_sort_width,
 };
 pub(in crate::ui) use shell_navigation::*;
 
@@ -245,7 +246,6 @@ pub(in crate::ui) fn route_resize_diagnostics_enabled() -> bool {
 pub(in crate::ui) enum RouteResizePolicy {
     Stable,
     LayoutSignature,
-    PlaylistDetailLayout,
     SettledWidth,
 }
 #[derive(Clone, Debug, Default)]
@@ -465,6 +465,7 @@ pub(in crate::ui) struct Shell {
     split_view: adw::OverlaySplitView,
     normal_nav_slot: gtk::ScrolledWindow,
     compact_nav_slot: gtk::ScrolledWindow,
+    tiny_nav_button: gtk::Button,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
@@ -755,6 +756,21 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     content_chrome.root.set_margin_start(8);
     let main_menu = content_chrome.main_menu;
     let right_panel_slot = content_chrome.right_panel_slot;
+    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    tiny_nav_button.add_css_class("icon-button");
+    tiny_nav_button.add_css_class("flat");
+    tiny_nav_button.add_css_class("circular");
+    tiny_nav_button.set_tooltip_text(Some(&tr("Show sidebar")));
+    tiny_nav_button.update_property(&[gtk::accessible::Property::Label(&tr("Show sidebar"))]);
+    tiny_nav_button.set_halign(gtk::Align::Start);
+    tiny_nav_button.set_valign(gtk::Align::Start);
+    tiny_nav_button.set_margin_top(9);
+    tiny_nav_button.set_margin_start(8);
+    tiny_nav_button.set_visible(false);
+    content_chrome.root.add_overlay(&tiny_nav_button);
+    content_chrome
+        .root
+        .set_measure_overlay(&tiny_nav_button, false);
     let fullscreen_player = build_fullscreen_player();
     let player_controls = build_bottom_player();
 
@@ -817,6 +833,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         split_view,
         normal_nav_slot,
         compact_nav_slot,
+        tiny_nav_button,
         normal_nav,
         compact_nav,
         server_selector,
@@ -841,6 +858,12 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.update_server_selector();
+    {
+        let split_view = shell.split_view.clone();
+        shell
+            .tiny_nav_button
+            .connect_clicked(move |_| split_view.set_show_sidebar(true));
+    }
     connect_shell_actions(&shell, main_menu);
     install_window_state_persistence(&shell);
     #[cfg(unix)]

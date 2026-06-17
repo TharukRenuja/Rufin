@@ -9,7 +9,7 @@ use crate::i18n::tr;
 
 use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
 use super::{
-    HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell,
+    HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, Shell,
     add_album_seed_gradient_class, add_card_label_link, album_artist_route,
     configure_fill_width_clip, icon_button, mark_route_scroll_owner,
 };
@@ -79,7 +79,7 @@ impl Shell {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.add_css_class("route-content");
-        content.set_margin_top(24);
+        content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);

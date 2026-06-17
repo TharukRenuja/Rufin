@@ -11,7 +11,6 @@ use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
-const DETAIL_SHOWCASE_SIDE_INSET: i32 = PRIMARY_ROUTE_MARGIN_END / 2;
 
 impl Shell {
     pub(super) fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -28,7 +27,7 @@ impl Shell {
 
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.set_margin_top(28);
+        content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(0);
@@ -93,7 +92,7 @@ impl Shell {
 
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.set_margin_top(28);
+        content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(0);
@@ -148,7 +147,7 @@ impl Shell {
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         wrapper.set_margin_end(0);
@@ -204,6 +203,7 @@ impl Shell {
         header.add_css_class("detail-showcase");
         header.add_css_class("artist-detail-showcase");
         header.add_css_class("detail-showcase-horizontal");
+        mark_tiny_detail_showcase(&header, content_width);
         add_album_seed_gradient_class(&header, seed);
         let external_links = artist_external_links(self, artist, tracks);
         let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
@@ -364,8 +364,7 @@ impl Shell {
         body.append(&metadata);
         header.append(&body);
         let showcase = detail_showcase_frame(header.upcast());
-        showcase.set_margin_start(DETAIL_SHOWCASE_SIDE_INSET);
-        showcase.set_margin_end(DETAIL_SHOWCASE_SIDE_INSET);
+        showcase.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         showcase
     }
 

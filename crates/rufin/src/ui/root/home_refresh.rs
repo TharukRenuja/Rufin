@@ -30,7 +30,22 @@ pub(in crate::ui) fn present_track_context_menu(
     track: Track,
     position: Option<(f64, f64)>,
 ) {
-    present_track_context_menu_inner(target, shell, track, position, None);
+    present_track_context_menu_inner(target, shell, track, position, None, None);
+}
+pub(in crate::ui) fn present_track_context_menu_above(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    position: Option<(f64, f64)>,
+) {
+    present_track_context_menu_inner(
+        target,
+        shell,
+        track,
+        position,
+        None,
+        Some(gtk::PositionType::Top),
+    );
 }
 pub(in crate::ui) fn present_track_menu(
     target: &gtk::Widget,
@@ -39,7 +54,7 @@ pub(in crate::ui) fn present_track_menu(
     remove_action: PlaylistEntryContextMenuAction,
     position: Option<(f64, f64)>,
 ) {
-    present_track_context_menu_inner(target, shell, track, position, Some(remove_action));
+    present_track_context_menu_inner(target, shell, track, position, Some(remove_action), None);
 }
 fn present_track_context_menu_inner(
     target: &gtk::Widget,
@@ -47,6 +62,7 @@ fn present_track_context_menu_inner(
     track: Track,
     position: Option<(f64, f64)>,
     remove_action: Option<PlaylistEntryContextMenuAction>,
+    popover_position: Option<gtk::PositionType>,
 ) {
     let main_menu = context_menu_box();
     main_menu.append(&context_menu_action(
@@ -113,6 +129,9 @@ fn present_track_context_menu_inner(
     }
 
     let popover = context_popover(target, "track-context-menu", position, &main_menu);
+    if let Some(popover_position) = popover_position {
+        popover.set_position(popover_position);
+    }
 
     let actions = gio::SimpleActionGroup::new();
 

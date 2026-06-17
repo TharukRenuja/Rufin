@@ -1,7 +1,6 @@
 use super::*;
 
 const ALBUM_DETAIL_ROUTE_INSET: i32 = PRIMARY_ROUTE_MARGIN_START + DETAIL_ROUTE_SCROLL_GUTTER;
-const DETAIL_SHOWCASE_SIDE_INSET: i32 = PRIMARY_ROUTE_MARGIN_END / 2;
 const DETAIL_HEADER_SPACING: i32 = 18;
 
 impl Shell {
@@ -32,7 +31,7 @@ impl Shell {
 
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
-        content.set_margin_top(20);
+        content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(0);
@@ -46,6 +45,7 @@ impl Shell {
         header.add_css_class("detail-showcase");
         header.add_css_class("album-detail-showcase");
         header.add_css_class("detail-showcase-horizontal");
+        mark_tiny_detail_showcase(&header, inner_content_width);
         add_album_seed_gradient_class(&header, album.color_seed);
         let external_links = album_external_links(self, &album);
         let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
@@ -217,8 +217,7 @@ impl Shell {
         body.append(&metadata);
         header.append(&body);
         let showcase = detail_showcase_frame(header.upcast());
-        showcase.set_margin_start(DETAIL_SHOWCASE_SIDE_INSET);
-        showcase.set_margin_end(DETAIL_SHOWCASE_SIDE_INSET);
+        showcase.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.append(&showcase);
 
         let table = self.library_tracks_panel_with_source(

@@ -120,9 +120,9 @@ impl Shell {
         toolbar.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
         wrapper.append(&toolbar);
         self.install_type_to_search(&search);
-        wrapper.append(&non_propagating_width_clip(album_collection_widget(
-            self, model, key,
-        )));
+        let collection = non_propagating_width_clip(album_collection_widget(self, model, key));
+        collection.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
+        wrapper.append(&collection);
         wrapper.upcast()
     }
     pub(in crate::ui) fn library_tracks_page(
@@ -341,7 +341,7 @@ impl Shell {
         } = options;
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);

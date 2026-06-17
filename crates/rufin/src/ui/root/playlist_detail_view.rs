@@ -2,7 +2,9 @@ use super::*;
 
 const PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN: i32 = 24;
 const PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN: i32 = 16;
+const PLAYLIST_DETAIL_TINY_ROUTE_MARGIN: i32 = 10;
 const PLAYLIST_DETAIL_COMPACT_WIDTH: i32 = 760;
+const PLAYLIST_DETAIL_TINY_WIDTH: i32 = 520;
 const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
 const PLAYLIST_DETAIL_COMPACT_COVER_SIZE: i32 = 182;
 const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
@@ -13,7 +15,9 @@ pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
 }
 
 pub(in crate::ui) fn playlist_route_margin(width: i32) -> i32 {
-    if playlist_detail_compact_for_width(width) {
+    if width < PLAYLIST_DETAIL_TINY_WIDTH {
+        PLAYLIST_DETAIL_TINY_ROUTE_MARGIN
+    } else if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN
     } else {
         PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN
@@ -37,7 +41,9 @@ pub(in crate::ui) fn playlist_detail_cover_fetch_size() -> u32 {
     PLAYLIST_DETAIL_COVER_FETCH_SIZE
 }
 pub(in crate::ui) fn playlist_cover_size(width: i32) -> i32 {
-    if playlist_detail_compact_for_width(width) {
+    if width < PLAYLIST_DETAIL_TINY_WIDTH {
+        width.clamp(96, 156)
+    } else if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_COVER_SIZE
     } else {
         PLAYLIST_DETAIL_WIDE_COVER_SIZE
@@ -176,7 +182,7 @@ impl Shell {
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
-        wrapper.set_margin_top(28);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
 
         let header = gtk::Box::new(
@@ -184,6 +190,7 @@ impl Shell {
             if compact { 20 } else { 28 },
         );
         header.add_css_class("playlist-detail-showcase");
+        mark_tiny_detail_showcase(&header, content_width);
         add_album_seed_gradient_class(&header, seed);
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
@@ -201,16 +208,19 @@ impl Shell {
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
         metadata.set_hexpand(true);
+        metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
         let title = gtk::Label::new(Some(&detail.smart_playlist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        fit_playlist_detail_label(&title);
         let kind_row = self.playlist_detail_kind_row(&[]);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
+        fit_playlist_detail_label(&summary);
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
         let play = detail_action_button("media-playback-start-symbolic", "Play");
@@ -244,7 +254,8 @@ impl Shell {
         metadata.append(&summary);
         metadata.append(&actions);
         header.append(&metadata);
-        wrapper.append(&header);
+        let showcase = detail_showcase_frame(header.upcast());
+        wrapper.append(&showcase);
 
         if detail.tracks.is_empty() {
             let empty = self.placeholder_view("Tracks", "No tracks match this smart playlist.");
@@ -266,7 +277,9 @@ impl Shell {
                 }),
             ));
         }
-        wrapper.upcast()
+        let route = detail_route_wrapper(0);
+        route.append(&detail_route_scroller(self, wrapper.upcast()));
+        route.upcast()
     }
 
     pub(in crate::ui) fn playlist_detail_view(
@@ -338,7 +351,7 @@ impl Shell {
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
-        wrapper.set_margin_top(28);
+        wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(route_margin);
         wrapper.set_margin_end(route_margin);
@@ -348,6 +361,7 @@ impl Shell {
             if compact { 20 } else { 28 },
         );
         header.add_css_class("playlist-detail-showcase");
+        mark_tiny_detail_showcase(&header, content_width);
         add_album_seed_gradient_class(&header, seed);
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
@@ -363,16 +377,19 @@ impl Shell {
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
         metadata.set_hexpand(true);
+        metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
         let title = gtk::Label::new(Some(&detail.playlist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        fit_playlist_detail_label(&title);
         let kind_row = self.playlist_detail_kind_row(&detail.playlist.top_genres);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
+        fit_playlist_detail_label(&summary);
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
         let play = detail_action_button("media-playback-start-symbolic", "Play");
@@ -461,7 +478,9 @@ impl Shell {
         } else {
             wrapper.append(&self.playlist_entries_view(&detail));
         }
-        wrapper.upcast()
+        let route = detail_route_wrapper(0);
+        route.append(&detail_route_scroller(self, wrapper.upcast()));
+        route.upcast()
     }
 
     fn playlist_detail_from_loaded_tracks(
@@ -580,6 +599,14 @@ impl Shell {
         wrapper.append(&table);
         wrapper.upcast()
     }
+}
+
+fn fit_playlist_detail_label(label: &gtk::Label) {
+    label.set_hexpand(true);
+    label.set_halign(gtk::Align::Fill);
+    label.set_width_request(1);
+    label.set_width_chars(1);
+    label.set_max_width_chars(32);
 }
 
 #[cfg(test)]
