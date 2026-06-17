@@ -30,36 +30,65 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.4/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.5/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.5" date="2026-06-17">
+      <description>
+        <p>I believe this release makes the app much more predictable after adressing common UX gaps and making it viable in smaller window sizes. Since Rufin got a lot of changes in last 3 versions, new issues for possible regressions are appreciated.</p>
+        <ul>
+          <li>Added Russian and Latvian translations by Александр Стельмах</li>
+        </ul>
+        <ul>
+          <li>App window now can be made smaller, to 450x400 px</li>
+        </ul>
+        <ul>
+          <li>Added release and control button toast notifications, these can be controlled from preferences</li>
+        </ul>
+        <ul>
+          <li>Added more keyboard shortcuts</li>
+        </ul>
+        <ul>
+          <li>Lyrics loading is faster now, and fixed another NetEase placeholder text</li>
+        </ul>
+        <ul>
+          <li>Queue and playback behavior got several fixes: clearing the queue now keeps the current track while removing the rest (#247), shuffle uses the full source list, the current queue track stays visible, MPRIS updates are now not lagging behind and Auto DJ doesn't create an entry per skip and create a delay on continous skips</li>
+        </ul>
+        <ul>
+          <li>Local and cached library handling got better, and fixed a bug where local library kept the deleted tracks</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug that longer titles and albums could push the bottom player buttons to the right</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.4" date="2026-06-16">
       <description>
         <p>This release touches a lot of areas, and fixes 2 biggest problems of the app: UI freezes on playing/skipping, and unreliable window resize reactions. There were a lot of improvements in playback thanks to this and solving these 2 problems will make the future easier. There are several improvements and bug fixes in other areas as well:</p>
