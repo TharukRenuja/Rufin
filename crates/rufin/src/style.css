@@ -362,16 +362,24 @@ popover.queue-context-menu > contents {
 }
 
 .server-selector {
-  border-radius: 8px;
+  margin: 0 8px 4px;
 }
 
-menubutton.server-selector > button {
-  border-radius: 8px;
+menubutton.server-selector > button,
+menubutton.server-selector > button:focus,
+menubutton.server-selector > button:checked {
+  border-radius: 9px;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 menubutton.server-selector:not(.rail-button) > button {
-  padding: 8px 10px;
-  min-height: 42px;
+  padding: 7px 10px;
+}
+
+menubutton.server-selector.rail-button {
+  margin: 0 2px 4px;
 }
 
 menubutton.server-selector.rail-button > button {
