@@ -138,6 +138,7 @@ impl LyricsPane {
     pub fn set_content(
         &self,
         lyrics: Option<&Lyrics>,
+        loading: bool,
         empty_status: String,
         seek: Rc<dyn Fn(u64)>,
     ) {
@@ -147,6 +148,11 @@ impl LyricsPane {
         self.rows.borrow_mut().clear();
         self.active_index.set(None);
         self.cancel_scroll_animation();
+        if lyrics.is_none() {
+            self.body.add_css_class("lyrics-placeholder");
+        } else {
+            self.body.remove_css_class("lyrics-placeholder");
+        }
 
         if let Some(current_lyrics) = lyrics {
             for (line_index, line) in current_lyrics.lines.iter().enumerate() {
@@ -184,6 +190,22 @@ impl LyricsPane {
                     label,
                 });
             }
+        } else if loading {
+            let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            placeholder.set_halign(gtk::Align::Fill);
+            placeholder.set_valign(gtk::Align::Fill);
+            placeholder.set_hexpand(true);
+            placeholder.set_vexpand(true);
+
+            let spinner = gtk::Spinner::new();
+            spinner.add_css_class("lyrics-loading-spinner");
+            spinner.set_halign(gtk::Align::Center);
+            spinner.set_valign(gtk::Align::Center);
+            spinner.set_hexpand(true);
+            spinner.set_vexpand(true);
+            spinner.start();
+            placeholder.append(&spinner);
+            self.body.append(&placeholder);
         } else {
             let status = gtk::Label::new(Some(&empty_status));
             status.add_css_class("muted");

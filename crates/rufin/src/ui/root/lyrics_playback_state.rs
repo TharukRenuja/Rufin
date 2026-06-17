@@ -82,6 +82,10 @@ impl Shell {
         track_id: TrackId,
         lyrics: Option<Lyrics>,
     ) {
+        clear_matching_lyrics_loading(
+            &mut self.state.lyrics_loading_track_id.borrow_mut(),
+            &track_id,
+        );
         if !loaded_lyrics_matches_current(
             current_playback_track_id(&self.state.player.borrow()).as_ref(),
             &track_id,
@@ -138,9 +142,10 @@ impl Shell {
         {
             return;
         }
+        *self.state.lyrics_loading_track_id.borrow_mut() = Some(request_track_id.clone());
         let controller = self.controller.clone();
         std::thread::spawn(move || match request {
-            AutoLyricsRequest::Default => controller.request_track_lyrics(request_track_id),
+            AutoLyricsRequest::Default => controller.request_track_auto_lyrics(request_track_id),
             AutoLyricsRequest::ServerOnly => {
                 controller.request_track_server_lyrics(request_track_id);
             }
@@ -222,4 +227,22 @@ pub(in crate::ui) fn loaded_lyrics_matches_current(
 ) -> bool {
     current_track.is_some_and(|current| current == track_id)
         && lyrics.is_none_or(|lyrics| &lyrics.track_id == track_id)
+}
+pub(in crate::ui) fn lyrics_loading_matches_current(
+    current_track: Option<&TrackId>,
+    loading_track: Option<&TrackId>,
+    lyrics: Option<&Lyrics>,
+) -> bool {
+    lyrics.is_none()
+        && current_track
+            .zip(loading_track)
+            .is_some_and(|(current, loading)| current == loading)
+}
+pub(in crate::ui) fn clear_matching_lyrics_loading(
+    loading_track: &mut Option<TrackId>,
+    track_id: &TrackId,
+) {
+    if loading_track.as_ref() == Some(track_id) {
+        *loading_track = None;
+    }
 }

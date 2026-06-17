@@ -713,6 +713,15 @@ scale.volume-slider trough {
   padding: 20px 0 140px;
 }
 
+.lyrics-lines.lyrics-placeholder {
+  padding: 0;
+}
+
+.lyrics-loading-spinner {
+  min-width: 24px;
+  min-height: 24px;
+}
+
 .lyrics-line {
   color: @window_fg_color;
   font-size: 19px;
