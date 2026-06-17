@@ -1,6 +1,7 @@
 use super::cover::{cover_artwork_id_for_key, cover_request_id_for_key};
 use super::lyrics_playback_state::{
-    allow_loaded_lyrics_cache_revisit, loaded_lyrics_matches_current,
+    allow_loaded_lyrics_cache_revisit, clear_matching_lyrics_loading,
+    loaded_lyrics_matches_current, lyrics_loading_matches_current,
 };
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
@@ -1655,6 +1656,42 @@ pub(in crate::ui) fn shell_allow_cache() {
     assert!(attempted.contains(&previous_failed_track_id));
     allow_loaded_lyrics_cache_revisit(&mut attempted, None);
     assert!(attempted.contains(&previous_failed_track_id));
+}
+#[test]
+pub(in crate::ui) fn shell_lyrics_loading_current() {
+    let current_track = TrackId::fake(15);
+    let old_track = TrackId::fake(16);
+    let lyrics = Lyrics {
+        track_id: current_track.clone(),
+        source: LyricsSource::Server,
+        external_provider: None,
+        lines: vec![LyricLine {
+            text: "line one".to_string(),
+            start_millis: None,
+        }],
+    };
+
+    assert!(lyrics_loading_matches_current(
+        Some(&current_track),
+        Some(&current_track),
+        None
+    ));
+    assert!(!lyrics_loading_matches_current(
+        Some(&current_track),
+        Some(&old_track),
+        None
+    ));
+    assert!(!lyrics_loading_matches_current(
+        Some(&current_track),
+        Some(&current_track),
+        Some(&lyrics)
+    ));
+
+    let mut loading_track = Some(old_track.clone());
+    clear_matching_lyrics_loading(&mut loading_track, &current_track);
+    assert_eq!(loading_track, Some(old_track.clone()));
+    clear_matching_lyrics_loading(&mut loading_track, &old_track);
+    assert_eq!(loading_track, None);
 }
 #[test]
 pub(in crate::ui) fn shell_reject_stale_lyrics() {

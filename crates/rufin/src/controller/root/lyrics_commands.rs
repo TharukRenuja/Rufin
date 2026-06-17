@@ -7,9 +7,36 @@ fn lyrics_event(track_id: &TrackId, lyrics: Option<Lyrics>) -> ControllerEvent {
     }
 }
 
+fn default_external_fallback_for_search(search: JellyfinLyricsSearch) -> bool {
+    matches!(
+        search,
+        JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
+    )
+}
+
+fn cached_lyrics_search_mode(
+    search: JellyfinLyricsSearch,
+    allow_external_fallback: bool,
+) -> JellyfinLyricsSearch {
+    if allow_external_fallback && matches!(search, JellyfinLyricsSearch::ServerOnly) {
+        JellyfinLyricsSearch::ServerThenRemote
+    } else {
+        search
+    }
+}
+
 impl AppController {
+    #[cfg(test)]
     pub fn request_track_lyrics(&self, track_id: TrackId) {
         self.lyrics_cache_for_track(track_id, true);
+    }
+    pub fn request_track_auto_lyrics(&self, track_id: TrackId) {
+        self.lyrics_search_for_track_with_external(
+            track_id,
+            true,
+            JellyfinLyricsSearch::ServerOnly,
+            true,
+        );
     }
     pub fn request_track_server_lyrics(&self, track_id: TrackId) {
         self.lyrics_search_for_track(track_id, true, JellyfinLyricsSearch::ServerOnly);
@@ -38,6 +65,7 @@ impl AppController {
         let settings = load_settings_from_store(&self.store);
         self.lyrics_search(use_cache, lyrics_search_for_settings(&settings));
     }
+    #[cfg(test)]
     fn lyrics_cache_for_track(&self, track_id: TrackId, use_cache: bool) {
         let settings = load_settings_from_store(&self.store);
         self.lyrics_search_for_track(track_id, use_cache, lyrics_search_for_settings(&settings));
@@ -51,7 +79,13 @@ impl AppController {
             debug!("lyrics request skipped because the queue has no current track");
             return;
         };
-        self.lyrics_search_entry(use_cache, search, server_id, entry);
+        self.lyrics_search_entry(
+            use_cache,
+            search,
+            default_external_fallback_for_search(search),
+            server_id,
+            entry,
+        );
     }
     fn lyrics_search_for_track(
         &self,
@@ -67,12 +101,36 @@ impl AppController {
             debug!(track_id = %track_id, "skipped stale lyrics request");
             return;
         }
-        self.lyrics_search_entry(use_cache, search, server_id, entry);
+        self.lyrics_search_entry(
+            use_cache,
+            search,
+            default_external_fallback_for_search(search),
+            server_id,
+            entry,
+        );
+    }
+    fn lyrics_search_for_track_with_external(
+        &self,
+        track_id: TrackId,
+        use_cache: bool,
+        search: JellyfinLyricsSearch,
+        allow_external_fallback: bool,
+    ) {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
+            debug!("lyrics request skipped because the queue has no current track");
+            return;
+        };
+        if entry.track_id != track_id {
+            debug!(track_id = %track_id, "skipped stale lyrics request");
+            return;
+        }
+        self.lyrics_search_entry(use_cache, search, allow_external_fallback, server_id, entry);
     }
     fn lyrics_search_entry(
         &self,
         use_cache: bool,
         search: JellyfinLyricsSearch,
+        allow_external_fallback: bool,
         server_id: ServerId,
         entry: QueueEntry,
     ) {
@@ -95,7 +153,12 @@ impl AppController {
                 .unwrap_or(None)
         });
         if let Some(cached) = cached.flatten()
-            && cached_lyrics_allowed_for_track(&cached, search, &external_providers, cue_track)
+            && cached_lyrics_allowed_for_track(
+                &cached,
+                cached_lyrics_search_mode(search, allow_external_fallback),
+                &external_providers,
+                cue_track,
+            )
         {
             let delete_remote = cached.source == source::LyricsSource::Remote;
             if let Some(cached) = lyrics_with_displayable_content(cached) {
@@ -116,17 +179,17 @@ impl AppController {
             .with_store(|store| store.saved_server(&server_id))
             .unwrap_or(None)
             .is_some_and(|saved| saved.server.provider == LOCAL_PROVIDER_ID);
-        let allow_remote = matches!(
-            search,
-            JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
-        );
         if provider_is_local {
-            debug!(track_id = %entry.track_id, allow_remote, "local provider has no server lyrics");
+            debug!(
+                track_id = %entry.track_id,
+                allow_external_fallback, "local provider has no server lyrics"
+            );
             let events = self.events.clone();
             let store = self.store.clone();
             let local_external_providers = external_providers.clone();
             thread::spawn(move || {
-                match allow_remote.then(|| external_best_lyrics(&entry, &local_external_providers))
+                match allow_external_fallback
+                    .then(|| external_best_lyrics(&entry, &local_external_providers))
                 {
                     Some(Ok(Some(lyrics))) => {
                         debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
@@ -145,7 +208,12 @@ impl AppController {
             });
             return;
         }
-        debug!(track_id = %entry.track_id, allow_remote, ?search, "requesting lyrics from provider");
+        debug!(
+            track_id = %entry.track_id,
+            allow_external_fallback,
+            ?search,
+            "requesting lyrics from provider"
+        );
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -175,8 +243,13 @@ impl AppController {
                     let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
                 }
                 Ok(None) => {
-                    debug!(track_id = %entry.track_id, allow_remote, "provider returned no lyrics");
-                    match allow_remote.then(|| external_best_lyrics(&entry, &external_providers)) {
+                    debug!(
+                        track_id = %entry.track_id,
+                        allow_external_fallback, "provider returned no lyrics"
+                    );
+                    match allow_external_fallback
+                        .then(|| external_best_lyrics(&entry, &external_providers))
+                    {
                         Some(Ok(Some(lyrics))) => {
                             debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                             let _saved =
@@ -193,7 +266,9 @@ impl AppController {
                     }
                 }
                 Err(error) => {
-                    match allow_remote.then(|| external_best_lyrics(&entry, &external_providers)) {
+                    match allow_external_fallback
+                        .then(|| external_best_lyrics(&entry, &external_providers))
+                    {
                         Some(Ok(Some(lyrics))) => {
                             debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider after provider error");
                             let _saved =

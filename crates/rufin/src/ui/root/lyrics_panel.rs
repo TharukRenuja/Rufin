@@ -1,13 +1,14 @@
+use super::lyrics_playback_state::lyrics_loading_matches_current;
 use super::*;
 
 const LYRICS_SEARCH_DEBOUNCE_MILLIS: u64 = 600;
 
 impl Shell {
     pub(in crate::ui) fn render_lyrics_panel(self: &Rc<Self>) {
+        self.request_auto_lyrics_if_needed();
         self.render_lyrics_pane(&self.lyrics_pane);
         self.render_lyrics_pane(&self.fullscreen_player.lyrics_pane);
         self.update_lyrics_highlight();
-        self.request_auto_lyrics_if_needed();
     }
     pub(in crate::ui) fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.state.settings.borrow();
@@ -21,6 +22,11 @@ impl Shell {
             (tr("No track playing"), false)
         };
         let lyrics = self.state.lyrics.borrow();
+        let loading = lyrics_loading_matches_current(
+            current_track_id.as_ref(),
+            self.state.lyrics_loading_track_id.borrow().as_ref(),
+            lyrics.as_ref(),
+        );
         let clear_auto_search_enabled =
             auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref(), lyrics.as_ref());
         drop(settings);
@@ -34,7 +40,7 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
-        pane.set_content(lyrics.as_ref(), empty_status, seek);
+        pane.set_content(lyrics.as_ref(), loading, empty_status, seek);
         drop(lyrics);
     }
     pub(in crate::ui) fn present_lyrics_search_dialog(self: &Rc<Self>) {

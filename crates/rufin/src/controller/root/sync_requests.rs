@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const EXTERNAL_LYRICS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const LRCLIB_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
 const SLOW_STREAM_RESOLVE_STAGE_MS: u128 = 250;
 pub(in crate::controller) const LOCAL_LYRICS_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -358,17 +358,35 @@ pub(in crate::controller) fn external_lyrics_search(
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut had_success = false;
-    for provider in providers {
-        match external_provider_search(*provider, artist_name, track_name, false) {
-            Ok(mut batch) => {
-                had_success = true;
-                filter_external_results_for_query(&mut batch, artist_name, track_name);
-                order_external_provider_results(&mut batch, artist_name, track_name);
-                results.extend(batch);
+    std::thread::scope(|scope| {
+        let handles = providers
+            .iter()
+            .copied()
+            .map(|provider| {
+                scope.spawn(move || {
+                    (
+                        provider,
+                        external_provider_search(provider, artist_name, track_name, false),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            let Ok((provider, result)) = handle.join() else {
+                errors.push("lyric provider worker panicked".to_string());
+                continue;
+            };
+            match result {
+                Ok(mut batch) => {
+                    had_success = true;
+                    filter_external_results_for_query(&mut batch, artist_name, track_name);
+                    order_external_provider_results(&mut batch, artist_name, track_name);
+                    results.extend(batch);
+                }
+                Err(error) => errors.push(format!("{}: {error}", provider.title())),
             }
-            Err(error) => errors.push(format!("{}: {error}", provider.title())),
         }
-    }
+    });
     if !had_success && !errors.is_empty() {
         return Err(errors.join("; "));
     }
@@ -381,25 +399,30 @@ pub(in crate::controller) fn external_best_lyrics(
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut had_success = false;
-    for provider in providers {
-        if *provider == ExternalLyricsProvider::Lrclib {
-            match lrclib_exact_result(entry) {
-                Ok(Some(result)) => {
+    std::thread::scope(|scope| {
+        let handles = providers
+            .iter()
+            .copied()
+            .map(|provider| {
+                scope.spawn(move || (provider, external_best_lyrics_for_provider(entry, provider)))
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            let Ok((provider, result)) = handle.join() else {
+                errors.push("lyric provider worker panicked".to_string());
+                continue;
+            };
+            match result {
+                Ok(batch) => {
                     had_success = true;
-                    results.push(result);
+                    if !batch.is_empty() {
+                        results.extend(batch);
+                    }
                 }
-                Ok(None) => {}
                 Err(error) => errors.push(format!("{}: {error}", provider.title())),
             }
         }
-        match external_provider_search(*provider, &entry.artist, &entry.title, true) {
-            Ok(batch) => {
-                had_success = true;
-                results.extend(batch);
-            }
-            Err(error) => errors.push(format!("{}: {error}", provider.title())),
-        }
-    }
+    });
     if results.is_empty() {
         if !had_success && !errors.is_empty() {
             return Err(errors.join("; "));
@@ -423,6 +446,24 @@ pub(in crate::controller) fn external_best_lyrics(
     } else {
         Ok(None)
     }
+}
+fn external_best_lyrics_for_provider(
+    entry: &QueueEntry,
+    provider: ExternalLyricsProvider,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let mut results = Vec::new();
+    if provider == ExternalLyricsProvider::Lrclib
+        && let Some(result) = lrclib_exact_result(entry)?
+    {
+        results.push(result);
+    }
+    results.extend(external_provider_search(
+        provider,
+        &entry.artist,
+        &entry.title,
+        true,
+    )?);
+    Ok(results)
 }
 pub(in crate::controller) fn filter_external_results_for_query(
     results: &mut Vec<LyricsSearchResult>,
@@ -450,7 +491,7 @@ fn lrclib_exact_result(entry: &QueueEntry) -> Result<Option<LyricsSearchResult>,
     let Some(url) = lrclib_get_url(&entry.artist, &entry.title, entry.duration_seconds)? else {
         return Ok(None);
     };
-    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     lrclib_fetch_get(&client, url)
 }
 fn external_provider_search(
@@ -497,7 +538,7 @@ fn netease_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearc
         pairs.append_pair("limit", "5");
         pairs.append_pair("offset", "0");
     }
-    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     let body = fetch_text(&client, url, "NetEase lyric search")?;
     parse_netease_search_body(&body)
 }
@@ -540,7 +581,7 @@ fn netease_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
         pairs.append_pair("lv", "-1");
         pairs.append_pair("tv", "-1");
     }
-    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     let body = fetch_text(&client, url, "NetEase lyric lookup")?;
     let response = serde_json::from_str::<NeteaseLyricsResponse>(&body)
         .map_err(|error| format!("NetEase lyric lookup returned invalid data: {error}"))?;
@@ -565,7 +606,7 @@ fn genius_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearch
         pairs.append_pair("q", &query);
         pairs.append_pair("per_page", "5");
     }
-    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     let body = fetch_text(&client, url, "Genius lyric search")?;
     parse_genius_search_body(&body)
 }
@@ -605,7 +646,7 @@ pub(in crate::controller) fn parse_genius_search_body(
 }
 fn genius_fetch_lyrics(url: &str) -> Result<Option<String>, String> {
     let url = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
-    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     let body = fetch_text(&client, url, "Genius lyric lookup")?;
     Ok(extract_genius_lyrics(&body).filter(|lyrics| !lyrics.trim().is_empty()))
 }
@@ -693,7 +734,7 @@ fn lrclib_search_with_urls(
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(LRCLIB_REQUEST_TIMEOUT)
+        .timeout(EXTERNAL_LYRICS_REQUEST_TIMEOUT)
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| error.to_string())?;
@@ -743,7 +784,7 @@ fn lrclib_search_priority_urls(
         return Ok(Vec::new());
     }
     let client = reqwest::blocking::Client::builder()
-        .timeout(LRCLIB_REQUEST_TIMEOUT)
+        .timeout(EXTERNAL_LYRICS_REQUEST_TIMEOUT)
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| error.to_string())?;
