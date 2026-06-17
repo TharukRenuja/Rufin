@@ -6,6 +6,10 @@ on:
       - published
   workflow_dispatch:
     inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        default: main
       package:
         description: Package to build or publish
         required: true
@@ -62,7 +66,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || github.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -73,15 +77,15 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || github.event_name == 'push'
+        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
         run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
 
       - name: Validate release tag
-        if: github.event_name == 'release' || github.event_name == 'push'
+        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
         run: |
           set -euo pipefail
           tag_name="$RELEASE_TAG"
@@ -91,9 +95,9 @@ jobs:
           fi
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || github.event_name == 'push'
+        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -107,9 +111,9 @@ jobs:
           test "$version" = "$metainfo_version"
 
       - name: Prepare release package from release tag
-        if: github.event_name == 'release' || github.event_name == 'push'
+        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
         run: |
           set -euo pipefail
           bash .github/scripts/update-aur-stable-package.sh --skip-srcinfo "$RELEASE_TAG"
@@ -121,7 +125,8 @@ jobs:
           set -euo pipefail
 
           package="$REQUESTED_PACKAGE"
-          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ||
+            "${{ inputs.ref }}" =~ ^refs/tags/v || "${{ inputs.ref }}" =~ ^v ]]; then
             package="rufin"
           fi
 
@@ -150,7 +155,8 @@ jobs:
           set -euo pipefail
 
           package="$REQUESTED_PACKAGE"
-          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ||
+            "${{ inputs.ref }}" =~ ^refs/tags/v || "${{ inputs.ref }}" =~ ^v ]]; then
             package="rufin"
           fi
 
