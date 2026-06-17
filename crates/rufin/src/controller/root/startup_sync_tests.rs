@@ -2132,9 +2132,16 @@ pub(in crate::controller) fn startup_emit_timing() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(statuses.iter().any(|status| status.contains(
-        "Caching library… This may take some time. Cached tracks page 5/5 for Fake Library (Music Server), 2,400/2,400 fetched, 2,400 cached"
-    )));
+    let track_count = FakeScale::Small.track_count();
+    let track_pages = track_count.div_ceil(PAGE_SIZE).max(1);
+    let expected_tracks = format!(
+        "Caching library… This may take some time. Cached tracks page {track_pages}/{track_pages} for Fake Library (Music Server), {track_count}/{track_count} fetched, {track_count} cached"
+    );
+    assert!(
+        statuses
+            .iter()
+            .any(|status| status.contains(&expected_tracks))
+    );
     assert!(
         statuses
             .iter()

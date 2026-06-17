@@ -1,5 +1,8 @@
 use super::*;
 
+const TEST_WAIT: Duration = Duration::from_secs(1);
+const TEST_POLL: Duration = Duration::from_millis(10);
+
 pub(in crate::controller) fn library_track(
     number: u32,
     artist_id: Option<ArtistId>,
@@ -90,7 +93,7 @@ fn wait_for_event<T>(
     mut select: impl FnMut(ControllerEvent) -> Option<T>,
 ) -> T {
     loop {
-        let event = events.recv_timeout(Duration::from_secs(5)).expect(context);
+        let event = events.recv_timeout(TEST_WAIT).expect(context);
         match event {
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
             event => {
@@ -145,7 +148,7 @@ pub(in crate::controller) fn wait_for_recorded_command(
     commands: &Arc<Mutex<Vec<PlaybackCommand>>>,
     predicate: impl Fn(&PlaybackCommand) -> bool,
 ) -> PlaybackCommand {
-    for _ in 0..50 {
+    for _ in 0..100 {
         if let Some(command) = commands
             .lock()
             .expect("commands")
@@ -155,7 +158,7 @@ pub(in crate::controller) fn wait_for_recorded_command(
         {
             return command;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(TEST_POLL);
     }
     panic!("timed out waiting for playback command");
 }
@@ -246,14 +249,14 @@ pub(in crate::controller) fn wait_for_polled_event<T>(
     context: &str,
     mut select: impl FnMut(ControllerEvent) -> Option<T>,
 ) -> T {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + TEST_WAIT;
     loop {
         assert!(
             std::time::Instant::now() < deadline,
             "timed out waiting for {context}"
         );
         controller.poll_playback_events();
-        match events.recv_timeout(Duration::from_millis(50)) {
+        match events.recv_timeout(TEST_POLL) {
             Ok(event) => {
                 if let Some(value) = select(event) {
                     return value;

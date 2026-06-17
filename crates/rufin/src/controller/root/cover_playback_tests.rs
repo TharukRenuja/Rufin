@@ -94,7 +94,7 @@ impl PlaybackBackend for BlockingPlaybackBackend {
         ) {
             let _sent = self.entered.send(());
             self.release
-                .recv_timeout(Duration::from_secs(5))
+                .recv_timeout(Duration::from_secs(1))
                 .map_err(|_| playback::PlaybackError::Backend("start gate timed out".into()))?;
             self.events
                 .push(PlaybackEvent::StateChanged(PlaybackState::Playing));

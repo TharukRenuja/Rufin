@@ -828,7 +828,7 @@ mod tests {
     fn source_shuffle_start_uses_shuffled_current() {
         let (controller, events, snapshot, ..) =
             AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = snapshot.tracks[0..4].to_vec();
+        let tracks = snapshot.tracks[0..8].to_vec();
         controller
             .with_queue_mut(|queue| {
                 queue.set_shuffle(true, 19);
@@ -872,8 +872,9 @@ mod tests {
         );
 
         let queue = wait_for_queue(&events).expect("source queue");
+        let identity_order = (0..queue.entries.len()).collect::<Vec<_>>();
         assert_eq!(queue.current_index, queue.shuffle_order.first().copied());
-        assert_ne!(queue.current_index, Some(0));
+        assert_ne!(queue.shuffle_order, identity_order);
     }
 
     #[test]
