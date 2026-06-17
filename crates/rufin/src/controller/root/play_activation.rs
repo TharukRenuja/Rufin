@@ -12,11 +12,30 @@ pub struct PlayActivation {
     pub target: PlayTarget,
 }
 
+impl PlayActivation {
+    pub fn shuffled_start(mut self) -> Self {
+        self.target = PlayTarget::ShuffleStart(Box::new(self.target));
+        self
+    }
+
+    pub fn into_parts(self) -> (bool, PlayTarget) {
+        match self.target {
+            PlayTarget::ShuffleStart(target) => (true, *target),
+            target => (false, target),
+        }
+    }
+
+    pub fn shuffle_start(&self) -> bool {
+        matches!(self.target, PlayTarget::ShuffleStart(_))
+    }
+}
+
 // Track-only activations are accepted by the seam before route conversion emits them.
 #[allow(dead_code)]
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlayTarget {
+    ShuffleStart(Box<PlayTarget>),
     TrackOnly(Track),
     LoadedSource {
         source_key: PlaySourceKey,
@@ -62,12 +81,13 @@ pub enum NormalizedPlayTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NormalizedPlayActivation {
     pub target: NormalizedPlayTarget,
+    pub shuffle_start: bool,
 }
 
 pub fn normalize_loaded_source_activation(
     activation: PlayActivation,
 ) -> Result<NormalizedPlayActivation, String> {
-    let PlayActivation { target } = activation;
+    let (shuffle_start, target) = activation.into_parts();
     let target = match target {
         PlayTarget::TrackOnly(track) => NormalizedPlayTarget::TrackOnly(Box::new(track)),
         PlayTarget::LoadedSource {
@@ -79,8 +99,12 @@ pub fn normalize_loaded_source_activation(
         PlayTarget::StoreBackedSource { .. } => {
             return Err("The selected source could not be resolved.".to_string());
         }
+        PlayTarget::ShuffleStart(_) => unreachable!("shuffle start is unwrapped by into_parts"),
     };
-    Ok(NormalizedPlayActivation { target })
+    Ok(NormalizedPlayActivation {
+        target,
+        shuffle_start,
+    })
 }
 
 fn normalize_loaded_source_target(

@@ -175,7 +175,7 @@ impl Shell {
                 0,
                 selected_folder_for_play.clone(),
             ) {
-                controller.play_activation(activation);
+                controller.play_activation(activation.shuffled_start());
             }
         });
         actions.append(&play_album);

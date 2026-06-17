@@ -3,21 +3,34 @@ use super::*;
 impl AppController {
     pub fn play_activation(&self, activation: PlayActivation) {
         let generation = self.next_play_activation_generation();
-        if self.activate_materialized_source_entry(&activation) {
+        let (shuffle_start, target) = activation.into_parts();
+        let activation = PlayActivation { target };
+        if !shuffle_start && self.activate_materialized_source_entry(&activation) {
             return;
         }
         match activation.target {
             PlayTarget::StoreBackedSource { source_key, anchor } => {
-                self.play_store_backed_source_activation(source_key, anchor, generation);
+                self.play_store_backed_source_activation(
+                    source_key,
+                    anchor,
+                    generation,
+                    shuffle_start,
+                );
             }
             target => {
-                self.finish_resolved_play_activation(PlayActivation { target });
+                let activation = PlayActivation { target };
+                self.finish_resolved_play_activation(if shuffle_start {
+                    activation.shuffled_start()
+                } else {
+                    activation
+                });
             }
         }
     }
 
     fn finish_resolved_play_activation(&self, activation: PlayActivation) {
-        if self.activate_materialized_source_entry(&activation) {
+        let shuffle_start = activation.shuffle_start();
+        if !shuffle_start && self.activate_materialized_source_entry(&activation) {
             return;
         }
         let activation = match normalize_loaded_source_activation(activation) {
@@ -32,7 +45,7 @@ impl AppController {
                 self.play_now(*track);
             }
             NormalizedPlayTarget::Replacement(replacement) => {
-                self.replace_queue_from_activation(replacement);
+                self.replace_queue_from_activation(replacement, activation.shuffle_start);
             }
         }
     }
@@ -43,6 +56,7 @@ impl AppController {
                 source_key, anchor, ..
             }
             | PlayTarget::StoreBackedSource { source_key, anchor } => (source_key, anchor),
+            PlayTarget::ShuffleStart(_) => return false,
             PlayTarget::TrackOnly(_) => return false,
         };
 
@@ -94,6 +108,7 @@ impl AppController {
         source_key: PlaySourceKey,
         anchor: PlayAnchor,
         generation: u64,
+        shuffle_start: bool,
     ) {
         let controller = self.clone();
         thread::spawn(move || {
@@ -105,7 +120,10 @@ impl AppController {
                 return;
             }
             match resolved {
-                Ok((server_id, activation)) => {
+                Ok((server_id, mut activation)) => {
+                    if shuffle_start {
+                        activation = activation.shuffled_start();
+                    }
                     controller
                         .finish_store_backed_source_activation(&server_id, activation, generation);
                 }
@@ -193,12 +211,15 @@ impl AppController {
         })
     }
 
-    fn replace_queue_from_activation(&self, replacement: QueueReplacement) {
+    fn replace_queue_from_activation(&self, replacement: QueueReplacement, shuffle_start: bool) {
         let result = self.with_queue_mut(|queue| {
             queue
                 .replace_all(replacement)
-                .map(|_| ())
-                .map_err(|_| "The selected source could not be queued.".to_string())
+                .map_err(|_| "The selected source could not be queued.".to_string())?;
+            if shuffle_start {
+                queue.start_first_shuffled();
+            }
+            Ok(())
         });
         if let Err(error) = result {
             let _sent = self.events.send(ControllerEvent::Error(error));
@@ -301,6 +322,7 @@ impl AppController {
                 },
             },
         }
+        .shuffled_start()
     }
 
     fn active_music_folder(store: &StoreHandle) -> Option<MusicFolderId> {
@@ -800,6 +822,58 @@ mod tests {
                 .collect::<Vec<_>>(),
             initial_ids
         );
+    }
+
+    #[test]
+    fn source_shuffle_start_uses_shuffled_current() {
+        let (controller, events, snapshot, ..) =
+            AppController::bootstrap_with_fake(FakeScale::Small);
+        let tracks = snapshot.tracks[0..4].to_vec();
+        controller
+            .with_queue_mut(|queue| {
+                queue.set_shuffle(true, 19);
+                Ok(())
+            })
+            .expect("set shuffle");
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: PlaylistId::fake(9),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: None,
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        };
+
+        controller.play_activation(
+            PlayActivation {
+                target: PlayTarget::LoadedSource {
+                    source_key,
+                    completeness: LoadedCompleteness::Complete,
+                    items: tracks
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .map(|(source_index, track)| PlaySourceItem {
+                            track,
+                            source_index,
+                            source_item_id: Some(format!("entry-{source_index}")),
+                        })
+                        .collect(),
+                    anchor: PlayAnchor {
+                        track_id: tracks[0].id.clone(),
+                        source_index: 0,
+                        source_item_id: Some("entry-0".to_string()),
+                    },
+                },
+            }
+            .shuffled_start(),
+        );
+
+        let queue = wait_for_queue(&events).expect("source queue");
+        assert_eq!(queue.current_index, queue.shuffle_order.first().copied());
+        assert_ne!(queue.current_index, Some(0));
     }
 
     #[test]

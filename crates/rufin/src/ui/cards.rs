@@ -22,7 +22,7 @@ use super::{
     present_track_context_menu, selected_music_folder_id, set_favorite_button_active,
     smart_playlist_play_source_key, stable_seed, track_artist_route,
 };
-use crate::controller::AppController;
+use crate::controller::{AppController, PlayActivation};
 
 impl Shell {
     fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
@@ -453,6 +453,7 @@ pub(super) fn playlist_cover_tile(
                 )
             } else {
                 playlist_entry_play_activation(playlist_id.clone(), &detail.entries[0], 0, &state)
+                    .map(PlayActivation::shuffled_start)
             };
             if let Some(activation) = activation {
                 controller.play_activation(activation);
