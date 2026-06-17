@@ -268,7 +268,7 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
                 start_millis: Some(0),
             },
             LyricLine {
-                text: "纯音乐，请欣赏".to_string(),
+                text: "Sorry，此歌曲暂无文本歌词。".to_string(),
                 start_millis: Some(5_000),
             },
         ],
@@ -472,9 +472,7 @@ pub(in crate::controller) fn lyrics_save_rejects_netease_placeholder() {
         artist_name: "Artist".to_string(),
         album_name: "Album".to_string(),
         duration_seconds: 180,
-        synced_lyrics: Some(
-            "[00:00.00] 作曲 : Example Composer\n[00:05.00]纯音乐，请欣赏\n".to_string(),
-        ),
+        synced_lyrics: Some("[00:05.00]Sorry，此歌曲暂无文本歌词。\n".to_string()),
         plain_lyrics: None,
     };
 
@@ -1287,6 +1285,24 @@ pub(in crate::controller) fn lyrics_reject_netease_instrumental_placeholder() {
     };
 
     let lyrics = super::lyrics_from_search_result(TrackId::new("track-placeholder"), &result)
+        .expect("lyrics result");
+
+    assert!(lyrics.is_none());
+}
+#[test]
+pub(in crate::controller) fn lyrics_reject_netease_no_text_placeholder() {
+    let result = super::LyricsSearchResult {
+        provider: ExternalLyricsProvider::Netease,
+        id: "remote-no-text".to_string(),
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 120,
+        synced_lyrics: Some("[00:00.00]Sorry，此歌曲暂无文本歌词。\n".to_string()),
+        plain_lyrics: None,
+    };
+
+    let lyrics = super::lyrics_from_search_result(TrackId::new("track-no-text"), &result)
         .expect("lyrics result");
 
     assert!(lyrics.is_none());
