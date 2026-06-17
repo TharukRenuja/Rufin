@@ -490,6 +490,16 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
     privacy_group.add(&notifications_row);
 
+    let release_notifications_row = adw::SwitchRow::builder()
+        .title(tr("Release notifications"))
+        .active(settings.release_notifications_enabled)
+        .build();
+    let release_notifications_shell = Rc::clone(shell);
+    release_notifications_row.connect_active_notify(move |row| {
+        release_notifications_shell.set_release_notifications_enabled(row.is_active());
+    });
+    privacy_group.add(&release_notifications_row);
+
     let secret_storage_titles = [tr("Legacy"), tr("Secure storage")];
     let secret_storage_refs = secret_storage_titles
         .iter()

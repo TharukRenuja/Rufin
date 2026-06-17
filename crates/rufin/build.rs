@@ -15,7 +15,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", translation_dir.display());
 
-    let build_locale_dir = compile_translation_catalogs(&translation_dir);
+    let po_files = translation_source_files(&translation_dir);
+    write_translator_credits(&po_files);
+    let build_locale_dir = compile_translation_catalogs(&po_files);
     println!(
         "cargo:rustc-env=RUFIN_BUILD_LOCALEDIR={}",
         build_locale_dir.display()
@@ -28,18 +30,17 @@ fn main() {
     compile_windows_resource(&icon_path);
 }
 
-fn compile_translation_catalogs(translation_dir: &Path) -> PathBuf {
+fn compile_translation_catalogs(po_files: &[PathBuf]) -> PathBuf {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let locale_dir = out_dir.join("share/locale");
     if locale_dir.exists() {
         fs::remove_dir_all(&locale_dir).expect("remove stale generated gettext catalogs");
     }
 
-    let po_files = translation_source_files(translation_dir);
     if po_files.is_empty() {
         return locale_dir;
     }
-    for po_file in &po_files {
+    for po_file in po_files {
         println!("cargo:rerun-if-changed={}", po_file.display());
     }
 
@@ -58,7 +59,7 @@ fn compile_translation_catalogs(translation_dir: &Path) -> PathBuf {
         let target_file = target_dir.join("rufin.mo");
         let status = Command::new("msgfmt")
             .arg("--check")
-            .arg(&po_file)
+            .arg(po_file)
             .arg("-o")
             .arg(&target_file)
             .status();
@@ -73,6 +74,35 @@ fn compile_translation_catalogs(translation_dir: &Path) -> PathBuf {
     }
 
     locale_dir
+}
+
+fn write_translator_credits(po_files: &[PathBuf]) {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let mut credits = Vec::new();
+    for po_file in po_files {
+        let Ok(text) = fs::read_to_string(po_file) else {
+            continue;
+        };
+        let Some(translator) = po_header_value(&text, "Last-Translator") else {
+            continue;
+        };
+        if translator == "Rufin translators" || credits.iter().any(|credit| credit == &translator) {
+            continue;
+        }
+        credits.push(translator);
+    }
+    fs::write(out_dir.join("translator_credits.txt"), credits.join("\n"))
+        .expect("write generated translator credits");
+}
+
+fn po_header_value(text: &str, key: &str) -> Option<String> {
+    let prefix = format!("\"{key}: ");
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(&prefix))
+        .and_then(|value| value.strip_suffix("\\n\""))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn translation_source_files(po_dir: &Path) -> Vec<PathBuf> {

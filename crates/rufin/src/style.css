@@ -45,6 +45,121 @@ toastoverlay toast label {
   min-height: 0;
 }
 
+.release-notes-backdrop {
+  background: color-mix(in srgb, @window_fg_color 12%, transparent);
+}
+
+.release-notes-card {
+  background: color-mix(in srgb, @window_bg_color 94%, @card_bg_color 6%);
+  color: @window_fg_color;
+  border: 1px solid color-mix(in srgb, @window_fg_color 14%, transparent);
+  border-radius: 18px;
+  padding: 26px;
+  box-shadow:
+    0 20px 58px rgba(0, 0, 0, 0.28),
+    inset 0 1px color-mix(in srgb, white 12%, transparent);
+}
+
+.release-notes-title {
+  color: @window_fg_color;
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.release-notes-current-version {
+  background: color-mix(in srgb, @window_fg_color 10%, transparent);
+  color: color-mix(in srgb, @window_fg_color 84%, transparent);
+  border: 1px solid color-mix(in srgb, @window_fg_color 12%, transparent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-weight: 700;
+}
+
+.release-note-summary {
+  background: color-mix(in srgb, @accent_bg_color 10%, transparent);
+  color: color-mix(in srgb, @window_fg_color 88%, transparent);
+  border-left: 3px solid color-mix(in srgb, @accent_bg_color 64%, transparent);
+  border-radius: 8px;
+  font-size: 15px;
+  padding: 8px 11px;
+}
+
+.release-notes-list {
+  border-top: 1px solid color-mix(in srgb, @window_fg_color 10%, transparent);
+}
+
+.release-note-row {
+  background: color-mix(in srgb, @window_fg_color 4%, transparent);
+  border: 1px solid color-mix(in srgb, @window_fg_color 8%, transparent);
+  border-radius: 14px;
+  padding: 13px 14px;
+  margin: 8px 0;
+}
+
+.release-note-version {
+  background: rgba(0, 0, 0, 0.58);
+  color: color-mix(in srgb, @accent_color 74%, white);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-weight: 800;
+  min-width: 0;
+  min-height: 0;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 1px color-mix(in srgb, @accent_color 24%, transparent);
+  transition:
+    background 120ms ease-out,
+    color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.release-note-version label {
+  color: inherit;
+  font-weight: 800;
+}
+
+.release-note-version image {
+  color: inherit;
+  -gtk-icon-size: 12px;
+}
+
+.release-note-version:hover {
+  background: rgba(0, 0, 0, 0.68);
+  color: color-mix(in srgb, @accent_color 88%, white);
+  box-shadow:
+    0 2px 7px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px color-mix(in srgb, @accent_color 42%, transparent);
+}
+
+.release-note-date {
+  background: color-mix(in srgb, @accent_bg_color 14%, transparent);
+  color: @accent_color;
+  border: 1px solid color-mix(in srgb, @accent_bg_color 26%, transparent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-weight: 700;
+}
+
+.release-note-items {
+  margin-top: 5px;
+}
+
+.release-note-bullet {
+  margin: 1px 0;
+}
+
+.release-note-marker {
+  color: @accent_color;
+  font-weight: 800;
+  padding-top: 2px;
+}
+
+.release-note-item {
+  color: color-mix(in srgb, @window_fg_color 86%, transparent);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
 .app-root {
   background: transparent;
 }
