@@ -245,6 +245,38 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     );
 }
 #[test]
+pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let track = snapshot.tracks[0].clone();
+    controller.play_now(track.clone());
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let server_id = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("load active server")
+        .expect("active server")
+        .server
+        .id;
+    let remote_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Remote,
+        external_provider: None,
+        lines: vec![LyricLine {
+            text: "cached remote line".to_string(),
+            start_millis: None,
+        }],
+    };
+    controller
+        .store
+        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .expect("save remote lyrics");
+
+    controller.request_track_auto_lyrics(track.id.clone());
+
+    assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
+}
+#[test]
 pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
