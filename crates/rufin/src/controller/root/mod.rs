@@ -14,10 +14,11 @@ use directories::ProjectDirs;
 #[cfg(test)]
 use domain::ThemePreference;
 use domain::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, ExternalLyricsProvider, FolderPathItem, Genre,
-    GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder,
-    LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
-    PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, AutoDjReason, ExternalLyricsProvider,
+    FolderPathItem, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection,
+    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId,
+    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine,
+    QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource, QueueItemInput,
     QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode, ServerId,
     ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
     SmartPlaylistDetail, SmartPlaylistId, SourceOrder, StreamDescriptor, StreamQuality, Track,
@@ -142,6 +143,7 @@ const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const GROUPED_COVER_REF_LIMIT: usize = 4;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
+const AUTO_DJ_HISTORY_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 2;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";

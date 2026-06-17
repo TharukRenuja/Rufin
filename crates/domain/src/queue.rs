@@ -677,6 +677,26 @@ impl QueueEngine {
         true
     }
 
+    pub fn trim_auto_dj_history(&mut self, keep: usize) -> bool {
+        let Some(current_index) = self.current_index else {
+            return false;
+        };
+        let played_indices = self.played_indices_before_current(current_index);
+        let auto_dj_indices = played_indices
+            .into_iter()
+            .filter(|index| {
+                self.entries.get(*index).is_some_and(|entry| {
+                    matches!(entry.origin, Some(QueueEntryOrigin::AutoDj { .. }))
+                })
+            })
+            .collect::<Vec<_>>();
+        if auto_dj_indices.len() <= keep {
+            return false;
+        }
+        let remove_count = auto_dj_indices.len() - keep;
+        self.remove_indices(&auto_dj_indices[..remove_count])
+    }
+
     pub fn reorder(&mut self, entry_id: &QueueEntryId, new_index: usize) -> bool {
         let Some(old_index) = self.entries.iter().position(|entry| entry.id == *entry_id) else {
             return false;
@@ -719,6 +739,62 @@ impl QueueEngine {
         self.current_index = Some(current_index);
         self.rebuild_shuffle_order();
         self.move_shuffle_entry_after_current(entry_id);
+        true
+    }
+
+    fn played_indices_before_current(&self, current_index: usize) -> Vec<usize> {
+        if self.shuffle.enabled
+            && valid_shuffle_order(&self.shuffle_order, self.entries.len())
+            && let Some(position) = self.shuffle_position.or_else(|| {
+                self.shuffle_order
+                    .iter()
+                    .position(|index| *index == current_index)
+            })
+        {
+            return self.shuffle_order.iter().take(position).copied().collect();
+        }
+        (0..current_index).collect()
+    }
+
+    fn remove_indices(&mut self, indices: &[usize]) -> bool {
+        if indices.is_empty() {
+            return false;
+        }
+        let mut remove = vec![false; self.entries.len()];
+        for index in indices {
+            if let Some(slot) = remove.get_mut(*index) {
+                *slot = true;
+            }
+        }
+        if !remove.iter().any(|remove| *remove) {
+            return false;
+        }
+
+        let mut old_to_new = vec![None; self.entries.len()];
+        let mut entries = Vec::with_capacity(
+            self.entries.len() - remove.iter().filter(|remove| **remove).count(),
+        );
+        for (index, entry) in self.entries.drain(..).enumerate() {
+            if remove[index] {
+                continue;
+            }
+            old_to_new[index] = Some(entries.len());
+            entries.push(entry);
+        }
+        self.entries = entries;
+        self.current_index = self
+            .current_index
+            .and_then(|index| old_to_new.get(index).and_then(|mapped| *mapped));
+        self.shuffle_order = self
+            .shuffle_order
+            .iter()
+            .filter_map(|index| old_to_new.get(*index).and_then(|mapped| *mapped))
+            .collect();
+        if self.shuffle.enabled && valid_shuffle_order(&self.shuffle_order, self.entries.len()) {
+            self.sync_shuffle_position();
+        } else {
+            self.rebuild_shuffle_order();
+        }
         true
     }
 
@@ -1826,6 +1902,45 @@ mod tests {
             .expect("shuffled queue has a next item");
         assert_ne!(next_track_id, TrackId::fake(1));
         assert!([TrackId::fake(2), TrackId::fake(3)].contains(&next_track_id));
+    }
+
+    #[test]
+    fn trim_auto_dj_history_keeps_recent_generated_entries() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue
+            .append_last(QueueInsertion {
+                source: QueueInsertionSource::AutoDj {
+                    generated_from_track_id: TrackId::fake(1),
+                    reason: super::AutoDjReason::Similarity,
+                },
+                items: (2..=7)
+                    .map(|number| QueueItemInput::Generated {
+                        track: track(number),
+                        generated_index: number as usize,
+                    })
+                    .collect(),
+            })
+            .expect("auto dj append");
+        for _ in 0..5 {
+            queue.next_track();
+        }
+
+        assert!(queue.trim_auto_dj_history(2));
+        let snapshot = queue.snapshot();
+        assert_eq!(snapshot.entries.len(), 5);
+        assert_eq!(
+            snapshot.entries[snapshot.current_index.expect("current")].track_id,
+            TrackId::fake(6)
+        );
+        assert_eq!(
+            snapshot
+                .entries
+                .iter()
+                .filter(|entry| matches!(entry.origin, Some(QueueEntryOrigin::AutoDj { .. })))
+                .count(),
+            4
+        );
     }
 
     #[test]
