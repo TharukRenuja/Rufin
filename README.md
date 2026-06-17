@@ -114,6 +114,7 @@ This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin),
 ## Translation credits
 
 - Estonian translation by Priit Jõerüüt
+- Russian and Latvian translation by [aguhadug ](https://github.com/aguhadug)
 
 # License
 
