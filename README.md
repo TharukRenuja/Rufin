@@ -33,7 +33,7 @@
 
 # Library behavior
 
-- Rufin keeps a local cache for each source, so opening the app, switching pages and browsing a large library doesn't mean asking the server or scanning folders again for every click. When a library changes, the app tries to update only the changed parts
+- Rufin keeps a local cache for each source, so opening the app, switching pages and browsing a large library doesn't mean asking the server or scanning folders again for every click. 
 
 - Large libraries are normal to browse; tracks, albums, artists, genres and playlists are full pages, they are not paginated
 
