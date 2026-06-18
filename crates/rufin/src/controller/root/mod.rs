@@ -98,7 +98,10 @@ mod server_cache_commands;
 mod server_lifecycle_commands;
 mod server_local_access_commands;
 mod settings_controller;
+mod source_image_policy;
 mod source_presentation;
+mod source_readiness;
+mod source_refs;
 mod source_selection;
 mod sync_command;
 mod sync_requests;
@@ -113,7 +116,6 @@ mod startup_sync_tests;
 mod test_support;
 
 pub(in crate::controller) use cached_reads::*;
-pub(crate) use cached_reads::{grouped_cover_refs_for_items, track_cover_refs_for_items};
 pub(in crate::controller) use controller_startup::*;
 #[cfg(test)]
 pub(in crate::controller) use lyrics_local_access_tests::{
@@ -131,7 +133,28 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
-pub(in crate::controller) use source_presentation::*;
+use source_image_policy::{
+    image_ref_allowed, is_local_album_id, is_local_artist_id, is_local_provider_image_ref,
+    is_local_track_id, scrub_home_refs, scrub_snapshot_image_refs, scrub_source_image_ref,
+    snapshot_external_ref_policy, source_image_ref_allowed,
+};
+pub(in crate::controller) use source_image_policy::{
+    scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
+    scrub_selected_genre_image_refs, scrub_selected_playlist_image_refs,
+    scrub_selected_track_image_refs, scrub_smart_refs,
+};
+use source_presentation::{load_runtime_snapshot, load_snapshot};
+#[cfg(test)]
+use source_readiness::{
+    SourceSyncReadinessInput, SyncRequiredReason, active_source_readiness, source_sync_readiness,
+};
+use source_readiness::{active_server_needs_sync, active_source_startup_readiness};
+pub(in crate::controller) use source_refs::track_album_refs_with_settings;
+use source_refs::{
+    album_track_refs, home_image_refs, home_local_refs, queue_album_refs, sync_status_text,
+    track_album_refs,
+};
+pub(crate) use source_refs::{grouped_cover_refs_for_items, track_cover_refs_for_items};
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
 pub(in crate::controller) use sync_requests::*;
@@ -142,7 +165,6 @@ const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
 pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 40_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
-const GROUPED_COVER_REF_LIMIT: usize = 4;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_HISTORY_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 2;
