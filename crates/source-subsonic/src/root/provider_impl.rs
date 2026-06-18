@@ -128,7 +128,10 @@ pub(super) fn favorite(value: &Option<serde_json::Value>) -> bool {
     value.as_ref().is_some_and(|value| match value {
         serde_json::Value::Bool(value) => *value,
         serde_json::Value::String(value) => !value.trim().is_empty(),
-        _ => false,
+        serde_json::Value::Null
+        | serde_json::Value::Number(_)
+        | serde_json::Value::Array(_)
+        | serde_json::Value::Object(_) => false,
     })
 }
 pub(super) fn image_ref(
@@ -335,11 +338,11 @@ pub(super) fn normalized_date(value: Option<String>) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    if value.len() >= 10 {
-        let prefix = &value[..10];
-        if prefix.as_bytes().get(4) == Some(&b'-') && prefix.as_bytes().get(7) == Some(&b'-') {
-            return Some(prefix.to_string());
-        }
+    if let Some(prefix) = value.get(..10)
+        && prefix.as_bytes().get(4) == Some(&b'-')
+        && prefix.as_bytes().get(7) == Some(&b'-')
+    {
+        return Some(prefix.to_string());
     }
     Some(value)
 }

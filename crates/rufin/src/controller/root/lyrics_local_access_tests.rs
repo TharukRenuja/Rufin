@@ -145,11 +145,9 @@ pub(in crate::controller) fn lyrics_local_lookup() {
 
     controller.request_track_lyrics(track.id);
 
-    assert!(
-        events
-            .recv_timeout(std::time::Duration::from_millis(100))
-            .is_err()
-    );
+    let _error = events
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .expect_err("lyrics event should not be emitted");
 }
 
 #[test]
@@ -423,11 +421,9 @@ pub(in crate::controller) fn lyrics_skip_stale_track_request() {
 
     controller.request_track_lyrics(TrackId::new("jellyfin:track:stale-lyrics"));
 
-    assert!(
-        events
-            .recv_timeout(std::time::Duration::from_millis(100))
-            .is_err()
-    );
+    let _error = events
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .expect_err("lyrics event should not be emitted");
 }
 #[test]
 pub(in crate::controller) fn lyrics_search_preference() {
@@ -1836,11 +1832,11 @@ pub(in crate::controller) fn controller_from_store_for_test(
     let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
         MemorySecretStore::new(),
     )));
-    let secrets: Arc<dyn SecretStore> = secret_switch.clone();
+    let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
     let controller = AppController {
         settings: super::settings_controller::SettingsController::new(
             store.clone(),
-            secrets.clone(),
+            Arc::<dyn SecretStore>::clone(&secrets),
         ),
         store,
         runtime,

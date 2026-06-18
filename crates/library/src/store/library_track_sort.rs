@@ -25,7 +25,13 @@ pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: b
         ),
         LibraryField::Duration => format!("{alias}.duration_seconds"),
         LibraryField::Favorite => format!("{alias}.favorite"),
-        _ => format!("{alias}.title COLLATE NOCASE"),
+        LibraryField::RowIndex
+        | LibraryField::Image
+        | LibraryField::Title
+        | LibraryField::TitleMerged
+        | LibraryField::DiscNumber
+        | LibraryField::SongCount
+        | LibraryField::AlbumCount => format!("{alias}.title COLLATE NOCASE"),
     };
     let missing = match field {
         LibraryField::ReleaseDate
@@ -33,7 +39,21 @@ pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: b
         | LibraryField::LastPlayed
         | LibraryField::PlayCount
         | LibraryField::UserRating => format!("{expression} IS NULL ASC, "),
-        _ => String::new(),
+        LibraryField::RowIndex
+        | LibraryField::Image
+        | LibraryField::Title
+        | LibraryField::TitleMerged
+        | LibraryField::Artist
+        | LibraryField::AlbumArtist
+        | LibraryField::Album
+        | LibraryField::Year
+        | LibraryField::Genre
+        | LibraryField::TrackNumber
+        | LibraryField::DiscNumber
+        | LibraryField::SongCount
+        | LibraryField::AlbumCount
+        | LibraryField::Duration
+        | LibraryField::Favorite => String::new(),
     };
     format!(
         "{missing}{expression} {direction}, {}",

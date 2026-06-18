@@ -293,16 +293,18 @@ impl AppController {
                     ));
                     return;
                 }
-                self.play_activation(
-                    Self::album_play_activation(
-                        album.id,
-                        tracks,
-                        0,
-                        Self::active_music_folder(&self.store),
-                    )
-                    .expect("non-empty album has a playable first track")
-                    .shuffled_start(),
-                );
+                let Some(activation) = Self::album_play_activation(
+                    album.id,
+                    tracks,
+                    0,
+                    Self::active_music_folder(&self.store),
+                ) else {
+                    let _sent = self.events.send(ControllerEvent::Error(
+                        "No tracks are available to play.".to_string(),
+                    ));
+                    return;
+                };
+                self.play_activation(activation.shuffled_start());
             }
             Ok(None) => {
                 let _sent = self.events.send(ControllerEvent::Error(

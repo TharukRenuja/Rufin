@@ -127,7 +127,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod album_detail_view;
 mod build;
@@ -538,11 +538,11 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let using_fake_library = _options.fake_scale.is_some();
     #[cfg(not(feature = "dev-tools"))]
     let using_fake_library = false;
-    let (controller, events, library, queue, player) = {
+    let bootstrapped = {
         #[cfg(feature = "dev-tools")]
         {
             if let Some(scale) = _options.fake_scale {
-                AppController::bootstrap_with_fake(scale)
+                Ok(AppController::bootstrap_with_fake(scale))
             } else {
                 AppController::bootstrap()
             }
@@ -550,6 +550,14 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         #[cfg(not(feature = "dev-tools"))]
         {
             AppController::bootstrap()
+        }
+    };
+    let (controller, events, library, queue, player) = match bootstrapped {
+        Ok(bootstrapped) => bootstrapped,
+        Err(error) => {
+            error!(%error, "failed to start Rufin");
+            app.quit();
+            return;
         }
     };
     let settings = controller.load_settings();

@@ -352,7 +352,9 @@ pub(in crate::controller) fn startup_persist_server() {
             .expect("servers")
             .is_empty()
     );
-    assert!(events.try_recv().is_err());
+    let _error = events
+        .try_recv()
+        .expect_err("sync event should not be emitted");
 }
 
 #[test]
@@ -2222,7 +2224,9 @@ pub(in crate::controller) fn startup_background_sync_mutes_running_status() {
 
     start_background_sync_thread(controller.sync_context(), saved);
 
-    assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+    let _error = events
+        .recv_timeout(Duration::from_millis(100))
+        .expect_err("sync event should not be emitted");
 }
 
 #[test]

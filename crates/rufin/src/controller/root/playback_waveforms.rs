@@ -764,7 +764,9 @@ mod tests {
         );
 
         assert!(!cache_path.exists());
-        assert!(receiver.try_recv().is_err());
+        let _error = receiver
+            .try_recv()
+            .expect_err("waveform event should not be emitted");
         assert!(
             playback_snapshot
                 .lock()

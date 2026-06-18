@@ -1,5 +1,3 @@
-use std::fmt::Write as _;
-
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
@@ -452,14 +450,13 @@ impl QueueEngine {
     }
 
     pub fn play_now(&mut self, track: &Track) -> QueueEntryId {
-        self.replace_all(QueueReplacement {
-            source: QueueReplacementSource::Manual,
-            items: vec![QueueItemInput::Manual {
-                track: track.clone(),
-            }],
-            anchor: QueueAnchor::Position(0),
-        })
-        .expect("single manual replacement is valid")
+        let entry = self.entry_from_track(track);
+        let id = entry.id.clone();
+        self.entries = vec![entry];
+        self.current_index = Some(0);
+        self.progress_seconds = 0;
+        self.rebuild_shuffle_order();
+        id
     }
 
     pub fn replace_all(
@@ -485,29 +482,17 @@ impl QueueEngine {
     }
 
     pub fn play_next(&mut self, track: &Track) -> QueueEntryId {
-        self.insert_next(QueueInsertion {
-            source: QueueInsertionSource::Manual,
-            items: vec![QueueItemInput::Manual {
-                track: track.clone(),
-            }],
-        })
-        .expect("single manual insertion is valid")
-        .into_iter()
-        .next()
-        .expect("single manual insertion returns an id")
+        let entry = self.entry_from_track(track);
+        let id = entry.id.clone();
+        self.insert_entries_next(vec![entry]);
+        id
     }
 
     pub fn append(&mut self, track: &Track) -> QueueEntryId {
-        self.append_last(QueueInsertion {
-            source: QueueInsertionSource::Manual,
-            items: vec![QueueItemInput::Manual {
-                track: track.clone(),
-            }],
-        })
-        .expect("single manual append is valid")
-        .into_iter()
-        .next()
-        .expect("single manual append returns an id")
+        let entry = self.entry_from_track(track);
+        let id = entry.id.clone();
+        self.append_entries_last(vec![entry]);
+        id
     }
 
     pub fn insert_next(
@@ -515,11 +500,21 @@ impl QueueEngine {
         insertion: QueueInsertion,
     ) -> Result<Vec<QueueEntryId>, QueueError> {
         let entries = self.entries_from_insertion(insertion)?;
+        Ok(self.insert_entries_next(entries))
+    }
+
+    fn insert_entries_next(&mut self, entries: Vec<QueueEntry>) -> Vec<QueueEntryId> {
         let ids = entries
             .iter()
             .map(|entry| entry.id.clone())
             .collect::<Vec<_>>();
-        let insert_index = self.current_index.map_or(0, |index| index + 1);
+        if entries.is_empty() {
+            return ids;
+        }
+        let insert_index = self
+            .current_index
+            .map_or(0, |index| index.saturating_add(1))
+            .min(self.entries.len());
         let inserted_count = ids.len();
         let previous_current_index = self.current_index;
         let previous_shuffle_order = self.shuffle_order.clone();
@@ -536,7 +531,7 @@ impl QueueEngine {
                 .into_iter()
                 .map(|index| {
                     if index >= insert_index {
-                        index + inserted_count
+                        index.saturating_add(inserted_count)
                     } else {
                         index
                     }
@@ -548,24 +543,23 @@ impl QueueEngine {
                 .position(|index| Some(*index) == previous_current_index)
             else {
                 self.rebuild_shuffle_order();
-                return Ok(ids);
+                return ids;
             };
 
-            let mut inserted_block =
-                (insert_index..insert_index + inserted_count).collect::<Vec<_>>();
+            let insert_end = insert_index.saturating_add(inserted_count);
+            let mut inserted_block = (insert_index..insert_end).collect::<Vec<_>>();
             let first_inserted = inserted_block.remove(0);
             let seed = self.shuffle.seed;
-            inserted_block.sort_by_key(|index| {
-                stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
-            });
+            inserted_block.sort_by_key(|index| stable_entry_sort_key(&self.entries, seed, *index));
             inserted_block.insert(0, first_inserted);
+            let splice_start = current_position.saturating_add(1);
             self.shuffle_order
-                .splice(current_position + 1..current_position + 1, inserted_block);
+                .splice(splice_start..splice_start, inserted_block);
             self.sync_shuffle_position();
         } else {
             self.rebuild_shuffle_order();
         }
-        Ok(ids)
+        ids
     }
 
     pub fn append_last(
@@ -573,10 +567,17 @@ impl QueueEngine {
         insertion: QueueInsertion,
     ) -> Result<Vec<QueueEntryId>, QueueError> {
         let entries = self.entries_from_insertion(insertion)?;
+        Ok(self.append_entries_last(entries))
+    }
+
+    fn append_entries_last(&mut self, entries: Vec<QueueEntry>) -> Vec<QueueEntryId> {
         let ids = entries
             .iter()
             .map(|entry| entry.id.clone())
             .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return ids;
+        }
         let first_inserted_index = self.entries.len();
         let previous_current_index = self.current_index;
         let previous_shuffle_order = self.shuffle_order.clone();
@@ -593,15 +594,14 @@ impl QueueEngine {
             let mut appended_indices =
                 (first_inserted_index..self.entries.len()).collect::<Vec<_>>();
             let seed = self.shuffle.seed;
-            appended_indices.sort_by_key(|index| {
-                stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
-            });
+            appended_indices
+                .sort_by_key(|index| stable_entry_sort_key(&self.entries, seed, *index));
             self.shuffle_order.extend(appended_indices);
             self.sync_shuffle_position();
         } else {
             self.rebuild_shuffle_order();
         }
-        Ok(ids)
+        ids
     }
 
     pub fn remove(&mut self, entry_id: &QueueEntryId) -> Option<QueueEntry> {
@@ -694,7 +694,9 @@ impl QueueEngine {
             return false;
         }
         let remove_count = auto_dj_indices.len() - keep;
-        self.remove_indices(&auto_dj_indices[..remove_count])
+        auto_dj_indices
+            .get(..remove_count)
+            .is_some_and(|indices| self.remove_indices(indices))
     }
 
     pub fn reorder(&mut self, entry_id: &QueueEntryId, new_index: usize) -> bool {
@@ -775,10 +777,12 @@ impl QueueEngine {
             self.entries.len() - remove.iter().filter(|remove| **remove).count(),
         );
         for (index, entry) in self.entries.drain(..).enumerate() {
-            if remove[index] {
+            if remove.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            old_to_new[index] = Some(entries.len());
+            if let Some(mapped) = old_to_new.get_mut(index) {
+                *mapped = Some(entries.len());
+            }
             entries.push(entry);
         }
         self.entries = entries;
@@ -965,7 +969,12 @@ impl QueueEngine {
             .collect();
 
         self.entries = entries;
-        let anchored_id = self.entries[anchor_index].id.clone();
+        let anchored_id = self
+            .entries
+            .get(anchor_index)
+            .ok_or(QueueError::AnchorNotFound)?
+            .id
+            .clone();
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1002,7 +1011,12 @@ impl QueueEngine {
                 entry
             })
             .collect();
-        let anchored_id = self.entries[anchor_index].id.clone();
+        let anchored_id = self
+            .entries
+            .get(anchor_index)
+            .ok_or(QueueError::AnchorNotFound)?
+            .id
+            .clone();
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1046,7 +1060,12 @@ impl QueueEngine {
                 entry
             })
             .collect();
-        let anchored_id = self.entries[anchor_index].id.clone();
+        let anchored_id = self
+            .entries
+            .get(anchor_index)
+            .ok_or(QueueError::AnchorNotFound)?
+            .id
+            .clone();
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1118,9 +1137,8 @@ impl QueueEngine {
     fn rebuild_shuffle_order_unpinned(&mut self) {
         self.shuffle_order = (0..self.entries.len()).collect();
         let seed = self.shuffle.seed;
-        self.shuffle_order.sort_by_key(|index| {
-            stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
-        });
+        self.shuffle_order
+            .sort_by_key(|index| stable_entry_sort_key(&self.entries, seed, *index));
     }
 
     fn sync_shuffle_position(&mut self) {
@@ -1187,6 +1205,13 @@ fn stable_shuffle_key(seed: u64, value: &str) -> u64 {
         })
 }
 
+fn stable_entry_sort_key(entries: &[QueueEntry], seed: u64, index: usize) -> u64 {
+    entries
+        .get(index)
+        .map(|entry| stable_shuffle_key(seed, entry_shuffle_key(entry)))
+        .unwrap_or(u64::MAX)
+}
+
 fn entry_shuffle_key(entry: &QueueEntry) -> &str {
     match entry.origin.as_ref() {
         Some(QueueEntryOrigin::Source { shuffle_key, .. })
@@ -1223,11 +1248,20 @@ fn escape_component(value: &str) -> String {
                 escaped.push(char::from(byte));
             }
             _ => {
-                write!(&mut escaped, "%{byte:02X}").expect("writing to a string cannot fail");
+                escaped.push('%');
+                escaped.push(hex_digit(byte >> 4));
+                escaped.push(hex_digit(byte & 0x0f));
             }
         }
     }
     escaped
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => char::from(b'0' + value),
+        _ => char::from(b'A' + value - 10),
+    }
 }
 
 fn manual_shuffle_key(entry: &QueueEntry) -> QueueShuffleKey {
@@ -1293,10 +1327,13 @@ fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
     }
     let mut seen = vec![false; entries_len];
     for index in shuffle_order {
-        if *index >= entries_len || seen[*index] {
+        let Some(slot) = seen.get_mut(*index) else {
+            return false;
+        };
+        if *slot {
             return false;
         }
-        seen[*index] = true;
+        *slot = true;
     }
     true
 }

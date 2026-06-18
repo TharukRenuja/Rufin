@@ -31,10 +31,9 @@ impl LazyGStreamerPlaybackBackend {
             debug!("initializing GStreamer playback backend");
             self.inner = Some(Box::new(GStreamerPlaybackBackend::new()?));
         }
-        Ok(self
-            .inner
+        self.inner
             .as_mut()
-            .expect("lazy playback backend was just initialized"))
+            .ok_or_else(|| PlaybackError::Backend("GStreamer backend was not initialized".into()))
     }
 }
 impl Default for LazyGStreamerPlaybackBackend {
@@ -748,11 +747,9 @@ impl GstEngine {
         if let Ok(mut shared) = self.shared.lock() {
             shared.next = Some(next.clone());
             if shared.about_to_finish_pending && gapless_preload_should_run(&shared, &next) {
-                if gapless_preload_source_is_supported(next.stream.uri()) {
-                    let item = shared
-                        .next
-                        .take()
-                        .expect("late gapless preload just stored next item");
+                if gapless_preload_source_is_supported(next.stream.uri())
+                    && let Some(item) = shared.next.take()
+                {
                     shared.gapless_pending = Some(item.clone());
                     shared.about_to_finish_pending = false;
                     late_preload = Some(item);
@@ -890,7 +887,7 @@ impl GstEngine {
                     gst::State::Null | gst::State::Ready => PlaybackState::Stopped,
                     gst::State::Paused => PlaybackState::Paused,
                     gst::State::Playing => PlaybackState::Playing,
-                    _ => PlaybackState::Buffering,
+                    gst::State::VoidPending => PlaybackState::Buffering,
                 };
                 self.handle_state_changed(playback_state);
             }
@@ -1825,10 +1822,10 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
         return AboutToFinishAction::Ignore;
     }
 
-    let next = shared
-        .next
-        .take()
-        .expect("gapless preload checked that next item exists");
+    let Some(next) = shared.next.take() else {
+        shared.about_to_finish_pending = false;
+        return AboutToFinishAction::Ignore;
+    };
     shared.gapless_pending = Some(next.clone());
     shared.about_to_finish_pending = false;
     AboutToFinishAction::Preload(Box::new(next))

@@ -1131,24 +1131,26 @@ pub(in crate::controller) fn extract_genius_lyrics(body: &str) -> Option<String>
     let mut sections = Vec::new();
     let mut remaining = body;
     while let Some(marker_start) = remaining.find("data-lyrics-container=\"true\"") {
-        let after_marker = &remaining[marker_start..];
+        let after_marker = remaining.get(marker_start..)?;
         let tag_end = after_marker.find('>')? + marker_start;
-        let after_tag = &remaining[tag_end + 1..];
+        let after_tag = remaining.get(tag_end + 1..)?;
         let section_end = after_tag.find("</div>").unwrap_or(after_tag.len());
-        let section = strip_html_tags(&after_tag[..section_end]);
+        let section = strip_html_tags(after_tag.get(..section_end).unwrap_or_default());
         if !section.trim().is_empty() {
             sections.push(section);
         }
-        remaining = &after_tag[section_end.min(after_tag.len())..];
+        remaining = after_tag
+            .get(section_end.min(after_tag.len())..)
+            .unwrap_or_default();
     }
     if sections.is_empty()
         && let Some(lyrics_start) = body.find("class=\"lyrics\"")
     {
-        let after_marker = &body[lyrics_start..];
+        let after_marker = body.get(lyrics_start..)?;
         let tag_end = after_marker.find('>')? + lyrics_start;
-        let after_tag = &body[tag_end + 1..];
+        let after_tag = body.get(tag_end + 1..)?;
         let section_end = after_tag.find("</div>").unwrap_or(after_tag.len());
-        let section = strip_html_tags(&after_tag[..section_end]);
+        let section = strip_html_tags(after_tag.get(..section_end).unwrap_or_default());
         if !section.trim().is_empty() {
             sections.push(section);
         }
@@ -1504,7 +1506,7 @@ pub(in crate::controller) fn map_server_path_to_local(
         .filter(|value| !value.is_empty())
         && raw.starts_with(prefix)
     {
-        let suffix = raw[prefix.len()..].trim_start_matches(['/', '\\']);
+        let suffix = raw.get(prefix.len()..)?.trim_start_matches(['/', '\\']);
         return Some(PathBuf::from(replace_to).join(path_from_server_suffix(suffix)));
     }
     let raw_path = Path::new(raw);

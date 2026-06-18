@@ -703,7 +703,10 @@ fn preview_local_path_preview(
                 saveable: false,
             };
         }
-        let suffix = sample[server_prefix.len()..].trim_start_matches(['/', '\\']);
+        let suffix = sample
+            .get(server_prefix.len()..)
+            .unwrap_or_default()
+            .trim_start_matches(['/', '\\']);
         return LocalPathPreview {
             text: base
                 .join(path_from_server_suffix(suffix))
@@ -802,7 +805,7 @@ fn common_suffix_len(server_parts: &[PathComponent], local_parts: &[PathComponen
 fn prefix_before_suffix(value: &str, parts: &[PathComponent], suffix_len: usize) -> Option<String> {
     let suffix_start_index = parts.len().checked_sub(suffix_len)?;
     let prefix_end = parts.get(suffix_start_index)?.start;
-    let raw_prefix = &value[..prefix_end];
+    let raw_prefix = value.get(..prefix_end)?;
     let trimmed = raw_prefix.trim_end_matches(['/', '\\']);
     if !trimmed.is_empty() {
         return Some(trimmed.to_string());
@@ -828,7 +831,7 @@ fn path_component_spans(value: &str) -> Vec<PathComponent<'_>> {
                 && part_start < index
             {
                 parts.push(PathComponent {
-                    value: &value[part_start..index],
+                    value: value.get(part_start..index).unwrap_or_default(),
                     start: part_start,
                 });
             }
@@ -840,7 +843,7 @@ fn path_component_spans(value: &str) -> Vec<PathComponent<'_>> {
         && part_start < value.len()
     {
         parts.push(PathComponent {
-            value: &value[part_start..],
+            value: value.get(part_start..).unwrap_or_default(),
             start: part_start,
         });
     }

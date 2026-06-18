@@ -866,7 +866,13 @@ fn compile_text_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
                 params: vec![Value::from(value.to_lowercase())],
             }
         }
-        _ => false_sql(),
+        SmartPlaylistRuleOperator::Above
+        | SmartPlaylistRuleOperator::Below
+        | SmartPlaylistRuleOperator::Between
+        | SmartPlaylistRuleOperator::Is
+        | SmartPlaylistRuleOperator::IsNot
+        | SmartPlaylistRuleOperator::Before
+        | SmartPlaylistRuleOperator::After => false_sql(),
     }
 }
 
@@ -881,7 +887,15 @@ fn compile_genre_rule(rule: &SmartPlaylistRule) -> SmartSql {
         SmartPlaylistRuleOperator::Contains | SmartPlaylistRuleOperator::NotContains => {
             ("LIKE", format!("%{}%", escape_like(&value.to_lowercase())))
         }
-        _ => return false_sql(),
+        SmartPlaylistRuleOperator::Above
+        | SmartPlaylistRuleOperator::Below
+        | SmartPlaylistRuleOperator::Between
+        | SmartPlaylistRuleOperator::Is
+        | SmartPlaylistRuleOperator::IsNot
+        | SmartPlaylistRuleOperator::Before
+        | SmartPlaylistRuleOperator::After
+        | SmartPlaylistRuleOperator::IsEmpty
+        | SmartPlaylistRuleOperator::IsNotEmpty => return false_sql(),
     };
     let comparison = if operator == "LIKE" {
         "LOWER(tg.genre_name) LIKE ? ESCAPE '\\'"
@@ -935,7 +949,15 @@ fn compile_number_rule(expression: &str, nullable: bool, rule: &SmartPlaylistRul
                 SmartPlaylistRuleOperator::Below => "<",
                 SmartPlaylistRuleOperator::Equals => "=",
                 SmartPlaylistRuleOperator::NotEquals => "!=",
-                _ => unreachable!(),
+                SmartPlaylistRuleOperator::Contains
+                | SmartPlaylistRuleOperator::NotContains
+                | SmartPlaylistRuleOperator::Between
+                | SmartPlaylistRuleOperator::Is
+                | SmartPlaylistRuleOperator::IsNot
+                | SmartPlaylistRuleOperator::Before
+                | SmartPlaylistRuleOperator::After
+                | SmartPlaylistRuleOperator::IsEmpty
+                | SmartPlaylistRuleOperator::IsNotEmpty => return false_sql(),
             };
             SmartSql {
                 clause: format!("{expression} {operator} ?"),
@@ -951,7 +973,14 @@ fn compile_number_rule(expression: &str, nullable: bool, rule: &SmartPlaylistRul
                 params: vec![Value::from(min), Value::from(max)],
             }
         }
-        _ => false_sql(),
+        SmartPlaylistRuleOperator::Contains
+        | SmartPlaylistRuleOperator::NotContains
+        | SmartPlaylistRuleOperator::Is
+        | SmartPlaylistRuleOperator::IsNot
+        | SmartPlaylistRuleOperator::Before
+        | SmartPlaylistRuleOperator::After
+        | SmartPlaylistRuleOperator::IsEmpty
+        | SmartPlaylistRuleOperator::IsNotEmpty => false_sql(),
     }
 }
 
@@ -1016,7 +1045,15 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
                 SmartPlaylistRuleOperator::After => ">",
                 SmartPlaylistRuleOperator::Equals => "=",
                 SmartPlaylistRuleOperator::NotEquals => "!=",
-                _ => unreachable!(),
+                SmartPlaylistRuleOperator::Contains
+                | SmartPlaylistRuleOperator::NotContains
+                | SmartPlaylistRuleOperator::Above
+                | SmartPlaylistRuleOperator::Below
+                | SmartPlaylistRuleOperator::Between
+                | SmartPlaylistRuleOperator::Is
+                | SmartPlaylistRuleOperator::IsNot
+                | SmartPlaylistRuleOperator::IsEmpty
+                | SmartPlaylistRuleOperator::IsNotEmpty => return false_sql(),
             };
             SmartSql {
                 clause: format!("{expression} {operator} ?"),
@@ -1032,37 +1069,41 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
                 params: vec![Value::from(start), Value::from(end)],
             }
         }
-        _ => false_sql(),
+        SmartPlaylistRuleOperator::Contains
+        | SmartPlaylistRuleOperator::NotContains
+        | SmartPlaylistRuleOperator::Above
+        | SmartPlaylistRuleOperator::Below
+        | SmartPlaylistRuleOperator::Is
+        | SmartPlaylistRuleOperator::IsNot => false_sql(),
     }
 }
 
 fn text_value(rule: &SmartPlaylistRule) -> Option<String> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::Text(value) => Some(value.trim().to_string()),
-        _ => None,
-    }
-    .filter(|value| !value.is_empty())
+    let SmartPlaylistRuleValue::Text(value) = rule.value.as_ref()? else {
+        return None;
+    };
+    (!value.trim().is_empty()).then(|| value.trim().to_string())
 }
 
 fn number_value(rule: &SmartPlaylistRule) -> Option<i64> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::Number(value) => Some(*value),
-        _ => None,
-    }
+    let SmartPlaylistRuleValue::Number(value) = rule.value.as_ref()? else {
+        return None;
+    };
+    Some(*value)
 }
 
 fn number_range_value(rule: &SmartPlaylistRule) -> Option<(i64, i64)> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::NumberRange { min, max } => Some((*min, *max)),
-        _ => None,
-    }
+    let SmartPlaylistRuleValue::NumberRange { min, max } = rule.value.as_ref()? else {
+        return None;
+    };
+    Some((*min, *max))
 }
 
 fn bool_value(rule: &SmartPlaylistRule) -> Option<bool> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::Bool(value) => Some(*value),
-        _ => None,
-    }
+    let SmartPlaylistRuleValue::Bool(value) = rule.value.as_ref()? else {
+        return None;
+    };
+    Some(*value)
 }
 
 fn date_value(rule: &SmartPlaylistRule) -> Option<String> {
@@ -1070,7 +1111,10 @@ fn date_value(rule: &SmartPlaylistRule) -> Option<String> {
         SmartPlaylistRuleValue::Date(value) | SmartPlaylistRuleValue::Text(value) => {
             Some(value.trim().to_string())
         }
-        _ => None,
+        SmartPlaylistRuleValue::Number(_)
+        | SmartPlaylistRuleValue::NumberRange { .. }
+        | SmartPlaylistRuleValue::Bool(_)
+        | SmartPlaylistRuleValue::DateRange { .. } => None,
     }
     .filter(|value| !value.is_empty())
 }
@@ -1088,7 +1132,11 @@ fn date_range_value(rule: &SmartPlaylistRule) -> Option<(String, String)> {
                 Some((end, start))
             }
         }
-        _ => None,
+        SmartPlaylistRuleValue::Text(_)
+        | SmartPlaylistRuleValue::Number(_)
+        | SmartPlaylistRuleValue::NumberRange { .. }
+        | SmartPlaylistRuleValue::Bool(_)
+        | SmartPlaylistRuleValue::Date(_) => None,
     }
 }
 
@@ -1136,7 +1184,13 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
         SmartPlaylistSortField::DateAdded
         | SmartPlaylistSortField::LastPlayed
         | SmartPlaylistSortField::Rating => format!("{expression} IS NULL ASC, "),
-        _ => String::new(),
+        SmartPlaylistSortField::Title
+        | SmartPlaylistSortField::Artist
+        | SmartPlaylistSortField::Album
+        | SmartPlaylistSortField::Year
+        | SmartPlaylistSortField::PlayCount
+        | SmartPlaylistSortField::SkipCount
+        | SmartPlaylistSortField::Duration => String::new(),
     };
     format!(
         "{missing}{expression} {direction}, t.album COLLATE NOCASE {direction}, t.disc_number {direction}, t.track_number {direction}, t.title COLLATE NOCASE {direction}, t.track_id {direction}"

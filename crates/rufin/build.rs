@@ -1,13 +1,15 @@
 use std::{
-    env, fs, io,
+    env,
+    error::Error,
+    fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
 
-fn main() {
-    let manifest_dir = PathBuf::from(
-        env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
-    );
+type BuildResult<T> = Result<T, Box<dyn Error>>;
+
+fn main() -> BuildResult<()> {
+    let manifest_dir = cargo_env_path("CARGO_MANIFEST_DIR")?;
     let icon_path = manifest_dir.join("../../packaging/windows/assets/rufin.ico");
     let translation_dir = manifest_dir.join("../../locales");
 
@@ -16,29 +18,34 @@ fn main() {
     println!("cargo:rerun-if-changed={}", translation_dir.display());
 
     let po_files = translation_source_files(&translation_dir);
-    write_translator_credits(&po_files);
-    let build_locale_dir = compile_translation_catalogs(&po_files);
+    write_translator_credits(&po_files)?;
+    let build_locale_dir = compile_translation_catalogs(&po_files)?;
     println!(
         "cargo:rustc-env=RUFIN_BUILD_LOCALEDIR={}",
         build_locale_dir.display()
     );
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+        return Ok(());
     }
 
-    compile_windows_resource(&icon_path);
+    compile_windows_resource(&icon_path)
 }
 
-fn compile_translation_catalogs(po_files: &[PathBuf]) -> PathBuf {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+fn cargo_env_path(name: &str) -> BuildResult<PathBuf> {
+    let value = env::var_os(name).ok_or_else(|| io::Error::other(format!("{name} is not set")))?;
+    Ok(PathBuf::from(value))
+}
+
+fn compile_translation_catalogs(po_files: &[PathBuf]) -> BuildResult<PathBuf> {
+    let out_dir = cargo_env_path("OUT_DIR")?;
     let locale_dir = out_dir.join("share/locale");
     if locale_dir.exists() {
-        fs::remove_dir_all(&locale_dir).expect("remove stale generated gettext catalogs");
+        fs::remove_dir_all(&locale_dir)?;
     }
 
     if po_files.is_empty() {
-        return locale_dir;
+        return Ok(locale_dir);
     }
     for po_file in po_files {
         println!("cargo:rerun-if-changed={}", po_file.display());
@@ -46,16 +53,16 @@ fn compile_translation_catalogs(po_files: &[PathBuf]) -> PathBuf {
 
     if !msgfmt_available() {
         println!("cargo:warning=msgfmt was not found; local .po translations will not be compiled");
-        return locale_dir;
+        return Ok(locale_dir);
     }
 
     for po_file in po_files {
         let lang = po_file
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .expect("translation file has UTF-8 stem");
+            .ok_or_else(|| io::Error::other(format!("{} has no UTF-8 stem", po_file.display())))?;
         let target_dir = locale_dir.join(lang).join("LC_MESSAGES");
-        fs::create_dir_all(&target_dir).expect("create generated gettext catalog directory");
+        fs::create_dir_all(&target_dir)?;
         let target_file = target_dir.join("rufin.mo");
         let status = Command::new("msgfmt")
             .arg("--check")
@@ -65,19 +72,28 @@ fn compile_translation_catalogs(po_files: &[PathBuf]) -> PathBuf {
             .status();
         match status {
             Ok(status) if status.success() => {}
-            Ok(status) => panic!(
-                "msgfmt failed for {} with status {status}",
-                po_file.display()
-            ),
-            Err(error) => panic!("failed to run msgfmt for {}: {error}", po_file.display()),
+            Ok(status) => {
+                return Err(io::Error::other(format!(
+                    "msgfmt failed for {} with status {status}",
+                    po_file.display()
+                ))
+                .into());
+            }
+            Err(error) => {
+                return Err(io::Error::other(format!(
+                    "failed to run msgfmt for {}: {error}",
+                    po_file.display()
+                ))
+                .into());
+            }
         }
     }
 
-    locale_dir
+    Ok(locale_dir)
 }
 
-fn write_translator_credits(po_files: &[PathBuf]) {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+fn write_translator_credits(po_files: &[PathBuf]) -> BuildResult<()> {
+    let out_dir = cargo_env_path("OUT_DIR")?;
     let mut credits = Vec::new();
     for po_file in po_files {
         let Ok(text) = fs::read_to_string(po_file) else {
@@ -91,8 +107,8 @@ fn write_translator_credits(po_files: &[PathBuf]) {
         }
         credits.push(translator);
     }
-    fs::write(out_dir.join("translator_credits.txt"), credits.join("\n"))
-        .expect("write generated translator credits");
+    fs::write(out_dir.join("translator_credits.txt"), credits.join("\n"))?;
+    Ok(())
 }
 
 fn po_header_value(text: &str, key: &str) -> Option<String> {
@@ -125,8 +141,8 @@ fn msgfmt_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-fn compile_windows_resource(icon_path: &Path) {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+fn compile_windows_resource(icon_path: &Path) -> BuildResult<()> {
+    let out_dir = cargo_env_path("OUT_DIR")?;
     let resource_icon_path = out_dir.join("rufin.ico");
     let resource_script_path = out_dir.join("rufin.rc");
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
@@ -136,27 +152,27 @@ fn compile_windows_resource(icon_path: &Path) {
         out_dir.join("rufin-resource.o")
     };
 
-    fs::copy(icon_path, &resource_icon_path).expect("copy Windows app icon");
-    fs::write(&resource_script_path, windows_resource_script())
-        .expect("write Windows resource file");
+    fs::copy(icon_path, &resource_icon_path)?;
+    fs::write(&resource_script_path, windows_resource_script()?)?;
 
     if target_env == "msvc" {
-        compile_with_msvc_resource_compiler(&resource_script_path, &compiled_resource_path);
+        compile_with_msvc_resource_compiler(&resource_script_path, &compiled_resource_path)?;
     } else {
-        compile_with_windres(&resource_script_path, &compiled_resource_path);
+        compile_with_windres(&resource_script_path, &compiled_resource_path)?;
     }
 
     println!(
         "cargo:rustc-link-arg-bin=rufin={}",
         compiled_resource_path.display()
     );
+    Ok(())
 }
 
-fn windows_resource_script() -> String {
-    let package_version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
+fn windows_resource_script() -> BuildResult<String> {
+    let package_version = env::var("CARGO_PKG_VERSION")?;
     let [major, minor, patch, build] = windows_version_numbers(&package_version);
 
-    format!(
+    Ok(format!(
         r#"#define APP_ICON 1
 #define VER_FILEVERSION {major},{minor},{patch},{build}
 #define VER_FILEVERSION_STR "{package_version}\0"
@@ -190,7 +206,7 @@ BEGIN
     END
 END
 "#
-    )
+    ))
 }
 
 fn windows_version_numbers(version: &str) -> [u16; 4] {
@@ -200,22 +216,27 @@ fn windows_version_numbers(version: &str) -> [u16; 4] {
         .take(numbers.len())
         .enumerate()
     {
-        numbers[index] = part.parse::<u16>().unwrap_or(0);
+        if let Some(number) = numbers.get_mut(index) {
+            *number = part.parse::<u16>().unwrap_or(0);
+        }
     }
     numbers
 }
 
-fn compile_with_windres(resource_script_path: &Path, compiled_resource_path: &Path) {
+fn compile_with_windres(
+    resource_script_path: &Path,
+    compiled_resource_path: &Path,
+) -> BuildResult<()> {
     let mut last_error = None;
     let resource_dir = resource_script_path
         .parent()
-        .expect("Windows resource script has parent directory");
+        .ok_or_else(|| io::Error::other("Windows resource script has no parent directory"))?;
     let resource_file = resource_script_path
         .file_name()
-        .expect("Windows resource script has file name");
+        .ok_or_else(|| io::Error::other("Windows resource script has no file name"))?;
     let compiled_resource_file = compiled_resource_path
         .file_name()
-        .expect("compiled Windows resource has file name");
+        .ok_or_else(|| io::Error::other("compiled Windows resource has no file name"))?;
     for compiler in ["windres", "llvm-windres"] {
         let result = Command::new(compiler)
             .current_dir(resource_dir)
@@ -227,32 +248,42 @@ fn compile_with_windres(resource_script_path: &Path, compiled_resource_path: &Pa
             .arg(compiled_resource_file)
             .status();
         match result {
-            Ok(status) if status.success() => return,
-            Ok(status) => panic!("{compiler} failed with status {status}"),
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                return Err(
+                    io::Error::other(format!("{compiler} failed with status {status}")).into(),
+                );
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => last_error = Some(error),
-            Err(error) => panic!("failed to run {compiler}: {error}"),
+            Err(error) => {
+                return Err(io::Error::other(format!("failed to run {compiler}: {error}")).into());
+            }
         }
     }
 
-    panic!(
+    Err(io::Error::other(format!(
         "failed to compile Windows resources: windres was not found{}",
         last_error
             .map(|error| format!(" ({error})"))
             .unwrap_or_default()
-    );
+    ))
+    .into())
 }
 
-fn compile_with_msvc_resource_compiler(resource_script_path: &Path, compiled_resource_path: &Path) {
+fn compile_with_msvc_resource_compiler(
+    resource_script_path: &Path,
+    compiled_resource_path: &Path,
+) -> BuildResult<()> {
     let mut last_error = None;
     let resource_dir = resource_script_path
         .parent()
-        .expect("Windows resource script has parent directory");
+        .ok_or_else(|| io::Error::other("Windows resource script has no parent directory"))?;
     let resource_file = resource_script_path
         .file_name()
-        .expect("Windows resource script has file name");
+        .ok_or_else(|| io::Error::other("Windows resource script has no file name"))?;
     let compiled_resource_file = compiled_resource_path
         .file_name()
-        .expect("compiled Windows resource has file name");
+        .ok_or_else(|| io::Error::other("compiled Windows resource has no file name"))?;
     for compiler in ["rc", "rc.exe", "llvm-rc", "llvm-rc.exe"] {
         let result = Command::new(compiler)
             .current_dir(resource_dir)
@@ -261,17 +292,24 @@ fn compile_with_msvc_resource_compiler(resource_script_path: &Path, compiled_res
             .arg(resource_file)
             .status();
         match result {
-            Ok(status) if status.success() => return,
-            Ok(status) => panic!("{compiler} failed with status {status}"),
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                return Err(
+                    io::Error::other(format!("{compiler} failed with status {status}")).into(),
+                );
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => last_error = Some(error),
-            Err(error) => panic!("failed to run {compiler}: {error}"),
+            Err(error) => {
+                return Err(io::Error::other(format!("failed to run {compiler}: {error}")).into());
+            }
         }
     }
 
-    panic!(
+    Err(io::Error::other(format!(
         "failed to compile Windows resources: rc was not found{}",
         last_error
             .map(|error| format!(" ({error})"))
             .unwrap_or_default()
-    );
+    ))
+    .into())
 }

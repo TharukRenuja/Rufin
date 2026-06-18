@@ -693,7 +693,7 @@ mod tests {
         inner
             .save_token(&server_id, "provider-token")
             .expect("seed provider token");
-        let store = CachedSecretStore::new(inner.clone());
+        let store = CachedSecretStore::new(Arc::<CountingSecretStore>::clone(&inner));
 
         assert_eq!(
             store.load_token(&server_id).expect("load provider token"),
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn cached_store_mutations() {
         let inner = Arc::new(CountingSecretStore::default());
-        let store = CachedSecretStore::new(inner.clone());
+        let store = CachedSecretStore::new(Arc::<CountingSecretStore>::clone(&inner));
         let server_id = ServerId::fake(1);
 
         store

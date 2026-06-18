@@ -621,9 +621,32 @@ pub(super) fn artist_credits_or_scalar(
     result
 }
 pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
-    let first = tracks
-        .first()
-        .expect("album fallback requires at least one track");
+    let Some(first) = tracks.first() else {
+        return Album {
+            id: album_id.clone(),
+            title: album_id.as_str().to_string(),
+            artist: String::new(),
+            artist_id: None,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
+            year: 0,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 0,
+            duration_seconds: 0,
+            favorite: false,
+            color_seed: stable_seed(album_id.as_str()),
+            image_ref: None,
+            genres: Vec::new(),
+            release_types: Vec::new(),
+            is_compilation: None,
+            musicbrainz_album_id: None,
+            musicbrainz_release_group_id: None,
+        };
+    };
     Album {
         id: album_id.clone(),
         title: first.album.clone(),

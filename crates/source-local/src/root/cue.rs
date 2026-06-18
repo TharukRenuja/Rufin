@@ -188,8 +188,8 @@ impl<'a> CueFields<'a> {
             .value
             .find(char::is_whitespace)
             .unwrap_or(self.value.len());
-        let word = &self.value[..end];
-        self.value = &self.value[end..];
+        let word = self.value.get(..end)?;
+        self.value = self.value.get(end..).unwrap_or_default();
         Some(word)
     }
 
@@ -212,7 +212,7 @@ impl<'a> CueFields<'a> {
                     continue;
                 }
                 if ch == '"' {
-                    self.value = &rest[index + ch.len_utf8()..];
+                    self.value = rest.get(index + ch.len_utf8()..).unwrap_or_default();
                     return Some(value);
                 }
                 value.push(ch);
@@ -223,8 +223,8 @@ impl<'a> CueFields<'a> {
                 .value
                 .find(char::is_whitespace)
                 .unwrap_or(self.value.len());
-            let value = self.value[..end].to_string();
-            self.value = &self.value[end..];
+            let value = self.value.get(..end)?.to_string();
+            self.value = self.value.get(end..).unwrap_or_default();
             Some(value)
         }
     }
