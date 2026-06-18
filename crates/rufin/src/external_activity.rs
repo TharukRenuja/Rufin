@@ -28,6 +28,10 @@ pub fn playback_reporting(settings: &AppSettings) -> bool {
     !settings.private_mode
 }
 
+pub fn release_update_check(settings: &AppSettings) -> bool {
+    settings.release_notifications_enabled && !settings.private_mode
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,6 +44,7 @@ mod tests {
             external_lyrics_enabled: true,
             discord_presence_enabled: true,
             notifications_enabled: true,
+            release_notifications_enabled: true,
             ..AppSettings::default()
         };
 
@@ -49,5 +54,6 @@ mod tests {
         assert!(!discord_presence(&settings));
         assert!(!notifications(&settings));
         assert!(!playback_reporting(&settings));
+        assert!(!release_update_check(&settings));
     }
 }
