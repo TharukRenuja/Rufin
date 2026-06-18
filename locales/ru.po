@@ -120,7 +120,7 @@ msgstr "Переключить Полноэкранный Режим"
 #: crates/rufin/src/ui/preferences/root/mod.rs:91
 #: crates/rufin/src/ui/root/cover_startup.rs:723
 msgid "Preferences"
-msgstr "Предпочтения"
+msgstr "Настройки"
 
 #: crates/rufin/src/ui/chrome.rs:149
 #: crates/rufin/src/ui/root/cover_startup.rs:713
@@ -1517,11 +1517,11 @@ msgstr ""
 
 #: crates/rufin/src/ui/root/cover_startup.rs:716
 msgid "Back"
-msgstr "назад"
+msgstr "Назад"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:718
 msgid "Forward"
-msgstr "вперед"
+msgstr "Вперед"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:738
 #: crates/rufin/src/ui/root/tray.rs:51
@@ -2038,7 +2038,7 @@ msgstr ""
 #: crates/domain/src/settings/layout.rs:597
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:92
 msgid "Last played"
-msgstr "Последнее воспроизведение"
+msgstr "Посл. прослушано"
 
 #: crates/domain/src/domain.rs:317
 msgid "Most Played"
@@ -2090,7 +2090,7 @@ msgstr "Плейлисты"
 
 #: crates/domain/src/settings/layout.rs:598
 msgid "Plays"
-msgstr "Воспроизводит"
+msgstr "Прослушано раз"
 
 #: crates/domain/src/settings/layout.rs:599
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:68
