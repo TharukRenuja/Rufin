@@ -55,7 +55,7 @@ const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
 const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
-const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = 864;
+const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = BOTTOM_PLAYER_SHOW_LYRICS_WIDTH;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
 const SEEK_PREVIEW_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
@@ -1555,7 +1555,7 @@ mod tests {
         );
         assert_eq!(
             super::bottom_player_actions(800),
-            super::BottomPlayerActions::Lyrics
+            super::BottomPlayerActions::Queue
         );
         assert_eq!(
             super::bottom_player_actions(900),
