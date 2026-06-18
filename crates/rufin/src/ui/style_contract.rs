@@ -8,7 +8,7 @@ const TOAST_FOREGROUND: &str = "@window_fg_color";
 const TOAST_RADIUS: &str = "999px";
 const TOAST_BOTTOM_MARGIN: &str = "108px";
 const TOAST_CLOSE_OPACITY: &str = "0";
-const TOAST_CLOSE_ICON_SIZE: &str = "0";
+const TOAST_CLOSE_ICON_SIZE: &str = "1px";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]

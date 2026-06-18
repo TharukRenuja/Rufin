@@ -40,7 +40,7 @@ toastoverlay toast label {
 }
 
 .quick-toast-overlay toast button.circular.flat image {
-  -gtk-icon-size: 0;
+  -gtk-icon-size: 1px;
   min-width: 0;
   min-height: 0;
 }
