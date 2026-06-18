@@ -1,4 +1,7 @@
 use super::*;
+use std::time::Instant;
+
+const SLOW_SMART_PLAYLIST_DETAIL_MS: u64 = 100;
 
 impl AppController {
     pub fn cached_album_detail(
@@ -366,21 +369,55 @@ impl AppController {
         &self,
         smart_playlist_id: &SmartPlaylistId,
     ) -> Result<Option<SmartPlaylistDetail>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+        let total_started = Instant::now();
+        let store_started = Instant::now();
+        let Some((saved, detail, active_ms, load_ms)) = self.store.with_store_fast(|store| {
+            let active_started = Instant::now();
+            let Some(saved) = store.active_server()? else {
+                return Ok(None);
+            };
+            let active_ms = active_started.elapsed().as_millis() as u64;
+            let load_started = Instant::now();
+            let detail = store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)?;
+            let load_ms = load_started.elapsed().as_millis() as u64;
+            Ok(Some((saved, detail, active_ms, load_ms)))
+        })?
+        else {
             return Ok(None);
         };
+        let store_ms = store_started.elapsed().as_millis() as u64;
+        let settings_started = Instant::now();
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| {
-                store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)
-            })
-            .map(|mut detail| {
-                if let Some(detail) = detail.as_mut() {
-                    scrub_smart_refs(&saved, std::slice::from_mut(&mut detail.smart_playlist));
-                    scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
-                }
-                detail
-            })
+        let settings_ms = settings_started.elapsed().as_millis() as u64;
+        let scrub_started = Instant::now();
+        let mut detail = detail;
+        let (track_count, playlist_name) = if let Some(detail) = detail.as_mut() {
+            scrub_smart_refs(&saved, std::slice::from_mut(&mut detail.smart_playlist));
+            scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
+            (
+                detail.tracks.len(),
+                Some(detail.smart_playlist.name.as_str().to_string()),
+            )
+        } else {
+            (0, None)
+        };
+        let scrub_ms = scrub_started.elapsed().as_millis() as u64;
+        let total_ms = total_started.elapsed().as_millis() as u64;
+        if total_ms >= SLOW_SMART_PLAYLIST_DETAIL_MS {
+            warn!(
+                smart_playlist_id = %smart_playlist_id.as_str(),
+                playlist_name = playlist_name.as_deref().unwrap_or(""),
+                track_count,
+                store_ms,
+                active_ms,
+                settings_ms,
+                load_ms,
+                scrub_ms,
+                total_ms,
+                "slow cached smart playlist detail"
+            );
+        }
+        Ok(detail)
     }
     pub fn missing_builtin_smart_playlists(&self) -> Result<Vec<SmartPlaylistBuiltin>, String> {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {

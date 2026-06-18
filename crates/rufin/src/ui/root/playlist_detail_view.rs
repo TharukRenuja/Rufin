@@ -166,12 +166,6 @@ impl Shell {
         let mut smart_playlist = detail.smart_playlist.clone();
         smart_playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
-        let summary = format!(
-            "{} {} • {}",
-            detail.smart_playlist.track_count,
-            tr("tracks"),
-            format_duration(detail.smart_playlist.duration_seconds)
-        );
         let content_width = route_content_width(self);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
@@ -217,10 +211,10 @@ impl Shell {
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         fit_playlist_detail_label(&title);
         let kind_row = self.playlist_detail_kind_row(&[]);
-        let summary = gtk::Label::new(Some(&summary));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        fit_playlist_detail_label(&summary);
+        let summary = playlist_detail_summary(
+            detail.smart_playlist.track_count,
+            detail.smart_playlist.duration_seconds,
+        );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
         let play = detail_action_button("media-playback-start-symbolic", "Play");
@@ -335,12 +329,6 @@ impl Shell {
         let mut playlist = detail.playlist.clone();
         playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
-        let summary = format!(
-            "{} {} • {}",
-            detail.playlist.track_count,
-            tr("tracks"),
-            format_duration(detail.playlist.duration_seconds)
-        );
         let content_width = route_content_width(self);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
@@ -386,10 +374,10 @@ impl Shell {
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         fit_playlist_detail_label(&title);
         let kind_row = self.playlist_detail_kind_row(&detail.playlist.top_genres);
-        let summary = gtk::Label::new(Some(&summary));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        fit_playlist_detail_label(&summary);
+        let summary = playlist_detail_summary(
+            detail.playlist.track_count,
+            detail.playlist.duration_seconds,
+        );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
         let play = detail_action_button("media-playback-start-symbolic", "Play");
@@ -609,6 +597,46 @@ fn fit_playlist_detail_label(label: &gtk::Label) {
     label.set_max_width_chars(32);
 }
 
+fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.set_halign(gtk::Align::Start);
+    row.append(&playlist_detail_summary_item(
+        "audio-x-generic-symbolic",
+        &format!("{track_count} {}", tr("tracks")),
+    ));
+    row.append(&playlist_detail_summary_item(
+        "appointment-soon-symbolic",
+        &playlist_detail_duration(duration_seconds),
+    ));
+    row
+}
+
+fn playlist_detail_summary_item(icon_name: &str, text: &str) -> gtk::Box {
+    let item = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("muted");
+    icon.set_pixel_size(14);
+    item.append(&icon);
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("muted");
+    label.set_xalign(0.0);
+    item.append(&label);
+    item
+}
+
+fn playlist_detail_duration(seconds: u32) -> String {
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        return format!("{hours}h {minutes}m {seconds}s");
+    }
+    if minutes > 0 {
+        return format!("{minutes}m {seconds}s");
+    }
+    format!("{seconds}s")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,6 +701,12 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn playlist_detail_duration_uses_units() {
+        assert_eq!(playlist_detail_duration(57), "57s");
+        assert_eq!(playlist_detail_duration(4_497), "1h 14m 57s");
     }
 
     fn test_track(index: usize, genres: &[&str]) -> Track {

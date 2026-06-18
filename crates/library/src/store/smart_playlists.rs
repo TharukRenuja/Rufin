@@ -65,6 +65,20 @@ impl Store {
 
     fn delete_retired_builtin_smart_playlists(&self, server_id: &ServerId) -> StoreResult<()> {
         for key in RETIRED_SMART_PLAYLIST_BUILTIN_KEYS {
+            let exists = self.connection.query_row(
+                "
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM smart_playlists
+                    WHERE server_id = ?1 AND builtin_key = ?2
+                )
+                ",
+                params![server_id.as_str(), key],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                continue;
+            }
             self.connection.execute(
                 "
                 DELETE FROM smart_playlists
