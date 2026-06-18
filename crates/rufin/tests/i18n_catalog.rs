@@ -197,7 +197,7 @@ fn parse_msgids(path: &Path) -> Vec<String> {
 fn call_arg_strings(source: &str, name: &str, arg_index: usize) -> Vec<String> {
     let mut strings = Vec::new();
     let mut offset = 0;
-    while let Some(relative) = source[offset..].find(name) {
+    while let Some(relative) = str_tail(source, offset).find(name) {
         let start = offset + relative;
         if !identifier_boundary(source, start, name.len()) {
             offset = start + name.len();
@@ -280,7 +280,7 @@ fn field_strings(source: &str, field: &str) -> Vec<String> {
     let needle = format!("{field}:");
     let mut strings = Vec::new();
     let mut offset = 0;
-    while let Some(relative) = source[offset..].find(&needle) {
+    while let Some(relative) = str_tail(source, offset).find(&needle) {
         let start = offset + relative + needle.len();
         let cursor = skip_ws(source, start);
         if let Some((value, _)) = parse_rust_string(source, cursor) {
@@ -294,7 +294,7 @@ fn field_strings(source: &str, field: &str) -> Vec<String> {
 fn dropdown_array_strings(source: &str) -> Vec<String> {
     let mut strings = Vec::new();
     let mut offset = 0;
-    while let Some(relative) = source[offset..].find("dropdown_from_titles") {
+    while let Some(relative) = str_tail(source, offset).find("dropdown_from_titles") {
         let start = offset + relative;
         let mut cursor = skip_ws(source, start + "dropdown_from_titles".len());
         if source.as_bytes().get(cursor) != Some(&b'(') {
@@ -302,7 +302,7 @@ fn dropdown_array_strings(source: &str) -> Vec<String> {
             continue;
         }
         cursor = skip_ws(source, cursor + 1);
-        if source[cursor..].starts_with("&[") {
+        if str_tail(source, cursor).starts_with("&[") {
             cursor += 2;
             while let Some((value, next)) = parse_rust_string(source, skip_ws(source, cursor)) {
                 strings.push(value);
@@ -323,20 +323,20 @@ fn function_return_strings(source: &str, name: &str) -> Vec<String> {
     let mut strings = Vec::new();
     let needle = format!("fn {name}");
     let mut offset = 0;
-    while let Some(relative) = source[offset..].find(&needle) {
+    while let Some(relative) = str_tail(source, offset).find(&needle) {
         let start = offset + relative;
         if !identifier_boundary(source, start + 3, name.len()) {
             offset = start + needle.len();
             continue;
         }
-        let Some(open_relative) = source[start..].find('{') else {
+        let Some(open_relative) = str_tail(source, start).find('{') else {
             break;
         };
         let open = start + open_relative;
         let Some(close) = matching_brace(source, open) else {
             break;
         };
-        strings.extend(arrow_strings(&source[open..=close]));
+        strings.extend(arrow_strings(str_range_inclusive(source, open, close)));
         offset = close + 1;
     }
     strings
@@ -345,7 +345,7 @@ fn function_return_strings(source: &str, name: &str) -> Vec<String> {
 fn arrow_strings(source: &str) -> Vec<String> {
     let mut strings = Vec::new();
     let mut offset = 0;
-    while let Some(relative) = source[offset..].find("=>") {
+    while let Some(relative) = str_tail(source, offset).find("=>") {
         let cursor = skip_ws(source, offset + relative + 2);
         if let Some((value, _)) = parse_rust_string(source, cursor) {
             strings.push(value);
@@ -357,7 +357,7 @@ fn arrow_strings(source: &str) -> Vec<String> {
 
 fn matching_brace(source: &str, open: usize) -> Option<usize> {
     let mut depth = 0;
-    for (relative, ch) in source[open..].char_indices() {
+    for (relative, ch) in str_tail(source, open).char_indices() {
         match ch {
             '{' => depth += 1,
             '}' => {
@@ -379,12 +379,12 @@ fn parse_rust_string(source: &str, start: usize) -> Option<(String, usize)> {
     let mut value = String::new();
     let mut cursor = start + 1;
     while cursor < source.len() {
-        let ch = source[cursor..].chars().next()?;
+        let ch = str_tail(source, cursor).chars().next()?;
         match ch {
             '"' => return Some((value, cursor + 1)),
             '\\' => {
                 cursor += ch.len_utf8();
-                let escaped = source[cursor..].chars().next()?;
+                let escaped = str_tail(source, cursor).chars().next()?;
                 match escaped {
                     'n' => value.push('\n'),
                     'r' => value.push('\r'),
@@ -457,4 +457,12 @@ fn identifier_boundary(source: &str, start: usize, len: usize) -> bool {
         .get(start + len)
         .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_');
     before && after
+}
+
+fn str_tail(source: &str, start: usize) -> &str {
+    source.get(start..).unwrap_or_default()
+}
+
+fn str_range_inclusive(source: &str, start: usize, end: usize) -> &str {
+    source.get(start..=end).unwrap_or_default()
 }

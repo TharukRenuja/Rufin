@@ -17,8 +17,11 @@ use clap::Parser;
 #[cfg(feature = "dev-tools")]
 use clap::ValueEnum;
 use gtk::gio;
+use std::cell::Cell;
 use std::path::PathBuf;
-use tracing::info;
+use std::process::ExitCode;
+use std::rc::Rc;
+use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt};
 
 const APP_ID: &str = "io.github.screwys.Rufin";
@@ -62,36 +65,36 @@ impl From<FakeScaleArg> for FakeScale {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
     init_tracing();
     i18n::init(&i18n::startup_language_preference());
 
     if cli.clear_cache && cli.forget_active_server {
-        eprintln!("Use only one maintenance flag at a time.");
-        std::process::exit(2);
+        error!("use only one maintenance flag at a time");
+        return ExitCode::from(2);
     }
     if cli.clear_cache {
         match controller::AppController::clear_app_cache() {
             Ok(()) => info!("cleared active server cache"),
             Err(error) => {
-                eprintln!("Failed to clear active server cache: {error}");
-                std::process::exit(1);
+                error!(%error, "failed to clear active server cache");
+                return ExitCode::FAILURE;
             }
         }
-        return;
+        return ExitCode::SUCCESS;
     }
 
     if cli.forget_active_server {
         match controller::AppController::forget_active_server_for_app() {
             Ok(()) => info!("forgot active server"),
             Err(error) => {
-                eprintln!("Failed to forget active server: {error}");
-                std::process::exit(1);
+                error!(%error, "failed to forget active server");
+                return ExitCode::FAILURE;
             }
         }
-        return;
+        return ExitCode::SUCCESS;
     }
 
     let options = ui::AppOptions {
@@ -104,8 +107,14 @@ fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("rufin-async")
-        .build()
-        .expect("failed to create async runtime");
+        .build();
+    let runtime = match runtime {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            error!(%error, "failed to create async runtime");
+            return ExitCode::FAILURE;
+        }
+    };
     let _runtime_guard = runtime.enter();
 
     let app = adw::Application::builder()
@@ -113,12 +122,14 @@ fn main() {
         .flags(gio::ApplicationFlags::empty())
         .build();
     let startup_check = cli.startup_check;
+    let startup_display_ready = Rc::new(Cell::new(true));
+    let startup_display_ready_check = Rc::clone(&startup_display_ready);
     app.connect_startup(move |app| {
         let display_ready = configure_app_icon();
         if startup_check {
             if !display_ready {
-                eprintln!("GTK display is not available.");
-                std::process::exit(1);
+                error!("GTK display is not available");
+                startup_display_ready_check.set(false);
             }
             app.quit();
         }
@@ -133,6 +144,11 @@ fn main() {
         .next()
         .unwrap_or_else(|| "rufin".to_string());
     let _exit_code = app.run_with_args(&[program]);
+    if startup_display_ready.get() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn configure_app_icon() -> bool {
@@ -192,8 +208,10 @@ fn app_icon_search_paths_for(
 fn init_tracing() {
     let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("rufin=info,rufin_app=info,playback=info"));
-    if std::env::var("RUST_LOG").map_or(true, |value| !value.contains("lofty")) {
-        filter = filter.add_directive("lofty=error".parse().expect("valid lofty filter"));
+    if std::env::var("RUST_LOG").map_or(true, |value| !value.contains("lofty"))
+        && let Ok(directive) = "lofty=error".parse()
+    {
+        filter = filter.add_directive(directive);
     }
     fmt().with_env_filter(filter).compact().init();
 }

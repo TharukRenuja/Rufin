@@ -210,20 +210,26 @@ mod tests {
         AudioscrobblerScrobbleSettings, ListenBrainzScrobbleSettings, ScrobblingSettings,
     };
     use secrets::{SecretError, SecretResult};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    struct PanickingSecretStore;
+    struct UnexpectedSecretStore {
+        touched: Arc<AtomicBool>,
+    }
 
-    impl SecretStore for PanickingSecretStore {
+    impl SecretStore for UnexpectedSecretStore {
         fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
-            panic!("plain settings load touched secret save")
+            self.touched.store(true, Ordering::Relaxed);
+            Err(SecretError::Backend("unexpected secret save".to_string()))
         }
 
         fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
-            panic!("plain settings load touched secret load")
+            self.touched.store(true, Ordering::Relaxed);
+            Err(SecretError::Backend("unexpected secret load".to_string()))
         }
 
         fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
-            panic!("plain settings load touched secret delete")
+            self.touched.store(true, Ordering::Relaxed);
+            Err(SecretError::Backend("unexpected secret delete".to_string()))
         }
     }
 
@@ -246,8 +252,12 @@ mod tests {
     #[test]
     fn settings_load_skips_scrobbling_secret_store() {
         let store = StoreHandle::open_memory().expect("memory store");
-        let secrets: Arc<dyn SecretStore> = Arc::new(PanickingSecretStore);
-        let controller = SettingsController::new(store.clone(), secrets.clone());
+        let touched = Arc::new(AtomicBool::new(false));
+        let secrets: Arc<dyn SecretStore> = Arc::new(UnexpectedSecretStore {
+            touched: Arc::clone(&touched),
+        });
+        let controller =
+            SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = AppSettings {
             scrobbling: ScrobblingSettings {
                 lastfm: AudioscrobblerScrobbleSettings {
@@ -281,13 +291,15 @@ mod tests {
             persisted.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
+        assert!(!touched.load(Ordering::Relaxed));
     }
 
     #[test]
     fn settings_load_scrobbling_secrets_migrates_legacy_values() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let controller = SettingsController::new(store.clone(), secrets.clone());
+        let controller =
+            SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = AppSettings {
             scrobbling: ScrobblingSettings {
                 lastfm: AudioscrobblerScrobbleSettings {
@@ -330,7 +342,8 @@ mod tests {
     fn settings_persist_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let controller = SettingsController::new(store.clone(), secrets.clone());
+        let controller =
+            SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = AppSettings {
             lastfm_api_key: "cover-key".to_string(),
             scrobbling: ScrobblingSettings {
@@ -401,7 +414,8 @@ mod tests {
     fn settings_save_preserves_missing_scrobbling_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let controller = SettingsController::new(store.clone(), secrets.clone());
+        let controller =
+            SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         secrets
             .save_secret(&SecretKey::LastFmSession, "lastfm-session")
             .expect("seed secret");
@@ -424,7 +438,8 @@ mod tests {
     fn settings_scrobbling_save_deletes_missing_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let controller = SettingsController::new(store.clone(), secrets.clone());
+        let controller =
+            SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         secrets
             .save_secret(&SecretKey::LastFmSession, "lastfm-session")
             .expect("seed secret");

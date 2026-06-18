@@ -730,7 +730,17 @@ impl LibraryListSettings {
                         self.row_fields = default_row_fields(key);
                     }
                 }
-                _ => {}
+                LibraryListKey::Artists
+                | LibraryListKey::AlbumArtists
+                | LibraryListKey::Tracks
+                | LibraryListKey::FavoriteTracks
+                | LibraryListKey::Genres
+                | LibraryListKey::Playlists
+                | LibraryListKey::SmartPlaylists
+                | LibraryListKey::AlbumDetailTracks
+                | LibraryListKey::GenreTracks
+                | LibraryListKey::PlaylistTracks
+                | LibraryListKey::SmartPlaylistTracks => {}
             }
         }
 
@@ -758,7 +768,17 @@ impl LibraryListSettings {
                         self.row_fields = default_row_fields(key);
                     }
                 }
-                _ => {}
+                LibraryListKey::Artists
+                | LibraryListKey::AlbumArtists
+                | LibraryListKey::Tracks
+                | LibraryListKey::Genres
+                | LibraryListKey::Playlists
+                | LibraryListKey::SmartPlaylists
+                | LibraryListKey::AlbumDetailTracks
+                | LibraryListKey::ArtistAlbums
+                | LibraryListKey::GenreTracks
+                | LibraryListKey::PlaylistTracks
+                | LibraryListKey::SmartPlaylistTracks => {}
             }
         }
     }

@@ -546,18 +546,19 @@ pub(in crate::ui) fn album_detail_cover_tile(
         }
     });
 
-    let favorite = controls.favorite.as_ref().expect("favorite button");
-    shell.register_favorite_button(album_favorite_key(&album.id), favorite);
-    let favorite_shell = Rc::clone(shell);
-    let album_id = album.id.clone();
-    favorite.connect_clicked(move |button| {
-        let favorite = !favorite_button_is_active(button);
-        favorite_shell.set_favorite_with_feedback(
-            source::FavoriteItemId::Album(album_id.clone()),
-            favorite,
-            Some(button),
-        );
-    });
+    if let Some(favorite) = controls.favorite.as_ref() {
+        shell.register_favorite_button(album_favorite_key(&album.id), favorite);
+        let favorite_shell = Rc::clone(shell);
+        let album_id = album.id.clone();
+        favorite.connect_clicked(move |button| {
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Album(album_id.clone()),
+                favorite,
+                Some(button),
+            );
+        });
+    }
 
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);

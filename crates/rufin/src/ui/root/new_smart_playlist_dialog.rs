@@ -339,7 +339,7 @@ fn smart_playlist_editor_content(
     let rules = gtk::Box::new(gtk::Orientation::Vertical, 10);
     rules.set_hexpand(true);
     let rerender_slot: RerenderSlot = Rc::new(RefCell::new(None));
-    let rerender = {
+    let rerender: Rc<dyn Fn()> = {
         let rules = rules.clone();
         let editor_rules = Rc::clone(&editor.rules);
         let rerender_slot = Rc::clone(&rerender_slot);
@@ -356,7 +356,7 @@ fn smart_playlist_editor_content(
             }
         })
     };
-    *rerender_slot.borrow_mut() = Some(rerender.clone());
+    *rerender_slot.borrow_mut() = Some(Rc::clone(&rerender));
     rerender();
     content.append(&rules);
 

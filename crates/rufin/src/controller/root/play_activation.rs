@@ -99,7 +99,9 @@ pub fn normalize_loaded_source_activation(
         PlayTarget::StoreBackedSource { .. } => {
             return Err("The selected source could not be resolved.".to_string());
         }
-        PlayTarget::ShuffleStart(_) => unreachable!("shuffle start is unwrapped by into_parts"),
+        PlayTarget::ShuffleStart(_) => {
+            return Err("The selected source could not be resolved.".to_string());
+        }
     };
     Ok(NormalizedPlayActivation {
         target,
@@ -157,10 +159,9 @@ fn validate_loaded_items(
                 return Err("The selected track is no longer available.".to_string());
             }
             if let Some(total) = total {
-                let last_source_index = items
-                    .last()
-                    .expect("non-empty source has a last item")
-                    .source_index;
+                let Some(last_source_index) = items.last().map(|item| item.source_index) else {
+                    return Err("No tracks are available to play.".to_string());
+                };
                 if *start >= *total || last_source_index >= *total {
                     return Err("The selected track is no longer available.".to_string());
                 }

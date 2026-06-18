@@ -126,7 +126,7 @@ jobs:
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
       - name: Check Rust lints
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash scripts/lint-rust.sh
 
       - name: Run Rust tests
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash scripts/test-rust.sh

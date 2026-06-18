@@ -139,16 +139,21 @@ fn parse_appstream_release_notes(xml: &str, limit: usize) -> Vec<ReleaseNote> {
         let Some(start) = rest.find("<release ") else {
             break;
         };
-        rest = &rest[start..];
+        rest = rest.get(start..).unwrap_or_default();
         let Some(tag_end) = rest.find('>') else {
             break;
         };
-        let tag = &rest[..tag_end + 1];
+        let tag = rest.get(..tag_end + 1).unwrap_or_default();
         let body_start = tag_end + 1;
-        let Some(body_end) = rest[body_start..].find("</release>") else {
+        let Some(body_end) = rest
+            .get(body_start..)
+            .and_then(|rest| rest.find("</release>"))
+        else {
             break;
         };
-        let body = &rest[body_start..body_start + body_end];
+        let body = rest
+            .get(body_start..body_start + body_end)
+            .unwrap_or_default();
         let description = tag_body(body, "description").unwrap_or(body);
         notes.push(ReleaseNote {
             version: attr_value(tag, "version").unwrap_or_default(),
@@ -156,7 +161,9 @@ fn parse_appstream_release_notes(xml: &str, limit: usize) -> Vec<ReleaseNote> {
             summary: tag_texts(description, "p").into_iter().next(),
             items: tag_texts(description, "li"),
         });
-        rest = &rest[body_start + body_end + "</release>".len()..];
+        rest = rest
+            .get(body_start + body_end + "</release>".len()..)
+            .unwrap_or_default();
     }
     notes
 }
@@ -164,16 +171,16 @@ fn parse_appstream_release_notes(xml: &str, limit: usize) -> Vec<ReleaseNote> {
 fn attr_value(tag: &str, name: &str) -> Option<String> {
     let needle = format!("{name}=\"");
     let start = tag.find(&needle)? + needle.len();
-    let end = tag[start..].find('"')?;
-    Some(xml_text(&tag[start..start + end]))
+    let end = tag.get(start..)?.find('"')?;
+    Some(xml_text(tag.get(start..start + end)?))
 }
 
 fn tag_body<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = text.find(&open)? + open.len();
-    let end = text[start..].find(&close)?;
-    Some(&text[start..start + end])
+    let end = text.get(start..)?.find(&close)?;
+    text.get(start..start + end)
 }
 
 fn tag_texts(text: &str, tag: &str) -> Vec<String> {
@@ -182,15 +189,15 @@ fn tag_texts(text: &str, tag: &str) -> Vec<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     while let Some(start) = rest.find(&open) {
-        rest = &rest[start + open.len()..];
+        rest = rest.get(start + open.len()..).unwrap_or_default();
         let Some(end) = rest.find(&close) else {
             break;
         };
-        let value = xml_text(&strip_xml_tags(&rest[..end]));
+        let value = xml_text(&strip_xml_tags(rest.get(..end).unwrap_or_default()));
         if !value.is_empty() {
             values.push(value);
         }
-        rest = &rest[end + close.len()..];
+        rest = rest.get(end + close.len()..).unwrap_or_default();
     }
     values
 }

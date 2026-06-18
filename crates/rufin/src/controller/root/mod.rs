@@ -483,6 +483,14 @@ pub struct AppController {
     _test_permit: Option<ControllerTestPermit>,
 }
 
+pub(crate) type ControllerBootstrap = (
+    AppController,
+    Receiver<ControllerEvent>,
+    LibrarySnapshot,
+    Option<QueueSnapshot>,
+    PlaybackSnapshot,
+);
+
 pub(crate) fn smart_playlist_definition_fingerprint(
     definition: &SmartPlaylistDefinition,
 ) -> String {

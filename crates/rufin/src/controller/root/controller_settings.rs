@@ -142,7 +142,7 @@ mod tests {
             .save_secret(&SecretKey::ListenBrainzToken, "listenbrainz-token")
             .expect("save listenbrainz token");
 
-        let backend: Arc<dyn SecretStore> = secrets.clone();
+        let backend: Arc<dyn SecretStore> = Arc::<MemorySecretStore>::clone(&secrets);
         delete_current_secrets(&backend, &[first.clone(), second.clone()])
             .expect("delete current secrets");
 

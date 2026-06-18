@@ -100,10 +100,10 @@ fn selector_color(css: &str, selector: &str) -> Option<String> {
 fn selector_property(css: &str, selector: &str, property: &str) -> Option<String> {
     let mut remaining = css;
     while let Some(block_start) = remaining.find('{') {
-        let selector_list = remaining[..block_start].trim();
-        let after_block_start = &remaining[block_start + 1..];
+        let selector_list = remaining.get(..block_start).unwrap_or_default().trim();
+        let after_block_start = remaining.get(block_start + 1..).unwrap_or_default();
         let block_end = after_block_start.find('}')?;
-        let block = &after_block_start[..block_end];
+        let block = after_block_start.get(..block_end).unwrap_or_default();
         if selector_list
             .split(',')
             .map(str::trim)
@@ -115,7 +115,7 @@ fn selector_property(css: &str, selector: &str, property: &str) -> Option<String
                 .find_map(|line| line.strip_prefix(&format!("{property}:")))
                 .map(|value| value.trim().trim_end_matches(';').to_string());
         }
-        remaining = &after_block_start[block_end + 1..];
+        remaining = after_block_start.get(block_end + 1..).unwrap_or_default();
     }
     None
 }

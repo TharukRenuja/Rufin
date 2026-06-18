@@ -379,11 +379,11 @@ fn normalized_date(value: Option<String>) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    if value.len() >= 10 {
-        let prefix = &value[..10];
-        if prefix.as_bytes().get(4) == Some(&b'-') && prefix.as_bytes().get(7) == Some(&b'-') {
-            return Some(prefix.to_string());
-        }
+    if let Some(prefix) = value.get(..10)
+        && prefix.as_bytes().get(4) == Some(&b'-')
+        && prefix.as_bytes().get(7) == Some(&b'-')
+    {
+        return Some(prefix.to_string());
     }
     Some(value)
 }

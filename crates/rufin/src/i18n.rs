@@ -393,7 +393,8 @@ impl PluralExpr {
                             left % right
                         }
                     }
-                    PluralBinaryOp::Or | PluralBinaryOp::And => unreachable!(),
+                    PluralBinaryOp::Or => i64::from(left != 0 || right != 0),
+                    PluralBinaryOp::And => i64::from(left != 0 && right != 0),
                 }
             }
             Self::Ternary(condition, when_true, when_false) => {
@@ -578,12 +579,16 @@ impl<'a> PluralParser<'a> {
         {
             self.cursor += 1;
         }
-        (self.cursor > start).then(|| self.input[start..self.cursor].parse::<i64>().ok())?
+        (self.cursor > start).then(|| self.input.get(start..self.cursor)?.parse::<i64>().ok())?
     }
 
     fn take(&mut self, token: &str) -> bool {
         self.skip_ws();
-        if self.input[self.cursor..].starts_with(token) {
+        if self
+            .input
+            .get(self.cursor..)
+            .is_some_and(|input| input.starts_with(token))
+        {
             self.cursor += token.len();
             true
         } else {

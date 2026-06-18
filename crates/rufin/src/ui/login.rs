@@ -61,13 +61,13 @@ impl Shell {
             .build();
         let dialog_for_connect = dialog.clone();
         let on_connect_started = on_connect_started.clone();
-        let connect_callback = Rc::new(move || {
+        let connect_callback: Rc<dyn Fn()> = Rc::new(move || {
             dialog_for_connect.close();
             if let Some(on_connect_started) = on_connect_started.as_ref() {
                 on_connect_started();
             }
         });
-        let child = self.server_view_handler(Some(connect_callback.clone()));
+        let child = self.server_view_handler(Some(Rc::clone(&connect_callback)));
         toolbar.set_content(Some(&child));
         dialog.set_child(Some(&toolbar));
         *self.state.add_server_dialog.borrow_mut() = Some(AddServerDialogHandle {

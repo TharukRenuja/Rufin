@@ -2,15 +2,7 @@ use super::*;
 
 impl AppController {
     #[cfg(any(test, feature = "dev-tools"))]
-    pub fn bootstrap_with_fake(
-        scale: FakeScale,
-    ) -> (
-        Self,
-        Receiver<ControllerEvent>,
-        LibrarySnapshot,
-        Option<QueueSnapshot>,
-        PlaybackSnapshot,
-    ) {
+    pub(crate) fn bootstrap_with_fake(scale: FakeScale) -> ControllerBootstrap {
         #[cfg(test)]
         let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
@@ -47,7 +39,7 @@ impl AppController {
         let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
             MemorySecretStore::new(),
         )));
-        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
+        let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
         let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(
@@ -91,28 +83,24 @@ impl AppController {
         )
     }
 
-    pub fn bootstrap() -> (
-        Self,
-        Receiver<ControllerEvent>,
-        LibrarySnapshot,
-        Option<QueueSnapshot>,
-        PlaybackSnapshot,
-    ) {
+    pub(crate) fn bootstrap() -> Result<ControllerBootstrap, String> {
         #[cfg(test)]
         let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
-            .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
-        let store = StoreHandle::open_for_app().unwrap_or_else(|error| {
-            warn!(%error, "failed to open app store, falling back to memory");
-            StoreHandle::open_memory().unwrap_or_else(|memory_error| {
-                panic!("failed to open memory store: {memory_error}")
-            })
-        });
+            .map_err(|error| format!("failed to create Tokio runtime: {error}"))?;
+        let store = match StoreHandle::open_for_app() {
+            Ok(store) => store,
+            Err(error) => {
+                warn!(%error, "failed to open app store, falling back to memory");
+                StoreHandle::open_memory()
+                    .map_err(|error| format!("failed to open memory store: {error}"))?
+            }
+        };
         let settings = load_settings_from_store(&store);
         let secret_switch = Arc::new(SwitchableSecretStore::new(platform_secret_store(&settings)));
-        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
+        let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
         let snapshot = load_runtime_snapshot(&store, &secrets).unwrap_or_else(|error| {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
@@ -163,22 +151,16 @@ impl AppController {
             _test_permit: test_permit,
         };
         controller.warm_playback_backend();
-        (
+        Ok((
             controller,
             receiver,
             snapshot,
             queue_snapshot,
             playback_snapshot,
-        )
+        ))
     }
     #[cfg(test)]
-    pub(in crate::controller) fn bootstrap_memory_for_test() -> (
-        Self,
-        Receiver<ControllerEvent>,
-        LibrarySnapshot,
-        Option<QueueSnapshot>,
-        PlaybackSnapshot,
-    ) {
+    pub(in crate::controller) fn bootstrap_memory_for_test() -> ControllerBootstrap {
         let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
@@ -193,7 +175,7 @@ impl AppController {
         let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
             MemorySecretStore::new(),
         )));
-        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
+        let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
         let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(

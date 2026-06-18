@@ -869,7 +869,7 @@ fn schema_track_commit() {
         },
     );
 
-    assert!(error.is_err());
+    let _error = error.expect_err("duplicate manifest should fail");
     let tracks = store
         .load_tracks(&saved.server.id, 0, 10)
         .expect("tracks after failed delta");
