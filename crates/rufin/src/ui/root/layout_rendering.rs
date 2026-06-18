@@ -1148,6 +1148,23 @@ pub(in crate::ui) fn detail_action_button(icon_name: &str, label: &str) -> gtk::
     button.add_css_class("detail-showcase-action-button");
     button
 }
+pub(in crate::ui) fn detail_genre_pill_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("album-detail-genre-pill");
+    button.set_halign(gtk::Align::Start);
+    button.set_valign(gtk::Align::Center);
+    button.set_hexpand(false);
+    button.set_tooltip_text(Some(label));
+    let text = gtk::Label::new(Some(label));
+    text.set_xalign(0.0);
+    text.set_halign(gtk::Align::Start);
+    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    text.set_width_chars(1);
+    text.set_max_width_chars(28);
+    button.set_child(Some(&text));
+    button
+}
 pub(in crate::ui) fn detail_delete_button(label: &str) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("icon-button");

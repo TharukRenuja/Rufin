@@ -117,6 +117,11 @@ impl Shell {
         self.render_queue_panel_with_scroll(QueueScrollBehavior::Preserve);
     }
 
+    pub(super) fn invalidate_queue_panel_render_state(&self) {
+        self.state.queue_sidebar_render_state.borrow_mut().take();
+        self.state.queue_fullscreen_render_state.borrow_mut().take();
+    }
+
     fn render_queue_panel_reset_scroll(self: &Rc<Self>) {
         self.render_queue_panel_with_scroll(QueueScrollBehavior::Reset);
     }
@@ -1139,19 +1144,19 @@ fn show_queue_row_context_menu(
         ));
     }
 
-    main_menu.append(&context_menu_action(
-        if entry.favorite {
-            "Remove from Favorites"
-        } else {
-            "Add to Favorites"
-        },
-        "queue.favorite",
-        if entry.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+    if entry.favorite {
+        main_menu.append(&context_menu_action(
+            "Remove from Favorites",
+            "queue.favorite",
+            FAVORITE_REMOVE_ICON,
+        ));
+    } else {
+        main_menu.append(&context_menu_action(
+            "Add to Favorites",
+            "queue.favorite",
+            FAVORITE_ADD_ICON,
+        ));
+    }
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
         main_menu.append(&context_menu_action(

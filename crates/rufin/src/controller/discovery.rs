@@ -14,6 +14,15 @@ pub struct DiscoveredServer {
     pub id: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ServerDiscoveryStatus {
+    Idle,
+    Searching,
+    Empty,
+    Found(u64),
+    Failed(String),
+}
+
 impl From<DiscoveredJellyfinServer> for DiscoveredServer {
     fn from(server: DiscoveredJellyfinServer) -> Self {
         Self {
@@ -31,7 +40,7 @@ impl AppController {
         thread::spawn(move || {
             let _sent = events.send(ControllerEvent::ServerDiscovery {
                 servers: Vec::new(),
-                status: "Searching for Jellyfin servers on the local network…".to_string(),
+                status: ServerDiscoveryStatus::Searching,
                 running: true,
             });
 
@@ -39,7 +48,7 @@ impl AppController {
                 Ok(servers) => {
                     let servers: Vec<DiscoveredServer> =
                         servers.into_iter().map(DiscoveredServer::from).collect();
-                    let status = discovery_finished_status(&servers);
+                    let status = discovery_finished_status(servers.len());
                     let _sent = events.send(ControllerEvent::ServerDiscovery {
                         servers,
                         status,
@@ -49,7 +58,7 @@ impl AppController {
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::ServerDiscovery {
                         servers: Vec::new(),
-                        status: format!("Server discovery failed: {error}"),
+                        status: ServerDiscoveryStatus::Failed(error.to_string()),
                         running: false,
                     });
                 }
@@ -58,10 +67,9 @@ impl AppController {
     }
 }
 
-fn discovery_finished_status(servers: &[DiscoveredServer]) -> String {
-    match servers.len() {
-        0 => "No Jellyfin servers found. Enter the address manually or search again".to_string(),
-        1 => "Found 1 Jellyfin server".to_string(),
-        count => format!("Found {count} Jellyfin servers"),
+fn discovery_finished_status(count: usize) -> ServerDiscoveryStatus {
+    match count {
+        0 => ServerDiscoveryStatus::Empty,
+        count => ServerDiscoveryStatus::Found(count as u64),
     }
 }

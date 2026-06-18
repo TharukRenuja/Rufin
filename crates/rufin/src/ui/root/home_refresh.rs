@@ -1,3 +1,5 @@
+use crate::i18n::tr_with;
+
 use super::*;
 
 const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
@@ -94,19 +96,19 @@ fn present_track_context_menu_inner(
         ));
     }
 
-    main_menu.append(&context_menu_action(
-        if track.favorite {
-            "Remove from Favorites"
-        } else {
-            "Add to Favorites"
-        },
-        "track.favorite",
-        if track.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+    if track.favorite {
+        main_menu.append(&context_menu_action(
+            "Remove from Favorites",
+            "track.favorite",
+            FAVORITE_REMOVE_ICON,
+        ));
+    } else {
+        main_menu.append(&context_menu_action(
+            "Add to Favorites",
+            "track.favorite",
+            FAVORITE_ADD_ICON,
+        ));
+    }
     let artist_route = track_artist_route(&track);
     if artist_route.is_some() {
         main_menu.append(&context_menu_action(
@@ -288,19 +290,19 @@ pub(in crate::ui) fn present_album_context_menu(
         ));
     }
 
-    main_menu.append(&context_menu_action(
-        if album.favorite {
-            "Remove from Favorites"
-        } else {
-            "Add to Favorites"
-        },
-        "album.favorite",
-        if album.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+    if album.favorite {
+        main_menu.append(&context_menu_action(
+            "Remove from Favorites",
+            "album.favorite",
+            FAVORITE_REMOVE_ICON,
+        ));
+    } else {
+        main_menu.append(&context_menu_action(
+            "Add to Favorites",
+            "album.favorite",
+            FAVORITE_ADD_ICON,
+        ));
+    }
     let artist_route = album_artist_route(&album);
     if artist_route.is_some() {
         main_menu.append(&context_menu_action(
@@ -453,19 +455,19 @@ pub(in crate::ui) fn present_artist_context_menu(
         ));
     }
 
-    main_menu.append(&context_menu_action(
-        if artist.favorite {
-            "Remove from Favorites"
-        } else {
-            "Add to Favorites"
-        },
-        "artist.favorite",
-        if artist.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+    if artist.favorite {
+        main_menu.append(&context_menu_action(
+            "Remove from Favorites",
+            "artist.favorite",
+            FAVORITE_REMOVE_ICON,
+        ));
+    } else {
+        main_menu.append(&context_menu_action(
+            "Add to Favorites",
+            "artist.favorite",
+            FAVORITE_ADD_ICON,
+        ));
+    }
     main_menu.append(&context_menu_action(
         "Go to Artist",
         "artist.go-artist",
@@ -1042,15 +1044,32 @@ fn playlist_picker_meta(icon_name: &str, text: &str) -> gtk::Box {
 }
 fn playlist_add_toast(added_tracks: usize, playlist_count: usize) -> String {
     if added_tracks == 0 {
-        return "No songs added".to_string();
+        return tr("No songs added");
     }
-    let song = if added_tracks == 1 { "song" } else { "songs" };
-    let playlist = if playlist_count == 1 {
-        "playlist"
-    } else {
-        "playlists"
-    };
-    format!("{added_tracks} {song} added to {playlist_count} {playlist}")
+    let track_count = added_tracks.to_string();
+    let playlist_count_text = playlist_count.to_string();
+    let args = [
+        ("track_count", track_count.as_str()),
+        ("playlist_count", playlist_count_text.as_str()),
+    ];
+    match (added_tracks == 1, playlist_count == 1) {
+        (true, true) => tr_with(
+            "{track_count} song added to {playlist_count} playlist",
+            &args,
+        ),
+        (true, false) => tr_with(
+            "{track_count} song added to {playlist_count} playlists",
+            &args,
+        ),
+        (false, true) => tr_with(
+            "{track_count} songs added to {playlist_count} playlist",
+            &args,
+        ),
+        (false, false) => tr_with(
+            "{track_count} songs added to {playlist_count} playlists",
+            &args,
+        ),
+    }
 }
 fn playlist_tracks_to_add(
     controller: &AppController,

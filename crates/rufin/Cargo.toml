@@ -23,7 +23,6 @@ dev-tools = ["dep:test_support"]
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
 directories.workspace = true
-gettext-rs = { workspace = true, features = ["gettext-system"] }
 gdk-pixbuf.workspace = true
 getrandom.workspace = true
 gtk = { workspace = true, features = ["v4_20"] }

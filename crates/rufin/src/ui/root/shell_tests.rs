@@ -1751,15 +1751,15 @@ pub(in crate::ui) fn shell_reject_stale_lyrics() {
 pub(in crate::ui) fn shell_use_statuses() {
     assert_eq!(
         preferences_login_status_toast_message("Checking Jellyfin server…"),
-        Some("Checking Jellyfin server…")
+        Some("Checking Jellyfin server…".to_string())
     );
     assert_eq!(
         preferences_login_status_toast_message("Server settings saved."),
-        Some("Server settings saved.")
+        Some("Server settings saved.".to_string())
     );
     assert_eq!(
         preferences_login_status_toast_message("Server settings saved. Resyncing library…"),
-        Some("Server settings saved. Resyncing library…")
+        Some("Server settings saved. Resyncing library…".to_string())
     );
     assert_eq!(
         preferences_login_status_toast_message("Syncing Jellyfin library…"),
@@ -1775,11 +1775,11 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(
         preferences_login_status_toast_message("Sync already running."),
-        Some("Sync already running.")
+        Some("Sync already running.".to_string())
     );
     assert_eq!(
         preferences_login_status_toast_message("No changes to save."),
-        Some("No changes to save.")
+        Some("No changes to save.".to_string())
     );
     assert!(!super::controller_error_is_user_visible(
         "Element failed to change its state"
@@ -1821,13 +1821,13 @@ pub(in crate::ui) fn shell_use_statuses() {
         library_sync_toast_message(
             "Caching library… This may take some time. Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
         ),
-        "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+        "Caching library… This may take some time."
     );
     assert_eq!(
         library_sync_toast_message(
             "Caching local library… This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
         ),
-        "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+        "Caching local library… This may take some time."
     );
     assert_eq!(library_sync_toast_state("Sync already running."), None);
 }

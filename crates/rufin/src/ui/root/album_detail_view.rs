@@ -132,13 +132,35 @@ impl Shell {
         kind.set_xalign(0.0);
         kind.set_halign(gtk::Align::Start);
         kind.set_valign(gtk::Align::Center);
-        let kind_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        kind.set_margin_end(6);
+        let kind_row = gtk::FlowBox::new();
         kind_row.add_css_class("album-detail-kind-row");
-        kind_row.set_halign(gtk::Align::Start);
+        kind_row.add_css_class("album-detail-genre-row");
+        kind_row.set_column_spacing(2);
+        kind_row.set_row_spacing(2);
+        kind_row.set_selection_mode(gtk::SelectionMode::None);
+        kind_row.set_min_children_per_line(1);
+        kind_row.set_max_children_per_line(4);
+        kind_row.set_valign(gtk::Align::Center);
+        kind_row.set_halign(gtk::Align::Fill);
+        kind_row.set_hexpand(true);
         kind_row.set_width_request(1);
-        kind_row.append(&kind);
-        if let Some(genre_links) = self.album_genre_links(&album) {
-            kind_row.append(&genre_links);
+        kind_row.insert(&kind, -1);
+        for genre_name in album
+            .genres
+            .iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+        {
+            let button = detail_genre_pill_button(genre_name);
+            if let Some(genre_id) = self.album_genre_id(genre_name) {
+                let shell = Rc::clone(self);
+                button
+                    .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
+            } else {
+                button.set_sensitive(false);
+            }
+            kind_row.insert(&button, -1);
         }
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
@@ -258,37 +280,6 @@ impl Shell {
 
         wrapper.append(&detail_route_scroller(self, content.upcast()));
         wrapper.upcast()
-    }
-
-    fn album_genre_links(self: &Rc<Self>, album: &Album) -> Option<gtk::Widget> {
-        let flow = gtk::FlowBox::new();
-        flow.add_css_class("album-detail-genre-row");
-        flow.set_column_spacing(2);
-        flow.set_row_spacing(2);
-        flow.set_selection_mode(gtk::SelectionMode::None);
-        flow.set_max_children_per_line(3);
-        flow.set_valign(gtk::Align::Center);
-
-        for genre_name in album
-            .genres
-            .iter()
-            .map(|name| name.trim())
-            .filter(|name| !name.is_empty())
-        {
-            let button = gtk::Button::with_label(genre_name);
-            button.add_css_class("flat");
-            button.add_css_class("album-detail-genre-pill");
-            if let Some(genre_id) = self.album_genre_id(genre_name) {
-                let shell = Rc::clone(self);
-                button
-                    .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
-            } else {
-                button.set_sensitive(false);
-            }
-            flow.insert(&button, -1);
-        }
-
-        flow.first_child().is_some().then(|| flow.upcast())
     }
 
     fn album_genre_id(&self, name: &str) -> Option<domain::GenreId> {

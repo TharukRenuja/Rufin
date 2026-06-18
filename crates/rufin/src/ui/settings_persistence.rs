@@ -402,6 +402,7 @@ impl Shell {
         self.relocalize_static_controls();
         self.rebuild_sidebar_navigation();
         self.render_current_route_preserving_scroll();
+        self.invalidate_queue_panel_render_state();
         self.render_queue_panel();
         self.render_lyrics_panel();
         self.update_bottom_player();
@@ -419,50 +420,126 @@ impl Shell {
         self.update_mpris_player();
     }
 
-    fn relocalize_static_controls(&self) {
-        chrome::relocalize_primary_menu_button(&self.main_menu);
-        relocalize_icon_button(&self.normal_back_button, "Back");
-        relocalize_icon_button(&self.compact_back_button, "Back");
-        relocalize_icon_button(&self.normal_forward_button, "Forward");
-        relocalize_icon_button(&self.compact_forward_button, "Forward");
+    pub(in crate::ui) fn install_locale_bindings(&self) {
+        if !self.state.locale_bindings.borrow().is_empty() {
+            return;
+        }
 
-        let cover_label = tr("Open fullscreen player");
-        self.player_controls
-            .cover
-            .area
-            .set_tooltip_text(Some(&cover_label));
-        self.player_controls
-            .cover
-            .area
-            .update_property(&[gtk::accessible::Property::Label(&cover_label)]);
+        self.bind_locale({
+            let button = self.main_menu.clone();
+            move || chrome::relocalize_primary_menu_button(&button)
+        });
+        self.bind_icon_locale(&self.normal_back_button, "Back");
+        self.bind_icon_locale(&self.compact_back_button, "Back");
+        self.bind_icon_locale(&self.normal_forward_button, "Forward");
+        self.bind_icon_locale(&self.compact_forward_button, "Forward");
 
-        relocalize_icon_button(&self.player_controls.previous_button, "Previous");
-        relocalize_icon_button(&self.player_controls.next_button, "Next");
-        relocalize_icon_button(&self.player_controls.shuffle_button, "Shuffle");
-        relocalize_icon_button(&self.player_controls.random_button, "Play random");
-        relocalize_icon_button(&self.player_controls.menu_button, "More actions");
-        relocalize_icon_button(&self.player_controls.favorite_button, "Favorite");
-        relocalize_icon_button(&self.player_controls.mute_button, "Mute");
-        relocalize_icon_button(
+        self.bind_locale({
+            let area = self.player_controls.cover.area.clone();
+            move || {
+                let label = tr("Open fullscreen player");
+                area.set_tooltip_text(Some(&label));
+                area.update_property(&[gtk::accessible::Property::Label(&label)]);
+            }
+        });
+        self.bind_icon_locale(&self.player_controls.previous_button, "Previous");
+        self.bind_icon_locale(&self.player_controls.next_button, "Next");
+        self.bind_icon_locale(&self.player_controls.shuffle_button, "Shuffle");
+        self.bind_icon_locale(&self.player_controls.random_button, "Play random");
+        self.bind_icon_locale(&self.player_controls.menu_button, "More actions");
+        self.bind_icon_locale(&self.player_controls.favorite_button, "Favorite");
+        self.bind_icon_locale(&self.player_controls.mute_button, "Mute");
+
+        self.bind_icon_locale(
             &self.fullscreen_player.close_button,
             "Close fullscreen player",
         );
+        self.bind_icon_locale(
+            &self.fullscreen_player.inline_close_button,
+            "Close fullscreen player",
+        );
+        for (button, label, msgid) in &self.fullscreen_player.tabs {
+            let button = button.clone();
+            let label = label.clone();
+            let msgid = *msgid;
+            self.bind_locale(move || {
+                let text = tr(msgid);
+                label.set_text(&text);
+                button.set_tooltip_text(Some(&text));
+                button.update_property(&[gtk::accessible::Property::Label(&text)]);
+            });
+        }
+        self.bind_locale({
+            let stack = self.fullscreen_player.stack.clone();
+            let child = self.fullscreen_player.lyrics_pane.widget().clone();
+            move || stack.page(&child).set_title(Some(&tr("Lyrics")))
+        });
+        self.bind_locale({
+            let stack = self.fullscreen_player.stack.clone();
+            let child = self.fullscreen_player.queue_panel.clone();
+            move || stack.page(&child).set_title(Some(&tr("Queue")))
+        });
+        self.bind_locale({
+            let stack = self.fullscreen_player.stack.clone();
+            let child = self.fullscreen_player.visualizer_panel.clone();
+            move || stack.page(&child).set_title(Some(&tr("Visualizer")))
+        });
+        self.bind_locale({
+            let stack = self.fullscreen_player.stack.clone();
+            let child = self.fullscreen_player.equalizer_panel.clone();
+            move || stack.page(&child).set_title(Some(&tr("Equalizer")))
+        });
+        self.bind_label_locale(
+            &self.fullscreen_player.equalizer_enabled_label,
+            "Enable equalizer",
+        );
+        self.bind_button_label_locale(&self.fullscreen_player.equalizer_reset_button, "Reset");
+        for (button, name) in &self.fullscreen_player.equalizer_preset_buttons {
+            let button = button.clone();
+            let name = name.clone();
+            self.bind_locale(move || button.set_label(&tr(&name)));
+        }
 
-        let search_label = tr("Search queue");
-        self.queue_search
-            .update_property(&[gtk::accessible::Property::Label(&search_label)]);
-        relocalize_icon_button(&self.queue_clear_button, "Clear queue");
-        self.lyrics_pane.set_title(&tr("Lyrics"));
-        let lyrics_title = tr("Lyrics");
-        self.fullscreen_player
-            .stack
-            .page(self.fullscreen_player.lyrics_pane.widget())
-            .set_title(Some(&lyrics_title));
-        let queue_title = tr("Queue");
-        self.fullscreen_player
-            .stack
-            .page(&self.fullscreen_player.queue_panel)
-            .set_title(Some(&queue_title));
+        self.bind_locale({
+            let entry = self.queue_search.clone();
+            move || {
+                let label = tr("Search queue");
+                entry.update_property(&[gtk::accessible::Property::Label(&label)]);
+            }
+        });
+        self.bind_icon_locale(&self.queue_clear_button, "Clear queue");
+        self.bind_locale({
+            let pane = self.lyrics_pane.clone();
+            move || pane.set_title(&tr("Lyrics"))
+        });
+    }
+
+    fn bind_locale(&self, update: impl Fn() + 'static) {
+        let update = Box::new(update) as Box<dyn Fn()>;
+        update();
+        self.state.locale_bindings.borrow_mut().push(update);
+    }
+
+    fn bind_icon_locale(&self, button: &gtk::Button, msgid: &'static str) {
+        let button = button.clone();
+        self.bind_locale(move || relocalize_icon_button(&button, msgid));
+    }
+
+    fn bind_button_label_locale(&self, button: &gtk::Button, msgid: &'static str) {
+        let button = button.clone();
+        self.bind_locale(move || button.set_label(&tr(msgid)));
+    }
+
+    fn bind_label_locale(&self, label: &gtk::Label, msgid: &'static str) {
+        let label = label.clone();
+        self.bind_locale(move || label.set_text(&tr(msgid)));
+    }
+
+    fn relocalize_static_controls(&self) {
+        for binding in self.state.locale_bindings.borrow().iter() {
+            binding();
+        }
+        self.relocalize_fullscreen_player_controls();
     }
 
     pub(super) fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {

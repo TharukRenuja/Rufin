@@ -70,14 +70,18 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) album: gtk::Label,
     pub(super) meta: gtk::FlowBox,
     pub(super) stack: adw::ViewStack,
+    pub(super) tabs: Vec<(gtk::ToggleButton, gtk::Label, &'static str)>,
     pub(super) lyrics_pane: LyricsPane,
     pub(super) queue_panel: gtk::Box,
+    pub(super) visualizer_panel: gtk::Box,
     pub(super) visualizer_area: gtk::DrawingArea,
     pub(super) visualizer_levels: Rc<RefCell<Vec<f64>>>,
     pub(super) visualizer_targets: Rc<RefCell<Vec<f64>>>,
     pub(super) visualizer_tick: RefCell<Option<gtk::TickCallbackId>>,
     pub(super) visualizer_active: Cell<bool>,
+    pub(super) equalizer_panel: gtk::ScrolledWindow,
     pub(super) equalizer_enabled: gtk::Switch,
+    pub(super) equalizer_enabled_label: gtk::Label,
     pub(super) equalizer_scales: Vec<gtk::Scale>,
     pub(super) equalizer_reset_button: gtk::Button,
     pub(super) equalizer_preset_button: gtk::MenuButton,
@@ -95,6 +99,7 @@ pub(super) struct FullscreenPlayerParts {
 struct EqualizerPanel {
     root: gtk::ScrolledWindow,
     enabled: gtk::Switch,
+    enabled_label: gtk::Label,
     scales: Vec<gtk::Scale>,
     reset_button: gtk::Button,
     preset_button: gtk::MenuButton,
@@ -206,7 +211,8 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     inline_close_button.add_css_class("fullscreen-player-close-button");
     inline_close_button.set_visible(false);
     switcher_bar.set_start_widget(Some(&inline_close_button));
-    switcher_bar.set_center_widget(Some(&fullscreen_player_switcher(&stack)));
+    let (switcher, tabs) = fullscreen_player_switcher(&stack);
+    switcher_bar.set_center_widget(Some(&switcher));
     body.append(&switcher_bar);
     body.append(&stack);
     root.append(&body);
@@ -224,14 +230,18 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         album,
         meta,
         stack,
+        tabs,
         lyrics_pane,
         queue_panel,
+        visualizer_panel,
         visualizer_area,
         visualizer_levels,
         visualizer_targets,
         visualizer_tick: RefCell::new(None),
         visualizer_active: Cell::new(false),
+        equalizer_panel: equalizer.root.clone(),
         equalizer_enabled: equalizer.enabled,
+        equalizer_enabled_label: equalizer.enabled_label,
         equalizer_scales: equalizer.scales,
         equalizer_reset_button: equalizer.reset_button,
         equalizer_preset_button: equalizer.preset_button,
@@ -247,23 +257,25 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     }
 }
 
-fn fullscreen_player_switcher(stack: &adw::ViewStack) -> gtk::Box {
+fn fullscreen_player_switcher(
+    stack: &adw::ViewStack,
+) -> (gtk::Box, Vec<(gtk::ToggleButton, gtk::Label, &'static str)>) {
     let switcher = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     switcher.add_css_class("linked");
     switcher.set_halign(gtk::Align::Center);
 
-    let queue = fullscreen_player_tab_button(
+    let (queue, queue_label) = fullscreen_player_tab_button(
         gtk::Image::from_icon_name("view-list-ordered-symbolic").upcast(),
-        &tr("Queue"),
+        "Queue",
     );
-    let lyrics = fullscreen_player_tab_button(
+    let (lyrics, lyrics_label) = fullscreen_player_tab_button(
         lyrics_icon_area(Rc::new(Cell::new(true))).upcast(),
-        &tr("Lyrics"),
+        "Lyrics",
     );
-    let visualizer =
-        fullscreen_player_tab_button(fullscreen_visualizer_icon().upcast(), &tr("Visualizer"));
-    let equalizer =
-        fullscreen_player_tab_button(fullscreen_equalizer_icon().upcast(), &tr("Equalizer"));
+    let (visualizer, visualizer_label) =
+        fullscreen_player_tab_button(fullscreen_visualizer_icon().upcast(), "Visualizer");
+    let (equalizer, equalizer_label) =
+        fullscreen_player_tab_button(fullscreen_equalizer_icon().upcast(), "Equalizer");
     lyrics.set_active(true);
 
     let queue_stack = stack.clone();
@@ -299,20 +311,33 @@ fn fullscreen_player_switcher(stack: &adw::ViewStack) -> gtk::Box {
     switcher.append(&lyrics);
     switcher.append(&visualizer);
     switcher.append(&equalizer);
-    switcher
+    (
+        switcher,
+        vec![
+            (queue, queue_label, "Queue"),
+            (lyrics, lyrics_label, "Lyrics"),
+            (visualizer, visualizer_label, "Visualizer"),
+            (equalizer, equalizer_label, "Equalizer"),
+        ],
+    )
 }
 
-fn fullscreen_player_tab_button(icon: gtk::Widget, label: &str) -> gtk::ToggleButton {
+fn fullscreen_player_tab_button(
+    icon: gtk::Widget,
+    msgid: &'static str,
+) -> (gtk::ToggleButton, gtk::Label) {
     let button = gtk::ToggleButton::new();
+    let label_text = tr(msgid);
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.set_halign(gtk::Align::Center);
     content.set_valign(gtk::Align::Center);
     content.append(&icon);
-    content.append(&gtk::Label::new(Some(label)));
+    let label = gtk::Label::new(Some(&label_text));
+    content.append(&label);
     button.set_child(Some(&content));
-    button.set_tooltip_text(Some(label));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
-    button
+    button.set_tooltip_text(Some(&label_text));
+    button.update_property(&[gtk::accessible::Property::Label(&label_text)]);
+    (button, label)
 }
 
 fn fullscreen_visualizer_icon() -> gtk::DrawingArea {
@@ -734,6 +759,7 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     EqualizerPanel {
         root,
         enabled,
+        enabled_label,
         scales,
         reset_button,
         preset_button,
@@ -1173,6 +1199,12 @@ impl Shell {
         } else {
             self.open_fullscreen_player();
         }
+    }
+
+    pub(super) fn relocalize_fullscreen_player_controls(&self) {
+        self.sync_fullscreen_equalizer_preset_label(
+            &self.state.settings.borrow().playback.equalizer,
+        );
     }
 
     pub(super) fn update_fullscreen_player(self: &Rc<Self>) {

@@ -5,8 +5,8 @@ use std::{
     time::Duration,
 };
 
-use crate::controller::LoginRequest;
-use crate::i18n::tr;
+use crate::controller::{LoginRequest, ServerDiscoveryStatus};
+use crate::i18n::{tr, tr_with, trn_with};
 use crate::providers::StreamingProvider;
 use adw::prelude::*;
 use domain::ServerId;
@@ -532,8 +532,7 @@ impl Shell {
             return;
         }
         self.state.server_discovery_running.set(true);
-        *self.state.server_discovery_status.borrow_mut() =
-            "Searching for Jellyfin servers on the local network…".to_string();
+        *self.state.server_discovery_status.borrow_mut() = ServerDiscoveryStatus::Searching;
         self.controller.discover_servers();
     }
 
@@ -543,8 +542,7 @@ impl Shell {
         }
         self.state.server_discovery_running.set(true);
         *self.state.discovered_servers.borrow_mut() = Vec::new();
-        *self.state.server_discovery_status.borrow_mut() =
-            "Searching for Jellyfin servers on the local network…".to_string();
+        *self.state.server_discovery_status.borrow_mut() = ServerDiscoveryStatus::Searching;
         self.controller.discover_servers();
         self.render_current_route();
     }
@@ -559,7 +557,7 @@ impl Shell {
         let servers = self.state.discovered_servers.borrow().clone();
         let group = adw::PreferencesGroup::builder()
             .title(tr("Found Servers"))
-            .description(status)
+            .description(discovery_status_label(&status))
             .build();
 
         if servers.is_empty() {
@@ -613,6 +611,30 @@ impl Shell {
         group.add(&search);
 
         group
+    }
+}
+
+fn discovery_status_label(status: &ServerDiscoveryStatus) -> String {
+    match status {
+        ServerDiscoveryStatus::Idle => tr("Searching will start automatically"),
+        ServerDiscoveryStatus::Searching => {
+            tr("Searching for Jellyfin servers on the local network…")
+        }
+        ServerDiscoveryStatus::Empty => {
+            tr("No Jellyfin servers found. Enter the address manually or search again")
+        }
+        ServerDiscoveryStatus::Found(count) => {
+            let count_label = count.to_string();
+            trn_with(
+                "Found {count} Jellyfin server",
+                "Found {count} Jellyfin servers",
+                *count,
+                &[("count", count_label.as_str())],
+            )
+        }
+        ServerDiscoveryStatus::Failed(error) => {
+            tr_with("Server discovery failed: {error}", &[("error", error)])
+        }
     }
 }
 

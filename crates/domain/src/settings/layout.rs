@@ -600,7 +600,7 @@ impl LibraryField {
             Self::Genre => "Genre",
             Self::TrackNumber => "Track",
             Self::DiscNumber => "Disc",
-            Self::SongCount => "Songs",
+            Self::SongCount => "Number of songs",
             Self::AlbumCount => "Albums",
             Self::Duration => "Duration",
             Self::Favorite => "Favorite",
