@@ -86,7 +86,7 @@ impl AppController {
             return;
         };
         let settings = self.load_settings_with_scrobbling_secrets();
-        if settings.private_mode {
+        if !crate::external_activity::playback_reporting(&settings) {
             return;
         }
         external_scrobbling::report(

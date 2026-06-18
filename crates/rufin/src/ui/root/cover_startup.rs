@@ -339,8 +339,7 @@ pub(in crate::ui) fn auto_lyrics_request_for_settings(
     if !lyrics_surface_visible {
         return None;
     }
-    if settings.private_mode
-        || !settings.external_lyrics_enabled
+    if !crate::external_activity::external_lyrics_lookup(settings)
         || auto_lyrics_search_is_suppressed(settings, track_id)
     {
         Some(AutoLyricsRequest::ServerOnly)
@@ -359,8 +358,7 @@ pub(in crate::ui) fn auto_lyrics_skip_action_enabled(
     if lyrics.source != LyricsSource::Remote {
         return false;
     }
-    !settings.private_mode
-        && settings.external_lyrics_enabled
+    crate::external_activity::external_lyrics_lookup(settings)
         && !auto_lyrics_search_is_suppressed(settings, track_id)
 }
 pub(in crate::ui) fn clear_list_box(list: &gtk::ListBox) {

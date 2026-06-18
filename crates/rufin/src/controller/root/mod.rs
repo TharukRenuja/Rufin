@@ -98,6 +98,7 @@ mod server_cache_commands;
 mod server_lifecycle_commands;
 mod server_local_access_commands;
 mod settings_controller;
+mod source_presentation;
 mod source_selection;
 mod sync_command;
 mod sync_requests;
@@ -130,6 +131,7 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
+pub(in crate::controller) use source_presentation::*;
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
 pub(in crate::controller) use sync_requests::*;

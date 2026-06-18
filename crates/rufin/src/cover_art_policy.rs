@@ -36,7 +36,6 @@ pub enum ArtworkProvenance {
 pub enum ArtworkFetchPolicy {
     LocalSource,
     ProviderSource,
-    #[allow(dead_code)]
     CachedExternal,
     OptionalExternalNetwork,
     FinalMissing,
@@ -75,7 +74,12 @@ pub fn selected_track_artwork(
     let original_ref = track.image_ref.clone();
     let mut track = track.clone();
     external_metadata::normalize_track_with_album_ref(&mut track, album_image_ref, settings);
-    selected_track_ref(track.image_ref, original_ref.as_ref(), album_image_ref)
+    selected_track_ref(
+        track.image_ref,
+        original_ref.as_ref(),
+        album_image_ref,
+        settings,
+    )
 }
 
 pub fn selected_queue_artwork(
@@ -86,7 +90,12 @@ pub fn selected_queue_artwork(
     let original_ref = entry.image_ref.clone();
     let mut entry = entry.clone();
     external_metadata::normalize_queue_entry_with_album_ref(&mut entry, album_image_ref, settings);
-    selected_track_ref(entry.image_ref, original_ref.as_ref(), album_image_ref)
+    selected_track_ref(
+        entry.image_ref,
+        original_ref.as_ref(),
+        album_image_ref,
+        settings,
+    )
 }
 
 pub fn selected_artist_artwork(artist: &Artist, settings: &AppSettings) -> SelectedArtwork {
@@ -225,13 +234,13 @@ fn selected_existing_ref(
 ) -> Option<SelectedArtwork> {
     let image_ref = image_ref?;
     if external_metadata::is_external_image_ref(image_ref) {
-        if !external_metadata::enabled(settings) {
+        if !external_metadata::cached_refs_enabled(settings) {
             return None;
         }
         return Some(selected(
             image_ref.clone(),
             external_ref_provenance(image_ref),
-            ArtworkFetchPolicy::OptionalExternalNetwork,
+            external_fetch_policy(settings),
         ));
     }
     Some(selected(
@@ -245,6 +254,7 @@ fn selected_track_ref(
     image_ref: Option<ImageRef>,
     original_ref: Option<&ImageRef>,
     album_image_ref: Option<&ImageRef>,
+    settings: &AppSettings,
 ) -> SelectedArtwork {
     let Some(image_ref) = image_ref else {
         return missing_artwork();
@@ -261,7 +271,7 @@ fn selected_track_ref(
         external_ref_provenance(&image_ref)
     };
     let fetch_policy = if external_metadata::is_external_image_ref(&image_ref) {
-        ArtworkFetchPolicy::OptionalExternalNetwork
+        external_fetch_policy(settings)
     } else {
         source_fetch_policy(&image_ref)
     };
@@ -380,6 +390,14 @@ fn source_fetch_policy(image_ref: &ImageRef) -> ArtworkFetchPolicy {
     }
 }
 
+fn external_fetch_policy(settings: &AppSettings) -> ArtworkFetchPolicy {
+    if external_metadata::enabled(settings) {
+        ArtworkFetchPolicy::OptionalExternalNetwork
+    } else {
+        ArtworkFetchPolicy::CachedExternal
+    }
+}
+
 fn external_ref_provenance(image_ref: &ImageRef) -> ArtworkProvenance {
     if image_ref.item_id.starts_with("external:mb-release") {
         ArtworkProvenance::ExternalMbid
@@ -448,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_private_mode_is_final_missing() {
+    fn policy_private_mode_skips_new_external_art() {
         let album = album_without_cover();
 
         let artwork = selected_album_artwork(
@@ -464,6 +482,32 @@ mod tests {
         assert_eq!(artwork.fetch_policy, ArtworkFetchPolicy::FinalMissing);
         assert_eq!(artwork.selection, ArtworkSelection::FinalMissing);
         assert!(artwork.image_ref.is_none());
+    }
+
+    #[test]
+    fn policy_private_mode_keeps_cached_external_art() {
+        let image_ref = ImageRef::new(
+            "external:mb-release-group:group-one",
+            Some("tag-one".to_string()),
+        );
+        let album = Album {
+            image_ref: Some(image_ref.clone()),
+            ..album_without_cover()
+        };
+
+        let artwork = selected_album_artwork(
+            &album,
+            &AppSettings {
+                external_metadata_enabled: true,
+                private_mode: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(artwork.image_ref, Some(image_ref));
+        assert_eq!(artwork.provenance, ArtworkProvenance::ExternalMbid);
+        assert_eq!(artwork.fetch_policy, ArtworkFetchPolicy::CachedExternal);
+        assert_eq!(artwork.selection, ArtworkSelection::ImageRefs);
     }
 
     #[test]

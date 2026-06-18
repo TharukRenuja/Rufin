@@ -1296,7 +1296,7 @@ pub(in crate::ui) fn fit_detail_text(label: &gtk::Label, text: &str) {
 pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<gtk::Widget> {
     let settings = shell.state.settings.borrow();
     let link_settings = &settings.external_site_links;
-    if settings.private_mode || !link_settings.enabled {
+    if !crate::external_activity::external_site_links(&settings) {
         return None;
     }
 
@@ -1342,7 +1342,7 @@ pub(in crate::ui) fn artist_external_links(
 ) -> Option<gtk::Widget> {
     let settings = shell.state.settings.borrow();
     let link_settings = &settings.external_site_links;
-    if settings.private_mode || !link_settings.enabled {
+    if !crate::external_activity::external_site_links(&settings) {
         return None;
     }
 
