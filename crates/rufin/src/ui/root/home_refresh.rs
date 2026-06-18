@@ -970,7 +970,7 @@ fn playlist_picker_row(
     meta.add_css_class("context-playlist-meta");
     meta.append(&playlist_picker_meta(
         "audio-x-generic-symbolic",
-        &playlist.track_count.to_string(),
+        &format!("{} {}", playlist.track_count, tr("tracks")),
     ));
     meta.append(&playlist_picker_meta(
         "appointment-soon-symbolic",
