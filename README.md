@@ -76,7 +76,7 @@ yay -S rufin-git
 To run the latest stable release:
 
 ```bash
-nix run github:screwys/Rufin/v0.7.5
+nix run github:screwys/Rufin/v0.7.6
 ```
 
 To run the current `main` branch:
@@ -88,7 +88,7 @@ nix run github:screwys/Rufin/main
 Release tags and `main` builds are cached. You can also add either ref to your profile:
 
 ```bash
-nix profile install github:screwys/Rufin/v0.7.5
+nix profile install github:screwys/Rufin/v0.7.6
 ```
 
 ## Building locally
