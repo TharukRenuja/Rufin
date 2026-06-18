@@ -260,6 +260,30 @@ impl AppController {
     pub fn play_now(&self, track: Track) {
         self.play_tracks_now(vec![track]);
     }
+    pub fn play_album_tracks(
+        &self,
+        album_id: AlbumId,
+        tracks: Vec<Track>,
+        anchor_index: usize,
+        shuffled_start: bool,
+    ) {
+        let Some(activation) = Self::album_play_activation(
+            album_id,
+            tracks,
+            anchor_index,
+            Self::active_music_folder(&self.store),
+        ) else {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "The selected track is no longer available.".to_string(),
+            ));
+            return;
+        };
+        self.play_activation(if shuffled_start {
+            activation.shuffled_start()
+        } else {
+            activation
+        });
+    }
     pub fn play_album_now(&self, album_id: AlbumId) {
         match self.cached_album_detail(&album_id) {
             Ok(Some((album, tracks))) => {
@@ -269,11 +293,16 @@ impl AppController {
                     ));
                     return;
                 }
-                self.play_activation(Self::album_play_activation(
-                    album.id,
-                    tracks,
-                    Self::active_music_folder(&self.store),
-                ));
+                self.play_activation(
+                    Self::album_play_activation(
+                        album.id,
+                        tracks,
+                        0,
+                        Self::active_music_folder(&self.store),
+                    )
+                    .expect("non-empty album has a playable first track")
+                    .shuffled_start(),
+                );
             }
             Ok(None) => {
                 let _sent = self.events.send(ControllerEvent::Error(
@@ -289,14 +318,11 @@ impl AppController {
     fn album_play_activation(
         album_id: AlbumId,
         tracks: Vec<Track>,
+        anchor_index: usize,
         selected_music_folder_id: Option<MusicFolderId>,
-    ) -> PlayActivation {
-        let anchor_track_id = tracks
-            .first()
-            .expect("album activation has a first track")
-            .id
-            .clone();
-        PlayActivation {
+    ) -> Option<PlayActivation> {
+        let anchor_track_id = tracks.get(anchor_index)?.id.clone();
+        Some(PlayActivation {
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {
@@ -317,12 +343,193 @@ impl AppController {
                     .collect(),
                 anchor: PlayAnchor {
                     track_id: anchor_track_id,
-                    source_index: 0,
+                    source_index: anchor_index,
                     source_item_id: None,
                 },
             },
+        })
+    }
+
+    pub fn play_playlist_entry(
+        &self,
+        playlist_id: PlaylistId,
+        entry: PlaylistEntry,
+        source_index: usize,
+        query: Option<String>,
+        sort: (PlaylistEntrySortDescriptor, bool),
+        shuffled_start: bool,
+    ) {
+        let (sort, descending) = sort;
+        let activation = PlayActivation {
+            target: PlayTarget::StoreBackedSource {
+                source_key: PlaySourceKey {
+                    descriptor: PlaySourceDescriptor::Playlist { playlist_id },
+                    order: SourceOrder::PlaylistDisplayed {
+                        query,
+                        sort,
+                        descending,
+                    },
+                },
+                anchor: PlayAnchor {
+                    track_id: entry.track.id,
+                    source_index,
+                    source_item_id: Some(entry.entry_id),
+                },
+            },
+        };
+        self.play_activation(if shuffled_start {
+            activation.shuffled_start()
+        } else {
+            activation
+        });
+    }
+    pub fn play_playlist_detail(&self, detail: PlaylistDetail) {
+        let playlist_id = detail.playlist.id;
+        if let Some(entry) = detail.entries.into_iter().next() {
+            self.play_playlist_entry(
+                playlist_id,
+                entry,
+                0,
+                None,
+                (PlaylistEntrySortDescriptor::Position, false),
+                true,
+            );
+            return;
         }
-        .shuffled_start()
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: playlist_id.clone(),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: None,
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        };
+        if let Some(activation) = loaded_tracks_activation(source_key, &detail.tracks, 0) {
+            self.play_activation(activation);
+        }
+    }
+    pub fn play_smart_playlist_detail(&self, detail: SmartPlaylistDetail) {
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::SmartPlaylist {
+                smart_playlist_id: detail.smart_playlist.id,
+                definition_fingerprint: smart_playlist_definition_fingerprint(
+                    &detail.smart_playlist.definition,
+                ),
+                selected_music_folder_id: Self::active_music_folder(&self.store),
+            },
+            order: SourceOrder::SmartPlaylistDefinition {
+                sort: SmartPlaylistSortDescriptor::Definition,
+                limit: detail.smart_playlist.definition.limit,
+                skip_count: 0,
+            },
+        };
+        if let Some(activation) = loaded_tracks_activation(source_key, &detail.tracks, 0) {
+            self.play_activation(activation);
+        }
+    }
+    pub fn play_loaded_source_window(
+        &self,
+        source_key: PlaySourceKey,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        let Some(activation) =
+            loaded_tracks_window_activation(source_key, total_items, anchor_index, track_at)
+        else {
+            return false;
+        };
+        self.play_activation(activation);
+        true
+    }
+    pub fn play_library_source_window(
+        &self,
+        descriptor: PlaySourceDescriptor,
+        source: (LibraryListSettings, String, bool),
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        let (settings, query, favorite_first) = source;
+        self.play_loaded_source_window(
+            PlaySourceKey {
+                descriptor,
+                order: library_displayed_source_order(&settings, &query, favorite_first),
+            },
+            total_items,
+            anchor_index,
+            track_at,
+        )
+    }
+    pub fn play_folder_window(
+        &self,
+        path: Vec<FolderPathItem>,
+        query: String,
+        settings: TrackTableSettings,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        self.play_loaded_source_window(
+            PlaySourceKey {
+                descriptor: PlaySourceDescriptor::FolderLoaded {
+                    path: path.into_iter().map(|entry| entry.name).collect(),
+                    selected_music_folder_id: Self::active_music_folder(&self.store),
+                },
+                order: SourceOrder::FolderDisplayed {
+                    query: source_query(&query),
+                    filter_key: track_table_filter_key(&settings, &query, false),
+                    sort: track_sort_descriptor(settings.sort_key),
+                },
+            },
+            total_items,
+            anchor_index,
+            track_at,
+        )
+    }
+    pub fn play_artist_tracks_window(
+        &self,
+        artist_id: ArtistId,
+        scope: ArtistTrackScope,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        self.play_loaded_source_window(
+            PlaySourceKey {
+                descriptor: PlaySourceDescriptor::ArtistTracks {
+                    artist_id,
+                    scope,
+                    selected_music_folder_id: Self::active_music_folder(&self.store),
+                },
+                order: SourceOrder::Canonical,
+            },
+            total_items,
+            anchor_index,
+            track_at,
+        )
+    }
+    pub fn play_genre_tracks_window(
+        &self,
+        genre_id: GenreId,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        self.play_loaded_source_window(
+            PlaySourceKey {
+                descriptor: PlaySourceDescriptor::GenreTracks {
+                    genre_id,
+                    selected_music_folder_id: Self::active_music_folder(&self.store),
+                },
+                order: SourceOrder::Canonical,
+            },
+            total_items,
+            anchor_index,
+            track_at,
+        )
     }
 
     fn active_music_folder(store: &StoreHandle) -> Option<MusicFolderId> {
@@ -535,6 +742,155 @@ fn store_backed_window_extents(total: usize, anchor_rank: usize) -> (usize, usiz
     let before = anchor_rank.min(MATERIALIZED_WINDOW_BEFORE_ANCHOR);
     let after = MATERIALIZED_WINDOW_LIMIT.saturating_sub(before.saturating_add(1));
     (before, after)
+}
+
+fn library_displayed_source_order(
+    settings: &LibraryListSettings,
+    query: &str,
+    favorite_first: bool,
+) -> SourceOrder {
+    SourceOrder::LibraryDisplayed {
+        filter_key: library_filter_key(settings, query, favorite_first),
+        sort: library_sort_descriptor(settings.sort_key),
+    }
+}
+
+fn library_filter_key(
+    settings: &LibraryListSettings,
+    query: &str,
+    favorite_first: bool,
+) -> Option<String> {
+    let query = query.trim();
+    Some(format!(
+        "query={};sort={};descending={};favorite-first={}",
+        query,
+        library_field_key(settings.sort_key),
+        settings.descending,
+        favorite_first
+    ))
+}
+
+fn track_table_filter_key(
+    settings: &TrackTableSettings,
+    query: &str,
+    favorite_first: bool,
+) -> Option<String> {
+    let query = query.trim();
+    Some(format!(
+        "query={};sort={};descending={};favorite-first={}",
+        query,
+        track_sort_key(settings.sort_key),
+        settings.descending,
+        favorite_first
+    ))
+}
+
+fn source_query(query: &str) -> Option<String> {
+    let query = query.trim();
+    (!query.is_empty()).then(|| query.to_string())
+}
+
+fn track_sort_key(sort_key: TrackSortKey) -> &'static str {
+    match sort_key {
+        TrackSortKey::TrackNumber => "track-number",
+        TrackSortKey::Title => "title",
+        TrackSortKey::Artist => "artist",
+        TrackSortKey::Album => "album",
+        TrackSortKey::Year => "year",
+        TrackSortKey::Duration => "duration",
+        TrackSortKey::Favorite => "favorite",
+    }
+}
+
+fn track_sort_descriptor(sort_key: TrackSortKey) -> TrackSortDescriptor {
+    match sort_key {
+        TrackSortKey::TrackNumber => TrackSortDescriptor::TrackNumber,
+        TrackSortKey::Title => TrackSortDescriptor::Title,
+        TrackSortKey::Artist => TrackSortDescriptor::Artist,
+        TrackSortKey::Album => TrackSortDescriptor::Album,
+        TrackSortKey::Year | TrackSortKey::Duration | TrackSortKey::Favorite => {
+            TrackSortDescriptor::Title
+        }
+    }
+}
+
+fn library_sort_descriptor(field: LibraryField) -> TrackSortDescriptor {
+    match field {
+        LibraryField::TrackNumber | LibraryField::DiscNumber => TrackSortDescriptor::TrackNumber,
+        LibraryField::Title | LibraryField::TitleMerged => TrackSortDescriptor::Title,
+        LibraryField::Artist | LibraryField::AlbumArtist => TrackSortDescriptor::Artist,
+        LibraryField::Album => TrackSortDescriptor::Album,
+        LibraryField::DateAdded => TrackSortDescriptor::DateAdded,
+        _ => TrackSortDescriptor::Title,
+    }
+}
+
+fn library_field_key(field: LibraryField) -> &'static str {
+    match field {
+        LibraryField::RowIndex => "row-index",
+        LibraryField::Image => "image",
+        LibraryField::Title => "title",
+        LibraryField::TitleMerged => "title-merged",
+        LibraryField::Artist => "artist",
+        LibraryField::AlbumArtist => "album-artist",
+        LibraryField::Album => "album",
+        LibraryField::Year => "year",
+        LibraryField::ReleaseDate => "release-date",
+        LibraryField::DateAdded => "date-added",
+        LibraryField::LastPlayed => "last-played",
+        LibraryField::PlayCount => "play-count",
+        LibraryField::UserRating => "user-rating",
+        LibraryField::Genre => "genre",
+        LibraryField::TrackNumber => "track-number",
+        LibraryField::DiscNumber => "disc-number",
+        LibraryField::SongCount => "song-count",
+        LibraryField::AlbumCount => "album-count",
+        LibraryField::Duration => "duration",
+        LibraryField::Favorite => "favorite",
+    }
+}
+
+fn loaded_tracks_activation(
+    source_key: PlaySourceKey,
+    tracks: &[Track],
+    anchor_index: usize,
+) -> Option<PlayActivation> {
+    loaded_tracks_window_activation(source_key, tracks.len(), anchor_index, |index| {
+        tracks.get(index).cloned()
+    })
+}
+
+fn loaded_tracks_window_activation(
+    source_key: PlaySourceKey,
+    total_items: usize,
+    anchor_index: usize,
+    mut track_at: impl FnMut(usize) -> Option<Track>,
+) -> Option<PlayActivation> {
+    if total_items == 0 || anchor_index >= total_items {
+        return None;
+    }
+    let (before, after) = store_backed_window_extents(total_items, anchor_index);
+    let start = anchor_index - before;
+    let end = (anchor_index + after + 1).min(total_items);
+    let window = StoreBackedSourceWindow {
+        start_rank: start,
+        total_source_items: total_items,
+        items: (start..end)
+            .map(|index| {
+                track_at(index).map(|track| StoreBackedSourceItem {
+                    track,
+                    source_index: index,
+                    source_item_id: None,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?,
+    };
+    let activation = store_backed_window_play_activation(source_key, window, anchor_index).ok()?;
+    Some(if anchor_index == 0 {
+        activation.shuffled_start()
+    } else {
+        activation
+    })
 }
 
 fn normalize_store_backed_window_tracks(

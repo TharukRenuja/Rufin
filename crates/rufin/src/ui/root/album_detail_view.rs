@@ -213,16 +213,8 @@ impl Shell {
         let controller = self.controller.clone();
         let album_id_for_play = album.id.clone();
         let album_tracks = tracks.clone();
-        let selected_folder_for_play = selected_music_folder_id(self);
         play_album.connect_clicked(move |_| {
-            if let Some(activation) = album_play_activation(
-                album_id_for_play.clone(),
-                album_tracks.clone(),
-                0,
-                selected_folder_for_play.clone(),
-            ) {
-                controller.play_activation(activation.shuffled_start());
-            }
+            controller.play_album_tracks(album_id_for_play.clone(), album_tracks.clone(), 0, true);
         });
         actions.append(&play_album);
 

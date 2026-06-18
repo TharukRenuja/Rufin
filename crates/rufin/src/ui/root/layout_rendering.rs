@@ -27,121 +27,31 @@ pub(in crate::ui) const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 4] = [
 ];
 #[derive(Clone)]
 pub(in crate::ui) struct LoadedTrackPlayContext {
-    source_key: Rc<dyn Fn() -> PlaySourceKey>,
+    descriptor: PlaySourceDescriptor,
+    settings: Rc<dyn Fn() -> LibraryListSettings>,
+    query: Rc<RefCell<String>>,
+    favorite_first: bool,
 }
 impl LoadedTrackPlayContext {
-    pub(in crate::ui) fn new(source_key: impl Fn() -> PlaySourceKey + 'static) -> Self {
-        Self {
-            source_key: Rc::new(source_key),
-        }
-    }
-
-    pub(in crate::ui) fn source_key(&self) -> PlaySourceKey {
-        (self.source_key)()
-    }
-}
-pub(in crate::ui) fn loaded_tracks_play_activation(
-    source_key: PlaySourceKey,
-    tracks: Vec<Track>,
-    anchor_index: usize,
-) -> Option<PlayActivation> {
-    loaded_track_items_play_activation(
-        source_key,
-        tracks.into_iter().map(|track| (track, None)).collect(),
-        anchor_index,
-    )
-}
-pub(in crate::ui) fn loaded_track_items_play_activation(
-    source_key: PlaySourceKey,
-    items: Vec<(Track, Option<String>)>,
-    anchor_index: usize,
-) -> Option<PlayActivation> {
-    let (anchor_track, anchor_source_item_id) = items.get(anchor_index).cloned()?;
-    Some(PlayActivation {
-        target: PlayTarget::LoadedSource {
-            source_key,
-            completeness: LoadedCompleteness::Complete,
-            items: items
-                .into_iter()
-                .enumerate()
-                .map(|(source_index, (track, source_item_id))| PlaySourceItem {
-                    track,
-                    source_index,
-                    source_item_id,
-                })
-                .collect(),
-            anchor: PlayAnchor {
-                track_id: anchor_track.id,
-                source_index: anchor_index,
-                source_item_id: anchor_source_item_id,
-            },
-        },
-    })
-}
-pub(in crate::ui) fn loaded_tracks_window_play_activation(
-    source_key: PlaySourceKey,
-    total_items: usize,
-    anchor_index: usize,
-    mut track_at: impl FnMut(usize) -> Option<Track>,
-) -> Option<PlayActivation> {
-    if total_items == 0 || anchor_index >= total_items {
-        return None;
-    }
-    let (start, end, completeness) = if total_items <= FULL_LOADED_LIMIT {
-        (0, total_items, LoadedCompleteness::Complete)
-    } else {
-        let (start, end) = bounded_loaded_window(total_items, anchor_index);
-        (
-            start,
-            end,
-            LoadedCompleteness::Window {
-                start,
-                total: Some(total_items),
-            },
+    pub(in crate::ui) fn play_window(
+        &self,
+        controller: &AppController,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        controller.play_library_source_window(
+            self.descriptor.clone(),
+            (
+                (self.settings)(),
+                self.query.borrow().to_string(),
+                self.favorite_first,
+            ),
+            total_items,
+            anchor_index,
+            track_at,
         )
-    };
-    let items = (start..end)
-        .map(|source_index| {
-            track_at(source_index).map(|track| PlaySourceItem {
-                track,
-                source_index,
-                source_item_id: None,
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let anchor_track = items
-        .get(anchor_index.saturating_sub(start))
-        .map(|item| item.track.clone())?;
-    let activation = PlayActivation {
-        target: PlayTarget::LoadedSource {
-            source_key,
-            completeness,
-            items,
-            anchor: PlayAnchor {
-                track_id: anchor_track.id,
-                source_index: anchor_index,
-                source_item_id: None,
-            },
-        },
-    };
-    Some(if anchor_index == 0 {
-        activation.shuffled_start()
-    } else {
-        activation
-    })
-}
-fn bounded_loaded_window(total_items: usize, anchor_index: usize) -> (usize, usize) {
-    let before = anchor_index.min(MATERIALIZED_WINDOW_BEFORE_ANCHOR);
-    let start = anchor_index - before;
-    let after = MATERIALIZED_WINDOW_LIMIT.saturating_sub(before + 1);
-    let mut end = (anchor_index + 1).saturating_add(after).min(total_items);
-    let mut start = start;
-    let len = end.saturating_sub(start);
-    if len < MATERIALIZED_WINDOW_LIMIT {
-        start = start.saturating_sub(MATERIALIZED_WINDOW_LIMIT - len);
     }
-    end = end.max(anchor_index + 1).min(total_items);
-    (start, end)
 }
 pub(in crate::ui) fn selected_music_folder_id(shell: &Rc<Shell>) -> Option<MusicFolderId> {
     shell
@@ -151,60 +61,6 @@ pub(in crate::ui) fn selected_music_folder_id(shell: &Rc<Shell>) -> Option<Music
         .selected_music_folder_id
         .clone()
 }
-pub(in crate::ui) fn album_play_source_key(
-    album_id: AlbumId,
-    selected_music_folder_id: Option<MusicFolderId>,
-) -> PlaySourceKey {
-    PlaySourceKey {
-        descriptor: PlaySourceDescriptor::Album {
-            album_id,
-            selected_music_folder_id,
-        },
-        order: SourceOrder::Canonical,
-    }
-}
-pub(in crate::ui) fn album_play_activation(
-    album_id: AlbumId,
-    tracks: Vec<Track>,
-    anchor_index: usize,
-    selected_music_folder_id: Option<MusicFolderId>,
-) -> Option<PlayActivation> {
-    loaded_tracks_play_activation(
-        album_play_source_key(album_id, selected_music_folder_id),
-        tracks,
-        anchor_index,
-    )
-}
-pub(in crate::ui) fn playlist_entry_play_activation(
-    playlist_id: PlaylistId,
-    anchor_entry: &PlaylistEntry,
-    anchor_index: usize,
-    state: &PlaylistEntryListState,
-) -> Option<PlayActivation> {
-    Some(PlayActivation {
-        target: PlayTarget::StoreBackedSource {
-            source_key: playlist_play_source_key(playlist_id, state),
-            anchor: PlayAnchor {
-                track_id: anchor_entry.track.id.clone(),
-                source_index: anchor_index,
-                source_item_id: Some(anchor_entry.entry_id.clone()),
-            },
-        },
-    })
-}
-pub(in crate::ui) fn playlist_play_source_key(
-    playlist_id: PlaylistId,
-    state: &PlaylistEntryListState,
-) -> PlaySourceKey {
-    PlaySourceKey {
-        descriptor: PlaySourceDescriptor::Playlist { playlist_id },
-        order: SourceOrder::PlaylistDisplayed {
-            query: source_query(&state.query),
-            sort: playlist_entry_sort_descriptor(state.sort),
-            descending: state.descending,
-        },
-    }
-}
 pub(in crate::ui) fn track_collection_play_context(
     shell: &Rc<Shell>,
     descriptor: PlaySourceDescriptor,
@@ -213,93 +69,14 @@ pub(in crate::ui) fn track_collection_play_context(
     favorite_first: bool,
 ) -> LoadedTrackPlayContext {
     let shell = Rc::clone(shell);
-    LoadedTrackPlayContext::new(move || PlaySourceKey {
-        descriptor: descriptor.clone(),
-        order: library_displayed_source_order(
-            &shell.library_settings(key),
-            query.borrow().as_str(),
-            favorite_first,
-        ),
-    })
-}
-pub(in crate::ui) fn library_displayed_source_order(
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-) -> SourceOrder {
-    SourceOrder::LibraryDisplayed {
-        filter_key: library_filter_key(settings, query, favorite_first),
-        sort: library_sort_descriptor(settings.sort_key),
-    }
-}
-pub(in crate::ui) fn folder_play_source_key(
-    path: &[FolderPathItem],
-    query: &str,
-    settings: &TrackTableSettings,
-    selected_music_folder_id: Option<MusicFolderId>,
-) -> PlaySourceKey {
-    PlaySourceKey {
-        descriptor: PlaySourceDescriptor::FolderLoaded {
-            path: path.iter().map(|entry| entry.name.clone()).collect(),
-            selected_music_folder_id,
-        },
-        order: SourceOrder::FolderDisplayed {
-            query: source_query(query),
-            filter_key: track_table_filter_key(settings, query, false),
-            sort: track_sort_descriptor(settings.sort_key),
-        },
-    }
-}
-pub(in crate::ui) fn smart_playlist_play_source_key(
-    playlist: &SmartPlaylist,
-    selected_music_folder_id: Option<MusicFolderId>,
-) -> PlaySourceKey {
-    PlaySourceKey {
-        descriptor: PlaySourceDescriptor::SmartPlaylist {
-            smart_playlist_id: playlist.id.clone(),
-            definition_fingerprint: smart_playlist_definition_fingerprint(&playlist.definition),
-            selected_music_folder_id,
-        },
-        order: SourceOrder::SmartPlaylistDefinition {
-            sort: SmartPlaylistSortDescriptor::Definition,
-            limit: playlist.definition.limit,
-            skip_count: 0,
-        },
-    }
-}
-pub(in crate::ui) fn smart_playlist_definition_fingerprint(
-    definition: &SmartPlaylistDefinition,
-) -> String {
-    serde_json::to_string(definition).unwrap_or_else(|_| "unavailable".to_string())
-}
-fn library_filter_key(
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-) -> Option<String> {
-    let query = query.trim();
-    Some(format!(
-        "query={};sort={};descending={};favorite-first={}",
+    LoadedTrackPlayContext {
+        descriptor,
+        settings: Rc::new(move || shell.library_settings(key)),
         query,
-        library_field_key(settings.sort_key),
-        settings.descending,
-        favorite_first
-    ))
+        favorite_first,
+    }
 }
-fn track_table_filter_key(
-    settings: &TrackTableSettings,
-    query: &str,
-    favorite_first: bool,
-) -> Option<String> {
-    let query = query.trim();
-    Some(format!(
-        "query={};sort={};descending={};favorite-first={}",
-        query,
-        track_sort_key(settings.sort_key),
-        settings.descending,
-        favorite_first
-    ))
-}
+
 fn source_query(query: &str) -> Option<String> {
     let query = query.trim();
     (!query.is_empty()).then(|| query.to_string())
@@ -310,62 +87,6 @@ fn playlist_entry_sort_descriptor(sort: PlaylistEntrySort) -> PlaylistEntrySortD
         PlaylistEntrySort::Title => PlaylistEntrySortDescriptor::Title,
         PlaylistEntrySort::Artist => PlaylistEntrySortDescriptor::Artist,
         PlaylistEntrySort::Album => PlaylistEntrySortDescriptor::Album,
-    }
-}
-fn track_sort_key(sort_key: TrackSortKey) -> &'static str {
-    match sort_key {
-        TrackSortKey::TrackNumber => "track-number",
-        TrackSortKey::Title => "title",
-        TrackSortKey::Artist => "artist",
-        TrackSortKey::Album => "album",
-        TrackSortKey::Year => "year",
-        TrackSortKey::Duration => "duration",
-        TrackSortKey::Favorite => "favorite",
-    }
-}
-fn track_sort_descriptor(sort_key: TrackSortKey) -> TrackSortDescriptor {
-    match sort_key {
-        TrackSortKey::TrackNumber => TrackSortDescriptor::TrackNumber,
-        TrackSortKey::Title => TrackSortDescriptor::Title,
-        TrackSortKey::Artist => TrackSortDescriptor::Artist,
-        TrackSortKey::Album => TrackSortDescriptor::Album,
-        TrackSortKey::Year | TrackSortKey::Duration | TrackSortKey::Favorite => {
-            TrackSortDescriptor::Title
-        }
-    }
-}
-fn library_sort_descriptor(field: LibraryField) -> TrackSortDescriptor {
-    match field {
-        LibraryField::TrackNumber | LibraryField::DiscNumber => TrackSortDescriptor::TrackNumber,
-        LibraryField::Title | LibraryField::TitleMerged => TrackSortDescriptor::Title,
-        LibraryField::Artist | LibraryField::AlbumArtist => TrackSortDescriptor::Artist,
-        LibraryField::Album => TrackSortDescriptor::Album,
-        LibraryField::DateAdded => TrackSortDescriptor::DateAdded,
-        _ => TrackSortDescriptor::Title,
-    }
-}
-fn library_field_key(field: LibraryField) -> &'static str {
-    match field {
-        LibraryField::RowIndex => "row-index",
-        LibraryField::Image => "image",
-        LibraryField::Title => "title",
-        LibraryField::TitleMerged => "title-merged",
-        LibraryField::Artist => "artist",
-        LibraryField::AlbumArtist => "album-artist",
-        LibraryField::Album => "album",
-        LibraryField::Year => "year",
-        LibraryField::ReleaseDate => "release-date",
-        LibraryField::DateAdded => "date-added",
-        LibraryField::LastPlayed => "last-played",
-        LibraryField::PlayCount => "play-count",
-        LibraryField::UserRating => "user-rating",
-        LibraryField::Genre => "genre",
-        LibraryField::TrackNumber => "track-number",
-        LibraryField::DiscNumber => "disc-number",
-        LibraryField::SongCount => "song-count",
-        LibraryField::AlbumCount => "album-count",
-        LibraryField::Duration => "duration",
-        LibraryField::Favorite => "favorite",
     }
 }
 #[derive(Clone, Debug)]
@@ -465,14 +186,15 @@ pub(in crate::ui) fn playlist_entries_table_panel(
         let Some(entry) = entries_for_activate.get(row.original_index) else {
             return;
         };
-        if let Some(activation) = playlist_entry_play_activation(
+        let state = state_for_activate.borrow();
+        controller.play_playlist_entry(
             playlist_id_for_activate.clone(),
-            entry,
+            entry.clone(),
             position as usize,
-            &state_for_activate.borrow(),
-        ) {
-            controller.play_activation(activation);
-        }
+            source_query(&state.query),
+            (playlist_entry_sort_descriptor(state.sort), state.descending),
+            false,
+        );
     });
 
     let scroller = gtk::ScrolledWindow::new();

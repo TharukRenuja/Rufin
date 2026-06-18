@@ -103,14 +103,13 @@ pub(in crate::ui) fn album_detail_list(
     list.set_halign(gtk::Align::Fill);
     list.set_vexpand(true);
     let controller = shell.controller.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
     list.connect_activate(move |_, position| {
         let Some(AlbumDetailItem::Track { track, .. }) =
             item_at::<AlbumDetailItem>(&model, position)
         else {
             return;
         };
-        play_album_track_from_cache(&controller, track, selected_music_folder_id.clone());
+        play_album_track_from_cache(&controller, track);
     });
     list
 }
@@ -637,7 +636,6 @@ pub(in crate::ui) fn album_detail_track_cells(
 
     let controller = shell.controller.clone();
     let track = track.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
     let selection = selection.clone();
     let row_for_click = row.clone();
     let gesture = gtk::GestureClick::new();
@@ -648,10 +646,7 @@ pub(in crate::ui) fn album_detail_track_cells(
             gesture.set_state(gtk::EventSequenceState::Claimed);
             let controller = controller.clone();
             let track = track.clone();
-            let selected_music_folder_id = selected_music_folder_id.clone();
-            glib::idle_add_local_once(move || {
-                play_album_track_from_cache(&controller, track, selected_music_folder_id)
-            });
+            glib::idle_add_local_once(move || play_album_track_from_cache(&controller, track));
         } else if n_press == 1 {
             selection.select_row(row_for_click.upcast_ref(), track.id.clone());
         }
@@ -663,11 +658,7 @@ fn album_detail_play_click(n_press: i32) -> bool {
     n_press >= 2 && n_press % 2 == 0
 }
 
-fn play_album_track_from_cache(
-    controller: &crate::controller::AppController,
-    track: Track,
-    selected_music_folder_id: Option<domain::MusicFolderId>,
-) {
+fn play_album_track_from_cache(controller: &crate::controller::AppController, track: Track) {
     let Ok(Some((album, tracks))) = controller.cached_album_detail(&track.album_id) else {
         controller.play_now(track);
         return;
@@ -676,13 +667,7 @@ fn play_album_track_from_cache(
         controller.play_now(track);
         return;
     };
-    let Some(activation) =
-        album_play_activation(album.id, tracks, anchor_index, selected_music_folder_id)
-    else {
-        controller.play_now(track);
-        return;
-    };
-    controller.play_activation(activation);
+    controller.play_album_tracks(album.id, tracks, anchor_index, false);
 }
 pub(in crate::ui) fn album_detail_track_cell(
     shell: &Rc<Shell>,

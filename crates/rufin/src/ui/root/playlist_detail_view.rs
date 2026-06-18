@@ -214,17 +214,9 @@ impl Shell {
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
-        let source_key =
-            smart_playlist_play_source_key(&detail.smart_playlist, selected_music_folder_id(self));
-        let tracks = detail.tracks.clone();
+        let detail_for_play = detail.clone();
         play.connect_clicked(move |_| {
-            if let Some(activation) =
-                loaded_tracks_window_play_activation(source_key.clone(), tracks.len(), 0, |index| {
-                    tracks.get(index).cloned()
-                })
-            {
-                controller.play_activation(activation);
-            }
+            controller.play_smart_playlist_detail(detail_for_play.clone());
         });
         actions.append(&play);
         let edit = detail_action_button("document-edit-symbolic", "Edit");
@@ -380,16 +372,15 @@ impl Shell {
         let playlist_id_for_play = detail.playlist.id.clone();
         let entry_for_play = detail.entries.first().cloned();
         play.connect_clicked(move |_| {
-            if let Some(entry) = entry_for_play.as_ref()
-                && let Some(activation) = playlist_entry_play_activation(
+            if let Some(entry) = entry_for_play.clone() {
+                controller.play_playlist_entry(
                     playlist_id_for_play.clone(),
                     entry,
                     0,
-                    &PlaylistEntryListState::default(),
-                )
-                .map(PlayActivation::shuffled_start)
-            {
-                controller.play_activation(activation);
+                    None,
+                    (PlaylistEntrySortDescriptor::Position, false),
+                    true,
+                );
             }
         });
         actions.append(&play);

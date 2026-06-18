@@ -3,8 +3,7 @@ use std::rc::Rc;
 use ::library::CachedArtistDetail;
 use adw::prelude::*;
 use domain::{
-    Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, PlaySourceKey, Route,
-    SourceOrder, Track,
+    Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, Route, Track,
 };
 
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
@@ -308,23 +307,14 @@ impl Shell {
         let controller = self.controller.clone();
         let play_tracks = Rc::clone(&action_tracks);
         let artist_id = artist.id.clone();
-        let selected_music_folder_id = selected_music_folder_id(self);
         play.connect_clicked(move |_| {
-            let source_key = PlaySourceKey {
-                descriptor: PlaySourceDescriptor::ArtistTracks {
-                    artist_id: artist_id.clone(),
-                    scope: ArtistTrackScope::AllCredits,
-                    selected_music_folder_id: selected_music_folder_id.clone(),
-                },
-                order: SourceOrder::Canonical,
-            };
-            if let Some(activation) =
-                loaded_tracks_window_play_activation(source_key, play_tracks.len(), 0, |index| {
-                    play_tracks.as_ref().get(index).cloned()
-                })
-            {
-                controller.play_activation(activation);
-            }
+            controller.play_artist_tracks_window(
+                artist_id.clone(),
+                ArtistTrackScope::AllCredits,
+                play_tracks.len(),
+                0,
+                |index| play_tracks.as_ref().get(index).cloned(),
+            );
         });
         actions.append(&play);
 

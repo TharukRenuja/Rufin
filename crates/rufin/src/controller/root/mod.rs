@@ -14,20 +14,22 @@ use directories::ProjectDirs;
 #[cfg(test)]
 use domain::ThemePreference;
 use domain::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, AutoDjReason, ExternalLyricsProvider,
-    FolderPathItem, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection,
-    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId,
-    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine,
-    QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource, QueueItemInput,
-    QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode, ServerId,
-    ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistDetail, SmartPlaylistId, SourceOrder, StreamDescriptor, StreamQuality, Track,
-    TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
+    ExternalLyricsProvider, FolderPathItem, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
+    LibraryField, LibraryListSettings, LibrarySourceSelection, LocalLibraryFolder,
+    LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
+    PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail, PlaylistEntrySortDescriptor,
+    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource,
+    QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode,
+    ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceOrder,
+    StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey,
+    TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
     LibraryDeltaCollector, LocalLibraryDelta, SavedServer, ServerLocalAccess, Store,
-    StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
+    StoreBackedSourceItem, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
 };
 use playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -480,6 +482,13 @@ pub struct AppController {
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
 }
+
+pub(crate) fn smart_playlist_definition_fingerprint(
+    definition: &SmartPlaylistDefinition,
+) -> String {
+    serde_json::to_string(definition).unwrap_or_else(|_| "unavailable".to_string())
+}
+
 #[cfg(test)]
 #[derive(Clone)]
 struct ControllerTestPermit {
