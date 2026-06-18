@@ -56,10 +56,9 @@ mod style_contract;
 mod tray;
 
 use crate::controller::{
-    AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
-    LibrarySyncStatus, LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
-    MATERIALIZED_WINDOW_LIMIT, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
-    PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus, grouped_cover_refs_for_items,
+    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LibrarySyncStatus,
+    LyricsSearchResult, PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus,
+    grouped_cover_refs_for_items, smart_playlist_definition_fingerprint,
     track_cover_refs_for_items,
 };
 use crate::external_metadata;
@@ -75,14 +74,13 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
     HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist,
+    LibraryListSettings, MusicFolderId, PlaySourceDescriptor, Playlist,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route,
     RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortDescriptor,
-    SmartPlaylistSortField, SourceOrder, Track, TrackId, TrackSortDescriptor, TrackSortKey,
-    TrackTableSettings, format_duration, sanitized_window_size,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
+    TrackSortKey, TrackTableSettings, format_duration, sanitized_window_size,
 };
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,

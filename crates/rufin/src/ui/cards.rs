@@ -14,15 +14,13 @@ use super::layout::{
     home_album_card_height, home_album_card_size, home_album_content_width, home_album_page_size,
 };
 use super::{
-    GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
-    Shell, THUMB_COVER_SIZE, add_card_label_link, album_artist_route, favorite_button_is_active,
-    favorite_icon_button, icon_button, install_album_context_menu, install_track_context_menu,
-    loaded_tracks_window_play_activation, playlist_entry_play_activation, playlist_play_source_key,
+    GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE,
+    add_card_label_link, album_artist_route, favorite_button_is_active, favorite_icon_button,
+    icon_button, install_album_context_menu, install_track_context_menu,
     present_album_context_menu, present_playlist_context_menu, present_smart_playlist_context_menu,
-    present_track_context_menu, selected_music_folder_id, set_favorite_button_active,
-    smart_playlist_play_source_key, stable_seed, track_artist_route,
+    present_track_context_menu, set_favorite_button_active, stable_seed, track_artist_route,
 };
-use crate::controller::{AppController, PlayActivation};
+use crate::controller::AppController;
 
 impl Shell {
     fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
@@ -443,21 +441,7 @@ pub(super) fn playlist_cover_tile(
     let playlist_id = playlist.id.clone();
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            let state = PlaylistEntryListState::default();
-            let activation = if detail.entries.is_empty() {
-                loaded_tracks_window_play_activation(
-                    playlist_play_source_key(playlist_id.clone(), &state),
-                    detail.tracks.len(),
-                    0,
-                    |index| detail.tracks.get(index).cloned(),
-                )
-            } else {
-                playlist_entry_play_activation(playlist_id.clone(), &detail.entries[0], 0, &state)
-                    .map(PlayActivation::shuffled_start)
-            };
-            if let Some(activation) = activation {
-                controller.play_activation(activation);
-            }
+            controller.play_playlist_detail(detail);
         }
     });
     let controller = shell.controller.clone();
@@ -523,20 +507,9 @@ pub(super) fn smart_playlist_cover_tile(
     });
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id)
-            && let Some(activation) = loaded_tracks_window_play_activation(
-                smart_playlist_play_source_key(
-                    &detail.smart_playlist,
-                    selected_music_folder_id.clone(),
-                ),
-                detail.tracks.len(),
-                0,
-                |index| detail.tracks.get(index).cloned(),
-            )
-        {
-            controller.play_activation(activation);
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+            controller.play_smart_playlist_detail(detail);
         }
     });
     let controller = shell.controller.clone();

@@ -16,28 +16,26 @@ use super::startup_reveal::{
 use super::{
     AutoLyricsRequest, LibrarySyncToastState, LocalSourceCacheGateAction,
     LocalSourceCacheGateInput, PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
-    album_play_activation, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, library_sync_toast_message,
     library_sync_toast_state, local_source_cache_gate_action, local_source_snapshot_is_syncing,
     lyrics_result_subtitle, lyrics_result_subtitle_markup, lyrics_result_title_markup,
     lyrics_search_response_matches_query, lyrics_search_result_has_content, playlist_cover_size,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
-    playlist_entry_play_activation, playlist_route_margin, playlist_sort_width,
-    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
-    seekbar_target_seconds, snapshot_event_outcome,
+    playlist_route_margin, playlist_sort_width, preferences_login_status_toast_message,
+    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
-    LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, NormalizedPlayTarget,
-    PlayAnchor, PlayTarget, SearchRequestKey, normalize_loaded_source_activation,
+    LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, SearchRequestKey,
 };
 use domain::{
     Album, AlbumId, AppSettings, ArtistId, Genre, GenreId, HomeBlockKind, HomeSection,
     HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, MusicFolderId, Playlist,
-    PlaylistId, QueueAnchor, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route,
-    SearchKind, ServerId, ServerIdentity, ShuffleState, SidebarRouteItem, SmartPlaylist,
-    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
-    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableSettings,
+    PlaylistId, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId,
+    ServerIdentity, ShuffleState, SidebarRouteItem, SmartPlaylist, SmartPlaylistDefinition,
+    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track,
+    TrackId, TrackSortKey, TrackTableSettings,
 };
 use domain::{ExternalLyricsProvider, LibraryListKey, LibraryListSettings};
 use gdk_pixbuf::{Colorspace, Pixbuf};
@@ -1341,66 +1339,6 @@ pub(in crate::ui) fn shell_playlist_panes() {
     assert_eq!(playlist_sort_width(360), 120);
     assert_eq!(playlist_sort_width(550), 150);
     assert_eq!(playlist_sort_width(760), 170);
-}
-#[test]
-pub(in crate::ui) fn shell_track_occurrences() {
-    let mut duplicate = test_track("Artist", None);
-    duplicate.id = TrackId::fake(7);
-    let entries = [
-        PlaylistEntry {
-            entry_id: "entry-a".to_string(),
-            track: duplicate.clone(),
-        },
-        PlaylistEntry {
-            entry_id: "entry-b".to_string(),
-            track: duplicate,
-        },
-    ];
-    let activation = playlist_entry_play_activation(
-        PlaylistId::fake(3),
-        &entries[1],
-        1,
-        &PlaylistEntryListState::default(),
-    )
-    .expect("playlist activation should be available");
-
-    let PlayTarget::StoreBackedSource { anchor, .. } = activation.target else {
-        panic!("playlist activation should use the store-backed source");
-    };
-    assert!(matches!(
-        anchor,
-        PlayAnchor {
-            source_index: 1,
-            source_item_id: Some(ref id),
-            ..
-        } if id == "entry-b"
-    ));
-}
-#[test]
-pub(in crate::ui) fn shell_track_anchor() {
-    let tracks = (1..=3)
-        .map(|number| {
-            let mut track = test_track("Artist", None);
-            track.id = TrackId::fake(number);
-            track
-        })
-        .collect::<Vec<_>>();
-    let activation =
-        album_play_activation(AlbumId::fake(1), tracks, 1, None).expect("album activation");
-    let normalized =
-        normalize_loaded_source_activation(activation).expect("album activation should normalize");
-
-    let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
-        panic!("album activation should replace the queue");
-    };
-    assert_eq!(replacement.items.len(), 3);
-    assert_eq!(
-        replacement.anchor,
-        QueueAnchor::SourcePosition {
-            position: 1,
-            track_id: TrackId::fake(2),
-        }
-    );
 }
 #[test]
 pub(in crate::ui) fn shell_drop_source() {

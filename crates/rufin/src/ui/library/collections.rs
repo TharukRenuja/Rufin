@@ -165,16 +165,15 @@ fn play_track_from_model(
         controller.play_now(fallback_track);
         return;
     };
-    let Some(activation) = loaded_tracks_window_play_activation(
-        play_context.source_key(),
+    let played = play_context.play_window(
+        controller,
         model.n_items() as usize,
         anchor_index,
         |index| item_at::<Track>(model, index as u32),
-    ) else {
+    );
+    if !played {
         controller.play_now(fallback_track);
-        return;
-    };
-    controller.play_activation(activation);
+    }
 }
 
 pub(in crate::ui) fn album_grid(
@@ -753,24 +752,12 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     let controls = cards::cover_play_hover_controls(size, "Play genre");
     let controller = shell.controller.clone();
     let genre_id = genre.id.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
             let tracks = detail.tracks;
-            if let Some(activation) = loaded_tracks_window_play_activation(
-                domain::PlaySourceKey {
-                    descriptor: domain::PlaySourceDescriptor::GenreTracks {
-                        genre_id: genre_id.clone(),
-                        selected_music_folder_id: selected_music_folder_id.clone(),
-                    },
-                    order: domain::SourceOrder::Canonical,
-                },
-                tracks.len(),
-                0,
-                |index| tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            controller.play_genre_tracks_window(genre_id.clone(), tracks.len(), 0, |index| {
+                tracks.get(index).cloned()
+            });
         }
     });
     let controller = shell.controller.clone();
@@ -1047,24 +1034,15 @@ pub(in crate::ui) fn artist_cover_tile(
     });
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id)
-            && let Some(activation) = loaded_tracks_window_play_activation(
-                domain::PlaySourceKey {
-                    descriptor: domain::PlaySourceDescriptor::ArtistTracks {
-                        artist_id: artist_id.clone(),
-                        scope: domain::ArtistTrackScope::AllCredits,
-                        selected_music_folder_id: selected_music_folder_id.clone(),
-                    },
-                    order: domain::SourceOrder::Canonical,
-                },
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+            controller.play_artist_tracks_window(
+                artist_id.clone(),
+                domain::ArtistTrackScope::AllCredits,
                 detail.tracks.len(),
                 0,
                 |index| detail.tracks.get(index).cloned(),
-            )
-        {
-            controller.play_activation(activation);
+            );
         }
     });
     let controller = shell.controller.clone();
