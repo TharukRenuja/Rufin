@@ -1057,6 +1057,7 @@ pub(in crate::controller) fn startup_advance_generation() {
         name: "Example".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     }];
@@ -3347,6 +3348,7 @@ pub(in crate::controller) fn local_genre_grid_uses_cached_mbid_album_fallback_ar
         name: "Example Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -3633,6 +3635,7 @@ pub(in crate::controller) fn genre_projection_uses_bound_album_track_fallback_ar
         name: "Example Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -3756,6 +3759,7 @@ pub(in crate::controller) fn genre_projection_uses_bound_mbid_album_art() {
         name: "Example Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -3813,6 +3817,7 @@ pub(in crate::controller) fn genre_route_consumes_bound_mbid_art_without_cache()
         name: "Example Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -3872,6 +3877,7 @@ pub(in crate::controller) fn genre_route_keeps_cached_mbid_art_in_private_mode()
         name: "Example Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: Vec::new(),
         image_ref: None,
     };

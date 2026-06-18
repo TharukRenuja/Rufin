@@ -757,8 +757,9 @@ pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
         name: row.get(1)?,
         album_count: u32_from_i64(row.get(2)?),
         track_count: u32_from_i64(row.get(3)?),
+        duration_seconds: u32_from_i64(row.get(4)?),
         image_refs: Vec::new(),
-        image_ref: image_ref_from_row(row, 4, 5)?,
+        image_ref: image_ref_from_row(row, 5, 6)?,
     })
 }
 pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
@@ -1424,9 +1425,9 @@ pub(super) fn repair_linked_genres(
     let mut insert = connection.prepare(
         "
         INSERT INTO genres (
-            server_id, genre_id, name, album_count, track_count, sync_generation
+            server_id, genre_id, name, album_count, track_count, duration_seconds, sync_generation
         )
-        VALUES (?1, ?2, ?3, 0, 0, ?4)
+        VALUES (?1, ?2, ?3, 0, 0, 0, ?4)
         ON CONFLICT(server_id, genre_id) DO UPDATE SET
             name = excluded.name,
             sync_generation = excluded.sync_generation

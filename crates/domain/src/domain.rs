@@ -472,6 +472,8 @@ pub struct Genre {
     pub name: String,
     pub album_count: u32,
     pub track_count: u32,
+    #[serde(default)]
+    pub duration_seconds: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_refs: Vec<ImageRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

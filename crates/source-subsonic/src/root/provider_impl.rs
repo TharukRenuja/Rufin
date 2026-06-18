@@ -329,6 +329,7 @@ pub(super) fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) 
         name: genre.value,
         album_count: genre.album_count.unwrap_or_default(),
         track_count: genre.song_count.unwrap_or_default(),
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: None,
     }

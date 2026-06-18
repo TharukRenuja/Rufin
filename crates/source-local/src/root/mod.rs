@@ -133,6 +133,7 @@ struct GenreAccumulator {
     name: String,
     albums: BTreeSet<AlbumId>,
     tracks: BTreeSet<TrackId>,
+    duration_seconds: u32,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalScanStage {

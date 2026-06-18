@@ -444,6 +444,9 @@ impl MusicProvider for SubsonicProvider {
             name: genre_name,
             album_count: albums.len() as u32,
             track_count: tracks.len() as u32,
+            duration_seconds: tracks.iter().fold(0_u32, |total, track| {
+                total.saturating_add(track.duration_seconds)
+            }),
             image_refs: Vec::new(),
             image_ref: None,
         };

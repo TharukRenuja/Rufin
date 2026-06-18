@@ -409,14 +409,36 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
         })
         .collect::<Vec<_>>();
 
+    let mut genre_album_counts = vec![0_u32; GENRES.len()];
+    for album in &albums {
+        for genre in &album.genres {
+            if let Some(index) = GENRES.iter().position(|name| name == genre) {
+                genre_album_counts[index] += 1;
+            }
+        }
+    }
+
+    let mut genre_track_counts = vec![0_u32; GENRES.len()];
+    let mut genre_durations = vec![0_u32; GENRES.len()];
+    for track in &tracks {
+        for genre in &track.genres {
+            if let Some(index) = GENRES.iter().position(|name| name == genre) {
+                genre_track_counts[index] += 1;
+                genre_durations[index] =
+                    genre_durations[index].saturating_add(track.duration_seconds);
+            }
+        }
+    }
+
     let genres = GENRES
         .iter()
         .enumerate()
         .map(|(index, name)| Genre {
             id: GenreId::fake(index + 1),
             name: (*name).to_string(),
-            album_count: (album_count / GENRES.len()) as u32,
-            track_count: (track_count / GENRES.len()) as u32,
+            album_count: genre_album_counts[index],
+            track_count: genre_track_counts[index],
+            duration_seconds: genre_durations[index],
             image_refs: Vec::new(),
             image_ref: Some(fake_image_ref("genre", index + 1)),
         })

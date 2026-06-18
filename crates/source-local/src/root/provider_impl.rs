@@ -141,7 +141,11 @@ pub(super) fn build_library(
                 ..GenreAccumulator::default()
             });
             genre.albums.insert(track.album_id.clone());
-            genre.tracks.insert(track.id.clone());
+            if genre.tracks.insert(track.id.clone()) {
+                genre.duration_seconds = genre
+                    .duration_seconds
+                    .saturating_add(track.duration_seconds);
+            }
         }
         tracks.push(track.clone());
     }
@@ -222,6 +226,7 @@ pub(super) fn build_library(
             name: genre.name,
             album_count: genre.albums.len().min(u32::MAX as usize) as u32,
             track_count: genre.tracks.len().min(u32::MAX as usize) as u32,
+            duration_seconds: genre.duration_seconds,
             image_refs: Vec::new(),
             image_ref: None,
         })

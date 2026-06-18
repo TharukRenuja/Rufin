@@ -386,6 +386,7 @@ fn genre_detail_tracks() {
         name: "Dream Pop".to_string(),
         album_count: 0,
         track_count: 0,
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: Some(image_ref("genre-dream-pop", "tag")),
     };
@@ -454,6 +455,7 @@ fn relation_use_counts() {
         name: "Anime".to_string(),
         album_count: 167,
         track_count: 1_561,
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -479,8 +481,10 @@ fn relation_use_counts() {
         .expect("genre detail");
     assert_eq!(genres.items[0].album_count, 1);
     assert_eq!(genres.items[0].track_count, 1);
+    assert_eq!(genres.items[0].duration_seconds, track.duration_seconds);
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
+    assert_eq!(detail.genre.duration_seconds, track.duration_seconds);
 }
 
 #[test]
@@ -497,6 +501,7 @@ fn track_only_counts() {
         name: "Instrumental".to_string(),
         album_count: 12,
         track_count: 99,
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -544,6 +549,7 @@ fn missing_album_counts() {
         name: "Instrumental".to_string(),
         album_count: 12,
         track_count: 99,
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: None,
     };
@@ -605,6 +611,7 @@ fn relation_repair_genre() {
         name: "Dream Pop".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: None,
     };

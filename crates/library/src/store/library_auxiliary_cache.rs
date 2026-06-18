@@ -11,7 +11,8 @@ impl Store {
         let total = self.count_linked_genres(server_id)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+            SELECT genre_id, name, album_count, track_count, duration_seconds,
+                   image_item_id, image_tag
             FROM genres g
             WHERE g.server_id = ?1
               AND (
@@ -50,7 +51,8 @@ impl Store {
         let total = self.count_linked_genres_like(server_id, &pattern)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+            SELECT genre_id, name, album_count, track_count, duration_seconds,
+                   image_item_id, image_tag
             FROM genres g
             WHERE g.server_id = ?1
               AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
@@ -396,7 +398,7 @@ impl Store {
             .query_row(
                 "
                 SELECT genre_id, name,
-                       album_count, track_count,
+                       album_count, track_count, duration_seconds,
                        image_item_id, image_tag
                 FROM genres
                 WHERE server_id = ?1 AND genre_id = ?2

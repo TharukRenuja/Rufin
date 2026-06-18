@@ -345,7 +345,7 @@ impl MusicProvider for JellyfinProvider {
         genre_url
             .query_pairs_mut()
             .append_pair("UserId", &self.user_id);
-        let genre = genre_from_item(self.get_json::<JellyfinItem>(genre_url).await?);
+        let mut genre = genre_from_item(self.get_json::<JellyfinItem>(genre_url).await?);
 
         let mut albums_url = endpoint(&self.base_url, "Items")?;
         albums_url
@@ -379,7 +379,10 @@ impl MusicProvider for JellyfinProvider {
             .items
             .into_iter()
             .map(track_from_item)
-            .collect();
+            .collect::<Vec<_>>();
+        genre.duration_seconds = tracks.iter().fold(0_u32, |total, track| {
+            total.saturating_add(track.duration_seconds)
+        });
 
         Ok(GenreDetail {
             genre,
