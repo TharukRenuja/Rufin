@@ -96,7 +96,7 @@ fn latest_release_version_from_flathub_json(value: &serde_json::Value) -> Option
 }
 
 fn release_notification_due(settings: &AppSettings, latest: &str, current: &str) -> bool {
-    settings.release_notifications_enabled
+    crate::external_activity::release_update_check(settings)
         && release_version_is_newer(latest, current)
         && settings.release_notification_seen_version.as_deref() != Some(latest)
 }
@@ -374,7 +374,7 @@ fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::O
 
 impl Shell {
     pub(in crate::ui) fn check_release_toast(self: &Rc<Self>) {
-        if !self.state.settings.borrow().release_notifications_enabled {
+        if !crate::external_activity::release_update_check(&self.state.settings.borrow()) {
             return;
         };
         let shell = Rc::clone(self);
@@ -472,6 +472,10 @@ mod tests {
         assert!(release_notification_due(&settings, "2.0.0", "1.9.0"));
 
         settings.release_notifications_enabled = false;
+        assert!(!release_notification_due(&settings, "2.0.0", "1.9.0"));
+
+        settings.release_notifications_enabled = true;
+        settings.private_mode = true;
         assert!(!release_notification_due(&settings, "2.0.0", "1.9.0"));
     }
 
