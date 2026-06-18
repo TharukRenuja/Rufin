@@ -296,17 +296,6 @@ impl Shell {
         self.state
             .route_load_generation
             .set(self.state.route_load_generation.get().saturating_add(1));
-        self.cancel_route_cover_prime();
-    }
-
-    fn cancel_route_cover_prime(&self) {
-        self.state.route_cover_prime_generation.set(
-            self.state
-                .route_cover_prime_generation
-                .get()
-                .saturating_add(1),
-        );
-        self.state.route_cover_prime_pending.borrow_mut().clear();
     }
 }
 

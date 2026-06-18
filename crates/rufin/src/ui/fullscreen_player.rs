@@ -18,8 +18,8 @@ use crate::ui::{
 };
 
 use super::{
-    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE,
-    cover_artwork_id_for_key, cover_request_id_for_key, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
+    ArtworkTile, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, cover_artwork_id_for_key,
+    cover_request_id_for_key, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
     player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
 };
 
@@ -1494,16 +1494,13 @@ impl Shell {
                 let pixbuf = self
                     .cloned_decoded_cover(&key, cover_size)
                     .map(|cover| {
-                        self.touch_decoded_cover(&key, CoverDecodePriority::Visible);
+                        self.touch_visible_decoded_cover(&key);
                         cover.pixbuf
                     })
                     .or_else(|| {
                         self.fullscreen_cover_preview(image_ref, fetch_size).map(
                             |(preview_key, pixbuf)| {
-                                self.touch_decoded_cover(
-                                    &preview_key,
-                                    CoverDecodePriority::Visible,
-                                );
+                                self.touch_visible_decoded_cover(&preview_key);
                                 pixbuf
                             },
                         )

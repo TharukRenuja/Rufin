@@ -161,31 +161,31 @@ pub(in crate::ui) fn shell_warm_lookup() {
     assert!(record_cover_path_lookup_request(
         &mut lookups,
         "album-art".to_string(),
-        super::CoverPathLookupIntent::Warm,
+        super::cover::CoverPathLookupIntent::Warm,
     ));
     assert!(!record_cover_path_lookup_request(
         &mut lookups,
         "album-art".to_string(),
-        super::CoverPathLookupIntent::Visible,
+        super::cover::CoverPathLookupIntent::Visible,
     ));
     assert_eq!(
         lookups.get("album-art"),
-        Some(&super::CoverPathLookupIntent::Visible)
+        Some(&super::cover::CoverPathLookupIntent::Visible)
     );
 
     assert!(record_cover_path_lookup_request(
         &mut lookups,
         "now-playing".to_string(),
-        super::CoverPathLookupIntent::Visible,
+        super::cover::CoverPathLookupIntent::Visible,
     ));
     assert!(!record_cover_path_lookup_request(
         &mut lookups,
         "now-playing".to_string(),
-        super::CoverPathLookupIntent::Warm,
+        super::cover::CoverPathLookupIntent::Warm,
     ));
     assert_eq!(
         lookups.get("now-playing"),
-        Some(&super::CoverPathLookupIntent::Visible)
+        Some(&super::cover::CoverPathLookupIntent::Visible)
     );
 }
 #[test]

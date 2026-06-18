@@ -85,7 +85,7 @@ impl Shell {
         if let Some((cache_key, pixbuf)) =
             self.decoded_cover_for_ref(image_ref, fetch_size, decode_size)
         {
-            self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
+            self.touch_visible_decoded_cover(&cache_key);
             tile.bind_selected_cover(
                 seed,
                 cover_artwork_id_for_key(&key, image_ref),
@@ -304,7 +304,7 @@ impl Shell {
         if let Some((cache_key, pixbuf)) =
             self.decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
         {
-            self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
+            self.touch_visible_decoded_cover(&cache_key);
             tile.set_pixbuf_if_current(generation, pixbuf);
             return;
         }
@@ -330,7 +330,7 @@ impl Shell {
         if let Some((cache_key, pixbuf)) =
             self.decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
         {
-            self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
+            self.touch_visible_decoded_cover(&cache_key);
             tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             return;
         }

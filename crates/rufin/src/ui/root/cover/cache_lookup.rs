@@ -1,6 +1,157 @@
 use super::*;
 
 impl Shell {
+    fn start_cover_prime_lookup(
+        self: &Rc<Self>,
+        key: String,
+        image_ref: ImageRef,
+        fetch_size: u32,
+        size: i32,
+    ) {
+        self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+            key,
+            image_ref,
+            fetch_size,
+            size,
+            intent: CoverPathLookupIntent::StartupPrime,
+        });
+    }
+
+    pub(in crate::ui::root) fn begin_startup_cover_prime(self: &Rc<Self>) -> u64 {
+        let generation = self
+            .state
+            .startup_cover_prime_generation
+            .get()
+            .saturating_add(1);
+        self.state.startup_cover_prime_generation.set(generation);
+        self.state.startup_cover_prime_pending.borrow_mut().clear();
+
+        let jobs = startup_cover_prime_jobs(self);
+        let mut pending = HashSet::new();
+        for job in jobs {
+            if self
+                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
+                .is_some()
+                || self.state.cover_unavailable.borrow().contains(&job.key)
+            {
+                continue;
+            }
+            pending.insert(job.key.clone());
+            self.start_cover_prime_lookup(job.key, job.image_ref, job.fetch_size, job.size);
+        }
+
+        let pending_count = pending.len();
+        *self.state.startup_cover_prime_pending.borrow_mut() = pending;
+        if pending_count > 0 {
+            info!(covers = pending_count, "started startup cover prime");
+        }
+        generation
+    }
+
+    pub(in crate::ui::root) fn finish_startup_cover_prime_gate(&self) {
+        self.state.startup_cover_prime_generation.set(
+            self.state
+                .startup_cover_prime_generation
+                .get()
+                .saturating_add(1),
+        );
+        self.state.startup_cover_prime_pending.borrow_mut().clear();
+    }
+
+    pub(in crate::ui::root) fn startup_cover_prime_pending_count(
+        &self,
+        generation: Option<u64>,
+    ) -> usize {
+        match generation {
+            Some(generation) if self.state.startup_cover_prime_generation.get() == generation => {
+                self.state.startup_cover_prime_pending.borrow().len()
+            }
+            Some(_) => 0,
+            None => 1,
+        }
+    }
+
+    pub(in crate::ui::root) fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
+        let generation = self
+            .state
+            .first_run_cover_prime_generation
+            .get()
+            .saturating_add(1);
+        self.state.first_run_cover_prime_generation.set(generation);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .clear();
+
+        let jobs = self.first_run_cover_prime_jobs();
+        if jobs.is_empty() {
+            return None;
+        }
+
+        let mut pending = HashSet::new();
+        for job in jobs {
+            if self
+                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
+                .is_some()
+                || self.state.cover_unavailable.borrow().contains(&job.key)
+            {
+                continue;
+            }
+            pending.insert(job.key.clone());
+            self.start_cover_prime_lookup(job.key, job.image_ref, job.fetch_size, job.size);
+        }
+
+        if pending.is_empty() {
+            return None;
+        }
+        let pending_count = pending.len();
+        *self.state.first_run_cover_prime_pending.borrow_mut() = pending;
+        info!(covers = pending_count, "started first-run cover prime");
+        Some(generation)
+    }
+
+    pub(in crate::ui::root) fn first_run_cover_prime_current(&self, generation: u64) -> bool {
+        self.state.first_run_cover_prime_generation.get() == generation
+    }
+
+    pub(in crate::ui::root) fn first_run_cover_prime_pending_count(&self) -> usize {
+        self.state.first_run_cover_prime_pending.borrow().len()
+    }
+
+    pub(in crate::ui::root) fn finish_first_run_cover_prime_gate(&self) {
+        self.state.first_run_cover_prime_generation.set(
+            self.state
+                .first_run_cover_prime_generation
+                .get()
+                .saturating_add(1),
+        );
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .clear();
+    }
+
+    fn first_run_cover_prime_jobs(&self) -> Vec<FirstRunCoverPrimeJob> {
+        let image_refs = first_run_cover_prime_refs(&self.state.library.borrow());
+        let mut seen = HashSet::new();
+        let mut jobs = Vec::new();
+        for image_ref in image_refs {
+            let Some(key) = self.cover_cache_key(&image_ref, GRID_COVER_SIZE) else {
+                continue;
+            };
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            jobs.push(FirstRunCoverPrimeJob {
+                key,
+                image_ref,
+                fetch_size: GRID_COVER_SIZE,
+                size: GRID_COVER_SIZE as i32,
+            });
+        }
+        jobs
+    }
+
     pub(in crate::ui) fn current_playback_cached_artwork_path(
         &self,
         entry: &QueueEntry,
@@ -120,7 +271,7 @@ impl Shell {
         }
         None
     }
-    pub(in crate::ui) fn start_cached_cover_path_lookup(
+    pub(in crate::ui::root::cover) fn start_cached_cover_path_lookup(
         self: &Rc<Self>,
         request: CoverPathLookupRequest,
     ) {
@@ -147,9 +298,7 @@ impl Shell {
         }
         let fast_path = if matches!(
             intent,
-            CoverPathLookupIntent::Priority
-                | CoverPathLookupIntent::StartupPrime
-                | CoverPathLookupIntent::RoutePrime
+            CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
         ) {
             cover_candidate_path(
                 &candidate_keys,
@@ -220,7 +369,7 @@ impl Shell {
             }
         });
     }
-    pub(in crate::ui) fn finish_cached_cover_path_lookup(
+    pub(in crate::ui::root::cover) fn finish_cached_cover_path_lookup(
         self: &Rc<Self>,
         key: String,
         image_ref: ImageRef,
@@ -258,7 +407,7 @@ impl Shell {
                     self.apply_cover_unavailable(&key);
                 }
             }
-            CoverPathLookupIntent::StartupPrime | CoverPathLookupIntent::RoutePrime => {
+            CoverPathLookupIntent::StartupPrime => {
                 if let Some(path) = path {
                     self.state.cover_unavailable.borrow_mut().remove(&key);
                     self.start_cover_decode_from_path(
@@ -274,18 +423,7 @@ impl Shell {
                         .cover_unavailable
                         .borrow_mut()
                         .insert(key.clone());
-                    self.state
-                        .startup_cover_prime_pending
-                        .borrow_mut()
-                        .remove(&key);
-                    self.state
-                        .first_run_cover_prime_pending
-                        .borrow_mut()
-                        .remove(&key);
-                    self.state
-                        .route_cover_prime_pending
-                        .borrow_mut()
-                        .remove(&key);
+                    self.remove_cover_prime_pending(&key);
                 }
             }
             CoverPathLookupIntent::Visible => {
@@ -376,21 +514,8 @@ impl Shell {
             .pending_cover_size(key)
             .unwrap_or(GRID_COVER_SIZE as i32);
         if let Some(cover) = self.cloned_decoded_cover(key, size) {
-            self.touch_decoded_cover(key, CoverDecodePriority::Visible);
-            self.mark_cover_request_state(key, CoverRequestState::Ready);
-            self.state.cover_visible_requests.borrow_mut().remove(key);
-            self.state
-                .startup_cover_prime_pending
-                .borrow_mut()
-                .remove(key);
-            self.state
-                .first_run_cover_prime_pending
-                .borrow_mut()
-                .remove(key);
-            self.state
-                .route_cover_prime_pending
-                .borrow_mut()
-                .remove(key);
+            self.touch_visible_decoded_cover(key);
+            self.finish_cover_ready_state(key);
             let bindings = self.take_live_cover_bindings(key);
             let bindings_count = bindings.len();
             let bind_started = Instant::now();
@@ -422,40 +547,25 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_cover_unavailable(self: &Rc<Self>, key: &str) {
         self.state.cover_fetches.borrow_mut().remove(key);
-        self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
-        self.state.cover_visible_requests.borrow_mut().remove(key);
+        self.finish_cover_missing_state(key);
         self.state
             .cover_unavailable
             .borrow_mut()
             .insert(key.to_string());
         self.state.cover_path_cache.borrow_mut().remove(key);
-        self.state
-            .startup_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state
-            .route_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
 
         let bindings = self.take_live_cover_bindings(key);
-        let mut cleared = 0_usize;
         for binding in bindings {
             if !binding.clear_on_failure {
                 continue;
             }
-            if binding
-                .tile
-                .upgrade()
-                .is_some_and(|tile| tile.clear_image_if_current(binding.generation))
-            {
-                cleared = cleared.saturating_add(1);
+            if let Some(tile) = binding.tile.upgrade() {
+                tile.clear_image_if_current(binding.generation);
             }
         }
+    }
+    pub(in crate::ui) fn clear_cover_unavailable(&self) {
+        self.state.cover_unavailable.borrow_mut().clear();
     }
     pub(in crate::ui) fn apply_cover_deferred(self: &Rc<Self>, key: &str) {
         self.state.cover_fetches.borrow_mut().remove(key);
@@ -477,10 +587,34 @@ impl Shell {
             shell.start_cached_cover_path_lookup(request);
         });
     }
-    pub(in crate::ui) fn mark_cover_request_state(&self, key: &str, state: CoverRequestState) {
+    pub(in crate::ui::root::cover) fn mark_cover_request_state(
+        &self,
+        key: &str,
+        state: CoverRequestState,
+    ) {
         if let Some(record) = self.state.cover_visible_requests.borrow_mut().get_mut(key) {
             record.state = state;
         }
+    }
+    pub(in crate::ui::root::cover) fn finish_cover_ready_state(&self, key: &str) {
+        self.mark_cover_request_state(key, CoverRequestState::Ready);
+        self.state.cover_visible_requests.borrow_mut().remove(key);
+        self.remove_cover_prime_pending(key);
+    }
+    pub(in crate::ui::root::cover) fn finish_cover_missing_state(&self, key: &str) {
+        self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
+        self.state.cover_visible_requests.borrow_mut().remove(key);
+        self.remove_cover_prime_pending(key);
+    }
+    pub(in crate::ui::root::cover) fn remove_cover_prime_pending(&self, key: &str) {
+        self.state
+            .startup_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
     }
     pub(in crate::ui) fn reconcile_startup_cover_prime_pending(&self) {
         let stale = self.stale_cover_prime_pending_keys(
@@ -607,20 +741,7 @@ impl Shell {
             return false;
         };
         self.touch_decoded_cover(key, priority);
-        self.mark_cover_request_state(key, CoverRequestState::Ready);
-        self.state
-            .startup_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state.cover_visible_requests.borrow_mut().remove(key);
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state
-            .route_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
+        self.finish_cover_ready_state(key);
         let bindings = self.take_live_cover_bindings(key);
         apply_pixbuf_to_bindings(bindings, cover.pixbuf);
         true

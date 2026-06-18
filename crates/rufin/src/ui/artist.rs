@@ -301,10 +301,12 @@ impl Shell {
         actions.add_css_class("artist-detail-actions");
         actions.set_halign(gtk::Align::Start);
 
+        let action_tracks = Rc::new(tracks.to_vec());
+
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
-        let play_tracks = tracks.to_vec();
+        let play_tracks = Rc::clone(&action_tracks);
         let artist_id = artist.id.clone();
         let selected_music_folder_id = selected_music_folder_id(self);
         play.connect_clicked(move |_| {
@@ -318,7 +320,7 @@ impl Shell {
             };
             if let Some(activation) =
                 loaded_tracks_window_play_activation(source_key, play_tracks.len(), 0, |index| {
-                    play_tracks.get(index).cloned()
+                    play_tracks.as_ref().get(index).cloned()
                 })
             {
                 controller.play_activation(activation);
@@ -328,9 +330,9 @@ impl Shell {
 
         let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
         let controller = self.controller.clone();
-        let next_tracks = tracks.to_vec();
+        let next_tracks = Rc::clone(&action_tracks);
         play_next.connect_clicked(move |_| {
-            for track in next_tracks.iter().rev() {
+            for track in next_tracks.as_ref().iter().rev() {
                 controller.play_next(track.clone());
             }
         });
@@ -338,8 +340,8 @@ impl Shell {
 
         let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
         let controller = self.controller.clone();
-        let later_tracks = tracks.to_vec();
-        play_later.connect_clicked(move |_| controller.play_last(later_tracks.clone()));
+        let later_tracks = Rc::clone(&action_tracks);
+        play_later.connect_clicked(move |_| controller.play_last(later_tracks.as_ref().clone()));
         actions.append(&play_later);
 
         let favorite = favorite_icon_button("Favorite");

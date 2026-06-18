@@ -56,6 +56,7 @@ pub(in crate::ui) fn install_startup_stall_monitor(shell: &Rc<Shell>) {
             last_tick.set(now);
             let delayed_ms = startup_stall_delay_ms(expected, observed);
             if delayed_ms >= STARTUP_STALL_WARN_MS {
+                let cover = shell.cover_work_stats();
                 warn!(
                     delayed_ms,
                     observed_ms = observed.as_millis() as u64,
@@ -64,17 +65,16 @@ pub(in crate::ui) fn install_startup_stall_monitor(shell: &Rc<Shell>) {
                     startup_revealed = shell.state.startup_route_revealed.get(),
                     startup_render_pending = shell.state.startup_route_render_pending.get(),
                     startup_content_prepared = shell.state.startup_route_content_prepared.get(),
-                    cover_prime_pending = shell.state.startup_cover_prime_pending.borrow().len(),
-                    route_cover_prime_pending = shell.state.route_cover_prime_pending.borrow().len(),
-                    cover_path_lookups = shell.state.cover_path_lookups.borrow().len(),
-                    cover_fetches = shell.state.cover_fetches.borrow().len(),
-                    cover_visible_requests = shell.state.cover_visible_requests.borrow().len(),
-                    cover_bindings = shell.state.cover_bindings.borrow().len(),
-                    cover_decode_queue = shell.state.cover_decode_queue.borrow().len(),
-                    cover_decodes = shell.state.cover_decodes.borrow().len(),
-                    decoded_covers = shell.state.decoded_covers.borrow().len(),
-                    cover_warm_pending = shell.state.cover_warm_pending.borrow().is_some(),
-                    cover_warm_started = shell.state.cover_warm_started.borrow().is_some(),
+                    cover_prime_pending = cover.prime_pending,
+                    cover_path_lookups = cover.path_lookups,
+                    cover_fetches = cover.fetches,
+                    cover_visible_requests = cover.visible_requests,
+                    cover_bindings = cover.bindings,
+                    cover_decode_queue = cover.decode_queue,
+                    cover_decodes = cover.decodes,
+                    decoded_covers = cover.decoded,
+                    cover_warm_pending = cover.warm_pending,
+                    cover_warm_started = cover.warm_started,
                     "startup UI thread stalled"
                 );
             }
@@ -184,13 +184,8 @@ impl Shell {
                 let elapsed = started_at.elapsed();
                 let width_ready = shell.layout_width() > 1 && shell.root_stack.width() > 1;
                 shell.reconcile_startup_cover_prime_pending();
-                let pending_covers = cover_prime_generation
-                    .get()
-                    .filter(|generation| {
-                        shell.state.startup_cover_prime_generation.get() == *generation
-                    })
-                    .map(|_| shell.state.startup_cover_prime_pending.borrow().len())
-                    .unwrap_or(usize::from(cover_prime_generation.get().is_none()));
+                let pending_covers =
+                    shell.startup_cover_prime_pending_count(cover_prime_generation.get());
                 match startup_route_reveal_action(width_ready, pending_covers, elapsed) {
                     StartupRevealAction::RevealReady => {
                         shell.finish_startup_cover_prime_gate();
@@ -237,51 +232,6 @@ impl Shell {
         self.state.startup_route_content_prepared.set(true);
         self.log_layout_snapshot("startup_prepare_after_hidden_render");
     }
-    pub(in crate::ui) fn begin_startup_cover_prime(self: &Rc<Self>) -> u64 {
-        let generation = self
-            .state
-            .startup_cover_prime_generation
-            .get()
-            .saturating_add(1);
-        self.state.startup_cover_prime_generation.set(generation);
-        self.state.startup_cover_prime_pending.borrow_mut().clear();
-
-        let jobs = startup_cover_prime_jobs(self);
-        let mut pending = HashSet::new();
-        for job in jobs {
-            if self
-                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
-                .is_some()
-                || self.state.cover_unavailable.borrow().contains(&job.key)
-            {
-                continue;
-            }
-            pending.insert(job.key.clone());
-            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
-                key: job.key,
-                image_ref: job.image_ref,
-                fetch_size: job.fetch_size,
-                size: job.size,
-                intent: CoverPathLookupIntent::StartupPrime,
-            });
-        }
-
-        let pending_count = pending.len();
-        *self.state.startup_cover_prime_pending.borrow_mut() = pending;
-        if pending_count > 0 {
-            info!(covers = pending_count, "started startup cover prime");
-        }
-        generation
-    }
-    fn finish_startup_cover_prime_gate(&self) {
-        self.state.startup_cover_prime_generation.set(
-            self.state
-                .startup_cover_prime_generation
-                .get()
-                .saturating_add(1),
-        );
-        self.state.startup_cover_prime_pending.borrow_mut().clear();
-    }
     pub(in crate::ui) fn reveal_startup_route(self: &Rc<Self>) {
         if self.login_screen_active() || self.state.startup_route_revealed.get() {
             return;
@@ -315,11 +265,11 @@ impl Shell {
             let timeout_logged = Rc::new(Cell::new(false));
             let shell = Rc::clone(self);
             glib::timeout_add_local(Duration::from_millis(PRIME_POLL_MS), move || {
-                if shell.state.first_run_cover_prime_generation.get() != generation {
+                if !shell.first_run_cover_prime_current(generation) {
                     return glib::ControlFlow::Break;
                 }
                 shell.reconcile_prime_pending();
-                let pending_covers = shell.state.first_run_cover_prime_pending.borrow().len();
+                let pending_covers = shell.first_run_cover_prime_pending_count();
                 match startup_prime_action(pending_covers, started_at.elapsed()) {
                     StartupRevealAction::RevealReady => {
                         shell.finish_first_run_app_reveal();
@@ -346,16 +296,7 @@ impl Shell {
             self.render_current_route();
         }
 
-        self.state.first_run_cover_prime_generation.set(
-            self.state
-                .first_run_cover_prime_generation
-                .get()
-                .saturating_add(1),
-        );
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .clear();
+        self.finish_first_run_cover_prime_gate();
 
         let shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
@@ -509,70 +450,6 @@ impl Shell {
             album_grid_card_size,
             home_showcase_seed: self.state.home_showcase_seed.get(),
         }
-    }
-    pub(in crate::ui) fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
-        let generation = self
-            .state
-            .first_run_cover_prime_generation
-            .get()
-            .saturating_add(1);
-        self.state.first_run_cover_prime_generation.set(generation);
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .clear();
-
-        let jobs = self.first_run_cover_prime_jobs();
-        if jobs.is_empty() {
-            return None;
-        }
-
-        let mut pending = HashSet::new();
-        for job in jobs {
-            if self
-                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
-                .is_some()
-                || self.state.cover_unavailable.borrow().contains(&job.key)
-            {
-                continue;
-            }
-            pending.insert(job.key.clone());
-            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
-                key: job.key,
-                image_ref: job.image_ref,
-                fetch_size: job.fetch_size,
-                size: job.size,
-                intent: CoverPathLookupIntent::StartupPrime,
-            });
-        }
-
-        if pending.is_empty() {
-            return None;
-        }
-        let pending_count = pending.len();
-        *self.state.first_run_cover_prime_pending.borrow_mut() = pending;
-        info!(covers = pending_count, "started first-run cover prime");
-        Some(generation)
-    }
-    pub(in crate::ui) fn first_run_cover_prime_jobs(&self) -> Vec<FirstRunCoverPrimeJob> {
-        let image_refs = first_run_cover_prime_refs(&self.state.library.borrow());
-        let mut seen = HashSet::new();
-        let mut jobs = Vec::new();
-        for image_ref in image_refs {
-            let Some(key) = self.cover_cache_key(&image_ref, GRID_COVER_SIZE) else {
-                continue;
-            };
-            if !seen.insert(key.clone()) {
-                continue;
-            }
-            jobs.push(FirstRunCoverPrimeJob {
-                key,
-                image_ref,
-                fetch_size: GRID_COVER_SIZE,
-                size: GRID_COVER_SIZE as i32,
-            });
-        }
-        jobs
     }
 }
 

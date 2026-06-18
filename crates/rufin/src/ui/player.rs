@@ -15,8 +15,8 @@ use super::player_icons::{
     skip_icon_button,
 };
 use super::{
-    ArtworkTile, CoverDecodePriority, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
-    add_label_click, add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
+    ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
+    add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
     favorite_button_is_active, favorite_icon_button, icon_button, icon_button_with_image,
     install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
     set_active_class, set_favorite_button_active,
@@ -434,7 +434,7 @@ impl Shell {
                 let pixbuf = self
                     .cloned_decoded_cover(&key, BOTTOM_PLAYER_COVER_SIZE)
                     .map(|cover| {
-                        self.touch_decoded_cover(&key, CoverDecodePriority::Visible);
+                        self.touch_visible_decoded_cover(&key);
                         cover.pixbuf
                     });
                 let outcome = controls.cover.bind_selected_cover(
