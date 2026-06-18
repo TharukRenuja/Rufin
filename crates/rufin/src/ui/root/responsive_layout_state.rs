@@ -202,8 +202,20 @@ impl Shell {
     }
 
     fn sidebar_widths(&self) -> SidebarWidths {
-        SidebarWidths::default()
+        SidebarWidths {
+            full: measured_sidebar_width(&self.normal_nav_slot, NORMAL_SIDEBAR_WIDTH),
+            compact: measured_sidebar_width(&self.compact_nav_slot, COMPACT_RAIL_WIDTH),
+        }
     }
+}
+
+fn measured_sidebar_width(slot: &gtk::ScrolledWindow, fallback: i32) -> i32 {
+    let allocated = slot.width();
+    if allocated > 1 {
+        return allocated;
+    }
+    let (_, natural, _, _) = slot.measure(gtk::Orientation::Horizontal, -1);
+    natural.max(fallback)
 }
 
 fn widget_width_chain(widget: &gtk::Widget) -> String {

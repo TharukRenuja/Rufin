@@ -190,7 +190,10 @@ fn resolve_layout_for_profile(
         - resolved_sidebar_width(left_sidebar, sidebar_widths)
         - resolved_right_sidebar_width;
 
-    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == ResolvedLeftSidebarMode::Full {
+    if left_sidebar == ResolvedLeftSidebarMode::Full
+        && (main_width < MIN_APP_WINDOW_WIDTH
+            || (!right_sidebar.is_visible() && configured.right_sidebar.is_visible()))
+    {
         left_sidebar = ResolvedLeftSidebarMode::Compact;
         right_sidebar = resolved_right_sidebar_for_width(
             right_sidebar,
@@ -222,7 +225,7 @@ fn resolved_right_sidebar_for_width(
 ) -> RightSidebarMode {
     let mut mode = configured;
     while mode.is_visible()
-        && available_after_left_sidebar - right_sidebar_width(mode) < MIN_USEFUL_MAIN_WIDTH
+        && available_after_left_sidebar - right_sidebar_width(mode) < MIN_APP_WINDOW_WIDTH
     {
         mode = smaller_right_sidebar_mode(mode);
     }
@@ -411,7 +414,7 @@ pub(super) fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
 
 #[cfg(test)]
 mod tests {
-    use domain::{LayoutSettings, RightSidebarMode};
+    use domain::{LayoutSettings, LeftSidebarMode, RightSidebarMode};
 
     use super::*;
 
@@ -519,8 +522,8 @@ mod tests {
         let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + 800);
 
         assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Full);
-        assert_eq!(resolved.right_sidebar, RightSidebarMode::Compact);
-        assert!(resolved.main_width >= MIN_USEFUL_MAIN_WIDTH);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
+        assert!(resolved.main_width >= MIN_APP_WINDOW_WIDTH);
     }
 
     #[test]
@@ -555,6 +558,36 @@ mod tests {
             resolved.main_width,
             MIN_USEFUL_MAIN_WIDTH - COMPACT_RAIL_WIDTH
         );
+    }
+
+    #[test]
+    fn layout_keeps_right_sidebar_at_fitted_width() {
+        let settings = LayoutSettings::default();
+        let resolved = resolve_layout(
+            &settings,
+            COMPACT_RAIL_WIDTH + RIGHT_SIDEBAR_COMPACT_WIDTH + MIN_APP_WINDOW_WIDTH,
+        );
+
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Compact);
+        assert_eq!(resolved.main_width, MIN_APP_WINDOW_WIDTH);
+    }
+
+    #[test]
+    fn layout_uses_measured_compact_rail_width() {
+        let mut settings = LayoutSettings::default();
+        settings.default_profile.left_sidebar = LeftSidebarMode::Compact;
+        settings.default_profile.right_sidebar = RightSidebarMode::Default;
+        let widths = SidebarWidths {
+            full: NORMAL_SIDEBAR_WIDTH,
+            compact: 75,
+        };
+
+        let resolved = resolve_layout_with_sidebar_widths(&settings, 936, widths);
+
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
+        assert_eq!(resolved.main_width, 561);
     }
 
     #[test]
