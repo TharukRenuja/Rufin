@@ -3,7 +3,7 @@ all-features = true
 
 [advisories]
 ignore = [
-    { id = "RUSTSEC-2024-0436", reason = "paste is pulled transitively by lofty 0.24 for local audio metadata parsing; this unmaintained advisory has no patched paste release, so keep the exception narrow until lofty removes or replaces paste." },
+    { id = "RUSTSEC-2024-0436", reason = "lofty uses paste, can be removed if they change it to pastey" },
 ]
 
 [licenses]
