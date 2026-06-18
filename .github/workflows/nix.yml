@@ -67,9 +67,9 @@ jobs:
         run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
