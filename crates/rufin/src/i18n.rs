@@ -1,9 +1,8 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use directories::ProjectDirs;
@@ -11,13 +10,12 @@ use domain::{
     AppSettings, SYSTEM_LANGUAGE_PREFERENCE, default_language_preference,
     sanitize_language_preference,
 };
-use gettextrs::{
-    LocaleCategory, bind_textdomain_codeset, bindtextdomain, gettext, setlocale, textdomain,
-};
 
 const DOMAIN: &str = "rufin";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const ENGLISH_LANGUAGE_PREFERENCE: &str = "en";
+const MO_MAGIC_LE: u32 = 0x9504_12de;
+const MO_MAGIC_BE: u32 = 0xde12_0495;
 const LANGUAGE_NAMES: &[(&str, &str)] = &[
     ("af", "Afrikaans"),
     ("ar", "العربية"),
@@ -76,7 +74,7 @@ const LANGUAGE_NAMES: &[(&str, &str)] = &[
     ("vi", "Tiếng Việt"),
     ("zh", "中文"),
 ];
-static INSTALLED_LOCALE_IDS: OnceLock<Vec<String>> = OnceLock::new();
+static I18N_STATE: OnceLock<Mutex<I18nState>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LanguageOption {
@@ -85,11 +83,7 @@ pub struct LanguageOption {
 }
 
 pub fn init(language_preference: &str) {
-    apply_language_preference(language_preference);
-    let localedir = locale_dir();
-    let _domain_dir = bindtextdomain(DOMAIN, localedir);
-    let _codeset = bind_textdomain_codeset(DOMAIN, "UTF-8");
-    let _domain = textdomain(DOMAIN);
+    set_language_preference(language_preference);
 }
 
 pub fn startup_language_preference() -> String {
@@ -153,160 +147,553 @@ pub fn language_option_index(options: &[LanguageOption], language_preference: &s
 }
 
 pub fn tr(message: &str) -> String {
-    non_empty_translation(message, gettext(message))
+    state()
+        .lock()
+        .map(|state| state.catalog.translate(message))
+        .unwrap_or_else(|_| message.to_string())
+}
+
+pub fn trn(singular: &str, plural: &str, count: u64) -> String {
+    state()
+        .lock()
+        .map(|state| state.catalog.translate_plural(singular, plural, count))
+        .unwrap_or_else(|_| english_plural(singular, plural, count).to_string())
+}
+
+pub fn tr_with(message: &str, args: &[(&str, &str)]) -> String {
+    replace_placeholders(tr(message), args)
+}
+
+pub fn trn_with(singular: &str, plural: &str, count: u64, args: &[(&str, &str)]) -> String {
+    replace_placeholders(trn(singular, plural, count), args)
 }
 
 pub fn set_language_preference(language_preference: &str) {
-    apply_language_preference(language_preference);
+    if let Ok(mut state) = state().lock() {
+        state.set_language_preference(language_preference);
+    }
 }
 
-fn apply_language_preference(language_preference: &str) {
-    let _locale = setlocale(LocaleCategory::LcAll, "");
-    let language_preference = sanitize_language_preference(language_preference);
-    if language_preference == SYSTEM_LANGUAGE_PREFERENCE {
-        return;
+fn state() -> &'static Mutex<I18nState> {
+    I18N_STATE.get_or_init(|| Mutex::new(I18nState::new(&default_language_preference())))
+}
+
+#[derive(Clone, Debug)]
+struct I18nState {
+    language_preference: String,
+    catalog: Catalog,
+}
+
+impl I18nState {
+    fn new(language_preference: &str) -> Self {
+        let language_preference = sanitize_language_preference(language_preference);
+        let catalog = Catalog::load(&language_preference);
+        Self {
+            language_preference,
+            catalog,
+        }
     }
 
-    for candidate in locale_candidates(&language_preference) {
-        if setlocale(LocaleCategory::LcMessages, candidate.as_str()).is_some() {
+    fn set_language_preference(&mut self, language_preference: &str) {
+        let language_preference = sanitize_language_preference(language_preference);
+        if self.language_preference == language_preference {
             return;
+        }
+        self.catalog = Catalog::load(&language_preference);
+        self.language_preference = language_preference;
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct Catalog {
+    messages: HashMap<String, Vec<String>>,
+    plural_rule: PluralRule,
+}
+
+impl Catalog {
+    fn load(language_preference: &str) -> Self {
+        let language_preference = catalog_language_preference(language_preference);
+        if is_english_language(&language_preference) {
+            return Self::default();
+        }
+        let localedir = locale_dir();
+        for candidate in catalog_language_candidates(&language_preference) {
+            let path = localedir
+                .join(candidate)
+                .join("LC_MESSAGES")
+                .join(format!("{DOMAIN}.mo"));
+            if let Some(catalog) = Self::from_mo_path(&path) {
+                return catalog;
+            }
+        }
+        Self::default()
+    }
+
+    fn from_mo_path(path: &Path) -> Option<Self> {
+        let bytes = fs::read(path).ok()?;
+        Self::from_mo_bytes(&bytes)
+    }
+
+    fn from_mo_bytes(bytes: &[u8]) -> Option<Self> {
+        let magic = read_u32_le(bytes, 0)?;
+        let endian = if magic == MO_MAGIC_LE {
+            Endian::Little
+        } else if magic == MO_MAGIC_BE {
+            Endian::Big
+        } else {
+            return None;
+        };
+        let count = read_u32(bytes, 8, endian)? as usize;
+        let originals = read_u32(bytes, 12, endian)? as usize;
+        let translations = read_u32(bytes, 16, endian)? as usize;
+        let mut catalog = Self::default();
+
+        for index in 0..count {
+            let original = mo_string(bytes, originals, index, endian)?;
+            let translated = mo_string(bytes, translations, index, endian)?;
+            let original = String::from_utf8_lossy(original).to_string();
+            let translated = String::from_utf8_lossy(translated).to_string();
+            if original.is_empty() {
+                catalog.plural_rule = PluralRule::from_header(&translated);
+                continue;
+            }
+            catalog.messages.insert(
+                original,
+                translated.split('\0').map(ToOwned::to_owned).collect(),
+            );
+        }
+
+        Some(catalog)
+    }
+
+    fn translate(&self, message: &str) -> String {
+        self.messages
+            .get(message)
+            .and_then(|forms| forms.first())
+            .map(|translated| non_empty_translation(message, translated.clone()))
+            .unwrap_or_else(|| message.to_string())
+    }
+
+    fn translate_plural(&self, singular: &str, plural: &str, count: u64) -> String {
+        let key = format!("{singular}\0{plural}");
+        if let Some(forms) = self.messages.get(&key)
+            && !forms.is_empty()
+        {
+            let index = self.plural_rule.index(count).min(forms.len() - 1);
+            return non_empty_translation(
+                english_plural(singular, plural, count),
+                forms[index].clone(),
+            );
+        }
+        english_plural(singular, plural, count).to_string()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PluralRule {
+    nplurals: usize,
+    expression: PluralExpr,
+}
+
+impl Default for PluralRule {
+    fn default() -> Self {
+        Self {
+            nplurals: 2,
+            expression: PluralExpr::Binary(
+                PluralBinaryOp::Ne,
+                Box::new(PluralExpr::N),
+                Box::new(PluralExpr::Number(1)),
+            ),
         }
     }
 }
 
-fn locale_candidates(language_preference: &str) -> Vec<String> {
-    let language_preference = sanitize_language_preference(language_preference);
-    if language_preference == SYSTEM_LANGUAGE_PREFERENCE {
-        return Vec::new();
-    }
-    if is_english_language(&language_preference) {
-        return vec!["C".to_string()];
+impl PluralRule {
+    fn from_header(header: &str) -> Self {
+        let Some(forms) = header
+            .lines()
+            .find_map(|line| line.strip_prefix("Plural-Forms:"))
+        else {
+            return Self::default();
+        };
+        let nplurals = forms
+            .split(';')
+            .find_map(|part| part.trim().strip_prefix("nplurals="))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(2);
+        let expression = forms
+            .split(';')
+            .find_map(|part| part.trim().strip_prefix("plural="))
+            .and_then(|value| PluralParser::new(value.trim()).parse())
+            .unwrap_or_else(|| Self::default().expression);
+        Self {
+            nplurals,
+            expression,
+        }
     }
 
-    let normalized = language_preference.replace('-', "_");
-    let mut candidates = Vec::new();
-    push_candidate(&mut candidates, language_preference);
-    push_candidate(&mut candidates, normalized.clone());
-    if let Some(territory) = default_language_territory(&normalized) {
-        push_candidate(&mut candidates, format!("{normalized}_{territory}"));
+    fn index(&self, count: u64) -> usize {
+        let value = self.expression.eval(count);
+        if value <= 0 {
+            0
+        } else {
+            (value as usize).min(self.nplurals.saturating_sub(1))
+        }
     }
-    for candidate in installed_locale_candidates(&normalized) {
-        push_candidate(&mut candidates, candidate);
-    }
-    if !normalized.contains('.') {
-        for codeset in ["UTF-8", "utf8"] {
-            if let Some((base, modifier)) = normalized.split_once('@') {
-                push_candidate(&mut candidates, format!("{base}.{codeset}@{modifier}"));
-            } else {
-                push_candidate(&mut candidates, format!("{normalized}.{codeset}"));
-                if let Some(territory) = default_language_territory(&normalized) {
-                    push_candidate(
-                        &mut candidates,
-                        format!("{normalized}_{territory}.{codeset}"),
-                    );
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PluralExpr {
+    N,
+    Number(i64),
+    Not(Box<PluralExpr>),
+    Neg(Box<PluralExpr>),
+    Binary(PluralBinaryOp, Box<PluralExpr>, Box<PluralExpr>),
+    Ternary(Box<PluralExpr>, Box<PluralExpr>, Box<PluralExpr>),
+}
+
+impl PluralExpr {
+    fn eval(&self, count: u64) -> i64 {
+        match self {
+            Self::N => count.min(i64::MAX as u64) as i64,
+            Self::Number(value) => *value,
+            Self::Not(value) => i64::from(value.eval(count) == 0),
+            Self::Neg(value) => -value.eval(count),
+            Self::Binary(PluralBinaryOp::Or, left, right) => {
+                i64::from(left.eval(count) != 0 || right.eval(count) != 0)
+            }
+            Self::Binary(PluralBinaryOp::And, left, right) => {
+                i64::from(left.eval(count) != 0 && right.eval(count) != 0)
+            }
+            Self::Binary(op, left, right) => {
+                let left = left.eval(count);
+                let right = right.eval(count);
+                match op {
+                    PluralBinaryOp::Eq => i64::from(left == right),
+                    PluralBinaryOp::Ne => i64::from(left != right),
+                    PluralBinaryOp::Lt => i64::from(left < right),
+                    PluralBinaryOp::Le => i64::from(left <= right),
+                    PluralBinaryOp::Gt => i64::from(left > right),
+                    PluralBinaryOp::Ge => i64::from(left >= right),
+                    PluralBinaryOp::Add => left.saturating_add(right),
+                    PluralBinaryOp::Sub => left.saturating_sub(right),
+                    PluralBinaryOp::Mul => left.saturating_mul(right),
+                    PluralBinaryOp::Div => {
+                        if right == 0 {
+                            0
+                        } else {
+                            left / right
+                        }
+                    }
+                    PluralBinaryOp::Rem => {
+                        if right == 0 {
+                            0
+                        } else {
+                            left % right
+                        }
+                    }
+                    PluralBinaryOp::Or | PluralBinaryOp::And => unreachable!(),
                 }
             }
+            Self::Ternary(condition, when_true, when_false) => {
+                if condition.eval(count) != 0 {
+                    when_true.eval(count)
+                } else {
+                    when_false.eval(count)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PluralBinaryOp {
+    Or,
+    And,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
+struct PluralParser<'a> {
+    input: &'a str,
+    cursor: usize,
+}
+
+impl<'a> PluralParser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input, cursor: 0 }
+    }
+
+    fn parse(mut self) -> Option<PluralExpr> {
+        let expression = self.parse_ternary()?;
+        self.skip_ws();
+        (self.cursor == self.input.len()).then_some(expression)
+    }
+
+    fn parse_ternary(&mut self) -> Option<PluralExpr> {
+        let condition = self.parse_or()?;
+        if !self.take("?") {
+            return Some(condition);
+        }
+        let when_true = self.parse_ternary()?;
+        if !self.take(":") {
+            return None;
+        }
+        let when_false = self.parse_ternary()?;
+        Some(PluralExpr::Ternary(
+            Box::new(condition),
+            Box::new(when_true),
+            Box::new(when_false),
+        ))
+    }
+
+    fn parse_or(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_and()?;
+        while self.take("||") {
+            expression = PluralExpr::Binary(
+                PluralBinaryOp::Or,
+                Box::new(expression),
+                Box::new(self.parse_and()?),
+            );
+        }
+        Some(expression)
+    }
+
+    fn parse_and(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_equality()?;
+        while self.take("&&") {
+            expression = PluralExpr::Binary(
+                PluralBinaryOp::And,
+                Box::new(expression),
+                Box::new(self.parse_equality()?),
+            );
+        }
+        Some(expression)
+    }
+
+    fn parse_equality(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_relation()?;
+        loop {
+            let op = if self.take("==") {
+                PluralBinaryOp::Eq
+            } else if self.take("!=") {
+                PluralBinaryOp::Ne
+            } else {
+                return Some(expression);
+            };
+            expression =
+                PluralExpr::Binary(op, Box::new(expression), Box::new(self.parse_relation()?));
+        }
+    }
+
+    fn parse_relation(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_add()?;
+        loop {
+            let op = if self.take("<=") {
+                PluralBinaryOp::Le
+            } else if self.take(">=") {
+                PluralBinaryOp::Ge
+            } else if self.take("<") {
+                PluralBinaryOp::Lt
+            } else if self.take(">") {
+                PluralBinaryOp::Gt
+            } else {
+                return Some(expression);
+            };
+            expression = PluralExpr::Binary(op, Box::new(expression), Box::new(self.parse_add()?));
+        }
+    }
+
+    fn parse_add(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_mul()?;
+        loop {
+            let op = if self.take("+") {
+                PluralBinaryOp::Add
+            } else if self.take("-") {
+                PluralBinaryOp::Sub
+            } else {
+                return Some(expression);
+            };
+            expression = PluralExpr::Binary(op, Box::new(expression), Box::new(self.parse_mul()?));
+        }
+    }
+
+    fn parse_mul(&mut self) -> Option<PluralExpr> {
+        let mut expression = self.parse_unary()?;
+        loop {
+            let op = if self.take("*") {
+                PluralBinaryOp::Mul
+            } else if self.take("/") {
+                PluralBinaryOp::Div
+            } else if self.take("%") {
+                PluralBinaryOp::Rem
+            } else {
+                return Some(expression);
+            };
+            expression =
+                PluralExpr::Binary(op, Box::new(expression), Box::new(self.parse_unary()?));
+        }
+    }
+
+    fn parse_unary(&mut self) -> Option<PluralExpr> {
+        if self.take("!") {
+            Some(PluralExpr::Not(Box::new(self.parse_unary()?)))
+        } else if self.take("-") {
+            Some(PluralExpr::Neg(Box::new(self.parse_unary()?)))
+        } else {
+            self.parse_primary()
+        }
+    }
+
+    fn parse_primary(&mut self) -> Option<PluralExpr> {
+        self.skip_ws();
+        if self.take("n") {
+            return Some(PluralExpr::N);
+        }
+        if self.take("(") {
+            let expression = self.parse_ternary()?;
+            return self.take(")").then_some(expression);
+        }
+        self.parse_number().map(PluralExpr::Number)
+    }
+
+    fn parse_number(&mut self) -> Option<i64> {
+        self.skip_ws();
+        let start = self.cursor;
+        while self
+            .input
+            .as_bytes()
+            .get(self.cursor)
+            .is_some_and(u8::is_ascii_digit)
+        {
+            self.cursor += 1;
+        }
+        (self.cursor > start).then(|| self.input[start..self.cursor].parse::<i64>().ok())?
+    }
+
+    fn take(&mut self, token: &str) -> bool {
+        self.skip_ws();
+        if self.input[self.cursor..].starts_with(token) {
+            self.cursor += token.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while self
+            .input
+            .as_bytes()
+            .get(self.cursor)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.cursor += 1;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Endian {
+    Little,
+    Big,
+}
+
+fn catalog_language_preference(language_preference: &str) -> String {
+    let language_preference = sanitize_language_preference(language_preference);
+    if language_preference == SYSTEM_LANGUAGE_PREFERENCE {
+        return system_language_preference()
+            .unwrap_or_else(|| ENGLISH_LANGUAGE_PREFERENCE.to_string());
+    }
+    language_preference
+}
+
+fn system_language_preference() -> Option<String> {
+    for key in ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"] {
+        let Ok(value) = env::var(key) else {
+            continue;
+        };
+        for item in value.split(':') {
+            let language = sanitize_language_preference(item);
+            if !language.is_empty() {
+                return Some(language);
+            }
+        }
+    }
+    None
+}
+
+fn catalog_language_candidates(language_preference: &str) -> Vec<String> {
+    let normalized = sanitize_language_preference(language_preference).replace('-', "_");
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, normalized.clone());
+    if let Some(base) = normalized.split(['.', '@']).next() {
+        push_candidate(&mut candidates, base.to_string());
+    }
+    push_candidate(&mut candidates, language_code(&normalized).to_string());
+    for id in available_translation_language_ids() {
+        if language_code(&id) == language_code(&normalized) {
+            push_candidate(&mut candidates, id);
         }
     }
     candidates
 }
 
-fn installed_locale_candidates(language_preference: &str) -> Vec<String> {
-    let code = language_code(language_preference);
-    if code != language_preference {
-        return Vec::new();
+fn push_candidate(candidates: &mut Vec<String>, candidate: impl Into<String>) {
+    let candidate = candidate.into();
+    if !candidate.is_empty() && !candidates.iter().any(|existing| existing == &candidate) {
+        candidates.push(candidate);
     }
-    installed_locale_ids()
-        .iter()
-        .filter(|locale| locale_matches_language_code(locale, code))
-        .cloned()
-        .collect()
 }
 
-fn installed_locale_ids() -> &'static Vec<String> {
-    INSTALLED_LOCALE_IDS.get_or_init(|| {
-        let Ok(output) = Command::new("locale").arg("-a").output() else {
-            return Vec::new();
-        };
-        if !output.status.success() {
-            return Vec::new();
-        }
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
+fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset + 4)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32(bytes: &[u8], offset: usize, endian: Endian) -> Option<u32> {
+    let data = bytes.get(offset..offset + 4)?.try_into().ok()?;
+    Some(match endian {
+        Endian::Little => u32::from_le_bytes(data),
+        Endian::Big => u32::from_be_bytes(data),
     })
 }
 
-fn locale_matches_language_code(locale: &str, code: &str) -> bool {
-    let Some(rest) = locale.strip_prefix(code) else {
-        return false;
-    };
-    rest.starts_with(['_', '-'])
+fn mo_string(bytes: &[u8], table_offset: usize, index: usize, endian: Endian) -> Option<&[u8]> {
+    let offset = table_offset.checked_add(index.checked_mul(8)?)?;
+    let length = read_u32(bytes, offset, endian)? as usize;
+    let string_offset = read_u32(bytes, offset + 4, endian)? as usize;
+    bytes.get(string_offset..string_offset.checked_add(length)?)
 }
 
-fn push_candidate(candidates: &mut Vec<String>, candidate: impl Into<String>) {
-    let candidate = candidate.into();
-    if !candidates.iter().any(|existing| existing == &candidate) {
-        candidates.push(candidate);
+fn replace_placeholders(mut text: String, args: &[(&str, &str)]) -> String {
+    for (name, value) in args {
+        text = text.replace(&format!("{{{name}}}"), value);
     }
+    text
+}
+
+fn english_plural<'a>(singular: &'a str, plural: &'a str, count: u64) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 fn is_english_language(language_preference: &str) -> bool {
     let language_preference = language_preference.replace('-', "_");
     matches!(language_preference.as_str(), "C" | "POSIX" | "en")
+        || language_preference.starts_with("C.")
         || language_preference.starts_with("en_")
         || language_preference.starts_with("en.")
-}
-
-fn default_language_territory(language_preference: &str) -> Option<&'static str> {
-    let code = language_code(language_preference);
-    if code != language_preference {
-        return None;
-    }
-    match code {
-        "ar" => Some("SA"),
-        "bg" => Some("BG"),
-        "ca" => Some("ES"),
-        "cs" => Some("CZ"),
-        "da" => Some("DK"),
-        "de" => Some("DE"),
-        "el" => Some("GR"),
-        "es" => Some("ES"),
-        "et" => Some("EE"),
-        "eu" => Some("ES"),
-        "fa" => Some("IR"),
-        "fi" => Some("FI"),
-        "fr" => Some("FR"),
-        "gl" => Some("ES"),
-        "he" => Some("IL"),
-        "hi" => Some("IN"),
-        "hr" => Some("HR"),
-        "hu" => Some("HU"),
-        "id" => Some("ID"),
-        "it" => Some("IT"),
-        "ja" => Some("JP"),
-        "ko" => Some("KR"),
-        "lt" => Some("LT"),
-        "lv" => Some("LV"),
-        "ms" => Some("MY"),
-        "nb" => Some("NO"),
-        "nl" => Some("NL"),
-        "pl" => Some("PL"),
-        "pt" => Some("PT"),
-        "ro" => Some("RO"),
-        "ru" => Some("RU"),
-        "sk" => Some("SK"),
-        "sl" => Some("SI"),
-        "sr" => Some("RS"),
-        "sv" => Some("SE"),
-        "uk" => Some("UA"),
-        "vi" => Some("VN"),
-        "zh" => Some("CN"),
-        _ => None,
-    }
 }
 
 fn locale_dir() -> PathBuf {
@@ -428,435 +815,9 @@ fn non_empty_translation(message: &str, translated: String) -> String {
     }
 }
 
-#[allow(dead_code)]
-fn catalog_strings_for_extraction() {
-    let _ = tr("System default");
-    let _ = tr("Language");
-    let _ = tr("Home");
-    let _ = tr("Favorites");
-    let _ = tr("Albums");
-    let _ = tr("Album");
-    let _ = tr("EPs");
-    let _ = tr("EP");
-    let _ = tr("Singles");
-    let _ = tr("Single");
-    let _ = tr("Collections");
-    let _ = tr("Collection");
-    let _ = tr("Other");
-    let _ = tr("Release");
-    let _ = tr("Tracks");
-    let _ = tr("Artist");
-    let _ = tr("Artists");
-    let _ = tr("Album Artists");
-    let _ = tr("Genre");
-    let _ = tr("Genres");
-    let _ = tr("Folders");
-    let _ = tr("Folder");
-    let _ = tr("Playlist");
-    let _ = tr("Playlists");
-    let _ = tr("Search");
-    let _ = tr("Settings");
-    let _ = tr("Explore");
-    let _ = tr("Most played");
-    let _ = tr("Newly added");
-    let _ = tr("Recently played");
-    let _ = tr("Recently released");
-    let _ = tr("Favorite tracks");
-    let _ = tr("Appears On");
-    let _ = tr("appears on");
-    let _ = tr("Discography");
-    let _ = tr("View all tracks");
-    let _ = tr("albums");
-    let _ = tr("tracks");
-    let _ = tr("Back");
-    let _ = tr("Forward");
-    let _ = tr("Menu");
-    let _ = tr("Main Menu");
-    let _ = tr("Preferences");
-    let _ = tr("Keyboard Shortcuts");
-    let _ = tr("Toggle Fullscreen");
-    let _ = tr("About Rufin");
-    let _ = tr("General");
-    let _ = tr("App window");
-    let _ = tr("Type to search");
-    let _ = tr("Type to search or create a new playlist");
-    let _ = tr("Create");
-    let _ = tr("Interface");
-    let _ = tr("Library");
-    let _ = tr("Actions");
-    let _ = tr("Sync Status");
-    let _ = tr("Metadata");
-    let _ = tr("External lyric lookup");
-    let _ = tr("External cover lookup");
-    let _ = tr("Prefer server playlist covers");
-    let _ = tr("External site links");
-    let _ = tr("Show external site links");
-    let _ = tr("Show external service icons on album and artist pages");
-    let _ = tr("MusicBrainz");
-    let _ = tr("Server");
-    let _ = tr("Open on Last.fm");
-    let _ = tr("Open on MusicBrainz");
-    let _ = tr("Open on Jellyfin");
-    let _ = tr("Does MusicBrainz and Cover Art Archive lookups");
-    let _ = tr("Try to fetch artwork from internet when server artwork is missing");
-    let _ = tr("Clear Cached Library");
-    let _ = tr("Clear Cache");
-    let _ = tr("This removes cached library metadata for");
-    let _ =
-        tr("This removes the server, cached library metadata, queue snapshot, and saved token for");
-    let _ = tr("Clears cached data for the server, login stays saved");
-    let _ = tr("No active server");
-    let _ = tr("Add Server");
-    let _ = tr("Manage Server");
-    let _ = tr("Configure local folder access");
-    let _ = tr("Source");
-    let _ = tr("Select Source");
-    let _ = tr("No source");
-    let _ = tr("Sources");
-    let _ = tr("Servers");
-    let _ = tr("Configure saved music servers and local playback mappings");
-    let _ = tr("No servers configured");
-    let _ = tr("Server Library");
-    let _ = tr("All Music");
-    let _ = tr("Manage");
-    let _ = tr("Local Folders");
-    let _ = tr("No local folders configured");
-    let _ = tr("Add Local Folder");
-    let _ = tr("Active Source Actions");
-    let _ = tr("Map Local");
-    let _ = tr("Edit Mapping");
-    let _ = tr("Server Settings");
-    let _ = tr("Server Actions");
-    let _ = tr("Use This Source");
-    let _ = tr("Selected Source");
-    let _ = tr("Name");
-    let _ = tr("Not set");
-    let _ = tr("Yes");
-    let _ = tr("No");
-    let _ = tr("Local mapping");
-    let _ = tr("No local playback mapping");
-    let _ = tr("Local mapping saved. Sync to preview matches");
-    let _ = tr("Saved per server");
-    let _ = tr("None");
-    let _ = tr("Use server streams only");
-    let _ = tr("Choose Folder");
-    let _ = tr("Add local folder access");
-    let _ = tr("Remove Local Folder");
-    let _ = tr("This removes the folder from the Local source");
-    let _ = tr("Clear Mapping");
-    let _ = tr("Save");
-    let _ = tr("Save Mapping");
-    let _ = tr("Save Server Settings");
-    let _ = tr("Connect");
-    let _ = tr("Connect to Music Server");
-    let _ = tr("Preparing library…");
-    let _ = tr("Library sync complete");
-    let _ = tr("Choose a provider, pick a server, or enter the address manually");
-    let _ = tr("Choose a provider, pick a discovered server, or enter the address manually");
-    let _ = tr("Provider");
-    let _ = tr("Username");
-    let _ = tr("Password");
-    let _ = tr("Jellyfin");
-    let _ = tr("Navidrome");
-    let _ = tr("Subsonic / OpenSubsonic");
-    let _ = tr("Local");
-    let _ = tr("Local Library");
-    let _ = tr(
-        "Choose a folder to scan and play locally from the computer (For flatpak users, if the folder is not in ~/Music, you need to give folder permissions from Flatseal)",
-    );
-    let _ = tr("Music Folder");
-    let _ = tr("Music Folders");
-    let _ = tr("No folder selected");
-    let _ = tr("No folders selected");
-    let _ = tr("folders selected");
-    let _ = tr("Add");
-    let _ = tr("Add Folder");
-    let _ = tr("Add another folder to the Local source");
-    let _ = tr("Choose one or more folders to scan and play directly from this computer");
-    let _ = tr("Choose at least one local music folder");
-    let _ = tr("Choose");
-    let _ = tr("Local Playback Access");
-    let _ = tr("Optionally map server tracks to files on this computer");
-    let _ = tr("Local Folder");
-    let _ = tr("Server Prefix");
-    let _ = tr("Local Prefix");
-    let _ = tr("Server Sample");
-    let _ = tr("No cached server path yet");
-    let _ = tr("Mapped Local Path");
-    let _ = tr("Server sample does not match the server prefix.");
-    let _ = tr("Enter a matching server prefix to map this path.");
-    let _ = tr("Save to rescan this local library.");
-    let _ = tr("Local library folder is saved.");
-    let _ = tr("Choose a local prefix.");
-    let _ = tr("Choose an existing local prefix.");
-    let _ = tr("Enter a local prefix.");
-    let _ = tr("Save to apply this mapping after the next sync.");
-    let _ = tr("No cached tracks yet. Sync the server to preview matches.");
-    let _ = tr("Unsaved changes.");
-    let _ = tr("Saved mapping.");
-    let _ = tr("Select Music Folder");
-    let _ = tr("Choose a local music folder");
-    let _ = tr("Enter a server address, username, and password");
-    let _ = tr("Server Address");
-    let _ = tr("Verify server certificate");
-    let _ = tr("Turn off only for a server you control");
-    let _ = tr("Found Servers");
-    let _ = tr("Searching Local Network");
-    let _ = tr("No Servers Found");
-    let _ = tr("Search Again");
-    let _ = tr("Resync Library");
-    let _ = tr("Play");
-    let _ = tr("Resume");
-    let _ = tr("Pause");
-    let _ = tr("Stop");
-    let _ = tr("Previous");
-    let _ = tr("Next");
-    let _ = tr("Favorite");
-    let _ = tr("Shuffle");
-    let _ = tr("Shuffle on");
-    let _ = tr("Auto DJ");
-    let _ = tr("Auto DJ refill threshold");
-    let _ = tr("Add tracks when fewer than this many remain");
-    let _ = tr("Auto DJ on");
-    let _ = tr("Play random");
-    let _ = tr("Number of songs");
-    let _ = tr("Minimum year");
-    let _ = tr("Maximum year");
-    let _ = tr("Any genre");
-    let _ = tr("Play filter");
-    let _ = tr("All tracks");
-    let _ = tr("Only unplayed tracks");
-    let _ = tr("Only played tracks");
-    let _ = tr("Add Last");
-    let _ = tr("Repeat off");
-    let _ = tr("Repeat one");
-    let _ = tr("Repeat all");
-    let _ = tr("Show sidebar");
-    let _ = tr("Hide sidebar");
-    let _ = tr("Show lyrics");
-    let _ = tr("Hide lyrics");
-    let _ = tr("Search lyrics");
-    let _ = tr("Search Lyrics");
-    let _ = tr("Save Lyrics");
-    let _ = tr("Close");
-    let _ = tr("Disable automatic lyric search for this track");
-    let _ = tr("No track playing");
-    let _ = tr("Song");
-    let _ = tr("Ready");
-    let _ = tr("Enter an artist or song.");
-    let _ = tr("Searching…");
-    let _ = tr("No lyrics found.");
-    let _ = tr("Search failed.");
-    let _ = tr("results");
-    let _ = tr("Synced lyrics");
-    let _ = tr("Plain lyrics");
-    let _ = tr("Remote lyrics");
-    let _ = tr("No lyrics");
-    let _ = tr("Loaded in lyrics panel.");
-    let _ = tr("Save");
-    let _ = tr("Saved to");
-    let _ = tr("Show Lyrics Panel");
-    let _ = tr("Keep the lyrics section visible below the queue");
-    let _ = tr("Keep the queue sidebar visible in the main window");
-    let _ = tr("Prefer server lyrics");
-    let _ = tr("Search server lyrics before external providers");
-    let _ = tr("Use remote lyric providers when server lyrics are unavailable");
-    let _ = tr("Scrobbling");
-    let _ = tr("Last.fm");
-    let _ = tr("Last.fm scrobbling");
-    let _ = tr("MusicBrainz + Last.fm");
-    let _ = tr("Use listening activity");
-    let _ = tr("Set the Discord activity type to Listening");
-    let _ = tr("API keys");
-    let _ = tr("If you do not have API keys, create them");
-    let _ = tr("here");
-    let _ = tr(". You only need to fill email and an application name parts");
-    let _ = tr("API key");
-    let _ = tr("Shared secret");
-    let _ = tr("Connection");
-    let _ = tr("Connect");
-    let _ = tr("Reconnect");
-    let _ = tr("Not connected");
-    let _ = tr("Connected");
-    let _ = tr("Connected as");
-    let _ = tr("Enter API credentials first");
-    let _ = tr("Opening Last.fm authorization…");
-    let _ = tr("Timed out waiting for Last.fm authorization.");
-    let _ = tr("Now playing updates");
-    let _ = tr("Libre.fm");
-    let _ = tr("If the page doesn't load, then Libre.fm blocks your IP range/VPN");
-    let _ = tr("Libre.fm scrobbling");
-    let _ = tr("Opening Libre.fm authorization…");
-    let _ = tr("Timed out waiting for Libre.fm authorization");
-    let _ = tr("ListenBrainz");
-    let _ = tr("ListenBrainz scrobbling");
-    let _ = tr("Get token");
-    let _ = tr("Find your ListenBrainz user token");
-    let _ = tr("User token");
-    let _ = tr(
-        "Stop playback reporting, external lyrics, external metadata, notifications, and Discord IPC",
-    );
-    let _ = tr("Music Server");
-    let _ = tr("Private mode is on");
-    let _ = tr("App window");
-    let _ = tr("Show tray icon");
-    let _ = tr("Exit to tray");
-    let _ = tr("Start minimized");
-    let _ = tr("Show Rufin");
-    let _ = tr("Play/Pause");
-    let _ = tr("Previous Track");
-    let _ = tr("Next Track");
-    let _ = tr("Enable private mode");
-    let _ = tr("Disable private mode");
-    let _ = tr("Quit");
-    let _ = tr("Rufin is running in the tray");
-    let _ = tr("Left sidebar density");
-    let _ = tr("Choose when the left sidebar uses compact navigation");
-    let _ = tr("Plays");
-    let _ = tr("Remove from playlist");
-    let _ = tr("Remove from queue");
-    let _ = tr("Remove from Queue");
-    let _ = tr("Mute");
-    let _ = tr("Seek playback");
-    let _ = tr("Seekbar");
-    let _ = tr("Queue and transitions");
-    let _ = tr("Audio");
-    let _ = tr("Skip same-album crossfade");
-    let _ = tr("Keep album transitions gapless when possible");
-    let _ = tr("Waveform seekbar");
-    let _ = tr("Generate and cache waveforms for the current track");
-    let _ = tr("Visualizer");
-    let _ = tr("Enable equalizer");
-    let _ = tr("Preset");
-    let _ = tr("Custom");
-    let _ = tr("Restore selected preset to default bands.");
-    let _ = tr("Flat");
-    let _ = tr("Classical");
-    let _ = tr("Club");
-    let _ = tr("Dance");
-    let _ = tr("Full Bass");
-    let _ = tr("Full Treble");
-    let _ = tr("Laptop/Headphones");
-    let _ = tr("Pop");
-    let _ = tr("Rock");
-    let _ = tr("Techno");
-    let _ = tr("Play now");
-    let _ = tr("Play Now");
-    let _ = tr("Play next");
-    let _ = tr("Play Next");
-    let _ = tr("Play Later");
-    let _ = tr("Play album");
-    let _ = tr("Play track");
-    let _ = tr("Play artist");
-    let _ = tr("Add to Favorites");
-    let _ = tr("Remove from Favorites");
-    let _ = tr("Go to Artist");
-    let _ = tr("Go to Album");
-    let _ = tr("Add to queue");
-    let _ = tr("Clear queue");
-    let _ = tr("Previous page");
-    let _ = tr("Next page");
-    let _ = tr("Refresh section");
-    let _ = tr("Reset display");
-    let _ = tr("New Smart Playlist");
-    let _ = tr("Edit Smart Playlist");
-    let _ = tr("Restore Default");
-    let _ = tr("Create");
-    let _ = tr("Restore");
-    let _ = tr("Match");
-    let _ = tr("Sort");
-    let _ = tr("Limit");
-    let _ = tr("Add Rule");
-    let _ = tr("Title");
-    let _ = tr("Title (merged)");
-    let _ = tr("Year");
-    let _ = tr("Duration");
-    let _ = tr("Comment");
-    let _ = tr("Rating");
-    let _ = tr("Played");
-    let _ = tr("Play count");
-    let _ = tr("Skip count");
-    let _ = tr("Last played");
-    let _ = tr("Date added");
-    let _ = tr("All");
-    let _ = tr("Any");
-    let _ = tr("No");
-    let _ = tr("contains");
-    let _ = tr("equals");
-    let _ = tr("does not contain");
-    let _ = tr("does not equal");
-    let _ = tr("is empty");
-    let _ = tr("is not empty");
-    let _ = tr("excludes");
-    let _ = tr("is not");
-    let _ = tr("above");
-    let _ = tr("below");
-    let _ = tr("range");
-    let _ = tr("is");
-    let _ = tr("after");
-    let _ = tr("before");
-    let _ = tr("Yes");
-    let _ = tr("Server");
-    let _ = tr("No server");
-    let _ = tr("Current server");
-    let _ = tr("Local");
-    let _ = tr("no account");
-    let _ = tr("Nothing playing");
-    let _ = tr("Queue a track to begin");
-    let _ = tr("Open fullscreen player");
-    let _ = tr("Close fullscreen player");
-    let _ = tr("Queue");
-    let _ = tr("No queue items match the search");
-    let _ = tr("Artist detail will use cached album and track groups");
-    let _ = tr("Genre detail keeps albums above tracks");
-    let _ = tr("Playlist detail will use the track table");
-    let _ = tr("Loading…");
-    let _ = tr("Loading folders…");
-    let _ = tr("Search current folder");
-    let _ = tr("Artist / Album");
-    let _ = tr("Folder browsing failed");
-    let _ = tr("No folder contents found.");
-    let _ = tr("Cached library data will appear here as sync pages finish");
-    let _ = tr("The selected cached album was not found");
-    let _ = tr("No cached results found");
-    let _ = tr("Cached rows will appear here after the background sync finishes");
-    let _ = tr("Type a query in the sidebar search field to search the local cache");
-    let _ = tr(
-        "Thank you for trying out Rufin! This a new app that is still in heavy development. If you have problems or suggestions, please open an issue in Github.",
-    );
-    let _ = tr("Website");
-    let _ = tr("Issues");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn i18n_include_variants() {
-        assert_eq!(
-            locale_candidates("de-DE"),
-            vec!["de-DE", "de_DE", "de_DE.UTF-8", "de_DE.utf8"]
-        );
-        let et_candidates = locale_candidates("et");
-        for candidate in [
-            "et",
-            "et_EE",
-            "et.UTF-8",
-            "et_EE.UTF-8",
-            "et.utf8",
-            "et_EE.utf8",
-        ] {
-            assert!(et_candidates.iter().any(|existing| existing == candidate));
-        }
-        assert!(locale_matches_language_code("et_EE.utf8", "et"));
-        assert!(!locale_matches_language_code("en_US.utf8", "et"));
-    }
-
-    #[test]
-    fn i18n_locale_catalog() {
-        assert_eq!(locale_candidates("en_US"), vec!["C"]);
-    }
 
     #[test]
     fn i18n_language_system() {
@@ -897,5 +858,84 @@ mod tests {
             non_empty_translation("Play", "Translated Play".to_string()),
             "Translated Play"
         );
+    }
+
+    #[test]
+    fn i18n_catalog_reads_mo() {
+        let bytes = test_mo(&[
+            (
+                "",
+                "Content-Type: text/plain; charset=UTF-8\nPlural-Forms: nplurals=2; plural=n != 1;\n",
+            ),
+            ("Play", "Mängi"),
+            ("track\0tracks", "lugu\0lood"),
+        ]);
+        let catalog = Catalog::from_mo_bytes(&bytes).expect("catalog parses");
+
+        assert_eq!(catalog.translate("Play"), "Mängi");
+        assert_eq!(catalog.translate("Missing"), "Missing");
+        assert_eq!(catalog.translate_plural("track", "tracks", 1), "lugu");
+        assert_eq!(catalog.translate_plural("track", "tracks", 2), "lood");
+    }
+
+    #[test]
+    fn i18n_plural_rules_cover_current_catalogs() {
+        let et = PluralRule::from_header("Plural-Forms: nplurals=2; plural=n != 1;\n");
+        assert_eq!(et.index(1), 0);
+        assert_eq!(et.index(2), 1);
+
+        let lv = PluralRule::from_header(
+            "Plural-Forms: nplurals=3; plural=(n % 10 == 0 || n % 100 >= 11 && n % 100 <= 19) ? 0 : ((n % 10 == 1 && n % 100 != 11) ? 1 : 2);\n",
+        );
+        assert_eq!(lv.index(0), 0);
+        assert_eq!(lv.index(1), 1);
+        assert_eq!(lv.index(2), 2);
+
+        let ru = PluralRule::from_header(
+            "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n",
+        );
+        assert_eq!(ru.index(1), 0);
+        assert_eq!(ru.index(2), 1);
+        assert_eq!(ru.index(5), 2);
+    }
+
+    #[test]
+    fn i18n_replaces_named_placeholders() {
+        assert_eq!(
+            replace_placeholders("Found {count} items".to_string(), &[("count", "3")]),
+            "Found 3 items"
+        );
+    }
+
+    fn test_mo(entries: &[(&str, &str)]) -> Vec<u8> {
+        let count = entries.len();
+        let originals = 28usize;
+        let translations = originals + count * 8;
+        let mut bytes = vec![0; translations + count * 8];
+        write_test_u32(&mut bytes, 0, MO_MAGIC_LE);
+        write_test_u32(&mut bytes, 8, count as u32);
+        write_test_u32(&mut bytes, 12, originals as u32);
+        write_test_u32(&mut bytes, 16, translations as u32);
+
+        for (index, (original, _)) in entries.iter().enumerate() {
+            write_test_string(&mut bytes, originals + index * 8, original);
+        }
+        for (index, (_, translation)) in entries.iter().enumerate() {
+            write_test_string(&mut bytes, translations + index * 8, translation);
+        }
+
+        bytes
+    }
+
+    fn write_test_string(bytes: &mut Vec<u8>, entry_offset: usize, value: &str) {
+        let string_offset = bytes.len();
+        bytes.extend_from_slice(value.as_bytes());
+        bytes.push(0);
+        write_test_u32(bytes, entry_offset, value.len() as u32);
+        write_test_u32(bytes, entry_offset + 4, string_offset as u32);
+    }
+
+    fn write_test_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 }

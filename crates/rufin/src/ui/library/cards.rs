@@ -218,7 +218,7 @@ pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) ->
 }
 pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: LibraryField) -> String {
     match field {
-        LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
+        LibraryField::Title | LibraryField::TitleMerged => smart_playlist_display_name(playlist),
         LibraryField::SongCount if playlist.track_count > 0 => {
             format!("{} {}", playlist.track_count, tr("tracks"))
         }

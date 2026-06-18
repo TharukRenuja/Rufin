@@ -338,7 +338,7 @@ pub(in crate::ui) fn audioscrobbler_connected_subtitle(username: &str) -> String
     if username.is_empty() {
         tr("Connected")
     } else {
-        format!("{} {username}", tr("Connected as"))
+        tr_with("Connected as {username}", &[("username", username)])
     }
 }
 pub(in crate::ui) fn inline_link_markup(

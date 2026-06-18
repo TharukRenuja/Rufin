@@ -1,5 +1,5 @@
 use super::covers;
-pub use super::discovery::DiscoveredServer;
+pub use super::discovery::{DiscoveredServer, ServerDiscoveryStatus};
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
 use crate::external_scrobbling::{self, ExternalScrobbleState};
 use crate::providers::{
@@ -431,7 +431,7 @@ pub enum ControllerEvent {
     },
     ServerDiscovery {
         servers: Vec<DiscoveredServer>,
-        status: String,
+        status: ServerDiscoveryStatus,
         running: bool,
     },
     LoginStatus(String),

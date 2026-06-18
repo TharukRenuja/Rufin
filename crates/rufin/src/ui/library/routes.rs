@@ -290,7 +290,7 @@ impl Shell {
         let view = self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Albums,
             empty: albums.borrow().is_empty(),
-            empty_body: "Cached albums will appear here after the background sync finishes.",
+            empty_body: "Cached entries will appear here after sync finishes",
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
@@ -620,7 +620,7 @@ impl Shell {
         let view = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: artists.borrow().is_empty(),
-            empty_body: "Cached rows will appear here after the background sync finishes.",
+            empty_body: "Cached entries will appear here after sync finishes",
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
@@ -854,7 +854,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Genres,
             empty: genres.borrow().is_empty(),
-            empty_body: "Cached rows will appear here after the background sync finishes.",
+            empty_body: "Cached entries will appear here after sync finishes",
             search,
             content: genre_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
@@ -1071,7 +1071,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Playlists,
             empty: playlists.borrow().is_empty(),
-            empty_body: "Cached playlists will appear here after the background sync finishes.",
+            empty_body: "Cached entries will appear here after sync finishes",
             search,
             content: playlist_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },

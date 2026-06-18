@@ -16,8 +16,9 @@ use super::{
     },
     loaded_tracks_window_play_activation, mark_route_scroll_owner, present_artist_context_menu,
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
-    replace_playlists_in_model, selected_music_folder_id, set_favorite_button_active, stable_seed,
-    track_artist_route, track_collection_play_context, track_link_column,
+    replace_playlists_in_model, selected_music_folder_id, set_favorite_button_active,
+    smart_playlist_display_name, stable_seed, track_artist_route, track_collection_play_context,
+    track_link_column,
 };
 use crate::cover_art_policy;
 use crate::i18n::tr;

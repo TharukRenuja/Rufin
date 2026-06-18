@@ -89,7 +89,7 @@ pub(in crate::ui) fn smart_playlist_column(
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
             expanding_text_column::<SmartPlaylist, _>("Title", 220, |playlist| {
-                playlist.name.clone()
+                smart_playlist_display_name(playlist)
             })
         }
         _ => text_column::<SmartPlaylist, _>(field.title(), column_width(field), move |playlist| {

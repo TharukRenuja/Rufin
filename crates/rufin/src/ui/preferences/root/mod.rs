@@ -5,7 +5,7 @@ use super::super::{
 use super::library;
 use crate::{
     external_scrobbling::{self, AudioscrobblerSession},
-    i18n::{self, tr},
+    i18n::{self, tr, tr_with},
 };
 use adw::prelude::*;
 use domain::ExternalLyricsProvider;

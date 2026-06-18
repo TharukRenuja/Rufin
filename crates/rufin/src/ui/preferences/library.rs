@@ -225,7 +225,7 @@ fn server_source_subtitle(
             tr("albums"),
             library.cached_track_count,
             tr("tracks"),
-            library.sync_status
+            library_sync_status_text(&library.sync_status)
         )
     } else {
         String::new()
@@ -242,6 +242,15 @@ fn server_source_subtitle(
     .filter(|line| !line.trim().is_empty())
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+fn library_sync_status_text(status: &str) -> String {
+    let status = status.trim();
+    match status {
+        "Cached library ready" => tr("Cached library ready"),
+        "Library sync complete" => tr("Library sync complete"),
+        _ => status.to_string(),
+    }
 }
 
 fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {

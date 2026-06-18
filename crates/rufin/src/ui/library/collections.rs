@@ -848,7 +848,11 @@ pub(in crate::ui) fn smart_playlist_card(
     let card_height = collection_grid_card_height(size, fields.len());
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&center_grid_title(&playlist.name, "track-title", size));
+    card.append(&center_grid_title(
+        &smart_playlist_display_name(playlist),
+        "track-title",
+        size,
+    ));
     for field in fields {
         let value = smart_playlist_field(playlist, field);
         if !value.is_empty() {

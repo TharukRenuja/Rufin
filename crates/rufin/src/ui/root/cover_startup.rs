@@ -1,3 +1,5 @@
+use crate::i18n::tr_with;
+
 use super::*;
 
 const MOUSE_BACK_BUTTON: u32 = 8;
@@ -163,18 +165,26 @@ pub(in crate::ui) enum AutoLyricsRequest {
     Default,
     ServerOnly,
 }
-pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<&str> {
+pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<String> {
     let status = status.trim();
-    let server_check = status.starts_with("Checking ") && status.ends_with(" server…");
-    let server_saved = status.starts_with("Server settings saved.");
-    if server_check
-        || server_saved
-        || status == "No changes to save."
-        || status == "Sync already running."
+    if let Some(provider) = status
+        .strip_prefix("Checking ")
+        .and_then(|status| status.strip_suffix(" server…"))
+        .filter(|provider| !provider.trim().is_empty())
     {
-        Some(status)
-    } else {
-        None
+        return Some(tr_with(
+            "Checking {provider} server…",
+            &[("provider", provider)],
+        ));
+    }
+    match status {
+        "Server settings saved." => Some(tr("Server settings saved.")),
+        "Server settings saved. Resyncing library…" => {
+            Some(tr("Server settings saved. Resyncing library…"))
+        }
+        "No changes to save." => Some(tr("No changes to save.")),
+        "Sync already running." => Some(tr("Sync already running.")),
+        _ => None,
     }
 }
 
@@ -202,26 +212,36 @@ pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyn
     }
     if status.starts_with("Caching library…")
         || status.starts_with("Caching local library…")
-        || status == "Caching library artwork…"
+        || status.starts_with("Caching library artwork…")
     {
         return Some(LibrarySyncToastState::Progress);
     }
     None
 }
 
-pub(in crate::ui) fn library_sync_toast_message(status: &str) -> &str {
+pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
     let status = status.trim();
-    for prefix in [
-        "Caching library… This may take some time. ",
-        "Caching local library… This may take some time. ",
-    ] {
-        if let Some(message) = status.strip_prefix(prefix)
-            && !message.trim().is_empty()
-        {
-            return message.trim();
-        }
+    if let Some(provider) = status
+        .strip_prefix("Syncing ")
+        .and_then(|status| status.strip_suffix(" library…"))
+        .filter(|provider| !provider.trim().is_empty())
+    {
+        return tr_with("Syncing {provider} library…", &[("provider", provider)]);
     }
-    status
+    if status.starts_with("Caching library… This may take some time.") {
+        return tr("Caching library… This may take some time.");
+    }
+    if status.starts_with("Caching local library… This may take some time.") {
+        return tr("Caching local library… This may take some time.");
+    }
+    if status.starts_with("Caching library artwork…") {
+        return tr("Caching library artwork…");
+    }
+    match status {
+        "Cached library ready" => tr("Cached library ready"),
+        "Library sync complete" => tr("Library sync complete"),
+        _ => status.to_string(),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -953,7 +973,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.state.server_discovery_running.set(false);
                         *shell.state.discovered_servers.borrow_mut() = Vec::new();
                         *shell.state.server_discovery_status.borrow_mut() =
-                            "Searching will start automatically".to_string();
+                            ServerDiscoveryStatus::Idle;
                     }
                     shell.update_prefetched_explore_from_snapshot(
                         server_id,
@@ -1051,8 +1071,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let toast_message = sync_toast_state
                         .is_none()
                         .then(|| preferences_login_status_toast_message(&status.sync_status))
-                        .flatten()
-                        .map(str::to_string);
+                        .flatten();
                     let delta = status.delta.clone();
                     let tracks_changed = delta.reset.is_some() || !delta.tracks.is_empty();
                     let apply_started = Instant::now();
@@ -1401,7 +1420,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     if let Some(sync_toast_state) = library_sync_toast_state(&status) {
                         shell.update_library_sync_toast(sync_toast_state, &status);
                     } else if let Some(message) = preferences_login_status_toast_message(&status) {
-                        shell.show_preferences_toast(message);
+                        shell.show_preferences_toast(&message);
                     }
                     let sync_complete = login_status_marks_sync_complete(&status);
                     if sync_complete {
@@ -1525,12 +1544,12 @@ impl Shell {
 
         let message = library_sync_toast_message(status);
         if let Some(toast) = self.state.library_sync_toast.borrow().as_ref() {
-            toast.set_title(message);
+            toast.set_title(&message);
             toast.set_timeout(0);
             return;
         }
 
-        let toast = adw::Toast::new(message);
+        let toast = adw::Toast::new(&message);
         toast.set_timeout(0);
         let weak_shell = Rc::downgrade(self);
         let toast_for_signal = toast.clone();

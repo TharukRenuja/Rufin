@@ -79,36 +79,30 @@ fn playlist_detail_from_loaded_tracks(
 }
 
 impl Shell {
-    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::Box {
+    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::FlowBox {
         let kind = gtk::Label::new(Some(&tr("Playlist")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
         kind.set_halign(gtk::Align::Start);
         kind.set_valign(gtk::Align::Center);
+        kind.set_margin_end(6);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let row = gtk::FlowBox::new();
         row.add_css_class("album-detail-kind-row");
-        row.set_halign(gtk::Align::Start);
-        row.append(&kind);
-        if let Some(genre_links) = self.playlist_detail_genre_links(genres) {
-            row.append(&genre_links);
-        }
-        row
-    }
-
-    fn playlist_detail_genre_links(self: &Rc<Self>, genres: &[String]) -> Option<gtk::Widget> {
-        let flow = gtk::FlowBox::new();
-        flow.add_css_class("album-detail-genre-row");
-        flow.set_column_spacing(2);
-        flow.set_row_spacing(2);
-        flow.set_selection_mode(gtk::SelectionMode::None);
-        flow.set_max_children_per_line(PLAYLIST_DETAIL_GENRE_LIMIT as u32);
-        flow.set_valign(gtk::Align::Center);
+        row.add_css_class("album-detail-genre-row");
+        row.set_column_spacing(2);
+        row.set_row_spacing(2);
+        row.set_selection_mode(gtk::SelectionMode::None);
+        row.set_min_children_per_line(1);
+        row.set_max_children_per_line(PLAYLIST_DETAIL_GENRE_LIMIT as u32 + 1);
+        row.set_valign(gtk::Align::Center);
+        row.set_halign(gtk::Align::Fill);
+        row.set_hexpand(true);
+        row.set_width_request(1);
+        row.insert(&kind, -1);
 
         for genre_name in genres {
-            let button = gtk::Button::with_label(genre_name);
-            button.add_css_class("flat");
-            button.add_css_class("album-detail-genre-pill");
+            let button = detail_genre_pill_button(genre_name);
             if let Some(genre_id) = self.playlist_detail_genre_id(genre_name) {
                 let shell = Rc::clone(self);
                 button
@@ -116,10 +110,10 @@ impl Shell {
             } else {
                 button.set_sensitive(false);
             }
-            flow.insert(&button, -1);
+            row.insert(&button, -1);
         }
 
-        flow.first_child().is_some().then(|| flow.upcast())
+        row
     }
 
     fn playlist_detail_genre_id(&self, name: &str) -> Option<domain::GenreId> {
@@ -204,7 +198,7 @@ impl Shell {
         metadata.set_hexpand(true);
         metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
-        let title = gtk::Label::new(Some(&detail.smart_playlist.name));
+        let title = gtk::Label::new(Some(&smart_playlist_display_name(&detail.smart_playlist)));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);

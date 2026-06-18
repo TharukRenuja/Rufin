@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeSet,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process::{self, Command},
 };
 
 #[test]
@@ -11,7 +12,8 @@ fn i18n_template_covers_literal_ui_strings() {
         .and_then(Path::parent)
         .expect("app crate lives under crates/rufin");
     let template = parse_template(&root.join("locales/rufin.pot"));
-    let sources = rust_sources(&root.join("crates/rufin/src"));
+    let mut sources = rust_sources(&root.join("crates/rufin/src"));
+    sources.extend(rust_sources(&root.join("crates/domain/src")));
     let expected = expected_messages(&sources);
 
     let missing = expected.difference(&template).cloned().collect::<Vec<_>>();
@@ -36,10 +38,42 @@ fn i18n_template_has_no_duplicate_msgids() {
     );
 }
 
+#[test]
+fn i18n_template_matches_generated_output() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("app crate lives under crates/rufin");
+    let output = env::temp_dir().join(format!("rufin-template-{}.pot", process::id()));
+    let status = Command::new(root.join(".github/scripts/update-i18n-template.sh"))
+        .arg(&output)
+        .current_dir(root)
+        .status()
+        .expect("run i18n template update script");
+    assert!(status.success(), "i18n template update script failed");
+
+    let generated = fs::read_to_string(&output)
+        .unwrap_or_else(|error| panic!("read generated template {}: {error}", output.display()));
+    let checked_in =
+        fs::read_to_string(root.join("locales/rufin.pot")).expect("read checked-in i18n template");
+    let _ = fs::remove_file(output);
+
+    assert_eq!(
+        checked_in, generated,
+        "locales/rufin.pot is stale; run .github/scripts/update-i18n-template.sh"
+    );
+}
+
 fn expected_messages(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
     let mut messages = BTreeSet::new();
     for (path, source) in sources {
         messages.extend(call_arg_strings(source, "tr", 0));
+        messages.extend(call_arg_strings(source, "tr_with", 0));
+        for name in ["trn", "trn_with"] {
+            messages.extend(call_arg_strings(source, name, 0));
+            messages.extend(call_arg_strings(source, name, 1));
+        }
+        messages.extend(field_strings(source, "empty_body"));
 
         for name in [
             "text_button",
@@ -55,10 +89,14 @@ fn expected_messages(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
         }
 
         for name in [
+            "button_row",
+            "context_menu_action",
+            "context_menu_picker_button",
             "dialog_button",
             "labeled_control",
             "labeled_row",
             "smart_playlist_dialog",
+            "table_header_label",
         ] {
             messages.extend(call_arg_strings(source, name, 0));
         }
@@ -68,7 +106,20 @@ fn expected_messages(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
             messages.extend(field_strings(source, "title"));
             messages.extend(dropdown_array_strings(source));
         }
+        if path.ends_with("domain.rs")
+            || path.ends_with("route.rs")
+            || path.ends_with("settings/layout.rs")
+            || path.ends_with("settings/sidebar.rs")
+            || path.ends_with("root/layout_rendering.rs")
+        {
+            messages.extend(function_return_strings(source, "title"));
+        }
+        if path.ends_with("cards.rs") {
+            messages.extend(function_return_strings(source, "field_group_title"));
+            messages.extend(function_return_strings(source, "layout_title"));
+        }
     }
+    messages.remove("#");
     messages
 }
 
@@ -123,7 +174,10 @@ fn parse_msgids(path: &Path) -> Vec<String> {
     let mut index = 0;
     let mut msgids = Vec::new();
     while index < lines.len() {
-        let Some(rest) = lines[index].strip_prefix("msgid ") else {
+        let Some(rest) = lines[index]
+            .strip_prefix("msgid ")
+            .or_else(|| lines[index].strip_prefix("msgid_plural "))
+        else {
             index += 1;
             continue;
         };
@@ -164,16 +218,35 @@ fn call_arg_strings(source: &str, name: &str, arg_index: usize) -> Vec<String> {
 }
 
 fn nth_string_arg(source: &str, mut cursor: usize, arg_index: usize) -> Option<String> {
-    for index in 0..=arg_index {
-        cursor = skip_non_string_arg(source, cursor);
-        cursor = skip_ws(source, cursor);
-        if index == arg_index {
-            return parse_rust_string(source, cursor).map(|(value, _)| value);
-        }
-        let (_, next) = parse_rust_string(source, cursor)?;
-        cursor = skip_ws(source, next);
-        if source.as_bytes().get(cursor) != Some(&b',') {
-            return None;
+    for _ in 0..arg_index {
+        cursor = skip_arg(source, cursor)?;
+    }
+    cursor = skip_non_string_arg(source, cursor);
+    cursor = skip_ws(source, cursor);
+    parse_rust_string(source, cursor).map(|(value, _)| value)
+}
+
+fn skip_arg(source: &str, mut cursor: usize) -> Option<usize> {
+    let mut parens = 0;
+    let mut brackets = 0;
+    let mut braces = 0;
+    while cursor < source.len() {
+        let bytes = source.as_bytes();
+        match bytes[cursor] {
+            b'"' => {
+                let (_, next) = parse_rust_string(source, cursor)?;
+                cursor = next;
+                continue;
+            }
+            b'(' => parens += 1,
+            b')' if parens == 0 && brackets == 0 && braces == 0 => return None,
+            b')' => parens -= 1,
+            b'[' => brackets += 1,
+            b']' => brackets -= 1,
+            b'{' => braces += 1,
+            b'}' => braces -= 1,
+            b',' if parens == 0 && brackets == 0 && braces == 0 => return Some(cursor + 1),
+            _ => {}
         }
         cursor += 1;
     }
@@ -244,6 +317,59 @@ fn dropdown_array_strings(source: &str) -> Vec<String> {
         offset = cursor;
     }
     strings
+}
+
+fn function_return_strings(source: &str, name: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let needle = format!("fn {name}");
+    let mut offset = 0;
+    while let Some(relative) = source[offset..].find(&needle) {
+        let start = offset + relative;
+        if !identifier_boundary(source, start + 3, name.len()) {
+            offset = start + needle.len();
+            continue;
+        }
+        let Some(open_relative) = source[start..].find('{') else {
+            break;
+        };
+        let open = start + open_relative;
+        let Some(close) = matching_brace(source, open) else {
+            break;
+        };
+        strings.extend(arrow_strings(&source[open..=close]));
+        offset = close + 1;
+    }
+    strings
+}
+
+fn arrow_strings(source: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut offset = 0;
+    while let Some(relative) = source[offset..].find("=>") {
+        let cursor = skip_ws(source, offset + relative + 2);
+        if let Some((value, _)) = parse_rust_string(source, cursor) {
+            strings.push(value);
+        }
+        offset = cursor.saturating_add(1);
+    }
+    strings
+}
+
+fn matching_brace(source: &str, open: usize) -> Option<usize> {
+    let mut depth = 0;
+    for (relative, ch) in source[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + relative);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn parse_rust_string(source: &str, start: usize) -> Option<(String, usize)> {

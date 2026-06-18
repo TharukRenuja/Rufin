@@ -33,7 +33,6 @@ domain = { path = "crates/domain" }
 futures-executor = "0.3.32"
 gdk-pixbuf = "0.22.0"
 getrandom = "0.4.0"
-gettext-rs = "0.7.7"
 gstreamer = "0.25.2"
 gstreamer-audio = "0.25.2"
 gstreamer-play = "0.25.0"

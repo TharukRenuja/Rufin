@@ -312,7 +312,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Tracks,
             empty: tracks.borrow().is_empty(),
-            empty_body: "Cached tracks will appear here after the background sync finishes.",
+            empty_body: "Cached entries will appear here after sync finishes",
             search,
             content: track_collection_widget(
                 self,

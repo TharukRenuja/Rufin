@@ -59,7 +59,8 @@ use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
     LibrarySyncStatus, LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
-    PlaybackSnapshot, SearchRequestKey, grouped_cover_refs_for_items, track_cover_refs_for_items,
+    PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus, grouped_cover_refs_for_items,
+    track_cover_refs_for_items,
 };
 use crate::external_metadata;
 use crate::i18n::{self, tr};
@@ -244,6 +245,14 @@ pub(in crate::ui) fn route_resize_diagnostics_enabled() -> bool {
         "1" | "true" | "yes" | "on"
     )
 }
+
+pub(in crate::ui) fn smart_playlist_display_name(playlist: &SmartPlaylist) -> String {
+    playlist
+        .builtin
+        .map(|builtin| tr(builtin.title()))
+        .unwrap_or_else(|| playlist.name.clone())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum RouteResizePolicy {
     Stable,
@@ -340,10 +349,11 @@ pub(in crate::ui) struct AppState {
     cover_warm_pending: RefCell<Option<(ServerId, u64)>>,
     cover_warm_started: RefCell<Option<ServerId>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
-    server_discovery_status: RefCell<String>,
+    server_discovery_status: RefCell<ServerDiscoveryStatus>,
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
     add_server_dialog: RefCell<Option<AddServerDialogHandle>>,
+    locale_bindings: RefCell<Vec<Box<dyn Fn()>>>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_unavailable: RefCell<HashSet<String>>,
     cover_path_cache: RefCell<HashMap<String, PathBuf>>,
@@ -641,10 +651,11 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         cover_warm_pending: RefCell::new(None),
         cover_warm_started: RefCell::new(None),
         discovered_servers: RefCell::new(Vec::new()),
-        server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
+        server_discovery_status: RefCell::new(ServerDiscoveryStatus::Idle),
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
         add_server_dialog: RefCell::new(None),
+        locale_bindings: RefCell::new(Vec::new()),
         cover_bindings: RefCell::new(HashMap::new()),
         cover_unavailable: RefCell::new(HashSet::new()),
         cover_path_cache: RefCell::new(HashMap::new()),
@@ -857,6 +868,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
 
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
+    shell.install_locale_bindings();
     shell.update_server_selector();
     {
         let split_view = shell.split_view.clone();
