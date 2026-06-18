@@ -874,6 +874,18 @@ impl GstEngine {
             MessageView::StateChanged(state)
                 if self.message_source_is_pipeline(slot, message) && self.is_active_slot(slot) =>
             {
+                if let Some(started_at) = self.play_command_started_at {
+                    let track_id = self.timing_track_id();
+                    debug!(
+                        track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                        ?slot,
+                        old = ?state.old(),
+                        current = ?state.current(),
+                        pending = ?state.pending(),
+                        elapsed_ms = started_at.elapsed().as_millis(),
+                        "GStreamer startup state changed"
+                    );
+                }
                 let playback_state = match state.current() {
                     gst::State::Null | gst::State::Ready => PlaybackState::Stopped,
                     gst::State::Paused => PlaybackState::Paused,
@@ -883,9 +895,27 @@ impl GstEngine {
                 self.handle_state_changed(playback_state);
             }
             MessageView::AsyncDone(_) if self.is_active_slot(slot) => {
+                if let Some(started_at) = self.play_command_started_at {
+                    let track_id = self.timing_track_id();
+                    debug!(
+                        track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                        ?slot,
+                        elapsed_ms = started_at.elapsed().as_millis(),
+                        "GStreamer startup async done"
+                    );
+                }
                 self.handle_async_done();
             }
             MessageView::StreamStart(_) if self.is_active_slot(slot) => {
+                if let Some(started_at) = self.play_command_started_at {
+                    let track_id = self.timing_track_id();
+                    debug!(
+                        track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                        ?slot,
+                        elapsed_ms = started_at.elapsed().as_millis(),
+                        "GStreamer startup stream start"
+                    );
+                }
                 self.handle_stream_start();
             }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
@@ -896,7 +926,20 @@ impl GstEngine {
                 }
             }
             MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
-                self.handle_buffering(buffering.percent().min(100) as u8);
+                let percent = buffering.percent().min(100) as u8;
+                if matches!(percent, 1 | 25 | 50 | 75 | 100)
+                    && let Some(started_at) = self.play_command_started_at
+                {
+                    let track_id = self.timing_track_id();
+                    debug!(
+                        track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                        ?slot,
+                        percent,
+                        elapsed_ms = started_at.elapsed().as_millis(),
+                        "GStreamer startup buffering"
+                    );
+                }
+                self.handle_buffering(percent);
             }
             MessageView::Eos(_) => self.handle_eos(slot),
             MessageView::Error(error_message) => {
