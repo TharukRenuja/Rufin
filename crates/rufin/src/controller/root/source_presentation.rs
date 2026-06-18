@@ -1,14 +1,12 @@
 use super::*;
 
 #[derive(Clone, Debug)]
-pub(in crate::controller) struct SnapshotSourceReconciliation {
-    pub(in crate::controller) selected_source: LibrarySourceSelection,
-    pub(in crate::controller) saved: SavedServer,
+struct SnapshotSourceReconciliation {
+    selected_source: LibrarySourceSelection,
+    saved: SavedServer,
 }
 
-pub(in crate::controller) fn snapshot_remote_servers(
-    saved_servers: &[SavedServer],
-) -> Vec<SavedServer> {
+fn snapshot_remote_servers(saved_servers: &[SavedServer]) -> Vec<SavedServer> {
     saved_servers
         .iter()
         .filter(|saved| saved.server.provider != LOCAL_PROVIDER_ID)
@@ -16,16 +14,14 @@ pub(in crate::controller) fn snapshot_remote_servers(
         .collect()
 }
 
-pub(in crate::controller) fn snapshot_server_identities(
-    remote_saved_servers: &[SavedServer],
-) -> Vec<ServerIdentity> {
+fn snapshot_server_identities(remote_saved_servers: &[SavedServer]) -> Vec<ServerIdentity> {
     remote_saved_servers
         .iter()
         .map(|saved| saved.server.clone())
         .collect()
 }
 
-pub(in crate::controller) fn snapshot_server_local_access(
+fn snapshot_server_local_access(
     store: &StoreHandle,
     remote_saved_servers: &[SavedServer],
 ) -> Result<Vec<ServerLocalAccessSnapshot>, String> {
@@ -87,7 +83,7 @@ fn snapshot_server_local_access_summary(
     })
 }
 
-pub(in crate::controller) fn reconcile_snapshot_source(
+fn reconcile_snapshot_source(
     store: &StoreHandle,
     settings: &AppSettings,
     remote_saved_servers: &[SavedServer],
@@ -126,7 +122,7 @@ fn saved_server_for_snapshot_source(
     }
 }
 
-pub(in crate::controller) fn resolve_selected_source(
+fn resolve_selected_source(
     settings: &AppSettings,
     remote_saved_servers: &[SavedServer],
     active_server: Option<SavedServer>,
@@ -156,7 +152,59 @@ pub(in crate::controller) fn resolve_selected_source(
         .map(|saved| LibrarySourceSelection::Server(saved.server.id.clone()))
 }
 
-pub(in crate::controller) fn load_active_source_snapshot(
+pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
+    let source_settings = load_settings_from_store(store);
+    let saved_servers = store.with_store(|store| store.list_servers())?;
+    let remote_saved_servers = snapshot_remote_servers(&saved_servers);
+    let servers = snapshot_server_identities(&remote_saved_servers);
+    let server_local_access = snapshot_server_local_access(store, &remote_saved_servers)?;
+    let Some(reconciled_source) =
+        reconcile_snapshot_source(store, &source_settings, &remote_saved_servers)?
+    else {
+        let mut snapshot = LibrarySnapshot::first_run();
+        snapshot.servers = servers;
+        snapshot.local_folders = source_settings.sources.local_folders.clone();
+        snapshot.server_local_access = server_local_access;
+        return Ok(snapshot);
+    };
+    let SnapshotSourceReconciliation {
+        selected_source,
+        saved,
+    } = reconciled_source;
+    load_active_source_snapshot(
+        store,
+        source_settings,
+        servers,
+        server_local_access,
+        selected_source,
+        saved,
+    )
+}
+
+pub(in crate::controller) fn load_runtime_snapshot(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<LibrarySnapshot, String> {
+    let mut snapshot = load_snapshot(store)?;
+    if active_server_needs_auth(&snapshot, secrets) {
+        snapshot.first_run = true;
+        snapshot.sync_status = "Connect once more to continue using this server.".to_string();
+        snapshot.last_error = None;
+    }
+    Ok(snapshot)
+}
+
+fn active_server_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn SecretStore>) -> bool {
+    let Some(server) = snapshot.server.as_ref() else {
+        return false;
+    };
+    if server.provider == LOCAL_PROVIDER_ID || server.provider == "fake" {
+        return false;
+    }
+    !config_token_available(secrets, &server.id)
+}
+
+fn load_active_source_snapshot(
     store: &StoreHandle,
     source_settings: AppSettings,
     servers: Vec<ServerIdentity>,
@@ -305,431 +353,4 @@ pub(in crate::controller) fn load_active_source_snapshot(
         favorites,
         search: SearchResults::default(),
     })
-}
-
-pub(in crate::controller) fn scrub_source_album_image_refs(
-    saved: &SavedServer,
-    albums: &mut [Album],
-) {
-    for album in albums {
-        scrub_source_image_ref(saved, &mut album.image_ref);
-    }
-}
-
-pub(in crate::controller) fn scrub_selected_album_image_refs(
-    saved: &SavedServer,
-    settings: &AppSettings,
-    albums: &mut [Album],
-) {
-    let external_ref_policy = snapshot_external_ref_policy(settings);
-    scrub_snapshot_album_image_refs(saved, albums, external_ref_policy);
-}
-
-pub(in crate::controller) fn scrub_source_track_image_refs(
-    saved: &SavedServer,
-    tracks: &mut [Track],
-) {
-    for track in tracks {
-        scrub_source_image_ref(saved, &mut track.image_ref);
-    }
-}
-
-pub(in crate::controller) fn scrub_selected_track_image_refs(
-    saved: &SavedServer,
-    settings: &AppSettings,
-    tracks: &mut [Track],
-) {
-    let external_ref_policy = snapshot_external_ref_policy(settings);
-    scrub_snapshot_track_image_refs(saved, tracks, external_ref_policy);
-}
-
-pub(in crate::controller) fn scrub_selected_artist_image_refs(
-    saved: &SavedServer,
-    settings: &AppSettings,
-    artists: &mut [Artist],
-) {
-    let external_ref_policy = snapshot_external_ref_policy(settings);
-    scrub_snapshot_artist_image_refs(saved, artists, external_ref_policy);
-}
-
-pub(in crate::controller) fn scrub_selected_genre_image_refs(
-    saved: &SavedServer,
-    settings: &AppSettings,
-    genres: &mut [Genre],
-) {
-    let external_ref_policy = snapshot_external_ref_policy(settings);
-    scrub_snapshot_genre_image_refs(saved, genres, external_ref_policy);
-}
-
-pub(in crate::controller) fn scrub_selected_playlist_image_refs(
-    saved: &SavedServer,
-    settings: &AppSettings,
-    playlists: &mut [Playlist],
-) {
-    let external_ref_policy = snapshot_external_ref_policy(settings);
-    scrub_snapshot_playlist_image_refs(saved, playlists, external_ref_policy);
-}
-
-pub(in crate::controller) fn scrub_smart_refs(
-    saved: &SavedServer,
-    playlists: &mut [SmartPlaylist],
-) {
-    for playlist in playlists {
-        scrub_source_image_ref(saved, &mut playlist.image_ref);
-        scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
-    }
-}
-
-pub(in crate::controller) fn scrub_home_refs(saved: &SavedServer, section: &mut HomeSection) {
-    if saved.server.provider == LOCAL_PROVIDER_ID {
-        section.albums.retain(|album| is_local_album_id(&album.id));
-        section.tracks.retain(|track| is_local_track_id(&track.id));
-    }
-    scrub_source_album_image_refs(saved, &mut section.albums);
-    scrub_source_track_image_refs(saved, &mut section.tracks);
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::controller) struct SnapshotExternalRefPolicy {
-    allow_identity_refs: bool,
-    allow_cached_refs: bool,
-}
-
-pub(in crate::controller) fn snapshot_external_ref_policy(
-    settings: &AppSettings,
-) -> SnapshotExternalRefPolicy {
-    let cached_refs_enabled = external_metadata::cached_refs_enabled(settings);
-    SnapshotExternalRefPolicy {
-        allow_identity_refs: cached_refs_enabled,
-        allow_cached_refs: cached_refs_enabled && !external_metadata::enabled(settings),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::controller) fn scrub_snapshot_image_refs(
-    saved: &SavedServer,
-    home_sections: &mut [HomeSection],
-    prefetched_explore: Option<&mut HomeSection>,
-    albums: &mut [Album],
-    tracks: &mut [Track],
-    artists: &mut [Artist],
-    album_artists: &mut [Artist],
-    genres: &mut [Genre],
-    playlists: &mut [Playlist],
-    favorites: &mut [Track],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for section in home_sections {
-        scrub_snapshot_home_refs(saved, section, external_ref_policy);
-    }
-    if let Some(section) = prefetched_explore {
-        scrub_snapshot_home_refs(saved, section, external_ref_policy);
-    }
-    scrub_snapshot_album_image_refs(saved, albums, external_ref_policy);
-    scrub_snapshot_track_image_refs(saved, tracks, external_ref_policy);
-    scrub_snapshot_artist_image_refs(saved, artists, external_ref_policy);
-    scrub_snapshot_artist_image_refs(saved, album_artists, external_ref_policy);
-    scrub_snapshot_genre_image_refs(saved, genres, external_ref_policy);
-    scrub_snapshot_playlist_image_refs(saved, playlists, external_ref_policy);
-    scrub_snapshot_track_image_refs(saved, favorites, external_ref_policy);
-}
-
-fn scrub_snapshot_home_refs(
-    saved: &SavedServer,
-    section: &mut HomeSection,
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    if saved.server.provider == LOCAL_PROVIDER_ID {
-        section.albums.retain(|album| is_local_album_id(&album.id));
-        section.tracks.retain(|track| is_local_track_id(&track.id));
-    }
-    scrub_snapshot_album_image_refs(saved, &mut section.albums, external_ref_policy);
-    scrub_snapshot_track_image_refs(saved, &mut section.tracks, external_ref_policy);
-}
-
-fn scrub_snapshot_album_image_refs(
-    saved: &SavedServer,
-    albums: &mut [Album],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for album in albums {
-        scrub_snapshot_image_ref(saved, &mut album.image_ref, external_ref_policy);
-    }
-}
-
-fn scrub_snapshot_track_image_refs(
-    saved: &SavedServer,
-    tracks: &mut [Track],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for track in tracks {
-        scrub_snapshot_image_ref(saved, &mut track.image_ref, external_ref_policy);
-    }
-}
-
-fn scrub_snapshot_artist_image_refs(
-    saved: &SavedServer,
-    artists: &mut [Artist],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for artist in artists {
-        scrub_snapshot_image_ref(saved, &mut artist.image_ref, external_ref_policy);
-    }
-}
-
-fn scrub_snapshot_genre_image_refs(
-    saved: &SavedServer,
-    genres: &mut [Genre],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for genre in genres {
-        scrub_snapshot_image_ref(saved, &mut genre.image_ref, external_ref_policy);
-        scrub_snapshot_image_ref_vec(saved, &mut genre.image_refs, external_ref_policy);
-    }
-}
-
-fn scrub_snapshot_playlist_image_refs(
-    saved: &SavedServer,
-    playlists: &mut [Playlist],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for playlist in playlists {
-        scrub_snapshot_image_ref(saved, &mut playlist.image_ref, external_ref_policy);
-        scrub_snapshot_image_ref_vec(saved, &mut playlist.image_refs, external_ref_policy);
-    }
-}
-
-fn scrub_snapshot_image_ref(
-    saved: &SavedServer,
-    image_ref: &mut Option<ImageRef>,
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    let Some(ref_value) = image_ref else {
-        return;
-    };
-    if snapshot_image_ref_allowed(saved, ref_value, external_ref_policy) {
-        return;
-    }
-    *image_ref = None;
-}
-
-fn scrub_snapshot_image_ref_vec(
-    saved: &SavedServer,
-    image_refs: &mut Vec<ImageRef>,
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    image_refs
-        .retain(|image_ref| snapshot_image_ref_allowed(saved, image_ref, external_ref_policy));
-}
-
-fn snapshot_image_ref_allowed(
-    saved: &SavedServer,
-    image_ref: &ImageRef,
-    external_ref_policy: SnapshotExternalRefPolicy,
-) -> bool {
-    source_image_ref_allowed(saved, image_ref)
-        || (external_ref_policy.allow_cached_refs
-            && external_metadata::is_external_image_ref(image_ref))
-        || (external_ref_policy.allow_identity_refs && external_identity_image_ref(image_ref))
-}
-
-fn external_identity_image_ref(image_ref: &ImageRef) -> bool {
-    external_metadata::album_art_from_image_ref(image_ref).is_some_and(|art| {
-        art.musicbrainz_release_id.is_some() || art.musicbrainz_release_group_id.is_some()
-    })
-}
-
-pub(in crate::controller) fn scrub_source_image_ref(
-    saved: &SavedServer,
-    image_ref: &mut Option<ImageRef>,
-) {
-    let Some(ref_value) = image_ref else {
-        return;
-    };
-    if source_image_ref_allowed(saved, ref_value) {
-        return;
-    }
-    *image_ref = None;
-}
-
-fn scrub_source_image_ref_vec(saved: &SavedServer, image_refs: &mut Vec<ImageRef>) {
-    image_refs.retain(|image_ref| source_image_ref_allowed(saved, image_ref));
-}
-
-pub(in crate::controller) fn source_image_ref_allowed(
-    saved: &SavedServer,
-    image_ref: &ImageRef,
-) -> bool {
-    image_ref_allowed(&saved.server, image_ref)
-}
-
-pub(in crate::controller) fn image_ref_allowed(
-    server: &ServerIdentity,
-    image_ref: &ImageRef,
-) -> bool {
-    if server.provider == LOCAL_PROVIDER_ID {
-        return is_local_provider_image_ref(image_ref);
-    }
-    !is_local_provider_image_ref(image_ref)
-}
-
-pub(in crate::controller) fn is_local_provider_image_ref(image_ref: &ImageRef) -> bool {
-    image_ref.item_id.starts_with("local:cover:")
-}
-
-pub(in crate::controller) fn is_local_album_id(album_id: &AlbumId) -> bool {
-    album_id.as_str().starts_with("local:album:")
-}
-
-pub(in crate::controller) fn is_local_track_id(track_id: &TrackId) -> bool {
-    track_id.as_str().starts_with("local:track:")
-}
-
-pub(in crate::controller) fn is_local_artist_id(artist_id: &ArtistId) -> bool {
-    artist_id.as_str().starts_with("local:artist:")
-}
-
-pub(in crate::controller) fn active_server_needs_sync(
-    store: &StoreHandle,
-    server_id: &ServerId,
-) -> bool {
-    active_source_readiness_inner(store, server_id, false)
-        .map(|readiness| readiness.sync_required_reason.is_some())
-        .unwrap_or(true)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::controller) enum SyncRequiredReason {
-    EmptyCache,
-    PreviousSyncError,
-    RemoteCacheStale,
-    LocalManifestRefresh,
-    LocalArtworkMissing,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::controller) struct SourceSyncReadiness {
-    pub(in crate::controller) metadata_fresh: bool,
-    pub(in crate::controller) artwork_fresh: bool,
-    pub(in crate::controller) sync_required_reason: Option<SyncRequiredReason>,
-    pub(in crate::controller) prefetch_required_reason: Option<SyncRequiredReason>,
-    pub(in crate::controller) startup_delay_ms: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::controller) struct SourceSyncReadinessInput<'a> {
-    pub(in crate::controller) provider: &'a str,
-    pub(in crate::controller) cached_item_count: usize,
-    pub(in crate::controller) sync_status: Option<&'a str>,
-    pub(in crate::controller) sync_completed_age_seconds: Option<i64>,
-    pub(in crate::controller) local_library_configured: bool,
-    pub(in crate::controller) local_artwork_missing: bool,
-}
-
-pub(in crate::controller) fn source_sync_readiness(
-    input: SourceSyncReadinessInput<'_>,
-) -> SourceSyncReadiness {
-    let stale = input
-        .sync_completed_age_seconds
-        .is_none_or(|age| age >= STARTUP_CACHE_STALE_SECONDS);
-    let sync_required_reason = if input.sync_status == Some("error") {
-        Some(SyncRequiredReason::PreviousSyncError)
-    } else if input.cached_item_count == 0 && input.sync_completed_age_seconds.is_none() {
-        Some(SyncRequiredReason::EmptyCache)
-    } else if input.provider == LOCAL_PROVIDER_ID
-        && input.local_library_configured
-        && (input.cached_item_count == 0 || stale)
-    {
-        Some(SyncRequiredReason::LocalManifestRefresh)
-    } else if stale && input.provider != LOCAL_PROVIDER_ID {
-        Some(SyncRequiredReason::RemoteCacheStale)
-    } else {
-        None
-    };
-    let prefetch_required_reason = (input.provider == LOCAL_PROVIDER_ID
-        && input.cached_item_count > 0
-        && input.local_artwork_missing)
-        .then_some(SyncRequiredReason::LocalArtworkMissing);
-    let startup_delay_ms = match sync_required_reason {
-        Some(SyncRequiredReason::EmptyCache) => Some(500),
-        Some(_) => Some(8_000),
-        None => None,
-    };
-    SourceSyncReadiness {
-        metadata_fresh: !matches!(
-            sync_required_reason,
-            Some(
-                SyncRequiredReason::EmptyCache
-                    | SyncRequiredReason::PreviousSyncError
-                    | SyncRequiredReason::RemoteCacheStale
-            )
-        ),
-        artwork_fresh: prefetch_required_reason.is_none(),
-        sync_required_reason,
-        prefetch_required_reason,
-        startup_delay_ms,
-    }
-}
-
-#[cfg(test)]
-pub(in crate::controller) fn active_source_readiness(
-    store: &StoreHandle,
-    server_id: &ServerId,
-) -> Result<SourceSyncReadiness, String> {
-    active_source_readiness_inner(store, server_id, true)
-}
-
-pub(in crate::controller) fn active_source_startup_readiness(
-    store: &StoreHandle,
-    server_id: &ServerId,
-) -> Result<SourceSyncReadiness, String> {
-    active_source_readiness_inner(store, server_id, true)
-}
-
-fn active_source_readiness_inner(
-    store: &StoreHandle,
-    server_id: &ServerId,
-    include_local_artwork: bool,
-) -> Result<SourceSyncReadiness, String> {
-    let local_library_configured = server_id.as_str() == LOCAL_SOURCE_SERVER_ID
-        && !load_settings_from_store(store)
-            .sources
-            .local_folders
-            .is_empty();
-    let (provider, cached_item_count, sync_status, sync_completed_age_seconds) =
-        store.with_store(|store| {
-            let provider = store
-                .list_servers()?
-                .into_iter()
-                .find(|saved| saved.server.id == *server_id)
-                .map(|saved| saved.server.provider)
-                .unwrap_or_else(|| {
-                    if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
-                        LOCAL_PROVIDER_ID.to_string()
-                    } else {
-                        String::new()
-                    }
-                });
-            let albums = store.load_albums(server_id, 0, 1)?.total;
-            let tracks = store.load_tracks(server_id, 0, 1)?.total;
-            let sync_status = store.sync_state(server_id).ok().map(|state| state.status);
-            let sync_completed_age_seconds = store.sync_completed_age_seconds(server_id)?;
-            Ok((
-                provider,
-                albums.saturating_add(tracks),
-                sync_status,
-                sync_completed_age_seconds,
-            ))
-        })?;
-    let local_artwork_missing = include_local_artwork
-        && provider == LOCAL_PROVIDER_ID
-        && local_cover_cache_missing(store, server_id, false);
-    Ok(source_sync_readiness(SourceSyncReadinessInput {
-        provider: &provider,
-        cached_item_count,
-        sync_status: sync_status.as_deref(),
-        sync_completed_age_seconds,
-        local_library_configured,
-        local_artwork_missing,
-    }))
 }
