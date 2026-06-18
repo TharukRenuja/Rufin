@@ -414,20 +414,19 @@ fn scroll_row_into_view_when_ready(
 }
 
 pub fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
-    let first_timed_index = lines
-        .iter()
-        .position(|line| line.start_millis.is_some() && lyric_line_has_text(line));
     lines
         .iter()
         .enumerate()
         .filter_map(|(index, line)| {
             let start = line.start_millis?;
-            let target_index = lyric_highlight_target_index(lines, index)?;
-            (start <= position_millis).then_some((target_index, start, index))
+            (start <= position_millis).then_some((
+                lyric_line_has_text(line).then_some(index),
+                start,
+                index,
+            ))
         })
         .max_by_key(|(_, start, index)| (*start, *index))
-        .map(|(index, _, _)| index)
-        .or(first_timed_index)
+        .and_then(|(index, _, _)| index)
 }
 
 pub fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
@@ -437,9 +436,6 @@ pub fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
 pub fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
     lines
         .iter()
-        .enumerate()
-        .filter(|(index, _)| lyric_highlight_target_index(lines, *index).is_some())
-        .map(|(_, line)| line)
         .filter_map(|line| line.start_millis)
         .filter(|start| *start > position_millis)
         .min()
@@ -499,18 +495,6 @@ fn lyric_line_has_text(line: &LyricLine) -> bool {
     !line.text.trim().is_empty()
 }
 
-fn lyric_highlight_target_index(lines: &[LyricLine], index: usize) -> Option<usize> {
-    let line = lines.get(index)?;
-    if lyric_line_has_text(line) {
-        return Some(index);
-    }
-    lines
-        .iter()
-        .enumerate()
-        .skip(index + 1)
-        .find_map(|(next_index, line)| lyric_line_has_text(line).then_some(next_index))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -542,7 +526,7 @@ mod tests {
             },
         ];
 
-        assert_eq!(active_lyrics_line_index(&lines, 999), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 999), None);
         assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 5_499), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
@@ -551,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_advance_line() {
+    fn lyrics_blank_line_clears_highlight() {
         let lines = vec![
             LyricLine {
                 text: "current".to_string(),
@@ -568,8 +552,8 @@ mod tests {
         ];
 
         assert_eq!(active_lyrics_line_index(&lines, 4_999), Some(0));
-        assert_eq!(active_lyrics_line_index(&lines, 5_000), Some(2));
-        assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(2));
+        assert_eq!(active_lyrics_line_index(&lines, 5_000), None);
+        assert_eq!(active_lyrics_line_index(&lines, 8_999), None);
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(2));
     }
 
@@ -586,8 +570,8 @@ mod tests {
             },
         ];
 
-        assert_eq!(active_lyrics_line_index(&lines, 5_000), Some(0));
-        assert_eq!(active_lyrics_line_index(&lines, 50_000), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 5_000), None);
+        assert_eq!(active_lyrics_line_index(&lines, 50_000), None);
     }
 
     #[test]
