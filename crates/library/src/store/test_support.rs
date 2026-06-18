@@ -101,6 +101,7 @@ pub(super) fn genre(number: u32, image_ref: Option<ImageRef>) -> Genre {
         name: format!("Genre {number}"),
         album_count: 1,
         track_count: 2,
+        duration_seconds: 360,
         image_refs: Vec::new(),
         image_ref,
     }

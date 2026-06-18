@@ -35,6 +35,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 17,
         run: migrate_to_image_origin_schema,
     },
+    SchemaMigration {
+        from_version: 18,
+        run: migrate_to_genre_duration_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -280,6 +284,7 @@ const IMAGE_ORIGIN_COLUMNS: &[(&str, &str)] = &[
     ("genres", "image_origin"),
     ("playlists", "image_origin"),
 ];
+const GENRE_DURATION_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
 
 struct SchemaMigration {
     from_version: i64,
@@ -400,6 +405,24 @@ fn migrate_to_playlist_top_genres_schema(store: &Store) -> StoreResult<()> {
 }
 fn migrate_to_image_origin_schema(store: &Store) -> StoreResult<()> {
     store.ensure_image_origin_columns()
+}
+fn migrate_to_genre_duration_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
+    store.connection.execute(
+        "
+        UPDATE genres
+        SET duration_seconds = COALESCE((
+            SELECT SUM(t.duration_seconds)
+            FROM track_genres tg
+            JOIN tracks t
+                ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+            WHERE tg.server_id = genres.server_id
+              AND tg.genre_name = genres.name
+        ), 0)
+        ",
+        [],
+    )?;
+    Ok(())
 }
 
 impl Store {
@@ -533,6 +556,8 @@ impl Store {
                 && self.schema_has_required_parts(&[], PLAYLIST_TOP_GENRES_COLUMNS)?),
             18 => Ok(self.schema_is_complete_for_version(17)?
                 && self.schema_has_required_parts(&[], IMAGE_ORIGIN_COLUMNS)?),
+            19 => Ok(self.schema_is_complete_for_version(18)?
+                && self.schema_has_required_parts(&[], GENRE_DURATION_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -797,6 +822,7 @@ impl Store {
                 name TEXT NOT NULL,
                 album_count INTEGER NOT NULL,
                 track_count INTEGER NOT NULL,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
                 image_item_id TEXT,
                 image_tag TEXT,
                 image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
@@ -995,6 +1021,7 @@ impl Store {
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
         self.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")?;
+        self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_image_origin_columns()?;
         self.create_entity_identity_schema()?;
         self.connection

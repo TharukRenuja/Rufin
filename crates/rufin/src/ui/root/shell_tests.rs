@@ -973,6 +973,7 @@ pub(in crate::ui) fn shell_include_refs() {
         name: "Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: vec![shared.clone(), genre_only.clone()],
         image_ref: Some(shared.clone()),
     }];
@@ -1087,6 +1088,7 @@ pub(in crate::ui) fn shell_warm_route() {
         name: "Genre".to_string(),
         album_count: 1,
         track_count: 1,
+        duration_seconds: 180,
         image_refs: vec![genre_ref.clone()],
         image_ref: None,
     }];

@@ -612,6 +612,7 @@ mod tests {
             name: "Empty Genre".to_string(),
             album_count: 1,
             track_count: 3,
+            duration_seconds: 0,
             image_ref: None,
             image_refs: Vec::new(),
         };
@@ -634,6 +635,7 @@ mod tests {
             name: "Covered Genre".to_string(),
             album_count: 2,
             track_count: 4,
+            duration_seconds: 0,
             image_ref: None,
             image_refs: vec![first.clone(), second.clone()],
         };

@@ -533,7 +533,7 @@ msgstr ""
 msgid "Exit to tray"
 msgstr ""
 
-#: crates/domain/src/domain.rs:520
+#: crates/domain/src/domain.rs:522
 msgid "Explore"
 msgstr ""
 
@@ -561,7 +561,7 @@ msgstr ""
 msgid "Favorites"
 msgstr ""
 
-#: crates/domain/src/domain.rs:550
+#: crates/domain/src/domain.rs:552
 msgid "Featured genres"
 msgstr ""
 
@@ -856,7 +856,7 @@ msgstr ""
 msgid "Most Skipped"
 msgstr ""
 
-#: crates/domain/src/domain.rs:521
+#: crates/domain/src/domain.rs:523
 msgid "Most played"
 msgstr ""
 
@@ -928,7 +928,7 @@ msgstr ""
 msgid "New Smart Playlist"
 msgstr ""
 
-#: crates/domain/src/domain.rs:522
+#: crates/domain/src/domain.rs:524
 msgid "Newly added"
 msgstr ""
 
@@ -1256,11 +1256,11 @@ msgstr ""
 msgid "Ready"
 msgstr ""
 
-#: crates/domain/src/domain.rs:523
+#: crates/domain/src/domain.rs:525
 msgid "Recently played"
 msgstr ""
 
-#: crates/domain/src/domain.rs:524
+#: crates/domain/src/domain.rs:526
 msgid "Recently released"
 msgstr ""
 
@@ -1605,7 +1605,7 @@ msgstr ""
 msgid "Show/hide right sidebar"
 msgstr ""
 
-#: crates/domain/src/domain.rs:544
+#: crates/domain/src/domain.rs:546
 msgid "Showcase"
 msgstr ""
 

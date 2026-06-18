@@ -187,10 +187,12 @@ impl Store {
         let mut delta = LibraryDelta::default();
         for genre in genres {
             match self.load_genre_for_delta(server_id, &genre.id)? {
-                Some(existing) if existing == *genre => {}
+                Some(existing) if genre_delta_unchanged(&existing, genre) => {}
                 Some(existing) => {
                     if existing.album_count != genre.album_count
                         || existing.track_count != genre.track_count
+                        || (genre.duration_seconds > 0
+                            && existing.duration_seconds != genre.duration_seconds)
                     {
                         delta.genres.stats.push(genre.id.clone());
                     }
@@ -199,7 +201,7 @@ impl Store {
                     {
                         delta.genres.cover_refs.push(genre.id.clone());
                     }
-                    if existing != *genre {
+                    if !genre_delta_unchanged(&existing, genre) {
                         delta.genres.fields.push(genre.id.clone());
                     }
                 }
@@ -1053,14 +1055,18 @@ impl Store {
             let mut statement = connection.prepare(
                 "
                 INSERT INTO genres (
-                    server_id, genre_id, name, album_count, track_count, image_item_id,
-                    image_tag, image_origin, sync_generation
+                    server_id, genre_id, name, album_count, track_count, duration_seconds,
+                    image_item_id, image_tag, image_origin, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 ON CONFLICT(server_id, genre_id) DO UPDATE SET
                     name = excluded.name,
                     album_count = excluded.album_count,
                     track_count = excluded.track_count,
+                    duration_seconds = CASE
+                        WHEN excluded.duration_seconds > 0 THEN excluded.duration_seconds
+                        ELSE genres.duration_seconds
+                    END,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
                     image_origin = excluded.image_origin,
@@ -1076,6 +1082,7 @@ impl Store {
                     genre.name,
                     i64::from(genre.album_count),
                     i64::from(genre.track_count),
+                    i64::from(genre.duration_seconds),
                     image_item_id,
                     image_tag,
                     image_origin,
@@ -1508,7 +1515,8 @@ impl Store {
             .connection
             .query_row(
                 "
-                SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+                SELECT genre_id, name, album_count, track_count, duration_seconds,
+                       image_item_id, image_tag
                 FROM genres
                 WHERE server_id = ?1 AND genre_id = ?2
                 ",
@@ -2385,12 +2393,46 @@ fn refresh_genre_counts_on_connection(
                       AND track_genres.genre_name = genres.name
                 )
                 ELSE track_count
+            END,
+            duration_seconds = CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM album_genres
+                    WHERE album_genres.server_id = genres.server_id
+                      AND album_genres.genre_name = genres.name
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM track_genres
+                    WHERE track_genres.server_id = genres.server_id
+                      AND track_genres.genre_name = genres.name
+                )
+                THEN COALESCE((
+                    SELECT SUM(tracks.duration_seconds)
+                    FROM track_genres
+                    JOIN tracks
+                        ON tracks.server_id = track_genres.server_id
+                       AND tracks.track_id = track_genres.track_id
+                    WHERE track_genres.server_id = genres.server_id
+                      AND track_genres.genre_name = genres.name
+                ), 0)
+                ELSE duration_seconds
             END
         WHERE server_id = ?1
         ",
         params![server_id.as_str()],
     )?;
     Ok(())
+}
+
+fn genre_delta_unchanged(left: &Genre, right: &Genre) -> bool {
+    left.id == right.id
+        && left.name == right.name
+        && left.album_count == right.album_count
+        && left.track_count == right.track_count
+        && (right.duration_seconds == 0 || left.duration_seconds == right.duration_seconds)
+        && left.image_refs == right.image_refs
+        && left.image_ref == right.image_ref
 }
 
 #[cfg(test)]

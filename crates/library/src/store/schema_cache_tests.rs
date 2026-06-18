@@ -14,7 +14,7 @@ use domain::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -28,6 +28,12 @@ fn current_schema_initializes_empty_database() {
             "albums.{column} should exist"
         );
     }
+    assert!(
+        store
+            .table_has_column("genres", "duration_seconds")
+            .expect("column lookup"),
+        "genres.duration_seconds should exist"
+    );
     for table in [
         "source_objects",
         "entities",
@@ -368,7 +374,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -420,7 +426,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -446,7 +452,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -489,7 +495,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -577,7 +583,7 @@ fn schema_v13_local_manifest_without_identity_columns_migrates() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -613,12 +619,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 19)
+        .pragma_update(None, "user_version", 20)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -653,11 +659,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 18);
+        assert_eq!(store.schema_version().expect("schema version"), 19);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 18);
+    assert_eq!(store.schema_version().expect("schema version"), 19);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -4441,6 +4447,7 @@ fn paged_search_read() {
         .collect::<Vec<_>>();
     genres[504].name = "Needle Genre".to_string();
     genres[504].track_count = 1;
+    genres[504].duration_seconds = 180;
     let playlists = (1..=505)
         .map(|number| playlist(number, None))
         .collect::<Vec<_>>();

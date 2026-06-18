@@ -274,6 +274,7 @@ pub(super) fn genre_from_item(item: JellyfinItem) -> Genre {
                 .as_ref()
                 .and_then(|counts| counts.song_count)
         })),
+        duration_seconds: 0,
         image_refs: Vec::new(),
         image_ref: primary_image_ref("genre", &item.id, &item.image_tags),
     }
