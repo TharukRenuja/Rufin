@@ -112,7 +112,7 @@ impl DiscordPresence {
     }
 
     pub(super) fn update(&mut self, settings: &AppSettings, snapshot: &PlaybackSnapshot) {
-        if !settings.discord_presence_enabled || settings.private_mode {
+        if !crate::external_activity::discord_presence(settings) {
             self.clear();
             return;
         }

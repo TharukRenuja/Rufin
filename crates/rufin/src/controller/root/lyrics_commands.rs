@@ -303,7 +303,7 @@ impl AppController {
         };
         let track_id = entry.track_id.clone();
         let settings = load_settings_from_store(&self.store);
-        if settings.private_mode || !settings.external_lyrics_enabled {
+        if !crate::external_activity::external_lyrics_lookup(&settings) {
             let _sent = self.events.send(ControllerEvent::LyricsSearchResults {
                 track_id,
                 artist_name,

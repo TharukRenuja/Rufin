@@ -122,7 +122,7 @@ pub(in crate::controller) fn fraction_to_millis(fraction: &str) -> Option<u64> {
 pub(in crate::controller) fn lyrics_search_for_settings(
     settings: &AppSettings,
 ) -> JellyfinLyricsSearch {
-    if settings.private_mode || !settings.external_lyrics_enabled {
+    if !crate::external_activity::external_lyrics_lookup(settings) {
         JellyfinLyricsSearch::ServerOnly
     } else if settings.prefer_server_lyrics {
         JellyfinLyricsSearch::ServerThenRemote

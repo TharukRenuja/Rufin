@@ -3020,6 +3020,56 @@ pub(in crate::controller) fn snapshot_discards_external() {
 }
 
 #[test]
+pub(in crate::controller) fn snapshot_keeps_cached_external_art_in_private_mode() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
+    let local_album = local_album_with_image_ref(external_image_ref.clone());
+    let mut settings = AppSettings {
+        external_metadata_enabled: true,
+        private_mode: true,
+        ..AppSettings::default()
+    };
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                std::slice::from_ref(&local_album),
+                generation,
+            )?;
+            store.upsert_home_sections(
+                &local.server.id,
+                &[HomeSection {
+                    kind: HomeSectionKind::Explore,
+                    albums: vec![local_album],
+                    tracks: Vec::new(),
+                }],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(snapshot.albums.len(), 1);
+    assert_eq!(
+        snapshot.albums[0].image_ref.as_ref(),
+        Some(&external_image_ref)
+    );
+    assert_eq!(snapshot.home_sections.len(), 1);
+    assert_eq!(
+        snapshot.home_sections[0].albums[0].image_ref.as_ref(),
+        Some(&external_image_ref)
+    );
+}
+
+#[test]
 pub(in crate::controller) fn local_routes_select_external_mbid_art() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
@@ -3690,7 +3740,7 @@ pub(in crate::controller) fn album_projection_binds_mbid_art_before_route_read()
         .with_store(|store| store.load_raw_album_image_refs(&local.server.id))
         .expect("raw album refs");
 
-    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected)));
+    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected.clone())));
 }
 
 #[test]
@@ -3803,7 +3853,7 @@ pub(in crate::controller) fn genre_route_consumes_bound_mbid_art_without_cache()
 }
 
 #[test]
-pub(in crate::controller) fn genre_route_hides_bound_mbid_art_in_private_mode() {
+pub(in crate::controller) fn genre_route_keeps_cached_mbid_art_in_private_mode() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let mut settings = AppSettings {
@@ -3852,7 +3902,7 @@ pub(in crate::controller) fn genre_route_hides_bound_mbid_art_in_private_mode() 
     let raw_refs = store
         .with_store(|store| store.load_raw_album_image_refs(&local.server.id))
         .expect("raw album refs");
-    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected)));
+    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected.clone())));
     let (controller, _events) = controller_from_store_for_test(store);
 
     let genres = controller
@@ -3861,8 +3911,8 @@ pub(in crate::controller) fn genre_route_hides_bound_mbid_art_in_private_mode() 
         .items;
 
     assert_eq!(genres.len(), 1);
-    assert!(genres[0].image_refs.is_empty());
-    assert!(genres[0].image_ref.is_none());
+    assert_eq!(genres[0].image_refs, vec![expected.clone()]);
+    assert_eq!(genres[0].image_ref.as_ref(), Some(&expected));
 }
 
 #[test]

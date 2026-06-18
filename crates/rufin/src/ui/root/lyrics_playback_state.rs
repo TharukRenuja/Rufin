@@ -3,7 +3,7 @@ use super::*;
 impl Shell {
     pub(in crate::ui) fn notify_now_playing(self: &Rc<Self>, snapshot: &PlaybackSnapshot) {
         let settings = self.state.settings.borrow().clone();
-        if !settings.notifications_enabled || settings.private_mode {
+        if !crate::external_activity::notifications(&settings) {
             return;
         }
         if !matches!(
@@ -31,7 +31,7 @@ impl Shell {
                 None => None,
             };
             let settings = shell.state.settings.borrow();
-            if !settings.notifications_enabled || settings.private_mode {
+            if !crate::external_activity::notifications(&settings) {
                 return;
             }
             drop(settings);

@@ -55,7 +55,7 @@ impl Shell {
             return None;
         }
         if external_metadata::is_external_image_ref(image_ref)
-            && !external_metadata::enabled(&self.state.settings.borrow())
+            && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
         {
             return None;
         }
@@ -83,7 +83,7 @@ impl Shell {
             return None;
         }
         if external_metadata::is_external_image_ref(image_ref)
-            && !external_metadata::enabled(&self.state.settings.borrow())
+            && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
         {
             return None;
         }

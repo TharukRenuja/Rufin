@@ -1,5 +1,7 @@
 use domain::{Album, AppSettings, Artist, ImageRef, QueueEntry, Track};
 
+use crate::external_activity;
+
 mod album_lookup;
 mod release_type_lookup;
 
@@ -23,7 +25,11 @@ pub struct ExternalAlbumArt {
 }
 
 pub fn enabled(settings: &AppSettings) -> bool {
-    settings.external_metadata_enabled && !settings.private_mode
+    external_activity::external_metadata_lookup(settings)
+}
+
+pub fn cached_refs_enabled(settings: &AppSettings) -> bool {
+    external_activity::cached_external_metadata_refs(settings)
 }
 
 pub fn is_external_image_ref(image_ref: &ImageRef) -> bool {
@@ -114,6 +120,7 @@ fn normalize_track_ref(
         || replaceable_album_ref(&track.image_ref, album_image_ref);
     if (track.image_ref.is_none() || weak_album_ref)
         && let Some(image_ref) = album_image_ref
+        && (!is_external_image_ref(image_ref) || cached_refs_enabled(settings))
     {
         track.image_ref = Some(image_ref.clone());
         return;
@@ -145,7 +152,7 @@ pub fn normalize_queue_entry_with_album_ref(
     }) || replaceable_album_ref(&entry.image_ref, album_image_ref);
     if (entry.image_ref.is_none() || weak_album_ref)
         && let Some(image_ref) = album_image_ref
-        && (!is_external_image_ref(image_ref) || enabled(settings))
+        && (!is_external_image_ref(image_ref) || cached_refs_enabled(settings))
     {
         entry.image_ref = Some(image_ref.clone());
         return;
@@ -185,7 +192,7 @@ pub fn is_expected_lookup_miss(error: &str) -> bool {
 fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings) {
     if image_ref
         .as_ref()
-        .is_some_and(|image_ref| is_external_image_ref(image_ref) && !enabled(settings))
+        .is_some_and(|image_ref| is_external_image_ref(image_ref) && !cached_refs_enabled(settings))
     {
         *image_ref = None;
     }
@@ -438,6 +445,24 @@ mod tests {
         );
 
         assert_eq!(track.image_ref, None);
+    }
+
+    #[test]
+    fn metadata_private_mode_keeps_refs() {
+        let image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
+        let mut track = track_without_cover("Example Track", "Example Artist", "Example Album");
+        track.image_ref = Some(image_ref.clone());
+
+        normalize_track(
+            &mut track,
+            &AppSettings {
+                external_metadata_enabled: true,
+                private_mode: true,
+                ..AppSettings::default()
+            },
+        );
+
+        assert_eq!(track.image_ref, Some(image_ref));
     }
 
     #[test]

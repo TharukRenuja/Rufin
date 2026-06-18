@@ -293,13 +293,7 @@ impl Shell {
         #[cfg(unix)]
         self.refresh_tray_private_mode();
         self.update_discord_presence(&self.state.player.borrow());
-        self.controller.reload_snapshot();
-        *self.state.lyrics.borrow_mut() = None;
-        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
         self.render_lyrics_panel();
-        if current_playback_track_id(&self.state.player.borrow()).is_some() {
-            self.controller.refresh_lyrics_for_current();
-        }
     }
 
     pub(super) fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {

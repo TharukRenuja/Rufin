@@ -2,6 +2,7 @@
 
 mod controller;
 mod cover_art_policy;
+mod external_activity;
 mod external_metadata;
 mod external_scrobbling;
 mod i18n;

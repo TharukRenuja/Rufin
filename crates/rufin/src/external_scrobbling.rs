@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use source::PlaybackReportKind;
 use tracing::{debug, warn};
 
-use crate::controller::PlaybackSnapshot;
+use crate::{controller::PlaybackSnapshot, external_activity};
 
 const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 const LIBREFM_API_URL: &str = "https://libre.fm/2.0/";
@@ -249,7 +249,10 @@ pub(crate) fn report(
     snapshot: &PlaybackSnapshot,
     entry: &QueueEntry,
 ) {
-    if failed || settings.private_mode || !has_configured_target(&settings.scrobbling, false) {
+    if failed
+        || !external_activity::playback_reporting(settings)
+        || !has_configured_target(&settings.scrobbling, false)
+    {
         return;
     }
 
