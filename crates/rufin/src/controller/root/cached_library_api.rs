@@ -49,16 +49,19 @@ impl AppController {
         &self,
         artist_id: &ArtistId,
     ) -> Result<Option<CachedArtistDetail>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
-            return Ok(None);
-        };
-        let settings = load_settings_for_saved(&self.store, &saved);
-        let Some(mut detail) = self
-            .store
-            .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))?
+        let Some((saved, mut detail)) = self.store.with_store_fast(|store| {
+            let Some(saved) = store.active_server()? else {
+                return Ok(None);
+            };
+            let Some(detail) = store.load_artist_detail(&saved.server.id, artist_id)? else {
+                return Ok(None);
+            };
+            Ok(Some((saved, detail)))
+        })?
         else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         scrub_selected_artist_image_refs(
             &saved,
             &settings,

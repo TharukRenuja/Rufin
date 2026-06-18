@@ -2,28 +2,14 @@ use super::*;
 
 impl Shell {
     pub(in crate::ui) fn reset_cover_pipeline(&self) {
-        self.state.cover_bindings.borrow_mut().clear();
-        self.state.cover_unavailable.borrow_mut().clear();
-        self.state.cover_path_lookups.borrow_mut().clear();
-        self.state.cover_fetches.borrow_mut().clear();
-        self.state.cover_visible_requests.borrow_mut().clear();
-        self.state.cover_decode_queue.borrow_mut().clear();
-        self.state.startup_cover_prime_pending.borrow_mut().clear();
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .clear();
-        self.state.route_cover_prime_pending.borrow_mut().clear();
-        self.state.cover_warm_pending.borrow_mut().take();
-        self.state.cover_warm_started.borrow_mut().take();
+        self.reset_cover_pipeline_state();
         self.state.route_track_refs.borrow_mut().clear();
         self.state.smart_playlists.borrow_mut().clear();
         self.state.smart_playlists_loaded.set(false);
-        self.cancel_cover_warm();
     }
 
     pub(in crate::ui) fn prepare_cover_retry(&self) {
-        self.state.cover_unavailable.borrow_mut().clear();
+        self.clear_cover_unavailable();
         self.player_controls.cover_key.borrow_mut().take();
         self.fullscreen_player.cover_key.borrow_mut().take();
     }

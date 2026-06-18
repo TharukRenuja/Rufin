@@ -1,6 +1,38 @@
 use super::*;
 
 impl Shell {
+    pub(in crate::ui::root) fn cover_work_stats(&self) -> CoverWorkStats {
+        CoverWorkStats {
+            prime_pending: self.state.startup_cover_prime_pending.borrow().len(),
+            path_lookups: self.state.cover_path_lookups.borrow().len(),
+            fetches: self.state.cover_fetches.borrow().len(),
+            visible_requests: self.state.cover_visible_requests.borrow().len(),
+            bindings: self.state.cover_bindings.borrow().len(),
+            decode_queue: self.state.cover_decode_queue.borrow().len(),
+            decodes: self.state.cover_decodes.borrow().len(),
+            decoded: self.state.decoded_covers.borrow().len(),
+            warm_pending: self.state.cover_warm_pending.borrow().is_some(),
+            warm_started: self.state.cover_warm_started.borrow().is_some(),
+        }
+    }
+
+    pub(in crate::ui) fn reset_cover_pipeline_state(&self) {
+        self.state.cover_bindings.borrow_mut().clear();
+        self.state.cover_unavailable.borrow_mut().clear();
+        self.state.cover_path_lookups.borrow_mut().clear();
+        self.state.cover_fetches.borrow_mut().clear();
+        self.state.cover_visible_requests.borrow_mut().clear();
+        self.state.cover_decode_queue.borrow_mut().clear();
+        self.state.startup_cover_prime_pending.borrow_mut().clear();
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .clear();
+        self.state.cover_warm_pending.borrow_mut().take();
+        self.state.cover_warm_started.borrow_mut().take();
+        self.cancel_cover_warm();
+    }
+
     pub(in crate::ui) fn reset_route_covers(&self) {
         self.state.cover_bindings.borrow_mut().clear();
         self.state.cover_visible_requests.borrow_mut().clear();
@@ -105,20 +137,7 @@ impl Shell {
     }
     pub(in crate::ui) fn finish_cover_decode_success(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
-        self.mark_cover_request_state(key, CoverRequestState::Ready);
-        self.state.cover_visible_requests.borrow_mut().remove(key);
-        self.state
-            .startup_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state
-            .first_run_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
-        self.state
-            .route_cover_prime_pending
-            .borrow_mut()
-            .remove(key);
+        self.finish_cover_ready_state(key);
     }
     pub(in crate::ui) fn finish_cover_decode_failure(
         self: &Rc<Self>,
@@ -258,7 +277,11 @@ impl Shell {
         self.state.decoded_cover_touch.set(next);
         next
     }
-    pub(in crate::ui) fn touch_decoded_cover(&self, key: &str, priority: CoverDecodePriority) {
+    pub(in crate::ui::root::cover) fn touch_decoded_cover(
+        &self,
+        key: &str,
+        priority: CoverDecodePriority,
+    ) {
         let last_used = self.next_decoded_cover_touch();
         let mut covers = self.state.decoded_covers.borrow_mut();
         let Some(cover) = covers.get_mut(key) else {
@@ -275,6 +298,9 @@ impl Shell {
                 key: key.to_string(),
                 last_used,
             });
+    }
+    pub(in crate::ui) fn touch_visible_decoded_cover(&self, key: &str) {
+        self.touch_decoded_cover(key, CoverDecodePriority::Visible);
     }
     pub(in crate::ui) fn decoded_cover_has_warm_capacity(&self, size: i32) -> bool {
         self.state

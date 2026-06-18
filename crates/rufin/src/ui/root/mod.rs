@@ -166,9 +166,8 @@ mod shell_tests;
 
 pub(in crate::ui) use build::*;
 pub(in crate::ui) use cover::{
-    CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent,
-    CoverPathLookupRequest, CoverRequestRecord, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
-    FirstRunCoverPrimeJob, cover_artwork_id_for_key, cover_request_id_for_key,
+    CoverBinding, CoverDecodeJob, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
+    cover_artwork_id_for_key, cover_request_id_for_key,
 };
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use equalizer::{
@@ -333,8 +332,6 @@ pub(in crate::ui) struct AppState {
     local_source_sync_seen: Cell<bool>,
     startup_cover_prime_generation: Cell<u64>,
     startup_cover_prime_pending: RefCell<HashSet<String>>,
-    route_cover_prime_generation: Cell<u64>,
-    route_cover_prime_pending: RefCell<HashSet<String>>,
     first_run_connection_pending: Cell<bool>,
     first_run_connection_ready: Cell<bool>,
     first_run_cover_prime_generation: Cell<u64>,
@@ -350,10 +347,10 @@ pub(in crate::ui) struct AppState {
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_unavailable: RefCell<HashSet<String>>,
     cover_path_cache: RefCell<HashMap<String, PathBuf>>,
-    cover_path_lookups: RefCell<HashMap<String, CoverPathLookupIntent>>,
+    cover_path_lookups: RefCell<HashMap<String, cover::CoverPathLookupIntent>>,
     cover_fetches: RefCell<HashSet<String>>,
-    cover_visible_requests: RefCell<HashMap<String, CoverRequestRecord>>,
-    cover_decodes: RefCell<HashMap<String, CoverDecodePriority>>,
+    cover_visible_requests: RefCell<HashMap<String, cover::CoverRequestRecord>>,
+    cover_decodes: RefCell<HashMap<String, cover::CoverDecodePriority>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
     cover_warm_paused_until: Cell<Option<Instant>>,
@@ -636,8 +633,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         local_source_sync_seen: Cell::new(false),
         startup_cover_prime_generation: Cell::new(0),
         startup_cover_prime_pending: RefCell::new(HashSet::new()),
-        route_cover_prime_generation: Cell::new(0),
-        route_cover_prime_pending: RefCell::new(HashSet::new()),
         first_run_connection_pending: Cell::new(false),
         first_run_connection_ready: Cell::new(false),
         first_run_cover_prime_generation: Cell::new(0),

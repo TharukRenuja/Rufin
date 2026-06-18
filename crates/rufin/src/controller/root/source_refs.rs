@@ -63,7 +63,7 @@ pub(in crate::controller) fn track_album_refs_with_settings(
             ids
         });
     if !missing_album_ids.is_empty() {
-        let mut loaded = store.with_store(|store| {
+        let mut loaded = store.with_store_fast(|store| {
             store.load_album_image_refs(&saved.server.id, &missing_album_ids)
         })?;
         loaded.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
@@ -80,8 +80,9 @@ pub(in crate::controller) fn track_album_refs_with_settings(
             ids
         });
     if !missing_album_ids.is_empty() {
-        let mut loaded = store
-            .with_store(|store| store.load_albums_by_ids(&saved.server.id, &missing_album_ids))?;
+        let mut loaded = store.with_store_fast(|store| {
+            store.load_albums_by_ids(&saved.server.id, &missing_album_ids)
+        })?;
         for album in &mut loaded {
             scrub_source_image_ref(saved, &mut album.image_ref);
             cover_art_policy::bind_album(album, settings);

@@ -45,24 +45,37 @@ pub(in crate::ui) struct CoverWarmJob {
     pub(in crate::ui) size: i32,
 }
 
-#[derive(Clone)]
-pub(in crate::ui) struct CoverPathLookupRequest {
-    pub(in crate::ui) key: String,
-    pub(in crate::ui) image_ref: ImageRef,
-    pub(in crate::ui) fetch_size: u32,
-    pub(in crate::ui) size: i32,
-    pub(in crate::ui) intent: CoverPathLookupIntent,
+pub(in crate::ui::root) struct CoverWorkStats {
+    pub(in crate::ui::root) prime_pending: usize,
+    pub(in crate::ui::root) path_lookups: usize,
+    pub(in crate::ui::root) fetches: usize,
+    pub(in crate::ui::root) visible_requests: usize,
+    pub(in crate::ui::root) bindings: usize,
+    pub(in crate::ui::root) decode_queue: usize,
+    pub(in crate::ui::root) decodes: usize,
+    pub(in crate::ui::root) decoded: usize,
+    pub(in crate::ui::root) warm_pending: bool,
+    pub(in crate::ui::root) warm_started: bool,
 }
 
 #[derive(Clone)]
-pub(in crate::ui) struct CoverRequestRecord {
-    pub(in crate::ui) request: CoverPathLookupRequest,
-    pub(in crate::ui) state: CoverRequestState,
-    pub(in crate::ui) decode_failures: u8,
+pub(in crate::ui::root::cover) struct CoverPathLookupRequest {
+    pub(in crate::ui::root::cover) key: String,
+    pub(in crate::ui::root::cover) image_ref: ImageRef,
+    pub(in crate::ui::root::cover) fetch_size: u32,
+    pub(in crate::ui::root::cover) size: i32,
+    pub(in crate::ui::root::cover) intent: CoverPathLookupIntent,
+}
+
+#[derive(Clone)]
+pub(in crate::ui::root) struct CoverRequestRecord {
+    pub(in crate::ui::root::cover) request: CoverPathLookupRequest,
+    pub(in crate::ui::root::cover) state: CoverRequestState,
+    pub(in crate::ui::root::cover) decode_failures: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum CoverRequestState {
+pub(in crate::ui::root::cover) enum CoverRequestState {
     PathLookup,
     Fetching,
     Decoding,
@@ -92,11 +105,10 @@ impl CoverRequestRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum CoverPathLookupIntent {
+pub(in crate::ui::root) enum CoverPathLookupIntent {
     Visible,
     Priority,
     StartupPrime,
-    RoutePrime,
     Warm,
 }
 
@@ -106,7 +118,6 @@ impl CoverPathLookupIntent {
             (Self::Visible, _) | (_, Self::Visible) => Self::Visible,
             (Self::Priority, _) | (_, Self::Priority) => Self::Priority,
             (Self::StartupPrime, _) | (_, Self::StartupPrime) => Self::StartupPrime,
-            (Self::RoutePrime, _) | (_, Self::RoutePrime) => Self::RoutePrime,
             _ => Self::Warm,
         }
     }
@@ -126,7 +137,7 @@ pub(in crate::ui) fn record_cover_path_lookup_request(
     }
 }
 
-pub(in crate::ui) fn record_visible_cover_request(
+pub(in crate::ui::root::cover) fn record_visible_cover_request(
     requests: &mut HashMap<String, CoverRequestRecord>,
     request: CoverPathLookupRequest,
 ) {
@@ -137,11 +148,11 @@ pub(in crate::ui) fn record_visible_cover_request(
     }
 }
 
-pub(in crate::ui) struct FirstRunCoverPrimeJob {
-    pub(in crate::ui) key: String,
-    pub(in crate::ui) image_ref: ImageRef,
-    pub(in crate::ui) fetch_size: u32,
-    pub(in crate::ui) size: i32,
+struct FirstRunCoverPrimeJob {
+    key: String,
+    image_ref: ImageRef,
+    fetch_size: u32,
+    size: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,9 +178,7 @@ pub(in crate::ui) fn retain_current_priority_cover_work(
     lookups.retain(|key, intent| {
         !matches!(
             intent,
-            CoverPathLookupIntent::Priority
-                | CoverPathLookupIntent::StartupPrime
-                | CoverPathLookupIntent::RoutePrime
+            CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
         ) || keep.contains(key)
     });
     queue.retain(|job| {
