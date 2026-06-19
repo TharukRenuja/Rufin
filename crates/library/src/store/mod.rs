@@ -367,6 +367,7 @@ pub struct StoreBackedSourceWindow {
     pub items: Vec<StoreBackedSourceItem>,
 }
 
+mod identity;
 mod library_auxiliary_cache;
 mod library_cache_reads;
 mod library_cache_writes;
@@ -380,7 +381,8 @@ mod smart_playlists;
 mod source_windows;
 mod store_lifecycle_schema;
 
-pub use local_manifest::{LocalLibraryDelta, local_file_source_object_id};
+pub use identity::local_file_source_object_id;
+pub use local_manifest::LocalLibraryDelta;
 pub use servers::{image_cache_key, lyrics_cache_key};
 
 #[cfg(test)]
