@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::root::playlist_detail_view::playlist_route_margin;
+use crate::ui::root::playlist_detail_view::{playlist_cover_size, playlist_route_margin};
 
 pub(in crate::ui) const GROUPED_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
 
@@ -18,7 +18,9 @@ impl Shell {
             source_descriptor,
         } = data;
         let content_width = route_content_width(self);
+        let cover_only = detail_showcase_cover_only(content_width);
         let route_margin = playlist_route_margin(content_width);
+        let cover_size = playlist_cover_size(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
@@ -38,13 +40,14 @@ impl Shell {
         header.append(&self.cover_group_tile_for_artwork(
             &artwork,
             seed,
-            160,
+            cover_size,
             GROUPED_DETAIL_COVER_FETCH_SIZE,
         ));
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
         metadata.set_hexpand(true);
         metadata.set_width_request(1);
+        metadata.set_visible(!cover_only);
         let title_label = gtk::Label::new(Some(&title));
         title_label.add_css_class("detail-title");
         title_label.set_xalign(0.0);

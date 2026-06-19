@@ -13,6 +13,8 @@ const TOAST_CLOSE_ICON_SIZE: &str = "1px";
 const BOTTOM_PLAYER_PADDING: &str = "2px 8px";
 const PLAYER_TRANSPORT_MARGIN: &str = "0";
 const PLAYER_PROGRESS_MIN_WIDTH: &str = "220px";
+const SIDEBAR_ENTRY_FONT_SIZE: &str = "10px";
+const SIDEBAR_ENTRY_FONT_WEIGHT: &str = "600";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]
@@ -260,6 +262,18 @@ mod tests {
         assert_eq!(
             selector_property(APP_STYLE, ".player-waveform", "min-width"),
             Some(PLAYER_PROGRESS_MIN_WIDTH.to_string())
+        );
+    }
+
+    #[test]
+    fn style_sidebar_entry_font() {
+        assert_eq!(
+            selector_property(APP_STYLE, ".sidebar-entry-label", "font-size"),
+            Some(SIDEBAR_ENTRY_FONT_SIZE.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".sidebar-entry-label", "font-weight"),
+            Some(SIDEBAR_ENTRY_FONT_WEIGHT.to_string())
         );
     }
 }

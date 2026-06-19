@@ -205,6 +205,7 @@ impl Shell {
         track_count: u32,
     ) -> gtk::Widget {
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
+        let cover_only = detail_showcase_cover_only(content_width);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
         let header = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -236,6 +237,7 @@ impl Shell {
         cover_column.append(&cover);
         if let Some(external_links) = external_links {
             external_links.set_halign(gtk::Align::Center);
+            external_links.set_visible(!cover_only);
             cover_column.append(&external_links);
         }
         body.append(&cover_column);
@@ -245,6 +247,7 @@ impl Shell {
         metadata.set_valign(gtk::Align::Start);
         metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
+        metadata.set_visible(!cover_only);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
