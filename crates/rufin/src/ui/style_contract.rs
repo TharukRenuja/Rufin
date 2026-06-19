@@ -9,6 +9,9 @@ const TOAST_RADIUS: &str = "999px";
 const TOAST_BOTTOM_MARGIN: &str = "108px";
 const TOAST_CLOSE_OPACITY: &str = "0";
 const TOAST_CLOSE_ICON_SIZE: &str = "1px";
+const BOTTOM_PLAYER_PADDING: &str = "2px 8px";
+const PLAYER_TRANSPORT_MARGIN: &str = "0";
+const PLAYER_PROGRESS_MIN_WIDTH: &str = "220px";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]
@@ -228,6 +231,26 @@ mod tests {
                 "-gtk-icon-size"
             ),
             Some(TOAST_CLOSE_ICON_SIZE.to_string())
+        );
+    }
+
+    #[test]
+    fn style_bottom_player_layout_budget() {
+        assert_eq!(
+            selector_property(APP_STYLE, ".bottom-player", "padding"),
+            Some(BOTTOM_PLAYER_PADDING.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".player-transport", "margin"),
+            Some(PLAYER_TRANSPORT_MARGIN.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".player-progress", "min-width"),
+            Some(PLAYER_PROGRESS_MIN_WIDTH.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".player-waveform", "min-width"),
+            Some(PLAYER_PROGRESS_MIN_WIDTH.to_string())
         );
     }
 }

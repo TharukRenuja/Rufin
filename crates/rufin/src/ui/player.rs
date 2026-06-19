@@ -6,29 +6,33 @@ use adw::prelude::*;
 use domain::{RepeatMode, Route, SearchKind, format_duration};
 use gtk::glib;
 use playback::PlaybackState;
+use tracing::info;
 
 use crate::controller::PlaybackSnapshot;
 
 use super::player_icons::{
-    auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
+    VolumeIcon, auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
     random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, shuffle_icon_button,
-    skip_icon_button,
+    skip_icon_button, volume_icon_button, volume_icon_state,
 };
 use super::{
     ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
     add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
-    favorite_button_is_active, favorite_icon_button, icon_button, icon_button_with_image,
+    favorite_button_is_active, favorite_icon_button, icon_button,
     install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
     set_active_class, set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
 pub(in crate::ui) const BOTTOM_PLAYER_COVER_SIZE: i32 = 56;
+const BOTTOM_PLAYER_EDGE_PADDING: i32 = 8;
 const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 0;
 const BOTTOM_PLAYER_NOW_PLAYING_SPACING: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 300;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 320;
 const BOTTOM_PLAYER_PROGRESS_MIN_WIDTH: i32 = 140;
+const BOTTOM_PLAYER_PROGRESS_MIN_NATURAL_WIDTH: i32 = 220;
+const BOTTOM_PLAYER_TIME_LABEL_WIDTH: i32 = 32;
 const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 58;
 const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 50;
 const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 45;
@@ -36,11 +40,15 @@ const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 38.0;
 const BOTTOM_PLAYER_WAVEFORM_HEIGHT: i32 = 32;
 const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
+const BOTTOM_PLAYER_ACTION_ICON_SIZE: i32 = 20;
+const BOTTOM_PLAYER_LYRICS_ICON_SIZE: i32 = 24;
+const BOTTOM_PLAYER_VOLUME_ICON_SIZE: i32 = 22;
 const BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE: i32 = 18;
-const BOTTOM_PLAYER_TITLE_MENU_GAP: i32 = 2;
-const BOTTOM_PLAYER_TITLE_CHARS: i32 = 12;
-const BOTTOM_PLAYER_META_CHARS: i32 = 14;
-const BOTTOM_PLAYER_ACTION_SPACING: i32 = 3;
+const BOTTOM_PLAYER_TITLE_MENU_GAP: i32 = 0;
+const BOTTOM_PLAYER_META_CHAR_WIDTH: i32 = 9;
+const BOTTOM_PLAYER_META_MIN_CHARS: i32 = 4;
+const BOTTOM_PLAYER_ACTION_SPACING: i32 = 0;
+const BOTTOM_PLAYER_PROGRESS_SPACING: i32 = 6;
 const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 1;
 const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
 const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
@@ -50,6 +58,7 @@ const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 8;
 const BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH: i32 = 126;
 const BOTTOM_PLAYER_TINY_CONTROL_SPACING: i32 = 2;
 const BOTTOM_PLAYER_TINY_CONTROLS_WIDTH: i32 = BOTTOM_PLAYER_TINY_TRANSPORT_WIDTH;
+const BOTTOM_PLAYER_TINY_ROW_SPACING: i32 = 6;
 const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
 const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
@@ -77,6 +86,9 @@ pub(super) struct PlayerControls {
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
     now_playing_wall: gtk::Box,
+    now_playing: gtk::Box,
+    identity: gtk::Box,
+    title_row: gtk::Box,
     tiny_row: gtk::Box,
     tiny_controls: gtk::Box,
     tiny_layout: Cell<bool>,
@@ -109,7 +121,8 @@ pub(super) struct PlayerControls {
     pub(super) duration: gtk::Label,
     actions: gtk::Box,
     pub(super) mute_button: gtk::Button,
-    pub(super) mute_icon: gtk::Image,
+    pub(super) mute_icon: gtk::DrawingArea,
+    mute_icon_state: Rc<Cell<VolumeIcon>>,
     pub(super) volume: gtk::Scale,
 }
 
@@ -117,6 +130,8 @@ struct NowPlayingControls {
     root: gtk::Box,
     cover: ArtworkTile,
     title: gtk::Label,
+    identity: gtk::Box,
+    title_row: gtk::Box,
     menu_button: gtk::Button,
     artist: gtk::Label,
     album: gtk::Label,
@@ -152,7 +167,8 @@ struct PlayerActionControls {
     lyrics_icon_open: Rc<Cell<bool>>,
     favorite_button: gtk::Button,
     mute_button: gtk::Button,
-    mute_icon: gtk::Image,
+    mute_icon: gtk::DrawingArea,
+    mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
 }
 
@@ -492,6 +508,7 @@ impl Shell {
         controls.title.set_text(&title);
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
+        self.apply_bottom_player_width(self.window.width());
         controls.title.set_sensitive(player.current.is_some());
         controls.menu_button.set_sensitive(player.current.is_some());
         controls.artist.set_sensitive(
@@ -576,8 +593,11 @@ impl Shell {
             .duration
             .set_text(&format_duration(player.duration_seconds));
 
-        let volume_icon = volume_icon_name(player.muted, player.volume);
-        controls.mute_icon.set_icon_name(Some(volume_icon));
+        let volume_icon = volume_icon_state(player.muted, player.volume);
+        if controls.mute_icon_state.get() != volume_icon {
+            controls.mute_icon_state.set(volume_icon);
+            controls.mute_icon.queue_draw();
+        }
         controls.volume.set_value(player.volume);
         self.state.updating_player_controls.set(false);
     }
@@ -627,6 +647,8 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         menu_button,
         artist,
         album,
+        identity,
+        title_row,
     } = build_now_playing_controls();
 
     let TransportControls {
@@ -669,6 +691,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         favorite_button,
         mute_button,
         mute_icon,
+        mute_icon_state,
         volume,
     } = build_player_action_controls();
 
@@ -686,7 +709,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     tiny_controls.set_valign(gtk::Align::Center);
     tiny_controls.set_width_request(BOTTOM_PLAYER_TINY_CONTROLS_WIDTH);
 
-    let tiny_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let tiny_row = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_TINY_ROW_SPACING);
     tiny_row.set_hexpand(true);
     tiny_row.set_halign(gtk::Align::Fill);
     tiny_row.set_valign(gtk::Align::Center);
@@ -706,6 +729,9 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         artist,
         album,
         now_playing_wall,
+        now_playing,
+        identity,
+        title_row,
         tiny_row,
         tiny_controls,
         tiny_layout: Cell::new(false),
@@ -739,6 +765,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         actions,
         mute_button,
         mute_icon,
+        mute_icon_state,
         volume,
     }
 }
@@ -784,13 +811,14 @@ fn build_now_playing_controls() -> NowPlayingControls {
     title_row.add_css_class("player-title-row");
     title_row.set_halign(gtk::Align::Start);
     title_row.set_valign(gtk::Align::Center);
-    title.set_max_width_chars(BOTTOM_PLAYER_TITLE_CHARS);
+    let (title_chars, meta_chars) = bottom_player_metadata_chars(BOTTOM_PLAYER_COMPACT_MIN_WIDTH);
+    title.set_max_width_chars(title_chars);
     title_row.append(&title);
     title_row.append(&menu_button);
     let artist = player_link("player-primary");
     let album = player_link("player-primary");
-    artist.set_max_width_chars(BOTTOM_PLAYER_META_CHARS);
-    album.set_max_width_chars(BOTTOM_PLAYER_META_CHARS);
+    artist.set_max_width_chars(meta_chars);
+    album.set_max_width_chars(meta_chars);
     artist.set_hexpand(true);
     artist.set_width_request(1);
     album.set_hexpand(true);
@@ -804,6 +832,8 @@ fn build_now_playing_controls() -> NowPlayingControls {
         root,
         cover,
         title,
+        identity,
+        title_row,
         menu_button,
         artist,
         album,
@@ -891,7 +921,7 @@ fn build_transport_controls() -> TransportControls {
         BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
     );
 
-    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_PROGRESS_SPACING);
     progress_row.add_css_class("player-progress-row");
     progress_row.set_halign(gtk::Align::Center);
     progress_row.set_valign(gtk::Align::Center);
@@ -947,7 +977,12 @@ fn build_player_action_controls() -> PlayerActionControls {
     root.set_halign(gtk::Align::End);
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
+    queue_icon.set_content_width(BOTTOM_PLAYER_ACTION_ICON_SIZE);
+    queue_icon.set_content_height(BOTTOM_PLAYER_ACTION_ICON_SIZE);
     let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
+    lyrics_icon.set_content_width(BOTTOM_PLAYER_LYRICS_ICON_SIZE);
+    lyrics_icon.set_content_height(BOTTOM_PLAYER_LYRICS_ICON_SIZE);
+    lyrics_icon.set_margin_top(1);
     configure_player_action_button(&lyrics_button);
     root.append(&lyrics_button);
     configure_player_action_button(&queue_button);
@@ -959,7 +994,9 @@ fn build_player_action_controls() -> PlayerActionControls {
 
     let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
     volume_group.set_valign(gtk::Align::Center);
-    let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
+    let (mute_button, mute_icon, mute_icon_state) = volume_icon_button("Mute");
+    mute_icon.set_content_width(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
+    mute_icon.set_content_height(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
     mute_button.add_css_class("player-mute-button");
     configure_player_action_button(&mute_button);
     volume_group.append(&mute_button);
@@ -983,6 +1020,7 @@ fn build_player_action_controls() -> PlayerActionControls {
         favorite_button,
         mute_button,
         mute_icon,
+        mute_icon_state,
         volume,
     }
 }
@@ -1042,6 +1080,108 @@ fn bottom_player_progress_width(player_width: i32) -> i32 {
     BOTTOM_PLAYER_PROGRESS_MIN_WIDTH + width_span * progress / span
 }
 
+fn bottom_player_content_width(player_width: i32) -> i32 {
+    (player_width - BOTTOM_PLAYER_EDGE_PADDING * 2).max(1)
+}
+
+fn bottom_player_progress_row_width(player_width: i32) -> i32 {
+    let progress_width =
+        bottom_player_progress_width(player_width).max(BOTTOM_PLAYER_PROGRESS_MIN_NATURAL_WIDTH);
+    progress_width + BOTTOM_PLAYER_TIME_LABEL_WIDTH * 2 + BOTTOM_PLAYER_PROGRESS_SPACING * 2
+}
+
+fn bottom_player_transport_budget(player_width: i32) -> i32 {
+    if bottom_player_tiny(player_width) {
+        return BOTTOM_PLAYER_TINY_CONTROLS_WIDTH;
+    }
+
+    BOTTOM_PLAYER_TRANSPORT_WIDTH.max(bottom_player_progress_row_width(player_width))
+}
+
+fn bottom_player_now_playing_budget(player_width: i32) -> i32 {
+    let content_width = bottom_player_content_width(player_width);
+    if bottom_player_tiny(player_width) {
+        return content_width
+            - BOTTOM_PLAYER_TINY_CONTROLS_WIDTH
+            - BOTTOM_PLAYER_TINY_ROW_SPACING
+            - BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
+    }
+
+    (content_width - bottom_player_transport_budget(player_width)) / 2
+}
+
+fn bottom_player_metadata_chars(player_width: i32) -> (i32, i32) {
+    let side_width = bottom_player_now_playing_budget(player_width);
+    let text_width = side_width - BOTTOM_PLAYER_COVER_SIZE - BOTTOM_PLAYER_NOW_PLAYING_SPACING;
+    let title_width =
+        text_width - BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE - BOTTOM_PLAYER_TITLE_MENU_GAP;
+    let title_chars =
+        (title_width / BOTTOM_PLAYER_META_CHAR_WIDTH).max(BOTTOM_PLAYER_META_MIN_CHARS);
+    let meta_chars = (text_width / BOTTOM_PLAYER_META_CHAR_WIDTH).max(BOTTOM_PLAYER_META_MIN_CHARS);
+
+    (title_chars, meta_chars)
+}
+
+fn apply_bottom_player_metadata_widths(player: &PlayerControls, player_width: i32) {
+    let (title_chars, meta_chars) = bottom_player_metadata_chars(player_width);
+    player.title.set_max_width_chars(title_chars);
+    player.artist.set_max_width_chars(meta_chars);
+    player.album.set_max_width_chars(meta_chars);
+}
+
+fn bottom_player_widget_widths(widget: &impl glib::object::IsA<gtk::Widget>) -> (i32, i32, i32) {
+    let widget = widget.as_ref();
+    let (minimum, natural, _, _) = widget.measure(gtk::Orientation::Horizontal, -1);
+    (widget.width(), minimum, natural)
+}
+
+fn log_bottom_player_layout_probe(stage: &'static str, player_width: i32, player: &PlayerControls) {
+    if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_none() {
+        return;
+    }
+
+    let (title_chars, meta_chars) = bottom_player_metadata_chars(player_width);
+    info!(
+        stage,
+        player_width,
+        content_width = bottom_player_content_width(player_width),
+        tiny = bottom_player_tiny(player_width),
+        transport_budget = bottom_player_transport_budget(player_width),
+        now_playing_budget = bottom_player_now_playing_budget(player_width),
+        progress_width = bottom_player_progress_width(player_width),
+        progress_row_budget = bottom_player_progress_row_width(player_width),
+        title_chars,
+        meta_chars,
+        title_len = player.title.text().chars().count(),
+        artist_len = player.artist.text().chars().count(),
+        album_len = player.album.text().chars().count(),
+        title_hexpand = player.title.hexpands(),
+        title_row_halign = ?player.title_row.halign(),
+        root = ?bottom_player_widget_widths(&player.root),
+        now_playing_wall = ?bottom_player_widget_widths(&player.now_playing_wall),
+        now_playing = ?bottom_player_widget_widths(&player.now_playing),
+        identity = ?bottom_player_widget_widths(&player.identity),
+        title_row = ?bottom_player_widget_widths(&player.title_row),
+        title = ?bottom_player_widget_widths(&player.title),
+        menu = ?bottom_player_widget_widths(&player.menu_button),
+        artist = ?bottom_player_widget_widths(&player.artist),
+        album = ?bottom_player_widget_widths(&player.album),
+        transport_slot = ?bottom_player_widget_widths(&player.transport_slot),
+        transport = ?bottom_player_widget_widths(&player.transport),
+        actions = ?bottom_player_widget_widths(&player.actions),
+        queue = ?bottom_player_widget_widths(&player.queue_button),
+        lyrics = ?bottom_player_widget_widths(&player.lyrics_button),
+        favorite = ?bottom_player_widget_widths(&player.favorite_button),
+        mute = ?bottom_player_widget_widths(&player.mute_button),
+        tiny_row = ?bottom_player_widget_widths(&player.tiny_row),
+        tiny_controls = ?bottom_player_widget_widths(&player.tiny_controls),
+        progress_row = ?bottom_player_widget_widths(&player.progress_row),
+        progress_stack = ?bottom_player_widget_widths(&player.progress_stack),
+        volume = ?bottom_player_widget_widths(&player.volume),
+        "bottom player layout probe"
+    );
+}
+
 fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
     if player_width >= BOTTOM_PLAYER_SHOW_QUEUE_WIDTH {
         BottomPlayerActions::Queue
@@ -1056,14 +1196,6 @@ fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
 
 fn bottom_player_tiny(player_width: i32) -> bool {
     player_width < BOTTOM_PLAYER_TINY_WIDTH
-}
-
-fn volume_icon_name(muted: bool, volume: f64) -> &'static str {
-    if muted || volume <= 0.0 {
-        "audio-volume-muted-symbolic"
-    } else {
-        "audio-volume-high-symbolic"
-    }
 }
 
 fn put_transport_button(
@@ -1410,7 +1542,14 @@ fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
 impl Shell {
     pub(in crate::ui) fn apply_bottom_player_width(&self, player_width: i32) {
         if player_width > 0 {
+            let root_width = self.player_controls.root.width();
+            let player_width = if root_width > 1 {
+                root_width + BOTTOM_PLAYER_EDGE_PADDING * 2
+            } else {
+                player_width
+            };
             let progress_width = bottom_player_progress_width(player_width);
+            apply_bottom_player_metadata_widths(&self.player_controls, player_width);
             self.player_controls
                 .progress
                 .set_width_request(progress_width);
@@ -1430,6 +1569,11 @@ impl Shell {
                 .set_width_request(bottom_player_volume_width(player_width));
             self.apply_bottom_player_tiny(bottom_player_tiny(player_width));
             self.apply_bottom_player_actions(bottom_player_actions(player_width));
+            log_bottom_player_layout_probe(
+                "apply_bottom_player_width",
+                player_width,
+                &self.player_controls,
+            );
         }
     }
 
@@ -1544,6 +1688,29 @@ mod tests {
     }
 
     #[test]
+    fn player_metadata_budget_tracks_layout_width() {
+        let (tiny_title, tiny_meta) = super::bottom_player_metadata_chars(450);
+        assert!(tiny_title > 20);
+        assert!(tiny_meta >= tiny_title);
+
+        let (compact_title, compact_meta) = super::bottom_player_metadata_chars(614);
+        assert!(compact_meta >= compact_title);
+
+        let (narrow_title, narrow_meta) = super::bottom_player_metadata_chars(643);
+        assert!(narrow_title >= 9);
+        assert!(narrow_title > compact_title);
+        assert!(narrow_meta >= narrow_title);
+
+        let (normal_title, normal_meta) = super::bottom_player_metadata_chars(788);
+        assert!(normal_title > narrow_title);
+        assert!(normal_meta >= normal_title);
+
+        let (wide_title, wide_meta) = super::bottom_player_metadata_chars(960);
+        assert!(wide_title > normal_title);
+        assert!(wide_meta >= wide_title);
+    }
+
+    #[test]
     fn player_restores_actions_by_priority() {
         assert_eq!(
             super::bottom_player_actions(614),
@@ -1573,16 +1740,16 @@ mod tests {
     #[test]
     fn player_volume_zero_uses_muted_icon() {
         assert_eq!(
-            super::volume_icon_name(false, 0.0),
-            "audio-volume-muted-symbolic"
+            super::volume_icon_state(false, 0.0),
+            super::VolumeIcon::Muted
         );
         assert_eq!(
-            super::volume_icon_name(false, 0.01),
-            "audio-volume-high-symbolic"
+            super::volume_icon_state(false, 0.01),
+            super::VolumeIcon::High
         );
         assert_eq!(
-            super::volume_icon_name(true, 1.0),
-            "audio-volume-muted-symbolic"
+            super::volume_icon_state(true, 1.0),
+            super::VolumeIcon::Muted
         );
     }
 }

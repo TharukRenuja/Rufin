@@ -220,7 +220,7 @@ msgstr ""
 msgid "Auto DJ refill threshold"
 msgstr ""
 
-#: crates/rufin/src/ui/root/cover_startup.rs:696 crates/rufin/src/ui/root/layout_rendering.rs:1065
+#: crates/rufin/src/ui/root/cover_startup.rs:696 crates/rufin/src/ui/root/layout_rendering.rs:1051
 msgid "Back"
 msgstr ""
 
@@ -844,7 +844,7 @@ msgstr ""
 msgid "Minimum year"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:574 crates/rufin/src/ui/player.rs:775
+#: crates/rufin/src/ui/cards.rs:574 crates/rufin/src/ui/player.rs:802
 msgid "More actions"
 msgstr ""
 
@@ -1044,7 +1044,7 @@ msgstr ""
 msgid "Not set"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:1642 crates/rufin/src/ui/player.rs:480
+#: crates/rufin/src/ui/fullscreen_player.rs:1642 crates/rufin/src/ui/player.rs:496
 msgid "Nothing playing"
 msgstr ""
 
@@ -1076,7 +1076,7 @@ msgstr ""
 msgid "Only unplayed tracks"
 msgstr ""
 
-#: crates/rufin/src/ui/player.rs:761 crates/rufin/src/ui/settings_persistence.rs:436
+#: crates/rufin/src/ui/player.rs:788 crates/rufin/src/ui/settings_persistence.rs:436
 msgid "Open fullscreen player"
 msgstr ""
 
@@ -1236,7 +1236,7 @@ msgstr ""
 msgid "Queue"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:1648 crates/rufin/src/ui/player.rs:486
+#: crates/rufin/src/ui/fullscreen_player.rs:1648 crates/rufin/src/ui/player.rs:502
 msgid "Queue a track to begin"
 msgstr ""
 
@@ -1492,7 +1492,7 @@ msgstr ""
 msgid "Seek Forward"
 msgstr ""
 
-#: crates/rufin/src/ui/player.rs:175
+#: crates/rufin/src/ui/player.rs:191
 msgid "Seek playback"
 msgstr ""
 
