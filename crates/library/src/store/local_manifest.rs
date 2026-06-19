@@ -1,3 +1,8 @@
+use super::identity::{
+    delete_track_entity_rows, delete_track_entity_rows_not_in_temp,
+    ensure_local_file_source_parent, local_file_source_object_id, source_object_from_row,
+    upsert_source_object_on_connection, upsert_track_entity_data_on_connection,
+};
 use super::servers::{
     COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_origin_for_source_ref,
     image_ref_from_row, image_ref_parts, u32_from_i64,
@@ -629,9 +634,7 @@ impl Store {
                     if updated == 0 {
                         missing_tracks.push(track.clone());
                     } else {
-                        super::library_cache_writes::upsert_track_entity_data_on_connection(
-                            connection, server_id, track,
-                        )?;
+                        upsert_track_entity_data_on_connection(connection, server_id, track)?;
                     }
                 }
             }
@@ -871,102 +874,6 @@ pub(super) fn clear_local_manifest_on_connection(
     Ok(())
 }
 
-pub fn local_file_source_object_id(root_path: &str, relative_path: &str) -> String {
-    format!("local:file:{root_path}\u{1f}{relative_path}")
-}
-
-fn upsert_source_object_on_connection(
-    connection: &Connection,
-    server_id: &ServerId,
-    source: &SourceObject,
-) -> StoreResult<()> {
-    connection.execute(
-        "
-        INSERT INTO source_objects (
-            server_id, source_object_id, entity_kind, entity_id, source_kind,
-            source_path, parent_source_object_id, cue_path, cue_revision,
-            cue_track_index, segment_start_ms, segment_end_ms, metadata_json,
-            sync_generation, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '{}', ?13, CURRENT_TIMESTAMP)
-        ON CONFLICT(server_id, source_object_id) DO UPDATE SET
-            entity_kind = excluded.entity_kind,
-            entity_id = excluded.entity_id,
-            source_kind = excluded.source_kind,
-            source_path = excluded.source_path,
-            parent_source_object_id = excluded.parent_source_object_id,
-            cue_path = excluded.cue_path,
-            cue_revision = excluded.cue_revision,
-            cue_track_index = excluded.cue_track_index,
-            segment_start_ms = excluded.segment_start_ms,
-            segment_end_ms = excluded.segment_end_ms,
-            metadata_json = excluded.metadata_json,
-            sync_generation = excluded.sync_generation,
-            updated_at = excluded.updated_at
-        ",
-        params![
-            server_id.as_str(),
-            source.source_object_id.as_str(),
-            source.entity_kind.as_deref(),
-            source.entity_id.as_deref(),
-            source.source_kind.as_str(),
-            source.source_path.as_deref(),
-            source.parent_source_object_id.as_deref(),
-            source.cue_path.as_deref(),
-            source.cue_revision.as_deref(),
-            source.cue_track_index,
-            source.segment_start_ms,
-            source.segment_end_ms,
-            source.sync_generation,
-        ],
-    )?;
-    Ok(())
-}
-
-fn ensure_local_file_source_parent(
-    connection: &Connection,
-    server_id: &ServerId,
-    source_object_id: &str,
-) -> StoreResult<()> {
-    let exists = connection.query_row(
-        "
-        SELECT EXISTS(
-            SELECT 1
-            FROM source_objects
-            WHERE server_id = ?1
-              AND source_object_id = ?2
-              AND source_kind = 'local_file'
-        )
-        ",
-        params![server_id.as_str(), source_object_id],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if exists {
-        Ok(())
-    } else {
-        Err(StoreError::InvalidSourceObject(format!(
-            "cue parent source object is not a local file: {source_object_id}"
-        )))
-    }
-}
-
-fn source_object_from_row(row: &Row<'_>) -> rusqlite::Result<SourceObject> {
-    Ok(SourceObject {
-        source_object_id: row.get(0)?,
-        entity_kind: row.get(1)?,
-        entity_id: row.get(2)?,
-        source_kind: row.get(3)?,
-        source_path: row.get(4)?,
-        parent_source_object_id: row.get(5)?,
-        cue_path: row.get(6)?,
-        cue_revision: row.get(7)?,
-        cue_track_index: row.get(8)?,
-        segment_start_ms: row.get(9)?,
-        segment_end_ms: row.get(10)?,
-        sync_generation: row.get(11)?,
-    })
-}
-
 fn local_manifest_cover_parts(
     cover: Option<&LocalManifestCover>,
 ) -> (
@@ -1037,39 +944,6 @@ fn delete_track_ids(
                 .map(|track_id| Value::Text(track_id.as_str().to_string())),
         );
         connection.execute(&sql, params_from_iter(values))?;
-    }
-    Ok(())
-}
-
-fn delete_track_entity_rows(
-    connection: &Connection,
-    server_id: &ServerId,
-    track_ids: &[TrackId],
-) -> StoreResult<()> {
-    for chunk in track_ids.chunks(400) {
-        let placeholders = std::iter::repeat_n("?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut values = vec![Value::Text(server_id.as_str().to_string())];
-        values.extend(
-            chunk
-                .iter()
-                .map(|track_id| Value::Text(track_id.as_str().to_string())),
-        );
-        for (table, column) in [
-            ("entity_content_refs", "entity_id"),
-            ("entity_facts", "entity_id"),
-            ("entity_grouping_keys", "entity_id"),
-            ("entity_identity_keys", "entity_id"),
-            ("entity_links", "entity_id"),
-            ("entities", "entity_id"),
-            ("source_objects", "entity_id"),
-        ] {
-            let sql = format!(
-                "DELETE FROM {table} WHERE server_id = ? AND entity_kind = 'track' AND {column} IN ({placeholders})"
-            );
-            connection.execute(&sql, params_from_iter(values.clone()))?;
-        }
     }
     Ok(())
 }
@@ -1210,33 +1084,6 @@ fn prune_stale_local_track_rows(
     }
     delete_track_entity_rows_not_in_temp(connection, server_id, "local_current_track_ids")?;
     delete_fts_not_in_temp(connection, server_id, "track", "local_current_track_ids")?;
-    Ok(())
-}
-
-fn delete_track_entity_rows_not_in_temp(
-    connection: &Connection,
-    server_id: &ServerId,
-    temp_table: &str,
-) -> StoreResult<()> {
-    for (table, column) in [
-        ("entity_content_refs", "entity_id"),
-        ("entity_facts", "entity_id"),
-        ("entity_grouping_keys", "entity_id"),
-        ("entity_identity_keys", "entity_id"),
-        ("entity_links", "entity_id"),
-        ("entities", "entity_id"),
-        ("source_objects", "entity_id"),
-    ] {
-        let sql = format!(
-            "
-            DELETE FROM {table}
-            WHERE server_id = ?1
-              AND entity_kind = 'track'
-              AND {column} NOT IN (SELECT id FROM {temp_table})
-            "
-        );
-        connection.execute(&sql, params![server_id.as_str()])?;
-    }
     Ok(())
 }
 
