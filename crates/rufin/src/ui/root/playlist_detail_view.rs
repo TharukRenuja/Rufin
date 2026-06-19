@@ -584,7 +584,7 @@ fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box 
     row.set_halign(gtk::Align::Start);
     row.append(&playlist_detail_summary_item(
         "audio-x-generic-symbolic",
-        &format!("{track_count} {}", tr("tracks")),
+        &track_count_text(track_count.into()),
     ));
     row.append(&playlist_detail_summary_item(
         "appointment-soon-symbolic",

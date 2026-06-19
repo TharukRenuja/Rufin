@@ -62,7 +62,7 @@ use crate::controller::{
     track_cover_refs_for_items,
 };
 use crate::external_metadata;
-use crate::i18n::{self, tr};
+use crate::i18n::{self, tr, trn_with};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use ::library::{CachedGenreDetail, LibraryDelta, image_cache_key};
 #[cfg(feature = "dev-tools")]
@@ -128,6 +128,56 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
+
+fn album_count_text(count: u64) -> String {
+    let label = count.to_string();
+    trn_with(
+        "{count} album",
+        "{count} albums",
+        count,
+        &[("count", label.as_str())],
+    )
+}
+
+fn folder_count_text(count: u64) -> String {
+    let label = count.to_string();
+    trn_with(
+        "{count} folder",
+        "{count} folders",
+        count,
+        &[("count", label.as_str())],
+    )
+}
+
+fn folder_selected_text(count: u64) -> String {
+    let label = count.to_string();
+    trn_with(
+        "{count} folder selected",
+        "{count} folders selected",
+        count,
+        &[("count", label.as_str())],
+    )
+}
+
+fn result_count_text(count: u64) -> String {
+    let label = count.to_string();
+    trn_with(
+        "{count} result",
+        "{count} results",
+        count,
+        &[("count", label.as_str())],
+    )
+}
+
+fn track_count_text(count: u64) -> String {
+    let label = count.to_string();
+    trn_with(
+        "{count} track",
+        "{count} tracks",
+        count,
+        &[("count", label.as_str())],
+    )
+}
 
 mod album_detail_view;
 mod build;

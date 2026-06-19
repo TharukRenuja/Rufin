@@ -182,7 +182,7 @@ pub(in crate::ui) fn album_field(album: &Album, field: LibraryField) -> String {
         LibraryField::PlayCount => option_count(album.play_count),
         LibraryField::UserRating => option_rating(album.user_rating),
         LibraryField::Genre => album.genres.join(", "),
-        LibraryField::SongCount => format!("{} {}", album.track_count, tr("tracks")),
+        LibraryField::SongCount => track_count_text(album.track_count.into()),
         LibraryField::Duration => format_duration_units(album.duration_seconds),
         LibraryField::Favorite => favorite_text(album.favorite),
         _ => String::new(),
@@ -191,8 +191,8 @@ pub(in crate::ui) fn album_field(album: &Album, field: LibraryField) -> String {
 pub(in crate::ui) fn artist_field(artist: &Artist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => artist.name.clone(),
-        LibraryField::AlbumCount => format!("{} {}", artist.album_count, tr("albums")),
-        LibraryField::SongCount => format!("{} {}", artist.track_count, tr("tracks")),
+        LibraryField::AlbumCount => album_count_text(artist.album_count.into()),
+        LibraryField::SongCount => track_count_text(artist.track_count.into()),
         LibraryField::LastPlayed => artist.last_played.clone().unwrap_or_default(),
         LibraryField::PlayCount => option_count(artist.play_count),
         LibraryField::UserRating => option_rating(artist.user_rating),
@@ -203,15 +203,15 @@ pub(in crate::ui) fn artist_field(artist: &Artist, field: LibraryField) -> Strin
 pub(in crate::ui) fn genre_field(genre: &Genre, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => genre.name.clone(),
-        LibraryField::AlbumCount => format!("{} {}", genre.album_count, tr("albums")),
-        LibraryField::SongCount => format!("{} {}", genre.track_count, tr("tracks")),
+        LibraryField::AlbumCount => album_count_text(genre.album_count.into()),
+        LibraryField::SongCount => track_count_text(genre.track_count.into()),
         _ => String::new(),
     }
 }
 pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
-        LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
+        LibraryField::SongCount => track_count_text(playlist.track_count.into()),
         LibraryField::Duration => format_duration_units(playlist.duration_seconds),
         _ => String::new(),
     }
@@ -220,7 +220,7 @@ pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: Libra
     match field {
         LibraryField::Title | LibraryField::TitleMerged => smart_playlist_display_name(playlist),
         LibraryField::SongCount if playlist.track_count > 0 => {
-            format!("{} {}", playlist.track_count, tr("tracks"))
+            track_count_text(playlist.track_count.into())
         }
         LibraryField::Duration if playlist.duration_seconds > 0 => {
             format_duration_units(playlist.duration_seconds)
@@ -512,10 +512,9 @@ pub(in crate::ui) fn album_detail_meta_label(
 }
 pub(in crate::ui) fn album_fact_text(album: &Album) -> String {
     format!(
-        "{} • {} {} • {}",
+        "{} • {} • {}",
         nonzero_year(album.year),
-        album.track_count,
-        tr("tracks"),
+        track_count_text(album.track_count.into()),
         format_duration_units(album.duration_seconds)
     )
 }

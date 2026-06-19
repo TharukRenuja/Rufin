@@ -381,7 +381,7 @@ impl Shell {
 
         let albums = artist_count_button(
             "media-optical-symbolic",
-            &format!("{} {}", album_count, tr("albums")),
+            &album_count_text(album_count as u64),
         );
         let shell = Rc::clone(self);
         let artist_id = artist.id.clone();
@@ -392,7 +392,7 @@ impl Shell {
 
         let tracks = artist_count_button(
             "audio-x-generic-symbolic",
-            &format!("{} {}", track_count, tr("tracks")),
+            &track_count_text(track_count.into()),
         );
         let shell = Rc::clone(self);
         let artist_id = artist.id.clone();
@@ -490,11 +490,9 @@ fn section_heading(title: &str) -> gtk::Widget {
 
 fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count: u32) -> String {
     format!(
-        "{} {} / {} {}",
-        album_count + appears_on_count,
-        tr("albums"),
-        track_count,
-        tr("tracks")
+        "{} / {}",
+        album_count_text((album_count + appears_on_count) as u64),
+        track_count_text(track_count.into())
     )
 }
 

@@ -8,6 +8,7 @@ use gtk::gio;
 use crate::controller::{LibrarySnapshot, ServerLocalAccessSnapshot};
 use crate::i18n::tr;
 
+use super::super::{album_count_text, track_count_text};
 use super::{Shell, button_row};
 
 pub(super) fn library_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> gtk::Widget {
@@ -219,12 +220,10 @@ fn server_source_subtitle(
     };
     let cache = if selected {
         format!(
-            "{}: {} {}, {} {}. {}",
+            "{}: {}, {}. {}",
             tr("Cached"),
-            library.cached_album_count,
-            tr("albums"),
-            library.cached_track_count,
-            tr("tracks"),
+            album_count_text(library.cached_album_count as u64),
+            track_count_text(library.cached_track_count as u64),
             library_sync_status_text(&library.sync_status)
         )
     } else {

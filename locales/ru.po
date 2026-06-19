@@ -18,1907 +18,123 @@ msgstr ""
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 "X-Generator: Weblate 2026.7.dev0\n"
 
-#: crates/rufin/src/i18n.rs:112
-#: crates/rufin/src/ui/preferences/root/general.rs:862
-msgid "System default"
-msgstr "Системные настройки по умолчанию"
-
-#: crates/rufin/src/ui/artist.rs:282
-#: crates/rufin/src/ui/root/lyrics_panel.rs:88
-msgid "Artist"
-msgstr "Исполнитель"
-
-#: crates/rufin/src/ui/artist.rs:306 crates/rufin/src/ui/random_play.rs:87
-#: crates/rufin/src/ui/root/album_detail_view.rs:211
-#: crates/rufin/src/ui/root/home_refresh.rs:71
-#: crates/rufin/src/ui/root/home_refresh.rs:257
-#: crates/rufin/src/ui/root/home_refresh.rs:429
-#: crates/rufin/src/ui/root/home_refresh.rs:597
-#: crates/rufin/src/ui/root/home_refresh.rs:682
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:214
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:377
-msgid "Play"
-msgstr "Воспроизвести"
-
-#: crates/rufin/src/ui/artist.rs:331
-#: crates/rufin/src/ui/root/album_detail_view.rs:229
-#: crates/rufin/src/ui/root/cover_startup.rs:746
-msgid "Next"
-msgstr "Следующий"
-
-#: crates/rufin/src/ui/artist.rs:341 crates/rufin/src/ui/cards.rs:706
-#: crates/rufin/src/ui/root/album_detail_view.rs:239
-#: crates/rufin/src/ui/root/home_refresh.rs:81
-#: crates/rufin/src/ui/root/home_refresh.rs:267
-#: crates/rufin/src/ui/root/home_refresh.rs:439
-msgid "Play Later"
-msgstr "Воспроизвести Позже"
-
-#: crates/rufin/src/ui/artist.rs:368
-msgid "Discography"
-msgstr "Дискография"
-
-#: crates/rufin/src/ui/artist.rs:376
-msgid "View all tracks"
-msgstr "Показать все треки"
-
-#: crates/rufin/src/ui/artist.rs:485 crates/rufin/src/ui/home.rs:237
-#: crates/rufin/src/ui/library/cards.rs:194
-#: crates/rufin/src/ui/library/cards.rs:206
-#: crates/rufin/src/ui/preferences/library.rs:225
-msgid "albums"
-msgstr "альбомы"
-
-#: crates/rufin/src/ui/artist.rs:487 crates/rufin/src/ui/home.rs:65
-#: crates/rufin/src/ui/home.rs:239 crates/rufin/src/ui/library/cards.rs:185
-#: crates/rufin/src/ui/library/cards.rs:195
-#: crates/rufin/src/ui/library/cards.rs:207
-#: crates/rufin/src/ui/library/cards.rs:214
-#: crates/rufin/src/ui/library/cards.rs:223
-#: crates/rufin/src/ui/library/cards.rs:518
-#: crates/rufin/src/ui/preferences/library.rs:227
-#: crates/rufin/src/ui/root/album_detail_view.rs:92
-#: crates/rufin/src/ui/root/genre_detail_view.rs:33
-#: crates/rufin/src/ui/root/home_refresh.rs:975
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:599
-msgid "tracks"
-msgstr "треки"
-
-#: crates/rufin/src/ui/cards.rs:217
-msgid "Play album"
-msgstr "Воспроизвести альбом"
-
-#: crates/rufin/src/ui/cards.rs:346
-msgid "Play track"
-msgstr "Воспроизвести трек"
-
-#: crates/rufin/src/ui/cards.rs:607 crates/rufin/src/ui/player.rs:775
-msgid "More actions"
-msgstr "Другие действия"
-
-#: crates/rufin/src/ui/cards.rs:693 crates/rufin/src/ui/queue.rs:1126
-#: crates/rufin/src/ui/random_play.rs:86
-#: crates/rufin/src/ui/root/home_refresh.rs:76
-#: crates/rufin/src/ui/root/home_refresh.rs:262
-#: crates/rufin/src/ui/root/home_refresh.rs:434
-msgid "Play Next"
-msgstr "Воспроизвести Следующий трек"
-
-#: crates/rufin/src/ui/chrome.rs:124 crates/rufin/src/ui/chrome.rs:132
-#: crates/rufin/src/ui/root/cover_startup.rs:721
-msgid "Main Menu"
-msgstr "Главное Меню"
-
-#: crates/rufin/src/ui/chrome.rs:142
-#: crates/rufin/src/ui/root/cover_startup.rs:731
-msgid "Toggle Fullscreen"
-msgstr "Переключить Полноэкранный Режим"
-
-#: crates/rufin/src/ui/chrome.rs:148
-#: crates/rufin/src/ui/preferences/root/mod.rs:59
-#: crates/rufin/src/ui/preferences/root/mod.rs:87
-#: crates/rufin/src/ui/preferences/root/mod.rs:91
-#: crates/rufin/src/ui/root/cover_startup.rs:723
-msgid "Preferences"
-msgstr "Настройки"
-
-#: crates/rufin/src/ui/chrome.rs:149
-#: crates/rufin/src/ui/root/cover_startup.rs:713
-#: crates/rufin/src/ui/root/cover_startup.rs:727
-msgid "Keyboard Shortcuts"
-msgstr "Сочетания Клавиш"
-
-#: crates/rufin/src/ui/chrome.rs:153
-msgid "About Rufin"
-msgstr "О программе Rufin"
-
-#: crates/rufin/src/ui/folders.rs:65
-msgid "Search current folder"
-msgstr "Поиск в текущей папке"
-
-#: crates/rufin/src/ui/folders.rs:350
-msgid "Artist / Album"
-msgstr "Исполнитель / Альбом"
-
-#: crates/rufin/src/ui/folders.rs:357
-#: crates/rufin/src/ui/local_access_mapping.rs:391
-msgid "Name"
-msgstr "Имя"
-
-#: crates/rufin/src/ui/folders.rs:382
-#: crates/rufin/src/ui/library/album_detail.rs:597
-#: crates/rufin/src/ui/queue.rs:860
-msgid "Duration"
-msgstr "Продолжительность"
-
-#: crates/rufin/src/ui/folders.rs:405
-msgid "Folder"
-msgstr "Папка"
-
-#: crates/rufin/src/ui/folders.rs:587
-msgid "No folder contents found."
-msgstr "Содержимое папки не найдено."
-
-#: crates/rufin/src/ui/folders.rs:600
-msgid "Folder browsing failed"
-msgstr "Не удалось выполнить просмотр папки"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:127
-#: crates/rufin/src/ui/fullscreen_player.rs:210
-msgid "Close fullscreen player"
-msgstr "Закрыть полноэкранный плеер"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:184
-#: crates/rufin/src/ui/settings_persistence.rs:480
-msgid "Queue"
-msgstr "Очередь"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:186
-#: crates/rufin/src/ui/fullscreen_player.rs:189
-#: crates/rufin/src/ui/right_panel.rs:57
-#: crates/rufin/src/ui/settings_persistence.rs:475
-#: crates/rufin/src/ui/settings_persistence.rs:513
-msgid "Lyrics"
-msgstr "Текст песни"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:200
-#: crates/rufin/src/ui/settings_persistence.rs:485
-msgid "Visualizer"
-msgstr "Визуализатор"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:203
-#: crates/rufin/src/ui/preferences/root/general.rs:635
-#: crates/rufin/src/ui/settings_persistence.rs:490
-msgid "Equalizer"
-msgstr "Эквалайзер"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:672
-#: crates/rufin/src/ui/preferences/root/general.rs:639
-msgid "Enable equalizer"
-msgstr "Включить эквалайзер"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:685
-#: crates/rufin/src/ui/preferences/root/general.rs:763
-msgid "Reset"
-msgstr "Сбросить"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:1642
-msgid "Nothing playing"
-msgstr "Сейчас ничего не воспроизводится"
-
-#: crates/rufin/src/ui/fullscreen_player.rs:1648
-msgid "Queue a track to begin"
-msgstr "Добавьте трек в очередь, чтобы начать воспроизведение"
-
-#: crates/rufin/src/ui/home.rs:273 crates/rufin/src/ui/home.rs:325
-msgid "Previous page"
-msgstr "Предыдущая страница"
-
-#: crates/rufin/src/ui/home.rs:274 crates/rufin/src/ui/home.rs:326
-msgid "Next page"
-msgstr "Следующая страница"
-
-#: crates/rufin/src/ui/home.rs:275 crates/rufin/src/ui/home.rs:327
-msgid "Refresh section"
-msgstr "Обновить раздел"
-
-#: crates/rufin/src/ui/library/cards.rs:567
-#: crates/rufin/src/ui/preferences/root/layout.rs:178
-#: crates/rufin/src/ui/preferences/root/mod.rs:779
-#: crates/rufin/src/ui/preferences/root/mod.rs:818
-msgid "Visible"
-msgstr "Видимый"
-
-#: crates/rufin/src/ui/library/cards.rs:567
-#: crates/rufin/src/ui/preferences/root/layout.rs:179
-#: crates/rufin/src/ui/preferences/root/layout.rs:252
-#: crates/rufin/src/ui/preferences/root/mod.rs:781
-#: crates/rufin/src/ui/preferences/root/mod.rs:820
-msgid "Hidden"
-msgstr "Скрыт"
-
-#: crates/rufin/src/ui/library/cards.rs:572
-#: crates/rufin/src/ui/library/collections.rs:886
-#: crates/rufin/src/ui/preferences/root/layout.rs:26
-#: crates/rufin/src/ui/preferences/root/mod.rs:826
-#: crates/rufin/src/ui/queue.rs:1009
-#: crates/rufin/src/ui/root/layout_rendering.rs:970
-msgid "Drag to reorder"
-msgstr "Перетащите, чтобы изменить порядок"
-
-#: crates/rufin/src/ui/library/cards.rs:584
-#: crates/rufin/src/ui/preferences/root/layout.rs:31
-#: crates/rufin/src/ui/preferences/root/mod.rs:835
-msgid "Move up"
-msgstr "Переместить вверх"
-
-#: crates/rufin/src/ui/library/cards.rs:591
-#: crates/rufin/src/ui/preferences/root/layout.rs:51
-#: crates/rufin/src/ui/preferences/root/mod.rs:841
-msgid "Move down"
-msgstr "Переместить вниз"
-
-#: crates/rufin/src/ui/library/columns.rs:683
-msgid "Image"
-msgstr "Изображение"
-
-#: crates/rufin/src/ui/library/route_shell.rs:95
-#: crates/rufin/src/ui/library/route_shell.rs:144
-#: crates/rufin/src/ui/library/routes.rs:87
-#: crates/rufin/src/ui/library/routes.rs:457
-#: crates/rufin/src/ui/library/routes.rs:701
-#: crates/rufin/src/ui/library/routes.rs:908
-#: crates/rufin/src/ui/library/routes.rs:1092
-#: crates/rufin/src/ui/library/routes.rs:1362
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:508
-msgid "Search"
-msgstr "Поиск"
-
-#: crates/rufin/src/ui/library/route_shell.rs:495
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:527
-msgid "Change sort order"
-msgstr "Изменить порядок сортировки"
-
-#: crates/rufin/src/ui/library/route_shell.rs:511
-#: crates/rufin/src/ui/library/route_shell.rs:577
-#: crates/rufin/src/ui/preferences/root/general.rs:798
-#: crates/rufin/src/ui/preferences/root/mod.rs:123
-msgid "Layout"
-msgstr "Макет"
-
-#: crates/rufin/src/ui/library/route_shell.rs:527
-#: crates/rufin/src/ui/library/route_shell.rs:564
-msgid "Customize display"
-msgstr "Настроить отображение"
-
-#: crates/rufin/src/ui/library/route_shell.rs:566
-msgid "Reset display"
-msgstr "Сбросить настройки отображения"
-
-#: crates/rufin/src/ui/library/route_shell.rs:578
-msgid "Choose the current page layout."
-msgstr "Выберите текущий макет страницы."
-
-#: crates/rufin/src/ui/library/route_shell.rs:580
-#: crates/rufin/src/ui/root/release_notes.rs:415
-msgid "View"
-msgstr "Просмотр"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:72
-msgid "Manage Server"
-msgstr "Управление Сервером"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:133
-msgid "Local Folder"
-msgstr "Локальная Папка"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:138
-msgid "No folder selected"
-msgstr "Папка не выбрана"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:141
-#: crates/rufin/src/ui/login.rs:206
-msgid "Choose"
-msgstr "Выбрать"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:147
-msgid "Server Prefix"
-msgstr "Префикс Сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:153
-msgid "Local Prefix"
-msgstr "Префикс для Локального Источника"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:161
-#: crates/rufin/src/ui/local_access_mapping.rs:681
-msgid "No cached server path yet"
-msgstr "Пока нет кэшированных путей к серверу"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:163
-msgid "Server Sample"
-msgstr "Пример Сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:169
-msgid "Mapped Local Path"
-msgstr "Сопоставленный Локальный Путь"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:180
-msgid "Local Playback Access"
-msgstr "Доступ к Локальному Воспроизведению"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:182
-#: crates/rufin/src/ui/login.rs:197
-msgid "Local Library"
-msgstr "Локальная Библиотека"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:185
-msgid "Optionally map server tracks to files on this computer"
-msgstr ""
-"При желании можно сопоставить треки на сервере с файлами на этом компьютере"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:187
-msgid "Choose the folder to scan and play directly from this computer"
-msgstr ""
-"Выберите папку для сканирования и воспроизведения файлов непосредственно с "
-"этого компьютера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:195
-msgid "Local playback mapping configured"
-msgstr "Настройка сопоставления для локального воспроизведения выполнена"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:197
-msgid "Map server tracks to local files"
-msgstr "Сопоставить треки с сервера с локальными файлами"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:200
-msgid "Local Playback Mapping"
-msgstr "Сопоставление Локального Воспроизведения"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:228
-msgid "Clear Mapping"
-msgstr "Удалить Соответствия"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:230
-msgid "Save Mapping"
-msgstr "Сохранить Сопоставления"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:332
-#: crates/rufin/src/ui/local_access_mapping.rs:742
-msgid "Choose a local music folder"
-msgstr "Выбрать локальную папку с музыкой"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:341
-msgid "Enter a local prefix."
-msgstr "Введите локальный префикс."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:382
-msgid "Server Settings"
-msgstr "Настройки Сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:397
-#: crates/rufin/src/ui/login.rs:160
-msgid "Server Address"
-msgstr "Адрес сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:404
-#: crates/rufin/src/ui/login.rs:167
-msgid "Username"
-msgstr "Имя пользователя"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:411
-#: crates/rufin/src/ui/login.rs:172
-msgid "Password"
-msgstr "Пароль"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:417
-#: crates/rufin/src/ui/login.rs:175
-msgid "Verify server certificate"
-msgstr "Проверить сертификат сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:418
-#: crates/rufin/src/ui/login.rs:176
-msgid "Turn off only for a server you control"
-msgstr "Отключайте только для сервера, которым вы управляете"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:424
-msgid "Save Server Settings"
-msgstr "Сохранить Настройки Сервера"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:465
-msgid "Server Actions"
-msgstr "Действия на сервере"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:469
-msgid "Use This Source"
-msgstr "Использовать Этот Источник"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:482
-msgid "Resync Library"
-msgstr "Синхронизировать библиотеку"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:492
-#: crates/rufin/src/ui/local_access_mapping.rs:543
-msgid "Clear Cached Library"
-msgstr "Очистить кэшированную библиотеку"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:501
-#: crates/rufin/src/ui/local_access_mapping.rs:576
-#: crates/rufin/src/ui/local_access_mapping.rs:584
-msgid "Forget Server"
-msgstr "Забыть сервер"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:526
-msgid "Not set"
-msgstr "Не задано"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:546
-msgid "This removes cached library metadata for"
-msgstr "Это удаляет кэшированные метаданные библиотеки для"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:550
-#: crates/rufin/src/ui/local_access_mapping.rs:583
-#: crates/rufin/src/ui/preferences/library.rs:169
-#: crates/rufin/src/ui/preferences/root/mod.rs:551
-#: crates/rufin/src/ui/root/home_refresh.rs:652
-#: crates/rufin/src/ui/root/home_refresh.rs:827
-#: crates/rufin/src/ui/root/layout_rendering.rs:1068
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:8
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:437
-#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
-msgid "Cancel"
-msgstr "Отменить"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:551
-msgid "Clear Cache"
-msgstr "Очистить Кэш"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:579
-msgid ""
-"This removes the server, cached library metadata, queue snapshot, and saved "
-"token for"
-msgstr ""
-"Это удаляет сервер, кэшированные метаданные библиотеки, снимок очереди и "
-"сохраненный токен для"
-
-#: crates/rufin/src/ui/local_access_mapping.rs:690
-#: crates/rufin/src/ui/local_access_mapping.rs:752
-msgid "Choose a local prefix."
-msgstr "Выбрать локальный префикс."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:702
-msgid "Server sample does not match the server prefix."
-msgstr "Пример сервера не соответствует префиксу сервера."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:730
-msgid "Enter a matching server prefix to map this path."
-msgstr "Введите соответствующий префикс сервера, чтобы привязать этот путь."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:746
-msgid "Save to rescan this local library."
-msgstr ""
-"Сохраните изменения, чтобы повторно просканировать эту локальную библиотеку."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:748
-msgid "Local library folder is saved."
-msgstr "Папка локальной библиотеки сохранена."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:755
-msgid "Choose an existing local prefix."
-msgstr "Выбрать существующий локальный префикс."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:759
-msgid "Save to apply this mapping after the next sync."
-msgstr ""
-"Сохраните, чтобы применить эти настройки после следующей синхронизации."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:761
-msgid "No cached tracks yet. Sync the server to preview matches."
-msgstr ""
-"Пока нет кэшированных треков. Синхронизируйте сервер, чтобы просмотреть "
-"результаты поиска."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:766
-msgid "Unsaved changes."
-msgstr "Несохраненные изменения."
-
-#: crates/rufin/src/ui/local_access_mapping.rs:768
-msgid "Saved mapping."
-msgstr "Сохраненные сопоставления."
-
-#: crates/rufin/src/ui/login.rs:51
-#: crates/rufin/src/ui/preferences/library.rs:89
-#: crates/rufin/src/ui/source_selector.rs:311
-msgid "Add Server"
-msgstr "Добавить Сервер"
-
-#: crates/rufin/src/ui/login.rs:127
-#: crates/rufin/src/ui/root/route_rendering.rs:51
-msgid "Connect to Music Server"
-msgstr "Подключиться к Музыкальному Серверу"
-
-#: crates/rufin/src/ui/login.rs:132
-msgid ""
-"Choose a provider, pick a discovered server, or enter the address manually"
-msgstr ""
-"Выберите провайдера, выберите один из найденных серверов или введите адрес "
-"вручную"
-
-#: crates/rufin/src/ui/login.rs:151
-msgid "Provider"
-msgstr "Провайдер"
-
-#: crates/rufin/src/ui/login.rs:184
-#: crates/rufin/src/ui/preferences/root/mod.rs:378
-msgid "Server"
-msgstr "Сервер"
-
-#: crates/rufin/src/ui/login.rs:199
-msgid "Choose one or more folders to scan and play directly from this computer"
-msgstr ""
-"Выберите одну или несколько папок для сканирования и воспроизведения файлов "
-"непосредственно с этого компьютера"
-
-#: crates/rufin/src/ui/login.rs:203
-msgid "Music Folders"
-msgstr "Папки с музыкой"
-
-#: crates/rufin/src/ui/login.rs:212
-msgid "Add Folder"
-msgstr "Добавить Папку"
-
-#: crates/rufin/src/ui/login.rs:213
-msgid "Add another folder to the Local source"
-msgstr "Добавить еще одну папку в локальный источник"
-
-#: crates/rufin/src/ui/login.rs:215
-#: crates/rufin/src/ui/root/home_refresh.rs:814
-msgid "Add"
-msgstr "Добавить"
-
-#: crates/rufin/src/ui/login.rs:243
-#: crates/rufin/src/ui/preferences/root/general.rs:110
-#: crates/rufin/src/ui/preferences/root/general.rs:199
-msgid "Connect"
-msgstr "Подключить"
-
-#: crates/rufin/src/ui/login.rs:277
-msgid "Choose at least one local music folder"
-msgstr "Выберите хотя бы одну локальную папку с музыкой"
-
-#: crates/rufin/src/ui/login.rs:281
-#: crates/rufin/src/ui/root/startup_reveal.rs:498
-msgid "Caching local library…"
-msgstr "Кэширование локальной библиотеки…"
-
-#: crates/rufin/src/ui/login.rs:287
-msgid "Enter a server address, username, and password"
-msgstr "Введите адрес сервера, имя пользователя и пароль"
-
-#: crates/rufin/src/ui/login.rs:291
-msgid "Connecting to music server…"
-msgstr "Подключение к музыкальному серверу…"
-
-#: crates/rufin/src/ui/login.rs:508
-msgid "Caching Library"
-msgstr "Кэшированная библиотека"
-
-#: crates/rufin/src/ui/login.rs:559
-msgid "Found Servers"
-msgstr "Найденные серверы"
-
-#: crates/rufin/src/ui/login.rs:565
-msgid "Searching Local Network"
-msgstr "Поиск в локальной сети"
-
-#: crates/rufin/src/ui/login.rs:567
-msgid "No Servers Found"
-msgstr "Серверы не найдены"
-
-#: crates/rufin/src/ui/login.rs:598
-#: crates/rufin/src/ui/root/cover_startup.rs:132
-#: crates/rufin/src/ui/root/lyrics_panel.rs:251
-#: crates/rufin/src/ui/root/lyrics_panel.rs:274
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:100
-msgid "Searching…"
-msgstr "Поиск…"
-
-#: crates/rufin/src/ui/login.rs:600
-msgid "Search Again"
-msgstr "Повторить поиск"
-
-#: crates/rufin/src/ui/login.rs:619
-msgid "Searching will start automatically"
-msgstr "Поиск начнётся автоматически"
-
-#: crates/rufin/src/ui/login.rs:621
-msgid "Searching for Jellyfin servers on the local network…"
-msgstr "Поиск серверов Jellyfin в локальной сети…"
-
-#: crates/rufin/src/ui/login.rs:624
-msgid "No Jellyfin servers found. Enter the address manually or search again"
-msgstr ""
-"Не найдено серверов Jellyfin. Введите адрес вручную или выполните повторный "
-"поиск"
-
-#: crates/rufin/src/ui/login.rs:629
-#, rust-format
-msgid "Found {count} Jellyfin server"
-msgid_plural "Found {count} Jellyfin servers"
-msgstr[0] "Найден {count} сервер Jellyfin"
-msgstr[1] "Найдено {count} сервера Jellyfin"
-msgstr[2] "Найдено {count} серверов Jellyfin"
-
-#: crates/rufin/src/ui/login.rs:636
-#, rust-format
-msgid "Server discovery failed: {error}"
-msgstr "Не удалось выполнить поиск сервера: {error}"
-
-#: crates/rufin/src/ui/login.rs:826
-msgid "No folders selected"
-msgstr "Папки не выбраны"
-
-#: crates/rufin/src/ui/login.rs:828
-msgid "folders selected"
-msgstr "папок выбрано"
-
-#: crates/rufin/src/ui/login.rs:873 crates/rufin/src/ui/login.rs:911
-#: crates/rufin/src/ui/preferences/library.rs:142
-msgid "Select Music Folder"
-msgstr "Выбрать папку с музыкой"
-
-#: crates/rufin/src/ui/preferences/library.rs:16
-#: crates/rufin/src/ui/preferences/library.rs:27
-#: crates/rufin/src/ui/preferences/root/mod.rs:141
-msgid "Library"
-msgstr "Библиотека"
-
-#: crates/rufin/src/ui/preferences/library.rs:34
-msgid "Servers"
-msgstr "Серверы"
-
-#: crates/rufin/src/ui/preferences/library.rs:36
-msgid "Configure saved music servers and local playback mappings."
-msgstr ""
-"Настройте сохраненные музыкальные серверы и параметры локального "
-"воспроизведения."
-
-#: crates/rufin/src/ui/preferences/library.rs:42
-#: crates/rufin/src/ui/source_selector.rs:231
-msgid "No servers configured"
-msgstr "Не настроено ни одного сервера"
-
-#: crates/rufin/src/ui/preferences/library.rs:44
-msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
-msgstr "Добавьте сервер для использования Jellyfin, Subsonic или OpenSubsonic."
-
-#: crates/rufin/src/ui/preferences/library.rs:99
-msgid "Local Folders"
-msgstr "Локальные Папки"
-
-#: crates/rufin/src/ui/preferences/library.rs:101
-msgid ""
-"These folders are combined into the Local source and shown through folder "
-"browsing."
-msgstr ""
-"Эти папки объединены в локальный источник и отображаются при просмотре "
-"содержимого папок."
-
-#: crates/rufin/src/ui/preferences/library.rs:106
-#: crates/rufin/src/ui/source_selector.rs:329
-msgid "No local folders configured"
-msgstr "Не настроено ни одной локальной папки"
-
-#: crates/rufin/src/ui/preferences/library.rs:107
-msgid "Add folders to use the Local source."
-msgstr "Добавьте папки, чтобы использовать локальный источник."
-
-#: crates/rufin/src/ui/preferences/library.rs:118
-#: crates/rufin/src/ui/preferences/library.rs:170
-#: crates/rufin/src/ui/root/layout_rendering.rs:1069
-msgid "Remove"
-msgstr "Удалить"
-
-#: crates/rufin/src/ui/preferences/library.rs:134
-msgid "Add Local Folder"
-msgstr "Добавить Локальную Папку"
-
-#: crates/rufin/src/ui/preferences/library.rs:162
-msgid "Remove Local Folder"
-msgstr "Удалить Локальную Папку"
-
-#: crates/rufin/src/ui/preferences/library.rs:165
-msgid "This removes the folder from the Local source."
-msgstr "Это удаляет папку из локального источника."
-
-#: crates/rufin/src/ui/preferences/library.rs:205
-#: crates/rufin/src/ui/source_selector.rs:343
-msgid "All Music"
-msgstr "Вся Музыка"
-
-#: crates/rufin/src/ui/preferences/library.rs:207
-msgid "Saved per server"
-msgstr "Сохранено для каждого сервера"
-
-#: crates/rufin/src/ui/preferences/library.rs:215
-msgid "User"
-msgstr "Пользователь"
-
-#: crates/rufin/src/ui/preferences/library.rs:223
-msgid "Cached"
-msgstr "Кэшировано"
-
-#: crates/rufin/src/ui/preferences/library.rs:237
-msgid "Music Folder"
-msgstr "Папка с музыкой"
-
-#: crates/rufin/src/ui/preferences/library.rs:250
-#: crates/rufin/src/ui/root/cover_startup.rs:241
-msgid "Cached library ready"
-msgstr "Кэшированная библиотека готова"
-
-#: crates/rufin/src/ui/preferences/library.rs:251
-#: crates/rufin/src/ui/root/cover_startup.rs:242
-msgid "Library sync complete"
-msgstr "Синхронизация библиотеки завершена"
-
-#: crates/rufin/src/ui/preferences/library.rs:258
-#: crates/rufin/src/ui/preferences/library.rs:261
-msgid "No local playback mapping"
-msgstr "Нет сопоставлений для локального воспроизведения"
-
-#: crates/rufin/src/ui/preferences/library.rs:265
-msgid "Local mapping saved. Sync to preview matches."
-msgstr ""
-"Локальное сопоставление сохранено. Синхронизация для предварительного "
-"просмотра соответствий."
-
-#: crates/rufin/src/ui/preferences/library.rs:269
-msgid "Local mapping"
-msgstr "Локальное сопоставление"
-
-#: crates/rufin/src/ui/preferences/library.rs:288
-#: crates/rufin/src/ui/source_selector.rs:193
-msgid "Jellyfin"
-msgstr "Jellyfin"
-
-#: crates/rufin/src/ui/preferences/library.rs:289
-#: crates/rufin/src/ui/source_selector.rs:194
-msgid "Navidrome"
-msgstr "Navidrome"
-
-#: crates/rufin/src/ui/preferences/library.rs:290
-#: crates/rufin/src/ui/source_selector.rs:195
-msgid "Subsonic / OpenSubsonic"
-msgstr "Subsonic / OpenSubsonic"
-
-#: crates/rufin/src/ui/preferences/library.rs:291
-#: crates/rufin/src/ui/source_selector.rs:196
-#: crates/rufin/src/ui/source_selector.rs:259
-msgid "Local"
-msgstr "Локальный источник"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:11
-#: crates/rufin/src/ui/preferences/root/mod.rs:129
-msgid "Scrobbling"
-msgstr "Отправка данных о прослушивании"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:24
-#: crates/rufin/src/ui/preferences/root/mod.rs:368
-#: crates/rufin/src/ui/preferences/root/mod.rs:443
-msgid "Last.fm"
-msgstr "Last.fm"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:27
-msgid "Last.fm scrobbling"
-msgstr "Отправка данных в Last.fm"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:43
-msgid "API keys"
-msgstr "Ключи API"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:45
-msgid "If you do not have API keys, create them"
-msgstr "Если у вас нет ключей API, создайте их"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:47
-#: crates/rufin/src/ui/preferences/root/general.rs:277
-msgid "here"
-msgstr "здесь"
-
 #: crates/rufin/src/ui/preferences/root/general.rs:48
 msgid ". You only need to fill email and an application name parts"
 msgstr ""
 ". Вам нужно заполнить только поля с адресом электронной почты и названием "
 "приложения"
 
+#: crates/rufin/src/ui/preferences/root/general.rs:577
+msgid "128 kbps"
+msgstr "128 кбит/с"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:576
+msgid "192 kbps"
+msgstr "192 кбит/с"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:575
+msgid "256 kbps"
+msgstr "256 кбит/с"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:574
+msgid "320 kbps"
+msgstr "320 кбит/с"
+
 #: crates/rufin/src/ui/preferences/root/general.rs:55
 msgid "API key"
 msgstr "Ключ API"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:83
-msgid "Shared secret"
-msgstr "Общий секретный ключ"
+#: crates/rufin/src/ui/preferences/root/general.rs:43
+msgid "API keys"
+msgstr "Ключи API"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:106
-#: crates/rufin/src/ui/preferences/root/general.rs:195
-msgid "Connection"
-msgstr "Соединение"
+#: crates/rufin/src/ui/chrome.rs:137
+msgid "About Rufin"
+msgstr "О программе Rufin"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:112
-#: crates/rufin/src/ui/preferences/root/general.rs:138
-#: crates/rufin/src/ui/preferences/root/general.rs:201
-#: crates/rufin/src/ui/preferences/root/general.rs:219
-msgid "Reconnect"
-msgstr "Повторное подключение"
+#: crates/rufin/src/ui/preferences/root/mod.rs:450
+msgid "Activity links and MusicBrainz covers"
+msgstr "Ссылки на активность и обложки с сайта MusicBrainz"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:126
-msgid "Enter API credentials first"
-msgstr "Сначала введите данные для доступа к API"
+#: crates/rufin/src/ui/login.rs:216
+#: crates/rufin/src/ui/root/home_refresh.rs:778
+msgid "Add"
+msgstr "Добавить"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:130
-msgid "Opening Last.fm authorization…"
-msgstr "Запуск процесса авторизации в Last.fm…"
+#: crates/rufin/src/ui/login.rs:213
+msgid "Add Folder"
+msgstr "Добавить Папку"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:150
-#: crates/rufin/src/ui/preferences/root/general.rs:231
-#: crates/rufin/src/ui/preferences/root/general.rs:306
-msgid "Now playing updates"
-msgstr "Обновление информации о текущем воспроизводимом треке"
+#: crates/rufin/src/ui/random_play.rs:89
+msgid "Add Last"
+msgstr "Добавить последний"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:170
-msgid "Libre.fm"
-msgstr "Libre.fm"
+#: crates/rufin/src/ui/preferences/library.rs:135
+msgid "Add Local Folder"
+msgstr "Добавить Локальную Папку"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:172
-msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
-msgstr ""
-"Если страница не загружается, значит, Libre.fm блокирует ваш диапазон IP-"
-"адресов или VPN"
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:386
+msgid "Add Rule"
+msgstr "Добавить правило"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:176
-msgid "Libre.fm scrobbling"
-msgstr "Отправка данных в Libre.fm"
+#: crates/rufin/src/ui/login.rs:52
+#: crates/rufin/src/ui/preferences/library.rs:90
+#: crates/rufin/src/ui/source_selector.rs:311
+msgid "Add Server"
+msgstr "Добавить Сервер"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:211
-msgid "Opening Libre.fm authorization…"
-msgstr "Запуск процесса авторизации в Libre.fm…"
+#: crates/rufin/src/ui/preferences/library.rs:44
+msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
+msgstr "Добавьте сервер для использования Jellyfin, Subsonic или OpenSubsonic."
 
-#: crates/rufin/src/ui/preferences/root/general.rs:251
-msgid "ListenBrainz"
-msgstr "ListenBrainz"
+#: crates/rufin/src/ui/login.rs:214
+msgid "Add another folder to the Local source"
+msgstr "Добавить еще одну папку в локальный источник"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:254
-msgid "ListenBrainz scrobbling"
-msgstr "Отправка данных о прослушивании в ListenBrainz"
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:384
+msgid "Add current"
+msgstr "Добавить текущий"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:273
-msgid "Get token"
-msgstr "Получить токен"
+#: crates/rufin/src/ui/preferences/library.rs:108
+msgid "Add folders to use the Local source."
+msgstr "Добавьте папки, чтобы использовать локальный источник."
 
-#: crates/rufin/src/ui/preferences/root/general.rs:275
-msgid "Find your ListenBrainz user token"
-msgstr "Найдите свой токен пользователя ListenBrainz"
+#: crates/rufin/src/ui/queue.rs:484
+msgid "Add music to start a queue."
+msgstr "Добавьте музыку, чтобы начать создавать очередь воспроизведения."
 
-#: crates/rufin/src/ui/preferences/root/general.rs:285
-msgid "User token"
-msgstr "Токен пользователя"
+#: crates/rufin/src/ui/queue.rs:1154
+#: crates/rufin/src/ui/root/home_refresh.rs:106
+#: crates/rufin/src/ui/root/home_refresh.rs:300
+#: crates/rufin/src/ui/root/home_refresh.rs:465
+msgid "Add to Favorites"
+msgstr "Добавить в Избранное"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:331
-msgid "Not connected"
-msgstr "Не подключено"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:339
-msgid "Connected"
-msgstr "Подключено"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:341
-#, rust-format
-msgid "Connected as {username}"
-msgstr "Вы вошли как {username}"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:407
-msgid "Timed out waiting for Last.fm authorization."
-msgstr "Время ожидания авторизации в Last.fm истекло."
-
-#: crates/rufin/src/ui/preferences/root/general.rs:440
-msgid "Timed out waiting for Libre.fm authorization"
-msgstr "Время ожидания авторизации в Libre.fm истекло"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:444
-#: crates/rufin/src/ui/preferences/root/mod.rs:135
-#: crates/rufin/src/ui/root/cover_startup.rs:736
-msgid "Playback"
-msgstr "Воспроизведение"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:452
-msgid "Queue and transitions"
-msgstr "Очередь и переходы"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:454
-#: crates/rufin/src/ui/preferences/root/layout.rs:254
-msgid "Default"
-msgstr "По умолчанию"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:454
-msgid "Gapless"
-msgstr "Бесшовное воспроизведение"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:454
-msgid "Crossfade"
-msgstr "Плавный переход между треками"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:461
-msgid "Transition mode"
-msgstr "Режим перехода"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:474
-msgid "Crossfade duration"
-msgstr "Длительность плавного перехода между треками"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:475
-msgid "Seconds"
-msgstr "Секунды"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:495
-msgid "Skip same-album crossfade"
-msgstr "Пропускать плавный переход между треками одного альбома"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:496
-msgid "Keep album transitions gapless when possible"
-msgstr "По возможности обеспечивать плавный переход между треками альбома"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:508
-msgid "Audio fade on play/pause"
-msgstr "Плавное затухание звука при воспроизведении/паузе"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:509
-msgid "Fade audio when playback is paused or resumed"
-msgstr ""
-"Плавное затухание звука при приостановке или возобновлении воспроизведения"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:521
-msgid "Auto DJ refill threshold"
-msgstr "Порог автоматического пополнения плейлиста \"Авто-DJ\""
+#: crates/rufin/src/ui/queue.rs:1139
+#: crates/rufin/src/ui/root/home_refresh.rs:285
+#: crates/rufin/src/ui/root/home_refresh.rs:450
+#: crates/rufin/src/ui/root/home_refresh.rs:742
+#: crates/rufin/src/ui/root/home_refresh.rs:747
+#: crates/rufin/src/ui/root/home_refresh.rs:91
+msgid "Add to Playlist"
+msgstr "Добавить в плейлист"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:522
 msgid "Add tracks when fewer than this many remain"
 msgstr ""
 "Добавлять треки, когда их количество опустится ниже указанного значения"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:552
-msgid "Audio"
-msgstr "Аудио"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:553
-msgid "Off"
-msgstr "Выкл."
-
-#: crates/rufin/src/ui/preferences/root/general.rs:553
-msgid "Track"
-msgstr "Трек"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:553
-#: crates/rufin/src/ui/queue.rs:821
-msgid "Album"
-msgstr "Альбом"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:560
-msgid "ReplayGain"
-msgstr "Нормализация громкости"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:573
-msgid "Original"
-msgstr "Оригинал"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:574
-msgid "320 kbps"
-msgstr "320 кбит/с"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:575
-msgid "256 kbps"
-msgstr "256 кбит/с"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:576
-msgid "192 kbps"
-msgstr "192 кбит/с"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:577
-msgid "128 kbps"
-msgstr "128 кбит/с"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:585
-msgid "Stream quality"
-msgstr "Качество потока"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:598
-msgid "Waveform seekbar"
-msgstr "Индикатор прогресса воспроизведения в виде волновой формы"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:599
-msgid "Generate and cache waveforms for the current track"
-msgstr "Создать и сохранить в кэше визуализацию текущего трека"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:615
-msgid "Audio output"
-msgstr "Аудиовыход"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:663
-msgid "Preset"
-msgstr "Предустановка"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:760
-msgid "Reset equalizer"
-msgstr "Сбросить настройки эквалайзера"
-
-#: crates/rufin/src/ui/preferences/root/general.rs:761
-msgid "Restore selected preset to default bands."
-msgstr ""
-"Восстановить выбранный пресет до значений по умолчанию для каждой полосы "
-"частот."
-
-#: crates/rufin/src/ui/preferences/root/general.rs:806
-msgid "Home Blocks"
-msgstr "Основные блоки"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:174
-msgid "Position"
-msgstr "Позиция"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:177
-msgid "Hidden server section"
-msgstr "Скрытый раздел сервера"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:230
-msgid "Full"
-msgstr "Полный"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:230
-#: crates/rufin/src/ui/preferences/root/layout.rs:253
-msgid "Compact"
-msgstr "Компактный"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:255
-msgid "Comfortable"
-msgstr "Удобный"
-
-#: crates/rufin/src/ui/preferences/root/layout.rs:256
-msgid "Spacious"
-msgstr "Просторный"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:117
-#: crates/rufin/src/ui/preferences/root/mod.rs:152
-#: crates/rufin/src/ui/root/cover_startup.rs:715
-msgid "General"
-msgstr "Общие настройки"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:159
-#: crates/rufin/src/ui/preferences/root/mod.rs:168
-msgid "Language"
-msgstr "Язык"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:197
-msgid "App window"
-msgstr "Окно приложения"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:200
-msgid "Show tray icon"
-msgstr "Показывать значок в системном трее"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:204
-msgid "Exit to tray"
-msgstr "Свернуть в трей"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:208
-msgid "Start minimized"
-msgstr "Запускать в свернутом виде"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:212
-msgid "Type to search"
-msgstr "Введите текст для поиска"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:250
-msgid "Notifications"
-msgstr "Уведомления"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:253
-msgid "Control notifications"
-msgstr "Управление уведомлениями"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:263
-msgid "Now playing notifications"
-msgstr "Уведомления о текущем воспроизведении"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:273
-msgid "Release notifications"
-msgstr "Уведомления о новых версиях"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:284
-msgid "Metadata"
-msgstr "Метаданные"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:287
-msgid "Prefer server playlist covers"
-msgstr "Предпочитать обложки плейлистов, хранящиеся на сервере"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:296
-msgid "Prefer server lyrics"
-msgstr "Предпочитать тексты песен с сервера"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:306
-msgid "External cover lookup"
-msgstr "Поиск обложки в интернете"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:315
-msgid "External lyric lookup"
-msgstr "Поиск текста песни в интернете"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:360
-msgid "External site links"
-msgstr "Ссылки на внешние сайты"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:363
-msgid "Show external site links"
-msgstr "Показывать ссылки на внешние сайты"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:364
-msgid "Show external service icons on album and artist pages"
-msgstr ""
-"Отображать значки внешних сервисов на страницах альбомов и исполнителей"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:373
-#: crates/rufin/src/ui/preferences/root/mod.rs:444
-msgid "MusicBrainz"
-msgstr "MusicBrainz"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:412
-msgid "Discord"
-msgstr "Discord"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:415
-msgid "Rich presence"
-msgstr "Расширенная информация о текущем воспроизведении"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:424
-msgid "Application name"
-msgstr "Название приложения"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:424
-msgid "Song title"
-msgstr "Название песни"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:424
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:940
-msgid "Artist name"
-msgstr "Имя исполнителя"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:431
-msgid "Status display"
-msgstr "Отображение статуса"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:442
-msgid "None"
-msgstr "Нет"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:445
-msgid "MusicBrainz + Last.fm"
-msgstr "MusicBrainz и Last.fm"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:450
-msgid "Activity links and MusicBrainz covers"
-msgstr "Ссылки на активность и обложки с сайта MusicBrainz"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:461
-msgid "Show paused status"
-msgstr "Показывать статус \"на паузе\""
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:471
-msgid "Use listening activity"
-msgstr "Использовать данные о прослушиваниях"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:472
-msgid "Set the Discord activity type to Listening"
-msgstr "Установите тип активности в Discord на \"Прослушивание\""
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:482
-msgid "Show playback icon"
-msgstr "Показывать значок воспроизведения"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:492
-msgid "Last.fm API key"
-msgstr "Ключ API для Last.fm"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:505
-msgid "Privacy and Security"
-msgstr "Конфиденциальность и безопасность"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:508
-msgid "Private mode"
-msgstr "Приватный режим"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:517
-msgid "Legacy"
-msgstr "Устаревшая версия"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:517
-msgid "Secure storage"
-msgstr "Безопасное хранилище"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:523
-msgid "Secret storage"
-msgstr "Скрытое хранилище"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:546
-msgid "Change Secret Storage"
-msgstr "Изменить секретное хранилище"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:548
-msgid ""
-"Changing secret backend removes legacy config secrets and signs you out "
-"everywhere, including API secrets. App cache is not affected."
-msgstr ""
-"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
-"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
-"приложения не затрагивается."
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:552
-msgid "Change"
-msgstr "Изменить"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:597
-msgid "Interface"
-msgstr "Интерфейс"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:601
-msgid "Default left sidebar"
-msgstr "Левая боковая панель по умолчанию"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:619
-msgid "Default right sidebar"
-msgstr "Правая боковая панель по умолчанию"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:641
-msgid "Show Lyrics Panel"
-msgstr "Показать панель с текстом песни"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:651
-msgid "Use different layout below a threshold width"
-msgstr ""
-"Использовать другую схему расположения элементов, если ширина экрана меньше "
-"заданного значения"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:665
-msgid "Narrow layout threshold"
-msgstr "Порог для узкой компоновки"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:690
-msgid "Narrow left sidebar"
-msgstr "Узкая левая боковая панель"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:709
-msgid "Narrow right sidebar"
-msgstr "Узкая правая боковая панель"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:754
-msgid "Sidebar Items"
-msgstr "Элементы боковой панели"
-
-#: crates/rufin/src/ui/preferences/root/mod.rs:777
-msgid "Server selector"
-msgstr "Выбор сервера"
-
-#: crates/rufin/src/ui/queue.rs:482
-msgid "No queue items match the search."
-msgstr "В очереди нет элементов, соответствующих запросу поиска."
-
-#: crates/rufin/src/ui/queue.rs:484
-msgid "Add music to start a queue."
-msgstr "Добавьте музыку, чтобы начать создавать очередь воспроизведения."
-
-#: crates/rufin/src/ui/queue.rs:788 crates/rufin/src/ui/queue.rs:809
-#: crates/rufin/src/ui/root/layout_rendering.rs:962
-msgid "Title"
-msgstr "Название"
-
-#: crates/rufin/src/ui/queue.rs:794 crates/rufin/src/ui/queue.rs:829
-msgid "Year"
-msgstr "Год"
-
-#: crates/rufin/src/ui/queue.rs:1116
-msgid "Remove from Queue"
-msgstr "Удалить из Очереди"
-
-#: crates/rufin/src/ui/queue.rs:1121
-msgid "Play Now"
-msgstr "Воспроизвести Сейчас"
-
-#: crates/rufin/src/ui/queue.rs:1140
-#: crates/rufin/src/ui/root/home_refresh.rs:92
-#: crates/rufin/src/ui/root/home_refresh.rs:286
-#: crates/rufin/src/ui/root/home_refresh.rs:451
-#: crates/rufin/src/ui/root/home_refresh.rs:778
-#: crates/rufin/src/ui/root/home_refresh.rs:783
-msgid "Add to Playlist"
-msgstr "Добавить в плейлист"
-
-#: crates/rufin/src/ui/queue.rs:1149
-#: crates/rufin/src/ui/root/home_refresh.rs:101
-#: crates/rufin/src/ui/root/home_refresh.rs:295
-#: crates/rufin/src/ui/root/home_refresh.rs:460
-msgid "Remove from Favorites"
-msgstr "Удалить из Избранных"
-
-#: crates/rufin/src/ui/queue.rs:1155
-#: crates/rufin/src/ui/root/home_refresh.rs:107
-#: crates/rufin/src/ui/root/home_refresh.rs:301
-#: crates/rufin/src/ui/root/home_refresh.rs:466
-msgid "Add to Favorites"
-msgstr "Добавить в Избранное"
-
-#: crates/rufin/src/ui/queue.rs:1163
-#: crates/rufin/src/ui/root/home_refresh.rs:115
-#: crates/rufin/src/ui/root/home_refresh.rs:309
-#: crates/rufin/src/ui/root/home_refresh.rs:472
-msgid "Go to Artist"
-msgstr "Перейти к исполнителю"
-
-#: crates/rufin/src/ui/queue.rs:1171
-#: crates/rufin/src/ui/root/home_refresh.rs:121
-#: crates/rufin/src/ui/root/home_refresh.rs:315
-msgid "Go to Album"
-msgstr "Перейти к альбому"
-
-#: crates/rufin/src/ui/random_play.rs:45
-msgid "Play random"
-msgstr "Воспроизвести в случайном порядке"
-
-#: crates/rufin/src/ui/random_play.rs:70
-msgid "Number of songs"
-msgstr "Количество песен"
-
-#: crates/rufin/src/ui/random_play.rs:72
-msgid "Minimum year"
-msgstr "Минимальный год"
-
-#: crates/rufin/src/ui/random_play.rs:77
-msgid "Maximum year"
-msgstr "Максимальный год"
-
-#: crates/rufin/src/ui/random_play.rs:81
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:938
-msgid "Genre"
-msgstr "Жанр"
-
-#: crates/rufin/src/ui/random_play.rs:82
-msgid "Play filter"
-msgstr "Воспроизвести фильтр"
-
-#: crates/rufin/src/ui/random_play.rs:89
-msgid "Add Last"
-msgstr "Добавить последний"
-
-#: crates/rufin/src/ui/random_play.rs:146
-msgid "Any genre"
-msgstr "Любой жанр"
-
-#: crates/rufin/src/ui/random_play.rs:157
-msgid "All tracks"
-msgstr "Все треки"
-
-#: crates/rufin/src/ui/random_play.rs:158
-msgid "Only unplayed tracks"
-msgstr "Только непрослушанные треки"
-
-#: crates/rufin/src/ui/random_play.rs:159
-msgid "Only played tracks"
-msgstr "Только проигранные треки"
-
-#: crates/rufin/src/ui/right_panel.rs:39
-#: crates/rufin/src/ui/settings_persistence.rs:506
-msgid "Search queue"
-msgstr "Поиск в очереди воспроизведения"
-
-#: crates/rufin/src/ui/right_panel.rs:45
-msgid "Clear queue"
-msgstr "Очистить очередь"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:128
-msgid "Enter an artist or song."
-msgstr "Введите имя исполнителя или название песни."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:176
-#, rust-format
-msgid "Checking {provider} server…"
-msgstr "Проверка сервера {provider}…"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:181
-msgid "Server settings saved."
-msgstr "Настройки сервера сохранены."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:183
-msgid "Server settings saved. Resyncing library…"
-msgstr ""
-"Настройки сервера сохранены. Выполняется повторная синхронизация библиотеки…"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:185
-msgid "No changes to save."
-msgstr "Нет изменений для сохранения."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:186
-msgid "Sync already running."
-msgstr "Синхронизация уже выполняется."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:229
-#, rust-format
-msgid "Syncing {provider} library…"
-msgstr "Синхронизация библиотеки {provider}…"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:232
-msgid "Caching library… This may take some time."
-msgstr "Кэширование библиотеки… Это может занять некоторое время."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:235
-msgid "Caching local library… This may take some time."
-msgstr "Кэширование локальной библиотеки… Это может занять некоторое время."
-
-#: crates/rufin/src/ui/root/cover_startup.rs:238
-msgid "Caching library artwork…"
-msgstr "Кэширование обложек альбомов…"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:428
-msgid "Synced lyrics"
-msgstr "Синхронизированные тексты песен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:434
-msgid "Plain lyrics"
-msgstr "Обычный текст песен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:436
-msgid "Remote lyrics"
-msgstr "Удалённые тексты песен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:438
-msgid "No lyrics"
-msgstr "Текст песни отсутствует"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:654
-msgid "Shuffle on"
-msgstr "Включить воспроизведение в случайном порядке"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:656
-msgid "Shuffle off"
-msgstr "Перемешивание выкл"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:663
-msgid "Repeat all"
-msgstr "Повторять все"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:664
-msgid "Repeat one"
-msgstr "Повторять один"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:665
-msgid "Repeat off"
-msgstr "Повтор выключен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:675
-msgid "Auto DJ on"
-msgstr "Авто-DJ включен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:677
-msgid "Auto DJ off"
-msgstr "Авто-DJ выключен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:685
-msgid "Muted"
-msgstr "Звук выключен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:685
-msgid "Unmuted"
-msgstr "Звук включен"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:716
-msgid "Back"
-msgstr "Назад"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:718
-msgid "Forward"
-msgstr "Вперед"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:738
-#: crates/rufin/src/ui/root/tray.rs:51
-msgid "Play/Pause"
-msgstr "Воспроизвести/Приостановить"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:742
-msgid "Previous"
-msgstr "Предыдущий"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:750
-msgid "Seek Backward"
-msgstr "Перемотать назад"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:754
-msgid "Seek Forward"
-msgstr "Перемотать вперёд"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:758
-msgid "Shuffle"
-msgstr "Воспроизведение в случайном порядке"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:762
-msgid "Repeat"
-msgstr "Повтор"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:766
-msgid "Favorite"
-msgstr "Избранное"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:770
-msgid "Auto DJ"
-msgstr "Авто-DJ"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:773
-msgid "Mute"
-msgstr "Отключить звук"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:775
-msgid "Volume Up"
-msgstr "Увеличить громкость"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:779
-msgid "Volume Down"
-msgstr "Уменьшить громкость"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:783
-msgid "Show/hide right sidebar"
-msgstr "Показать/скрыть правую боковую панель"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:787
-msgid "Show/hide lyrics"
-msgstr "Показать/скрыть текст песни"
-
-#: crates/rufin/src/ui/root/cover_startup.rs:811
-msgid ""
-"Thank you for trying out Rufin! If you have problems or suggestions, please "
-"open an issue in Github."
-msgstr ""
-"Спасибо, что попробовали Rufin! Если у вас возникли проблемы или есть "
-"предложения, пожалуйста, создайте запрос в Github."
-
 #: crates/rufin/src/ui/root/favorite_controls.rs:47
 msgid "Added to favorites"
 msgstr "Добавлено в избранное"
 
-#: crates/rufin/src/ui/root/favorite_controls.rs:49
-msgid "Removed from favorites"
-msgstr "Удалено из избранного"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:127
-msgid "Remove from playlist"
-msgstr "Удалить из плейлиста"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:602
-#: crates/rufin/src/ui/root/home_refresh.rs:653
-#: crates/rufin/src/ui/root/home_refresh.rs:687
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:438
-msgid "Delete"
-msgstr "Удалить"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:649
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:434
-msgid "Delete Playlist"
-msgstr "Удалить плейлист"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:806
-msgid "Type to search or create a new playlist"
-msgstr "Введите текст для поиска или создания нового плейлиста"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:821
-msgid "Don't duplicate"
-msgstr "Не дублировать"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:945
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:9
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:129
-msgid "Create"
-msgstr "Создать"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:1047
-msgid "No songs added"
-msgstr "Песни не добавлены"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:1057
-#, rust-format
-msgid "{track_count} song added to {playlist_count} playlist"
-msgstr "Добавлено {track_count} треков в плейлист {playlist_count}"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:1061
-#, rust-format
-msgid "{track_count} song added to {playlist_count} playlists"
-msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:1065
-#, rust-format
-msgid "{track_count} songs added to {playlist_count} playlist"
-msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
-
-#: crates/rufin/src/ui/root/home_refresh.rs:1069
-#, rust-format
-msgid "{track_count} songs added to {playlist_count} playlists"
-msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
-
-#: crates/rufin/src/ui/root/layout_rendering.rs:1065
-msgid "Remove from Playlist"
-msgstr "Удалить из плейлиста"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:18
-msgid "Private mode is on"
-msgstr "Приватный режим включен"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:20
-msgid "Search lyrics"
-msgstr "Поиск текста песни"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:22
-msgid "No track playing"
-msgstr "Сейчас ничего не воспроизводится"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:35
-msgid "Clear fetched lyrics for this track"
-msgstr "Удалить загруженные тексты песен для этого трека"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:70
-msgid "Search Lyrics"
-msgstr "Поиск текстов песен"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:75
-#: crates/rufin/src/ui/root/release_notes.rs:320
-msgid "Close"
-msgstr "Закрыть"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:80
-msgid ""
-"Tap to the entry to load the lyrics and save in the app cache, click save "
-"only if you also want to save it in your music folder"
-msgstr ""
-"Нажмите на запись, чтобы загрузить текст песни и сохранить его в кэше "
-"приложения. Нажмите «Сохранить», только если вы также хотите сохранить его в "
-"папке с музыкой"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:94
-msgid "Song"
-msgstr "Песня"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:99
-#: crates/rufin/src/ui/root/lyrics_panel.rs:356
-msgid "Ready"
-msgstr "Готово"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:200
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:105
-msgid "No lyrics found."
-msgstr "Текст песни не найден."
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:206
-msgid "results"
-msgstr "результаты"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:234
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:176
-msgid "Save"
-msgstr "Сохранить"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:264
-msgid "Save Lyrics"
-msgstr "Сохранить текст песни"
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:325
-msgid "Search failed."
-msgstr "Поиск не дал результатов."
-
-#: crates/rufin/src/ui/root/lyrics_panel.rs:366
-msgid "Saved to"
-msgstr "Сохранено в"
-
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:103
-msgid "Loaded in lyrics panel."
-msgstr "Загружено в панель с текстами песен."
-
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:183
-msgid "No server lyrics for the current track. Private mode is on."
-msgstr ""
-"Для текущего трека текст песен с сервера недоступен. Включен приватный режим."
-
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:185
-msgid "No server lyrics for the current track. External lyric lookup is off."
-msgstr ""
-"Для текущего трека серверные тексты песен недоступны. Поиск внешних текстов "
-"песен отключен."
-
-#: crates/rufin/src/ui/root/lyrics_playback_state.rs:187
-msgid "No lyrics for the current track."
-msgstr "Для текущего трека текст песни отсутствует."
-
-#: crates/rufin/src/ui/root/mod.rs:774 crates/rufin/src/ui/root/mod.rs:775
-msgid "Show sidebar"
-msgstr "Показать боковую панель"
-
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:6
-msgid "New Playlist"
-msgstr "Новый плейлист"
-
-#: crates/rufin/src/ui/root/new_playlist_dialog.rs:12
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:255
-msgid "Playlist name"
-msgstr "Название плейлиста"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:124
-msgid "Restore Default"
-msgstr "Восстановить настройки по умолчанию"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:134
-msgid "New Smart Playlist"
-msgstr "Новый умный плейлист"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:181
-msgid "Edit Smart Playlist"
-msgstr "Редактировать умный плейлист"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:268
-msgid "Descending"
-msgstr "По убыванию"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:271
-msgid "No limit"
-msgstr "Без ограничений"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:318
-msgid "Restore"
-msgstr "Восстановить"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:333
-msgid "Match"
-msgstr "Соответствие"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:334
-msgid "Sort"
-msgstr "Сортировать"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:336
-msgid "Limit"
-msgstr "Ограничение"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:386
-msgid "Add Rule"
-msgstr "Добавить правило"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:418
-msgid ""
-"This playlist uses nested rule groups. Rule editing is unavailable in this "
-"editor."
-msgstr ""
-"В этом плейлисте используются вложенные группы правил. Редактирование правил "
-"недоступно в данном редакторе."
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:483
-msgid "Remove rule"
-msgstr "Удалить правило"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:551
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:583
-msgid "to"
-msgstr "до"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:939
-msgid "Comment text"
-msgstr "Текст комментария"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:941
-msgid "Album title"
-msgstr "Название альбома"
-
-#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:942
-msgid "Text"
-msgstr "Текст"
-
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:83
-msgid "Playlist"
-msgstr "Плейлист"
-
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:230
-msgid "Edit"
-msgstr "Редактировать"
-
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:396
-#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:14
-msgid "Rename"
-msgstr "Переименовать"
-
-#: crates/rufin/src/ui/root/playlist_detail_view.rs:404
-msgid "Add current"
-msgstr "Добавить текущий"
-
-#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:10
-msgid "Rename Playlist"
-msgstr "Переименовать плейлист"
-
-#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:11
-msgid "Enter a new playlist name."
-msgstr "Введите новое название для плейлиста."
-
-#: crates/rufin/src/ui/root/release_notes.rs:232
-msgid "Open release notes"
-msgstr "Открыть примечания к выпуску"
-
-#: crates/rufin/src/ui/root/release_notes.rs:312
-msgid "Release notes"
-msgstr "Примечания к выпуску"
-
-#: crates/rufin/src/ui/root/release_notes.rs:323
-msgid "Current version:"
-msgstr "Текущая версия:"
-
-#: crates/rufin/src/ui/root/startup_reveal.rs:132
-msgid "Switching library…"
-msgstr "Переключение библиотеки…"
-
-#: crates/rufin/src/ui/root/tray.rs:50
-msgid "Show Rufin"
-msgstr "Показать Rufin"
-
-#: crates/rufin/src/ui/root/tray.rs:52
-msgid "Previous Track"
-msgstr "Предыдущий трек"
-
-#: crates/rufin/src/ui/root/tray.rs:53
-msgid "Next Track"
-msgstr "Следующий трек"
-
-#: crates/rufin/src/ui/root/tray.rs:54
-msgid "Enable private mode"
-msgstr "Включить приватный режим"
-
-#: crates/rufin/src/ui/root/tray.rs:55
-msgid "Disable private mode"
-msgstr "Отключить приватный режим"
-
-#: crates/rufin/src/ui/root/tray.rs:56
-msgid "Quit"
-msgstr "Выход"
-
-#: crates/rufin/src/ui/root/tray.rs:57
-msgid "Rufin is running in the tray"
-msgstr "Rufin работает в системном трее"
-
-#: crates/rufin/src/ui/settings_persistence.rs:440
-msgid "Open fullscreen player"
-msgstr "Открыть полноэкранный плеер"
-
-#: crates/rufin/src/ui/source_selector.rs:109
-msgid "Source"
-msgstr "Источник"
-
-#: crates/rufin/src/ui/source_selector.rs:141
-msgid "No source"
-msgstr "Источник не найден"
-
-#: crates/rufin/src/ui/source_selector.rs:229
-msgid "Select Source"
-msgstr "Выбрать Источник"
-
-#: crates/rufin/src/ui/source_selector.rs:281
-msgid "Server Library"
-msgstr "Библиотека Сервера"
-
-#: crates/rufin/src/ui/source_selector.rs:293
-msgid "Manage"
-msgstr "Управление"
-
-#: crates/rufin/src/ui/source_selector.rs:331
-msgid "folders"
-msgstr "папки"
+#: crates/domain/src/route.rs:47 crates/domain/src/settings/layout.rs:593
+#: crates/rufin/src/ui/preferences/root/general.rs:553
+#: crates/rufin/src/ui/queue.rs:821
+#: crates/rufin/src/ui/root/layout_rendering.rs:18
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:56
+msgid "Album"
+msgstr "Альбом"
 
 #: crates/domain/src/route.rs:53
 msgid "Album Artists"
@@ -1931,6 +147,10 @@ msgstr "Исполнитель альбома"
 #: crates/domain/src/settings/layout.rs:520
 msgid "Album artists"
 msgstr "Исполнители альбома"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:941
+msgid "Album title"
+msgstr "Название альбома"
 
 #: crates/domain/src/settings/layout.rs:526
 msgid "Album tracks"
@@ -1945,13 +165,51 @@ msgstr "Альбомы"
 msgid "All"
 msgstr "Все"
 
+#: crates/rufin/src/ui/preferences/library.rs:206
+#: crates/rufin/src/ui/source_selector.rs:343
+msgid "All Music"
+msgstr "Вся Музыка"
+
+#: crates/rufin/src/ui/random_play.rs:157
+msgid "All tracks"
+msgstr "Все треки"
+
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:873
 msgid "Any"
 msgstr "Любой"
 
+#: crates/rufin/src/ui/random_play.rs:146
+msgid "Any genre"
+msgstr "Любой жанр"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:197
+msgid "App window"
+msgstr "Окно приложения"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:424
+msgid "Application name"
+msgstr "Название приложения"
+
+#: crates/domain/src/route.rs:50 crates/domain/src/settings/layout.rs:591
+#: crates/rufin/src/ui/artist.rs:251
+#: crates/rufin/src/ui/root/layout_rendering.rs:17
+#: crates/rufin/src/ui/root/lyrics_panel.rs:88
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:52
+msgid "Artist"
+msgstr "Исполнитель"
+
+#: crates/rufin/src/ui/folders.rs:347
+msgid "Artist / Album"
+msgstr "Исполнитель / Альбом"
+
 #: crates/domain/src/settings/layout.rs:527
 msgid "Artist albums"
 msgstr "Альбомы исполнителя"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:424
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:940
+msgid "Artist name"
+msgstr "Имя исполнителя"
 
 #: crates/domain/src/settings/layout.rs:528
 msgid "Artist tracks"
@@ -1961,7 +219,44 @@ msgstr "Треки исполнителя"
 msgid "Artists"
 msgstr "Исполнители"
 
-#: crates/rufin/src/ui/library/route_shell.rs:315
+#: crates/rufin/src/ui/preferences/root/general.rs:552
+msgid "Audio"
+msgstr "Аудио"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:508
+msgid "Audio fade on play/pause"
+msgstr "Плавное затухание звука при воспроизведении/паузе"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:615
+msgid "Audio output"
+msgstr "Аудиовыход"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:750
+msgid "Auto DJ"
+msgstr "Авто-DJ"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:657
+msgid "Auto DJ off"
+msgstr "Авто-DJ выключен"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:655
+msgid "Auto DJ on"
+msgstr "Авто-DJ включен"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:521
+msgid "Auto DJ refill threshold"
+msgstr "Порог автоматического пополнения плейлиста \"Авто-DJ\""
+
+#: crates/rufin/src/ui/root/cover_startup.rs:696
+#: crates/rufin/src/ui/root/layout_rendering.rs:1051
+msgid "Back"
+msgstr "Назад"
+
+#: crates/rufin/src/ui/preferences/library.rs:224
+msgid "Cached"
+msgstr "Кэшировано"
+
+#: crates/rufin/src/ui/library/route_shell.rs:317
 #: crates/rufin/src/ui/library/routes.rs:1074
 #: crates/rufin/src/ui/library/routes.rs:293
 #: crates/rufin/src/ui/library/routes.rs:623
@@ -1969,50 +264,462 @@ msgstr "Исполнители"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Кэшированные элементы появятся здесь после завершения синхронизации"
 
-#: crates/rufin/src/ui/library/cards.rs:696
+#: crates/rufin/src/ui/preferences/library.rs:249
+#: crates/rufin/src/ui/root/cover_startup.rs:221
+msgid "Cached library ready"
+msgstr "Кэшированная библиотека готова"
+
+#: crates/rufin/src/ui/login.rs:509
+msgid "Caching Library"
+msgstr "Кэшированная библиотека"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:218
+msgid "Caching library artwork…"
+msgstr "Кэширование обложек альбомов…"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:212
+msgid "Caching library… This may take some time."
+msgstr "Кэширование библиотеки… Это может занять некоторое время."
+
+#: crates/rufin/src/ui/login.rs:282
+#: crates/rufin/src/ui/root/startup_reveal.rs:495
+msgid "Caching local library…"
+msgstr "Кэширование локальной библиотеки…"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:215
+msgid "Caching local library… This may take some time."
+msgstr "Кэширование локальной библиотеки… Это может занять некоторое время."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:550
+#: crates/rufin/src/ui/local_access_mapping.rs:583
+#: crates/rufin/src/ui/preferences/library.rs:170
+#: crates/rufin/src/ui/preferences/root/mod.rs:551
+#: crates/rufin/src/ui/root/home_refresh.rs:627
+#: crates/rufin/src/ui/root/home_refresh.rs:791
+#: crates/rufin/src/ui/root/layout_rendering.rs:790
+#: crates/rufin/src/ui/root/new_playlist_dialog.rs:8
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:417
+#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
+msgid "Cancel"
+msgstr "Отменить"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:552
+msgid "Change"
+msgstr "Изменить"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:546
+msgid "Change Secret Storage"
+msgstr "Изменить секретное хранилище"
+
+#: crates/rufin/src/ui/library/route_shell.rs:499
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:515
+msgid "Change sort order"
+msgstr "Изменить порядок сортировки"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:547
+msgid ""
+"Changing secret backend removes legacy config secrets and signs you out "
+"everywhere, including API secrets. App cache is not affected."
+msgstr ""
+"Изменение секретного ключа приводит к удалению устаревших конфигурационных "
+"данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
+"приложения не затрагивается."
+
+#: crates/rufin/src/ui/root/cover_startup.rs:155
+#, rust-format
+msgid "Checking {provider} server…"
+msgstr "Проверка сервера {provider}…"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:141
+#: crates/rufin/src/ui/login.rs:207
+msgid "Choose"
+msgstr "Выбрать"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:332
+#: crates/rufin/src/ui/local_access_mapping.rs:745
+msgid "Choose a local music folder"
+msgstr "Выбрать локальную папку с музыкой"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:690
+#: crates/rufin/src/ui/local_access_mapping.rs:755
+msgid "Choose a local prefix."
+msgstr "Выбрать локальный префикс."
+
+#: crates/rufin/src/ui/login.rs:132
+msgid ""
+"Choose a provider, pick a discovered server, or enter the address manually"
+msgstr ""
+"Выберите провайдера, выберите один из найденных серверов или введите адрес "
+"вручную"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:758
+msgid "Choose an existing local prefix."
+msgstr "Выбрать существующий локальный префикс."
+
+#: crates/rufin/src/ui/login.rs:278
+msgid "Choose at least one local music folder"
+msgstr "Выберите хотя бы одну локальную папку с музыкой"
+
+#: crates/rufin/src/ui/login.rs:199
+msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+"Выберите одну или несколько папок для сканирования и воспроизведения файлов "
+"непосредственно с этого компьютера"
+
+#: crates/rufin/src/ui/library/route_shell.rs:582
+msgid "Choose the current page layout."
+msgstr "Выберите текущий макет страницы."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:187
+msgid "Choose the folder to scan and play directly from this computer"
+msgstr ""
+"Выберите папку для сканирования и воспроизведения файлов непосредственно с "
+"этого компьютера"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:551
+msgid "Clear Cache"
+msgstr "Очистить Кэш"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:492
+#: crates/rufin/src/ui/local_access_mapping.rs:543
+msgid "Clear Cached Library"
+msgstr "Очистить кэшированную библиотеку"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:228
+msgid "Clear Mapping"
+msgstr "Удалить Соответствия"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:35
+msgid "Clear fetched lyrics for this track"
+msgstr "Удалить загруженные тексты песен для этого трека"
+
+#: crates/rufin/src/ui/right_panel.rs:49
+msgid "Clear queue"
+msgstr "Очистить очередь"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:75
+#: crates/rufin/src/ui/root/release_notes.rs:327
+msgid "Close"
+msgstr "Закрыть"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:127
+#: crates/rufin/src/ui/fullscreen_player.rs:210
+msgid "Close fullscreen player"
+msgstr "Закрыть полноэкранный плеер"
+
+#: crates/rufin/src/ui/library/cards.rs:695
 msgid "Columns"
 msgstr "Столбцы"
+
+#: crates/rufin/src/ui/preferences/root/layout.rs:255
+msgid "Comfortable"
+msgstr "Удобный"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:60
 msgid "Comment"
 msgstr "Комментарий"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:939
+msgid "Comment text"
+msgstr "Текст комментария"
+
+#: crates/rufin/src/ui/preferences/root/layout.rs:230
+#: crates/rufin/src/ui/preferences/root/layout.rs:253
+msgid "Compact"
+msgstr "Компактный"
+
+#: crates/rufin/src/ui/preferences/library.rs:36
+msgid "Configure saved music servers and local playback mappings."
+msgstr ""
+"Настройте сохраненные музыкальные серверы и параметры локального "
+"воспроизведения."
+
+#: crates/rufin/src/ui/login.rs:244
+#: crates/rufin/src/ui/preferences/root/general.rs:110
+#: crates/rufin/src/ui/preferences/root/general.rs:199
+msgid "Connect"
+msgstr "Подключить"
+
+#: crates/rufin/src/ui/login.rs:128
+msgid "Connect to Music Server"
+msgstr "Подключиться к Музыкальному Серверу"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:339
+msgid "Connected"
+msgstr "Подключено"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:341
+#, rust-format
+msgid "Connected as {username}"
+msgstr "Вы вошли как {username}"
+
+#: crates/rufin/src/ui/login.rs:292
+msgid "Connecting to music server…"
+msgstr "Подключение к музыкальному серверу…"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:106
+#: crates/rufin/src/ui/preferences/root/general.rs:195
+msgid "Connection"
+msgstr "Соединение"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:253
+msgid "Control notifications"
+msgstr "Управление уведомлениями"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:909
+#: crates/rufin/src/ui/root/new_playlist_dialog.rs:9
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:129
+msgid "Create"
+msgstr "Создать"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:454
+msgid "Crossfade"
+msgstr "Плавный переход между треками"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:474
+msgid "Crossfade duration"
+msgstr "Длительность плавного перехода между треками"
+
+#: crates/rufin/src/ui/root/release_notes.rs:330
+msgid "Current version:"
+msgstr "Текущая версия:"
+
+#: crates/rufin/src/ui/library/route_shell.rs:531
+#: crates/rufin/src/ui/library/route_shell.rs:568
+msgid "Customize display"
+msgstr "Настроить отображение"
 
 #: crates/domain/src/settings/layout.rs:596
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:96
 msgid "Date added"
 msgstr "Дата добавления"
 
-#: crates/rufin/src/ui/library/cards.rs:895
+#: crates/rufin/src/ui/preferences/root/general.rs:454
+#: crates/rufin/src/ui/preferences/root/layout.rs:254
+msgid "Default"
+msgstr "По умолчанию"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:601
+msgid "Default left sidebar"
+msgstr "Левая боковая панель по умолчанию"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:619
+msgid "Default right sidebar"
+msgstr "Правая боковая панель по умолчанию"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:592
+#: crates/rufin/src/ui/root/home_refresh.rs:628
+#: crates/rufin/src/ui/root/home_refresh.rs:661
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:418
+msgid "Delete"
+msgstr "Удалить"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:624
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:414
+msgid "Delete Playlist"
+msgstr "Удалить плейлист"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:268
+msgid "Descending"
+msgstr "По убыванию"
+
+#: crates/rufin/src/ui/library/cards.rs:894
 msgid "Detail"
 msgstr "Подробности"
 
-#: crates/rufin/src/ui/library/cards.rs:698
+#: crates/rufin/src/ui/library/cards.rs:697
 msgid "Detail track columns"
 msgstr "Подробные колонки треков"
+
+#: crates/rufin/src/ui/root/tray.rs:55
+msgid "Disable private mode"
+msgstr "Отключить приватный режим"
 
 #: crates/domain/src/settings/layout.rs:602
 msgid "Disc"
 msgstr "Диск"
 
-#: crates/domain/src/domain.rs:520
+#: crates/domain/src/route.rs:51
+msgid "Discography"
+msgstr "Дискография"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:412
+msgid "Discord"
+msgstr "Discord"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:785
+msgid "Don't duplicate"
+msgstr "Не дублировать"
+
+#: crates/rufin/src/ui/library/cards.rs:571
+#: crates/rufin/src/ui/library/collections.rs:873
+#: crates/rufin/src/ui/preferences/root/layout.rs:26
+#: crates/rufin/src/ui/preferences/root/mod.rs:826
+#: crates/rufin/src/ui/queue.rs:1009
+#: crates/rufin/src/ui/root/layout_rendering.rs:692
+msgid "Drag to reorder"
+msgstr "Перетащите, чтобы изменить порядок"
+
+#: crates/domain/src/settings/layout.rs:605 crates/rufin/src/ui/folders.rs:379
+#: crates/rufin/src/ui/library/album_detail.rs:597
+#: crates/rufin/src/ui/queue.rs:860
+msgid "Duration"
+msgstr "Продолжительность"
+
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:212
+msgid "Edit"
+msgstr "Редактировать"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:181
+msgid "Edit Smart Playlist"
+msgstr "Редактировать умный плейлист"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:672
+#: crates/rufin/src/ui/preferences/root/general.rs:639
+msgid "Enable equalizer"
+msgstr "Включить эквалайзер"
+
+#: crates/rufin/src/ui/root/tray.rs:54
+msgid "Enable private mode"
+msgstr "Включить приватный режим"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:126
+msgid "Enter API credentials first"
+msgstr "Сначала введите данные для доступа к API"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:341
+msgid "Enter a local prefix."
+msgstr "Введите локальный префикс."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:733
+msgid "Enter a matching server prefix to map this path."
+msgstr "Введите соответствующий префикс сервера, чтобы привязать этот путь."
+
+#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:11
+msgid "Enter a new playlist name."
+msgstr "Введите новое название для плейлиста."
+
+#: crates/rufin/src/ui/login.rs:288
+msgid "Enter a server address, username, and password"
+msgstr "Введите адрес сервера, имя пользователя и пароль"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:108
+msgid "Enter an artist or song."
+msgstr "Введите имя исполнителя или название песни."
+
+#: crates/rufin/src/ui/fullscreen_player.rs:203
+#: crates/rufin/src/ui/preferences/root/general.rs:635
+#: crates/rufin/src/ui/settings_persistence.rs:486
+msgid "Equalizer"
+msgstr "Эквалайзер"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:204
+msgid "Exit to tray"
+msgstr "Свернуть в трей"
+
+#: crates/domain/src/domain.rs:522
 msgid "Explore"
 msgstr "Изучить"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:306
+msgid "External cover lookup"
+msgstr "Поиск обложки в интернете"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:315
+msgid "External lyric lookup"
+msgstr "Поиск текста песни в интернете"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:360
+msgid "External site links"
+msgstr "Ссылки на внешние сайты"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:509
+msgid "Fade audio when playback is paused or resumed"
+msgstr ""
+"Плавное затухание звука при приостановке или возобновлении воспроизведения"
+
+#: crates/domain/src/settings/layout.rs:606
+#: crates/rufin/src/ui/root/cover_startup.rs:746
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:76
+msgid "Favorite"
+msgstr "Избранное"
 
 #: crates/domain/src/route.rs:45 crates/domain/src/settings/layout.rs:522
 msgid "Favorites"
 msgstr "Избранные"
 
-#: crates/domain/src/domain.rs:550
+#: crates/domain/src/domain.rs:552
 msgid "Featured genres"
 msgstr "Рекомендованные жанры"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:275
+msgid "Find your ListenBrainz user token"
+msgstr "Найдите свой токен пользователя ListenBrainz"
+
+#: crates/rufin/src/ui/folders.rs:402
+msgid "Folder"
+msgstr "Папка"
+
+#: crates/rufin/src/ui/folders.rs:598
+msgid "Folder browsing failed"
+msgstr "Не удалось выполнить просмотр папки"
 
 #: crates/domain/src/route.rs:56
 msgid "Folders"
 msgstr "Папки"
 
+#: crates/rufin/src/ui/local_access_mapping.rs:501
+#: crates/rufin/src/ui/local_access_mapping.rs:576
+#: crates/rufin/src/ui/local_access_mapping.rs:584
+msgid "Forget Server"
+msgstr "Забыть сервер"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:698
+msgid "Forward"
+msgstr "Вперед"
+
+#: crates/rufin/src/ui/login.rs:560
+msgid "Found Servers"
+msgstr "Найденные серверы"
+
+#: crates/rufin/src/ui/login.rs:629
+#, rust-format
+msgid "Found {count} Jellyfin server"
+msgid_plural "Found {count} Jellyfin servers"
+msgstr[0] "Найден {count} сервер Jellyfin"
+msgstr[1] "Найдено {count} сервера Jellyfin"
+msgstr[2] "Найдено {count} серверов Jellyfin"
+
+#: crates/rufin/src/ui/preferences/root/layout.rs:230
+msgid "Full"
+msgstr "Полный"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:454
+msgid "Gapless"
+msgstr "Бесшовное воспроизведение"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:117
+#: crates/rufin/src/ui/preferences/root/mod.rs:152
+#: crates/rufin/src/ui/root/cover_startup.rs:695
+msgid "General"
+msgstr "Общие настройки"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:599
+msgid "Generate and cache waveforms for the current track"
+msgstr "Создать и сохранить в кэше визуализацию текущего трека"
+
 #: crates/domain/src/settings/sidebar.rs:404
 msgid "Genius"
 msgstr "Genius"
+
+#: crates/domain/src/route.rs:55 crates/domain/src/settings/layout.rs:600
+#: crates/rufin/src/ui/random_play.rs:81
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:64
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:938
+msgid "Genre"
+msgstr "Жанр"
 
 #: crates/domain/src/settings/layout.rs:529
 msgid "Genre tracks"
@@ -2022,26 +729,256 @@ msgstr "Треки по жанрам"
 msgid "Genres"
 msgstr "Жанры"
 
-#: crates/rufin/src/ui/library/cards.rs:893
+#: crates/rufin/src/ui/preferences/root/general.rs:273
+msgid "Get token"
+msgstr "Получить токен"
+
+#: crates/rufin/src/ui/queue.rs:1170
+#: crates/rufin/src/ui/root/home_refresh.rs:120
+#: crates/rufin/src/ui/root/home_refresh.rs:314
+msgid "Go to Album"
+msgstr "Перейти к альбому"
+
+#: crates/rufin/src/ui/queue.rs:1162
+#: crates/rufin/src/ui/root/home_refresh.rs:114
+#: crates/rufin/src/ui/root/home_refresh.rs:308
+#: crates/rufin/src/ui/root/home_refresh.rs:471
+msgid "Go to Artist"
+msgstr "Перейти к исполнителю"
+
+#: crates/rufin/src/ui/library/cards.rs:892
 msgid "Grid"
 msgstr "Сетка"
 
-#: crates/rufin/src/ui/library/cards.rs:697
+#: crates/rufin/src/ui/library/cards.rs:696
 msgid "Grid labels"
 msgstr "Метки сетки"
+
+#: crates/rufin/src/ui/library/cards.rs:566
+#: crates/rufin/src/ui/preferences/root/layout.rs:179
+#: crates/rufin/src/ui/preferences/root/layout.rs:252
+#: crates/rufin/src/ui/preferences/root/mod.rs:781
+#: crates/rufin/src/ui/preferences/root/mod.rs:820
+msgid "Hidden"
+msgstr "Скрыт"
+
+#: crates/rufin/src/ui/preferences/root/layout.rs:177
+msgid "Hidden server section"
+msgstr "Скрытый раздел сервера"
 
 #: crates/domain/src/route.rs:44
 msgid "Home"
 msgstr "Главная"
 
+#: crates/rufin/src/ui/preferences/root/general.rs:806
+msgid "Home Blocks"
+msgstr "Основные блоки"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:171
+msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
+msgstr ""
+"Если страница не загружается, значит, Libre.fm блокирует ваш диапазон IP-"
+"адресов или VPN"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:45
+msgid "If you do not have API keys, create them"
+msgstr "Если у вас нет ключей API, создайте их"
+
+#: crates/domain/src/settings/layout.rs:588
+#: crates/rufin/src/ui/library/columns.rs:683
+msgid "Image"
+msgstr "Изображение"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:597
+msgid "Interface"
+msgstr "Интерфейс"
+
+#: crates/rufin/src/ui/preferences/library.rs:287
+#: crates/rufin/src/ui/source_selector.rs:193
+msgid "Jellyfin"
+msgstr "Jellyfin"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:496
+msgid "Keep album transitions gapless when possible"
+msgstr "По возможности обеспечивать плавный переход между треками альбома"
+
+#: crates/rufin/src/ui/chrome.rs:133
+#: crates/rufin/src/ui/root/cover_startup.rs:693
+#: crates/rufin/src/ui/root/cover_startup.rs:707
+msgid "Keyboard Shortcuts"
+msgstr "Сочетания Клавиш"
+
 #: crates/domain/src/settings/sidebar.rs:402
 msgid "LRCLIB"
 msgstr "LRCLIB"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:159
+#: crates/rufin/src/ui/preferences/root/mod.rs:168
+msgid "Language"
+msgstr "Язык"
 
 #: crates/domain/src/settings/layout.rs:597
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:92
 msgid "Last played"
 msgstr "Посл. прослушано"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:24
+#: crates/rufin/src/ui/preferences/root/mod.rs:368
+#: crates/rufin/src/ui/preferences/root/mod.rs:443
+msgid "Last.fm"
+msgstr "Last.fm"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:492
+msgid "Last.fm API key"
+msgstr "Ключ API для Last.fm"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:27
+msgid "Last.fm scrobbling"
+msgstr "Отправка данных в Last.fm"
+
+#: crates/rufin/src/ui/library/route_shell.rs:515
+#: crates/rufin/src/ui/library/route_shell.rs:581
+#: crates/rufin/src/ui/preferences/root/general.rs:798
+#: crates/rufin/src/ui/preferences/root/mod.rs:123
+msgid "Layout"
+msgstr "Макет"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:517
+msgid "Legacy"
+msgstr "Устаревшая версия"
+
+#: crates/rufin/src/ui/preferences/library.rs:17
+#: crates/rufin/src/ui/preferences/library.rs:28
+#: crates/rufin/src/ui/preferences/root/mod.rs:141
+msgid "Library"
+msgstr "Библиотека"
+
+#: crates/rufin/src/ui/preferences/library.rs:250
+#: crates/rufin/src/ui/root/cover_startup.rs:222
+msgid "Library sync complete"
+msgstr "Синхронизация библиотеки завершена"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:170
+msgid "Libre.fm"
+msgstr "Libre.fm"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:176
+msgid "Libre.fm scrobbling"
+msgstr "Отправка данных в Libre.fm"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:336
+msgid "Limit"
+msgstr "Ограничение"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:251
+msgid "ListenBrainz"
+msgstr "ListenBrainz"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:254
+msgid "ListenBrainz scrobbling"
+msgstr "Отправка данных о прослушивании в ListenBrainz"
+
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:103
+msgid "Loaded in lyrics panel."
+msgstr "Загружено в панель с текстами песен."
+
+#: crates/rufin/src/ui/preferences/library.rs:290
+#: crates/rufin/src/ui/source_selector.rs:196
+#: crates/rufin/src/ui/source_selector.rs:259
+msgid "Local"
+msgstr "Локальный источник"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:133
+msgid "Local Folder"
+msgstr "Локальная Папка"
+
+#: crates/rufin/src/ui/preferences/library.rs:100
+msgid "Local Folders"
+msgstr "Локальные Папки"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:182
+#: crates/rufin/src/ui/login.rs:198
+msgid "Local Library"
+msgstr "Локальная Библиотека"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:180
+msgid "Local Playback Access"
+msgstr "Доступ к Локальному Воспроизведению"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:200
+msgid "Local Playback Mapping"
+msgstr "Сопоставление Локального Воспроизведения"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:153
+msgid "Local Prefix"
+msgstr "Префикс для Локального Источника"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:751
+msgid "Local library folder is saved."
+msgstr "Папка локальной библиотеки сохранена."
+
+#: crates/rufin/src/ui/preferences/library.rs:268
+msgid "Local mapping"
+msgstr "Локальное сопоставление"
+
+#: crates/rufin/src/ui/preferences/library.rs:264
+msgid "Local mapping saved. Sync to preview matches."
+msgstr ""
+"Локальное сопоставление сохранено. Синхронизация для предварительного "
+"просмотра соответствий."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:195
+msgid "Local playback mapping configured"
+msgstr "Настройка сопоставления для локального воспроизведения выполнена"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:186
+#: crates/rufin/src/ui/fullscreen_player.rs:189
+#: crates/rufin/src/ui/right_panel.rs:61
+#: crates/rufin/src/ui/settings_persistence.rs:471
+#: crates/rufin/src/ui/settings_persistence.rs:509
+msgid "Lyrics"
+msgstr "Текст песни"
+
+#: crates/rufin/src/ui/chrome.rs:108 crates/rufin/src/ui/chrome.rs:116
+#: crates/rufin/src/ui/root/cover_startup.rs:701
+msgid "Main Menu"
+msgstr "Главное Меню"
+
+#: crates/rufin/src/ui/source_selector.rs:293
+msgid "Manage"
+msgstr "Управление"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:72
+msgid "Manage Server"
+msgstr "Управление Сервером"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:197
+msgid "Map server tracks to local files"
+msgstr "Сопоставить треки с сервера с локальными файлами"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:169
+msgid "Mapped Local Path"
+msgstr "Сопоставленный Локальный Путь"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:333
+msgid "Match"
+msgstr "Соответствие"
+
+#: crates/rufin/src/ui/random_play.rs:77
+msgid "Maximum year"
+msgstr "Максимальный год"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:284
+msgid "Metadata"
+msgstr "Метаданные"
+
+#: crates/rufin/src/ui/random_play.rs:72
+msgid "Minimum year"
+msgstr "Минимальный год"
+
+#: crates/rufin/src/ui/cards.rs:574 crates/rufin/src/ui/player.rs:802
+msgid "More actions"
+msgstr "Другие действия"
 
 #: crates/domain/src/domain.rs:317
 msgid "Most Played"
@@ -2051,9 +988,68 @@ msgstr "Самые воспроизводимые"
 msgid "Most Skipped"
 msgstr "Самые пропускаемые"
 
-#: crates/domain/src/domain.rs:521
+#: crates/domain/src/domain.rs:523
 msgid "Most played"
 msgstr "Наиболее часто прослушиваемые"
+
+#: crates/rufin/src/ui/library/cards.rs:590
+#: crates/rufin/src/ui/preferences/root/layout.rs:51
+#: crates/rufin/src/ui/preferences/root/mod.rs:841
+msgid "Move down"
+msgstr "Переместить вниз"
+
+#: crates/rufin/src/ui/library/cards.rs:583
+#: crates/rufin/src/ui/preferences/root/layout.rs:31
+#: crates/rufin/src/ui/preferences/root/mod.rs:835
+msgid "Move up"
+msgstr "Переместить вверх"
+
+#: crates/rufin/src/ui/preferences/library.rs:236
+msgid "Music Folder"
+msgstr "Папка с музыкой"
+
+#: crates/rufin/src/ui/login.rs:204
+msgid "Music Folders"
+msgstr "Папки с музыкой"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:373
+#: crates/rufin/src/ui/preferences/root/mod.rs:444
+msgid "MusicBrainz"
+msgstr "MusicBrainz"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:445
+msgid "MusicBrainz + Last.fm"
+msgstr "MusicBrainz и Last.fm"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:753
+msgid "Mute"
+msgstr "Отключить звук"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:665
+msgid "Muted"
+msgstr "Звук выключен"
+
+#: crates/rufin/src/ui/folders.rs:354
+#: crates/rufin/src/ui/local_access_mapping.rs:391
+msgid "Name"
+msgstr "Имя"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:665
+msgid "Narrow layout threshold"
+msgstr "Порог для узкой компоновки"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:690
+msgid "Narrow left sidebar"
+msgstr "Узкая левая боковая панель"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:709
+msgid "Narrow right sidebar"
+msgstr "Узкая правая боковая панель"
+
+#: crates/rufin/src/ui/preferences/library.rs:288
+#: crates/rufin/src/ui/source_selector.rs:194
+msgid "Navidrome"
+msgstr "Navidrome"
 
 #: crates/domain/src/settings/sidebar.rs:403
 msgid "NetEase"
@@ -2063,21 +1059,296 @@ msgstr "NetEase"
 msgid "Never Played"
 msgstr "Ни разу не воспроизводилось"
 
-#: crates/domain/src/domain.rs:522
+#: crates/rufin/src/ui/root/new_playlist_dialog.rs:6
+msgid "New Playlist"
+msgstr "Новый плейлист"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:134
+msgid "New Smart Playlist"
+msgstr "Новый умный плейлист"
+
+#: crates/domain/src/domain.rs:524
 msgid "Newly added"
 msgstr "Недавно добавленные"
+
+#: crates/rufin/src/ui/artist.rs:291
+#: crates/rufin/src/ui/root/album_detail_view.rs:208
+#: crates/rufin/src/ui/root/cover_startup.rs:726
+msgid "Next"
+msgstr "Следующий"
+
+#: crates/rufin/src/ui/root/tray.rs:53
+msgid "Next Track"
+msgstr "Следующий трек"
+
+#: crates/rufin/src/ui/home.rs:279 crates/rufin/src/ui/home.rs:339
+msgid "Next page"
+msgstr "Следующая страница"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:588
 msgid "No"
 msgstr "Нет"
 
+#: crates/rufin/src/ui/login.rs:625
+msgid "No Jellyfin servers found. Enter the address manually or search again"
+msgstr ""
+"Не найдено серверов Jellyfin. Введите адрес вручную или выполните повторный "
+"поиск"
+
+#: crates/rufin/src/ui/login.rs:568
+msgid "No Servers Found"
+msgstr "Серверы не найдены"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:161
+#: crates/rufin/src/ui/local_access_mapping.rs:681
+msgid "No cached server path yet"
+msgstr "Пока нет кэшированных путей к серверу"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:764
+msgid "No cached tracks yet. Sync the server to preview matches."
+msgstr ""
+"Пока нет кэшированных треков. Синхронизируйте сервер, чтобы просмотреть "
+"результаты поиска."
+
+#: crates/rufin/src/ui/root/cover_startup.rs:165
+msgid "No changes to save."
+msgstr "Нет изменений для сохранения."
+
+#: crates/rufin/src/ui/folders.rs:584
+msgid "No folder contents found."
+msgstr "Содержимое папки не найдено."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:138
+msgid "No folder selected"
+msgstr "Папка не выбрана"
+
+#: crates/rufin/src/ui/login.rs:827
+msgid "No folders selected"
+msgstr "Папки не выбраны"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:271
+msgid "No limit"
+msgstr "Без ограничений"
+
+#: crates/rufin/src/ui/preferences/library.rs:107
+#: crates/rufin/src/ui/source_selector.rs:329
+msgid "No local folders configured"
+msgstr "Не настроено ни одной локальной папки"
+
+#: crates/rufin/src/ui/preferences/library.rs:257
+#: crates/rufin/src/ui/preferences/library.rs:260
+msgid "No local playback mapping"
+msgstr "Нет сопоставлений для локального воспроизведения"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:418
+msgid "No lyrics"
+msgstr "Текст песни отсутствует"
+
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:187
+msgid "No lyrics for the current track."
+msgstr "Для текущего трека текст песни отсутствует."
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:200
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:105
+msgid "No lyrics found."
+msgstr "Текст песни не найден."
+
+#: crates/rufin/src/ui/queue.rs:482
+msgid "No queue items match the search."
+msgstr "В очереди нет элементов, соответствующих запросу поиска."
+
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:185
+msgid "No server lyrics for the current track. External lyric lookup is off."
+msgstr ""
+"Для текущего трека серверные тексты песен недоступны. Поиск внешних текстов "
+"песен отключен."
+
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:183
+msgid "No server lyrics for the current track. Private mode is on."
+msgstr ""
+"Для текущего трека текст песен с сервера недоступен. Включен приватный режим."
+
+#: crates/rufin/src/ui/preferences/library.rs:43
+#: crates/rufin/src/ui/source_selector.rs:231
+msgid "No servers configured"
+msgstr "Не настроено ни одного сервера"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:999
+msgid "No songs added"
+msgstr "Песни не добавлены"
+
+#: crates/rufin/src/ui/source_selector.rs:141
+msgid "No source"
+msgstr "Источник не найден"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:22
+msgid "No track playing"
+msgstr "Сейчас ничего не воспроизводится"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:442
+msgid "None"
+msgstr "Нет"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:331
+msgid "Not connected"
+msgstr "Не подключено"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:526
+msgid "Not set"
+msgstr "Не задано"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:1642
+#: crates/rufin/src/ui/player.rs:496
+msgid "Nothing playing"
+msgstr "Сейчас ничего не воспроизводится"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:250
+msgid "Notifications"
+msgstr "Уведомления"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:263
+msgid "Now playing notifications"
+msgstr "Уведомления о текущем воспроизведении"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:150
+#: crates/rufin/src/ui/preferences/root/general.rs:231
+#: crates/rufin/src/ui/preferences/root/general.rs:306
+msgid "Now playing updates"
+msgstr "Обновление информации о текущем воспроизводимом треке"
+
+#: crates/domain/src/settings/layout.rs:603
+#: crates/rufin/src/ui/random_play.rs:70
+msgid "Number of songs"
+msgstr "Количество песен"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:553
+msgid "Off"
+msgstr "Выкл."
+
+#: crates/rufin/src/ui/random_play.rs:159
+msgid "Only played tracks"
+msgstr "Только проигранные треки"
+
+#: crates/rufin/src/ui/random_play.rs:158
+msgid "Only unplayed tracks"
+msgstr "Только непрослушанные треки"
+
+#: crates/rufin/src/ui/player.rs:788
+#: crates/rufin/src/ui/settings_persistence.rs:436
+msgid "Open fullscreen player"
+msgstr "Открыть полноэкранный плеер"
+
+#: crates/rufin/src/ui/root/release_notes.rs:239
+msgid "Open release notes"
+msgstr "Открыть примечания к выпуску"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:130
+msgid "Opening Last.fm authorization…"
+msgstr "Запуск процесса авторизации в Last.fm…"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:211
+msgid "Opening Libre.fm authorization…"
+msgstr "Запуск процесса авторизации в Libre.fm…"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:185
+msgid "Optionally map server tracks to files on this computer"
+msgstr ""
+"При желании можно сопоставить треки на сервере с файлами на этом компьютере"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:573
+msgid "Original"
+msgstr "Оригинал"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:411
+#: crates/rufin/src/ui/login.rs:173
+msgid "Password"
+msgstr "Пароль"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:414
+msgid "Plain lyrics"
+msgstr "Обычный текст песен"
+
+#: crates/rufin/src/ui/artist.rs:275 crates/rufin/src/ui/random_play.rs:87
+#: crates/rufin/src/ui/root/album_detail_view.rs:198
+#: crates/rufin/src/ui/root/home_refresh.rs:256
+#: crates/rufin/src/ui/root/home_refresh.rs:428
+#: crates/rufin/src/ui/root/home_refresh.rs:587
+#: crates/rufin/src/ui/root/home_refresh.rs:656
+#: crates/rufin/src/ui/root/home_refresh.rs:70
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:204
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:358
+msgid "Play"
+msgstr "Воспроизвести"
+
+#: crates/rufin/src/ui/artist.rs:301 crates/rufin/src/ui/cards.rs:673
+#: crates/rufin/src/ui/root/album_detail_view.rs:218
+#: crates/rufin/src/ui/root/home_refresh.rs:266
+#: crates/rufin/src/ui/root/home_refresh.rs:438
+#: crates/rufin/src/ui/root/home_refresh.rs:80
+msgid "Play Later"
+msgstr "Воспроизвести Позже"
+
+#: crates/rufin/src/ui/cards.rs:660 crates/rufin/src/ui/queue.rs:1125
+#: crates/rufin/src/ui/random_play.rs:86
+#: crates/rufin/src/ui/root/home_refresh.rs:261
+#: crates/rufin/src/ui/root/home_refresh.rs:433
+#: crates/rufin/src/ui/root/home_refresh.rs:75
+msgid "Play Next"
+msgstr "Воспроизвести Следующий трек"
+
+#: crates/rufin/src/ui/queue.rs:1120
+msgid "Play Now"
+msgstr "Воспроизвести Сейчас"
+
+#: crates/rufin/src/ui/cards.rs:215
+#: crates/rufin/src/ui/library/album_detail.rs:524
+msgid "Play album"
+msgstr "Воспроизвести альбом"
+
+#: crates/rufin/src/ui/library/collections.rs:1022
+msgid "Play artist"
+msgstr "Воспроизвести исполнителя"
+
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:84
 msgid "Play count"
 msgstr "Количество воспроизведений"
 
+#: crates/rufin/src/ui/random_play.rs:82
+msgid "Play filter"
+msgstr "Воспроизвести фильтр"
+
+#: crates/rufin/src/ui/random_play.rs:45
+msgid "Play random"
+msgstr "Воспроизвести в случайном порядке"
+
+#: crates/rufin/src/ui/cards.rs:345
+msgid "Play track"
+msgstr "Воспроизвести трек"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:718
+#: crates/rufin/src/ui/root/tray.rs:51
+msgid "Play/Pause"
+msgstr "Воспроизвести/Приостановить"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:444
+#: crates/rufin/src/ui/preferences/root/mod.rs:135
+#: crates/rufin/src/ui/root/cover_startup.rs:716
+msgid "Playback"
+msgstr "Воспроизведение"
+
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:80
 msgid "Played"
 msgstr "Воспроизведено"
+
+#: crates/domain/src/route.rs:58
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:82
+msgid "Playlist"
+msgstr "Плейлист"
+
+#: crates/rufin/src/ui/root/new_playlist_dialog.rs:12
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:255
+msgid "Playlist name"
+msgstr "Название плейлиста"
 
 #: crates/rufin/src/ui/root/layout_rendering.rs:15
 msgid "Playlist order"
@@ -2095,34 +1366,496 @@ msgstr "Плейлисты"
 msgid "Plays"
 msgstr "Прослушано раз"
 
+#: crates/rufin/src/ui/preferences/root/layout.rs:174
+msgid "Position"
+msgstr "Позиция"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:296
+msgid "Prefer server lyrics"
+msgstr "Предпочитать тексты песен с сервера"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:287
+msgid "Prefer server playlist covers"
+msgstr "Предпочитать обложки плейлистов, хранящиеся на сервере"
+
+#: crates/rufin/src/ui/chrome.rs:132
+#: crates/rufin/src/ui/preferences/root/mod.rs:59
+#: crates/rufin/src/ui/preferences/root/mod.rs:87
+#: crates/rufin/src/ui/preferences/root/mod.rs:91
+#: crates/rufin/src/ui/root/cover_startup.rs:703
+msgid "Preferences"
+msgstr "Настройки"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:663
+msgid "Preset"
+msgstr "Предустановка"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:722
+msgid "Previous"
+msgstr "Предыдущий"
+
+#: crates/rufin/src/ui/root/tray.rs:52
+msgid "Previous Track"
+msgstr "Предыдущий трек"
+
+#: crates/rufin/src/ui/home.rs:278 crates/rufin/src/ui/home.rs:338
+msgid "Previous page"
+msgstr "Предыдущая страница"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:505
+msgid "Privacy and Security"
+msgstr "Конфиденциальность и безопасность"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:508
+msgid "Private mode"
+msgstr "Приватный режим"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:18
+msgid "Private mode is on"
+msgstr "Приватный режим включен"
+
+#: crates/rufin/src/ui/login.rs:152
+msgid "Provider"
+msgstr "Провайдер"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:184
+#: crates/rufin/src/ui/settings_persistence.rs:476
+msgid "Queue"
+msgstr "Очередь"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:1648
+#: crates/rufin/src/ui/player.rs:502
+msgid "Queue a track to begin"
+msgstr "Добавьте трек в очередь, чтобы начать воспроизведение"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:452
+msgid "Queue and transitions"
+msgstr "Очередь и переходы"
+
+#: crates/rufin/src/ui/root/tray.rs:56
+msgid "Quit"
+msgstr "Выход"
+
 #: crates/domain/src/settings/layout.rs:599
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:68
 msgid "Rating"
 msgstr "Оценка"
 
-#: crates/domain/src/domain.rs:523
+#: crates/rufin/src/ui/root/lyrics_panel.rs:356
+#: crates/rufin/src/ui/root/lyrics_panel.rs:99
+msgid "Ready"
+msgstr "Готово"
+
+#: crates/domain/src/domain.rs:525
 msgid "Recently played"
 msgstr "Недавно прослушанные"
 
-#: crates/domain/src/domain.rs:524
+#: crates/domain/src/domain.rs:526
 msgid "Recently released"
 msgstr "Недавно выпущенные"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:112
+#: crates/rufin/src/ui/preferences/root/general.rs:138
+#: crates/rufin/src/ui/preferences/root/general.rs:201
+#: crates/rufin/src/ui/preferences/root/general.rs:219
+msgid "Reconnect"
+msgstr "Повторное подключение"
+
+#: crates/rufin/src/ui/home.rs:280 crates/rufin/src/ui/home.rs:340
+msgid "Refresh section"
+msgstr "Обновить раздел"
 
 #: crates/domain/src/settings/layout.rs:595
 msgid "Release date"
 msgstr "Дата выпуска"
 
-#: crates/rufin/src/ui/library/cards.rs:894
+#: crates/rufin/src/ui/root/release_notes.rs:319
+msgid "Release notes"
+msgstr "Примечания к выпуску"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:273
+msgid "Release notifications"
+msgstr "Уведомления о новых версиях"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:416
+msgid "Remote lyrics"
+msgstr "Удалённые тексты песен"
+
+#: crates/rufin/src/ui/preferences/library.rs:119
+#: crates/rufin/src/ui/preferences/library.rs:171
+#: crates/rufin/src/ui/root/layout_rendering.rs:791
+msgid "Remove"
+msgstr "Удалить"
+
+#: crates/rufin/src/ui/preferences/library.rs:163
+msgid "Remove Local Folder"
+msgstr "Удалить Локальную Папку"
+
+#: crates/rufin/src/ui/queue.rs:1148
+#: crates/rufin/src/ui/root/home_refresh.rs:100
+#: crates/rufin/src/ui/root/home_refresh.rs:294
+#: crates/rufin/src/ui/root/home_refresh.rs:459
+msgid "Remove from Favorites"
+msgstr "Удалить из Избранных"
+
+#: crates/rufin/src/ui/root/layout_rendering.rs:787
+msgid "Remove from Playlist"
+msgstr "Удалить из плейлиста"
+
+#: crates/rufin/src/ui/queue.rs:1115
+msgid "Remove from Queue"
+msgstr "Удалить из Очереди"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:126
+msgid "Remove from playlist"
+msgstr "Удалить из плейлиста"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:483
+msgid "Remove rule"
+msgstr "Удалить правило"
+
+#: crates/rufin/src/ui/root/favorite_controls.rs:49
+msgid "Removed from favorites"
+msgstr "Удалено из избранного"
+
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:376
+#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:14
+msgid "Rename"
+msgstr "Переименовать"
+
+#: crates/rufin/src/ui/root/playlist_rename_dialog.rs:10
+msgid "Rename Playlist"
+msgstr "Переименовать плейлист"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:742
+msgid "Repeat"
+msgstr "Повтор"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:643
+msgid "Repeat all"
+msgstr "Повторять все"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:645
+msgid "Repeat off"
+msgstr "Повтор выключен"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:644
+msgid "Repeat one"
+msgstr "Повторять один"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:560
+msgid "ReplayGain"
+msgstr "Нормализация громкости"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:685
+#: crates/rufin/src/ui/preferences/root/general.rs:763
+msgid "Reset"
+msgstr "Сбросить"
+
+#: crates/rufin/src/ui/library/route_shell.rs:570
+msgid "Reset display"
+msgstr "Сбросить настройки отображения"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:760
+msgid "Reset equalizer"
+msgstr "Сбросить настройки эквалайзера"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:318
+msgid "Restore"
+msgstr "Восстановить"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:124
+msgid "Restore Default"
+msgstr "Восстановить настройки по умолчанию"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:761
+msgid "Restore selected preset to default bands."
+msgstr ""
+"Восстановить выбранный пресет до значений по умолчанию для каждой полосы "
+"частот."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:482
+msgid "Resync Library"
+msgstr "Синхронизировать библиотеку"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:415
+msgid "Rich presence"
+msgstr "Расширенная информация о текущем воспроизведении"
+
+#: crates/rufin/src/ui/library/cards.rs:893
 msgid "Rows"
 msgstr "Строки"
 
-#: crates/rufin/src/ui/player.rs:175
+#: crates/rufin/src/ui/root/tray.rs:57
+msgid "Rufin is running in the tray"
+msgstr "Rufin работает в системном трее"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:234
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:176
+msgid "Save"
+msgstr "Сохранить"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:264
+msgid "Save Lyrics"
+msgstr "Сохранить текст песни"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:230
+msgid "Save Mapping"
+msgstr "Сохранить Сопоставления"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:424
+msgid "Save Server Settings"
+msgstr "Сохранить Настройки Сервера"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:762
+msgid "Save to apply this mapping after the next sync."
+msgstr ""
+"Сохраните, чтобы применить эти настройки после следующей синхронизации."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:749
+msgid "Save to rescan this local library."
+msgstr ""
+"Сохраните изменения, чтобы повторно просканировать эту локальную библиотеку."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:788
+#, rust-format
+msgid ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+
+#: crates/rufin/src/ui/preferences/library.rs:208
+msgid "Saved per server"
+msgstr "Сохранено для каждого сервера"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:366
+msgid "Saved to"
+msgstr "Сохранено в"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:11
+#: crates/rufin/src/ui/preferences/root/mod.rs:129
+msgid "Scrobbling"
+msgstr "Отправка данных о прослушивании"
+
+#: crates/domain/src/route.rs:61 crates/rufin/src/ui/library/route_shell.rs:146
+#: crates/rufin/src/ui/library/route_shell.rs:97
+#: crates/rufin/src/ui/library/routes.rs:1092
+#: crates/rufin/src/ui/library/routes.rs:1362
+#: crates/rufin/src/ui/library/routes.rs:457
+#: crates/rufin/src/ui/library/routes.rs:701
+#: crates/rufin/src/ui/library/routes.rs:87
+#: crates/rufin/src/ui/library/routes.rs:908
+#: crates/rufin/src/ui/root/playlist_detail_view.rs:496
+msgid "Search"
+msgstr "Поиск"
+
+#: crates/rufin/src/ui/login.rs:601
+msgid "Search Again"
+msgstr "Повторить поиск"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:70
+msgid "Search Lyrics"
+msgstr "Поиск текстов песен"
+
+#: crates/rufin/src/ui/folders.rs:64
+msgid "Search current folder"
+msgstr "Поиск в текущей папке"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:325
+msgid "Search failed."
+msgstr "Поиск не дал результатов."
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:20
+msgid "Search lyrics"
+msgstr "Поиск текста песни"
+
+#: crates/rufin/src/ui/right_panel.rs:43
+#: crates/rufin/src/ui/settings_persistence.rs:502
+msgid "Search queue"
+msgstr "Поиск в очереди воспроизведения"
+
+#: crates/rufin/src/ui/login.rs:566
+msgid "Searching Local Network"
+msgstr "Поиск в локальной сети"
+
+#: crates/rufin/src/ui/login.rs:622
+msgid "Searching for Jellyfin servers on the local network…"
+msgstr "Поиск серверов Jellyfin в локальной сети…"
+
+#: crates/rufin/src/ui/login.rs:620
+msgid "Searching will start automatically"
+msgstr "Поиск начнётся автоматически"
+
+#: crates/rufin/src/ui/login.rs:599
+#: crates/rufin/src/ui/root/cover_startup.rs:112
+#: crates/rufin/src/ui/root/lyrics_panel.rs:251
+#: crates/rufin/src/ui/root/lyrics_panel.rs:274
+#: crates/rufin/src/ui/root/lyrics_playback_state.rs:100
+msgid "Searching…"
+msgstr "Поиск…"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:475
+msgid "Seconds"
+msgstr "Секунды"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:523
+msgid "Secret storage"
+msgstr "Скрытое хранилище"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:517
+msgid "Secure storage"
+msgstr "Безопасное хранилище"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:730
+msgid "Seek Backward"
+msgstr "Перемотать назад"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:734
+msgid "Seek Forward"
+msgstr "Перемотать вперёд"
+
+#: crates/rufin/src/ui/player.rs:191
 msgid "Seek playback"
 msgstr "Переместить по треку"
 
-#: crates/domain/src/domain.rs:544
+#: crates/rufin/src/ui/login.rs:874 crates/rufin/src/ui/login.rs:912
+#: crates/rufin/src/ui/preferences/library.rs:143
+msgid "Select Music Folder"
+msgstr "Выбрать папку с музыкой"
+
+#: crates/rufin/src/ui/source_selector.rs:229
+msgid "Select Source"
+msgstr "Выбрать Источник"
+
+#: crates/rufin/src/ui/login.rs:185
+#: crates/rufin/src/ui/preferences/root/mod.rs:378
+msgid "Server"
+msgstr "Сервер"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:465
+msgid "Server Actions"
+msgstr "Действия на сервере"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:397
+#: crates/rufin/src/ui/login.rs:161
+msgid "Server Address"
+msgstr "Адрес сервера"
+
+#: crates/rufin/src/ui/source_selector.rs:281
+msgid "Server Library"
+msgstr "Библиотека Сервера"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:147
+msgid "Server Prefix"
+msgstr "Префикс Сервера"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:163
+msgid "Server Sample"
+msgstr "Пример Сервера"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:382
+msgid "Server Settings"
+msgstr "Настройки Сервера"
+
+#: crates/rufin/src/ui/login.rs:637
+#, rust-format
+msgid "Server discovery failed: {error}"
+msgstr "Не удалось выполнить поиск сервера: {error}"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:702
+msgid "Server sample does not match the server prefix."
+msgstr "Пример сервера не соответствует префиксу сервера."
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:777
+msgid "Server selector"
+msgstr "Выбор сервера"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:161
+msgid "Server settings saved."
+msgstr "Настройки сервера сохранены."
+
+#: crates/rufin/src/ui/root/cover_startup.rs:163
+msgid "Server settings saved. Resyncing library…"
+msgstr ""
+"Настройки сервера сохранены. Выполняется повторная синхронизация библиотеки…"
+
+#: crates/rufin/src/ui/preferences/library.rs:35
+msgid "Servers"
+msgstr "Серверы"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:472
+msgid "Set the Discord activity type to Listening"
+msgstr "Установите тип активности в Discord на \"Прослушивание\""
+
+#: crates/rufin/src/ui/preferences/root/general.rs:83
+msgid "Shared secret"
+msgstr "Общий секретный ключ"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:641
+msgid "Show Lyrics Panel"
+msgstr "Показать панель с текстом песни"
+
+#: crates/rufin/src/ui/root/tray.rs:50
+msgid "Show Rufin"
+msgstr "Показать Rufin"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:364
+msgid "Show external service icons on album and artist pages"
+msgstr ""
+"Отображать значки внешних сервисов на страницах альбомов и исполнителей"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:363
+msgid "Show external site links"
+msgstr "Показывать ссылки на внешние сайты"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:461
+msgid "Show paused status"
+msgstr "Показывать статус \"на паузе\""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:482
+msgid "Show playback icon"
+msgstr "Показывать значок воспроизведения"
+
+#: crates/rufin/src/ui/root/mod.rs:822 crates/rufin/src/ui/root/mod.rs:823
+msgid "Show sidebar"
+msgstr "Показать боковую панель"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:200
+msgid "Show tray icon"
+msgstr "Показывать значок в системном трее"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:767
+msgid "Show/hide lyrics"
+msgstr "Показать/скрыть текст песни"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:763
+msgid "Show/hide right sidebar"
+msgstr "Показать/скрыть правую боковую панель"
+
+#: crates/domain/src/domain.rs:546
 msgid "Showcase"
 msgstr "Демонстрация"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:738
+msgid "Shuffle"
+msgstr "Воспроизведение в случайном порядке"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:636
+msgid "Shuffle off"
+msgstr "Перемешивание выкл"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:634
+msgid "Shuffle on"
+msgstr "Включить воспроизведение в случайном порядке"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:754
+msgid "Sidebar Items"
+msgstr "Элементы боковой панели"
 
 #: crates/domain/src/settings/sidebar.rs:405
 msgid "SimpMusic"
@@ -2131,6 +1864,10 @@ msgstr "SimpMusic"
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:88
 msgid "Skip count"
 msgstr "Количество пропусков"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:495
+msgid "Skip same-album crossfade"
+msgstr "Пропускать плавный переход между треками одного альбома"
 
 #: crates/domain/src/route.rs:60
 msgid "Smart Playlist"
@@ -2154,18 +1891,421 @@ msgstr ""
 "Здесь появятся интеллектуальные плейлисты после заполнения "
 "предустановленного набора."
 
+#: crates/rufin/src/ui/root/lyrics_panel.rs:94
+msgid "Song"
+msgstr "Песня"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:424
+msgid "Song title"
+msgstr "Название песни"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:334
+msgid "Sort"
+msgstr "Сортировать"
+
+#: crates/rufin/src/ui/source_selector.rs:109
+msgid "Source"
+msgstr "Источник"
+
+#: crates/rufin/src/ui/preferences/root/layout.rs:256
+msgid "Spacious"
+msgstr "Просторный"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:208
+msgid "Start minimized"
+msgstr "Запускать в свернутом виде"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:431
+msgid "Status display"
+msgstr "Отображение статуса"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:585
+msgid "Stream quality"
+msgstr "Качество потока"
+
+#: crates/rufin/src/ui/preferences/library.rs:289
+#: crates/rufin/src/ui/source_selector.rs:195
+msgid "Subsonic / OpenSubsonic"
+msgstr "Subsonic / OpenSubsonic"
+
+#: crates/rufin/src/ui/root/startup_reveal.rs:131
+msgid "Switching library…"
+msgstr "Переключение библиотеки…"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:166
+msgid "Sync already running."
+msgstr "Синхронизация уже выполняется."
+
+#: crates/rufin/src/ui/root/cover_startup.rs:408
+msgid "Synced lyrics"
+msgstr "Синхронизированные тексты песен"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:209
+#, rust-format
+msgid "Syncing {provider} library…"
+msgstr "Синхронизация библиотеки {provider}…"
+
+#: crates/rufin/src/i18n.rs:112
+#: crates/rufin/src/ui/preferences/root/general.rs:862
+msgid "System default"
+msgstr "Системные настройки по умолчанию"
+
+#: crates/rufin/src/ui/root/lyrics_panel.rs:79
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+"Нажмите на запись, чтобы загрузить текст песни и сохранить его в кэше "
+"приложения. Нажмите «Сохранить», только если вы также хотите сохранить его в "
+"папке с музыкой"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:942
+msgid "Text"
+msgstr "Текст"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:790
+msgid ""
+"Thank you for trying out Rufin! If you have problems or suggestions, please "
+"open an issue in Github."
+msgstr ""
+"Спасибо, что попробовали Rufin! Если у вас возникли проблемы или есть "
+"предложения, пожалуйста, создайте запрос в Github."
+
+#: crates/rufin/src/ui/preferences/library.rs:101
+msgid ""
+"These folders are combined into the Local source and shown through folder "
+"browsing."
+msgstr ""
+"Эти папки объединены в локальный источник и отображаются при просмотре "
+"содержимого папок."
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:417
+msgid ""
+"This playlist uses nested rule groups. Rule editing is unavailable in this "
+"editor."
+msgstr ""
+"В этом плейлисте используются вложенные группы правил. Редактирование правил "
+"недоступно в данном редакторе."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:546
+msgid "This removes cached library metadata for"
+msgstr "Это удаляет кэшированные метаданные библиотеки для"
+
+#: crates/rufin/src/ui/preferences/library.rs:166
+msgid "This removes the folder from the Local source."
+msgstr "Это удаляет папку из локального источника."
+
+#: crates/rufin/src/ui/local_access_mapping.rs:579
+msgid ""
+"This removes the server, cached library metadata, queue snapshot, and saved "
+"token for"
+msgstr ""
+"Это удаляет сервер, кэшированные метаданные библиотеки, снимок очереди и "
+"сохраненный токен для"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:407
+msgid "Timed out waiting for Last.fm authorization."
+msgstr "Время ожидания авторизации в Last.fm истекло."
+
+#: crates/rufin/src/ui/preferences/root/general.rs:440
+msgid "Timed out waiting for Libre.fm authorization"
+msgstr "Время ожидания авторизации в Libre.fm истекло"
+
+#: crates/domain/src/settings/layout.rs:589 crates/rufin/src/ui/queue.rs:788
+#: crates/rufin/src/ui/queue.rs:809
+#: crates/rufin/src/ui/root/layout_rendering.rs:16
+#: crates/rufin/src/ui/root/layout_rendering.rs:684
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:48
+msgid "Title"
+msgstr "Название"
+
 #: crates/domain/src/settings/layout.rs:590
 msgid "Title (merged)"
 msgstr "Название (объединено)"
+
+#: crates/rufin/src/ui/chrome.rs:126
+#: crates/rufin/src/ui/root/cover_startup.rs:711
+msgid "Toggle Fullscreen"
+msgstr "Переключить Полноэкранный Режим"
+
+#: crates/domain/src/settings/layout.rs:601
+#: crates/rufin/src/ui/preferences/root/general.rs:553
+msgid "Track"
+msgstr "Трек"
 
 #: crates/domain/src/route.rs:48 crates/domain/src/route.rs:52
 #: crates/domain/src/settings/layout.rs:521
 msgid "Tracks"
 msgstr "Треки"
 
+#: crates/rufin/src/ui/preferences/root/general.rs:461
+msgid "Transition mode"
+msgstr "Режим перехода"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:418
+#: crates/rufin/src/ui/login.rs:177
+msgid "Turn off only for a server you control"
+msgstr "Отключайте только для сервера, которым вы управляете"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:212
+msgid "Type to search"
+msgstr "Введите текст для поиска"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:770
+msgid "Type to search or create a new playlist"
+msgstr "Введите текст для поиска или создания нового плейлиста"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:665
+msgid "Unmuted"
+msgstr "Звук включен"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:781
+#, rust-format
+msgid ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+
+#: crates/rufin/src/ui/local_access_mapping.rs:469
+msgid "Use This Source"
+msgstr "Использовать Этот Источник"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:651
+msgid "Use different layout below a threshold width"
+msgstr ""
+"Использовать другую схему расположения элементов, если ширина экрана меньше "
+"заданного значения"
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:471
+msgid "Use listening activity"
+msgstr "Использовать данные о прослушиваниях"
+
+#: crates/rufin/src/ui/preferences/library.rs:216
+msgid "User"
+msgstr "Пользователь"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:285
+msgid "User token"
+msgstr "Токен пользователя"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:404
+#: crates/rufin/src/ui/login.rs:168
+msgid "Username"
+msgstr "Имя пользователя"
+
+#: crates/rufin/src/ui/local_access_mapping.rs:417
+#: crates/rufin/src/ui/login.rs:176
+msgid "Verify server certificate"
+msgstr "Проверить сертификат сервера"
+
+#: crates/rufin/src/ui/library/route_shell.rs:584
+#: crates/rufin/src/ui/root/release_notes.rs:422
+msgid "View"
+msgstr "Просмотр"
+
+#: crates/rufin/src/ui/library/cards.rs:566
+#: crates/rufin/src/ui/preferences/root/layout.rs:178
+#: crates/rufin/src/ui/preferences/root/mod.rs:779
+#: crates/rufin/src/ui/preferences/root/mod.rs:818
+msgid "Visible"
+msgstr "Видимый"
+
+#: crates/rufin/src/ui/fullscreen_player.rs:200
+#: crates/rufin/src/ui/settings_persistence.rs:481
+msgid "Visualizer"
+msgstr "Визуализатор"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:759
+msgid "Volume Down"
+msgstr "Уменьшить громкость"
+
+#: crates/rufin/src/ui/root/cover_startup.rs:755
+msgid "Volume Up"
+msgstr "Увеличить громкость"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:598
+msgid "Waveform seekbar"
+msgstr "Индикатор прогресса воспроизведения в виде волновой формы"
+
+#: crates/domain/src/settings/layout.rs:594 crates/rufin/src/ui/queue.rs:794
+#: crates/rufin/src/ui/queue.rs:829
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:72
+msgid "Year"
+msgstr "Год"
+
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:588
 msgid "Yes"
 msgstr "Да"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:665
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:676
+msgid "above"
+msgstr "выше"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:686
+msgid "after"
+msgstr "после"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:687
+msgid "before"
+msgstr "до"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:666
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:677
+msgid "below"
+msgstr "ниже"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:651
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:659
+msgid "contains"
+msgstr "содержит"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:653
+msgid "does not contain"
+msgstr "не содержит"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:654
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:679
+msgid "does not equal"
+msgstr "не равно"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:652
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:660
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:667
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:678
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:688
+msgid "equals"
+msgstr "равен"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:661
+msgid "excludes"
+msgstr "исключает"
+
+#: crates/rufin/src/ui/preferences/root/general.rs:277
+#: crates/rufin/src/ui/preferences/root/general.rs:47
+msgid "here"
+msgstr "здесь"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:682
+msgid "is"
+msgstr "является"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:655
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:669
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:689
+msgid "is empty"
+msgstr "пуст"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:662
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:682
+msgid "is not"
+msgstr "не является"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:656
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:670
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:690
+msgid "is not empty"
+msgstr "не пустой"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:668
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:675
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:685
+msgid "range"
+msgstr "диапазон"
+
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:551
+#: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:583
+msgid "to"
+msgstr "до"
+
+#: crates/rufin/src/ui/root/mod.rs:134
+#, rust-format
+msgid "{count} album"
+msgid_plural "{count} albums"
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+
+#: crates/rufin/src/ui/root/mod.rs:144
+#, fuzzy, rust-format
+msgid "{count} folder"
+msgid_plural "{count} folders"
+msgstr[0] "Поиск в текущей папке"
+msgstr[1] "Поиск в текущей папке"
+msgstr[2] "Поиск в текущей папке"
+
+#: crates/rufin/src/ui/root/mod.rs:154
+#, fuzzy, rust-format
+msgid "{count} folder selected"
+msgid_plural "{count} folders selected"
+msgstr[0] "Папка не выбрана"
+msgstr[1] "Папка не выбрана"
+msgstr[2] "Папка не выбрана"
+
+#: crates/rufin/src/ui/root/mod.rs:164
+#, rust-format
+msgid "{count} result"
+msgid_plural "{count} results"
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+
+#: crates/rufin/src/ui/root/mod.rs:174
+#, rust-format
+msgid "{count} track"
+msgid_plural "{count} tracks"
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+
+#: crates/rufin/src/ui/root/home_refresh.rs:1008
+#, rust-format
+msgid "{track_count} song added to {playlist_count} playlist"
+msgstr "Добавлено {track_count} треков в плейлист {playlist_count}"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:1012
+#, rust-format
+msgid "{track_count} song added to {playlist_count} playlists"
+msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:1016
+#, rust-format
+msgid "{track_count} songs added to {playlist_count} playlist"
+msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
+
+#: crates/rufin/src/ui/root/home_refresh.rs:1020
+#, rust-format
+msgid "{track_count} songs added to {playlist_count} playlists"
+msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
+
+#~ msgid "Saved mapping."
+#~ msgstr "Сохраненные сопоставления."
+
+#~ msgid "Unsaved changes."
+#~ msgstr "Несохраненные изменения."
+
+#~ msgid "View all tracks"
+#~ msgstr "Показать все треки"
+
+#~ msgid "albums"
+#~ msgstr "альбомы"
+
+#~ msgid "tracks"
+#~ msgstr "треки"
+
+#~ msgid "folders selected"
+#~ msgstr "папок выбрано"
+
+#~ msgid "results"
+#~ msgstr "результаты"
+
+#~ msgid "folders"
+#~ msgstr "папки"
 
 #~ msgid "Settings"
 #~ msgstr "Настройки"
@@ -2335,53 +2475,8 @@ msgstr "Да"
 #~ msgid "Play next"
 #~ msgstr "Воспроизвести следующий трек"
 
-#~ msgid "Play artist"
-#~ msgstr "Воспроизвести исполнителя"
-
 #~ msgid "Add to queue"
 #~ msgstr "Добавить в очередь воспроизведения"
-
-#~ msgid "contains"
-#~ msgstr "содержит"
-
-#~ msgid "equals"
-#~ msgstr "равен"
-
-#~ msgid "does not contain"
-#~ msgstr "не содержит"
-
-#~ msgid "does not equal"
-#~ msgstr "не равно"
-
-#~ msgid "is empty"
-#~ msgstr "пуст"
-
-#~ msgid "is not empty"
-#~ msgstr "не пустой"
-
-#~ msgid "excludes"
-#~ msgstr "исключает"
-
-#~ msgid "is not"
-#~ msgstr "не является"
-
-#~ msgid "above"
-#~ msgstr "выше"
-
-#~ msgid "below"
-#~ msgstr "ниже"
-
-#~ msgid "range"
-#~ msgstr "диапазон"
-
-#~ msgid "is"
-#~ msgstr "является"
-
-#~ msgid "after"
-#~ msgstr "после"
-
-#~ msgid "before"
-#~ msgstr "до"
 
 #~ msgid "No server"
 #~ msgstr "Сервер не найден"

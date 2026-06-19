@@ -203,7 +203,7 @@ impl Shell {
 
         dialog
             .status
-            .set_text(&format!("{} {}", results.len(), tr("results")));
+            .set_text(&result_count_text(results.len() as u64));
         self.render_lyrics_search_result_rows(&dialog, &track_id, &results);
     }
     fn render_lyrics_search_result_rows(
