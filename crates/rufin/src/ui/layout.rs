@@ -133,6 +133,7 @@ fn configured_sidebar_width(mode: LeftSidebarMode, widths: SidebarWidths) -> i32
     match mode {
         LeftSidebarMode::Full => widths.full,
         LeftSidebarMode::Compact => widths.compact,
+        LeftSidebarMode::Hidden => 0,
     }
 }
 
@@ -170,7 +171,11 @@ pub(in crate::ui) fn resolve_layout_with_sidebar_widths(
         } else {
             (ActiveLayoutProfile::Default, &settings.default_profile)
         };
-    resolve_layout_for_profile(profile, configured, window_width, sidebar_widths)
+    let mut configured = configured.clone();
+    if settings.default_profile.left_sidebar == LeftSidebarMode::Hidden {
+        configured.left_sidebar = LeftSidebarMode::Hidden;
+    }
+    resolve_layout_for_profile(profile, &configured, window_width, sidebar_widths)
 }
 
 fn resolve_layout_for_profile(
@@ -182,6 +187,7 @@ fn resolve_layout_for_profile(
     let mut left_sidebar = match configured.left_sidebar {
         LeftSidebarMode::Full => ResolvedLeftSidebarMode::Full,
         LeftSidebarMode::Compact => ResolvedLeftSidebarMode::Compact,
+        LeftSidebarMode::Hidden => ResolvedLeftSidebarMode::Hidden,
     };
     let mut right_sidebar = resolved_right_sidebar_for_width(
         configured.right_sidebar,
@@ -537,6 +543,39 @@ mod tests {
 
         assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
+    }
+
+    #[test]
+    fn layout_hides_configured_left_sidebar() {
+        let mut settings = LayoutSettings {
+            narrow_enabled: false,
+            ..Default::default()
+        };
+        settings.default_profile.left_sidebar = LeftSidebarMode::Hidden;
+
+        let resolved = resolve_layout(&settings, 1_500);
+
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Comfortable);
+        assert_eq!(resolved.main_width, 1_500 - RIGHT_SIDEBAR_COMFORTABLE_WIDTH);
+    }
+
+    #[test]
+    fn layout_default_hidden_left_sidebar_applies_to_narrow_widths() {
+        let mut settings = LayoutSettings::default();
+        settings.default_profile.left_sidebar = LeftSidebarMode::Hidden;
+        settings.narrow_profile.left_sidebar = LeftSidebarMode::Compact;
+
+        let narrow_width = settings.narrow_threshold - 1;
+        let resolved = resolve_layout(&settings, narrow_width);
+
+        assert_eq!(resolved.profile, ActiveLayoutProfile::Narrow);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
+        assert_eq!(
+            resolved.main_width,
+            narrow_width - RIGHT_SIDEBAR_DEFAULT_WIDTH
+        );
     }
 
     #[test]

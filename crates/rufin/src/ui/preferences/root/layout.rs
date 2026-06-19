@@ -227,7 +227,7 @@ pub(in crate::ui) fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow 
         .build()
 }
 pub(in crate::ui) fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
-    let titles = [tr("Full"), tr("Compact")];
+    let titles = [tr("Full"), tr("Compact"), tr("Hidden")];
     let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
     adw::ComboRow::builder()
         .title(title)
@@ -239,11 +239,13 @@ pub(in crate::ui) fn left_sidebar_mode_index(mode: LeftSidebarMode) -> u32 {
     match mode {
         LeftSidebarMode::Full => 0,
         LeftSidebarMode::Compact => 1,
+        LeftSidebarMode::Hidden => 2,
     }
 }
 pub(in crate::ui) fn left_sidebar_mode_from_index(index: u32) -> LeftSidebarMode {
     match index {
         1 => LeftSidebarMode::Compact,
+        2 => LeftSidebarMode::Hidden,
         _ => LeftSidebarMode::Full,
     }
 }

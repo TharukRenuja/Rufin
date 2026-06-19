@@ -50,6 +50,7 @@ pub enum LeftSidebarMode {
     #[default]
     Full,
     Compact,
+    Hidden,
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum RightSidebarMode {
