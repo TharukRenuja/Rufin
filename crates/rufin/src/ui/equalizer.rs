@@ -9,15 +9,8 @@ use gtk::prelude::*;
 use crate::i18n::tr;
 
 const EQUALIZER_FALLBACK_COMMIT_DELAY_MS: u64 = 1_200;
-const EQUALIZER_PRESET_MENU_HEIGHT: i32 = 160;
 const EQUALIZER_SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const CUSTOM_PRESET: &str = "Custom";
-
-pub(in crate::ui) struct EqualizerPresetDropdown {
-    pub(in crate::ui) button: gtk::MenuButton,
-    pub(in crate::ui) popover: gtk::Popover,
-    pub(in crate::ui) buttons: Vec<(gtk::Button, String)>,
-}
 
 pub(in crate::ui) fn equalizer_band_title(index: usize) -> String {
     const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
@@ -121,52 +114,30 @@ pub(in crate::ui) fn equalizer_preset_bands(name: &str) -> Vec<f64> {
     equalizer_default_preset_bands(name)
 }
 
-pub(in crate::ui) fn equalizer_preset_button_label(button: &gtk::MenuButton, preset: &str) {
-    button.set_label(&tr(preset));
+fn equalizer_preset_model() -> gtk::StringList {
+    let titles = equalizer_preset_names()
+        .into_iter()
+        .map(tr)
+        .collect::<Vec<_>>();
+    let title_refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
+    gtk::StringList::new(&title_refs)
 }
 
-pub(in crate::ui) fn build_equalizer_preset_dropdown(
-    menu_css_class: Option<&str>,
-) -> EqualizerPresetDropdown {
-    let button = gtk::MenuButton::new();
-    equalizer_preset_button_label(&button, CUSTOM_PRESET);
-    button.set_valign(gtk::Align::Center);
+pub(in crate::ui) fn build_equalizer_preset_row(title: &str, selected: u32) -> adw::ComboRow {
+    let model = equalizer_preset_model();
+    adw::ComboRow::builder()
+        .title(tr(title))
+        .model(&model)
+        .selected(selected)
+        .build()
+}
 
-    let popover = gtk::Popover::new();
-    let scroller = gtk::ScrolledWindow::new();
-    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_propagate_natural_width(true);
-    scroller.set_propagate_natural_height(false);
-    scroller.set_min_content_width(180);
-    scroller.set_min_content_height(EQUALIZER_PRESET_MENU_HEIGHT);
-    scroller.set_max_content_height(EQUALIZER_PRESET_MENU_HEIGHT);
-    scroller.set_height_request(EQUALIZER_PRESET_MENU_HEIGHT);
-
-    let menu = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    menu.add_css_class("equalizer-preset-menu");
-    if let Some(css_class) = menu_css_class {
-        menu.add_css_class(css_class);
-    }
-
-    let mut buttons = Vec::new();
-    for name in equalizer_preset_names() {
-        let item = gtk::Button::with_label(&tr(name));
-        item.set_halign(gtk::Align::Fill);
-        item.set_valign(gtk::Align::Center);
-        item.add_css_class("flat");
-        menu.append(&item);
-        buttons.push((item, name.to_string()));
-    }
-
-    scroller.set_child(Some(&menu));
-    popover.set_child(Some(&scroller));
-    button.set_popover(Some(&popover));
-
-    EqualizerPresetDropdown {
-        button,
-        popover,
-        buttons,
-    }
+pub(in crate::ui) fn build_equalizer_preset_dropdown(selected: u32) -> gtk::DropDown {
+    let model = equalizer_preset_model();
+    gtk::DropDown::builder()
+        .model(&model)
+        .selected(selected)
+        .build()
 }
 
 pub(in crate::ui) fn connect_equalizer_scale_commit(

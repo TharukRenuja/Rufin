@@ -54,7 +54,7 @@ toastoverlay toast label {
   color: @window_fg_color;
   border: 1px solid color-mix(in srgb, @window_fg_color 14%, transparent);
   border-radius: 18px;
-  padding: 26px;
+  padding: 10px 26px 12px;
   box-shadow:
     0 20px 58px rgba(0, 0, 0, 0.28),
     inset 0 1px color-mix(in srgb, white 12%, transparent);
@@ -62,17 +62,8 @@ toastoverlay toast label {
 
 .release-notes-title {
   color: @window_fg_color;
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 800;
-}
-
-.release-notes-current-version {
-  background: color-mix(in srgb, @window_fg_color 10%, transparent);
-  color: color-mix(in srgb, @window_fg_color 84%, transparent);
-  border: 1px solid color-mix(in srgb, @window_fg_color 12%, transparent);
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-weight: 700;
 }
 
 .release-note-summary {
@@ -93,24 +84,21 @@ toastoverlay toast label {
   border: 1px solid color-mix(in srgb, @window_fg_color 8%, transparent);
   border-radius: 14px;
   padding: 13px 14px;
-  margin: 8px 0;
+  margin: 0 0 10px;
 }
 
 .release-note-version {
-  background: rgba(0, 0, 0, 0.58);
-  color: color-mix(in srgb, @accent_color 74%, white);
-  border-radius: 999px;
-  padding: 4px 11px;
+  background: transparent;
+  color: @destructive_color;
+  border-radius: 6px;
+  padding: 2px 2px;
   font-weight: 800;
   min-width: 0;
   min-height: 0;
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.14),
-    inset 0 0 0 1px color-mix(in srgb, @accent_color 24%, transparent);
+  box-shadow: none;
   transition:
     background 120ms ease-out,
-    color 120ms ease-out,
-    box-shadow 120ms ease-out;
+    color 120ms ease-out;
 }
 
 .release-note-version label {
@@ -124,19 +112,22 @@ toastoverlay toast label {
 }
 
 .release-note-version:hover {
-  background: rgba(0, 0, 0, 0.68);
-  color: color-mix(in srgb, @accent_color 88%, white);
-  box-shadow:
-    0 2px 7px rgba(0, 0, 0, 0.18),
-    inset 0 0 0 1px color-mix(in srgb, @accent_color 42%, transparent);
+  background: color-mix(in srgb, @destructive_color 10%, transparent);
+  color: @destructive_color;
+}
+
+.release-note-installed {
+  background: color-mix(in srgb, @destructive_color 14%, transparent);
+  color: @destructive_color;
+  border: 1px solid color-mix(in srgb, @destructive_color 18%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-weight: 800;
 }
 
 .release-note-date {
-  background: color-mix(in srgb, @accent_bg_color 14%, transparent);
-  color: @accent_color;
-  border: 1px solid color-mix(in srgb, @accent_bg_color 26%, transparent);
-  border-radius: 999px;
-  padding: 5px 12px;
+  color: color-mix(in srgb, @window_fg_color 58%, transparent);
+  padding: 4px 0;
   font-weight: 700;
 }
 
@@ -913,20 +904,17 @@ scale.volume-slider trough {
   padding: 0;
   border-radius: 999px;
   color: color-mix(in srgb, @window_fg_color 92%, transparent);
-  background: color-mix(in srgb, @window_bg_color 34%, transparent);
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.22),
-    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 18%, transparent);
+  background: transparent;
+  box-shadow: none;
 }
 
 .window-controls menubutton.icon-button > button:hover,
 .window-controls menubutton.icon-button > button:focus,
 .window-controls menubutton.icon-button > button:active,
 .window-controls menubutton.icon-button > button:checked {
-  background: color-mix(in srgb, @window_bg_color 48%, transparent);
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.26),
-    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 22%, transparent);
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .icon-button.player-title-menu-button {
@@ -1398,9 +1386,12 @@ listview.queue-list row {
   padding-bottom: 0;
 }
 
-.equalizer-preset-menu,
-.fullscreen-player-equalizer-preset-menu {
-  padding: 6px;
+.fullscreen-player-equalizer-header flowboxchild,
+.fullscreen-player-equalizer-header flowboxchild:focus,
+.fullscreen-player-equalizer-header flowboxchild:selected {
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .fullscreen-player-equalizer-bands {

@@ -238,14 +238,15 @@ pub(super) fn volume_icon_button(
         context.close_path();
         let _ = context.stroke();
 
-        context.set_line_width(1.9);
         if icon_state.get() == VolumeIcon::Muted {
-            context.move_to(width * 0.66, height * 0.35);
-            context.line_to(width * 0.86, height * 0.65);
-            context.move_to(width * 0.86, height * 0.35);
-            context.line_to(width * 0.66, height * 0.65);
+            context.set_line_width(1.7);
+            context.move_to(width * 0.72, height * 0.40);
+            context.line_to(width * 0.90, height * 0.60);
+            context.move_to(width * 0.90, height * 0.40);
+            context.line_to(width * 0.72, height * 0.60);
             let _ = context.stroke();
         } else {
+            context.set_line_width(1.9);
             context.arc(width * 0.53, height * 0.50, width * 0.19, -0.70, 0.70);
             let _ = context.stroke();
             context.arc(width * 0.53, height * 0.50, width * 0.34, -0.62, 0.62);

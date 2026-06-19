@@ -221,9 +221,9 @@ pub(in crate::ui) use cover::{
 };
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use equalizer::{
-    build_equalizer_preset_dropdown, connect_equalizer_scale_commit, equalizer_band_label_parts,
-    equalizer_band_title, equalizer_default_preset_bands, equalizer_preset_bands,
-    equalizer_preset_button_label, equalizer_preset_name_at, equalizer_preset_position,
+    build_equalizer_preset_dropdown, build_equalizer_preset_row, connect_equalizer_scale_commit,
+    equalizer_band_label_parts, equalizer_band_title, equalizer_default_preset_bands,
+    equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_position,
     equalizer_selected_preset, install_equalizer_scroll,
 };
 pub(in crate::ui) use home_refresh::*;

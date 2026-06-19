@@ -4,6 +4,7 @@ use std::time::Duration;
 
 const RELEASE_NOTES_POPUP_WIDTH: i32 = 700;
 const RELEASE_NOTES_POPUP_HEIGHT: i32 = 640;
+const RELEASE_NOTES_SCROLLER_CHROME_HEIGHT: i32 = 74;
 const RELEASE_TOAST_TITLE: &str = "✨ New release is available!";
 const FLATHUB_APPSTREAM_URL: &str = "https://flathub.org/api/v2/appstream/io.github.screwys.Rufin";
 const RELEASE_CHECK_TIMEOUT_SECONDS: u64 = 4;
@@ -20,41 +21,18 @@ struct ReleaseNote {
     items: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CivilDate {
+    year: i32,
+    month: u32,
+    day: u32,
+}
+
 pub(in crate::ui) fn schedule_release_toast(shell: &Rc<Shell>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local_once(Duration::from_millis(250), move || {
         shell.check_release_toast();
     });
-}
-
-pub(in crate::ui) fn about_release_notes() -> String {
-    let Some(release) = release_notes_from_appstream().into_iter().next() else {
-        return String::new();
-    };
-    let mut markup = String::new();
-    if let Some(summary) = release.summary {
-        markup.push_str("<p>");
-        markup.push_str(&xml_escape(&summary));
-        markup.push_str("</p>");
-    }
-    if !release.items.is_empty() {
-        markup.push_str("<ul>");
-        for item in release.items {
-            markup.push_str("<li>");
-            markup.push_str(&xml_escape(&item));
-            markup.push_str("</li>");
-        }
-        markup.push_str("</ul>");
-    }
-    markup
-}
-
-fn xml_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 fn release_notes_from_appstream() -> Vec<ReleaseNote> {
@@ -66,6 +44,93 @@ fn latest_release_version() -> Option<String> {
         .into_iter()
         .next()
         .map(|release| release.version)
+}
+
+fn current_civil_date() -> Option<CivilDate> {
+    let now = glib::DateTime::now_local().ok()?;
+    Some(CivilDate {
+        year: now.year(),
+        month: now.month() as u32,
+        day: now.day_of_month() as u32,
+    })
+}
+
+fn parse_civil_date(text: &str) -> Option<CivilDate> {
+    let mut parts = text.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some(CivilDate { year, month, day })
+}
+
+fn civil_days(date: CivilDate) -> i32 {
+    let year = date.year - i32::from(date.month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month = date.month as i32;
+    let day = date.day as i32;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn release_relative_date_for(date: &str, today: CivilDate) -> String {
+    let Some(release_date) = parse_civil_date(date) else {
+        return date.to_string();
+    };
+    let days = civil_days(today).saturating_sub(civil_days(release_date));
+    if days < 0 {
+        return date.to_string();
+    }
+    match days {
+        0 => tr("today"),
+        1 => tr("yesterday"),
+        2..=13 => {
+            let count = days as u64;
+            trn_with(
+                "{count} day ago",
+                "{count} days ago",
+                count,
+                &[("count", &count.to_string())],
+            )
+        }
+        14..=59 => {
+            let count = (days / 7) as u64;
+            trn_with(
+                "{count} week ago",
+                "{count} weeks ago",
+                count,
+                &[("count", &count.to_string())],
+            )
+        }
+        60..=729 => {
+            let count = (days / 30) as u64;
+            trn_with(
+                "{count} month ago",
+                "{count} months ago",
+                count,
+                &[("count", &count.to_string())],
+            )
+        }
+        _ => {
+            let count = (days / 365) as u64;
+            trn_with(
+                "{count} year ago",
+                "{count} years ago",
+                count,
+                &[("count", &count.to_string())],
+            )
+        }
+    }
+}
+
+fn release_relative_date(date: &str) -> String {
+    current_civil_date()
+        .map(|today| release_relative_date_for(date, today))
+        .unwrap_or_else(|| date.to_string())
 }
 
 fn fetch_latest_flathub_release_version() -> Result<Option<String>, String> {
@@ -244,7 +309,10 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     version_content.append(&version_text);
     version_content.append(&version_icon);
     version.set_child(Some(&version_content));
-    let url = format!("https://github.com/screwys/Rufin/releases/tag/{version_label}");
+    let url = format!(
+        "https://github.com/screwys/Rufin/releases/tag/v{}",
+        note.version
+    );
     let window = window.clone();
     version.connect_clicked(move |_| {
         let launcher = gtk::UriLauncher::new(&url);
@@ -255,11 +323,16 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
             }
         });
     });
-    let date = gtk::Label::new(Some(&note.date));
+    let date = gtk::Label::new(Some(&release_relative_date(&note.date)));
     date.add_css_class("release-note-date");
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&version);
+    if note.version == env!("CARGO_PKG_VERSION") {
+        let installed = gtk::Label::new(Some(&tr("Installed")));
+        installed.add_css_class("release-note-installed");
+        header.append(&installed);
+    }
     header.append(&spacer);
     header.append(&date);
     row.append(&header);
@@ -302,37 +375,26 @@ fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::O
     backdrop.set_valign(gtk::Align::Fill);
     backdrop.set_hexpand(true);
     backdrop.set_vexpand(true);
-    let hit_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    hit_area.set_hexpand(true);
-    hit_area.set_vexpand(true);
-    backdrop.set_child(Some(&hit_area));
 
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
     card.add_css_class("release-notes-card");
     card.set_hexpand(true);
     card.set_width_request(1);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     header.set_hexpand(true);
-    let title_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    title_box.set_hexpand(true);
-    let title = gtk::Label::new(Some(&tr("Release notes")));
+    let title = gtk::Label::new(Some(&tr("Version History")));
     title.add_css_class("release-notes-title");
+    title.set_hexpand(true);
+    title.set_valign(gtk::Align::Center);
     title.set_xalign(0.0);
-    title_box.append(&title);
 
     let close = gtk::Button::from_icon_name("window-close-symbolic");
     close.add_css_class("flat");
     close.add_css_class("circular");
+    close.set_valign(gtk::Align::Center);
     close.set_tooltip_text(Some(&tr("Close")));
-    let current_version = gtk::Label::new(Some(&format!(
-        "{} v{}",
-        tr("Current version:"),
-        env!("CARGO_PKG_VERSION")
-    )));
-    current_version.add_css_class("release-notes-current-version");
-    header.append(&title_box);
-    header.append(&current_version);
+    header.append(&title);
     header.append(&close);
     card.append(&header);
 
@@ -344,7 +406,9 @@ fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::O
 
     let popup_width = large_popup_content_width(RELEASE_NOTES_POPUP_WIDTH);
     let popup_height = large_popup_content_height(window.height(), RELEASE_NOTES_POPUP_HEIGHT);
-    let scroller_height = popup_height.saturating_sub(104).max(280);
+    let scroller_height = popup_height
+        .saturating_sub(RELEASE_NOTES_SCROLLER_CHROME_HEIGHT)
+        .max(280);
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_min_content_height(scroller_height);
@@ -360,23 +424,15 @@ fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::O
     clamp.set_valign(gtk::Align::Center);
     clamp.set_margin_start(24);
     clamp.set_margin_end(24);
-    clamp.set_margin_top(24);
-    clamp.set_margin_bottom(24);
     clamp.set_child(Some(&card));
     backdrop.add_overlay(&clamp);
     backdrop.set_measure_overlay(&clamp, false);
     overlay.add_overlay(&backdrop);
     overlay.set_measure_overlay(&backdrop, false);
 
-    let overlay = overlay.clone();
     let backdrop_for_close = backdrop.clone();
     let close_overlay = overlay.clone();
     close.connect_clicked(move |_| close_overlay.remove_overlay(&backdrop_for_close));
-
-    let backdrop_for_click = backdrop.clone();
-    add_widget_click(hit_area.upcast_ref(), move || {
-        overlay.remove_overlay(&backdrop_for_click)
-    });
 }
 
 impl Shell {
@@ -462,6 +518,36 @@ mod tests {
                 items: vec!["First item".to_string(), "Second item".to_string()],
             }]
         );
+    }
+
+    #[test]
+    fn release_dates_use_relative_labels_without_singular_units() {
+        let today = CivilDate {
+            year: 2026,
+            month: 6,
+            day: 19,
+        };
+
+        assert_eq!(release_relative_date_for("2026-06-19", today), "today");
+        assert_eq!(release_relative_date_for("2026-06-18", today), "yesterday");
+        assert_eq!(release_relative_date_for("2026-06-10", today), "9 days ago");
+        assert_eq!(
+            release_relative_date_for("2026-05-01", today),
+            "7 weeks ago"
+        );
+        assert_eq!(
+            release_relative_date_for("2025-09-19", today),
+            "9 months ago"
+        );
+        assert_eq!(
+            release_relative_date_for("2025-06-19", today),
+            "12 months ago"
+        );
+        assert_eq!(
+            release_relative_date_for("2023-06-19", today),
+            "3 years ago"
+        );
+        assert_eq!(release_relative_date_for("not-a-date", today), "not-a-date");
     }
 
     #[test]
