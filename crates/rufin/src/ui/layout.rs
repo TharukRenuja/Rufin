@@ -556,8 +556,8 @@ mod tests {
         let resolved = resolve_layout(&settings, 1_500);
 
         assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
-        assert_eq!(resolved.right_sidebar, RightSidebarMode::Comfortable);
-        assert_eq!(resolved.main_width, 1_500 - RIGHT_SIDEBAR_COMFORTABLE_WIDTH);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
+        assert_eq!(resolved.main_width, 1_500 - RIGHT_SIDEBAR_DEFAULT_WIDTH);
     }
 
     #[test]
