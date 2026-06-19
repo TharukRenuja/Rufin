@@ -18,30 +18,33 @@
 # Features
 
 - Fast, native and modern GTK/libadwaita client
-- Optimized for quick startup and navigation, smooth browsing and type-to-search across large libraries
 - Supports playing from Jellyfin, Subsonic, Navidrome servers and local folders
+- Optimized for quick startup and navigation, smooth full library browsing
+- Automatic metadata, artwork and lyrics caching
+- Synchronized lyrics, built-in lyrics searcher that prioritizies synchronized lyrics
 - Local library support with multiple folders and CUE support with separate playable tracks
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
-- Automatic metadata caching for missing lyrics/cover arts
 - Gapless playback, crossfade, ReplayGain, equalizer presets and fullscreen player with visualizer
 - Best-effort path matching with your music server and local folders, you can play from your local files while keeping server reporting
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
 - System tray integration
 - Secure storage for all server credentials and API secrets
+- Simple private mode for pausing external activity
+- Expanding keyboard shortcuts catalog
 
 # Library behavior
 
-- Rufin keeps a local cache for each source, so opening the app, switching pages and browsing a large library doesn't mean asking the server or scanning folders again for every click. 
+- Rufin creates a local cache for each source. This makes large libraries fast to load and normal to browse. Everything is a full page, they are not paginated. This is achieved by trying to keep everything O(1), navigating to a page or scrolling through it doesn't parse data, scan folders or read the database for each entry.
 
-- Large libraries are normal to browse; tracks, albums, artists, genres and playlists are full pages, they are not paginated
+- Cover arts are shared through the app. App warms visible and nearby covers in background, and keeps decoded covers in memory so the same image doesn't need to be decoded again for every page.
 
-- Rufin stores source IDs, MusicBrainz IDs, sort tags and display names separately. It checks those before falling back to tag text from the same server or folder which helps to put albums on correct artist pages despite tag mismatches
+- Rufin stores source IDs, MusicBrainz IDs, sort tags and display names separately. It checks those before falling back to tag text from the same server or folder which helps to put albums on correct artist pages despite tag mismatches. Even if your tracks have missing Artist metadata, app can match it to an already existing artist. It still respects the new metadata if server source changes.
 
-- When a library changes, app tries to update the changed parts instead of making every page reload. Cover arts and artist pictures come from source first and missing ones are tried to fetch online, and artists use album arts as fallback
+- When a library changes, app tries to update the changed parts instead of making every page reload. Cover arts and artist pictures come from source first and missing ones are tried to fetch online. Artists can use album arts as fallback and vice-versa, app tries to make sure everything has an image. Again, if source metadata changes, that is respected.
 
-- If your server library also exists on disk, Rufin can play the local files directly while still reporting to the server
+- If your server library also exists on disk, Rufin can play the local files directly while still reporting to the server.
 
 # Screenshots
 
@@ -93,7 +96,71 @@ nix profile install github:screwys/Rufin/v0.7.6
 
 ## Building locally
 
-Refer to [CONTRIBUTING.md](CONTRIBUTING.md)
+Install the usual desktop app build dependencies. Package names vary by distro,
+but you need:
+
+- Rust 1.95 or newer, with Cargo, rustfmt, and clippy
+- pkg-config or pkgconf
+- gettext
+- jq
+- GTK 4.20 or newer
+- libadwaita 1.8 or newer
+- gdk-pixbuf
+- GStreamer with the base, good, bad, ugly, and libav plugin sets
+
+On Arch Linux:
+
+```bash
+sudo pacman -S --needed \
+  rust cargo rust-analyzer pkgconf gettext jq gtk4 libadwaita gdk-pixbuf2 \
+  gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+  gst-plugins-ugly gst-libav
+```
+
+Distrobox or Toolbx is a good option if you want to keep these packages out of
+your host system (Especially if you are on a Fedora Silverblue image like me). Create a normal development container, install the same
+packages there, and use it for building and testing. Running Rufin from the
+container can work too, but it can be tricky.
+
+If you already use Nix, the dev shell is an easy alternative:
+
+```bash
+nix --accept-flake-config develop
+```
+
+For one-off commands:
+
+```bash
+nix --accept-flake-config develop --command cargo run -p rufin
+nix --accept-flake-config develop --command scripts/test-rust.sh
+```
+
+The `--accept-flake-config` flag lets Nix use Rufin's configured binary cache.
+
+To run Rufin from source:
+
+```bash
+git clone https://github.com/screwys/Rufin.git
+cd Rufin
+cargo run -p rufin
+```
+
+To build a release binary:
+
+```bash
+cargo build --release -p rufin
+```
+
+`--startup-check` is a flag starts app and exits if a display is available, it is only exists for CIs.
+
+# Troubleshooting
+
+To run the app with debug logging:
+
+```bash
+RUST_LOG=rufin=debug,rufin_app=debug,playback=debug cargo run -p rufin
+flatpak run --env=RUST_LOG=rufin=debug,rufin_app=debug,playback=debug io.github.screwys.Rufin
+```
 
 # Contributing
 
