@@ -52,7 +52,7 @@ msgstr ""
 msgid "Activity links and MusicBrainz covers"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:215 crates/rufin/src/ui/root/home_refresh.rs:780
+#: crates/rufin/src/ui/login.rs:215 crates/rufin/src/ui/root/home_refresh.rs:778
 msgid "Add"
 msgstr ""
 
@@ -100,7 +100,7 @@ msgstr ""
 msgid "Add to Favorites"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1139 crates/rufin/src/ui/root/home_refresh.rs:285 crates/rufin/src/ui/root/home_refresh.rs:450 crates/rufin/src/ui/root/home_refresh.rs:744 crates/rufin/src/ui/root/home_refresh.rs:749 crates/rufin/src/ui/root/home_refresh.rs:91
+#: crates/rufin/src/ui/queue.rs:1139 crates/rufin/src/ui/root/home_refresh.rs:285 crates/rufin/src/ui/root/home_refresh.rs:450 crates/rufin/src/ui/root/home_refresh.rs:742 crates/rufin/src/ui/root/home_refresh.rs:747 crates/rufin/src/ui/root/home_refresh.rs:91
 msgid "Add to Playlist"
 msgstr ""
 
@@ -256,7 +256,7 @@ msgstr ""
 msgid "Caching local library… This may take some time."
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:550 crates/rufin/src/ui/local_access_mapping.rs:583 crates/rufin/src/ui/preferences/library.rs:169 crates/rufin/src/ui/preferences/root/mod.rs:551 crates/rufin/src/ui/root/home_refresh.rs:629 crates/rufin/src/ui/root/home_refresh.rs:793 crates/rufin/src/ui/root/layout_rendering.rs:790 crates/rufin/src/ui/root/new_playlist_dialog.rs:8 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175 crates/rufin/src/ui/root/playlist_detail_view.rs:428 crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
+#: crates/rufin/src/ui/local_access_mapping.rs:550 crates/rufin/src/ui/local_access_mapping.rs:583 crates/rufin/src/ui/preferences/library.rs:169 crates/rufin/src/ui/preferences/root/mod.rs:551 crates/rufin/src/ui/root/home_refresh.rs:627 crates/rufin/src/ui/root/home_refresh.rs:791 crates/rufin/src/ui/root/layout_rendering.rs:790 crates/rufin/src/ui/root/new_playlist_dialog.rs:8 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175 crates/rufin/src/ui/root/playlist_detail_view.rs:428 crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
 msgid "Cancel"
 msgstr ""
 
@@ -401,7 +401,7 @@ msgstr ""
 msgid "Control notifications"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:911 crates/rufin/src/ui/root/new_playlist_dialog.rs:9 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:129
+#: crates/rufin/src/ui/root/home_refresh.rs:909 crates/rufin/src/ui/root/new_playlist_dialog.rs:9 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:129
 msgid "Create"
 msgstr ""
 
@@ -437,11 +437,11 @@ msgstr ""
 msgid "Default right sidebar"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:592 crates/rufin/src/ui/root/home_refresh.rs:630 crates/rufin/src/ui/root/home_refresh.rs:663 crates/rufin/src/ui/root/playlist_detail_view.rs:429
+#: crates/rufin/src/ui/root/home_refresh.rs:592 crates/rufin/src/ui/root/home_refresh.rs:628 crates/rufin/src/ui/root/home_refresh.rs:661 crates/rufin/src/ui/root/playlist_detail_view.rs:429
 msgid "Delete"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:626 crates/rufin/src/ui/root/playlist_detail_view.rs:425
+#: crates/rufin/src/ui/root/home_refresh.rs:624 crates/rufin/src/ui/root/playlist_detail_view.rs:425
 msgid "Delete Playlist"
 msgstr ""
 
@@ -473,7 +473,7 @@ msgstr ""
 msgid "Discord"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:787
+#: crates/rufin/src/ui/root/home_refresh.rs:785
 msgid "Don't duplicate"
 msgstr ""
 
@@ -844,7 +844,7 @@ msgstr ""
 msgid "Minimum year"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:582 crates/rufin/src/ui/player.rs:775
+#: crates/rufin/src/ui/cards.rs:574 crates/rufin/src/ui/player.rs:775
 msgid "More actions"
 msgstr ""
 
@@ -1020,7 +1020,7 @@ msgstr ""
 msgid "No servers configured"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:1013
+#: crates/rufin/src/ui/root/home_refresh.rs:1011
 msgid "No songs added"
 msgstr ""
 
@@ -1108,15 +1108,15 @@ msgstr ""
 msgid "Plain lyrics"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:305 crates/rufin/src/ui/random_play.rs:87 crates/rufin/src/ui/root/album_detail_view.rs:211 crates/rufin/src/ui/root/home_refresh.rs:256 crates/rufin/src/ui/root/home_refresh.rs:428 crates/rufin/src/ui/root/home_refresh.rs:587 crates/rufin/src/ui/root/home_refresh.rs:658 crates/rufin/src/ui/root/home_refresh.rs:70 crates/rufin/src/ui/root/playlist_detail_view.rs:214 crates/rufin/src/ui/root/playlist_detail_view.rs:369
+#: crates/rufin/src/ui/artist.rs:305 crates/rufin/src/ui/random_play.rs:87 crates/rufin/src/ui/root/album_detail_view.rs:211 crates/rufin/src/ui/root/home_refresh.rs:256 crates/rufin/src/ui/root/home_refresh.rs:428 crates/rufin/src/ui/root/home_refresh.rs:587 crates/rufin/src/ui/root/home_refresh.rs:656 crates/rufin/src/ui/root/home_refresh.rs:70 crates/rufin/src/ui/root/playlist_detail_view.rs:214 crates/rufin/src/ui/root/playlist_detail_view.rs:369
 msgid "Play"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:331 crates/rufin/src/ui/cards.rs:681 crates/rufin/src/ui/root/album_detail_view.rs:231 crates/rufin/src/ui/root/home_refresh.rs:266 crates/rufin/src/ui/root/home_refresh.rs:438 crates/rufin/src/ui/root/home_refresh.rs:80
+#: crates/rufin/src/ui/artist.rs:331 crates/rufin/src/ui/cards.rs:673 crates/rufin/src/ui/root/album_detail_view.rs:231 crates/rufin/src/ui/root/home_refresh.rs:266 crates/rufin/src/ui/root/home_refresh.rs:438 crates/rufin/src/ui/root/home_refresh.rs:80
 msgid "Play Later"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:668 crates/rufin/src/ui/queue.rs:1125 crates/rufin/src/ui/random_play.rs:86 crates/rufin/src/ui/root/home_refresh.rs:261 crates/rufin/src/ui/root/home_refresh.rs:433 crates/rufin/src/ui/root/home_refresh.rs:75
+#: crates/rufin/src/ui/cards.rs:660 crates/rufin/src/ui/queue.rs:1125 crates/rufin/src/ui/random_play.rs:86 crates/rufin/src/ui/root/home_refresh.rs:261 crates/rufin/src/ui/root/home_refresh.rs:433 crates/rufin/src/ui/root/home_refresh.rs:75
 msgid "Play Next"
 msgstr ""
 
@@ -1796,7 +1796,7 @@ msgstr ""
 msgid "Type to search"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:772
+#: crates/rufin/src/ui/root/home_refresh.rs:770
 msgid "Type to search or create a new playlist"
 msgstr ""
 
@@ -1952,26 +1952,26 @@ msgstr ""
 msgid "to"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:477 crates/rufin/src/ui/home.rs:239 crates/rufin/src/ui/home.rs:65 crates/rufin/src/ui/library/cards.rs:185 crates/rufin/src/ui/library/cards.rs:195 crates/rufin/src/ui/library/cards.rs:207 crates/rufin/src/ui/library/cards.rs:214 crates/rufin/src/ui/library/cards.rs:223 crates/rufin/src/ui/library/cards.rs:518 crates/rufin/src/ui/preferences/library.rs:227 crates/rufin/src/ui/root/album_detail_view.rs:92 crates/rufin/src/ui/root/genre_detail_view.rs:33 crates/rufin/src/ui/root/home_refresh.rs:941 crates/rufin/src/ui/root/playlist_detail_view.rs:590
+#: crates/rufin/src/ui/artist.rs:477 crates/rufin/src/ui/home.rs:239 crates/rufin/src/ui/home.rs:65 crates/rufin/src/ui/library/cards.rs:185 crates/rufin/src/ui/library/cards.rs:195 crates/rufin/src/ui/library/cards.rs:207 crates/rufin/src/ui/library/cards.rs:214 crates/rufin/src/ui/library/cards.rs:223 crates/rufin/src/ui/library/cards.rs:518 crates/rufin/src/ui/preferences/library.rs:227 crates/rufin/src/ui/root/album_detail_view.rs:92 crates/rufin/src/ui/root/genre_detail_view.rs:33 crates/rufin/src/ui/root/home_refresh.rs:939 crates/rufin/src/ui/root/playlist_detail_view.rs:590
 msgid "tracks"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:1022
+#: crates/rufin/src/ui/root/home_refresh.rs:1020
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:1026
+#: crates/rufin/src/ui/root/home_refresh.rs:1024
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlists"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:1030
+#: crates/rufin/src/ui/root/home_refresh.rs:1028
 #, rust-format
 msgid "{track_count} songs added to {playlist_count} playlist"
 msgstr ""
 
-#: crates/rufin/src/ui/root/home_refresh.rs:1034
+#: crates/rufin/src/ui/root/home_refresh.rs:1032
 #, rust-format
 msgid "{track_count} songs added to {playlist_count} playlists"
 msgstr ""
