@@ -583,7 +583,7 @@ fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_halign(gtk::Align::Start);
     row.append(&playlist_detail_summary_item(
-        "audio-x-generic-symbolic",
+        "route-tracks-symbolic",
         &track_count_text(track_count.into()),
     ));
     row.append(&playlist_detail_summary_item(

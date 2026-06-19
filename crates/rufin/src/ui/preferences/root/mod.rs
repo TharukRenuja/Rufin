@@ -140,7 +140,7 @@ fn rebuild_preferences_dialog(
         &library_page,
         Some("library"),
         &tr("Library"),
-        "audio-x-generic-symbolic",
+        "route-tracks-symbolic",
     );
     if matches!(initial_page, PreferencesInitialPage::Library) {
         stack.set_visible_child_name("library");

@@ -26,7 +26,7 @@ fn library_sources_page(
 ) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Library"))
-        .icon_name("audio-x-generic-symbolic")
+        .icon_name("route-tracks-symbolic")
         .build();
 
     let library = shell.state.library.borrow().clone();
@@ -114,7 +114,7 @@ fn library_sources_page(
                 .title(local_folder_title(&folder.path))
                 .subtitle(folder.path.clone())
                 .build();
-            row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
+            row.add_prefix(&gtk::Image::from_icon_name("route-folders-symbolic"));
             let remove = gtk::Button::from_icon_name("user-trash-symbolic");
             remove.set_tooltip_text(Some(&tr("Remove")));
             remove.add_css_class("flat");
@@ -297,7 +297,7 @@ fn provider_icon_name(provider: &str) -> &'static str {
         "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
         "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
         "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
-        "local" | "fake" => "folder-symbolic",
+        "local" | "fake" => "route-folders-symbolic",
         _ => "network-server-symbolic",
     }
 }

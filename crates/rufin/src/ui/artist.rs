@@ -10,6 +10,7 @@ use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
+const ARTIST_COUNT_ICON_SIZE: i32 = 16;
 
 impl Shell {
     pub(super) fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -380,7 +381,7 @@ impl Shell {
         row.set_halign(gtk::Align::Start);
 
         let albums = artist_count_button(
-            "media-optical-symbolic",
+            "route-albums-symbolic",
             &album_count_text(album_count as u64),
         );
         let shell = Rc::clone(self);
@@ -391,7 +392,7 @@ impl Shell {
         row.append(&albums);
 
         let tracks = artist_count_button(
-            "audio-x-generic-symbolic",
+            "route-tracks-symbolic",
             &track_count_text(track_count.into()),
         );
         let shell = Rc::clone(self);
@@ -503,9 +504,10 @@ fn artist_count_button(icon_name: &str, label: &str) -> gtk::Button {
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     let icon = gtk::Image::from_icon_name(icon_name);
-    if icon_name == "media-optical-symbolic" {
-        icon.add_css_class("artist-count-album-icon");
-    }
+    icon.set_pixel_size(ARTIST_COUNT_ICON_SIZE);
+    icon.set_size_request(ARTIST_COUNT_ICON_SIZE, ARTIST_COUNT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
     content.append(&icon);
     let label = gtk::Label::new(Some(label));
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);

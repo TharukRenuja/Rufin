@@ -88,7 +88,7 @@ impl Shell {
         let facts = detail_summary_row(&[
             ("x-office-calendar-symbolic", album.year.to_string()),
             (
-                "audio-x-generic-symbolic",
+                "route-tracks-symbolic",
                 track_count_text(album.track_count.into()),
             ),
             (
