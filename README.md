@@ -158,9 +158,14 @@ cargo build --release -p rufin
 To run the app with debug logging:
 
 ```bash
-RUST_LOG=rufin=debug,rufin_app=debug,playback=debug cargo run -p rufin
 flatpak run --env=RUST_LOG=rufin=debug,rufin_app=debug,playback=debug io.github.screwys.Rufin
 ```
+Or if you are using the native build:
+
+```bash
+RUST_LOG=rufin=debug,rufin_app=debug,playback=debug cargo run -p rufin
+```
+
 
 # Contributing
 
