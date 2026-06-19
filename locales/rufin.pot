@@ -940,7 +940,7 @@ msgstr ""
 msgid "Next Track"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:279 crates/rufin/src/ui/home.rs:339
+#: crates/rufin/src/ui/home.rs:266 crates/rufin/src/ui/home.rs:326
 msgid "Next page"
 msgstr ""
 
@@ -1212,7 +1212,7 @@ msgstr ""
 msgid "Previous Track"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:278 crates/rufin/src/ui/home.rs:338
+#: crates/rufin/src/ui/home.rs:265 crates/rufin/src/ui/home.rs:325
 msgid "Previous page"
 msgstr ""
 
@@ -1268,7 +1268,7 @@ msgstr ""
 msgid "Reconnect"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:280 crates/rufin/src/ui/home.rs:340
+#: crates/rufin/src/ui/home.rs:267 crates/rufin/src/ui/home.rs:327
 msgid "Refresh section"
 msgstr ""
 
