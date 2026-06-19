@@ -157,6 +157,37 @@ release_note_pr_for_commit() {
   fi
 }
 
+release_note_extra_authors_for_pr() {
+  local repo_slug="$1"
+  local pr_number="$2"
+  local pr_author="$3"
+  local output
+
+  if output="$(gh pr view "$pr_number" \
+    --repo "$repo_slug" \
+    --json commits \
+    --jq '
+      .commits[]
+      | .authors[]
+      | .login // empty
+    ' 2>/dev/null)"; then
+    local seen_key
+    declare -A seen_key=()
+
+    while IFS= read -r author; do
+      if [[ -z "$author" ||
+        "$author" == "$pr_author" ||
+        -n "${seen_key[$author]+x}" ]] ||
+        is_release_note_bot_author "$author"; then
+        continue
+      fi
+
+      seen_key[$author]=1
+      printf '%s\n' "$author"
+    done <<< "$output"
+  fi
+}
+
 first_merged_pr_for_author() {
   local repo_slug="$1"
   local author="$2"
@@ -277,6 +308,15 @@ write_changelog() {
 
         local author_display
         author_display="$(format_release_note_author "$pr_author")"
+
+        if is_release_note_bot_author "$pr_author"; then
+          while IFS= read -r extra_author; do
+            if [[ -n "$extra_author" ]]; then
+              author_display+=", $(format_release_note_author "$extra_author")"
+            fi
+          done < <(release_note_extra_authors_for_pr "$repo_slug" "$pr_number" "$pr_author")
+        fi
+
         printf -- '- %s by %s in #%s\n' "$pr_title" "$author_display" "$pr_number"
 
         if [[ -n "$pr_author" ]] && ! is_release_note_bot_author "$pr_author"; then
