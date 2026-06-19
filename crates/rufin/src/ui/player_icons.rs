@@ -60,23 +60,19 @@ pub(super) fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
         let top = center_y - height * 0.28;
         let bottom = center_y + height * 0.28;
         let bar_width = (width * 0.12).clamp(2.1, 2.8);
-        if forward {
-            context.move_to(width * 0.30, top);
-            context.line_to(width * 0.30, bottom);
-            context.line_to(width * 0.70, center_y);
-            context.close_path();
-            let _ = context.fill();
-            context.rectangle(width * 0.76, top, bar_width, bottom - top);
-            let _ = context.fill();
-        } else {
-            context.rectangle(width * 0.20, top, bar_width, bottom - top);
-            let _ = context.fill();
-            context.move_to(width * 0.70, top);
-            context.line_to(width * 0.70, bottom);
-            context.line_to(width * 0.30, center_y);
-            context.close_path();
-            let _ = context.fill();
+        let _ = context.save();
+        if !forward {
+            context.translate(width, 0.0);
+            context.scale(-1.0, 1.0);
         }
+        context.move_to(width * 0.30, top);
+        context.line_to(width * 0.30, bottom);
+        context.line_to(width * 0.70, center_y);
+        context.close_path();
+        let _ = context.fill();
+        context.rectangle(width * 0.76, top, bar_width, bottom - top);
+        let _ = context.fill();
+        let _ = context.restore();
     });
     drawing_icon_button(label, icon)
 }

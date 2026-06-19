@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route, format_duration};
+use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route};
 
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
@@ -11,8 +11,8 @@ use super::cards::{album_cover_tile, render_home_album_page, render_home_track_p
 use super::{
     DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
     Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
-    album_count_text, configure_fill_width_clip, icon_button, mark_route_scroll_owner,
-    track_count_text,
+    album_count_text, configure_fill_width_clip, detail_summary_row, format_duration_units,
+    icon_button, mark_route_scroll_owner, track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -55,20 +55,6 @@ pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Alb
         .find(|section| section.kind == HomeSectionKind::Explore)
         .and_then(|section| section.albums.first())
         .cloned()
-}
-
-fn home_showcase_facts(album: &Album) -> String {
-    let mut parts = Vec::new();
-    if album.year > 0 {
-        parts.push(album.year.to_string());
-    }
-    if album.track_count > 0 {
-        parts.push(track_count_text(album.track_count.into()));
-    }
-    if album.duration_seconds > 0 {
-        parts.push(format_duration(album.duration_seconds));
-    }
-    parts.join(" • ")
 }
 
 impl Shell {
@@ -139,16 +125,17 @@ impl Shell {
         body.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         let cover = album_cover_tile(self, &album, 196, Some(&self.controller));
         cover.add_css_class("home-showcase-cover");
-        let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
-        facts.add_css_class("muted");
-        facts.add_css_class("home-showcase-facts");
-        facts.set_xalign(0.0);
-        facts.set_halign(gtk::Align::Start);
-        facts.set_justify(gtk::Justification::Left);
-        facts.set_wrap(true);
-        facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        facts.set_width_chars(1);
-        facts.set_max_width_chars(22);
+        let facts = detail_summary_row(&[
+            ("x-office-calendar-symbolic", album.year.to_string()),
+            (
+                "audio-x-generic-symbolic",
+                track_count_text(album.track_count.into()),
+            ),
+            (
+                "appointment-soon-symbolic",
+                format_duration_units(album.duration_seconds),
+            ),
+        ]);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         cover_column.set_width_request(196);
         cover_column.set_halign(gtk::Align::Start);

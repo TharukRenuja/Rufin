@@ -546,11 +546,6 @@ menubutton.server-selector > button:hover {
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
 }
 
-.home-showcase-facts {
-  font-size: 13px;
-  line-height: 1.2;
-}
-
 .home-genre-flow {
   padding-bottom: 4px;
 }
