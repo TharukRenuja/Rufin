@@ -509,28 +509,29 @@ where
     column
 }
 pub(in crate::ui) fn track_artist_route(track: &Track) -> Option<Route> {
-    if let Some(artist_id) = track.artist_id.clone() {
-        Some(Route::ArtistDetail(artist_id))
-    } else if !track.artist.trim().is_empty() {
-        Some(Route::Search {
-            query: track.artist.clone(),
-            kind: SearchKind::Artists,
+    track
+        .artist_id
+        .clone()
+        .or_else(|| track.artist_credits.first().map(|artist| artist.id.clone()))
+        .or_else(|| {
+            track
+                .album_artist_credits
+                .first()
+                .map(|artist| artist.id.clone())
         })
-    } else {
-        None
-    }
+        .map(Route::ArtistDetail)
 }
 pub(in crate::ui) fn album_artist_route(album: &Album) -> Option<Route> {
-    if let Some(artist_id) = album.artist_id.clone() {
-        Some(Route::ArtistDetail(artist_id))
-    } else if !album.artist.trim().is_empty() {
-        Some(Route::Search {
-            query: album.artist.clone(),
-            kind: SearchKind::Artists,
+    album
+        .artist_id
+        .clone()
+        .or_else(|| {
+            album
+                .album_artist_credits
+                .first()
+                .map(|artist| artist.id.clone())
         })
-    } else {
-        None
-    }
+        .map(Route::ArtistDetail)
 }
 pub(in crate::ui) fn install_track_context_menu(
     target: &impl IsA<gtk::Widget>,

@@ -16,12 +16,6 @@ pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) configure_scroller: Option<LibraryRouteScrollerConfigurator>,
 }
 
-fn next_track_hydration(generation: &Rc<Cell<u64>>) -> u64 {
-    let next = generation.get().saturating_add(1);
-    generation.set(next);
-    next
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::ui) fn log_route_page_timing(
     route: &Route,
@@ -39,44 +33,6 @@ pub(in crate::ui) fn log_route_page_timing(
             action, offset, count, total, load_ms, apply_ms, total_ms, "slow route page load"
         );
     }
-}
-
-fn schedule_track_hydration(
-    shell: &Rc<Shell>,
-    load_next: Rc<dyn Fn()>,
-    cursor: Rc<PagedGridCursor>,
-    generation: Rc<Cell<u64>>,
-    expected_generation: u64,
-    route_generation: u64,
-) {
-    if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
-        return;
-    }
-    let shell = Rc::clone(shell);
-    glib::idle_add_local(move || {
-        if generation.get() != expected_generation
-            || shell.state.route_load_generation.get() != route_generation
-            || shell.state.routes.borrow().current() != &Route::Tracks
-        {
-            return glib::ControlFlow::Break;
-        }
-        if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
-            return glib::ControlFlow::Break;
-        }
-        if cursor.loading.get() {
-            return glib::ControlFlow::Continue;
-        }
-        let previous_offset = cursor.offset.get();
-        load_next();
-        if cursor.offset.get() <= previous_offset {
-            return glib::ControlFlow::Break;
-        }
-        if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
-        }
-    });
 }
 
 impl Shell {
@@ -152,8 +108,6 @@ impl Shell {
         });
         let query = Rc::new(RefCell::new(String::new()));
         let play_query = Rc::clone(&query);
-        let route_generation = self.state.route_load_generation.get();
-        let hydration_generation = Rc::new(Cell::new(0_u64));
         let load_next = {
             let shell = Rc::clone(self);
             let model = model.clone();
@@ -209,12 +163,9 @@ impl Shell {
             let tracks = Rc::clone(&tracks);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
-            let load_next = Rc::clone(&load_next);
-            let hydration_generation = Rc::clone(&hydration_generation);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
-                let hydration = next_track_hydration(&hydration_generation);
                 if complete_page {
                     let settings = shell.library_settings(LibraryListKey::Tracks);
                     let visible_tracks =
@@ -267,14 +218,6 @@ impl Shell {
                             apply_started.elapsed().as_millis() as u64,
                             total_started.elapsed().as_millis() as u64,
                         );
-                        schedule_track_hydration(
-                            &shell,
-                            Rc::clone(&load_next),
-                            Rc::clone(&cursor),
-                            Rc::clone(&hydration_generation),
-                            hydration,
-                            route_generation,
-                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached tracks page");
@@ -282,17 +225,6 @@ impl Shell {
                     }
                 }
             });
-        }
-        if !complete_page {
-            let hydration = next_track_hydration(&hydration_generation);
-            schedule_track_hydration(
-                self,
-                Rc::clone(&load_next),
-                Rc::clone(&cursor),
-                Rc::clone(&hydration_generation),
-                hydration,
-                route_generation,
-            );
         }
         let track_viewport_warm = {
             let shell = Rc::clone(self);

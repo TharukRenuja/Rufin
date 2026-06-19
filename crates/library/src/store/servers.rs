@@ -568,11 +568,25 @@ pub(super) fn canonical_album_for_write(
             && entity_id != credit.id
         {
             credit.id = entity_id;
+        } else if let Some(artist_id) = fallback_musicbrainz_artist_id(&credit.id)
+            && let Some(entity_id) =
+                album_artist_musicbrainz_target(connection, server_id, artist_id)?
+            && entity_id != credit.id
+        {
+            credit.id = entity_id;
         }
     }
     if let Some(artist_id) = album.artist_id.as_ref()
         && let Some(entity_id) = album_artist_alias_target(connection, server_id, artist_id)?
         && entity_id != *artist_id
+    {
+        album.artist_id = Some(entity_id);
+    } else if let Some(artist_id) = album
+        .artist_id
+        .as_ref()
+        .and_then(fallback_musicbrainz_artist_id)
+        && let Some(entity_id) = album_artist_musicbrainz_target(connection, server_id, artist_id)?
+        && album.artist_id.as_ref() != Some(&entity_id)
     {
         album.artist_id = Some(entity_id);
     }
@@ -904,6 +918,7 @@ pub(super) fn repair_linked_artists(
         ",
         params![server_id.as_str()],
     )?;
+    merge_musicbrainz_album_artist_fallbacks(connection, server_id, generation)?;
     for (alias_id, canonical_id) in album_artist_aliases {
         merge_album_artist_alias(connection, server_id, &canonical_id, &alias_id, generation)?;
     }
@@ -1131,6 +1146,74 @@ fn canonical_album_artist_id_for_write(
     Ok(None)
 }
 
+fn album_artist_musicbrainz_target(
+    connection: &Connection,
+    server_id: &ServerId,
+    artist_id: &str,
+) -> StoreResult<Option<ArtistId>> {
+    connection
+        .query_row(
+            "
+            SELECT entity_id
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'musicbrainz:artist'
+              AND value = ?2
+            LIMIT 1
+            ",
+            params![server_id.as_str(), artist_id],
+            |row| row.get::<_, String>(0).map(ArtistId::new),
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+fn fallback_musicbrainz_artist_id(artist_id: &ArtistId) -> Option<&str> {
+    artist_id
+        .as_str()
+        .split_once(":artist:musicbrainz:")
+        .map(|(_, value)| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn merge_musicbrainz_album_artist_fallbacks(
+    connection: &Connection,
+    server_id: &ServerId,
+    generation: i64,
+) -> StoreResult<()> {
+    let marker = ":artist:musicbrainz:";
+    let mut statement = connection.prepare(
+        "
+        SELECT source.entity_id, target.entity_id
+        FROM entity_identity_keys source
+        JOIN entity_identity_keys target
+          ON target.server_id = source.server_id
+         AND target.entity_kind = 'album_artist'
+         AND target.namespace = 'musicbrainz:artist'
+         AND target.value = substr(source.value, instr(source.value, ?2) + length(?2))
+        WHERE source.server_id = ?1
+          AND source.entity_kind = 'album_artist'
+          AND source.namespace = 'source:artist_id'
+          AND instr(source.value, ?2) > 0
+          AND source.entity_id <> target.entity_id
+        ",
+    )?;
+    let aliases = collect_rows(statement.query_map(
+        params![server_id.as_str(), marker],
+        |row| {
+            Ok((
+                ArtistId::new(row.get::<_, String>(0)?),
+                ArtistId::new(row.get::<_, String>(1)?),
+            ))
+        },
+    )?)?;
+    for (alias_id, canonical_id) in aliases {
+        merge_album_artist_alias(connection, server_id, &canonical_id, &alias_id, generation)?;
+    }
+    Ok(())
+}
+
 fn relation_backed_album_artist_alias_target(
     connection: &Connection,
     server_id: &ServerId,
@@ -1158,6 +1241,7 @@ fn relation_backed_album_artist_alias_target(
         SELECT artist_id
         FROM relation_artists candidate
         WHERE LOWER(TRIM(candidate.name)) = LOWER(TRIM(?3))
+          AND instr(candidate.artist_id, ':artist:musicbrainz:') = 0
           AND NOT EXISTS (
               SELECT 1
               FROM entity_identity_keys key

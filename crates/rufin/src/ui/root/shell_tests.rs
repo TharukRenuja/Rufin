@@ -30,11 +30,12 @@ use crate::controller::{
 };
 use domain::ExternalLyricsProvider;
 use domain::{
-    Album, AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, LibraryLayout,
-    LibrarySourceSelection, MusicFolderId, Playlist, PlaylistId, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, ServerIdentity, SmartPlaylist,
-    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
-    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableSettings,
+    Album, AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
+    LibraryLayout, LibrarySourceSelection, MusicFolderId, Playlist, PlaylistId, QueueEntry,
+    QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, ServerIdentity,
+    SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode,
+    SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId, TrackSortKey,
+    TrackTableSettings,
 };
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use library::LibraryDelta;
@@ -915,12 +916,20 @@ pub(in crate::ui) fn track_artist_route() {
     );
 
     let track = test_track("Loose Artist", None);
+    assert_eq!(super::track_artist_route(&track), None);
+
+    let mut track = test_track("Credited Artist", None);
+    track.artist_credits = vec![test_credit(ArtistId::fake(4), "Credited Artist")];
     assert_eq!(
         super::track_artist_route(&track),
-        Some(Route::Search {
-            query: "Loose Artist".to_string(),
-            kind: SearchKind::Artists,
-        })
+        Some(Route::ArtistDetail(ArtistId::fake(4)))
+    );
+
+    let mut track = test_track("Album Artist", None);
+    track.album_artist_credits = vec![test_credit(ArtistId::fake(6), "Album Artist")];
+    assert_eq!(
+        super::track_artist_route(&track),
+        Some(Route::ArtistDetail(ArtistId::fake(6)))
     );
 
     assert_eq!(super::track_artist_route(&test_track("   ", None)), None);
@@ -934,12 +943,13 @@ pub(in crate::ui) fn album_artist_route() {
     );
 
     let album = test_album("Compilation Artist", None);
+    assert_eq!(super::album_artist_route(&album), None);
+
+    let mut album = test_album("Linked Artist", None);
+    album.album_artist_credits = vec![test_credit(ArtistId::fake(7), "Linked Artist")];
     assert_eq!(
         super::album_artist_route(&album),
-        Some(Route::Search {
-            query: "Compilation Artist".to_string(),
-            kind: SearchKind::Artists,
-        })
+        Some(Route::ArtistDetail(ArtistId::fake(7)))
     );
 
     assert_eq!(super::album_artist_route(&test_album("", None)), None);
@@ -1670,5 +1680,13 @@ pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Tr
         source_format: None,
         comment: None,
         skip_count: None,
+    }
+}
+
+fn test_credit(id: ArtistId, name: &str) -> ArtistCredit {
+    ArtistCredit {
+        id,
+        name: name.to_string(),
+        musicbrainz_artist_id: None,
     }
 }

@@ -92,15 +92,15 @@ msgstr ""
 msgid "Add folders to use the Local source."
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:484
+#: crates/rufin/src/ui/queue.rs:468
 msgid "Add music to start a queue."
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1154 crates/rufin/src/ui/root/home_refresh.rs:106 crates/rufin/src/ui/root/home_refresh.rs:300 crates/rufin/src/ui/root/home_refresh.rs:465
+#: crates/rufin/src/ui/queue.rs:1138 crates/rufin/src/ui/root/home_refresh.rs:106 crates/rufin/src/ui/root/home_refresh.rs:300 crates/rufin/src/ui/root/home_refresh.rs:465
 msgid "Add to Favorites"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1139 crates/rufin/src/ui/root/home_refresh.rs:285 crates/rufin/src/ui/root/home_refresh.rs:450 crates/rufin/src/ui/root/home_refresh.rs:742 crates/rufin/src/ui/root/home_refresh.rs:747 crates/rufin/src/ui/root/home_refresh.rs:91
+#: crates/rufin/src/ui/queue.rs:1123 crates/rufin/src/ui/root/home_refresh.rs:285 crates/rufin/src/ui/root/home_refresh.rs:450 crates/rufin/src/ui/root/home_refresh.rs:742 crates/rufin/src/ui/root/home_refresh.rs:747 crates/rufin/src/ui/root/home_refresh.rs:91
 msgid "Add to Playlist"
 msgstr ""
 
@@ -112,7 +112,7 @@ msgstr ""
 msgid "Added to favorites"
 msgstr ""
 
-#: crates/domain/src/route.rs:47 crates/domain/src/settings/layout.rs:593 crates/rufin/src/ui/preferences/root/general.rs:553 crates/rufin/src/ui/queue.rs:821 crates/rufin/src/ui/root/layout_rendering.rs:18 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:56
+#: crates/domain/src/route.rs:47 crates/domain/src/settings/layout.rs:593 crates/rufin/src/ui/preferences/root/general.rs:553 crates/rufin/src/ui/queue.rs:805 crates/rufin/src/ui/root/layout_rendering.rs:18 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:56
 msgid "Album"
 msgstr ""
 
@@ -228,7 +228,7 @@ msgstr ""
 msgid "Cached"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:317 crates/rufin/src/ui/library/routes.rs:1074 crates/rufin/src/ui/library/routes.rs:293 crates/rufin/src/ui/library/routes.rs:623 crates/rufin/src/ui/library/routes.rs:857
+#: crates/rufin/src/ui/library/route_shell.rs:249 crates/rufin/src/ui/library/routes.rs:1081 crates/rufin/src/ui/library/routes.rs:293 crates/rufin/src/ui/library/routes.rs:630 crates/rufin/src/ui/library/routes.rs:864
 msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
@@ -268,7 +268,7 @@ msgstr ""
 msgid "Change Secret Storage"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:499 crates/rufin/src/ui/root/playlist_detail_view.rs:515
+#: crates/rufin/src/ui/library/route_shell.rs:431 crates/rufin/src/ui/root/playlist_detail_view.rs:515
 msgid "Change sort order"
 msgstr ""
 
@@ -312,7 +312,7 @@ msgstr ""
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:582
+#: crates/rufin/src/ui/library/route_shell.rs:514
 msgid "Choose the current page layout."
 msgstr ""
 
@@ -417,7 +417,7 @@ msgstr ""
 msgid "Current version:"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:531 crates/rufin/src/ui/library/route_shell.rs:568
+#: crates/rufin/src/ui/library/route_shell.rs:463 crates/rufin/src/ui/library/route_shell.rs:500
 msgid "Customize display"
 msgstr ""
 
@@ -477,11 +477,11 @@ msgstr ""
 msgid "Don't duplicate"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:571 crates/rufin/src/ui/library/collections.rs:873 crates/rufin/src/ui/preferences/root/layout.rs:26 crates/rufin/src/ui/preferences/root/mod.rs:826 crates/rufin/src/ui/queue.rs:1009 crates/rufin/src/ui/root/layout_rendering.rs:692
+#: crates/rufin/src/ui/library/cards.rs:571 crates/rufin/src/ui/library/collections.rs:873 crates/rufin/src/ui/preferences/root/layout.rs:26 crates/rufin/src/ui/preferences/root/mod.rs:826 crates/rufin/src/ui/queue.rs:993 crates/rufin/src/ui/root/layout_rendering.rs:692
 msgid "Drag to reorder"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs:605 crates/rufin/src/ui/folders.rs:379 crates/rufin/src/ui/library/album_detail.rs:597 crates/rufin/src/ui/queue.rs:860
+#: crates/domain/src/settings/layout.rs:605 crates/rufin/src/ui/folders.rs:379 crates/rufin/src/ui/library/album_detail.rs:597 crates/rufin/src/ui/queue.rs:844
 msgid "Duration"
 msgstr ""
 
@@ -636,11 +636,11 @@ msgstr ""
 msgid "Get token"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1170 crates/rufin/src/ui/root/home_refresh.rs:120 crates/rufin/src/ui/root/home_refresh.rs:314
+#: crates/rufin/src/ui/queue.rs:1154 crates/rufin/src/ui/root/home_refresh.rs:120 crates/rufin/src/ui/root/home_refresh.rs:314
 msgid "Go to Album"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1162 crates/rufin/src/ui/root/home_refresh.rs:114 crates/rufin/src/ui/root/home_refresh.rs:308 crates/rufin/src/ui/root/home_refresh.rs:471
+#: crates/rufin/src/ui/queue.rs:1146 crates/rufin/src/ui/root/home_refresh.rs:114 crates/rufin/src/ui/root/home_refresh.rs:308 crates/rufin/src/ui/root/home_refresh.rs:471
 msgid "Go to Artist"
 msgstr ""
 
@@ -676,7 +676,7 @@ msgstr ""
 msgid "If you do not have API keys, create them"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs:588 crates/rufin/src/ui/library/columns.rs:683
+#: crates/domain/src/settings/layout.rs:588 crates/rufin/src/ui/library/columns.rs:678
 msgid "Image"
 msgstr ""
 
@@ -720,7 +720,7 @@ msgstr ""
 msgid "Last.fm scrobbling"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:515 crates/rufin/src/ui/library/route_shell.rs:581 crates/rufin/src/ui/preferences/root/general.rs:798 crates/rufin/src/ui/preferences/root/mod.rs:123
+#: crates/rufin/src/ui/library/route_shell.rs:447 crates/rufin/src/ui/library/route_shell.rs:513 crates/rufin/src/ui/preferences/root/general.rs:798 crates/rufin/src/ui/preferences/root/mod.rs:123
 msgid "Layout"
 msgstr ""
 
@@ -844,7 +844,7 @@ msgstr ""
 msgid "Minimum year"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:574 crates/rufin/src/ui/player.rs:802
+#: crates/rufin/src/ui/cards.rs:581 crates/rufin/src/ui/player.rs:802
 msgid "More actions"
 msgstr ""
 
@@ -932,7 +932,7 @@ msgstr ""
 msgid "Newly added"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:291 crates/rufin/src/ui/root/album_detail_view.rs:208 crates/rufin/src/ui/root/cover_startup.rs:726
+#: crates/rufin/src/ui/artist.rs:291 crates/rufin/src/ui/root/album_detail_view.rs:197 crates/rufin/src/ui/root/cover_startup.rs:726
 msgid "Next"
 msgstr ""
 
@@ -1004,7 +1004,7 @@ msgstr ""
 msgid "No lyrics found."
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:482
+#: crates/rufin/src/ui/queue.rs:466
 msgid "No queue items match the search."
 msgstr ""
 
@@ -1108,19 +1108,19 @@ msgstr ""
 msgid "Plain lyrics"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:275 crates/rufin/src/ui/random_play.rs:87 crates/rufin/src/ui/root/album_detail_view.rs:198 crates/rufin/src/ui/root/home_refresh.rs:256 crates/rufin/src/ui/root/home_refresh.rs:428 crates/rufin/src/ui/root/home_refresh.rs:587 crates/rufin/src/ui/root/home_refresh.rs:656 crates/rufin/src/ui/root/home_refresh.rs:70 crates/rufin/src/ui/root/playlist_detail_view.rs:204 crates/rufin/src/ui/root/playlist_detail_view.rs:358
+#: crates/rufin/src/ui/artist.rs:275 crates/rufin/src/ui/random_play.rs:87 crates/rufin/src/ui/root/album_detail_view.rs:187 crates/rufin/src/ui/root/home_refresh.rs:256 crates/rufin/src/ui/root/home_refresh.rs:428 crates/rufin/src/ui/root/home_refresh.rs:587 crates/rufin/src/ui/root/home_refresh.rs:656 crates/rufin/src/ui/root/home_refresh.rs:70 crates/rufin/src/ui/root/playlist_detail_view.rs:204 crates/rufin/src/ui/root/playlist_detail_view.rs:358
 msgid "Play"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:301 crates/rufin/src/ui/cards.rs:673 crates/rufin/src/ui/root/album_detail_view.rs:218 crates/rufin/src/ui/root/home_refresh.rs:266 crates/rufin/src/ui/root/home_refresh.rs:438 crates/rufin/src/ui/root/home_refresh.rs:80
+#: crates/rufin/src/ui/artist.rs:301 crates/rufin/src/ui/cards.rs:680 crates/rufin/src/ui/root/album_detail_view.rs:207 crates/rufin/src/ui/root/home_refresh.rs:266 crates/rufin/src/ui/root/home_refresh.rs:438 crates/rufin/src/ui/root/home_refresh.rs:80
 msgid "Play Later"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:660 crates/rufin/src/ui/queue.rs:1125 crates/rufin/src/ui/random_play.rs:86 crates/rufin/src/ui/root/home_refresh.rs:261 crates/rufin/src/ui/root/home_refresh.rs:433 crates/rufin/src/ui/root/home_refresh.rs:75
+#: crates/rufin/src/ui/cards.rs:667 crates/rufin/src/ui/queue.rs:1109 crates/rufin/src/ui/random_play.rs:86 crates/rufin/src/ui/root/home_refresh.rs:261 crates/rufin/src/ui/root/home_refresh.rs:433 crates/rufin/src/ui/root/home_refresh.rs:75
 msgid "Play Next"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1120
+#: crates/rufin/src/ui/queue.rs:1104
 msgid "Play Now"
 msgstr ""
 
@@ -1128,7 +1128,7 @@ msgstr ""
 msgid "Play album"
 msgstr ""
 
-#: crates/rufin/src/ui/library/collections.rs:1022
+#: crates/rufin/src/ui/library/collections.rs:1017
 msgid "Play artist"
 msgstr ""
 
@@ -1144,7 +1144,7 @@ msgstr ""
 msgid "Play random"
 msgstr ""
 
-#: crates/rufin/src/ui/cards.rs:345
+#: crates/rufin/src/ui/cards.rs:352
 msgid "Play track"
 msgstr ""
 
@@ -1296,7 +1296,7 @@ msgstr ""
 msgid "Remove Local Folder"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1148 crates/rufin/src/ui/root/home_refresh.rs:100 crates/rufin/src/ui/root/home_refresh.rs:294 crates/rufin/src/ui/root/home_refresh.rs:459
+#: crates/rufin/src/ui/queue.rs:1132 crates/rufin/src/ui/root/home_refresh.rs:100 crates/rufin/src/ui/root/home_refresh.rs:294 crates/rufin/src/ui/root/home_refresh.rs:459
 msgid "Remove from Favorites"
 msgstr ""
 
@@ -1304,7 +1304,7 @@ msgstr ""
 msgid "Remove from Playlist"
 msgstr ""
 
-#: crates/rufin/src/ui/queue.rs:1115
+#: crates/rufin/src/ui/queue.rs:1099
 msgid "Remove from Queue"
 msgstr ""
 
@@ -1352,7 +1352,7 @@ msgstr ""
 msgid "Reset"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:570
+#: crates/rufin/src/ui/library/route_shell.rs:502
 msgid "Reset display"
 msgstr ""
 
@@ -1435,7 +1435,7 @@ msgstr ""
 msgid "Scrobbling"
 msgstr ""
 
-#: crates/domain/src/route.rs:61 crates/rufin/src/ui/library/route_shell.rs:146 crates/rufin/src/ui/library/route_shell.rs:97 crates/rufin/src/ui/library/routes.rs:1092 crates/rufin/src/ui/library/routes.rs:1362 crates/rufin/src/ui/library/routes.rs:457 crates/rufin/src/ui/library/routes.rs:701 crates/rufin/src/ui/library/routes.rs:87 crates/rufin/src/ui/library/routes.rs:908 crates/rufin/src/ui/root/playlist_detail_view.rs:496
+#: crates/domain/src/route.rs:61 crates/rufin/src/ui/library/route_shell.rs:102 crates/rufin/src/ui/library/route_shell.rs:53 crates/rufin/src/ui/library/routes.rs:1099 crates/rufin/src/ui/library/routes.rs:1369 crates/rufin/src/ui/library/routes.rs:464 crates/rufin/src/ui/library/routes.rs:708 crates/rufin/src/ui/library/routes.rs:87 crates/rufin/src/ui/library/routes.rs:915 crates/rufin/src/ui/root/playlist_detail_view.rs:496
 msgid "Search"
 msgstr ""
 
@@ -1660,7 +1660,7 @@ msgstr ""
 msgid "Smart playlists"
 msgstr ""
 
-#: crates/rufin/src/ui/library/routes.rs:1135
+#: crates/rufin/src/ui/library/routes.rs:1142
 msgid "Smart playlists will appear here after the default set is seeded."
 msgstr ""
 
@@ -1771,7 +1771,7 @@ msgstr ""
 msgid "Timed out waiting for Libre.fm authorization"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs:589 crates/rufin/src/ui/queue.rs:788 crates/rufin/src/ui/queue.rs:809 crates/rufin/src/ui/root/layout_rendering.rs:16 crates/rufin/src/ui/root/layout_rendering.rs:684 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:48
+#: crates/domain/src/settings/layout.rs:589 crates/rufin/src/ui/queue.rs:772 crates/rufin/src/ui/queue.rs:793 crates/rufin/src/ui/root/layout_rendering.rs:16 crates/rufin/src/ui/root/layout_rendering.rs:684 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:48
 msgid "Title"
 msgstr ""
 
@@ -1850,7 +1850,7 @@ msgstr ""
 msgid "Verify server certificate"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:584 crates/rufin/src/ui/root/release_notes.rs:422
+#: crates/rufin/src/ui/library/route_shell.rs:516 crates/rufin/src/ui/root/release_notes.rs:422
 msgid "View"
 msgstr ""
 
@@ -1874,7 +1874,7 @@ msgstr ""
 msgid "Waveform seekbar"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs:594 crates/rufin/src/ui/queue.rs:794 crates/rufin/src/ui/queue.rs:829 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:72
+#: crates/domain/src/settings/layout.rs:594 crates/rufin/src/ui/queue.rs:778 crates/rufin/src/ui/queue.rs:813 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:72
 msgid "Year"
 msgstr ""
 

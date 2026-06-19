@@ -972,15 +972,10 @@ fn track_grid_artist_route(track: &Track, field: LibraryField) -> Option<Route> 
 }
 
 fn track_album_artist_route(track: &Track) -> Option<Route> {
-    if let Some(credit) = track.album_artist_credits.first() {
-        Some(Route::ArtistDetail(credit.id.clone()))
-    } else {
-        let album_artist = track_field(track, LibraryField::AlbumArtist);
-        (!album_artist.trim().is_empty()).then_some(Route::Search {
-            query: album_artist,
-            kind: SearchKind::Artists,
-        })
-    }
+    track
+        .album_artist_credits
+        .first()
+        .map(|artist| Route::ArtistDetail(artist.id.clone()))
 }
 
 fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {

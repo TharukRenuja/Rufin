@@ -351,7 +351,7 @@ impl Shell {
 
         let page = self
             .controller
-            .cached_tracks_page(0, TRACK_ROUTE_PAGE_SIZE)
+            .cached_tracks_page(0, self.track_route_cache_limit())
             .unwrap_or_else(|error| {
                 warn!(%error, "failed to load cached tracks page");
                 let tracks = self
@@ -366,6 +366,13 @@ impl Shell {
                 source::PagedResponse::new(tracks, self.state.library.borrow().cached_track_count)
             });
         self.library_tracks_page(page.items, page.total)
+    }
+    fn track_route_cache_limit(&self) -> usize {
+        self.state
+            .library
+            .borrow()
+            .cached_track_count
+            .max(TRACK_ROUTE_PAGE_SIZE)
     }
     pub(in crate::ui) fn library_artist_list_view(
         self: &Rc<Self>,
