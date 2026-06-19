@@ -1,9 +1,33 @@
+use super::source_image_policy::{
+    SnapshotExternalRefPolicy, scrub_snapshot_album_image_refs, scrub_snapshot_artist_image_refs,
+    scrub_snapshot_genre_image_refs, scrub_snapshot_home_refs, scrub_snapshot_playlist_image_refs,
+    scrub_snapshot_track_image_refs, snapshot_external_ref_policy,
+};
 use super::*;
 
 #[derive(Clone, Debug)]
 struct SnapshotSourceReconciliation {
     selected_source: LibrarySourceSelection,
     saved: SavedServer,
+}
+
+struct ActiveSourceProjection {
+    cached_album_count: usize,
+    cached_track_count: usize,
+    cached_artist_count: usize,
+    cached_album_artist_count: usize,
+    cached_genre_count: usize,
+    cached_playlist_count: usize,
+    home_sections: Vec<HomeSection>,
+    prefetched_explore: Option<HomeSection>,
+    albums: Vec<Album>,
+    tracks: Vec<Track>,
+    artists: Vec<Artist>,
+    album_artists: Vec<Artist>,
+    genres: Vec<Genre>,
+    playlists: Vec<Playlist>,
+    playlist_entry_keys: HashMap<PlaylistId, Vec<(String, TrackId)>>,
+    favorites: Vec<Track>,
 }
 
 fn snapshot_remote_servers(saved_servers: &[SavedServer]) -> Vec<SavedServer> {
@@ -204,6 +228,105 @@ fn active_server_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn Secret
     !config_token_available(secrets, &server.id)
 }
 
+fn scrub_projection_refs(
+    saved: &SavedServer,
+    projection: &mut ActiveSourceProjection,
+    external_ref_policy: SnapshotExternalRefPolicy,
+) {
+    for section in &mut projection.home_sections {
+        scrub_snapshot_home_refs(saved, section, external_ref_policy);
+    }
+    if let Some(section) = &mut projection.prefetched_explore {
+        scrub_snapshot_home_refs(saved, section, external_ref_policy);
+    }
+    scrub_snapshot_album_image_refs(saved, &mut projection.albums, external_ref_policy);
+    scrub_snapshot_track_image_refs(saved, &mut projection.tracks, external_ref_policy);
+    scrub_snapshot_artist_image_refs(saved, &mut projection.artists, external_ref_policy);
+    scrub_snapshot_artist_image_refs(saved, &mut projection.album_artists, external_ref_policy);
+    scrub_snapshot_genre_image_refs(saved, &mut projection.genres, external_ref_policy);
+    scrub_snapshot_playlist_image_refs(saved, &mut projection.playlists, external_ref_policy);
+    scrub_snapshot_track_image_refs(saved, &mut projection.favorites, external_ref_policy);
+}
+
+fn bind_projection_refs(projection: &mut ActiveSourceProjection, metadata_settings: &AppSettings) {
+    cover_art_policy::bind_home_sections(&mut projection.home_sections, metadata_settings);
+    if let Some(section) = &mut projection.prefetched_explore {
+        cover_art_policy::bind_home_section(section, metadata_settings);
+    }
+    cover_art_policy::bind_albums(&mut projection.albums, metadata_settings);
+    cover_art_policy::bind_tracks(&mut projection.tracks, metadata_settings);
+    cover_art_policy::bind_artists(&mut projection.artists, metadata_settings);
+    cover_art_policy::bind_artists(&mut projection.album_artists, metadata_settings);
+    cover_art_policy::bind_playlists(&mut projection.playlists, metadata_settings);
+    cover_art_policy::bind_tracks(&mut projection.favorites, metadata_settings);
+}
+
+fn load_active_source_projection(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    metadata_settings: &AppSettings,
+) -> Result<ActiveSourceProjection, String> {
+    store.with_store(|store| store.repair_artwork_projections(&saved.server.id))?;
+    store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
+    let home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
+    let prefetched_explore = store.with_store(|store| {
+        store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+    })?;
+    let album_page =
+        store.with_store(|store| store.load_albums(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let track_page =
+        store.with_store(|store| store.load_tracks(&saved.server.id, 0, SNAPSHOT_TRACK_LIMIT))?;
+    let artist_page = store
+        .with_store(|store| store.load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT))?;
+    let album_artist_page = store
+        .with_store(|store| store.load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT))?;
+    let genre_page =
+        store.with_store(|store| store.load_genres(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let playlist_page =
+        store.with_store(|store| store.load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let playlist_ids = playlist_page
+        .items
+        .iter()
+        .map(|playlist| playlist.id.clone())
+        .collect::<Vec<_>>();
+    let playlist_entry_keys = store.with_store(|store| {
+        store.playlist_entry_keys_for_playlists(&saved.server.id, &playlist_ids)
+    })?;
+    let favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
+    let mut projection = ActiveSourceProjection {
+        cached_album_count: album_page.total,
+        cached_track_count: track_page.total,
+        cached_artist_count: artist_page.total,
+        cached_album_artist_count: album_artist_page.total,
+        cached_genre_count: genre_page.total,
+        cached_playlist_count: playlist_page.total,
+        home_sections,
+        prefetched_explore,
+        albums: album_page.items,
+        tracks: track_page.items,
+        artists: artist_page.items,
+        album_artists: album_artist_page.items,
+        genres: genre_page.items,
+        playlists: playlist_page.items,
+        playlist_entry_keys,
+        favorites,
+    };
+    let external_ref_policy = snapshot_external_ref_policy(metadata_settings);
+    scrub_projection_refs(saved, &mut projection, external_ref_policy);
+    bind_projection_refs(&mut projection, metadata_settings);
+    scrub_projection_refs(saved, &mut projection, external_ref_policy);
+    album_track_refs(store, saved, &mut projection.albums)?;
+    track_album_refs(store, saved, &mut projection.tracks, &projection.albums)?;
+    for section in &mut projection.home_sections {
+        home_local_refs(store, saved, section)?;
+    }
+    if let Some(section) = &mut projection.prefetched_explore {
+        home_local_refs(store, saved, section)?;
+    }
+    track_album_refs(store, saved, &mut projection.favorites, &projection.albums)?;
+    Ok(projection)
+}
+
 fn load_active_source_snapshot(
     store: &StoreHandle,
     source_settings: AppSettings,
@@ -231,90 +354,7 @@ fn load_active_source_snapshot(
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
-    store.with_store(|store| store.repair_artwork_projections(&saved.server.id))?;
-    store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
-    let mut home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
-    let mut prefetched_explore = store.with_store(|store| {
-        store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
-    })?;
-    let album_page =
-        store.with_store(|store| store.load_albums(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
-    let track_page =
-        store.with_store(|store| store.load_tracks(&saved.server.id, 0, SNAPSHOT_TRACK_LIMIT))?;
-    let cached_album_count = album_page.total;
-    let cached_track_count = track_page.total;
-    let mut albums = album_page.items;
-    let mut tracks = track_page.items;
-    let artist_page = store
-        .with_store(|store| store.load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT))?;
-    let album_artist_page = store
-        .with_store(|store| store.load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT))?;
-    let genre_page =
-        store.with_store(|store| store.load_genres(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
-    let playlist_page =
-        store.with_store(|store| store.load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
-    let cached_artist_count = artist_page.total;
-    let cached_album_artist_count = album_artist_page.total;
-    let cached_genre_count = genre_page.total;
-    let cached_playlist_count = playlist_page.total;
-    let mut artists = artist_page.items;
-    let mut album_artists = album_artist_page.items;
-    let mut genres = genre_page.items;
-    let mut playlists = playlist_page.items;
-    let playlist_ids = playlists
-        .iter()
-        .map(|playlist| playlist.id.clone())
-        .collect::<Vec<_>>();
-    let playlist_entry_keys = store.with_store(|store| {
-        store.playlist_entry_keys_for_playlists(&saved.server.id, &playlist_ids)
-    })?;
-    let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
-    let external_ref_policy = snapshot_external_ref_policy(&metadata_settings);
-    scrub_snapshot_image_refs(
-        &saved,
-        &mut home_sections,
-        prefetched_explore.as_mut(),
-        &mut albums,
-        &mut tracks,
-        &mut artists,
-        &mut album_artists,
-        &mut genres,
-        &mut playlists,
-        &mut favorites,
-        external_ref_policy,
-    );
-    cover_art_policy::bind_home_sections(&mut home_sections, &metadata_settings);
-    if let Some(section) = &mut prefetched_explore {
-        cover_art_policy::bind_home_section(section, &metadata_settings);
-    }
-    cover_art_policy::bind_albums(&mut albums, &metadata_settings);
-    cover_art_policy::bind_tracks(&mut tracks, &metadata_settings);
-    cover_art_policy::bind_artists(&mut artists, &metadata_settings);
-    cover_art_policy::bind_artists(&mut album_artists, &metadata_settings);
-    cover_art_policy::bind_playlists(&mut playlists, &metadata_settings);
-    cover_art_policy::bind_tracks(&mut favorites, &metadata_settings);
-    scrub_snapshot_image_refs(
-        &saved,
-        &mut home_sections,
-        prefetched_explore.as_mut(),
-        &mut albums,
-        &mut tracks,
-        &mut artists,
-        &mut album_artists,
-        &mut genres,
-        &mut playlists,
-        &mut favorites,
-        external_ref_policy,
-    );
-    album_track_refs(store, &saved, &mut albums)?;
-    track_album_refs(store, &saved, &mut tracks, &albums)?;
-    for section in &mut home_sections {
-        home_local_refs(store, &saved, section)?;
-    }
-    if let Some(section) = &mut prefetched_explore {
-        home_local_refs(store, &saved, section)?;
-    }
-    track_album_refs(store, &saved, &mut favorites, &albums)?;
+    let projection = load_active_source_projection(store, &saved, &metadata_settings)?;
     let status = sync_state
         .as_ref()
         .map(sync_status_text)
@@ -335,22 +375,22 @@ fn load_active_source_snapshot(
         first_run: false,
         sync_status: status,
         last_error,
-        cached_album_count,
-        cached_track_count,
-        cached_artist_count,
-        cached_album_artist_count,
-        cached_genre_count,
-        cached_playlist_count,
-        home_sections,
-        prefetched_explore,
-        albums,
-        tracks,
-        artists,
-        album_artists,
-        genres,
-        playlists,
-        playlist_entry_keys,
-        favorites,
+        cached_album_count: projection.cached_album_count,
+        cached_track_count: projection.cached_track_count,
+        cached_artist_count: projection.cached_artist_count,
+        cached_album_artist_count: projection.cached_album_artist_count,
+        cached_genre_count: projection.cached_genre_count,
+        cached_playlist_count: projection.cached_playlist_count,
+        home_sections: projection.home_sections,
+        prefetched_explore: projection.prefetched_explore,
+        albums: projection.albums,
+        tracks: projection.tracks,
+        artists: projection.artists,
+        album_artists: projection.album_artists,
+        genres: projection.genres,
+        playlists: projection.playlists,
+        playlist_entry_keys: projection.playlist_entry_keys,
+        favorites: projection.favorites,
         search: SearchResults::default(),
     })
 }

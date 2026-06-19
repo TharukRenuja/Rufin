@@ -98,36 +98,7 @@ pub(in crate::controller) fn snapshot_external_ref_policy(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::controller) fn scrub_snapshot_image_refs(
-    saved: &SavedServer,
-    home_sections: &mut [HomeSection],
-    prefetched_explore: Option<&mut HomeSection>,
-    albums: &mut [Album],
-    tracks: &mut [Track],
-    artists: &mut [Artist],
-    album_artists: &mut [Artist],
-    genres: &mut [Genre],
-    playlists: &mut [Playlist],
-    favorites: &mut [Track],
-    external_ref_policy: SnapshotExternalRefPolicy,
-) {
-    for section in home_sections {
-        scrub_snapshot_home_refs(saved, section, external_ref_policy);
-    }
-    if let Some(section) = prefetched_explore {
-        scrub_snapshot_home_refs(saved, section, external_ref_policy);
-    }
-    scrub_snapshot_album_image_refs(saved, albums, external_ref_policy);
-    scrub_snapshot_track_image_refs(saved, tracks, external_ref_policy);
-    scrub_snapshot_artist_image_refs(saved, artists, external_ref_policy);
-    scrub_snapshot_artist_image_refs(saved, album_artists, external_ref_policy);
-    scrub_snapshot_genre_image_refs(saved, genres, external_ref_policy);
-    scrub_snapshot_playlist_image_refs(saved, playlists, external_ref_policy);
-    scrub_snapshot_track_image_refs(saved, favorites, external_ref_policy);
-}
-
-fn scrub_snapshot_home_refs(
+pub(in crate::controller::root) fn scrub_snapshot_home_refs(
     saved: &SavedServer,
     section: &mut HomeSection,
     external_ref_policy: SnapshotExternalRefPolicy,
@@ -140,7 +111,7 @@ fn scrub_snapshot_home_refs(
     scrub_snapshot_track_image_refs(saved, &mut section.tracks, external_ref_policy);
 }
 
-fn scrub_snapshot_album_image_refs(
+pub(in crate::controller::root) fn scrub_snapshot_album_image_refs(
     saved: &SavedServer,
     albums: &mut [Album],
     external_ref_policy: SnapshotExternalRefPolicy,
@@ -150,7 +121,7 @@ fn scrub_snapshot_album_image_refs(
     }
 }
 
-fn scrub_snapshot_track_image_refs(
+pub(in crate::controller::root) fn scrub_snapshot_track_image_refs(
     saved: &SavedServer,
     tracks: &mut [Track],
     external_ref_policy: SnapshotExternalRefPolicy,
@@ -160,7 +131,7 @@ fn scrub_snapshot_track_image_refs(
     }
 }
 
-fn scrub_snapshot_artist_image_refs(
+pub(in crate::controller::root) fn scrub_snapshot_artist_image_refs(
     saved: &SavedServer,
     artists: &mut [Artist],
     external_ref_policy: SnapshotExternalRefPolicy,
@@ -170,7 +141,7 @@ fn scrub_snapshot_artist_image_refs(
     }
 }
 
-fn scrub_snapshot_genre_image_refs(
+pub(in crate::controller::root) fn scrub_snapshot_genre_image_refs(
     saved: &SavedServer,
     genres: &mut [Genre],
     external_ref_policy: SnapshotExternalRefPolicy,
@@ -181,7 +152,7 @@ fn scrub_snapshot_genre_image_refs(
     }
 }
 
-fn scrub_snapshot_playlist_image_refs(
+pub(in crate::controller::root) fn scrub_snapshot_playlist_image_refs(
     saved: &SavedServer,
     playlists: &mut [Playlist],
     external_ref_policy: SnapshotExternalRefPolicy,
