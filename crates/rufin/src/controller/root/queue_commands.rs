@@ -386,21 +386,9 @@ impl AppController {
         });
     }
     pub fn play_playlist_detail(&self, detail: PlaylistDetail) {
-        let playlist_id = detail.playlist.id;
-        if let Some(entry) = detail.entries.into_iter().next() {
-            self.play_playlist_entry(
-                playlist_id,
-                entry,
-                0,
-                None,
-                (PlaylistEntrySortDescriptor::Position, false),
-                true,
-            );
-            return;
-        }
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
-                playlist_id: playlist_id.clone(),
+                playlist_id: detail.playlist.id.clone(),
             },
             order: SourceOrder::PlaylistDisplayed {
                 query: None,
@@ -408,9 +396,53 @@ impl AppController {
                 descending: false,
             },
         };
-        if let Some(activation) = loaded_tracks_activation(source_key, &detail.tracks, 0) {
+        if let Some(activation) = playlist_detail_activation(source_key, detail) {
             self.play_activation(activation);
         }
+    }
+    pub fn play_cached_playlist(&self, playlist_id: PlaylistId) {
+        let generation = self.next_play_activation_generation();
+        let controller = self.clone();
+        thread::spawn(move || {
+            if !controller.play_activation_generation_matches(generation) {
+                return;
+            }
+            if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id)
+                && controller.play_activation_generation_matches(generation)
+            {
+                controller.play_playlist_detail(detail);
+            }
+        });
+    }
+    pub fn play_cached_playlist_next(&self, playlist_id: PlaylistId) {
+        let generation = self.next_play_activation_generation();
+        let controller = self.clone();
+        thread::spawn(move || {
+            if !controller.play_activation_generation_matches(generation) {
+                return;
+            }
+            if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id)
+                && controller.play_activation_generation_matches(generation)
+            {
+                for track in detail.tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+    }
+    pub fn play_cached_playlist_last(&self, playlist_id: PlaylistId) {
+        let generation = self.next_play_activation_generation();
+        let controller = self.clone();
+        thread::spawn(move || {
+            if !controller.play_activation_generation_matches(generation) {
+                return;
+            }
+            if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id)
+                && controller.play_activation_generation_matches(generation)
+            {
+                controller.play_last(detail.tracks);
+            }
+        });
     }
     pub fn play_smart_playlist_detail(&self, detail: SmartPlaylistDetail) {
         let source_key = PlaySourceKey {
@@ -852,6 +884,37 @@ fn library_field_key(field: LibraryField) -> &'static str {
     }
 }
 
+fn playlist_detail_activation(
+    source_key: PlaySourceKey,
+    detail: PlaylistDetail,
+) -> Option<PlayActivation> {
+    if detail.entries.is_empty() {
+        return loaded_tracks_activation(source_key, &detail.tracks, 0);
+    }
+
+    let total_items = detail.entries.len();
+    let (_before, after) = store_backed_window_extents(total_items, 0);
+    let end = (after + 1).min(total_items);
+    let window = StoreBackedSourceWindow {
+        start_rank: 0,
+        total_source_items: total_items,
+        items: detail
+            .entries
+            .into_iter()
+            .enumerate()
+            .take(end)
+            .map(|(source_index, entry)| StoreBackedSourceItem {
+                track: entry.track,
+                source_index,
+                source_item_id: Some(entry.entry_id),
+            })
+            .collect(),
+    };
+    store_backed_window_play_activation(source_key, window, 0)
+        .ok()
+        .map(PlayActivation::shuffled_start)
+}
+
 fn loaded_tracks_activation(
     source_key: PlaySourceKey,
     tracks: &[Track],
@@ -978,6 +1041,66 @@ mod tests {
         fn drain_events(&mut self) -> Vec<PlaybackEvent> {
             Vec::new()
         }
+    }
+
+    #[test]
+    fn playlist_detail_activation_uses_loaded_entries() {
+        let tracks = vec![
+            library_track(1, None, AlbumId::fake(1), "Artist", &[]),
+            library_track(2, None, AlbumId::fake(1), "Artist", &[]),
+        ];
+        let detail = PlaylistDetail {
+            playlist: Playlist {
+                id: PlaylistId::fake(1),
+                name: "Playlist".to_string(),
+                track_count: tracks.len() as u32,
+                duration_seconds: 360,
+                top_genres: Vec::new(),
+                image_refs: Vec::new(),
+                image_ref: None,
+            },
+            tracks: tracks.clone(),
+            entries: tracks
+                .into_iter()
+                .enumerate()
+                .map(|(index, track)| PlaylistEntry {
+                    entry_id: format!("entry-{index}"),
+                    track,
+                })
+                .collect(),
+        };
+
+        let activation = playlist_detail_activation(
+            PlaySourceKey {
+                descriptor: PlaySourceDescriptor::Playlist {
+                    playlist_id: PlaylistId::fake(1),
+                },
+                order: SourceOrder::PlaylistDisplayed {
+                    query: None,
+                    sort: PlaylistEntrySortDescriptor::Position,
+                    descending: false,
+                },
+            },
+            detail,
+        )
+        .expect("playlist activation");
+
+        let (shuffle_start, target) = activation.into_parts();
+        let PlayTarget::LoadedSource {
+            completeness,
+            items,
+            anchor,
+            ..
+        } = target
+        else {
+            panic!("expected loaded playlist source");
+        };
+        assert!(shuffle_start);
+        assert_eq!(completeness, LoadedCompleteness::Complete);
+        assert_eq!(anchor.source_index, 0);
+        assert_eq!(anchor.source_item_id.as_deref(), Some("entry-0"));
+        assert_eq!(items[0].source_item_id.as_deref(), Some("entry-0"));
+        assert_eq!(items[1].source_item_id.as_deref(), Some("entry-1"));
     }
 
     #[test]

@@ -606,9 +606,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            controller.play_playlist_detail(detail);
-        }
+        controller.play_cached_playlist(playlist_id.clone());
     });
     actions.add_action(&play);
 

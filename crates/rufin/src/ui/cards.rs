@@ -442,25 +442,17 @@ pub(super) fn playlist_cover_tile(
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            controller.play_playlist_detail(detail);
-        }
+        controller.play_cached_playlist(playlist_id.clone());
     });
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
     controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            for track in detail.tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
+        controller.play_cached_playlist_next(playlist_id.clone());
     });
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
     controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            controller.play_last(detail.tracks);
-        }
+        controller.play_cached_playlist_last(playlist_id.clone());
     });
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);
