@@ -248,7 +248,7 @@ msgstr ""
 msgid "Caching library… This may take some time."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:281 crates/rufin/src/ui/root/startup_reveal.rs:497
+#: crates/rufin/src/ui/login.rs:281 crates/rufin/src/ui/root/startup_reveal.rs:495
 msgid "Caching local library…"
 msgstr ""
 
@@ -1589,7 +1589,7 @@ msgstr ""
 msgid "Show playback icon"
 msgstr ""
 
-#: crates/rufin/src/ui/root/mod.rs:771 crates/rufin/src/ui/root/mod.rs:772
+#: crates/rufin/src/ui/root/mod.rs:772 crates/rufin/src/ui/root/mod.rs:773
 msgid "Show sidebar"
 msgstr ""
 

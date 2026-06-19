@@ -1,3 +1,4 @@
+use super::targets::source_warm_targets;
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -7,6 +8,19 @@ struct CoverWarmSchedule {
 }
 
 impl Shell {
+    pub(in crate::ui) fn schedule_source_route_cover_warm(
+        self: &Rc<Self>,
+        library: &LibrarySnapshot,
+        smart_playlists: &[SmartPlaylist],
+        settings: &AppSettings,
+        route_metrics: InitialRouteCoverMetrics,
+    ) -> (usize, usize) {
+        let targets = source_warm_targets(library, smart_playlists, settings, route_metrics);
+        let target_count = targets.len();
+        let queued = self.schedule_warm_targets(targets);
+        (target_count, queued)
+    }
+
     pub(in crate::ui) fn warm_cover_refs_now(
         self: &Rc<Self>,
         image_refs: Vec<ImageRef>,
@@ -16,10 +30,7 @@ impl Shell {
         self.schedule_route_cover_warm_refs(image_refs, fetch_size, size, 0);
     }
 
-    pub(in crate::ui) fn schedule_warm_targets(
-        self: &Rc<Self>,
-        targets: Vec<CoverWarmTarget>,
-    ) -> usize {
+    fn schedule_warm_targets(self: &Rc<Self>, targets: Vec<CoverWarmTarget>) -> usize {
         let jobs = self.cover_warm_jobs_from_targets(targets);
         let queued = jobs.len();
         if jobs.is_empty() {
@@ -61,7 +72,7 @@ impl Shell {
             .map(|(key, _)| key.clone())
             .collect::<HashSet<_>>();
         retain_current_priority_cover_work(
-            &mut self.state.cover_path_lookups.borrow_mut(),
+            &self.state.cover_path_lookups,
             &mut self.state.cover_decode_queue.borrow_mut(),
             &keep,
         );
@@ -228,7 +239,7 @@ impl Shell {
         jobs
     }
 
-    pub(in crate::ui) fn cover_warm_jobs_from_targets(
+    fn cover_warm_jobs_from_targets(
         &self,
         targets: Vec<CoverWarmTarget>,
     ) -> VecDeque<CoverWarmJob> {
@@ -345,17 +356,13 @@ impl Shell {
             .cover_decodes
             .borrow()
             .len()
-            .saturating_add(self.state.cover_path_lookups.borrow().len())
+            .saturating_add(self.state.cover_path_lookups.len())
     }
 
     fn cover_job_active(&self, job: &CoverWarmJob) -> bool {
         self.decoded_cover_has_min_size(&job.key, job.size)
             || self.state.cover_decodes.borrow().contains_key(&job.key)
-            || self
-                .state
-                .cover_path_lookups
-                .borrow()
-                .contains_key(&job.key)
+            || self.state.cover_path_lookups.contains_key(&job.key)
     }
 
     fn start_warm_cover_path_lookup(self: &Rc<Self>, job: CoverWarmJob) {

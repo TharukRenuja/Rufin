@@ -164,9 +164,10 @@ mod startup_reveal;
 mod shell_tests;
 
 pub(in crate::ui) use build::*;
+pub(in crate::ui::root) use cover::*;
 pub(in crate::ui) use cover::{
-    CoverBinding, CoverDecodeJob, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
-    cover_artwork_id_for_key, cover_request_id_for_key,
+    CoverBinding, CoverDecodeJob, DecodedCover, DecodedCoverOrderEntry, cover_artwork_id_for_key,
+    cover_request_id_for_key,
 };
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use equalizer::{
@@ -355,9 +356,9 @@ pub(in crate::ui) struct AppState {
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_unavailable: RefCell<HashSet<String>>,
     cover_path_cache: RefCell<HashMap<String, PathBuf>>,
-    cover_path_lookups: RefCell<HashMap<String, cover::CoverPathLookupIntent>>,
+    cover_path_lookups: cover::CoverPathLookups,
     cover_fetches: RefCell<HashSet<String>>,
-    cover_visible_requests: RefCell<HashMap<String, cover::CoverRequestRecord>>,
+    cover_visible_requests: cover::CoverVisibleRequests,
     cover_decodes: RefCell<HashMap<String, cover::CoverDecodePriority>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
@@ -660,9 +661,9 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         cover_bindings: RefCell::new(HashMap::new()),
         cover_unavailable: RefCell::new(HashSet::new()),
         cover_path_cache: RefCell::new(HashMap::new()),
-        cover_path_lookups: RefCell::new(HashMap::new()),
+        cover_path_lookups: cover::CoverPathLookups::new(),
         cover_fetches: RefCell::new(HashSet::new()),
-        cover_visible_requests: RefCell::new(HashMap::new()),
+        cover_visible_requests: cover::CoverVisibleRequests::new(),
         cover_decodes: RefCell::new(HashMap::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),

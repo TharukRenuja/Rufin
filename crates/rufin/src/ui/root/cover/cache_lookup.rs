@@ -1,3 +1,4 @@
+use super::targets::startup_cover_prime_jobs;
 use super::*;
 
 impl Shell {
@@ -276,10 +277,7 @@ impl Shell {
         request: CoverPathLookupRequest,
     ) {
         if request.intent != CoverPathLookupIntent::Warm {
-            record_visible_cover_request(
-                &mut self.state.cover_visible_requests.borrow_mut(),
-                request.clone(),
-            );
+            self.state.cover_visible_requests.record(request.clone());
         }
         let CoverPathLookupRequest {
             key,
@@ -331,11 +329,7 @@ impl Shell {
             );
             return;
         }
-        let should_start = record_cover_path_lookup_request(
-            &mut self.state.cover_path_lookups.borrow_mut(),
-            key.clone(),
-            intent,
-        );
+        let should_start = self.state.cover_path_lookups.record(key.clone(), intent);
         if !should_start {
             return;
         }
@@ -354,7 +348,7 @@ impl Shell {
             .await
             .ok()
             .flatten();
-            let Some(intent) = shell.state.cover_path_lookups.borrow_mut().remove(&key) else {
+            let Some(intent) = shell.state.cover_path_lookups.remove(&key) else {
                 return;
             };
             let finish_started = Instant::now();
@@ -451,7 +445,7 @@ impl Shell {
         self.state.cover_unavailable.borrow_mut().remove(&key);
 
         if !self.cover_binding_has_live(&key) {
-            self.state.cover_visible_requests.borrow_mut().remove(&key);
+            self.state.cover_visible_requests.remove(&key);
             return;
         }
 
@@ -570,12 +564,7 @@ impl Shell {
     pub(in crate::ui) fn apply_cover_deferred(self: &Rc<Self>, key: &str) {
         self.state.cover_fetches.borrow_mut().remove(key);
         self.mark_cover_request_state(key, CoverRequestState::Deferred);
-        let request = self
-            .state
-            .cover_visible_requests
-            .borrow()
-            .get(key)
-            .map(|record| record.request.clone());
+        let request = self.state.cover_visible_requests.request(key);
         if request.is_none() && !self.cover_binding_has_live(key) {
             return;
         }
@@ -592,18 +581,16 @@ impl Shell {
         key: &str,
         state: CoverRequestState,
     ) {
-        if let Some(record) = self.state.cover_visible_requests.borrow_mut().get_mut(key) {
-            record.state = state;
-        }
+        self.state.cover_visible_requests.mark(key, state);
     }
     pub(in crate::ui::root::cover) fn finish_cover_ready_state(&self, key: &str) {
         self.mark_cover_request_state(key, CoverRequestState::Ready);
-        self.state.cover_visible_requests.borrow_mut().remove(key);
+        self.state.cover_visible_requests.remove(key);
         self.remove_cover_prime_pending(key);
     }
     pub(in crate::ui::root::cover) fn finish_cover_missing_state(&self, key: &str) {
         self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
-        self.state.cover_visible_requests.borrow_mut().remove(key);
+        self.state.cover_visible_requests.remove(key);
         self.remove_cover_prime_pending(key);
     }
     pub(in crate::ui::root::cover) fn remove_cover_prime_pending(&self, key: &str) {
@@ -650,7 +637,7 @@ impl Shell {
         startup_prime_wait(
             self.decoded_cover_has_min_size(key, cover_size_from_cache_key(key).unwrap_or(1)),
             self.state.cover_unavailable.borrow().contains(key),
-            self.state.cover_path_lookups.borrow().contains_key(key),
+            self.state.cover_path_lookups.contains_key(key),
             self.state.cover_fetches.borrow().contains(key),
             self.state.cover_decodes.borrow().contains_key(key),
             self.state
