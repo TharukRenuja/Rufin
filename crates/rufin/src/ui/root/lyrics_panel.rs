@@ -45,7 +45,7 @@ impl Shell {
     }
     pub(in crate::ui) fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {
-            dialog.dialog.present(Some(&self.window));
+            present_light_dismiss_dialog(&dialog.dialog, &self.window);
             dialog.title_entry.grab_focus();
             return;
         }
@@ -151,7 +151,7 @@ impl Shell {
         let edit_shell = Rc::clone(self);
         title_entry.connect_changed(move |_| edit_shell.schedule_lyrics_search());
 
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
         search_dialog.title_entry.grab_focus();
         self.schedule_lyrics_search();
     }

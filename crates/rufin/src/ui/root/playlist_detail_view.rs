@@ -424,7 +424,7 @@ impl Shell {
                     controller.delete_playlist(playlist_id.clone());
                 }
             });
-            dialog.present(Some(&window));
+            present_light_dismiss_dialog(&dialog, &window);
         });
         actions.append(&delete);
         metadata.append(&kind_row);

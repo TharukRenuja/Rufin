@@ -25,6 +25,6 @@ impl Shell {
                 }
             }
         });
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
     }
 }

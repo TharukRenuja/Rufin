@@ -340,7 +340,7 @@ msgstr ""
 msgid "Clear queue"
 msgstr ""
 
-#: crates/rufin/src/ui/root/lyrics_panel.rs crates/rufin/src/ui/root/release_notes.rs
+#: crates/rufin/src/ui/root/lyrics_panel.rs
 msgid "Close"
 msgstr ""
 

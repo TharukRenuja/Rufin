@@ -796,7 +796,7 @@ pub(in crate::ui) fn confirm_remove_playlist_entry(
             controller.remove_playlist_entry(playlist_id.clone(), entry_id.clone());
         }
     });
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 pub(in crate::ui) fn seekbar_target_seconds(value: f64, duration_seconds: u32) -> u32 {
     if !value.is_finite() {

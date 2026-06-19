@@ -218,6 +218,7 @@ fn server_selection_popover(
     anchor_width: i32,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    popover.set_autohide(true);
     popover.set_position(gtk::PositionType::Top);
     popover.set_offset(
         selector_popover_x_offset(anchor_width, SERVER_SELECTOR_POPOVER_WIDTH),
