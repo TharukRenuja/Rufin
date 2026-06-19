@@ -1068,6 +1068,9 @@ pub(in crate::ui) fn mark_tiny_detail_showcase(widget: &impl IsA<gtk::Widget>, w
     if width < 520 {
         widget.add_css_class("detail-showcase-tiny");
     }
+    if detail_showcase_cover_only(width) {
+        widget.add_css_class("detail-showcase-cover-only");
+    }
 }
 
 pub(in crate::ui) fn fit_detail_text(label: &gtk::Label, text: &str) {

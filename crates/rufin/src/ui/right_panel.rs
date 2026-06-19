@@ -13,6 +13,7 @@ use super::{
 };
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
+const QUEUE_HEADER_END_MARGIN: i32 = 88;
 
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,
@@ -36,7 +37,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_header.set_margin_top(ROUTE_TOP_MARGIN);
     queue_header.set_margin_bottom(0);
     queue_header.set_margin_start(12);
-    queue_header.set_margin_end(96);
+    queue_header.set_margin_end(QUEUE_HEADER_END_MARGIN);
 
     let queue_search = gtk::SearchEntry::new();
     queue_search.add_css_class("queue-search");

@@ -8,11 +8,15 @@ use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
 use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
+use super::home_layout::{
+    HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
+    home_showcase_mode, home_showcase_spacing,
+};
 use super::{
     DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
     Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
     album_count_text, configure_fill_width_clip, detail_summary_row, format_duration_units,
-    icon_button, mark_route_scroll_owner, track_count_text,
+    mark_route_scroll_owner, route_content_width, track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -66,6 +70,9 @@ impl Shell {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.add_css_class("route-content");
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        content.set_width_request(1);
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
@@ -112,19 +119,36 @@ impl Shell {
         library: &LibrarySnapshot,
         seed: u64,
     ) -> Option<gtk::Widget> {
+        let width = route_content_width(self);
+        let mode = home_showcase_mode(width);
+        let cover_size = home_showcase_cover_size(width);
         let album = showcase_album(library, seed)?;
 
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
 
-        let body = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, home_showcase_spacing(width));
         body.add_css_class("home-showcase");
         add_album_seed_gradient_class(&body, album.color_seed);
         body.set_hexpand(true);
+        body.set_halign(gtk::Align::Fill);
         body.set_valign(gtk::Align::Start);
+        body.set_width_request(1);
         body.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-        let cover = album_cover_tile(self, &album, 196, Some(&self.controller));
+        body.set_overflow(gtk::Overflow::Hidden);
+        let cover = album_cover_tile(self, &album, cover_size, Some(&self.controller));
         cover.add_css_class("home-showcase-cover");
+        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        cover_column.set_width_request(cover_size);
+        cover_column.set_halign(gtk::Align::Start);
+        cover_column.append(&cover);
+        body.append(&cover_column);
+
+        if mode == HomeShowcaseMode::CoverOnly {
+            section.append(&body);
+            return Some(section.upcast());
+        }
+
         let facts = detail_summary_row(&[
             ("x-office-calendar-symbolic", album.year.to_string()),
             (
@@ -136,27 +160,28 @@ impl Shell {
                 format_duration_units(album.duration_seconds),
             ),
         ]);
-        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        cover_column.set_width_request(196);
-        cover_column.set_halign(gtk::Align::Start);
-        cover_column.append(&cover);
-        body.append(&cover_column);
-
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_hexpand(true);
+        metadata.set_halign(gtk::Align::Fill);
         metadata.set_valign(gtk::Align::Center);
+        metadata.set_width_request(1);
 
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("home-showcase-title");
+        if home_showcase_is_compact(width) {
+            title.add_css_class("home-showcase-title-compact");
+        }
         title.set_xalign(0.0);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        title.set_width_chars(1);
         metadata.append(&title);
 
         let artist = gtk::Label::new(Some(&album.artist));
         artist.add_css_class("muted");
         artist.set_xalign(0.0);
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        artist.set_width_chars(1);
         add_card_label_link(
             self,
             artist.upcast_ref(),
@@ -250,28 +275,11 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        header.set_hexpand(true);
-        header.set_halign(gtk::Align::Fill);
-        header.set_width_request(1);
-        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        heading.set_hexpand(true);
-        header.append(&heading);
-
-        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        controls.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-        let previous = icon_button("go-previous-symbolic", "Previous page");
-        let next = icon_button("go-next-symbolic", "Next page");
-        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        next.add_css_class("home-section-control-button");
-        refresh.add_css_class("home-section-control-button");
-        controls.append(&previous);
-        controls.append(&next);
-        controls.append(&refresh);
-        header.append(&controls);
-        section.append(&header);
+        let header = home_section_header(section_data.kind.title(), route_content_width(self));
+        let previous = header.previous.clone();
+        let next = header.next.clone();
+        let refresh = header.refresh.clone();
+        section.append(&header.root);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
         row.add_css_class("album-strip");
@@ -310,28 +318,11 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        header.set_hexpand(true);
-        header.set_halign(gtk::Align::Fill);
-        header.set_width_request(1);
-        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        heading.set_hexpand(true);
-        header.append(&heading);
-
-        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        controls.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-        let previous = icon_button("go-previous-symbolic", "Previous page");
-        let next = icon_button("go-next-symbolic", "Next page");
-        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        next.add_css_class("home-section-control-button");
-        refresh.add_css_class("home-section-control-button");
-        controls.append(&previous);
-        controls.append(&next);
-        controls.append(&refresh);
-        header.append(&controls);
-        section.append(&header);
+        let header = home_section_header(section_data.kind.title(), route_content_width(self));
+        let previous = header.previous.clone();
+        let next = header.next.clone();
+        let refresh = header.refresh.clone();
+        section.append(&header.root);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
         row.add_css_class("album-strip");

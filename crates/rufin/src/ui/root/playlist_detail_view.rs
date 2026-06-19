@@ -5,6 +5,8 @@ const PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN: i32 = 16;
 const PLAYLIST_DETAIL_TINY_ROUTE_MARGIN: i32 = 10;
 const PLAYLIST_DETAIL_COMPACT_WIDTH: i32 = 760;
 const PLAYLIST_DETAIL_TINY_WIDTH: i32 = 520;
+const PLAYLIST_DETAIL_COVER_ONLY_WIDTH: i32 = 420;
+const PLAYLIST_DETAIL_TINY_COVER_SIZE: i32 = 150;
 const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
 const PLAYLIST_DETAIL_COMPACT_COVER_SIZE: i32 = 182;
 const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
@@ -40,8 +42,13 @@ pub(in crate::ui) fn playlist_detail_cover_fetch_size() -> u32 {
     PLAYLIST_DETAIL_COVER_FETCH_SIZE
 }
 pub(in crate::ui) fn playlist_cover_size(width: i32) -> i32 {
-    if width < PLAYLIST_DETAIL_TINY_WIDTH {
-        width.clamp(96, 156)
+    if width < PLAYLIST_DETAIL_COVER_ONLY_WIDTH {
+        width.clamp(96, PLAYLIST_DETAIL_TINY_COVER_SIZE)
+    } else if width < PLAYLIST_DETAIL_TINY_WIDTH {
+        PLAYLIST_DETAIL_TINY_COVER_SIZE
+            + ((width - PLAYLIST_DETAIL_COVER_ONLY_WIDTH)
+                * (PLAYLIST_DETAIL_COMPACT_COVER_SIZE - PLAYLIST_DETAIL_TINY_COVER_SIZE)
+                / (PLAYLIST_DETAIL_TINY_WIDTH - PLAYLIST_DETAIL_COVER_ONLY_WIDTH))
     } else if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_COVER_SIZE
     } else {
@@ -153,6 +160,7 @@ impl Shell {
         smart_playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
         let content_width = route_content_width(self);
+        let cover_only = detail_showcase_cover_only(content_width);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -188,6 +196,7 @@ impl Shell {
         metadata.set_hexpand(true);
         metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
+        metadata.set_visible(!cover_only);
         let title = gtk::Label::new(Some(&smart_playlist_display_name(&detail.smart_playlist)));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
@@ -307,6 +316,7 @@ impl Shell {
         playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
         let content_width = route_content_width(self);
+        let cover_only = detail_showcase_cover_only(content_width);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -342,6 +352,7 @@ impl Shell {
         metadata.set_hexpand(true);
         metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
+        metadata.set_visible(!cover_only);
         let title = gtk::Label::new(Some(&detail.playlist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);

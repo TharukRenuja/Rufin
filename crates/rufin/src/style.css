@@ -361,8 +361,9 @@ row:focus {
   min-height: 44px;
 }
 
-.rail-label {
+.sidebar-entry-label {
   font-size: 10px;
+  font-weight: 600;
 }
 
 .nav-button:not(.server-selector):hover,
@@ -508,6 +509,10 @@ menubutton.server-selector > button:hover {
   color: @window_fg_color;
   font-size: 36px;
   font-weight: 800;
+}
+
+.home-showcase-title-compact {
+  font-size: 28px;
 }
 
 .home-showcase .muted {

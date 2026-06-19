@@ -17,6 +17,10 @@ pub(super) const DETAIL_ROUTE_SCROLL_GUTTER: i32 = 24;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
+const DETAIL_SHOWCASE_TEXT_MIN_WIDTH: i32 = 420;
+const DETAIL_SHOWCASE_SHRINK_WIDTH: i32 = 520;
+const DETAIL_SHOWCASE_COMPACT_WIDTH: i32 = 760;
+const DETAIL_SHOWCASE_MAX_COVER_SIZE: i32 = 224;
 const HOME_ALBUM_MIN_COLUMNS: usize = 1;
 const HOME_ALBUM_MAX_COLUMNS: usize = 12;
 const ALBUM_GRID_MIN_SIZE: i32 = 200;
@@ -285,13 +289,22 @@ pub(super) fn detail_route_inner_width(shell: &Shell, horizontal_inset: i32) -> 
 }
 
 pub(super) fn detail_showcase_cover_size(width: i32) -> i32 {
-    if width < 520 {
-        width.clamp(72, 156)
-    } else if width < 760 {
-        188
+    if width < DETAIL_SHOWCASE_TEXT_MIN_WIDTH {
+        width.clamp(72, HOME_ALBUM_MIN_SIZE)
+    } else if width < DETAIL_SHOWCASE_SHRINK_WIDTH {
+        HOME_ALBUM_MIN_SIZE
+            + ((width - DETAIL_SHOWCASE_TEXT_MIN_WIDTH)
+                * (HOME_ALBUM_TARGET_SIZE - HOME_ALBUM_MIN_SIZE)
+                / (DETAIL_SHOWCASE_SHRINK_WIDTH - DETAIL_SHOWCASE_TEXT_MIN_WIDTH))
+    } else if width < DETAIL_SHOWCASE_COMPACT_WIDTH {
+        HOME_ALBUM_TARGET_SIZE
     } else {
-        224
+        DETAIL_SHOWCASE_MAX_COVER_SIZE
     }
+}
+
+pub(super) fn detail_showcase_cover_only(width: i32) -> bool {
+    width < DETAIL_SHOWCASE_TEXT_MIN_WIDTH
 }
 
 fn route_content_width_for(route_width: i32, resolved_width: i32) -> i32 {
@@ -502,9 +515,14 @@ mod tests {
         assert_eq!(route_content_width_for(1, 500), 500);
         assert_eq!(detail_showcase_cover_size(120), 120);
         assert_eq!(detail_showcase_cover_size(40), 72);
-        assert_eq!(detail_showcase_cover_size(519), 156);
-        assert_eq!(detail_showcase_cover_size(520), 188);
+        assert_eq!(detail_showcase_cover_size(419), HOME_ALBUM_MIN_SIZE);
+        assert_eq!(detail_showcase_cover_size(420), HOME_ALBUM_MIN_SIZE);
+        assert_eq!(detail_showcase_cover_size(500), 174);
+        assert_eq!(detail_showcase_cover_size(519), 179);
+        assert_eq!(detail_showcase_cover_size(520), HOME_ALBUM_TARGET_SIZE);
         assert_eq!(detail_showcase_cover_size(760), 224);
+        assert!(detail_showcase_cover_only(419));
+        assert!(!detail_showcase_cover_only(420));
     }
 
     #[test]

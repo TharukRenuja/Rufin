@@ -358,6 +358,7 @@ impl Shell {
                 Route::SmartPlaylists => {
                     self.library_layout_signature(LibraryListKey::SmartPlaylists)
                 }
+                Route::Home => self.home_layout_signature(),
                 _ => self.grid_layout_signature(),
             },
         }
@@ -375,6 +376,15 @@ impl Shell {
     fn grid_layout_signature(&self) -> i32 {
         let (columns, card_size) = self.collection_card_grid_metrics();
         grid_metric_signature(columns, card_size)
+    }
+
+    fn home_layout_signature(&self) -> i32 {
+        let (columns, card_size) = self.collection_card_grid_metrics();
+        grid_metric_signature(columns, card_size)
+            .saturating_mul(1024)
+            .saturating_add(home_layout::home_layout_width_signature(
+                route_content_width(self),
+            ))
     }
 
     fn library_grid_signature(&self, key: LibraryListKey, settings: &LibraryListSettings) -> i32 {

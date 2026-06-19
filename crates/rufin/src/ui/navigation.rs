@@ -6,7 +6,8 @@ use domain::{Route, SidebarRouteItem};
 use super::{Shell, layout::COMPACT_RAIL_WIDTH};
 use crate::i18n::tr;
 
-const SIDEBAR_NAV_ICON_SIZE: i32 = 20;
+const NORMAL_NAV_ICON_SIZE: i32 = 16;
+const COMPACT_NAV_ICON_SIZE: i32 = 20;
 #[cfg(test)]
 const ROUTE_ICON_PREFIX: &str = "route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
@@ -212,9 +213,14 @@ fn nav_button(
     } else {
         gtk::Align::Start
     });
+    let icon_size = if compact {
+        COMPACT_NAV_ICON_SIZE
+    } else {
+        NORMAL_NAV_ICON_SIZE
+    };
     let icon = gtk::Image::from_icon_name(icon_name);
-    icon.set_pixel_size(SIDEBAR_NAV_ICON_SIZE);
-    icon.set_size_request(SIDEBAR_NAV_ICON_SIZE, SIDEBAR_NAV_ICON_SIZE);
+    icon.set_pixel_size(icon_size);
+    icon.set_size_request(icon_size, icon_size);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     content.append(&icon);
@@ -224,8 +230,7 @@ fn nav_button(
         content.append(&text);
     } else {
         let text = gtk::Label::new(Some(&tr(label)));
-        text.set_xalign(0.0);
-        text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        configure_sidebar_entry_label(&text);
         content.append(&text);
     }
     button.set_child(Some(&content));
@@ -249,7 +254,7 @@ fn compact_sidebar_label_text(label: &str) -> String {
 }
 
 fn configure_rail_label(label: &gtk::Label) {
-    label.add_css_class("rail-label");
+    configure_sidebar_entry_label(label);
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
     label.set_lines(2);
@@ -260,6 +265,12 @@ fn configure_rail_label(label: &gtk::Label) {
     label.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
     label.set_width_chars(1);
     label.set_max_width_chars(COMPACT_RAIL_LABEL_WIDTH_CHARS);
+}
+
+fn configure_sidebar_entry_label(label: &gtk::Label) {
+    label.add_css_class("sidebar-entry-label");
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 }
 
 fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {

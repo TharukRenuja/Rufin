@@ -64,6 +64,7 @@ impl Shell {
         content.set_width_request(1);
 
         let inner_content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
+        let cover_only = detail_showcase_cover_only(inner_content_width);
         let cover_size = detail_showcase_cover_size(inner_content_width);
         let header = gtk::Box::new(gtk::Orientation::Vertical, 12);
         header.add_css_class("detail-showcase");
@@ -103,6 +104,7 @@ impl Shell {
         let link_stack = gtk::Box::new(gtk::Orientation::Vertical, 6);
         link_stack.add_css_class("album-detail-link-stack");
         link_stack.set_halign(gtk::Align::Center);
+        link_stack.set_visible(!cover_only);
         if let Some(external_links) = external_links {
             external_links.set_halign(gtk::Align::Center);
             link_stack.append(&external_links);
@@ -117,6 +119,7 @@ impl Shell {
         metadata.set_valign(gtk::Align::Start);
         metadata.set_halign(gtk::Align::Fill);
         metadata.set_width_request(1);
+        metadata.set_visible(!cover_only);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);

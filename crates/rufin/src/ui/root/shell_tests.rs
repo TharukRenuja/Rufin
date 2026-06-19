@@ -880,7 +880,9 @@ pub(in crate::ui) fn shell_playlist_panes() {
     assert_eq!(playlist_route_margin(550), 16);
     assert!(!playlist_detail_compact_for_width(760));
     assert_eq!(playlist_route_margin(760), 24);
-    assert_eq!(playlist_cover_size(450), 156);
+    assert_eq!(playlist_cover_size(419), 150);
+    assert_eq!(playlist_cover_size(450), 159);
+    assert_eq!(playlist_cover_size(519), 181);
     assert_eq!(playlist_cover_size(550), 182);
     assert_eq!(playlist_cover_size(760), 208);
     assert_eq!(playlist_sort_width(360), 120);

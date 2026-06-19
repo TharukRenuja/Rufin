@@ -13,11 +13,10 @@ use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
+const NORMAL_SELECTOR_ICON_SIZE: i32 = 16;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const COMPACT_SELECTOR_BUTTON_WIDTH: i32 = COMPACT_RAIL_WIDTH - 2;
-const NORMAL_SELECTOR_NON_LABEL_WIDTH: i32 = 54;
-const NORMAL_SELECTOR_LABEL_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - NORMAL_SELECTOR_NON_LABEL_WIDTH;
 const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 18;
 const NORMAL_SELECTOR_BUTTON_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - 16;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 304;
@@ -50,24 +49,26 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_button.set_can_shrink(true);
     normal_button.set_direction(gtk::ArrowType::Up);
     normal_button.set_margin_bottom(4);
+    normal_button.set_size_request(NORMAL_SELECTOR_BUTTON_WIDTH, -1);
 
-    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    normal_content.set_hexpand(true);
     normal_content.set_halign(gtk::Align::Fill);
     normal_content.set_valign(gtk::Align::Center);
+    normal_content.set_width_request(1);
     let normal_icon = gtk::Image::from_icon_name("network-server-symbolic");
+    normal_icon.set_pixel_size(NORMAL_SELECTOR_ICON_SIZE);
+    normal_icon.set_size_request(NORMAL_SELECTOR_ICON_SIZE, NORMAL_SELECTOR_ICON_SIZE);
+    normal_icon.set_halign(gtk::Align::Center);
     normal_icon.set_valign(gtk::Align::Center);
     normal_content.append(&normal_icon);
 
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    labels.set_hexpand(true);
-    labels.set_valign(gtk::Align::Center);
     let normal_name = gtk::Label::new(None);
     configure_normal_selector_label(&normal_name);
     let normal_subtitle = gtk::Label::new(None);
     normal_subtitle.add_css_class("muted");
     configure_normal_selector_label(&normal_subtitle);
-    labels.append(&normal_name);
-    normal_content.append(&labels);
+    normal_content.append(&normal_name);
 
     normal_button.set_child(Some(&normal_content));
 
@@ -475,16 +476,19 @@ fn compact_sidebar_label_text(label: &str) -> String {
 }
 
 fn configure_normal_selector_label(label: &gtk::Label) {
+    label.add_css_class("sidebar-entry-label");
+    label.set_hexpand(true);
+    label.set_halign(gtk::Align::Fill);
+    label.set_valign(gtk::Align::Center);
     label.set_xalign(0.0);
     label.set_yalign(0.5);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_width_request(NORMAL_SELECTOR_LABEL_WIDTH);
-    label.set_size_request(NORMAL_SELECTOR_LABEL_WIDTH, -1);
+    label.set_width_request(1);
     label.set_max_width_chars(NORMAL_SELECTOR_LABEL_WIDTH_CHARS);
 }
 
 fn configure_rail_label(label: &gtk::Label) {
-    label.add_css_class("caption");
+    label.add_css_class("sidebar-entry-label");
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
