@@ -1532,6 +1532,7 @@ pub(in crate::controller) struct SyncProgressReporter {
     started_at: Instant,
     last_status_at: Option<Instant>,
     min_interval: Duration,
+    cache_headline_sent: bool,
 }
 impl SyncProgressReporter {
     pub(in crate::controller) fn new(
@@ -1546,6 +1547,7 @@ impl SyncProgressReporter {
             started_at: Instant::now(),
             last_status_at: None,
             min_interval: SYNC_PROGRESS_MIN_INTERVAL,
+            cache_headline_sent: false,
         }
     }
 
@@ -1572,10 +1574,18 @@ impl SyncProgressReporter {
     }
 
     fn collection_started(&mut self, collection: SyncCollection) {
+        if !self.cache_headline_sent {
+            self.cache_headline_sent = true;
+            self.emit_status(
+                true,
+                "Caching library… This may take some time.".to_string(),
+            );
+            return;
+        }
         self.emit_status(
             true,
             format!(
-                "Caching library… This may take some time. Fetching {} for {} ({})",
+                "Fetching {} for {} ({})",
                 collection.label(),
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
@@ -1594,7 +1604,7 @@ impl SyncProgressReporter {
         self.emit_status(
             false,
             format!(
-                "Caching library… This may take some time. Fetching {} page {page_number} for {}, {count} fetched ({})",
+                "Fetching {} page {page_number} for {}, {count} fetched ({})",
                 collection.label(),
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
@@ -1603,6 +1613,14 @@ impl SyncProgressReporter {
     }
 
     fn local_scan_progress(&mut self, progress: LocalScanProgress) {
+        if !self.cache_headline_sent {
+            self.cache_headline_sent = true;
+            self.emit_status(
+                true,
+                "Caching local library… This may take some time.".to_string(),
+            );
+            return;
+        }
         let count = match progress.stage {
             LocalScanStage::Walking => format!(
                 "{} audio files found, {} entries checked",
@@ -1629,7 +1647,7 @@ impl SyncProgressReporter {
         self.emit_status(
             force,
             format!(
-                "Caching local library… This may take some time. {action} for {}, {count} ({})",
+                "{action} for {}, {count} ({})",
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
             ),
@@ -1642,7 +1660,7 @@ impl SyncProgressReporter {
         self.emit_status(
             progress.finished,
             format!(
-                "Caching library… This may take some time. Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
+                "Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
                 progress.collection.label(),
                 self.source_label(),
                 formatted_count(progress.written),
@@ -1667,7 +1685,7 @@ impl SyncProgressReporter {
         self.emit_status(
             true,
             format!(
-                "Caching library… This may take some time. Finalizing cache for {} ({})",
+                "Finalizing cache for {} ({})",
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
             ),

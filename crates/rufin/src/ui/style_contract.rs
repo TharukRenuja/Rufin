@@ -7,6 +7,7 @@ const TOAST_BACKGROUND: &str = "color-mix(in srgb, @window_bg_color 88%, @card_b
 const TOAST_FOREGROUND: &str = "@window_fg_color";
 const TOAST_RADIUS: &str = "999px";
 const TOAST_BOTTOM_MARGIN: &str = "108px";
+const CONTROL_FEEDBACK_PADDING: &str = "9px 16px";
 const TOAST_CLOSE_OPACITY: &str = "0";
 const TOAST_CLOSE_ICON_SIZE: &str = "1px";
 const BOTTOM_PLAYER_PADDING: &str = "2px 8px";
@@ -215,6 +216,14 @@ mod tests {
         assert_eq!(
             selector_property(APP_STYLE, ".app-toast-overlay toast", "margin-bottom"),
             Some(TOAST_BOTTOM_MARGIN.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".control-feedback-toast", "margin-bottom"),
+            Some(TOAST_BOTTOM_MARGIN.to_string())
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".control-feedback-toast", "padding"),
+            Some(CONTROL_FEEDBACK_PADDING.to_string())
         );
         assert_eq!(
             selector_property(

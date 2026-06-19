@@ -9,6 +9,7 @@ use playback::PlaybackState;
 use tracing::info;
 
 use crate::controller::PlaybackSnapshot;
+use crate::i18n::tr;
 
 use super::player_icons::{
     VolumeIcon, auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
@@ -1352,23 +1353,44 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .next_button
         .connect_clicked(move |_| controller.next_track());
 
-    let controller = shell.controller.clone();
+    let feedback_shell = Rc::clone(shell);
     shell
         .player_controls
         .shuffle_button
-        .connect_clicked(move |_| controller.toggle_shuffle());
+        .connect_clicked(move |_| {
+            let enabled = !feedback_shell.state.player.borrow().shuffle_enabled;
+            feedback_shell.controller.toggle_shuffle();
+            feedback_shell.show_control_feedback_toast(if enabled {
+                tr("Shuffle on")
+            } else {
+                tr("Shuffle off")
+            });
+        });
 
-    let controller = shell.controller.clone();
+    let feedback_shell = Rc::clone(shell);
     shell
         .player_controls
         .repeat_button
-        .connect_clicked(move |_| controller.cycle_repeat());
+        .connect_clicked(move |_| {
+            let title = match feedback_shell.state.player.borrow().repeat_mode {
+                RepeatMode::Off => tr("Repeat all"),
+                RepeatMode::All => tr("Repeat one"),
+                RepeatMode::One => tr("Repeat off"),
+            };
+            feedback_shell.controller.cycle_repeat();
+            feedback_shell.show_control_feedback_toast(title);
+        });
 
-    let controller = shell.controller.clone();
-    shell
-        .player_controls
-        .dj_button
-        .connect_clicked(move |_| controller.toggle_auto_dj());
+    let feedback_shell = Rc::clone(shell);
+    shell.player_controls.dj_button.connect_clicked(move |_| {
+        let enabled = !feedback_shell.state.player.borrow().auto_dj_enabled;
+        feedback_shell.controller.toggle_auto_dj();
+        feedback_shell.show_control_feedback_toast(if enabled {
+            tr("Auto DJ on")
+        } else {
+            tr("Auto DJ off")
+        });
+    });
 
     let random_shell = Rc::clone(shell);
     shell
