@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-19 00:22+0000\n"
+"PO-Revision-Date: 2026-06-19 14:43+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -1626,8 +1626,14 @@ msgid_plural ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего: {total} трек."
 msgstr[1] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего: {total} трека."
 msgstr[2] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего: {total} треков."
 
 #: crates/rufin/src/ui/preferences/library.rs:208
 msgid "Saved per server"
@@ -2068,8 +2074,14 @@ msgid_plural ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего несохраненных: {total} трек."
 msgstr[1] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего несохраненных: {total} трека."
 msgstr[2] ""
+"{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
+"не найдено. Всего несохраненных: {total} треков."
 
 #: crates/rufin/src/ui/local_access_mapping.rs:469
 msgid "Use This Source"
@@ -2227,41 +2239,41 @@ msgstr "до"
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
+msgstr[0] "{count} альбом"
+msgstr[1] "{count} альбома"
+msgstr[2] "{count} альбомов"
 
 #: crates/rufin/src/ui/root/mod.rs:144
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} folder"
 msgid_plural "{count} folders"
-msgstr[0] "Поиск в текущей папке"
-msgstr[1] "Поиск в текущей папке"
-msgstr[2] "Поиск в текущей папке"
+msgstr[0] "{count} папка"
+msgstr[1] "{count} папки"
+msgstr[2] "{count} папок"
 
 #: crates/rufin/src/ui/root/mod.rs:154
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
-msgstr[0] "Папка не выбрана"
-msgstr[1] "Папка не выбрана"
-msgstr[2] "Папка не выбрана"
+msgstr[0] "{count} папка выбрана"
+msgstr[1] "{count} папки выбрано"
+msgstr[2] "{count} папок выбрано"
 
 #: crates/rufin/src/ui/root/mod.rs:164
 #, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
+msgstr[0] "{count} результат"
+msgstr[1] "{count} результата"
+msgstr[2] "{count} результатов"
 
 #: crates/rufin/src/ui/root/mod.rs:174
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
+msgstr[0] "{count} трек"
+msgstr[1] "{count} трека"
+msgstr[2] "{count} треков"
 
 #: crates/rufin/src/ui/root/home_refresh.rs:1008
 #, rust-format
