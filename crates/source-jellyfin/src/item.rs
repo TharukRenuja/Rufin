@@ -87,6 +87,11 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         .or_else(|| backdrop_image_ref(&item));
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
+    let album_artist_credits = if album_artist_credits.is_empty() {
+        musicbrainz_album_artist_credit(item.album_artist.as_deref(), &item.provider_ids)
+    } else {
+        album_artist_credits
+    };
     let artist_id = album_artist_credits.first().map(|artist| artist.id.clone());
     let artist = item
         .album_artist
@@ -127,6 +132,27 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         musicbrainz_album_id: provider_id(&item.provider_ids, "MusicBrainzAlbum"),
         musicbrainz_release_group_id: provider_id(&item.provider_ids, "MusicBrainzReleaseGroup"),
     }
+}
+
+fn musicbrainz_album_artist_credit(
+    album_artist: Option<&str>,
+    provider_ids: &Option<HashMap<String, String>>,
+) -> Vec<ArtistCredit> {
+    let Some(name) = album_artist.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Vec::new();
+    };
+    let Some(artist_id) = provider_id(provider_ids, "MusicBrainzAlbumArtist") else {
+        return Vec::new();
+    };
+    let artist_id = artist_id.trim();
+    if artist_id.is_empty() {
+        return Vec::new();
+    }
+    vec![ArtistCredit {
+        id: ArtistId::new(jellyfin_id("artist", &format!("musicbrainz:{artist_id}"))),
+        name: name.to_string(),
+        musicbrainz_artist_id: None,
+    }]
 }
 
 pub(super) fn track_from_item(item: JellyfinItem) -> Track {

@@ -25,7 +25,7 @@ use crate::i18n::tr;
 use adw::prelude::*;
 use domain::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Playlist, SearchKind, SmartPlaylist, SmartPlaylistId, Track, TrackId,
+    LibraryListSettings, Playlist, SmartPlaylist, SmartPlaylistId, Track, TrackId,
     available_sort_fields,
 };
 use gtk::{gio, glib};

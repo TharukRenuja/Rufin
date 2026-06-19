@@ -171,22 +171,11 @@ impl Shell {
         artist.set_width_chars(1);
         artist.set_max_width_chars(32);
         fit_detail_text(&artist, &album.artist);
-        artist.set_cursor_from_name(Some("pointer"));
-        add_dynamic_link_hover(artist.upcast_ref(), &artist);
-        if let Some(artist_id) = album.artist_id.clone() {
+        if let Some(route) = album_artist_route(&album) {
+            artist.set_cursor_from_name(Some("pointer"));
+            add_dynamic_link_hover(artist.upcast_ref(), &artist);
             let shell = Rc::clone(self);
-            add_label_click(&artist, move || {
-                shell.navigate(Route::ArtistDetail(artist_id.clone()))
-            });
-        } else if !album.artist.trim().is_empty() {
-            let shell = Rc::clone(self);
-            let artist_name = album.artist.clone();
-            add_label_click(&artist, move || {
-                shell.navigate(Route::Search {
-                    query: artist_name.clone(),
-                    kind: SearchKind::Artists,
-                });
-            });
+            add_label_click(&artist, move || shell.navigate(route.clone()));
         }
         text_stack.append(&kind_row);
         text_stack.append(&title);

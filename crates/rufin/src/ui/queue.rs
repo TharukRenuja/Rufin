@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use domain::{QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration};
+use domain::{QueueEntry, QueueEntryId, RightSidebarMode, Route, format_duration};
 use gtk::{gio, glib};
 
 use crate::controller::AppController;
@@ -293,18 +293,10 @@ impl Shell {
         labels.append(&title);
         labels.append(&artist);
         if let Some(artist_id) = entry.artist_id.clone() {
+            add_queue_label_link_style(&artist);
             let shell = Rc::clone(self);
             add_queue_label_click(&artist, move || {
                 shell.navigate(Route::ArtistDetail(artist_id.clone()))
-            });
-        } else if !entry.artist.trim().is_empty() {
-            let shell = Rc::clone(self);
-            let artist_name = entry.artist.clone();
-            add_queue_label_click(&artist, move || {
-                shell.navigate(Route::Search {
-                    query: artist_name.clone(),
-                    kind: SearchKind::Artists,
-                });
             });
         }
         let year_text = (entry.year != 0).then(|| entry.year.to_string());
@@ -378,18 +370,10 @@ impl Shell {
         row.append(&columns);
 
         if let Some(artist_id) = entry.artist_id.clone() {
+            add_queue_label_link_style(&artist);
             let shell = Rc::clone(self);
             add_queue_label_click(&artist, move || {
                 shell.navigate(Route::ArtistDetail(artist_id.clone()))
-            });
-        } else if !entry.artist.trim().is_empty() {
-            let shell = Rc::clone(self);
-            let artist_name = entry.artist.clone();
-            add_queue_label_click(&artist, move || {
-                shell.navigate(Route::Search {
-                    query: artist_name.clone(),
-                    kind: SearchKind::Artists,
-                });
             });
         }
 
@@ -1273,16 +1257,7 @@ fn show_queue_row_context_menu(
 }
 
 fn queue_artist_route(entry: &QueueEntry) -> Option<Route> {
-    if let Some(artist_id) = entry.artist_id.clone() {
-        Some(Route::ArtistDetail(artist_id))
-    } else if !entry.artist.trim().is_empty() {
-        Some(Route::Search {
-            query: entry.artist.clone(),
-            kind: SearchKind::Artists,
-        })
-    } else {
-        None
-    }
+    entry.artist_id.clone().map(Route::ArtistDetail)
 }
 
 fn queue_link_label(text: &str) -> gtk::Label {
@@ -1291,9 +1266,12 @@ fn queue_link_label(text: &str) -> gtk::Label {
     label.add_css_class("muted");
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_cursor_from_name(Some("pointer"));
-    add_dynamic_link_hover(label.upcast_ref(), &label);
     label
+}
+
+fn add_queue_label_link_style(label: &gtk::Label) {
+    label.set_cursor_from_name(Some("pointer"));
+    add_dynamic_link_hover(label.upcast_ref(), label);
 }
 
 fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {

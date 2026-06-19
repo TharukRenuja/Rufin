@@ -2342,6 +2342,43 @@ fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
 }
 
 #[test]
+fn album_artist_musicbrainz_fallback_merges_to_provider_artist() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let fallback_id = ArtistId::new("jellyfin:artist:musicbrainz:mb-artist-one");
+    let provider_id = ArtistId::new("jellyfin:artist:artist-one");
+    let mut album = album(1);
+    album.artist = "Example Artist".to_string();
+    album.artist_id = Some(fallback_id.clone());
+    album.album_artist_credits = vec![credit(fallback_id.clone(), "Example Artist")];
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+
+    let mut artist = artist(1, None);
+    artist.id = provider_id.clone();
+    artist.name = "Example Artist".to_string();
+    artist.musicbrainz_artist_id = Some("mb-artist-one".to_string());
+    store
+        .upsert_artists(&saved.server.id, &[artist], true, generation)
+        .expect("upsert album artist");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+
+    let detail = store
+        .load_album_detail(&saved.server.id, &album.id)
+        .expect("load album detail")
+        .expect("album detail");
+
+    assert_eq!(detail.0.artist_id.as_ref(), Some(&provider_id));
+    assert_eq!(detail.0.album_artist_credits[0].id, provider_id);
+}
+
+#[test]
 fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();

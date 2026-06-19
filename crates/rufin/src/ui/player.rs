@@ -1426,11 +1426,6 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         };
         if let Some(artist_id) = entry.artist_id {
             artist_shell.navigate(Route::ArtistDetail(artist_id));
-        } else if !entry.artist.trim().is_empty() {
-            artist_shell.navigate(Route::Search {
-                query: entry.artist,
-                kind: SearchKind::Artists,
-            });
         }
     });
 

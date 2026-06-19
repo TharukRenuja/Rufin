@@ -299,6 +299,13 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
 
     let album = single_line_card_label(&track.album, size, &["muted"]);
     let album_clip = clipped_card_label_with_lines(&album, size, 1);
+    add_card_label_link(
+        shell,
+        &album_clip,
+        &album,
+        &track.album,
+        Some(Route::AlbumDetail(track.album_id.clone())),
+    );
 
     card.append(&title_clip);
     card.append(&artist_clip);

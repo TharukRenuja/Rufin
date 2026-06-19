@@ -180,6 +180,49 @@ async fn library_album_artist() {
 }
 
 #[tokio::test]
+async fn library_album_artist_musicbrainz_fallback() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "MusicAlbum"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{
+                "Id": "album-one",
+                "Name": "Blue Rooms",
+                "Type": "MusicAlbum",
+                "AlbumArtist": "Example Artist",
+                "AlbumArtists": [],
+                "ArtistItems": [{ "Id": "guest-one", "Name": "Guest Artist" }],
+                "ProviderIds": { "MusicBrainzAlbumArtist": "mb-artist-one" },
+                "ChildCount": 9
+            }]
+        })))
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let page = provider
+        .albums(PagedRequest::new(0, 50))
+        .await
+        .expect("albums");
+
+    assert_eq!(page.items[0].artist, "Example Artist");
+    assert_eq!(
+        page.items[0].artist_id.as_ref().map(ArtistId::as_str),
+        Some("jellyfin:artist:musicbrainz:mb-artist-one")
+    );
+    assert_eq!(
+        page.items[0].album_artist_credits,
+        vec![ArtistCredit {
+            id: ArtistId::new("jellyfin:artist:musicbrainz:mb-artist-one"),
+            name: "Example Artist".to_string(),
+            musicbrainz_artist_id: None,
+        }]
+    );
+}
+
+#[tokio::test]
 async fn library_album_uses_parent_backdrop_when_primary_missing() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
