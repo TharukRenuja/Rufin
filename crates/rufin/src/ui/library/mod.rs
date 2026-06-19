@@ -70,12 +70,8 @@ const ALBUM_DETAIL_META_SPACING: i32 = 6;
 const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const INITIAL_ROUTE_COVER_WARM_ITEMS: usize = 16;
 const SLOW_LIBRARY_ROUTE_SETUP_MS: u64 = 100;
-const TRACK_PRIORITY_AHEAD: usize = 0;
-const TRACK_PRIORITY_BEHIND: usize = 0;
 const TRACK_INTERACTION_AHEAD: usize = 96;
 const TRACK_INTERACTION_BEHIND: usize = 48;
-const TRACK_WARM_AHEAD: usize = 32;
-const TRACK_WARM_BEHIND: usize = 16;
 const TRACK_WARM_DELAY: u64 = 32;
 const ALBUM_PRIORITY_AHEAD: usize = 0;
 const ALBUM_PRIORITY_BEHIND: usize = 0;
@@ -101,6 +97,7 @@ struct TrackViewportCoverRanges {
     warm_after_start: usize,
     warm_after_end: usize,
 }
+#[cfg(test)]
 fn track_viewport_cover_ranges(
     total: usize,
     visible_start: usize,
@@ -110,12 +107,13 @@ fn track_viewport_cover_ranges(
         total,
         visible_start,
         visible_rows,
-        TRACK_PRIORITY_BEHIND,
-        TRACK_PRIORITY_AHEAD,
-        TRACK_WARM_BEHIND,
-        TRACK_WARM_AHEAD,
+        0,
+        0,
+        ALBUM_WARM_BEHIND,
+        ALBUM_WARM_AHEAD,
     )
 }
+#[cfg(test)]
 fn track_interaction_viewport_cover_ranges(
     total: usize,
     visible_start: usize,
@@ -127,8 +125,8 @@ fn track_interaction_viewport_cover_ranges(
         visible_rows,
         TRACK_INTERACTION_BEHIND,
         TRACK_INTERACTION_AHEAD,
-        TRACK_WARM_BEHIND,
-        TRACK_WARM_AHEAD,
+        ALBUM_WARM_BEHIND,
+        ALBUM_WARM_AHEAD,
     )
 }
 fn viewport_cover_ranges(
@@ -347,100 +345,20 @@ fn connect_track_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    if settings.layout != LibraryLayout::Row {
-        return;
-    }
-    let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
-        return;
-    };
-
-    let shell = Rc::clone(shell);
-    let model = model.clone();
-    let adjustment = scroller.vadjustment();
-    let generation = Rc::new(Cell::new(0_u64));
-
-    {
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        glib::idle_add_local_once(move || {
-            warm_track_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-        });
-    }
-
-    adjustment.connect_value_changed(move |adjustment| {
-        let next_generation = generation.get().saturating_add(1);
-        generation.set(next_generation);
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        let generation = Rc::clone(&generation);
-        glib::idle_add_local_once({
-            let shell = Rc::clone(&shell);
-            let model = model.clone();
-            let adjustment = adjustment.clone();
-            let generation = Rc::clone(&generation);
-            move || {
-                if generation.get() == next_generation {
-                    prime_track_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-                }
-            }
-        });
-        glib::timeout_add_local_once(Duration::from_millis(TRACK_WARM_DELAY), move || {
-            if generation.get() != next_generation {
-                return;
-            }
-            warm_track_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-        });
-    });
-}
-fn warm_track_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_track_cover_model_viewport(shell, model, adjustment, fetch_size, size, true, false);
-}
-fn prime_track_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_track_cover_model_viewport(shell, model, adjustment, fetch_size, size, false, true);
-}
-fn prepare_track_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-    include_warm: bool,
-    interaction: bool,
-) {
-    let row_height = f64::from(LIBRARY_TABLE_ROW_HEIGHT.max(1));
-    let visible_start = (adjustment.value().max(0.0) / row_height).floor() as usize;
-    let page_size = route_viewport_page_size(shell, adjustment);
-    let visible_rows = (page_size.max(row_height) / row_height).ceil() as usize;
-    let ranges = if interaction {
-        track_interaction_viewport_cover_ranges(
-            model.n_items() as usize,
-            visible_start,
-            visible_rows,
-        )
-    } else {
-        track_viewport_cover_ranges(model.n_items() as usize, visible_start, visible_rows)
-    };
-    let Some(ranges) = ranges else {
-        return;
-    };
-
-    let batches =
-        viewport_cover_batches(ranges, |start, end| library_track_range(model, start, end));
-    prepare_viewport_cover_refs(shell, batches, fetch_size, size, include_warm);
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        CoverViewportSpec {
+            key: LibraryListKey::Tracks,
+            cover_sizes: track_cover_warm_sizes_for_key,
+            refs_for_range: library_track_range,
+            row_interaction_behind: TRACK_INTERACTION_BEHIND,
+            row_interaction_ahead: TRACK_INTERACTION_AHEAD,
+            row_warm_delay: TRACK_WARM_DELAY,
+        },
+    );
 }
 fn library_track_range(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
     let mut refs = Vec::new();
@@ -559,10 +477,15 @@ fn connect_album_viewport_cover_warm(
         shell,
         scroller,
         model,
-        LibraryListKey::Albums,
         settings,
-        album_cover_warm_sizes,
-        album_cover_refs,
+        CoverViewportSpec {
+            key: LibraryListKey::Albums,
+            cover_sizes: album_cover_warm_sizes,
+            refs_for_range: album_cover_refs,
+            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
+            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
+            row_warm_delay: GRID_WARM_DELAY,
+        },
     );
 }
 fn connect_artist_viewport_cover_warm(
@@ -576,14 +499,29 @@ fn connect_artist_viewport_cover_warm(
         shell,
         scroller,
         model,
-        key,
         settings,
-        grid_row_sizes,
-        artist_cover_refs,
+        CoverViewportSpec {
+            key,
+            cover_sizes: grid_row_sizes,
+            refs_for_range: artist_cover_refs,
+            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
+            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
+            row_warm_delay: GRID_WARM_DELAY,
+        },
     );
 }
 type CoverSizeResolver = fn(&Rc<Shell>, LibraryListKey, &LibraryListSettings) -> Option<(u32, i32)>;
 type CoverRefsForRange = fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>;
+
+#[derive(Clone, Copy)]
+struct CoverViewportSpec {
+    key: LibraryListKey,
+    cover_sizes: CoverSizeResolver,
+    refs_for_range: CoverRefsForRange,
+    row_interaction_behind: usize,
+    row_interaction_ahead: usize,
+    row_warm_delay: u64,
+}
 
 struct CoverViewportRequest<'a> {
     model: &'a gio::ListStore,
@@ -594,6 +532,8 @@ struct CoverViewportRequest<'a> {
     size: i32,
     include_warm: bool,
     interaction: bool,
+    row_interaction_behind: usize,
+    row_interaction_ahead: usize,
     refs_for_range: CoverRefsForRange,
 }
 
@@ -605,6 +545,8 @@ fn prepare_item_cover_model_viewport(shell: &Rc<Shell>, request: CoverViewportRe
             request.model.n_items() as usize,
             request.key,
             request.settings,
+            request.row_interaction_behind,
+            request.row_interaction_ahead,
         )
     } else {
         library_viewport_cover_ranges(
@@ -640,10 +582,15 @@ fn connect_genre_viewport_cover_warm(
         shell,
         scroller,
         model,
-        LibraryListKey::Genres,
         settings,
-        grid_row_sizes,
-        genre_cover_refs,
+        CoverViewportSpec {
+            key: LibraryListKey::Genres,
+            cover_sizes: grid_row_sizes,
+            refs_for_range: genre_cover_refs,
+            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
+            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
+            row_warm_delay: GRID_WARM_DELAY,
+        },
     );
 }
 fn connect_playlist_viewport_cover_warm(
@@ -656,10 +603,15 @@ fn connect_playlist_viewport_cover_warm(
         shell,
         scroller,
         model,
-        LibraryListKey::Playlists,
         settings,
-        grid_row_sizes,
-        playlist_cover_refs,
+        CoverViewportSpec {
+            key: LibraryListKey::Playlists,
+            cover_sizes: grid_row_sizes,
+            refs_for_range: playlist_cover_refs,
+            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
+            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
+            row_warm_delay: GRID_WARM_DELAY,
+        },
     );
 }
 fn connect_smart_warm(
@@ -672,25 +624,32 @@ fn connect_smart_warm(
         shell,
         scroller,
         model,
-        LibraryListKey::SmartPlaylists,
         settings,
-        grid_row_sizes,
-        smart_cover_refs,
+        CoverViewportSpec {
+            key: LibraryListKey::SmartPlaylists,
+            cover_sizes: grid_row_sizes,
+            refs_for_range: smart_cover_refs,
+            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
+            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
+            row_warm_delay: GRID_WARM_DELAY,
+        },
     );
 }
 fn connect_cover_viewport_warm(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
     model: &gio::ListStore,
-    key: LibraryListKey,
     settings: &LibraryListSettings,
-    cover_sizes: CoverSizeResolver,
-    refs_for_range: CoverRefsForRange,
+    spec: CoverViewportSpec,
 ) {
-    let Some((fetch_size, size)) = cover_sizes(shell, key, settings) else {
+    let Some((fetch_size, size)) = (spec.cover_sizes)(shell, spec.key, settings) else {
         return;
     };
 
+    let warm_delay = match settings.layout {
+        LibraryLayout::Row => spec.row_warm_delay,
+        LibraryLayout::Grid | LibraryLayout::Detail => GRID_WARM_DELAY,
+    };
     let shell = Rc::clone(shell);
     let model = model.clone();
     let settings = settings.clone();
@@ -708,13 +667,15 @@ fn connect_cover_viewport_warm(
                 CoverViewportRequest {
                     model: &model,
                     adjustment: &adjustment,
-                    key,
+                    key: spec.key,
                     settings: &settings,
                     fetch_size,
                     size,
                     include_warm: true,
                     interaction: false,
-                    refs_for_range,
+                    row_interaction_behind: spec.row_interaction_behind,
+                    row_interaction_ahead: spec.row_interaction_ahead,
+                    refs_for_range: spec.refs_for_range,
                 },
             );
         });
@@ -741,19 +702,21 @@ fn connect_cover_viewport_warm(
                         CoverViewportRequest {
                             model: &model,
                             adjustment: &adjustment,
-                            key,
+                            key: spec.key,
                             settings: &settings,
                             fetch_size,
                             size,
                             include_warm: false,
                             interaction: true,
-                            refs_for_range,
+                            row_interaction_behind: spec.row_interaction_behind,
+                            row_interaction_ahead: spec.row_interaction_ahead,
+                            refs_for_range: spec.refs_for_range,
                         },
                     );
                 }
             }
         });
-        glib::timeout_add_local_once(Duration::from_millis(GRID_WARM_DELAY), move || {
+        glib::timeout_add_local_once(Duration::from_millis(warm_delay), move || {
             if generation.get() != next_generation {
                 return;
             }
@@ -762,13 +725,15 @@ fn connect_cover_viewport_warm(
                 CoverViewportRequest {
                     model: &model,
                     adjustment: &adjustment,
-                    key,
+                    key: spec.key,
                     settings: &settings,
                     fetch_size,
                     size,
                     include_warm: true,
                     interaction: false,
-                    refs_for_range,
+                    row_interaction_behind: spec.row_interaction_behind,
+                    row_interaction_ahead: spec.row_interaction_ahead,
+                    refs_for_range: spec.refs_for_range,
                 },
             );
         });
@@ -799,6 +764,8 @@ fn library_interaction_viewport_cover_ranges(
     total: usize,
     key: LibraryListKey,
     settings: &LibraryListSettings,
+    row_interaction_behind: usize,
+    row_interaction_ahead: usize,
 ) -> Option<TrackViewportCoverRanges> {
     priority_cover_ranges(
         shell,
@@ -806,8 +773,8 @@ fn library_interaction_viewport_cover_ranges(
         total,
         key,
         settings,
-        ALBUM_INTERACTION_BEHIND,
-        ALBUM_INTERACTION_AHEAD,
+        row_interaction_behind,
+        row_interaction_ahead,
         GRID_INTERACTION_BEHIND,
         GRID_INTERACTION_AHEAD,
     )
@@ -1006,9 +973,17 @@ fn warm_smart_covers(
 fn track_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
         LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1)),
-        LibraryLayout::Row => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
         LibraryLayout::Detail => None,
     }
+}
+fn track_cover_warm_sizes_for_key(
+    shell: &Rc<Shell>,
+    _key: LibraryListKey,
+    settings: &LibraryListSettings,
+) -> Option<(u32, i32)> {
+    track_cover_warm_sizes(shell, settings)
 }
 fn album_cover_warm_sizes(
     shell: &Rc<Shell>,
@@ -1028,7 +1003,7 @@ fn album_cover_warm_sizes(
                 220
             },
         )),
-        LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }
 }
@@ -1042,7 +1017,7 @@ fn grid_row_sizes(
             GRID_COVER_SIZE,
             shell.collection_card_grid_metrics_for(key, settings).1,
         )),
-        LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }
 }
@@ -1051,11 +1026,11 @@ fn collection_cover_warm_sizes(settings: &LibraryListSettings) -> Option<(u32, i
         LibraryLayout::Grid | LibraryLayout::Detail => {
             Some((THUMB_COVER_SIZE, THUMB_COVER_SIZE as i32))
         }
-        LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }
 }
-fn album_row_layout_uses_cover(settings: &LibraryListSettings) -> bool {
+fn row_layout_uses_cover(settings: &LibraryListSettings) -> bool {
     settings
         .row_fields
         .iter()
