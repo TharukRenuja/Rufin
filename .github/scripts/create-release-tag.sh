@@ -377,6 +377,14 @@ MSG
   exit 1
 }
 
+update_flatpak_cargo_sources() {
+  local sources_script="packaging/flatpak/update-cargo-sources.sh"
+
+  if [[ -f "$sources_script" ]]; then
+    bash "$sources_script"
+  fi
+}
+
 verify_nix_flake() {
   if [[ ! -f flake.nix ]]; then
     return
@@ -403,10 +411,14 @@ if [[ "$dry_run" == "1" ]]; then
 fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
+update_flatpak_cargo_sources
 update_nix_cargo_hash
 verify_nix_flake
 if ! git diff --quiet || ! git diff --cached --quiet; then
   git add Cargo.lock Cargo.toml README.md data/io.github.screwys.Rufin.metainfo.xml .github/ISSUE_TEMPLATE/bug_report.yml
+  if [[ -f packaging/flatpak/cargo-sources.json ]]; then
+    git add packaging/flatpak/cargo-sources.json
+  fi
   if [[ -f flake.nix ]]; then
     git add flake.nix
   fi
