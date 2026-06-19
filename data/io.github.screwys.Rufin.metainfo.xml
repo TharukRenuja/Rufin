@@ -30,36 +30,65 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.6/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.7" date="2026-06-19">
+      <description>
+        <p>Big visual overhaul! The biggest change is that we got rid of the mostly empty topbar, which came with a lot of other changes. I spent great effort in making app behave saner in different window sizes. Additionally, I'm experimenting with newer visual features.</p>
+        <ul>
+          <li>Removed back/forward keys from sidebar and added them to detail pages (album, playlist, and so on) to make it easier, which also works in small screens</li>
+        </ul>
+        <ul>
+          <li>Bottom player got further tweaks to keep it consistent</li>
+        </ul>
+        <ul>
+          <li>Artist pages and smart playlist lists are now faster to load</li>
+        </ul>
+        <ul>
+          <li>Lyrics now don't highlight any lines if next line is empty (#281) and lyrics header spacing got tigthened</li>
+        </ul>
+        <ul>
+          <li>Detail pages keep their layout more consistently</li>
+        </ul>
+        <ul>
+          <li>If artist ID is missing from music server, Rufin still tries to merge it from MusicBrainz ID, this is a strict fallback and dropped when the track gets a proper ID</li>
+        </ul>
+        <ul>
+          <li>Fixed a regression with sync progress not changing in toast notification, and removed sliding animation for control buttons</li>
+        </ul>
+        <ul>
+          <li>Fixed several issues with localization</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.6" date="2026-06-18">
       <description>
         <p>Quick hotfix for scrollbar and missing locale selection</p>
