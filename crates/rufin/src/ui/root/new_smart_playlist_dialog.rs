@@ -165,7 +165,7 @@ impl Shell {
                 dialog.close();
             });
         }
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
     }
 
     pub(in crate::ui) fn edit_smart_playlist_dialog(self: &Rc<Self>, playlist: SmartPlaylist) {
@@ -200,7 +200,7 @@ impl Shell {
                 dialog.close();
             });
         }
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
     }
 }
 

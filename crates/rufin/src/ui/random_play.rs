@@ -7,7 +7,7 @@ use source::PlayedFilter;
 use crate::controller::{RandomPlayAction, RandomPlayRequest};
 use crate::i18n::tr;
 
-use super::{PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, text_button};
+use super::{PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, present_light_dismiss_dialog, text_button};
 
 const DEFAULT_LIMIT: f64 = 100.0;
 const MIN_LIMIT: f64 = 1.0;
@@ -123,7 +123,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         RandomPlayAction::AddLast,
     );
 
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 
 fn count_spinner(default: f64, min: f64, max: f64) -> gtk::SpinButton {

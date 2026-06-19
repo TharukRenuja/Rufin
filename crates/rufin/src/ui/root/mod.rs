@@ -35,6 +35,7 @@ mod paging;
 mod player;
 #[path = "../player_icons.rs"]
 mod player_icons;
+mod popup;
 #[path = "../preferences.rs"]
 mod preferences;
 #[path = "../queue.rs"]
@@ -114,6 +115,7 @@ use navigation::{
 use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use playback::PlaybackState;
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
+use popup::present_light_dismiss_dialog;
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
 use release_kind::album_release_kind_label;

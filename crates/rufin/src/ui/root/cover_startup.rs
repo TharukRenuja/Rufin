@@ -788,7 +788,7 @@ pub(in crate::ui) fn show_shortcuts_dialog(shell: &Shell) {
         "win.toggle-lyrics",
     ));
     dialog.add(section);
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
     let dialog = adw::AboutDialog::builder()
@@ -809,7 +809,7 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
             "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
         ))
         .build();
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 
 pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {

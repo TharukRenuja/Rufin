@@ -15,10 +15,11 @@ use super::{
         configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
         route_content_width,
     },
-    mark_route_scroll_owner, present_artist_context_menu, replace_albums_in_model,
-    replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
-    selected_music_folder_id, set_favorite_button_active, smart_playlist_display_name, stable_seed,
-    track_artist_route, track_collection_play_context, track_count_text, track_link_column,
+    mark_route_scroll_owner, present_artist_context_menu, present_light_dismiss_dialog,
+    replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
+    replace_playlists_in_model, selected_music_folder_id, set_favorite_button_active,
+    smart_playlist_display_name, stable_seed, track_artist_route, track_collection_play_context,
+    track_count_text, track_link_column,
 };
 use crate::cover_art_policy;
 use crate::i18n::tr;

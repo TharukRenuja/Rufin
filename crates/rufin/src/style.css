@@ -58,27 +58,6 @@ toastoverlay toast label {
   min-height: 0;
 }
 
-.release-notes-backdrop {
-  background: color-mix(in srgb, @window_fg_color 12%, transparent);
-}
-
-.release-notes-card {
-  background: color-mix(in srgb, @window_bg_color 94%, @card_bg_color 6%);
-  color: @window_fg_color;
-  border: 1px solid color-mix(in srgb, @window_fg_color 14%, transparent);
-  border-radius: 18px;
-  padding: 10px 26px 12px;
-  box-shadow:
-    0 20px 58px rgba(0, 0, 0, 0.28),
-    inset 0 1px color-mix(in srgb, white 12%, transparent);
-}
-
-.release-notes-title {
-  color: @window_fg_color;
-  font-size: 18px;
-  font-weight: 800;
-}
-
 .release-note-summary {
   background: color-mix(in srgb, @accent_bg_color 10%, transparent);
   color: color-mix(in srgb, @window_fg_color 88%, transparent);

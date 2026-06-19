@@ -4,7 +4,6 @@ use std::time::Duration;
 
 const RELEASE_NOTES_POPUP_WIDTH: i32 = 700;
 const RELEASE_NOTES_POPUP_HEIGHT: i32 = 640;
-const RELEASE_NOTES_SCROLLER_CHROME_HEIGHT: i32 = 74;
 const RELEASE_TOAST_TITLE: &str = "✨ New release is available!";
 const FLATHUB_APPSTREAM_URL: &str = "https://flathub.org/api/v2/appstream/io.github.screwys.Rufin";
 const RELEASE_CHECK_TIMEOUT_SECONDS: u64 = 4;
@@ -368,35 +367,11 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     row.upcast()
 }
 
-fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::Overlay) {
-    let backdrop = gtk::Overlay::new();
-    backdrop.add_css_class("release-notes-backdrop");
-    backdrop.set_halign(gtk::Align::Fill);
-    backdrop.set_valign(gtk::Align::Fill);
-    backdrop.set_hexpand(true);
-    backdrop.set_vexpand(true);
-
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    card.add_css_class("release-notes-card");
-    card.set_hexpand(true);
-    card.set_width_request(1);
-
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    header.set_hexpand(true);
-    let title = gtk::Label::new(Some(&tr("Version History")));
-    title.add_css_class("release-notes-title");
-    title.set_hexpand(true);
-    title.set_valign(gtk::Align::Center);
-    title.set_xalign(0.0);
-
-    let close = gtk::Button::from_icon_name("window-close-symbolic");
-    close.add_css_class("flat");
-    close.add_css_class("circular");
-    close.set_valign(gtk::Align::Center);
-    close.set_tooltip_text(Some(&tr("Close")));
-    header.append(&title);
-    header.append(&close);
-    card.append(&header);
+fn present_release_notes_dialog(window: &adw::ApplicationWindow) {
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Version History"), "")));
+    toolbar.add_top_bar(&header);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     list.add_css_class("release-notes-list");
@@ -406,33 +381,23 @@ fn present_release_notes_popup(window: &adw::ApplicationWindow, overlay: &gtk::O
 
     let popup_width = large_popup_content_width(RELEASE_NOTES_POPUP_WIDTH);
     let popup_height = large_popup_content_height(window.height(), RELEASE_NOTES_POPUP_HEIGHT);
-    let scroller_height = popup_height
-        .saturating_sub(RELEASE_NOTES_SCROLLER_CHROME_HEIGHT)
-        .max(280);
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_min_content_height(scroller_height);
-    scroller.set_max_content_height(scroller_height);
-    scroller.set_propagate_natural_height(false);
+    scroller.set_margin_top(12);
+    scroller.set_margin_bottom(12);
+    scroller.set_margin_start(18);
+    scroller.set_margin_end(18);
+    scroller.set_vexpand(true);
     scroller.set_child(Some(&list));
-    card.append(&scroller);
+    toolbar.set_content(Some(&scroller));
 
-    let clamp = adw::Clamp::new();
-    clamp.set_maximum_size(popup_width);
-    clamp.set_tightening_threshold(popup_width);
-    clamp.set_halign(gtk::Align::Fill);
-    clamp.set_valign(gtk::Align::Center);
-    clamp.set_margin_start(24);
-    clamp.set_margin_end(24);
-    clamp.set_child(Some(&card));
-    backdrop.add_overlay(&clamp);
-    backdrop.set_measure_overlay(&clamp, false);
-    overlay.add_overlay(&backdrop);
-    overlay.set_measure_overlay(&backdrop, false);
-
-    let backdrop_for_close = backdrop.clone();
-    let close_overlay = overlay.clone();
-    close.connect_clicked(move |_| close_overlay.remove_overlay(&backdrop_for_close));
+    let dialog = adw::Dialog::builder()
+        .title(tr("Version History"))
+        .content_width(popup_width)
+        .content_height(popup_height)
+        .child(&toolbar)
+        .build();
+    present_light_dismiss_dialog(&dialog, window);
 }
 
 impl Shell {
@@ -481,7 +446,7 @@ impl Shell {
     }
 
     pub(in crate::ui) fn present_release_notes(&self) {
-        present_release_notes_popup(&self.window, &self.app_root_overlay);
+        present_release_notes_dialog(&self.window);
     }
 }
 

@@ -16,6 +16,7 @@ use super::{
     chrome::window_close_controls,
     folder_selected_text,
     layout::{large_popup_content_height, large_popup_content_width},
+    present_light_dismiss_dialog,
     startup_reveal::connection_progress_status_label,
     text_button,
 };
@@ -79,7 +80,7 @@ impl Shell {
         dialog.connect_closed(move |_| {
             shell.state.add_server_dialog.borrow_mut().take();
         });
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {

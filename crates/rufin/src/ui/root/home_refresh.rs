@@ -634,7 +634,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
                 controller.delete_playlist(playlist_id.clone());
             }
         });
-        dialog.present(Some(&window));
+        present_light_dismiss_dialog(&dialog, &window);
     });
     actions.add_action(&delete);
     target.insert_action_group("playlist", Some(&actions));
@@ -753,7 +753,7 @@ fn present_context_playlist_picker_dialog(
     dialog.connect_closed(move |_| {
         *shell_for_close.state.context_playlist_picker.borrow_mut() = None;
     });
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 fn context_playlist_picker(
     shell: &Rc<Shell>,
@@ -1117,6 +1117,7 @@ pub(in crate::ui) fn context_popover(
     child: &impl IsA<gtk::Widget>,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    popover.set_autohide(true);
     popover.add_css_class(css_class);
     popover.set_has_arrow(false);
     popover.set_parent(target);

@@ -591,7 +591,7 @@ impl Shell {
             ))
             .child(&toolbar)
             .build();
-        dialog.present(Some(&self.window));
+        present_light_dismiss_dialog(&dialog, &self.window);
     }
     pub(in crate::ui) fn library_settings(&self, key: LibraryListKey) -> LibraryListSettings {
         self.state.settings.borrow().library_list(key)

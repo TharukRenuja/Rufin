@@ -1,6 +1,7 @@
 use super::super::{
     Shell,
     layout::{large_popup_content_height, large_popup_content_width},
+    present_light_dismiss_dialog,
 };
 use super::library;
 use crate::{
@@ -51,7 +52,7 @@ enum PreferencesInitialPage {
 fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesInitialPage) {
     if let Some(dialog) = shell.state.preferences_dialog.borrow().as_ref().cloned() {
         rebuild_preferences_dialog(shell, &dialog, initial_page);
-        dialog.present(Some(&shell.window));
+        present_light_dismiss_dialog(&dialog, &shell.window);
         return;
     }
 
@@ -76,7 +77,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         }
     });
 
-    dialog.present(Some(&shell.window));
+    present_light_dismiss_dialog(&dialog, &shell.window);
 }
 
 fn rebuild_preferences_dialog(
