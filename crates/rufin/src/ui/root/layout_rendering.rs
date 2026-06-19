@@ -875,20 +875,6 @@ pub(in crate::ui) fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
     button
 }
-pub(in crate::ui) fn icon_button_with_image(
-    icon_name: &str,
-    label: &str,
-) -> (gtk::Button, gtk::Image) {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some(&tr(label)));
-    let image = gtk::Image::from_icon_name(icon_name);
-    button.set_child(Some(&image));
-    (button, image)
-}
 pub(in crate::ui) fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("pill-button");

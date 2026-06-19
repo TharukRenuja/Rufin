@@ -5,7 +5,22 @@ use domain::RepeatMode;
 use gtk::prelude::*;
 
 const TRANSPORT_ICON_SIZE: i32 = 23;
-const QUEUE_ICON_SIZE: i32 = 16;
+const QUEUE_ICON_SIZE: i32 = 20;
+const VOLUME_ICON_SIZE: i32 = 20;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum VolumeIcon {
+    High,
+    Muted,
+}
+
+pub(super) fn volume_icon_state(muted: bool, volume: f64) -> VolumeIcon {
+    if muted || volume <= 0.0 {
+        VolumeIcon::Muted
+    } else {
+        VolumeIcon::High
+    }
+}
 
 pub(super) fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
     button.set_child(Some(&repeat_icon_area(repeat_mode)));
@@ -196,6 +211,51 @@ pub(super) fn lyrics_icon_button(label: &str) -> (gtk::Button, gtk::DrawingArea,
     (button, icon, open)
 }
 
+pub(super) fn volume_icon_button(
+    label: &str,
+) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<VolumeIcon>>) {
+    let state = Rc::new(Cell::new(VolumeIcon::High));
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(VOLUME_ICON_SIZE);
+    icon.set_content_height(VOLUME_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    let icon_state = Rc::clone(&state);
+    icon.set_draw_func(move |area, context, width, height| {
+        set_icon_source(area, context);
+        context.set_line_width(1.8);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        context.move_to(width * 0.16, height * 0.40);
+        context.line_to(width * 0.33, height * 0.40);
+        context.line_to(width * 0.53, height * 0.27);
+        context.line_to(width * 0.53, height * 0.73);
+        context.line_to(width * 0.33, height * 0.60);
+        context.line_to(width * 0.16, height * 0.60);
+        context.close_path();
+        let _ = context.stroke();
+
+        context.set_line_width(1.9);
+        if icon_state.get() == VolumeIcon::Muted {
+            context.move_to(width * 0.66, height * 0.35);
+            context.line_to(width * 0.86, height * 0.65);
+            context.move_to(width * 0.86, height * 0.35);
+            context.line_to(width * 0.66, height * 0.65);
+            let _ = context.stroke();
+        } else {
+            context.arc(width * 0.53, height * 0.50, width * 0.19, -0.70, 0.70);
+            let _ = context.stroke();
+            context.arc(width * 0.53, height * 0.50, width * 0.34, -0.62, 0.62);
+            let _ = context.stroke();
+        }
+    });
+    let button = drawing_icon_button(label, icon.clone());
+    (button, icon, state)
+}
+
 pub(super) fn lyrics_icon_area(open: Rc<Cell<bool>>) -> gtk::DrawingArea {
     let icon = gtk::DrawingArea::new();
     icon.set_content_width(TRANSPORT_ICON_SIZE);
@@ -353,9 +413,9 @@ pub(super) fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingAre
         let width = f64::from(width);
         let height = f64::from(height);
         let x = (width - 14.0) / 2.0;
-        let y = (height - 12.0) / 2.0;
+        let y = (height - 14.0) / 2.0;
         let icon_width = 14.0;
-        let icon_height = 12.0;
+        let icon_height = 14.0;
         let separator_x = x + icon_width - 4.5;
         let center_y = y + icon_height / 2.0;
 

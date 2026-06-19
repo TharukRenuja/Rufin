@@ -690,7 +690,7 @@ menubutton.server-selector > button:hover {
 }
 
 .player-transport {
-  margin: 0 6px;
+  margin: 0;
 }
 
 .player-progress-row {
@@ -751,6 +751,10 @@ scale.volume-slider trough {
 
 .player-favorite-button.favorite-toggle:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.player-favorite-button label {
+  margin-top: 2px;
 }
 
 .player-play-button {
@@ -928,10 +932,6 @@ scale.volume-slider trough {
 .icon-button.player-title-menu-button {
   min-width: 18px;
   min-height: 18px;
-}
-
-.icon-button.player-mute-button {
-  min-width: 24px;
 }
 
 .icon-button.cover-play-button {
