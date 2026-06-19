@@ -17,6 +17,7 @@ find crates/rufin/src crates/domain/src -name '*.rs' | sort > "$sources"
 xgettext \
   --from-code=UTF-8 \
   --language=Rust \
+  --add-location=file \
   --package-name=Rufin \
   --msgid-bugs-address=https://github.com/screwys/Rufin/issues \
   --keyword=tr:1 \
@@ -116,10 +117,6 @@ def msgid_plural(block):
 
 def blocks(text):
     return [block for block in re.split(r"\n{2,}", text.strip()) if block]
-
-
-def line_number(source, index):
-    return source.count("\n", 0, index) + 1
 
 
 def skip_ws(source, cursor):
@@ -386,10 +383,10 @@ def source_messages():
         if rel.endswith("cards.rs"):
             items.extend(function_return_strings(source, "field_group_title"))
             items.extend(function_return_strings(source, "layout_title"))
-        for value, index in items:
+        for value, _index in items:
             if value == "#":
                 continue
-            messages.setdefault(value, set()).add(f"{rel}:{line_number(source, index)}")
+            messages.setdefault(value, set()).add(rel)
     return messages
 
 
