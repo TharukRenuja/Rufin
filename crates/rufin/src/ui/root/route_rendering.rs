@@ -48,7 +48,6 @@ impl Shell {
             while let Some(child) = self.login_host.first_child() {
                 self.login_host.remove(&child);
             }
-            self.route_title.set_title(&tr("Connect to Music Server"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.login_host.append(&view);
@@ -68,7 +67,7 @@ impl Shell {
         let route = self.state.routes.borrow().current().clone();
         let render_started = Instant::now();
         let prepare_started = Instant::now();
-        self.prepare_route_host(&route);
+        self.prepare_route_host();
         let prepare_ms = prepare_started.elapsed().as_millis() as u64;
         let view_started = Instant::now();
         let view = match route.clone() {
@@ -255,7 +254,7 @@ impl Shell {
             }
         });
     }
-    fn prepare_route_host(self: &Rc<Self>, route: &Route) {
+    fn prepare_route_host(self: &Rc<Self>) {
         clear_favorite_controls(&self.state.favorite_controls);
         self.state.type_to_search.borrow_mut().take();
         self.state.current_route_boundary.borrow_mut().take();
@@ -263,7 +262,6 @@ impl Shell {
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
         }
-        self.route_title.set_title(&tr(route.title()));
         self.set_history_buttons_sensitive(
             self.state.routes.borrow().can_back(),
             self.state.routes.borrow().can_forward(),

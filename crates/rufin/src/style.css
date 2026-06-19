@@ -178,11 +178,11 @@ toastoverlay toast label {
 }
 
 .wide-sidebar {
-  padding-top: 0;
+  padding-top: 10px;
 }
 
 .compact-rail {
-  padding: 0 0 4px;
+  padding: 10px 0 4px;
 }
 
 .main-area,
@@ -224,7 +224,7 @@ row:focus {
 .cover-hover-button:focus,
 .pill-button:focus,
 .album-detail-genre-pill:focus,
-.detail-showcase-link-button:focus,
+.artist-count-button:focus,
 .detail-external-link-button:focus,
 .context-menu-button:focus,
 .server-option:focus,
@@ -232,6 +232,17 @@ row:focus {
 .queue-favorite-button:focus,
 .favorite-toggle:focus {
   outline: none;
+}
+
+.window-controls .icon-button:focus,
+.window-controls .icon-button:active,
+.window-controls .icon-button:checked,
+.queue-toolbar .icon-button:focus,
+.queue-toolbar .icon-button:active,
+.queue-toolbar .icon-button:checked {
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .album-detail-track-cells {
@@ -312,15 +323,9 @@ row:focus {
   border-left: 1px solid @borders;
 }
 
-.route-header,
 .sidebar-header {
   min-height: 48px;
   color: @window_fg_color;
-}
-
-.route-header {
-  min-height: 52px;
-  background: @window_bg_color;
 }
 
 .sidebar-header {
@@ -328,11 +333,11 @@ row:focus {
 }
 
 .queue-toolbar {
-  min-height: 40px;
+  min-height: 34px;
 }
 
 .queue-search {
-  min-height: 34px;
+  min-height: 30px;
   padding-top: 0;
   padding-bottom: 0;
 }
@@ -377,29 +382,6 @@ row:focus {
   font-size: 10px;
 }
 
-.sidebar-history-controls {
-  min-height: 42px;
-  margin: 0 12px;
-}
-
-.rail-history-controls {
-  min-width: 48px;
-  min-height: 38px;
-  margin: 0 2px 3px;
-}
-
-.sidebar-history-button {
-  min-width: 30px;
-  min-height: 30px;
-  padding: 5px;
-}
-
-.rail-history-controls .sidebar-history-button {
-  min-width: 24px;
-  min-height: 26px;
-  padding: 3px;
-}
-
 .nav-button:not(.server-selector):hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
@@ -412,10 +394,6 @@ row:focus {
 button:disabled,
 menubutton:disabled > button {
   opacity: 0.46;
-}
-
-.sidebar-history-button:disabled {
-  opacity: 0.62;
 }
 
 button.suggested-action:disabled {
@@ -921,6 +899,32 @@ scale.volume-slider trough {
   min-height: 34px;
 }
 
+.home-section-control-button {
+  margin-left: -5px;
+}
+
+.window-controls menubutton.icon-button > button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  color: color-mix(in srgb, @window_fg_color 92%, transparent);
+  background: color-mix(in srgb, @window_bg_color 34%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 18%, transparent);
+}
+
+.window-controls menubutton.icon-button > button:hover,
+.window-controls menubutton.icon-button > button:focus,
+.window-controls menubutton.icon-button > button:active,
+.window-controls menubutton.icon-button > button:checked {
+  background: color-mix(in srgb, @window_bg_color 48%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.26),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 22%, transparent);
+}
+
 .icon-button.player-title-menu-button {
   min-width: 18px;
   min-height: 18px;
@@ -1049,6 +1053,39 @@ scale.volume-slider trough {
   margin-top: 4px;
 }
 
+.detail-back-button,
+.tiny-sidebar-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  color: color-mix(in srgb, @window_fg_color 92%, transparent);
+  background: color-mix(in srgb, @window_bg_color 18%, transparent);
+  border-radius: 999px;
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.24),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 18%, transparent);
+}
+
+.tiny-sidebar-button {
+  min-width: 38px;
+  min-height: 38px;
+  color: @window_fg_color;
+  background: color-mix(in srgb, @accent_bg_color 42%, @window_bg_color);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.32),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 26%, transparent);
+  -gtk-icon-size: 17px;
+}
+
+.detail-back-button:hover,
+.tiny-sidebar-button:hover {
+  background: color-mix(in srgb, @window_bg_color 30%, transparent);
+}
+
+.tiny-sidebar-button:hover {
+  background: color-mix(in srgb, @accent_bg_color 56%, @window_bg_color);
+}
+
 .detail-showcase-action-button {
   min-width: 48px;
   min-height: 48px;
@@ -1098,24 +1135,33 @@ scale.volume-slider trough {
   background: #f7f7f7;
 }
 
-.detail-showcase-link-row {
-  margin-top: -2px;
-}
-
 .detail-cover-facts {
   font-size: 13px;
   line-height: 1.2;
 }
 
-.detail-showcase-link-button {
-  min-height: 30px;
-  padding: 4px 4px;
+.detail-summary-row {
+  font-size: 13px;
+}
+
+.artist-count-row {
+  margin-top: 2px;
+}
+
+.artist-count-button {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 14px;
   color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
   background: transparent;
   box-shadow: none;
 }
 
-.detail-showcase-link-button:hover {
+.artist-count-album-icon {
+  -gtk-icon-size: 24px;
+}
+
+.artist-count-button:hover {
   color: @window_fg_color;
   background: color-mix(in srgb, @window_fg_color 10%, transparent);
 }

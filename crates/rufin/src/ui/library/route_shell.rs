@@ -2,7 +2,9 @@ use super::*;
 
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
+const LIBRARY_TOOLBAR_END_MARGIN: i32 = 10;
 const LIBRARY_TOOLBAR_STACK_WIDTH: i32 = 760;
+const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 = 96;
 
 pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) key: LibraryListKey,
@@ -425,7 +427,9 @@ impl Shell {
         search.set_width_request(1);
         toolbar.append(&search);
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        controls.set_margin_end(10);
+        controls.set_margin_end(library_toolbar_end_margin(
+            self.state.resolved_right_sidebar.get().is_visible(),
+        ));
         let command_button = Rc::new(RefCell::new(None::<gtk::Button>));
         let command_compact = Rc::new(Cell::new(false));
 
@@ -817,6 +821,14 @@ pub(in crate::ui) fn library_toolbar_orientation_for_width(
 }
 pub(in crate::ui) fn toolbar_sort_width(_key: LibraryListKey, width: i32) -> Option<i32> {
     library_toolbar_compact_for_width(width).then_some((width / 4).clamp(112, 150))
+}
+
+pub(in crate::ui) fn library_toolbar_end_margin(right_sidebar_visible: bool) -> i32 {
+    if right_sidebar_visible {
+        LIBRARY_TOOLBAR_END_MARGIN
+    } else {
+        LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE
+    }
 }
 
 fn apply_library_toolbar_layout(

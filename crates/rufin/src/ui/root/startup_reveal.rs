@@ -107,7 +107,6 @@ pub(in crate::ui) fn take_pending_warm(
 
 impl Shell {
     pub(in crate::ui) fn render_startup_loading_view(&self) {
-        self.route_title.set_title("Rufin");
         self.set_history_buttons_sensitive(false, false);
         self.root_stack
             .set_visible_child(&self.startup_loading_host);

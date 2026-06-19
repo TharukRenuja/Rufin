@@ -804,6 +804,40 @@ pub(in crate::ui) fn seekbar_target_seconds(value: f64, duration_seconds: u32) -
     }
     value.round().clamp(0.0, f64::from(duration_seconds)) as u32
 }
+
+pub(in crate::ui) fn format_duration_units(seconds: u32) -> String {
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        return format!("{hours}h {minutes}m {seconds}s");
+    }
+    if minutes > 0 {
+        return format!("{minutes}m {seconds}s");
+    }
+    format!("{seconds}s")
+}
+
+pub(in crate::ui) fn detail_summary_row(items: &[(&str, String)]) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("detail-summary-row");
+    row.set_halign(gtk::Align::Start);
+    for (icon_name, text) in items {
+        let item = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let icon = gtk::Image::from_icon_name(icon_name);
+        icon.add_css_class("muted");
+        icon.set_pixel_size(14);
+        item.append(&icon);
+
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class("muted");
+        label.set_xalign(0.0);
+        item.append(&label);
+        row.append(&item);
+    }
+    row
+}
+
 pub(in crate::ui) fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
     if active {
         widget.add_css_class("active-toggle");
@@ -1015,6 +1049,33 @@ pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header.set_halign(gtk::Align::Fill);
     header.set_width_request(1);
     header
+}
+
+pub(in crate::ui) fn detail_showcase_frame_with_back(
+    shell: &Rc<Shell>,
+    header: gtk::Widget,
+) -> gtk::Widget {
+    let frame = detail_showcase_frame(header);
+    let overlay = gtk::Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_halign(gtk::Align::Fill);
+    overlay.set_width_request(1);
+    overlay.set_child(Some(&frame));
+
+    let back = icon_button("go-previous-symbolic", "Back");
+    back.add_css_class("detail-back-button");
+    back.set_halign(gtk::Align::Start);
+    back.set_valign(gtk::Align::Start);
+    back.set_margin_top(1);
+    back.set_margin_start(4);
+    back.set_sensitive(shell.state.routes.borrow().can_back());
+    {
+        let shell = Rc::clone(shell);
+        back.connect_clicked(move |_| shell.go_back());
+    }
+    overlay.add_overlay(&back);
+    overlay.set_measure_overlay(&back, false);
+    overlay.upcast()
 }
 
 pub(in crate::ui) fn mark_tiny_detail_showcase(widget: &impl IsA<gtk::Widget>, width: i32) {
@@ -1260,22 +1321,6 @@ fn percent_encode_path_segment(value: &str) -> String {
     encoded
 }
 
-pub(in crate::ui) fn detail_link_button(icon_name: &str, label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("flat");
-    button.add_css_class("detail-showcase-link-button");
-    button.set_width_request(1);
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    content.set_width_request(1);
-    content.append(&gtk::Image::from_icon_name(icon_name));
-    let label = gtk::Label::new(Some(&tr(label)));
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_width_chars(1);
-    label.set_max_width_chars(18);
-    content.append(&label);
-    button.set_child(Some(&content));
-    button
-}
 pub(in crate::ui) fn install_css() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;

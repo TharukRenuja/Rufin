@@ -8,7 +8,6 @@ const PLAYLIST_DETAIL_TINY_WIDTH: i32 = 520;
 const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
 const PLAYLIST_DETAIL_COMPACT_COVER_SIZE: i32 = 182;
 const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
-const PLAYLIST_DETAIL_GENRE_LIMIT: usize = 2;
 
 pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
     width < PLAYLIST_DETAIL_COMPACT_WIDTH
@@ -79,7 +78,7 @@ fn playlist_detail_from_loaded_tracks(
 }
 
 impl Shell {
-    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::FlowBox {
+    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::Box {
         let kind = gtk::Label::new(Some(&tr("Playlist")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -87,19 +86,12 @@ impl Shell {
         kind.set_valign(gtk::Align::Center);
         kind.set_margin_end(6);
 
-        let row = gtk::FlowBox::new();
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         row.add_css_class("album-detail-kind-row");
         row.add_css_class("album-detail-genre-row");
-        row.set_column_spacing(2);
-        row.set_row_spacing(2);
-        row.set_selection_mode(gtk::SelectionMode::None);
-        row.set_min_children_per_line(1);
-        row.set_max_children_per_line(PLAYLIST_DETAIL_GENRE_LIMIT as u32 + 1);
         row.set_valign(gtk::Align::Center);
-        row.set_halign(gtk::Align::Fill);
-        row.set_hexpand(true);
-        row.set_width_request(1);
-        row.insert(&kind, -1);
+        row.set_halign(gtk::Align::Start);
+        row.append(&kind);
 
         for genre_name in genres {
             let button = detail_genre_pill_button(genre_name);
@@ -110,7 +102,7 @@ impl Shell {
             } else {
                 button.set_sensitive(false);
             }
-            row.insert(&button, -1);
+            row.append(&button);
         }
 
         row
@@ -183,8 +175,6 @@ impl Shell {
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
         header.set_width_request(1);
-        header.set_margin_start(route_margin);
-        header.set_margin_end(route_margin);
         let cover = self.cover_group_tile_for_artwork(
             &artwork,
             seed,
@@ -234,7 +224,8 @@ impl Shell {
         metadata.append(&summary);
         metadata.append(&actions);
         header.append(&metadata);
-        let showcase = detail_showcase_frame(header.upcast());
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         wrapper.append(&showcase);
 
         if detail.tracks.is_empty() {
@@ -327,8 +318,6 @@ impl Shell {
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(route_margin);
-        wrapper.set_margin_end(route_margin);
 
         let header = gtk::Box::new(
             playlist_header_orientation(content_width),
@@ -443,13 +432,21 @@ impl Shell {
         metadata.append(&summary);
         metadata.append(&actions);
         header.append(&metadata);
-        wrapper.append(&header);
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
+        wrapper.append(&showcase);
 
         if detail.entries.is_empty() {
-            wrapper
-                .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
+            let placeholder =
+                self.placeholder_view("Tracks", "No cached tracks are linked here yet.");
+            placeholder.set_margin_start(route_margin);
+            placeholder.set_margin_end(route_margin);
+            wrapper.append(&placeholder);
         } else {
-            wrapper.append(&self.playlist_entries_view(&detail));
+            let entries = self.playlist_entries_view(&detail);
+            entries.set_margin_start(route_margin);
+            entries.set_margin_end(route_margin);
+            wrapper.append(&entries);
         }
         let route = detail_route_wrapper(0);
         route.append(&detail_route_scroller(self, wrapper.upcast()));
@@ -591,7 +588,7 @@ fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box 
     ));
     row.append(&playlist_detail_summary_item(
         "appointment-soon-symbolic",
-        &playlist_detail_duration(duration_seconds),
+        &format_duration_units(duration_seconds),
     ));
     row
 }
@@ -607,19 +604,6 @@ fn playlist_detail_summary_item(icon_name: &str, text: &str) -> gtk::Box {
     label.set_xalign(0.0);
     item.append(&label);
     item
-}
-
-fn playlist_detail_duration(seconds: u32) -> String {
-    let hours = seconds / 3_600;
-    let minutes = (seconds % 3_600) / 60;
-    let seconds = seconds % 60;
-    if hours > 0 {
-        return format!("{hours}h {minutes}m {seconds}s");
-    }
-    if minutes > 0 {
-        return format!("{minutes}m {seconds}s");
-    }
-    format!("{seconds}s")
 }
 
 #[cfg(test)]
@@ -690,8 +674,8 @@ mod tests {
 
     #[test]
     fn playlist_detail_duration_uses_units() {
-        assert_eq!(playlist_detail_duration(57), "57s");
-        assert_eq!(playlist_detail_duration(4_497), "1h 14m 57s");
+        assert_eq!(format_duration_units(57), "57s");
+        assert_eq!(format_duration_units(4_497), "1h 14m 57s");
     }
 
     fn test_track(index: usize, genres: &[&str]) -> Track {

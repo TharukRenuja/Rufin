@@ -9,8 +9,8 @@ use crate::i18n::tr;
 
 use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
 use super::{
-    HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, Shell,
-    add_album_seed_gradient_class, add_card_label_link, album_artist_route,
+    DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
+    Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
     configure_fill_width_clip, icon_button, mark_route_scroll_owner,
 };
 
@@ -82,7 +82,7 @@ impl Shell {
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        content.set_margin_end(0);
 
         let blocks = self.state.settings.borrow().home_blocks.clone();
         let library = self.state.library.borrow();
@@ -135,6 +135,7 @@ impl Shell {
         add_album_seed_gradient_class(&body, album.color_seed);
         body.set_hexpand(true);
         body.set_valign(gtk::Align::Start);
+        body.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         let cover = album_cover_tile(self, &album, 196, Some(&self.controller));
         cover.add_css_class("home-showcase-cover");
         let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
@@ -263,19 +264,27 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        header.set_hexpand(true);
+        header.set_halign(gtk::Align::Fill);
+        header.set_width_request(1);
         let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
         heading.set_hexpand(true);
         header.append(&heading);
 
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        controls.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         let previous = icon_button("go-previous-symbolic", "Previous page");
         let next = icon_button("go-next-symbolic", "Next page");
         let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        header.append(&previous);
-        header.append(&next);
-        header.append(&refresh);
+        next.add_css_class("home-section-control-button");
+        refresh.add_css_class("home-section-control-button");
+        controls.append(&previous);
+        controls.append(&next);
+        controls.append(&refresh);
+        header.append(&controls);
         section.append(&header);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
@@ -315,19 +324,27 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        header.set_hexpand(true);
+        header.set_halign(gtk::Align::Fill);
+        header.set_width_request(1);
         let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
         heading.set_hexpand(true);
         header.append(&heading);
 
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        controls.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         let previous = icon_button("go-previous-symbolic", "Previous page");
         let next = icon_button("go-next-symbolic", "Next page");
         let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        header.append(&previous);
-        header.append(&next);
-        header.append(&refresh);
+        next.add_css_class("home-section-control-button");
+        refresh.add_css_class("home-section-control-button");
+        controls.append(&previous);
+        controls.append(&next);
+        controls.append(&refresh);
+        header.append(&controls);
         section.append(&header);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);

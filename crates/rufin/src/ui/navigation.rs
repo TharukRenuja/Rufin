@@ -3,10 +3,11 @@ use std::rc::Rc;
 use adw::prelude::*;
 use domain::{Route, SidebarRouteItem};
 
-use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
+use super::{Shell, layout::COMPACT_RAIL_WIDTH};
 use crate::i18n::tr;
 
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
+const ALBUM_NAV_ICON_SIZE: i32 = 24;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const NAV_SELECTED_CLASS: &str = "selected";
@@ -21,16 +22,7 @@ const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
 
-pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
-    let button = icon_button(icon_name, label);
-    button.add_css_class("sidebar-history-button");
-    button.set_valign(gtk::Align::Center);
-    button
-}
-
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
-    shell.normal_nav.append(&normal_history_controls(shell));
-
     for item in nav_items(shell) {
         shell.normal_nav.append(&nav_button(
             shell,
@@ -53,8 +45,6 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
-    shell.compact_nav.append(&compact_history_controls(shell));
-
     for item in nav_items(shell) {
         shell.compact_nav.append(&rail_button(
             shell,
@@ -112,23 +102,6 @@ fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Opti
             widget.remove_css_class(NAV_SELECTED_CLASS);
         }
     }
-}
-
-fn normal_history_controls(shell: &Rc<Shell>) -> gtk::Box {
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    controls.add_css_class("sidebar-history-controls");
-    controls.append(&shell.normal_back_button);
-    controls.append(&shell.normal_forward_button);
-    controls
-}
-
-fn compact_history_controls(shell: &Rc<Shell>) -> gtk::Box {
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    controls.add_css_class("rail-history-controls");
-    controls.set_halign(gtk::Align::Center);
-    controls.append(&shell.compact_back_button);
-    controls.append(&shell.compact_forward_button);
-    controls
 }
 
 #[derive(Clone)]
@@ -239,9 +212,13 @@ fn nav_button(
         gtk::Align::Start
     });
     let icon = gtk::Image::from_icon_name(icon_name);
+    if icon_name == "media-optical-symbolic" {
+        icon.set_pixel_size(ALBUM_NAV_ICON_SIZE);
+    } else if compact {
+        icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
+    }
     content.append(&icon);
     if compact {
-        icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
         let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
         configure_rail_label(&text);
         content.append(&text);

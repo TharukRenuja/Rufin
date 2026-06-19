@@ -6,7 +6,11 @@ use domain::RightSidebarMode;
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 
-use super::{Shell, icon_button, layout::MIN_RESTORED_WINDOW_HEIGHT, player::BOTTOM_PLAYER_HEIGHT};
+use super::{
+    Shell, icon_button,
+    layout::{MIN_RESTORED_WINDOW_HEIGHT, ROUTE_TOP_MARGIN},
+    player::BOTTOM_PLAYER_HEIGHT,
+};
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 
@@ -29,8 +33,8 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_header.add_css_class("sidebar-header");
     queue_header.add_css_class("queue-toolbar");
     queue_header.set_valign(gtk::Align::Center);
-    queue_header.set_margin_top(6);
-    queue_header.set_margin_bottom(2);
+    queue_header.set_margin_top(ROUTE_TOP_MARGIN);
+    queue_header.set_margin_bottom(0);
     queue_header.set_margin_start(12);
     queue_header.set_margin_end(96);
 
@@ -39,7 +43,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     let search_label = tr("Search queue");
     queue_search.update_property(&[gtk::accessible::Property::Label(&search_label)]);
     queue_search.set_hexpand(true);
-    queue_search.set_height_request(34);
+    queue_search.set_height_request(30);
     queue_header.append(&queue_search);
 
     let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");

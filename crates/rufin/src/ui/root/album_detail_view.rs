@@ -85,23 +85,17 @@ impl Shell {
             cover_fetch_size,
             "album-detail-cover",
         );
-        let facts = gtk::Label::new(Some(&format!(
-            "{} • {} {} • {}",
-            album.year,
-            album.track_count,
-            tr("tracks"),
-            format_duration(album.duration_seconds)
-        )));
-        facts.add_css_class("muted");
-        facts.add_css_class("detail-cover-facts");
-        facts.set_xalign(0.0);
-        facts.set_halign(gtk::Align::Start);
-        facts.set_justify(gtk::Justification::Left);
-        facts.set_wrap(true);
-        facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        facts.set_width_request(1);
-        facts.set_width_chars(1);
-        facts.set_max_width_chars(32);
+        let facts = detail_summary_row(&[
+            ("x-office-calendar-symbolic", album.year.to_string()),
+            (
+                "audio-x-generic-symbolic",
+                format!("{} {}", album.track_count, tr("tracks")),
+            ),
+            (
+                "appointment-soon-symbolic",
+                format_duration_units(album.duration_seconds),
+            ),
+        ]);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         cover_column.set_halign(gtk::Align::Start);
         cover_column.set_width_request(cover_size);
@@ -133,19 +127,12 @@ impl Shell {
         kind.set_halign(gtk::Align::Start);
         kind.set_valign(gtk::Align::Center);
         kind.set_margin_end(6);
-        let kind_row = gtk::FlowBox::new();
+        let kind_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         kind_row.add_css_class("album-detail-kind-row");
         kind_row.add_css_class("album-detail-genre-row");
-        kind_row.set_column_spacing(2);
-        kind_row.set_row_spacing(2);
-        kind_row.set_selection_mode(gtk::SelectionMode::None);
-        kind_row.set_min_children_per_line(1);
-        kind_row.set_max_children_per_line(4);
         kind_row.set_valign(gtk::Align::Center);
-        kind_row.set_halign(gtk::Align::Fill);
-        kind_row.set_hexpand(true);
-        kind_row.set_width_request(1);
-        kind_row.insert(&kind, -1);
+        kind_row.set_halign(gtk::Align::Start);
+        kind_row.append(&kind);
         for genre_name in album
             .genres
             .iter()
@@ -160,7 +147,7 @@ impl Shell {
             } else {
                 button.set_sensitive(false);
             }
-            kind_row.insert(&button, -1);
+            kind_row.append(&button);
         }
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
@@ -254,8 +241,8 @@ impl Shell {
         metadata.append(&actions);
         body.append(&metadata);
         header.append(&body);
-        let showcase = detail_showcase_frame(header.upcast());
-        showcase.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         content.append(&showcase);
 
         let table = self.library_tracks_panel_with_source(

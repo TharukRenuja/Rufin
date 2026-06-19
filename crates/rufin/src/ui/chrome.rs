@@ -3,14 +3,12 @@ use gtk::gio;
 
 use crate::i18n::tr;
 
-use super::configure_fill_width_clip;
+use super::{configure_fill_width_clip, layout::WINDOW_CHROME_MARGIN_END};
 
-const WINDOW_CONTROLS_MARGIN_END: i32 = 12;
-const WINDOW_CONTROLS_MARGIN_TOP: i32 = 9;
+const WINDOW_CONTROLS_MARGIN_TOP: i32 = 10;
 
 pub(super) struct MainAreaParts {
     pub(super) root: adw::ToolbarView,
-    pub(super) route_title: adw::WindowTitle,
     pub(super) route_host: gtk::Box,
 }
 
@@ -26,27 +24,13 @@ pub(super) fn build_main_area() -> MainAreaParts {
     root.set_hexpand(true);
     root.set_vexpand(true);
 
-    let header = adw::HeaderBar::new();
-    header.add_css_class("route-header");
-    header.set_show_start_title_buttons(false);
-    header.set_show_end_title_buttons(false);
-
-    let route_title = adw::WindowTitle::new("", "");
-    route_title.set_valign(gtk::Align::Center);
-    header.set_title_widget(Some(&route_title));
-
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
     route_host.set_vexpand(true);
 
-    root.add_top_bar(&header);
     root.set_content(Some(&route_host));
 
-    MainAreaParts {
-        root,
-        route_title,
-        route_host,
-    }
+    MainAreaParts { root, route_host }
 }
 
 pub(super) fn build_content_chrome(
@@ -83,7 +67,7 @@ pub(super) fn build_content_chrome(
     window_controls.set_halign(gtk::Align::End);
     window_controls.set_valign(gtk::Align::Start);
     window_controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
-    window_controls.set_margin_end(WINDOW_CONTROLS_MARGIN_END);
+    window_controls.set_margin_end(WINDOW_CHROME_MARGIN_END);
 
     let main_menu = primary_menu_button();
     let close_button = gtk::WindowControls::new(gtk::PackType::End);
@@ -106,7 +90,7 @@ pub(super) fn window_close_controls() -> gtk::Box {
     controls.set_halign(gtk::Align::End);
     controls.set_valign(gtk::Align::Start);
     controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
-    controls.set_margin_end(WINDOW_CONTROLS_MARGIN_END);
+    controls.set_margin_end(WINDOW_CHROME_MARGIN_END);
 
     let close_button = gtk::WindowControls::new(gtk::PackType::End);
     close_button.set_decoration_layout(Some(":close"));

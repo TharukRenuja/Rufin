@@ -123,23 +123,15 @@ impl Shell {
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
 
-        let title = gtk::Label::new(Some(&detail.artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        content.append(&title);
-
-        let summary = gtk::Label::new(Some(&artist_summary_text(
+        let summary = artist_summary_text(
             detail.albums.len(),
             detail.appears_on.len(),
             detail
                 .artist
                 .track_count
                 .max(detail.tracks.len().min(u32::MAX as usize) as u32),
-        )));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        content.append(&summary);
+        );
+        content.append(&self.artist_subroute_header(&detail.artist, "Discography", &summary));
 
         if !detail.albums.is_empty() {
             self.append_artist_release_sections(&content, &detail.albums);
@@ -178,23 +170,15 @@ impl Shell {
         wrapper.set_vexpand(true);
         wrapper.set_width_request(1);
 
-        let title = gtk::Label::new(Some(&detail.artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        wrapper.append(&title);
-
-        let summary = gtk::Label::new(Some(&artist_summary_text(
+        let summary = artist_summary_text(
             detail.albums.len(),
             detail.appears_on.len(),
             detail
                 .artist
                 .track_count
                 .max(detail.tracks.len().min(u32::MAX as usize) as u32),
-        )));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        wrapper.append(&summary);
+        );
+        wrapper.append(&self.artist_subroute_header(&detail.artist, "Tracks", &summary));
 
         wrapper.append(&self.library_tracks_scrolling_panel(
             detail.tracks,
@@ -244,21 +228,7 @@ impl Shell {
             cover_fetch_size,
             "artist-detail-cover",
         );
-        let summary = gtk::Label::new(Some(&artist_summary_text(
-            album_count,
-            appears_on_count,
-            track_count,
-        )));
-        summary.add_css_class("muted");
-        summary.add_css_class("detail-cover-facts");
-        summary.set_xalign(0.0);
-        summary.set_halign(gtk::Align::Start);
-        summary.set_justify(gtk::Justification::Left);
-        summary.set_wrap(true);
-        summary.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        summary.set_width_request(1);
-        summary.set_width_chars(1);
-        summary.set_max_width_chars(32);
+        let counts = self.artist_count_buttons(artist, album_count + appears_on_count, track_count);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         cover_column.set_halign(gtk::Align::Start);
         cover_column.set_width_request(cover_size);
@@ -350,38 +320,88 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        let links = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        links.add_css_class("detail-showcase-link-row");
-        links.set_halign(gtk::Align::Start);
-        links.set_width_request(1);
-
-        let discography = detail_link_button("media-optical-symbolic", "Discography");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        discography.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistDiscography(artist_id.clone()));
-        });
-        links.append(&discography);
-
-        let all_tracks = detail_link_button("audio-x-generic-symbolic", "View all tracks");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        all_tracks.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistTracks(artist_id.clone()));
-        });
-        links.append(&all_tracks);
-
         text_stack.append(&kind);
         text_stack.append(&title);
-        text_stack.append(&summary);
-        text_stack.append(&links);
+        text_stack.append(&counts);
         metadata.append(&text_stack);
         metadata.append(&actions);
         body.append(&metadata);
         header.append(&body);
-        let showcase = detail_showcase_frame(header.upcast());
-        showcase.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         showcase
+    }
+
+    fn artist_subroute_header(
+        self: &Rc<Self>,
+        artist: &Artist,
+        kind: &str,
+        summary: &str,
+    ) -> gtk::Widget {
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
+        let seed = stable_seed(artist.id.as_str());
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        header.add_css_class("detail-showcase");
+        header.add_css_class("artist-detail-showcase");
+        mark_tiny_detail_showcase(&header, content_width);
+        add_album_seed_gradient_class(&header, seed);
+
+        let kind = gtk::Label::new(Some(&tr(kind)));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.0);
+
+        let title = gtk::Label::new(Some(&artist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        fit_detail_text(&title, &artist.name);
+
+        let summary = gtk::Label::new(Some(summary));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+
+        header.append(&kind);
+        header.append(&title);
+        header.append(&summary);
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
+        showcase
+    }
+
+    fn artist_count_buttons(
+        self: &Rc<Self>,
+        artist: &Artist,
+        album_count: usize,
+        track_count: u32,
+    ) -> gtk::Box {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.add_css_class("artist-count-row");
+        row.set_halign(gtk::Align::Start);
+
+        let albums = artist_count_button(
+            "media-optical-symbolic",
+            &format!("{} {}", album_count, tr("albums")),
+        );
+        let shell = Rc::clone(self);
+        let artist_id = artist.id.clone();
+        albums.connect_clicked(move |_| {
+            shell.navigate(Route::ArtistDiscography(artist_id.clone()));
+        });
+        row.append(&albums);
+
+        let tracks = artist_count_button(
+            "audio-x-generic-symbolic",
+            &format!("{} {}", track_count, tr("tracks")),
+        );
+        let shell = Rc::clone(self);
+        let artist_id = artist.id.clone();
+        tracks.connect_clicked(move |_| {
+            shell.navigate(Route::ArtistTracks(artist_id.clone()));
+        });
+        row.append(&tracks);
+
+        row
     }
 
     fn artist_detail_data(&self, artist_id: &ArtistId) -> Option<CachedArtistDetail> {
@@ -476,6 +496,24 @@ fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count:
         track_count,
         tr("tracks")
     )
+}
+
+fn artist_count_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("artist-count-button");
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    if icon_name == "media-optical-symbolic" {
+        icon.add_css_class("artist-count-album-icon");
+    }
+    content.append(&icon);
+    let label = gtk::Label::new(Some(label));
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    content.append(&label);
+    button.set_child(Some(&content));
+    button
 }
 
 struct ArtistReleaseSection {
