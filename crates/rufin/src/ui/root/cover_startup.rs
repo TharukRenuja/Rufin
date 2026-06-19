@@ -193,10 +193,27 @@ pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyn
     if status.starts_with("Caching library…")
         || status.starts_with("Caching local library…")
         || status.starts_with("Caching library artwork…")
+        || library_sync_progress_detail(status)
     {
         return Some(LibrarySyncToastState::Progress);
     }
     None
+}
+
+fn library_sync_progress_detail(status: &str) -> bool {
+    status.starts_with("Fetching ")
+        || status.starts_with("Cached albums ")
+        || status.starts_with("Cached tracks ")
+        || status.starts_with("Cached music folders ")
+        || status.starts_with("Cached artists ")
+        || status.starts_with("Cached album artists ")
+        || status.starts_with("Cached genres ")
+        || status.starts_with("Cached playlists ")
+        || status.starts_with("Cached home sections ")
+        || status.starts_with("Finalizing cache ")
+        || status.starts_with("Scanning folders ")
+        || status.starts_with("Reading track metadata ")
+        || status.starts_with("Preparing local cache ")
 }
 
 pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
@@ -216,6 +233,9 @@ pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
     }
     if status.starts_with("Caching library artwork…") {
         return tr("Caching library artwork…");
+    }
+    if library_sync_progress_detail(status) {
+        return status.to_string();
     }
     match status {
         "Cached library ready" => tr("Cached library ready"),
@@ -1477,13 +1497,20 @@ impl Shell {
         if !self.state.settings.borrow().control_notifications_enabled {
             return;
         }
-        if let Some(toast) = self.state.control_feedback_toast.borrow_mut().take() {
-            toast.dismiss();
-        }
-        let toast = adw::Toast::new(&title);
-        toast.set_timeout(CONTROL_TOAST_TIMEOUT);
-        self.quick_toast_overlay.add_toast(toast.clone());
-        *self.state.control_feedback_toast.borrow_mut() = Some(toast);
+        let generation = self.state.control_feedback_generation.get() + 1;
+        self.state.control_feedback_generation.set(generation);
+        self.control_feedback_label.set_text(&title);
+        self.control_feedback_label.set_visible(true);
+        let label = self.control_feedback_label.clone();
+        let active_generation = Rc::clone(&self.state.control_feedback_generation);
+        glib::timeout_add_local_once(
+            Duration::from_secs(u64::from(CONTROL_TOAST_TIMEOUT)),
+            move || {
+                if active_generation.get() == generation {
+                    label.set_visible(false);
+                }
+            },
+        );
     }
 
     pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {

@@ -2138,7 +2138,7 @@ pub(in crate::controller) fn startup_emit_timing() {
     let track_count = FakeScale::Small.track_count();
     let track_pages = track_count.div_ceil(PAGE_SIZE).max(1);
     let expected_tracks = format!(
-        "Caching library… This may take some time. Cached tracks page {track_pages}/{track_pages} for Fake Library (Music Server), {track_count}/{track_count} fetched, {track_count} cached"
+        "Cached tracks page {track_pages}/{track_pages} for Fake Library (Music Server), {track_count}/{track_count} fetched, {track_count} cached"
     );
     assert!(
         statuses
@@ -2169,9 +2169,7 @@ pub(in crate::controller) fn startup_cache_total() {
     });
 
     let status = wait_for_status(&receiver);
-    assert!(status.contains(
-        "Caching library… This may take some time. Cached tracks page 2 for Local Music (Local)"
-    ));
+    assert!(status.contains("Cached tracks page 2 for Local Music (Local)"));
     assert!(status.contains("620 fetched, 620 cached"));
     assert!(!status.contains("620/"));
 }

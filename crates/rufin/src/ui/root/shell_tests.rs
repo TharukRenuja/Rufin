@@ -613,7 +613,7 @@ pub(in crate::ui) fn shell_split_status_detail() {
 pub(in crate::ui) fn shell_connection_progress_detail() {
     assert_eq!(
         connection_progress_status_label(
-            "Caching library… This may take some time. Fetching music folders for Desktop (Jellyfin) (20s elapsed)"
+            "Fetching music folders for Desktop (Jellyfin) (20s elapsed)"
         ),
         Some("Fetching music folders for Desktop (Jellyfin) (20s elapsed)".to_string())
     );
@@ -1287,7 +1287,7 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(
         library_sync_toast_state(
-            "Caching library… This may take some time. Cached albums page 2 for Test (Jellyfin), 500/2500 fetched, 500 cached (3s)"
+            "Cached albums page 2 for Test (Jellyfin), 500/2500 fetched, 500 cached (3s)"
         ),
         Some(LibrarySyncToastState::Progress)
     );
@@ -1307,21 +1307,22 @@ pub(in crate::ui) fn shell_use_statuses() {
         library_sync_toast_state("Library cache ready for Test (Jellyfin) in 44s elapsed"),
         Some(LibrarySyncToastState::Clear)
     );
+    assert_eq!(library_sync_toast_state("Cached library cleared."), None);
     assert_eq!(
         library_sync_toast_message("Caching library… This may take some time."),
         "Caching library… This may take some time."
     );
     assert_eq!(
         library_sync_toast_message(
-            "Caching library… This may take some time. Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+            "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
         ),
-        "Caching library… This may take some time."
+        "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
     );
     assert_eq!(
         library_sync_toast_message(
-            "Caching local library… This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+            "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
         ),
-        "Caching local library… This may take some time."
+        "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
     );
     assert_eq!(library_sync_toast_state("Sync already running."), None);
 }

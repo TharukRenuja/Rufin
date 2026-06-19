@@ -340,7 +340,7 @@ pub(in crate::ui) struct AppState {
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
     library_sync_toast: RefCell<Option<adw::Toast>>,
     library_sync_toast_suppressed: Cell<bool>,
-    control_feedback_toast: RefCell<Option<adw::Toast>>,
+    control_feedback_generation: Rc<Cell<u64>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
@@ -516,6 +516,7 @@ pub(in crate::ui) struct Shell {
     window: adw::ApplicationWindow,
     toast_overlay: adw::ToastOverlay,
     quick_toast_overlay: adw::ToastOverlay,
+    control_feedback_label: gtk::Label,
     root_stack: gtk::Stack,
     app_root_overlay: gtk::Overlay,
     app_root: gtk::Box,
@@ -645,7 +646,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
         library_sync_toast: RefCell::new(None),
         library_sync_toast_suppressed: Cell::new(false),
-        control_feedback_toast: RefCell::new(None),
+        control_feedback_generation: Rc::new(Cell::new(0)),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]
@@ -866,6 +867,13 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     app_root_overlay.set_hexpand(true);
     app_root_overlay.set_vexpand(true);
     app_root_overlay.set_child(Some(&app_root));
+    let control_feedback_label = gtk::Label::new(None);
+    control_feedback_label.add_css_class("control-feedback-toast");
+    control_feedback_label.set_halign(gtk::Align::Center);
+    control_feedback_label.set_valign(gtk::Align::End);
+    control_feedback_label.set_visible(false);
+    app_root_overlay.add_overlay(&control_feedback_label);
+    app_root_overlay.set_measure_overlay(&control_feedback_label, false);
 
     root_stack.add_named(&app_root_overlay, Some("app"));
     let quick_toast_overlay = adw::ToastOverlay::new();
@@ -883,6 +891,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         window,
         toast_overlay,
         quick_toast_overlay,
+        control_feedback_label,
         root_stack,
         app_root_overlay,
         app_root,
