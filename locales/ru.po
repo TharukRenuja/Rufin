@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-18 23:47+0000\n"
+"PO-Revision-Date: 2026-06-19 00:22+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -138,7 +138,7 @@ msgstr "Альбом"
 
 #: crates/domain/src/route.rs:53
 msgid "Album Artists"
-msgstr "Авторы альб."
+msgstr "Авторы альбома"
 
 #: crates/domain/src/settings/layout.rs:592
 msgid "Album artist"
@@ -146,7 +146,7 @@ msgstr "Исполнитель альбома"
 
 #: crates/domain/src/settings/layout.rs:520
 msgid "Album artists"
-msgstr "Авторы альб."
+msgstr "Авторы альбома"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:941
 msgid "Album title"
@@ -1843,15 +1843,15 @@ msgstr "Демонстрация"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:738
 msgid "Shuffle"
-msgstr "Воспроизведение в случайном порядке"
+msgstr "Перемешать"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:636
 msgid "Shuffle off"
-msgstr "Перемешивание выкл"
+msgstr "Перемешивание Выкл"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:634
 msgid "Shuffle on"
-msgstr "Включить воспроизведение в случайном порядке"
+msgstr "Перемешивание Вкл"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:754
 msgid "Sidebar Items"
@@ -2106,7 +2106,7 @@ msgstr "Проверить сертификат сервера"
 #: crates/rufin/src/ui/library/route_shell.rs:584
 #: crates/rufin/src/ui/root/release_notes.rs:422
 msgid "View"
-msgstr "Просмотр"
+msgstr "Вид"
 
 #: crates/rufin/src/ui/library/cards.rs:566
 #: crates/rufin/src/ui/preferences/root/layout.rs:178
