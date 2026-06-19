@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-18 21:00+0000\n"
+"PO-Revision-Date: 2026-06-19 00:22+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -138,7 +138,7 @@ msgstr "Альбом"
 
 #: crates/domain/src/route.rs:53
 msgid "Album Artists"
-msgstr "Исполнители альбома"
+msgstr "Авторы альбома"
 
 #: crates/domain/src/settings/layout.rs:592
 msgid "Album artist"
@@ -146,7 +146,7 @@ msgstr "Исполнитель альбома"
 
 #: crates/domain/src/settings/layout.rs:520
 msgid "Album artists"
-msgstr "Исполнители альбома"
+msgstr "Авторы альбома"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:941
 msgid "Album title"
@@ -476,7 +476,7 @@ msgstr "Создать"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:454
 msgid "Crossfade"
-msgstr "Плавный переход между треками"
+msgstr "Плавный между треками"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:474
 msgid "Crossfade duration"
@@ -698,13 +698,13 @@ msgstr "Полный"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:454
 msgid "Gapless"
-msgstr "Бесшовное воспроизведение"
+msgstr "Бесшовный"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:117
 #: crates/rufin/src/ui/preferences/root/mod.rs:152
 #: crates/rufin/src/ui/root/cover_startup.rs:695
 msgid "General"
-msgstr "Общие настройки"
+msgstr "Общие"
 
 #: crates/rufin/src/ui/preferences/root/general.rs:599
 msgid "Generate and cache waveforms for the current track"
@@ -1183,7 +1183,7 @@ msgstr "Источник не найден"
 
 #: crates/rufin/src/ui/root/lyrics_panel.rs:22
 msgid "No track playing"
-msgstr "Сейчас ничего не воспроизводится"
+msgstr "Не играет"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:442
 msgid "None"
@@ -1200,7 +1200,7 @@ msgstr "Не задано"
 #: crates/rufin/src/ui/fullscreen_player.rs:1642
 #: crates/rufin/src/ui/player.rs:496
 msgid "Nothing playing"
-msgstr "Сейчас ничего не воспроизводится"
+msgstr "Не играет"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:250
 msgid "Notifications"
@@ -1294,7 +1294,7 @@ msgstr "Воспроизвести Позже"
 #: crates/rufin/src/ui/root/home_refresh.rs:433
 #: crates/rufin/src/ui/root/home_refresh.rs:75
 msgid "Play Next"
-msgstr "Воспроизвести Следующий трек"
+msgstr "Воспроизвести следующий"
 
 #: crates/rufin/src/ui/queue.rs:1120
 msgid "Play Now"
@@ -1334,7 +1334,7 @@ msgstr "Воспроизвести/Приостановить"
 #: crates/rufin/src/ui/preferences/root/mod.rs:135
 #: crates/rufin/src/ui/root/cover_startup.rs:716
 msgid "Playback"
-msgstr "Воспроизведение"
+msgstr "Плеер"
 
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:80
 msgid "Played"
@@ -1640,7 +1640,7 @@ msgstr "Сохранено в"
 #: crates/rufin/src/ui/preferences/root/general.rs:11
 #: crates/rufin/src/ui/preferences/root/mod.rs:129
 msgid "Scrobbling"
-msgstr "Отправка данных о прослушивании"
+msgstr "Скробблинг"
 
 #: crates/domain/src/route.rs:61 crates/rufin/src/ui/library/route_shell.rs:146
 #: crates/rufin/src/ui/library/route_shell.rs:97
@@ -1843,15 +1843,15 @@ msgstr "Демонстрация"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:738
 msgid "Shuffle"
-msgstr "Воспроизведение в случайном порядке"
+msgstr "Перемешать"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:636
 msgid "Shuffle off"
-msgstr "Перемешивание выкл"
+msgstr "Перемешивание Выкл"
 
 #: crates/rufin/src/ui/root/cover_startup.rs:634
 msgid "Shuffle on"
-msgstr "Включить воспроизведение в случайном порядке"
+msgstr "Перемешивание Вкл"
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:754
 msgid "Sidebar Items"
@@ -2026,7 +2026,7 @@ msgstr "Название (объединено)"
 #: crates/rufin/src/ui/chrome.rs:126
 #: crates/rufin/src/ui/root/cover_startup.rs:711
 msgid "Toggle Fullscreen"
-msgstr "Переключить Полноэкранный Режим"
+msgstr "Переключить полноэкранный Режим"
 
 #: crates/domain/src/settings/layout.rs:601
 #: crates/rufin/src/ui/preferences/root/general.rs:553
@@ -2106,7 +2106,7 @@ msgstr "Проверить сертификат сервера"
 #: crates/rufin/src/ui/library/route_shell.rs:584
 #: crates/rufin/src/ui/root/release_notes.rs:422
 msgid "View"
-msgstr "Просмотр"
+msgstr "Вид"
 
 #: crates/rufin/src/ui/library/cards.rs:566
 #: crates/rufin/src/ui/preferences/root/layout.rs:178
@@ -2283,12 +2283,6 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 msgid "{track_count} songs added to {playlist_count} playlists"
 msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
 
-#~ msgid "Saved mapping."
-#~ msgstr "Сохраненные сопоставления."
-
-#~ msgid "Unsaved changes."
-#~ msgstr "Несохраненные изменения."
-
 #~ msgid "View all tracks"
 #~ msgstr "Показать все треки"
 
@@ -2297,6 +2291,12 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "tracks"
 #~ msgstr "треки"
+
+#~ msgid "Unsaved changes."
+#~ msgstr "Несохраненные изменения."
+
+#~ msgid "Saved mapping."
+#~ msgstr "Сохраненные сопоставления."
 
 #~ msgid "folders selected"
 #~ msgstr "папок выбрано"
