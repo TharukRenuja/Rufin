@@ -96,8 +96,8 @@ use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
 use layout::{
-    COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_HEIGHT,
-    MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
+    COMPACT_RAIL_WIDTH, DETAIL_GRADIENT_MARGIN_END, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP,
+    MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout, ResolvedLeftSidebarMode,
     SidebarWidths, configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
     detail_showcase_cover_size, large_popup_content_height, large_popup_content_width,
@@ -108,7 +108,7 @@ use mpris::install_mpris;
 #[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
 use navigation::{
-    build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
+    build_compact_navigation, build_normal_navigation, rebuild_navigation,
     update_navigation_selection,
 };
 use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
@@ -453,7 +453,7 @@ pub(in crate::ui) struct GroupedDetailData {
     title: String,
     artwork: crate::cover_art_policy::SelectedArtwork,
     seed: u32,
-    summary: String,
+    summary_items: Vec<(&'static str, String)>,
     tracks: Vec<Track>,
     table_context: &'static str,
     source_descriptor: Option<PlaySourceDescriptor>,
@@ -478,13 +478,8 @@ pub(in crate::ui) struct Shell {
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
-    route_title: adw::WindowTitle,
     route_host: gtk::Box,
     main_menu: gtk::MenuButton,
-    normal_back_button: gtk::Button,
-    normal_forward_button: gtk::Button,
-    compact_back_button: gtk::Button,
-    compact_forward_button: gtk::Button,
     right_panel_slot: gtk::ScrolledWindow,
     right_panel: gtk::Box,
     queue_panel: gtk::Box,
@@ -752,13 +747,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     compact_nav_slot.add_css_class("compact-rail-slot");
     let server_selector = build_server_selector();
 
-    let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
-    let normal_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
-    let compact_back_button = sidebar_history_button("go-previous-symbolic", "Back");
-    let compact_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
-    let route_title = main_area_parts.route_title;
     let route_host = main_area_parts.route_host;
 
     let right_panel_parts = build_right_panel();
@@ -777,12 +767,13 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     tiny_nav_button.add_css_class("icon-button");
     tiny_nav_button.add_css_class("flat");
     tiny_nav_button.add_css_class("circular");
+    tiny_nav_button.add_css_class("tiny-sidebar-button");
     tiny_nav_button.set_tooltip_text(Some(&tr("Show sidebar")));
     tiny_nav_button.update_property(&[gtk::accessible::Property::Label(&tr("Show sidebar"))]);
     tiny_nav_button.set_halign(gtk::Align::Start);
-    tiny_nav_button.set_valign(gtk::Align::Start);
-    tiny_nav_button.set_margin_top(9);
+    tiny_nav_button.set_valign(gtk::Align::End);
     tiny_nav_button.set_margin_start(8);
+    tiny_nav_button.set_margin_bottom(8);
     tiny_nav_button.set_visible(false);
     content_chrome.root.add_overlay(&tiny_nav_button);
     content_chrome
@@ -854,13 +845,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         normal_nav,
         compact_nav,
         server_selector,
-        route_title,
         route_host,
         main_menu: main_menu.clone(),
-        normal_back_button,
-        normal_forward_button,
-        compact_back_button,
-        compact_forward_button,
         right_panel_slot,
         right_panel,
         queue_panel,

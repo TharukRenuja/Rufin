@@ -12,7 +12,7 @@ impl Shell {
             title,
             artwork,
             seed,
-            summary,
+            summary_items,
             tracks,
             table_context,
             source_descriptor,
@@ -32,8 +32,6 @@ impl Shell {
         header.add_css_class("playlist-detail-showcase");
         mark_tiny_detail_showcase(&header, content_width);
         add_album_seed_gradient_class(&header, seed);
-        header.set_margin_start(route_margin);
-        header.set_margin_end(route_margin);
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
         header.set_width_request(1);
@@ -52,13 +50,12 @@ impl Shell {
         title_label.set_xalign(0.0);
         title_label.set_wrap(true);
         title_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        let summary_label = gtk::Label::new(Some(&summary));
-        summary_label.add_css_class("muted");
-        summary_label.set_xalign(0.0);
         metadata.append(&title_label);
-        metadata.append(&summary_label);
+        metadata.append(&detail_summary_row(&summary_items));
         header.append(&metadata);
-        wrapper.append(&header);
+        let showcase = detail_showcase_frame_with_back(self, header.upcast());
+        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
+        wrapper.append(&showcase);
 
         if tracks.is_empty() {
             let placeholder =

@@ -6,10 +6,10 @@ use super::{
     add_label_click, album_artist_route, album_favorite_key, append_albums_to_model,
     append_artists_to_model, append_genres_to_model, append_playlists_to_model,
     append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader, context_artist,
-    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
-    install_album_context_menu, install_artist_context_menu, install_dynamic_album_context_menu,
-    install_dynamic_track_context_menu, install_playlist_context_menu,
-    install_smart_playlist_context_menu, install_track_context_menu,
+    favorite_button_is_active, favorite_icon_button, finish_grid_page, format_duration_units,
+    icon_button, install_album_context_menu, install_artist_context_menu,
+    install_dynamic_album_context_menu, install_dynamic_track_context_menu,
+    install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{
         configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
         route_content_width,
@@ -25,7 +25,7 @@ use adw::prelude::*;
 use domain::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
     LibraryListSettings, Playlist, SearchKind, SmartPlaylist, SmartPlaylistId, Track, TrackId,
-    available_sort_fields, format_duration,
+    available_sort_fields,
 };
 use gtk::{gio, glib};
 use std::cell::{Cell, RefCell};

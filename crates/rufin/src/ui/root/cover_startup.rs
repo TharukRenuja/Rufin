@@ -33,26 +33,6 @@ pub(in crate::ui) fn fullscreen_playback_refresh(
 }
 
 pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
-    let normal_back_shell = Rc::clone(shell);
-    shell
-        .normal_back_button
-        .connect_clicked(move |_| normal_back_shell.go_back());
-
-    let compact_back_shell = Rc::clone(shell);
-    shell
-        .compact_back_button
-        .connect_clicked(move |_| compact_back_shell.go_back());
-
-    let normal_forward_shell = Rc::clone(shell);
-    shell
-        .normal_forward_button
-        .connect_clicked(move |_| normal_forward_shell.go_forward());
-
-    let compact_forward_shell = Rc::clone(shell);
-    shell
-        .compact_forward_button
-        .connect_clicked(move |_| compact_forward_shell.go_forward());
-
     install_window_actions(shell);
     install_mouse_history_buttons(shell);
     install_main_menu_shortcut(shell, main_menu);

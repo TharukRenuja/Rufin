@@ -11,10 +11,6 @@ impl Shell {
         rebuild_navigation(self);
         self.update_layout();
     }
-    pub(in crate::ui) fn set_history_buttons_sensitive(&self, can_back: bool, can_forward: bool) {
-        self.normal_back_button.set_sensitive(can_back);
-        self.compact_back_button.set_sensitive(can_back);
-        self.normal_forward_button.set_sensitive(can_forward);
-        self.compact_forward_button.set_sensitive(can_forward);
+    pub(in crate::ui) fn set_history_buttons_sensitive(&self, _can_back: bool, _can_forward: bool) {
     }
 }

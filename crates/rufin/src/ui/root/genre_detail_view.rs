@@ -30,7 +30,16 @@ impl Shell {
             return self.placeholder_view("Genre", "The selected cached genre was not found.");
         };
         let seed = stable_seed(detail.genre.id.as_str());
-        let summary = format!("{} {}", detail.genre.track_count, tr("tracks"));
+        let mut summary_items = vec![(
+            "audio-x-generic-symbolic",
+            format!("{} {}", detail.genre.track_count, tr("tracks")),
+        )];
+        if detail.genre.duration_seconds > 0 {
+            summary_items.push((
+                "appointment-soon-symbolic",
+                format_duration_units(detail.genre.duration_seconds),
+            ));
+        }
         let cover_refs = if detail.genre.image_refs.is_empty() {
             grouped_cover_refs_for_items(&detail.albums, &detail.tracks)
         } else {
@@ -43,7 +52,7 @@ impl Shell {
             title: genre.name,
             artwork,
             seed,
-            summary,
+            summary_items,
             tracks: detail.tracks,
             table_context: "genre-detail",
             source_descriptor: Some(PlaySourceDescriptor::GenreTracks {

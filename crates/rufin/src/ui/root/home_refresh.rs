@@ -940,7 +940,7 @@ fn playlist_picker_row(
     ));
     meta.append(&playlist_picker_meta(
         "appointment-soon-symbolic",
-        &playlist_picker_duration(playlist.duration_seconds),
+        &format_duration_units(playlist.duration_seconds),
     ));
     let genres = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     genres.add_css_class("context-playlist-genres");
@@ -956,22 +956,10 @@ fn playlist_picker_row(
         "{} {} {}",
         playlist.name,
         playlist.track_count,
-        playlist_picker_duration(playlist.duration_seconds)
+        format_duration_units(playlist.duration_seconds)
     )
     .to_lowercase();
     (row, check, haystack)
-}
-fn playlist_picker_duration(seconds: u32) -> String {
-    let hours = seconds / 3_600;
-    let minutes = (seconds % 3_600) / 60;
-    let seconds = seconds % 60;
-    if hours > 0 {
-        return format!("{hours}h {minutes}m {seconds}s");
-    }
-    if minutes > 0 {
-        return format!("{minutes}m {seconds}s");
-    }
-    format!("{seconds}s")
 }
 fn playlist_genre_pill(name: &str) -> gtk::Label {
     let pill = gtk::Label::new(Some(name));
@@ -1876,9 +1864,9 @@ mod tests {
 
     #[test]
     fn playlist_picker_duration_uses_units() {
-        assert_eq!(playlist_picker_duration(41), "41s");
-        assert_eq!(playlist_picker_duration(743), "12m 23s");
-        assert_eq!(playlist_picker_duration(4_421), "1h 13m 41s");
+        assert_eq!(format_duration_units(41), "41s");
+        assert_eq!(format_duration_units(743), "12m 23s");
+        assert_eq!(format_duration_units(4_421), "1h 13m 41s");
     }
 
     fn test_playlist(index: usize) -> Playlist {

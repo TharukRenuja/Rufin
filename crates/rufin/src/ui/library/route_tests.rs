@@ -52,6 +52,11 @@ fn route_stay_compact() {
     }
 }
 #[test]
+fn route_toolbar_reserves_window_controls_when_queue_hidden() {
+    assert_eq!(super::library_toolbar_end_margin(true), 10);
+    assert!(super::library_toolbar_end_margin(false) > super::library_toolbar_end_margin(true));
+}
+#[test]
 fn route_shrink_width() {
     let base_widths = [48, 96, 68, 220, 76];
     let fitted = super::fitted_column_widths(&base_widths, 320);

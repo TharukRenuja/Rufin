@@ -429,10 +429,6 @@ impl Shell {
             let button = self.main_menu.clone();
             move || chrome::relocalize_primary_menu_button(&button)
         });
-        self.bind_icon_locale(&self.normal_back_button, "Back");
-        self.bind_icon_locale(&self.compact_back_button, "Back");
-        self.bind_icon_locale(&self.normal_forward_button, "Forward");
-        self.bind_icon_locale(&self.compact_forward_button, "Forward");
 
         self.bind_locale({
             let area = self.player_controls.cover.area.clone();
