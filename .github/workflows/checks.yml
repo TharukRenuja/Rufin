@@ -148,6 +148,7 @@ jobs:
         with:
           arguments: --locked
           command: check
+          command-arguments: -D unmatched-skip
 
   required:
     name: Required
