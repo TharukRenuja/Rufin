@@ -31,7 +31,7 @@ impl Shell {
         };
         let seed = stable_seed(detail.genre.id.as_str());
         let mut summary_items = vec![(
-            "audio-x-generic-symbolic",
+            "route-tracks-symbolic",
             track_count_text(detail.genre.track_count.into()),
         )];
         if detail.genre.duration_seconds > 0 {

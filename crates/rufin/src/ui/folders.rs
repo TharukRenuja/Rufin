@@ -249,7 +249,7 @@ fn tree_row(
     content.set_hexpand(true);
     content.set_halign(gtk::Align::Fill);
     content.set_margin_start((depth as i32) * 12);
-    content.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    content.append(&gtk::Image::from_icon_name("route-folders-symbolic"));
     let text = gtk::Label::new(Some(&display_label(label, translate)));
     text.set_xalign(0.0);
     text.set_hexpand(true);
@@ -463,7 +463,7 @@ fn folder_name_cell(text: &str, width: i32) -> gtk::Widget {
     let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     cell.set_hexpand(true);
     cell.set_halign(gtk::Align::Fill);
-    cell.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    cell.append(&gtk::Image::from_icon_name("route-folders-symbolic"));
     let label = gtk::Label::new(Some(text));
     label.set_xalign(0.0);
     label.set_hexpand(true);

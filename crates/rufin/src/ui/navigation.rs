@@ -6,8 +6,9 @@ use domain::{Route, SidebarRouteItem};
 use super::{Shell, layout::COMPACT_RAIL_WIDTH};
 use crate::i18n::tr;
 
-const COMPACT_RAIL_ICON_SIZE: i32 = 22;
-const ALBUM_NAV_ICON_SIZE: i32 = 24;
+const SIDEBAR_NAV_ICON_SIZE: i32 = 20;
+#[cfg(test)]
+const ROUTE_ICON_PREFIX: &str = "route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const NAV_SELECTED_CLASS: &str = "selected";
@@ -127,52 +128,52 @@ fn nav_items(shell: &Shell) -> Vec<NavItem> {
 fn nav_item(item: SidebarRouteItem) -> NavItem {
     match item {
         SidebarRouteItem::Home => NavItem {
-            icon_name: "go-home-symbolic",
+            icon_name: "route-home-symbolic",
             label: "Home",
             route: Route::Home,
         },
         SidebarRouteItem::Favorites => NavItem {
-            icon_name: "starred-symbolic",
+            icon_name: "route-favorites-symbolic",
             label: "Favorites",
             route: Route::Favorites,
         },
         SidebarRouteItem::Albums => NavItem {
-            icon_name: "media-optical-symbolic",
+            icon_name: "route-albums-symbolic",
             label: "Albums",
             route: Route::Albums,
         },
         SidebarRouteItem::Tracks => NavItem {
-            icon_name: "audio-x-generic-symbolic",
+            icon_name: "route-tracks-symbolic",
             label: "Tracks",
             route: Route::Tracks,
         },
         SidebarRouteItem::Artists => NavItem {
-            icon_name: "avatar-default-symbolic",
+            icon_name: "route-artists-symbolic",
             label: "Artists",
             route: Route::Artists,
         },
         SidebarRouteItem::AlbumArtists => NavItem {
-            icon_name: "system-users-symbolic",
+            icon_name: "route-album-artists-symbolic",
             label: "Album Artists",
             route: Route::AlbumArtists,
         },
         SidebarRouteItem::Genres => NavItem {
-            icon_name: "rufin-genres-symbolic",
+            icon_name: "route-genres-symbolic",
             label: "Genres",
             route: Route::Genres,
         },
         SidebarRouteItem::Folders => NavItem {
-            icon_name: "folder-symbolic",
+            icon_name: "route-folders-symbolic",
             label: "Folders",
             route: Route::Folders { path: Vec::new() },
         },
         SidebarRouteItem::Playlists => NavItem {
-            icon_name: "view-list-symbolic",
+            icon_name: "route-playlists-symbolic",
             label: "Playlists",
             route: Route::Playlists,
         },
         SidebarRouteItem::SmartPlaylists => NavItem {
-            icon_name: "rufin-smart-playlist-symbolic",
+            icon_name: "route-smart-playlists-symbolic",
             label: "Smart Playlists",
             route: Route::SmartPlaylists,
         },
@@ -212,11 +213,10 @@ fn nav_button(
         gtk::Align::Start
     });
     let icon = gtk::Image::from_icon_name(icon_name);
-    if icon_name == "media-optical-symbolic" {
-        icon.set_pixel_size(ALBUM_NAV_ICON_SIZE);
-    } else if compact {
-        icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
-    }
+    icon.set_pixel_size(SIDEBAR_NAV_ICON_SIZE);
+    icon.set_size_request(SIDEBAR_NAV_ICON_SIZE, SIDEBAR_NAV_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
     content.append(&icon);
     if compact {
         let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
@@ -318,12 +318,14 @@ mod tests {
     }
 
     #[test]
-    fn navigation_bundled_assets() {
+    fn navigation_uses_bundled_assets() {
         for item in SidebarRouteItem::all() {
             let nav = nav_item(item);
-            if !nav.icon_name.starts_with("rufin-") {
-                continue;
-            }
+            assert!(
+                nav.icon_name.starts_with(ROUTE_ICON_PREFIX),
+                "{} should use an app-bundled sidebar icon",
+                nav.icon_name
+            );
 
             let path = bundled_sidebar_icon_path(nav.icon_name);
             assert!(
@@ -333,15 +335,6 @@ mod tests {
                 path.display()
             );
         }
-    }
-
-    #[test]
-    fn navigation_use_icon() {
-        let nav = nav_item(SidebarRouteItem::Genres);
-        assert!(
-            nav.icon_name.starts_with("rufin-"),
-            "Genres should not depend on a system-theme-only icon"
-        );
     }
 
     fn bundled_sidebar_icon_path(icon_name: &str) -> PathBuf {

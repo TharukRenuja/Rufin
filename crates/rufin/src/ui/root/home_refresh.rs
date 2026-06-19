@@ -7,9 +7,9 @@ const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
 const CONTEXT_PLAYLIST_ROW_COVER_SIZE: i32 = 48;
 const ADD_TO_PLAYLIST_DIALOG_WIDTH: i32 = 700;
 const ADD_TO_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
-pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "view-list-symbolic";
-pub(in crate::ui) const ALBUM_ICON: &str = "media-optical-symbolic";
-pub(in crate::ui) const ARTIST_ICON: &str = "avatar-default-symbolic";
+pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-symbolic";
+pub(in crate::ui) const ALBUM_ICON: &str = "route-albums-symbolic";
+pub(in crate::ui) const ARTIST_ICON: &str = "route-artists-symbolic";
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
 
@@ -935,7 +935,7 @@ fn playlist_picker_row(
     let meta = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     meta.add_css_class("context-playlist-meta");
     meta.append(&playlist_picker_meta(
-        "audio-x-generic-symbolic",
+        "route-tracks-symbolic",
         &track_count_text(playlist.track_count.into()),
     ));
     meta.append(&playlist_picker_meta(
