@@ -134,6 +134,7 @@ fn primary_menu_model() -> gio::Menu {
     menu.append_section(None, &preferences);
 
     let about = gio::Menu::new();
+    about.append(Some(&tr("Version History")), Some("win.show-release-notes"));
     about.append(Some(&tr("About Rufin")), Some("win.about"));
     menu.append_section(None, &about);
     menu

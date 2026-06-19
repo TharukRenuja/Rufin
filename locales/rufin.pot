@@ -16,35 +16,35 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/rufin/src/ui/preferences/root/general.rs:48
+#: crates/rufin/src/ui/preferences/root/general.rs:47
 msgid ". You only need to fill email and an application name parts"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:577
+#: crates/rufin/src/ui/preferences/root/general.rs:576
 msgid "128 kbps"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:576
+#: crates/rufin/src/ui/preferences/root/general.rs:575
 msgid "192 kbps"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:575
+#: crates/rufin/src/ui/preferences/root/general.rs:574
 msgid "256 kbps"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:574
+#: crates/rufin/src/ui/preferences/root/general.rs:573
 msgid "320 kbps"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:55
+#: crates/rufin/src/ui/preferences/root/general.rs:54
 msgid "API key"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:43
+#: crates/rufin/src/ui/preferences/root/general.rs:42
 msgid "API keys"
 msgstr ""
 
-#: crates/rufin/src/ui/chrome.rs:137
+#: crates/rufin/src/ui/chrome.rs:138
 msgid "About Rufin"
 msgstr ""
 
@@ -104,7 +104,7 @@ msgstr ""
 msgid "Add to Playlist"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:522
+#: crates/rufin/src/ui/preferences/root/general.rs:521
 msgid "Add tracks when fewer than this many remain"
 msgstr ""
 
@@ -112,7 +112,7 @@ msgstr ""
 msgid "Added to favorites"
 msgstr ""
 
-#: crates/domain/src/route.rs:47 crates/domain/src/settings/layout.rs:593 crates/rufin/src/ui/preferences/root/general.rs:553 crates/rufin/src/ui/queue.rs:805 crates/rufin/src/ui/root/layout_rendering.rs:18 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:56
+#: crates/domain/src/route.rs:47 crates/domain/src/settings/layout.rs:593 crates/rufin/src/ui/preferences/root/general.rs:552 crates/rufin/src/ui/queue.rs:805 crates/rufin/src/ui/root/layout_rendering.rs:18 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:56
 msgid "Album"
 msgstr ""
 
@@ -192,15 +192,15 @@ msgstr ""
 msgid "Artists"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:552
+#: crates/rufin/src/ui/preferences/root/general.rs:551
 msgid "Audio"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:508
+#: crates/rufin/src/ui/preferences/root/general.rs:507
 msgid "Audio fade on play/pause"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:615
+#: crates/rufin/src/ui/preferences/root/general.rs:614
 msgid "Audio output"
 msgstr ""
 
@@ -216,7 +216,7 @@ msgstr ""
 msgid "Auto DJ on"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:521
+#: crates/rufin/src/ui/preferences/root/general.rs:520
 msgid "Auto DJ refill threshold"
 msgstr ""
 
@@ -340,11 +340,11 @@ msgstr ""
 msgid "Clear queue"
 msgstr ""
 
-#: crates/rufin/src/ui/root/lyrics_panel.rs:75 crates/rufin/src/ui/root/release_notes.rs:327
+#: crates/rufin/src/ui/root/lyrics_panel.rs:75 crates/rufin/src/ui/root/release_notes.rs:396
 msgid "Close"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:127 crates/rufin/src/ui/fullscreen_player.rs:210
+#: crates/rufin/src/ui/fullscreen_player.rs:126 crates/rufin/src/ui/fullscreen_player.rs:209
 msgid "Close fullscreen player"
 msgstr ""
 
@@ -372,7 +372,7 @@ msgstr ""
 msgid "Configure saved music servers and local playback mappings."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:244 crates/rufin/src/ui/preferences/root/general.rs:110 crates/rufin/src/ui/preferences/root/general.rs:199
+#: crates/rufin/src/ui/login.rs:244 crates/rufin/src/ui/preferences/root/general.rs:109 crates/rufin/src/ui/preferences/root/general.rs:198
 msgid "Connect"
 msgstr ""
 
@@ -380,11 +380,11 @@ msgstr ""
 msgid "Connect to Music Server"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:339
+#: crates/rufin/src/ui/preferences/root/general.rs:338
 msgid "Connected"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:341
+#: crates/rufin/src/ui/preferences/root/general.rs:340
 #, rust-format
 msgid "Connected as {username}"
 msgstr ""
@@ -393,7 +393,7 @@ msgstr ""
 msgid "Connecting to music server…"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:106 crates/rufin/src/ui/preferences/root/general.rs:195
+#: crates/rufin/src/ui/preferences/root/general.rs:105 crates/rufin/src/ui/preferences/root/general.rs:194
 msgid "Connection"
 msgstr ""
 
@@ -405,16 +405,12 @@ msgstr ""
 msgid "Create"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:454
+#: crates/rufin/src/ui/preferences/root/general.rs:453
 msgid "Crossfade"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:474
+#: crates/rufin/src/ui/preferences/root/general.rs:473
 msgid "Crossfade duration"
-msgstr ""
-
-#: crates/rufin/src/ui/root/release_notes.rs:330
-msgid "Current version:"
 msgstr ""
 
 #: crates/rufin/src/ui/library/route_shell.rs:463 crates/rufin/src/ui/library/route_shell.rs:500
@@ -425,7 +421,7 @@ msgstr ""
 msgid "Date added"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:454 crates/rufin/src/ui/preferences/root/layout.rs:254
+#: crates/rufin/src/ui/preferences/root/general.rs:453 crates/rufin/src/ui/preferences/root/layout.rs:254
 msgid "Default"
 msgstr ""
 
@@ -493,7 +489,7 @@ msgstr ""
 msgid "Edit Smart Playlist"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:672 crates/rufin/src/ui/preferences/root/general.rs:639
+#: crates/rufin/src/ui/fullscreen_player.rs:670 crates/rufin/src/ui/preferences/root/general.rs:638
 msgid "Enable equalizer"
 msgstr ""
 
@@ -501,7 +497,7 @@ msgstr ""
 msgid "Enable private mode"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:126
+#: crates/rufin/src/ui/preferences/root/general.rs:125
 msgid "Enter API credentials first"
 msgstr ""
 
@@ -525,7 +521,7 @@ msgstr ""
 msgid "Enter an artist or song."
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:203 crates/rufin/src/ui/preferences/root/general.rs:635 crates/rufin/src/ui/settings_persistence.rs:486
+#: crates/rufin/src/ui/fullscreen_player.rs:202 crates/rufin/src/ui/preferences/root/general.rs:634 crates/rufin/src/ui/settings_persistence.rs:486
 msgid "Equalizer"
 msgstr ""
 
@@ -549,7 +545,7 @@ msgstr ""
 msgid "External site links"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:509
+#: crates/rufin/src/ui/preferences/root/general.rs:508
 msgid "Fade audio when playback is paused or resumed"
 msgstr ""
 
@@ -565,7 +561,7 @@ msgstr ""
 msgid "Featured genres"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:275
+#: crates/rufin/src/ui/preferences/root/general.rs:274
 msgid "Find your ListenBrainz user token"
 msgstr ""
 
@@ -604,7 +600,7 @@ msgstr[1] ""
 msgid "Full"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:454
+#: crates/rufin/src/ui/preferences/root/general.rs:453
 msgid "Gapless"
 msgstr ""
 
@@ -612,7 +608,7 @@ msgstr ""
 msgid "General"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:599
+#: crates/rufin/src/ui/preferences/root/general.rs:598
 msgid "Generate and cache waveforms for the current track"
 msgstr ""
 
@@ -632,7 +628,7 @@ msgstr ""
 msgid "Genres"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:273
+#: crates/rufin/src/ui/preferences/root/general.rs:272
 msgid "Get token"
 msgstr ""
 
@@ -664,20 +660,24 @@ msgstr ""
 msgid "Home"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:806
+#: crates/rufin/src/ui/preferences/root/general.rs:790
 msgid "Home Blocks"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:171
+#: crates/rufin/src/ui/preferences/root/general.rs:170
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:45
+#: crates/rufin/src/ui/preferences/root/general.rs:44
 msgid "If you do not have API keys, create them"
 msgstr ""
 
 #: crates/domain/src/settings/layout.rs:588 crates/rufin/src/ui/library/columns.rs:678
 msgid "Image"
+msgstr ""
+
+#: crates/rufin/src/ui/root/release_notes.rs:332
+msgid "Installed"
 msgstr ""
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:597
@@ -688,7 +688,7 @@ msgstr ""
 msgid "Jellyfin"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:496
+#: crates/rufin/src/ui/preferences/root/general.rs:495
 msgid "Keep album transitions gapless when possible"
 msgstr ""
 
@@ -708,7 +708,7 @@ msgstr ""
 msgid "Last played"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:24 crates/rufin/src/ui/preferences/root/mod.rs:368 crates/rufin/src/ui/preferences/root/mod.rs:443
+#: crates/rufin/src/ui/preferences/root/general.rs:23 crates/rufin/src/ui/preferences/root/mod.rs:368 crates/rufin/src/ui/preferences/root/mod.rs:443
 msgid "Last.fm"
 msgstr ""
 
@@ -716,11 +716,11 @@ msgstr ""
 msgid "Last.fm API key"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:27
+#: crates/rufin/src/ui/preferences/root/general.rs:26
 msgid "Last.fm scrobbling"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:447 crates/rufin/src/ui/library/route_shell.rs:513 crates/rufin/src/ui/preferences/root/general.rs:798 crates/rufin/src/ui/preferences/root/mod.rs:123
+#: crates/rufin/src/ui/library/route_shell.rs:447 crates/rufin/src/ui/library/route_shell.rs:513 crates/rufin/src/ui/preferences/root/general.rs:782 crates/rufin/src/ui/preferences/root/mod.rs:123
 msgid "Layout"
 msgstr ""
 
@@ -736,11 +736,11 @@ msgstr ""
 msgid "Library sync complete"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:170
+#: crates/rufin/src/ui/preferences/root/general.rs:169
 msgid "Libre.fm"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:176
+#: crates/rufin/src/ui/preferences/root/general.rs:175
 msgid "Libre.fm scrobbling"
 msgstr ""
 
@@ -748,11 +748,11 @@ msgstr ""
 msgid "Limit"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:251
+#: crates/rufin/src/ui/preferences/root/general.rs:250
 msgid "ListenBrainz"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:254
+#: crates/rufin/src/ui/preferences/root/general.rs:253
 msgid "ListenBrainz scrobbling"
 msgstr ""
 
@@ -804,7 +804,7 @@ msgstr ""
 msgid "Local playback mapping configured"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:186 crates/rufin/src/ui/fullscreen_player.rs:189 crates/rufin/src/ui/right_panel.rs:61 crates/rufin/src/ui/settings_persistence.rs:471 crates/rufin/src/ui/settings_persistence.rs:509
+#: crates/rufin/src/ui/fullscreen_player.rs:185 crates/rufin/src/ui/fullscreen_player.rs:188 crates/rufin/src/ui/right_panel.rs:61 crates/rufin/src/ui/settings_persistence.rs:471 crates/rufin/src/ui/settings_persistence.rs:505
 msgid "Lyrics"
 msgstr ""
 
@@ -1036,7 +1036,7 @@ msgstr ""
 msgid "None"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:331
+#: crates/rufin/src/ui/preferences/root/general.rs:330
 msgid "Not connected"
 msgstr ""
 
@@ -1044,7 +1044,7 @@ msgstr ""
 msgid "Not set"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:1642 crates/rufin/src/ui/player.rs:496
+#: crates/rufin/src/ui/fullscreen_player.rs:1646 crates/rufin/src/ui/player.rs:496
 msgid "Nothing playing"
 msgstr ""
 
@@ -1056,7 +1056,7 @@ msgstr ""
 msgid "Now playing notifications"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:150 crates/rufin/src/ui/preferences/root/general.rs:231 crates/rufin/src/ui/preferences/root/general.rs:306
+#: crates/rufin/src/ui/preferences/root/general.rs:149 crates/rufin/src/ui/preferences/root/general.rs:230 crates/rufin/src/ui/preferences/root/general.rs:305
 msgid "Now playing updates"
 msgstr ""
 
@@ -1064,7 +1064,7 @@ msgstr ""
 msgid "Number of songs"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:553
+#: crates/rufin/src/ui/preferences/root/general.rs:552
 msgid "Off"
 msgstr ""
 
@@ -1080,15 +1080,15 @@ msgstr ""
 msgid "Open fullscreen player"
 msgstr ""
 
-#: crates/rufin/src/ui/root/release_notes.rs:239
+#: crates/rufin/src/ui/root/release_notes.rs:304
 msgid "Open release notes"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:130
+#: crates/rufin/src/ui/preferences/root/general.rs:129
 msgid "Opening Last.fm authorization…"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:211
+#: crates/rufin/src/ui/preferences/root/general.rs:210
 msgid "Opening Libre.fm authorization…"
 msgstr ""
 
@@ -1096,7 +1096,7 @@ msgstr ""
 msgid "Optionally map server tracks to files on this computer"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:573
+#: crates/rufin/src/ui/preferences/root/general.rs:572
 msgid "Original"
 msgstr ""
 
@@ -1152,7 +1152,7 @@ msgstr ""
 msgid "Play/Pause"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:444 crates/rufin/src/ui/preferences/root/mod.rs:135 crates/rufin/src/ui/root/cover_startup.rs:716
+#: crates/rufin/src/ui/preferences/root/general.rs:443 crates/rufin/src/ui/preferences/root/mod.rs:135 crates/rufin/src/ui/root/cover_startup.rs:716
 msgid "Playback"
 msgstr ""
 
@@ -1200,7 +1200,7 @@ msgstr ""
 msgid "Preferences"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:663
+#: crates/rufin/src/ui/fullscreen_player.rs:678
 msgid "Preset"
 msgstr ""
 
@@ -1232,15 +1232,15 @@ msgstr ""
 msgid "Provider"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:184 crates/rufin/src/ui/settings_persistence.rs:476
+#: crates/rufin/src/ui/fullscreen_player.rs:183 crates/rufin/src/ui/settings_persistence.rs:476
 msgid "Queue"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:1648 crates/rufin/src/ui/player.rs:502
+#: crates/rufin/src/ui/fullscreen_player.rs:1652 crates/rufin/src/ui/player.rs:502
 msgid "Queue a track to begin"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:452
+#: crates/rufin/src/ui/preferences/root/general.rs:451
 msgid "Queue and transitions"
 msgstr ""
 
@@ -1264,7 +1264,7 @@ msgstr ""
 msgid "Recently released"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:112 crates/rufin/src/ui/preferences/root/general.rs:138 crates/rufin/src/ui/preferences/root/general.rs:201 crates/rufin/src/ui/preferences/root/general.rs:219
+#: crates/rufin/src/ui/preferences/root/general.rs:111 crates/rufin/src/ui/preferences/root/general.rs:137 crates/rufin/src/ui/preferences/root/general.rs:200 crates/rufin/src/ui/preferences/root/general.rs:218
 msgid "Reconnect"
 msgstr ""
 
@@ -1274,10 +1274,6 @@ msgstr ""
 
 #: crates/domain/src/settings/layout.rs:595
 msgid "Release date"
-msgstr ""
-
-#: crates/rufin/src/ui/root/release_notes.rs:319
-msgid "Release notes"
 msgstr ""
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:273
@@ -1344,11 +1340,11 @@ msgstr ""
 msgid "Repeat one"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:560
+#: crates/rufin/src/ui/preferences/root/general.rs:559
 msgid "ReplayGain"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:685 crates/rufin/src/ui/preferences/root/general.rs:763
+#: crates/rufin/src/ui/fullscreen_player.rs:686 crates/rufin/src/ui/preferences/root/general.rs:747
 msgid "Reset"
 msgstr ""
 
@@ -1356,7 +1352,7 @@ msgstr ""
 msgid "Reset display"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:760
+#: crates/rufin/src/ui/preferences/root/general.rs:744
 msgid "Reset equalizer"
 msgstr ""
 
@@ -1368,7 +1364,7 @@ msgstr ""
 msgid "Restore Default"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:761
+#: crates/rufin/src/ui/preferences/root/general.rs:745
 msgid "Restore selected preset to default bands."
 msgstr ""
 
@@ -1431,7 +1427,7 @@ msgstr ""
 msgid "Saved to"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:11 crates/rufin/src/ui/preferences/root/mod.rs:129
+#: crates/rufin/src/ui/preferences/root/general.rs:10 crates/rufin/src/ui/preferences/root/mod.rs:129
 msgid "Scrobbling"
 msgstr ""
 
@@ -1459,7 +1455,7 @@ msgstr ""
 msgid "Search lyrics"
 msgstr ""
 
-#: crates/rufin/src/ui/right_panel.rs:43 crates/rufin/src/ui/settings_persistence.rs:502
+#: crates/rufin/src/ui/right_panel.rs:43 crates/rufin/src/ui/settings_persistence.rs:498
 msgid "Search queue"
 msgstr ""
 
@@ -1479,7 +1475,7 @@ msgstr ""
 msgid "Searching…"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:475
+#: crates/rufin/src/ui/preferences/root/general.rs:474
 msgid "Seconds"
 msgstr ""
 
@@ -1568,7 +1564,7 @@ msgstr ""
 msgid "Set the Discord activity type to Listening"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:83
+#: crates/rufin/src/ui/preferences/root/general.rs:82
 msgid "Shared secret"
 msgstr ""
 
@@ -1640,7 +1636,7 @@ msgstr ""
 msgid "Skip count"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:495
+#: crates/rufin/src/ui/preferences/root/general.rs:494
 msgid "Skip same-album crossfade"
 msgstr ""
 
@@ -1692,7 +1688,7 @@ msgstr ""
 msgid "Status display"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:585
+#: crates/rufin/src/ui/preferences/root/general.rs:584
 msgid "Stream quality"
 msgstr ""
 
@@ -1717,7 +1713,7 @@ msgstr ""
 msgid "Syncing {provider} library…"
 msgstr ""
 
-#: crates/rufin/src/i18n.rs:112 crates/rufin/src/ui/preferences/root/general.rs:862
+#: crates/rufin/src/i18n.rs:112 crates/rufin/src/ui/preferences/root/general.rs:846
 msgid "System default"
 msgstr ""
 
@@ -1731,7 +1727,7 @@ msgstr ""
 msgid "Text"
 msgstr ""
 
-#: crates/rufin/src/ui/root/cover_startup.rs:790
+#: crates/rufin/src/ui/root/cover_startup.rs:788
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
@@ -1763,11 +1759,11 @@ msgid ""
 "token for"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:407
+#: crates/rufin/src/ui/preferences/root/general.rs:406
 msgid "Timed out waiting for Last.fm authorization."
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:440
+#: crates/rufin/src/ui/preferences/root/general.rs:439
 msgid "Timed out waiting for Libre.fm authorization"
 msgstr ""
 
@@ -1783,7 +1779,7 @@ msgstr ""
 msgid "Toggle Fullscreen"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs:601 crates/rufin/src/ui/preferences/root/general.rs:553
+#: crates/domain/src/settings/layout.rs:601 crates/rufin/src/ui/preferences/root/general.rs:552
 msgid "Track"
 msgstr ""
 
@@ -1791,7 +1787,7 @@ msgstr ""
 msgid "Tracks"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:461
+#: crates/rufin/src/ui/preferences/root/general.rs:460
 msgid "Transition mode"
 msgstr ""
 
@@ -1838,7 +1834,7 @@ msgstr ""
 msgid "User"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:285
+#: crates/rufin/src/ui/preferences/root/general.rs:284
 msgid "User token"
 msgstr ""
 
@@ -1850,7 +1846,11 @@ msgstr ""
 msgid "Verify server certificate"
 msgstr ""
 
-#: crates/rufin/src/ui/library/route_shell.rs:516 crates/rufin/src/ui/root/release_notes.rs:422
+#: crates/rufin/src/ui/chrome.rs:137 crates/rufin/src/ui/root/release_notes.rs:386
+msgid "Version History"
+msgstr ""
+
+#: crates/rufin/src/ui/library/route_shell.rs:516 crates/rufin/src/ui/root/release_notes.rs:478
 msgid "View"
 msgstr ""
 
@@ -1858,7 +1858,7 @@ msgstr ""
 msgid "Visible"
 msgstr ""
 
-#: crates/rufin/src/ui/fullscreen_player.rs:200 crates/rufin/src/ui/settings_persistence.rs:481
+#: crates/rufin/src/ui/fullscreen_player.rs:199 crates/rufin/src/ui/settings_persistence.rs:481
 msgid "Visualizer"
 msgstr ""
 
@@ -1870,7 +1870,7 @@ msgstr ""
 msgid "Volume Up"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:598
+#: crates/rufin/src/ui/preferences/root/general.rs:597
 msgid "Waveform seekbar"
 msgstr ""
 
@@ -1918,7 +1918,7 @@ msgstr ""
 msgid "excludes"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/general.rs:277 crates/rufin/src/ui/preferences/root/general.rs:47
+#: crates/rufin/src/ui/preferences/root/general.rs:276 crates/rufin/src/ui/preferences/root/general.rs:46
 msgid "here"
 msgstr ""
 
@@ -1946,10 +1946,25 @@ msgstr ""
 msgid "to"
 msgstr ""
 
+#: crates/rufin/src/ui/root/release_notes.rs:89
+msgid "today"
+msgstr ""
+
+#: crates/rufin/src/ui/root/release_notes.rs:90
+msgid "yesterday"
+msgstr ""
+
 #: crates/rufin/src/ui/root/mod.rs:134
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/release_notes.rs:93
+#, rust-format
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -1967,6 +1982,13 @@ msgid_plural "{count} folders selected"
 msgstr[0] ""
 msgstr[1] ""
 
+#: crates/rufin/src/ui/root/release_notes.rs:111
+#, rust-format
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
+msgstr[0] ""
+msgstr[1] ""
+
 #: crates/rufin/src/ui/root/mod.rs:164
 #, rust-format
 msgid "{count} result"
@@ -1978,6 +2000,20 @@ msgstr[1] ""
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/release_notes.rs:102
+#, rust-format
+msgid "{count} week ago"
+msgid_plural "{count} weeks ago"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/release_notes.rs:120
+#, rust-format
+msgid "{count} year ago"
+msgid_plural "{count} years ago"
 msgstr[0] ""
 msgstr[1] ""
 

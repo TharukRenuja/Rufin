@@ -14,7 +14,8 @@ use crate::lyrics::LyricsPane;
 use crate::ui::{
     build_equalizer_preset_dropdown, connect_equalizer_scale_commit, cover_fetch_size_for_display,
     equalizer_band_label_parts, equalizer_band_title, equalizer_default_preset_bands,
-    equalizer_preset_bands, equalizer_selected_preset, install_equalizer_scroll,
+    equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_position,
+    equalizer_selected_preset, install_equalizer_scroll,
 };
 
 use super::{
@@ -84,9 +85,8 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) equalizer_enabled_label: gtk::Label,
     pub(super) equalizer_scales: Vec<gtk::Scale>,
     pub(super) equalizer_reset_button: gtk::Button,
-    pub(super) equalizer_preset_button: gtk::MenuButton,
-    pub(super) equalizer_preset_popover: gtk::Popover,
-    pub(super) equalizer_preset_buttons: Vec<(gtk::Button, String)>,
+    pub(super) equalizer_preset_label: gtk::Label,
+    pub(super) equalizer_preset_dropdown: gtk::DropDown,
     pub(super) equalizer_band_row: gtk::Box,
     pub(super) equalizer_graph: gtk::Box,
     pub(super) equalizer_bands: gtk::Box,
@@ -102,9 +102,8 @@ struct EqualizerPanel {
     enabled_label: gtk::Label,
     scales: Vec<gtk::Scale>,
     reset_button: gtk::Button,
-    preset_button: gtk::MenuButton,
-    preset_popover: gtk::Popover,
-    preset_buttons: Vec<(gtk::Button, String)>,
+    preset_label: gtk::Label,
+    preset_dropdown: gtk::DropDown,
     band_row: gtk::Box,
     graph: gtk::Box,
     bands: gtk::Box,
@@ -244,9 +243,8 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         equalizer_enabled_label: equalizer.enabled_label,
         equalizer_scales: equalizer.scales,
         equalizer_reset_button: equalizer.reset_button,
-        equalizer_preset_button: equalizer.preset_button,
-        equalizer_preset_popover: equalizer.preset_popover,
-        equalizer_preset_buttons: equalizer.preset_buttons,
+        equalizer_preset_label: equalizer.preset_label,
+        equalizer_preset_dropdown: equalizer.preset_dropdown,
         equalizer_band_row: equalizer.band_row,
         equalizer_graph: equalizer.graph,
         equalizer_bands: equalizer.bands,
@@ -675,12 +673,15 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     enabled_group.append(&enabled);
     header.insert(&enabled_group, -1);
 
-    let preset_dropdown =
-        build_equalizer_preset_dropdown(Some("fullscreen-player-equalizer-preset-menu"));
-    let preset_button = preset_dropdown.button;
-    let preset_popover = preset_dropdown.popover;
-    let preset_buttons = preset_dropdown.buttons;
-    header.insert(&preset_button, -1);
+    let preset_group = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    preset_group.set_valign(gtk::Align::Center);
+    let preset_label = gtk::Label::new(Some(&tr("Preset")));
+    preset_label.set_valign(gtk::Align::Center);
+    let preset_dropdown = build_equalizer_preset_dropdown(0);
+    preset_dropdown.set_valign(gtk::Align::Center);
+    preset_group.append(&preset_label);
+    preset_group.append(&preset_dropdown);
+    header.insert(&preset_group, -1);
 
     let reset_button = gtk::Button::with_label(&tr("Reset"));
     reset_button.add_css_class("destructive-action");
@@ -762,9 +763,8 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
         enabled_label,
         scales,
         reset_button,
-        preset_button,
-        preset_popover,
-        preset_buttons,
+        preset_label,
+        preset_dropdown,
         band_row,
         graph,
         bands,
@@ -1093,22 +1093,20 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             reset_shell.reset_fullscreen_equalizer_preset();
         });
 
-    for (button, name) in &shell.fullscreen_player.equalizer_preset_buttons {
-        let preset_shell = Rc::clone(shell);
-        let preset_name = name.clone();
-        button.connect_clicked(move |_| {
-            let bands = equalizer_preset_bands(&preset_name);
-            preset_shell
-                .fullscreen_player
-                .equalizer_preset_button
-                .set_label(&tr(&preset_name));
-            preset_shell
-                .fullscreen_player
-                .equalizer_preset_popover
-                .popdown();
-            preset_shell.apply_fullscreen_equalizer_bands(true, preset_name.clone(), bands);
+    let preset_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .equalizer_preset_dropdown
+        .connect_selected_notify(move |dropdown| {
+            if preset_shell.fullscreen_player.equalizer_syncing.get() {
+                return;
+            }
+            let Some(preset) = equalizer_preset_name_at(dropdown.selected()) else {
+                return;
+            };
+            let bands = equalizer_preset_bands(&preset);
+            preset_shell.apply_fullscreen_equalizer_bands(true, preset, bands);
         });
-    }
 }
 
 impl Shell {
@@ -1328,10 +1326,11 @@ impl Shell {
     }
 
     fn sync_fullscreen_equalizer_preset_label(&self, equalizer: &EqualizerSettings) {
-        let label = tr(&equalizer_selected_preset(equalizer));
         self.fullscreen_player
-            .equalizer_preset_button
-            .set_label(&label);
+            .equalizer_preset_dropdown
+            .set_selected(equalizer_preset_position(&equalizer_selected_preset(
+                equalizer,
+            )));
     }
 
     fn apply_fullscreen_equalizer_bands(
@@ -1384,6 +1383,11 @@ impl Shell {
             .iter()
             .map(gtk::Scale::value)
             .collect::<Vec<_>>();
+        self.fullscreen_player.equalizer_syncing.set(true);
+        self.fullscreen_player
+            .equalizer_preset_dropdown
+            .set_selected(equalizer_preset_position("Custom"));
+        self.fullscreen_player.equalizer_syncing.set(false);
         self.update_playback_settings(|settings| {
             if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
                 settings.equalizer.sanitize();

@@ -1,9 +1,8 @@
 use super::*;
 use crate::ui::{
-    build_equalizer_preset_dropdown, connect_equalizer_scale_commit, equalizer_band_title,
-    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_button_label,
-    equalizer_preset_name_at, equalizer_preset_position, equalizer_selected_preset,
-    install_equalizer_scroll,
+    build_equalizer_preset_row, connect_equalizer_scale_commit, equalizer_band_title,
+    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_name_at,
+    equalizer_preset_position, equalizer_selected_preset, install_equalizer_scroll,
 };
 
 pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -654,15 +653,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let selected_preset =
         equalizer_preset_position(&equalizer_selected_preset(&settings.equalizer));
     let selected_preset = Rc::new(Cell::new(selected_preset));
-    let preset_dropdown = build_equalizer_preset_dropdown(None);
-    let preset_button = preset_dropdown.button;
-    equalizer_preset_button_label(
-        &preset_button,
-        &equalizer_selected_preset(&settings.equalizer),
-    );
-    let preset_row = adw::ActionRow::builder().title(tr("Preset")).build();
-    preset_row.add_suffix(&preset_button);
-    preset_row.set_activatable_widget(Some(&preset_button));
+    let preset_row = build_equalizer_preset_row("Preset", selected_preset.get());
     let preset_shell = Rc::clone(shell);
     let preset_switch = equalizer_row.clone();
     let preset_reset_guard = Rc::clone(&resetting_equalizer);
@@ -675,7 +666,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let equalizer_drag_active = Rc::new(Cell::new(false));
     let equalizer_commit: Rc<dyn Fn()> = {
         let band_shell = Rc::clone(shell);
-        let update_preset = preset_button.clone();
+        let update_preset = preset_row.clone();
         let update_selected_preset = Rc::clone(&selected_preset);
         let update_guard = Rc::clone(&resetting_equalizer);
         let update_scales = Rc::clone(&band_scales);
@@ -696,7 +687,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 equalizer_selected_preset(&band_shell.state.settings.borrow().playback.equalizer);
             update_guard.set(true);
             update_selected_preset.set(equalizer_preset_position(&preset));
-            equalizer_preset_button_label(&update_preset, &preset);
+            update_preset.set_selected(equalizer_preset_position(&preset));
             update_guard.set(false);
         })
     };
@@ -724,37 +715,30 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         band_scales.borrow_mut().push(scale);
     }
 
-    let preset_popover = preset_dropdown.popover.clone();
-    for (button, preset) in preset_dropdown.buttons {
-        let preset_scales = Rc::clone(&band_scales);
-        let preset_shell = Rc::clone(&preset_shell);
-        let preset_switch = preset_switch.clone();
-        let preset_reset_guard = Rc::clone(&preset_reset_guard);
-        let selected_preset = Rc::clone(&selected_preset);
-        let preset_button = preset_button.clone();
-        let preset_popover = preset_popover.clone();
-        button.connect_clicked(move |_| {
-            if preset_reset_guard.get() {
-                return;
-            }
-            let bands = equalizer_preset_bands(&preset);
-            preset_reset_guard.set(true);
-            preset_switch.set_active(true);
-            selected_preset.set(equalizer_preset_position(&preset));
-            equalizer_preset_button_label(&preset_button, &preset);
-            for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
-                scale.set_value(*gain);
-            }
-            preset_reset_guard.set(false);
-            preset_popover.popdown();
-            preset_shell.update_playback_settings(|settings| {
-                settings.equalizer.enabled = true;
-                settings.equalizer.selected_preset = preset.clone();
-                settings.equalizer.bands = bands;
-                settings.equalizer.sanitize();
-            });
+    let preset_scales = Rc::clone(&band_scales);
+    let preset_selected_preset = Rc::clone(&selected_preset);
+    preset_row.connect_selected_notify(move |row| {
+        if preset_reset_guard.get() {
+            return;
+        }
+        let Some(preset) = equalizer_preset_name_at(row.selected()) else {
+            return;
+        };
+        let bands = equalizer_preset_bands(&preset);
+        preset_reset_guard.set(true);
+        preset_switch.set_active(true);
+        preset_selected_preset.set(equalizer_preset_position(&preset));
+        for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
+            scale.set_value(*gain);
+        }
+        preset_reset_guard.set(false);
+        preset_shell.update_playback_settings(|settings| {
+            settings.equalizer.enabled = true;
+            settings.equalizer.selected_preset = preset.clone();
+            settings.equalizer.bands = bands;
+            settings.equalizer.sanitize();
         });
-    }
+    });
 
     let reset_row = adw::ActionRow::builder()
         .title(tr("Reset equalizer"))
@@ -764,7 +748,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     reset_button.set_valign(gtk::Align::Center);
     reset_button.add_css_class("destructive-action");
     let reset_shell = Rc::clone(shell);
-    let reset_preset = preset_button.clone();
+    let reset_preset = preset_row.clone();
     let reset_selected_preset = Rc::clone(&selected_preset);
     let reset_scales = Rc::clone(&band_scales);
     let reset_guard = Rc::clone(&resetting_equalizer);
@@ -775,7 +759,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         let bands = equalizer_default_preset_bands(&preset);
         reset_guard.set(true);
         reset_selected_preset.set(equalizer_preset_position(&preset));
-        equalizer_preset_button_label(&reset_preset, &preset);
+        reset_preset.set_selected(equalizer_preset_position(&preset));
         for (scale, gain) in reset_scales.borrow().iter().zip(bands.iter()) {
             scale.set_value(*gain);
         }

@@ -785,8 +785,6 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
         .license(
             "This application comes with absolutely no warranty and is licensed under GNU General Public Licence, version 3 or later.",
         )
-        .release_notes_version(format!("v{}", env!("CARGO_PKG_VERSION")))
-        .release_notes(about_release_notes())
         .comments(tr(
             "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
         ))

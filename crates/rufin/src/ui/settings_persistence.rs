@@ -489,12 +489,8 @@ impl Shell {
             &self.fullscreen_player.equalizer_enabled_label,
             "Enable equalizer",
         );
+        self.bind_label_locale(&self.fullscreen_player.equalizer_preset_label, "Preset");
         self.bind_button_label_locale(&self.fullscreen_player.equalizer_reset_button, "Reset");
-        for (button, name) in &self.fullscreen_player.equalizer_preset_buttons {
-            let button = button.clone();
-            let name = name.clone();
-            self.bind_locale(move || button.set_label(&tr(&name)));
-        }
 
         self.bind_locale({
             let entry = self.queue_search.clone();
