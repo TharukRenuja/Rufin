@@ -137,8 +137,7 @@ pub(in crate::controller) use playback_waveforms::{
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
 use source_image_policy::{
     image_ref_allowed, is_local_album_id, is_local_artist_id, is_local_provider_image_ref,
-    is_local_track_id, scrub_home_refs, scrub_snapshot_image_refs, scrub_source_image_ref,
-    snapshot_external_ref_policy, source_image_ref_allowed,
+    is_local_track_id, scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
 };
 pub(in crate::controller) use source_image_policy::{
     scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
