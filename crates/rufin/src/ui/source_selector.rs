@@ -6,7 +6,7 @@ use domain::{
 };
 
 use super::{
-    Shell,
+    Shell, folder_count_text,
     layout::{COMPACT_RAIL_WIDTH, NORMAL_SIDEBAR_WIDTH},
 };
 use crate::controller::LibrarySnapshot;
@@ -328,7 +328,7 @@ fn local_source_detail(folders: &[LocalLibraryFolder]) -> String {
     match folders.len() {
         0 => tr("No local folders configured"),
         1 => folders[0].path.clone(),
-        count => format!("{} {}", count, tr("folders")),
+        count => folder_count_text(count as u64),
     }
 }
 

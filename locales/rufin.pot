@@ -52,11 +52,11 @@ msgstr ""
 msgid "Activity links and MusicBrainz covers"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:215 crates/rufin/src/ui/root/home_refresh.rs:778
+#: crates/rufin/src/ui/login.rs:216 crates/rufin/src/ui/root/home_refresh.rs:778
 msgid "Add"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:212
+#: crates/rufin/src/ui/login.rs:213
 msgid "Add Folder"
 msgstr ""
 
@@ -64,7 +64,7 @@ msgstr ""
 msgid "Add Last"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:134
+#: crates/rufin/src/ui/preferences/library.rs:135
 msgid "Add Local Folder"
 msgstr ""
 
@@ -72,15 +72,15 @@ msgstr ""
 msgid "Add Rule"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:51 crates/rufin/src/ui/preferences/library.rs:89 crates/rufin/src/ui/source_selector.rs:311
+#: crates/rufin/src/ui/login.rs:52 crates/rufin/src/ui/preferences/library.rs:90 crates/rufin/src/ui/source_selector.rs:311
 msgid "Add Server"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:43
+#: crates/rufin/src/ui/preferences/library.rs:44
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:213
+#: crates/rufin/src/ui/login.rs:214
 msgid "Add another folder to the Local source"
 msgstr ""
 
@@ -88,7 +88,7 @@ msgstr ""
 msgid "Add current"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:107
+#: crates/rufin/src/ui/preferences/library.rs:108
 msgid "Add folders to use the Local source."
 msgstr ""
 
@@ -144,7 +144,7 @@ msgstr ""
 msgid "All"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:205 crates/rufin/src/ui/source_selector.rs:343
+#: crates/rufin/src/ui/preferences/library.rs:206 crates/rufin/src/ui/source_selector.rs:343
 msgid "All Music"
 msgstr ""
 
@@ -224,7 +224,7 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:223
+#: crates/rufin/src/ui/preferences/library.rs:224
 msgid "Cached"
 msgstr ""
 
@@ -232,11 +232,11 @@ msgstr ""
 msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:250 crates/rufin/src/ui/root/cover_startup.rs:221
+#: crates/rufin/src/ui/preferences/library.rs:249 crates/rufin/src/ui/root/cover_startup.rs:221
 msgid "Cached library ready"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:508
+#: crates/rufin/src/ui/login.rs:509
 msgid "Caching Library"
 msgstr ""
 
@@ -248,7 +248,7 @@ msgstr ""
 msgid "Caching library… This may take some time."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:281 crates/rufin/src/ui/root/startup_reveal.rs:495
+#: crates/rufin/src/ui/login.rs:282 crates/rufin/src/ui/root/startup_reveal.rs:495
 msgid "Caching local library…"
 msgstr ""
 
@@ -256,7 +256,7 @@ msgstr ""
 msgid "Caching local library… This may take some time."
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:550 crates/rufin/src/ui/local_access_mapping.rs:583 crates/rufin/src/ui/preferences/library.rs:169 crates/rufin/src/ui/preferences/root/mod.rs:551 crates/rufin/src/ui/root/home_refresh.rs:627 crates/rufin/src/ui/root/home_refresh.rs:791 crates/rufin/src/ui/root/layout_rendering.rs:790 crates/rufin/src/ui/root/new_playlist_dialog.rs:8 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175 crates/rufin/src/ui/root/playlist_detail_view.rs:417 crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
+#: crates/rufin/src/ui/local_access_mapping.rs:550 crates/rufin/src/ui/local_access_mapping.rs:583 crates/rufin/src/ui/preferences/library.rs:170 crates/rufin/src/ui/preferences/root/mod.rs:551 crates/rufin/src/ui/root/home_refresh.rs:627 crates/rufin/src/ui/root/home_refresh.rs:791 crates/rufin/src/ui/root/layout_rendering.rs:790 crates/rufin/src/ui/root/new_playlist_dialog.rs:8 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:128 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:175 crates/rufin/src/ui/root/playlist_detail_view.rs:417 crates/rufin/src/ui/root/playlist_rename_dialog.rs:13
 msgid "Cancel"
 msgstr ""
 
@@ -283,7 +283,7 @@ msgstr ""
 msgid "Checking {provider} server…"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:141 crates/rufin/src/ui/login.rs:206
+#: crates/rufin/src/ui/local_access_mapping.rs:141 crates/rufin/src/ui/login.rs:207
 msgid "Choose"
 msgstr ""
 
@@ -295,7 +295,7 @@ msgstr ""
 msgid "Choose a local prefix."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:131
+#: crates/rufin/src/ui/login.rs:132
 msgid ""
 "Choose a provider, pick a discovered server, or enter the address manually"
 msgstr ""
@@ -304,11 +304,11 @@ msgstr ""
 msgid "Choose an existing local prefix."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:277
+#: crates/rufin/src/ui/login.rs:278
 msgid "Choose at least one local music folder"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:198
+#: crates/rufin/src/ui/login.rs:199
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 
@@ -348,7 +348,7 @@ msgstr ""
 msgid "Close fullscreen player"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:696
+#: crates/rufin/src/ui/library/cards.rs:695
 msgid "Columns"
 msgstr ""
 
@@ -368,15 +368,15 @@ msgstr ""
 msgid "Compact"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:35
+#: crates/rufin/src/ui/preferences/library.rs:36
 msgid "Configure saved music servers and local playback mappings."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:243 crates/rufin/src/ui/preferences/root/general.rs:110 crates/rufin/src/ui/preferences/root/general.rs:199
+#: crates/rufin/src/ui/login.rs:244 crates/rufin/src/ui/preferences/root/general.rs:110 crates/rufin/src/ui/preferences/root/general.rs:199
 msgid "Connect"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:127
+#: crates/rufin/src/ui/login.rs:128
 msgid "Connect to Music Server"
 msgstr ""
 
@@ -389,7 +389,7 @@ msgstr ""
 msgid "Connected as {username}"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:291
+#: crates/rufin/src/ui/login.rs:292
 msgid "Connecting to music server…"
 msgstr ""
 
@@ -449,11 +449,11 @@ msgstr ""
 msgid "Descending"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:895
+#: crates/rufin/src/ui/library/cards.rs:894
 msgid "Detail"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:698
+#: crates/rufin/src/ui/library/cards.rs:697
 msgid "Detail track columns"
 msgstr ""
 
@@ -477,7 +477,7 @@ msgstr ""
 msgid "Don't duplicate"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:572 crates/rufin/src/ui/library/collections.rs:873 crates/rufin/src/ui/preferences/root/layout.rs:26 crates/rufin/src/ui/preferences/root/mod.rs:826 crates/rufin/src/ui/queue.rs:1009 crates/rufin/src/ui/root/layout_rendering.rs:692
+#: crates/rufin/src/ui/library/cards.rs:571 crates/rufin/src/ui/library/collections.rs:873 crates/rufin/src/ui/preferences/root/layout.rs:26 crates/rufin/src/ui/preferences/root/mod.rs:826 crates/rufin/src/ui/queue.rs:1009 crates/rufin/src/ui/root/layout_rendering.rs:692
 msgid "Drag to reorder"
 msgstr ""
 
@@ -517,7 +517,7 @@ msgstr ""
 msgid "Enter a new playlist name."
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:287
+#: crates/rufin/src/ui/login.rs:288
 msgid "Enter a server address, username, and password"
 msgstr ""
 
@@ -589,11 +589,11 @@ msgstr ""
 msgid "Forward"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:559
+#: crates/rufin/src/ui/login.rs:560
 msgid "Found Servers"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:628
+#: crates/rufin/src/ui/login.rs:629
 #, rust-format
 msgid "Found {count} Jellyfin server"
 msgid_plural "Found {count} Jellyfin servers"
@@ -644,15 +644,15 @@ msgstr ""
 msgid "Go to Artist"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:893
+#: crates/rufin/src/ui/library/cards.rs:892
 msgid "Grid"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:697
+#: crates/rufin/src/ui/library/cards.rs:696
 msgid "Grid labels"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:567 crates/rufin/src/ui/preferences/root/layout.rs:179 crates/rufin/src/ui/preferences/root/layout.rs:252 crates/rufin/src/ui/preferences/root/mod.rs:781 crates/rufin/src/ui/preferences/root/mod.rs:820
+#: crates/rufin/src/ui/library/cards.rs:566 crates/rufin/src/ui/preferences/root/layout.rs:179 crates/rufin/src/ui/preferences/root/layout.rs:252 crates/rufin/src/ui/preferences/root/mod.rs:781 crates/rufin/src/ui/preferences/root/mod.rs:820
 msgid "Hidden"
 msgstr ""
 
@@ -684,7 +684,7 @@ msgstr ""
 msgid "Interface"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:288 crates/rufin/src/ui/source_selector.rs:193
+#: crates/rufin/src/ui/preferences/library.rs:287 crates/rufin/src/ui/source_selector.rs:193
 msgid "Jellyfin"
 msgstr ""
 
@@ -728,11 +728,11 @@ msgstr ""
 msgid "Legacy"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:16 crates/rufin/src/ui/preferences/library.rs:27 crates/rufin/src/ui/preferences/root/mod.rs:141
+#: crates/rufin/src/ui/preferences/library.rs:17 crates/rufin/src/ui/preferences/library.rs:28 crates/rufin/src/ui/preferences/root/mod.rs:141
 msgid "Library"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:251 crates/rufin/src/ui/root/cover_startup.rs:222
+#: crates/rufin/src/ui/preferences/library.rs:250 crates/rufin/src/ui/root/cover_startup.rs:222
 msgid "Library sync complete"
 msgstr ""
 
@@ -760,7 +760,7 @@ msgstr ""
 msgid "Loaded in lyrics panel."
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:291 crates/rufin/src/ui/source_selector.rs:196 crates/rufin/src/ui/source_selector.rs:259
+#: crates/rufin/src/ui/preferences/library.rs:290 crates/rufin/src/ui/source_selector.rs:196 crates/rufin/src/ui/source_selector.rs:259
 msgid "Local"
 msgstr ""
 
@@ -768,11 +768,11 @@ msgstr ""
 msgid "Local Folder"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:99
+#: crates/rufin/src/ui/preferences/library.rs:100
 msgid "Local Folders"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:182 crates/rufin/src/ui/login.rs:197
+#: crates/rufin/src/ui/local_access_mapping.rs:182 crates/rufin/src/ui/login.rs:198
 msgid "Local Library"
 msgstr ""
 
@@ -792,11 +792,11 @@ msgstr ""
 msgid "Local library folder is saved."
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:269
+#: crates/rufin/src/ui/preferences/library.rs:268
 msgid "Local mapping"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:265
+#: crates/rufin/src/ui/preferences/library.rs:264
 msgid "Local mapping saved. Sync to preview matches."
 msgstr ""
 
@@ -860,19 +860,19 @@ msgstr ""
 msgid "Most played"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:591 crates/rufin/src/ui/preferences/root/layout.rs:51 crates/rufin/src/ui/preferences/root/mod.rs:841
+#: crates/rufin/src/ui/library/cards.rs:590 crates/rufin/src/ui/preferences/root/layout.rs:51 crates/rufin/src/ui/preferences/root/mod.rs:841
 msgid "Move down"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:584 crates/rufin/src/ui/preferences/root/layout.rs:31 crates/rufin/src/ui/preferences/root/mod.rs:835
+#: crates/rufin/src/ui/library/cards.rs:583 crates/rufin/src/ui/preferences/root/layout.rs:31 crates/rufin/src/ui/preferences/root/mod.rs:835
 msgid "Move up"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:237
+#: crates/rufin/src/ui/preferences/library.rs:236
 msgid "Music Folder"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:203
+#: crates/rufin/src/ui/login.rs:204
 msgid "Music Folders"
 msgstr ""
 
@@ -908,7 +908,7 @@ msgstr ""
 msgid "Narrow right sidebar"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:289 crates/rufin/src/ui/source_selector.rs:194
+#: crates/rufin/src/ui/preferences/library.rs:288 crates/rufin/src/ui/source_selector.rs:194
 msgid "Navidrome"
 msgstr ""
 
@@ -940,7 +940,7 @@ msgstr ""
 msgid "Next Track"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:280 crates/rufin/src/ui/home.rs:340
+#: crates/rufin/src/ui/home.rs:279 crates/rufin/src/ui/home.rs:339
 msgid "Next page"
 msgstr ""
 
@@ -948,11 +948,11 @@ msgstr ""
 msgid "No"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:624
+#: crates/rufin/src/ui/login.rs:625
 msgid "No Jellyfin servers found. Enter the address manually or search again"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:567
+#: crates/rufin/src/ui/login.rs:568
 msgid "No Servers Found"
 msgstr ""
 
@@ -976,7 +976,7 @@ msgstr ""
 msgid "No folder selected"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:826
+#: crates/rufin/src/ui/login.rs:827
 msgid "No folders selected"
 msgstr ""
 
@@ -984,11 +984,11 @@ msgstr ""
 msgid "No limit"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:106 crates/rufin/src/ui/source_selector.rs:329
+#: crates/rufin/src/ui/preferences/library.rs:107 crates/rufin/src/ui/source_selector.rs:329
 msgid "No local folders configured"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:258 crates/rufin/src/ui/preferences/library.rs:261
+#: crates/rufin/src/ui/preferences/library.rs:257 crates/rufin/src/ui/preferences/library.rs:260
 msgid "No local playback mapping"
 msgstr ""
 
@@ -1016,7 +1016,7 @@ msgstr ""
 msgid "No server lyrics for the current track. Private mode is on."
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:42 crates/rufin/src/ui/source_selector.rs:231
+#: crates/rufin/src/ui/preferences/library.rs:43 crates/rufin/src/ui/source_selector.rs:231
 msgid "No servers configured"
 msgstr ""
 
@@ -1100,7 +1100,7 @@ msgstr ""
 msgid "Original"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:411 crates/rufin/src/ui/login.rs:172
+#: crates/rufin/src/ui/local_access_mapping.rs:411 crates/rufin/src/ui/login.rs:173
 msgid "Password"
 msgstr ""
 
@@ -1212,7 +1212,7 @@ msgstr ""
 msgid "Previous Track"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:279 crates/rufin/src/ui/home.rs:339
+#: crates/rufin/src/ui/home.rs:278 crates/rufin/src/ui/home.rs:338
 msgid "Previous page"
 msgstr ""
 
@@ -1228,7 +1228,7 @@ msgstr ""
 msgid "Private mode is on"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:151
+#: crates/rufin/src/ui/login.rs:152
 msgid "Provider"
 msgstr ""
 
@@ -1268,7 +1268,7 @@ msgstr ""
 msgid "Reconnect"
 msgstr ""
 
-#: crates/rufin/src/ui/home.rs:281 crates/rufin/src/ui/home.rs:341
+#: crates/rufin/src/ui/home.rs:280 crates/rufin/src/ui/home.rs:340
 msgid "Refresh section"
 msgstr ""
 
@@ -1288,11 +1288,11 @@ msgstr ""
 msgid "Remote lyrics"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:118 crates/rufin/src/ui/preferences/library.rs:170 crates/rufin/src/ui/root/layout_rendering.rs:791
+#: crates/rufin/src/ui/preferences/library.rs:119 crates/rufin/src/ui/preferences/library.rs:171 crates/rufin/src/ui/root/layout_rendering.rs:791
 msgid "Remove"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:162
+#: crates/rufin/src/ui/preferences/library.rs:163
 msgid "Remove Local Folder"
 msgstr ""
 
@@ -1380,7 +1380,7 @@ msgstr ""
 msgid "Rich presence"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:894
+#: crates/rufin/src/ui/library/cards.rs:893
 msgid "Rows"
 msgstr ""
 
@@ -1412,11 +1412,18 @@ msgstr ""
 msgid "Save to rescan this local library."
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:771
-msgid "Saved mapping."
-msgstr ""
+#: crates/rufin/src/ui/local_access_mapping.rs:788
+#, rust-format
+msgid ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
 
-#: crates/rufin/src/ui/preferences/library.rs:207
+#: crates/rufin/src/ui/preferences/library.rs:208
 msgid "Saved per server"
 msgstr ""
 
@@ -1432,7 +1439,7 @@ msgstr ""
 msgid "Search"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:600
+#: crates/rufin/src/ui/login.rs:601
 msgid "Search Again"
 msgstr ""
 
@@ -1456,19 +1463,19 @@ msgstr ""
 msgid "Search queue"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:565
+#: crates/rufin/src/ui/login.rs:566
 msgid "Searching Local Network"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:621
+#: crates/rufin/src/ui/login.rs:622
 msgid "Searching for Jellyfin servers on the local network…"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:619
+#: crates/rufin/src/ui/login.rs:620
 msgid "Searching will start automatically"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:598 crates/rufin/src/ui/root/cover_startup.rs:112 crates/rufin/src/ui/root/lyrics_panel.rs:251 crates/rufin/src/ui/root/lyrics_panel.rs:274 crates/rufin/src/ui/root/lyrics_playback_state.rs:100
+#: crates/rufin/src/ui/login.rs:599 crates/rufin/src/ui/root/cover_startup.rs:112 crates/rufin/src/ui/root/lyrics_panel.rs:251 crates/rufin/src/ui/root/lyrics_panel.rs:274 crates/rufin/src/ui/root/lyrics_playback_state.rs:100
 msgid "Searching…"
 msgstr ""
 
@@ -1496,7 +1503,7 @@ msgstr ""
 msgid "Seek playback"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:873 crates/rufin/src/ui/login.rs:911 crates/rufin/src/ui/preferences/library.rs:142
+#: crates/rufin/src/ui/login.rs:874 crates/rufin/src/ui/login.rs:912 crates/rufin/src/ui/preferences/library.rs:143
 msgid "Select Music Folder"
 msgstr ""
 
@@ -1504,7 +1511,7 @@ msgstr ""
 msgid "Select Source"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:184 crates/rufin/src/ui/preferences/root/mod.rs:378
+#: crates/rufin/src/ui/login.rs:185 crates/rufin/src/ui/preferences/root/mod.rs:378
 msgid "Server"
 msgstr ""
 
@@ -1512,7 +1519,7 @@ msgstr ""
 msgid "Server Actions"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:397 crates/rufin/src/ui/login.rs:160
+#: crates/rufin/src/ui/local_access_mapping.rs:397 crates/rufin/src/ui/login.rs:161
 msgid "Server Address"
 msgstr ""
 
@@ -1532,7 +1539,7 @@ msgstr ""
 msgid "Server Settings"
 msgstr ""
 
-#: crates/rufin/src/ui/login.rs:636
+#: crates/rufin/src/ui/login.rs:637
 #, rust-format
 msgid "Server discovery failed: {error}"
 msgstr ""
@@ -1553,7 +1560,7 @@ msgstr ""
 msgid "Server settings saved. Resyncing library…"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:34
+#: crates/rufin/src/ui/preferences/library.rs:35
 msgid "Servers"
 msgstr ""
 
@@ -1589,7 +1596,7 @@ msgstr ""
 msgid "Show playback icon"
 msgstr ""
 
-#: crates/rufin/src/ui/root/mod.rs:772 crates/rufin/src/ui/root/mod.rs:773
+#: crates/rufin/src/ui/root/mod.rs:822 crates/rufin/src/ui/root/mod.rs:823
 msgid "Show sidebar"
 msgstr ""
 
@@ -1689,7 +1696,7 @@ msgstr ""
 msgid "Stream quality"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:290 crates/rufin/src/ui/source_selector.rs:195
+#: crates/rufin/src/ui/preferences/library.rs:289 crates/rufin/src/ui/source_selector.rs:195
 msgid "Subsonic / OpenSubsonic"
 msgstr ""
 
@@ -1730,7 +1737,7 @@ msgid ""
 "open an issue in Github."
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:100
+#: crates/rufin/src/ui/preferences/library.rs:101
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing."
@@ -1746,7 +1753,7 @@ msgstr ""
 msgid "This removes cached library metadata for"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:165
+#: crates/rufin/src/ui/preferences/library.rs:166
 msgid "This removes the folder from the Local source."
 msgstr ""
 
@@ -1788,7 +1795,7 @@ msgstr ""
 msgid "Transition mode"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:418 crates/rufin/src/ui/login.rs:176
+#: crates/rufin/src/ui/local_access_mapping.rs:418 crates/rufin/src/ui/login.rs:177
 msgid "Turn off only for a server you control"
 msgstr ""
 
@@ -1804,9 +1811,16 @@ msgstr ""
 msgid "Unmuted"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:769
-msgid "Unsaved changes."
-msgstr ""
+#: crates/rufin/src/ui/local_access_mapping.rs:781
+#, rust-format
+msgid ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/rufin/src/ui/local_access_mapping.rs:469
 msgid "Use This Source"
@@ -1820,7 +1834,7 @@ msgstr ""
 msgid "Use listening activity"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/library.rs:215
+#: crates/rufin/src/ui/preferences/library.rs:216
 msgid "User"
 msgstr ""
 
@@ -1828,11 +1842,11 @@ msgstr ""
 msgid "User token"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:404 crates/rufin/src/ui/login.rs:167
+#: crates/rufin/src/ui/local_access_mapping.rs:404 crates/rufin/src/ui/login.rs:168
 msgid "Username"
 msgstr ""
 
-#: crates/rufin/src/ui/local_access_mapping.rs:417 crates/rufin/src/ui/login.rs:175
+#: crates/rufin/src/ui/local_access_mapping.rs:417 crates/rufin/src/ui/login.rs:176
 msgid "Verify server certificate"
 msgstr ""
 
@@ -1840,7 +1854,7 @@ msgstr ""
 msgid "View"
 msgstr ""
 
-#: crates/rufin/src/ui/library/cards.rs:567 crates/rufin/src/ui/preferences/root/layout.rs:178 crates/rufin/src/ui/preferences/root/mod.rs:779 crates/rufin/src/ui/preferences/root/mod.rs:818
+#: crates/rufin/src/ui/library/cards.rs:566 crates/rufin/src/ui/preferences/root/layout.rs:178 crates/rufin/src/ui/preferences/root/mod.rs:779 crates/rufin/src/ui/preferences/root/mod.rs:818
 msgid "Visible"
 msgstr ""
 
@@ -1876,10 +1890,6 @@ msgstr ""
 msgid "after"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:384 crates/rufin/src/ui/artist.rs:495 crates/rufin/src/ui/home.rs:238 crates/rufin/src/ui/library/cards.rs:194 crates/rufin/src/ui/library/cards.rs:206 crates/rufin/src/ui/preferences/library.rs:225
-msgid "albums"
-msgstr ""
-
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:687
 msgid "before"
 msgstr ""
@@ -1908,14 +1918,6 @@ msgstr ""
 msgid "excludes"
 msgstr ""
 
-#: crates/rufin/src/ui/source_selector.rs:331
-msgid "folders"
-msgstr ""
-
-#: crates/rufin/src/ui/login.rs:828
-msgid "folders selected"
-msgstr ""
-
 #: crates/rufin/src/ui/preferences/root/general.rs:277 crates/rufin/src/ui/preferences/root/general.rs:47
 msgid "here"
 msgstr ""
@@ -1940,17 +1942,44 @@ msgstr ""
 msgid "range"
 msgstr ""
 
-#: crates/rufin/src/ui/root/lyrics_panel.rs:206
-msgid "results"
-msgstr ""
-
 #: crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:551 crates/rufin/src/ui/root/new_smart_playlist_dialog.rs:583
 msgid "to"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs:395 crates/rufin/src/ui/artist.rs:497 crates/rufin/src/ui/home.rs:240 crates/rufin/src/ui/home.rs:65 crates/rufin/src/ui/library/cards.rs:185 crates/rufin/src/ui/library/cards.rs:195 crates/rufin/src/ui/library/cards.rs:207 crates/rufin/src/ui/library/cards.rs:214 crates/rufin/src/ui/library/cards.rs:223 crates/rufin/src/ui/library/cards.rs:518 crates/rufin/src/ui/preferences/library.rs:227 crates/rufin/src/ui/root/album_detail_view.rs:92 crates/rufin/src/ui/root/genre_detail_view.rs:35 crates/rufin/src/ui/root/home_refresh.rs:939 crates/rufin/src/ui/root/playlist_detail_view.rs:587
-msgid "tracks"
-msgstr ""
+#: crates/rufin/src/ui/root/mod.rs:134
+#, rust-format
+msgid "{count} album"
+msgid_plural "{count} albums"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/mod.rs:144
+#, rust-format
+msgid "{count} folder"
+msgid_plural "{count} folders"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/mod.rs:154
+#, rust-format
+msgid "{count} folder selected"
+msgid_plural "{count} folders selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/mod.rs:164
+#, rust-format
+msgid "{count} result"
+msgid_plural "{count} results"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/rufin/src/ui/root/mod.rs:174
+#, rust-format
+msgid "{count} track"
+msgid_plural "{count} tracks"
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/rufin/src/ui/root/home_refresh.rs:1008
 #, rust-format

@@ -3,13 +3,14 @@ use super::{
     GRID_ROUTE_PAGE_SIZE, LoadedTrackPlayContext, PRIMARY_ROUTE_MARGIN_START, PagedGridCursor,
     PlaySourceDescriptor, ROUTE_TOP_MARGIN, Route, SLOW_ROUTE_PAGE_LOAD_MS, Shell,
     THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, add_card_label_link, add_dynamic_link_hover,
-    add_label_click, album_artist_route, album_favorite_key, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
-    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader, context_artist,
-    favorite_button_is_active, favorite_icon_button, finish_grid_page, format_duration_units,
-    icon_button, install_album_context_menu, install_artist_context_menu,
-    install_dynamic_album_context_menu, install_dynamic_track_context_menu,
-    install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
+    add_label_click, album_artist_route, album_count_text, album_favorite_key,
+    append_albums_to_model, append_artists_to_model, append_genres_to_model,
+    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
+    connect_paged_grid_loader, context_artist, favorite_button_is_active, favorite_icon_button,
+    finish_grid_page, format_duration_units, icon_button, install_album_context_menu,
+    install_artist_context_menu, install_dynamic_album_context_menu,
+    install_dynamic_track_context_menu, install_playlist_context_menu,
+    install_smart_playlist_context_menu, install_track_context_menu,
     layout::{
         configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
         route_content_width,
@@ -17,7 +18,7 @@ use super::{
     mark_route_scroll_owner, present_artist_context_menu, replace_albums_in_model,
     replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
     selected_music_folder_id, set_favorite_button_active, smart_playlist_display_name, stable_seed,
-    track_artist_route, track_collection_play_context, track_link_column,
+    track_artist_route, track_collection_play_context, track_count_text, track_link_column,
 };
 use crate::cover_art_policy;
 use crate::i18n::tr;

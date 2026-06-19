@@ -11,7 +11,8 @@ use super::cards::{album_cover_tile, render_home_album_page, render_home_track_p
 use super::{
     DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
     Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
-    configure_fill_width_clip, icon_button, mark_route_scroll_owner,
+    album_count_text, configure_fill_width_clip, icon_button, mark_route_scroll_owner,
+    track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -62,7 +63,7 @@ fn home_showcase_facts(album: &Album) -> String {
         parts.push(album.year.to_string());
     }
     if album.track_count > 0 {
-        parts.push(format!("{} {}", album.track_count, tr("tracks")));
+        parts.push(track_count_text(album.track_count.into()));
     }
     if album.duration_seconds > 0 {
         parts.push(format_duration(album.duration_seconds));
@@ -233,11 +234,9 @@ impl Shell {
         labels.append(&name);
 
         let counts = gtk::Label::new(Some(&format!(
-            "{} {} • {} {}",
-            genre.album_count,
-            tr("albums"),
-            genre.track_count,
-            tr("tracks")
+            "{} • {}",
+            album_count_text(genre.album_count.into()),
+            track_count_text(genre.track_count.into())
         )));
         counts.add_css_class("muted");
         counts.set_xalign(0.0);

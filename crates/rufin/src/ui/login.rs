@@ -14,6 +14,7 @@ use domain::ServerId;
 use super::{
     AddServerDialogHandle, Shell,
     chrome::window_close_controls,
+    folder_selected_text,
     layout::{large_popup_content_height, large_popup_content_width},
     startup_reveal::connection_progress_status_label,
     text_button,
@@ -825,7 +826,7 @@ fn local_folders_subtitle(folders: &[PathBuf]) -> String {
     match folders {
         [] => tr("No folders selected"),
         [folder] => path_subtitle(folder),
-        folders => format!("{} {}", folders.len(), tr("folders selected")),
+        folders => folder_selected_text(folders.len() as u64),
     }
 }
 

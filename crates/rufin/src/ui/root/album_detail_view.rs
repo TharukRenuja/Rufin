@@ -89,7 +89,7 @@ impl Shell {
             ("x-office-calendar-symbolic", album.year.to_string()),
             (
                 "audio-x-generic-symbolic",
-                format!("{} {}", album.track_count, tr("tracks")),
+                track_count_text(album.track_count.into()),
             ),
             (
                 "appointment-soon-symbolic",

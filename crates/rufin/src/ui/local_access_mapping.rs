@@ -8,7 +8,7 @@ use gtk::gio;
 use library::ServerLocalAccess;
 
 use crate::controller::LocalAccessStatus;
-use crate::i18n::tr;
+use crate::i18n::{tr, trn_with};
 use crate::providers::StreamingProvider;
 
 use super::{Shell, login::connect_folder_button, text_button};
@@ -765,20 +765,33 @@ fn local_access_status_text(
         };
     }
 
-    let lead = if changed {
-        tr("Unsaved changes.")
+    let total = status.total_track_count.to_string();
+    let direct = status.direct_match_count.to_string();
+    let prefix = status.prefix_match_count.to_string();
+    let metadata = status.metadata_match_count.to_string();
+    let unmatched = status.unmatched_count.to_string();
+    let args = [
+        ("direct", direct.as_str()),
+        ("prefix", prefix.as_str()),
+        ("metadata", metadata.as_str()),
+        ("unmatched", unmatched.as_str()),
+        ("total", total.as_str()),
+    ];
+    if changed {
+        trn_with(
+            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track.",
+            "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks.",
+            status.total_track_count as u64,
+            &args,
+        )
     } else {
-        tr("Saved mapping.")
-    };
-    format!(
-        "{} {} direct, {} prefix, {} metadata, {} unmatched of {} tracks.",
-        lead,
-        status.direct_match_count,
-        status.prefix_match_count,
-        status.metadata_match_count,
-        status.unmatched_count,
-        status.total_track_count
-    )
+        trn_with(
+            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} track.",
+            "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, {unmatched} unmatched of {total} tracks.",
+            status.total_track_count as u64,
+            &args,
+        )
+    }
 }
 
 fn infer_path_prefixes(server_path: &str, local_path: &str) -> Option<(String, String)> {
