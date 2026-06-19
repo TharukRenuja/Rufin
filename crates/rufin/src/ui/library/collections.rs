@@ -30,7 +30,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller: &gtk::ScrolledWindow,
 ) {
     scroller.add_css_class("library-route-scroller");
-    configure_fill_width_clip(scroller, gtk::PolicyType::Automatic);
+    configure_fill_width_clip(scroller, gtk::PolicyType::Always);
     scroller.set_propagate_natural_height(false);
     scroller.set_overlay_scrolling(false);
     scroller.set_hexpand(true);
