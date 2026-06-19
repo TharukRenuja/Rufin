@@ -493,6 +493,52 @@ fn route_track_set() {
     );
 }
 #[test]
+fn row_cover_warm_requires_cover_field() {
+    let mut settings = LibraryListSettings {
+        layout: LibraryLayout::Row,
+        row_fields: vec![LibraryField::TitleMerged, LibraryField::Album],
+        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+    };
+
+    assert!(super::row_layout_uses_cover(&settings));
+    settings.row_fields = vec![LibraryField::Title, LibraryField::Album];
+    assert!(!super::row_layout_uses_cover(&settings));
+    settings.row_fields = vec![LibraryField::Image, LibraryField::Title];
+    assert!(super::row_layout_uses_cover(&settings));
+}
+#[test]
+fn track_viewport_refs_follow_model_order() {
+    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
+    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
+        1,
+        "First",
+        "cover-one",
+    )));
+    model.append(&gtk::glib::BoxedAnyObject::new(test_track(
+        2, "Missing", 1, 2,
+    )));
+    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
+        3,
+        "Duplicate",
+        "cover-one",
+    )));
+    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
+        4,
+        "Second",
+        "cover-two",
+    )));
+
+    let refs = super::library_track_range(&model, 0, 4);
+
+    assert_eq!(
+        refs,
+        vec![
+            ImageRef::new("cover-one".to_string(), None),
+            ImageRef::new("cover-two".to_string(), None),
+        ]
+    );
+}
+#[test]
 fn disc_track_order() {
     let mut tracks = vec![
         test_track(1, "Second", 1, 2),
