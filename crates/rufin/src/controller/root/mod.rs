@@ -71,7 +71,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
-mod app_cache_commands;
 mod auto_dj;
 mod auto_dj_commands;
 mod cached_library_api;

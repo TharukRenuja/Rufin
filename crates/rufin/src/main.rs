@@ -34,12 +34,6 @@ struct Cli {
     #[arg(long, value_enum)]
     fake_scale: Option<FakeScaleArg>,
 
-    #[arg(long)]
-    clear_cache: bool,
-
-    #[arg(long)]
-    forget_active_server: bool,
-
     #[arg(long, hide = true)]
     startup_check: bool,
 }
@@ -70,32 +64,6 @@ fn main() -> ExitCode {
 
     init_tracing();
     i18n::init(&i18n::startup_language_preference());
-
-    if cli.clear_cache && cli.forget_active_server {
-        error!("use only one maintenance flag at a time");
-        return ExitCode::from(2);
-    }
-    if cli.clear_cache {
-        match controller::AppController::clear_app_cache() {
-            Ok(()) => info!("cleared active server cache"),
-            Err(error) => {
-                error!(%error, "failed to clear active server cache");
-                return ExitCode::FAILURE;
-            }
-        }
-        return ExitCode::SUCCESS;
-    }
-
-    if cli.forget_active_server {
-        match controller::AppController::forget_active_server_for_app() {
-            Ok(()) => info!("forgot active server"),
-            Err(error) => {
-                error!(%error, "failed to forget active server");
-                return ExitCode::FAILURE;
-            }
-        }
-        return ExitCode::SUCCESS;
-    }
 
     let options = ui::AppOptions {
         #[cfg(feature = "dev-tools")]
