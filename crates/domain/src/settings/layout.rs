@@ -45,21 +45,51 @@ fn default_narrow_layout_threshold() -> i32 {
 }
 pub const MIN_NARROW_LAYOUT_THRESHOLD: i32 = 700;
 pub const MAX_NARROW_LAYOUT_THRESHOLD: i32 = 3_400;
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub enum LeftSidebarMode {
     #[default]
     Full,
     Compact,
     Hidden,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+impl<'de> Deserialize<'de> for LeftSidebarMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "Full" => Self::Full,
+            "Compact" => Self::Compact,
+            "Hidden" => Self::Hidden,
+            _ => Self::default(),
+        })
+    }
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub enum RightSidebarMode {
     Hidden,
     Compact,
-    Default,
     #[default]
+    Default,
     Comfortable,
     Spacious,
+}
+impl<'de> Deserialize<'de> for RightSidebarMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "Hidden" => Self::Hidden,
+            "Compact" => Self::Compact,
+            "Default" => Self::Default,
+            "Comfortable" => Self::Comfortable,
+            "Spacious" => Self::Spacious,
+            _ => Self::default(),
+        })
+    }
 }
 impl RightSidebarMode {
     pub fn is_visible(self) -> bool {
@@ -104,7 +134,7 @@ impl LayoutProfile {
 }
 impl Default for LayoutProfile {
     fn default() -> Self {
-        Self::new(LeftSidebarMode::Full, RightSidebarMode::Comfortable)
+        Self::new(LeftSidebarMode::Full, RightSidebarMode::Default)
     }
 }
 fn default_narrow_layout_profile() -> LayoutProfile {
@@ -136,7 +166,7 @@ impl LayoutSettings {
         self.narrow_threshold = self
             .narrow_threshold
             .clamp(MIN_NARROW_LAYOUT_THRESHOLD, MAX_NARROW_LAYOUT_THRESHOLD);
-        self.default_profile.sanitize(RightSidebarMode::Comfortable);
+        self.default_profile.sanitize(RightSidebarMode::Default);
         self.narrow_profile.sanitize(RightSidebarMode::Default);
     }
 }

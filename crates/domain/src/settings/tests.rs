@@ -1,11 +1,12 @@
 use super::{
     AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
-    ExternalLyricsProvider, LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout,
-    LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
-    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MIN_AUTO_DJ_REFILL_THRESHOLD,
-    MIN_CROSSFADE_SECONDS, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
-    SecretStorageMode, SidebarRouteItem, TrackSortKey, TrackTableColumn,
-    available_detail_track_fields, default_external_lyrics_providers, sanitized_window_size,
+    ExternalLyricsProvider, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode, LibraryField,
+    LibraryLayout, LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD,
+    MAX_CROSSFADE_SECONDS, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH,
+    MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, RightSidebarMode,
+    SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings, SecretStorageMode, SidebarRouteItem,
+    TrackSortKey, TrackTableColumn, available_detail_track_fields,
+    default_external_lyrics_providers, sanitized_window_size,
 };
 #[test]
 fn settings_missing_secret_storage_mode_uses_legacy_config() {
@@ -142,7 +143,7 @@ fn settings_restore_without_window_geometry() {
     assert!(restored.lyrics_panel_visible);
     assert_eq!(
         restored.layout.default_profile.right_sidebar,
-        RightSidebarMode::Comfortable
+        RightSidebarMode::Default
     );
     assert_eq!(
         restored.layout.narrow_profile.right_sidebar,
@@ -164,6 +165,58 @@ fn settings_restore_without_window_geometry() {
     assert!(restored.type_to_search_enabled);
     assert!(restored.control_notifications_enabled);
     assert!(restored.release_notifications_enabled);
+}
+
+#[test]
+fn settings_unknown_layout_modes_keep_auth_settings() {
+    let json = r#"{
+        "layout": {
+            "default_profile": {
+                "left_sidebar": "Future",
+                "right_sidebar": "Future",
+                "last_visible_right_sidebar": "Future"
+            },
+            "narrow_profile": {
+                "left_sidebar": "Hidden",
+                "right_sidebar": "Comfortable"
+            }
+        },
+        "theme_preference": "System",
+        "private_mode": false,
+        "notifications_enabled": false,
+        "secret_storage_mode": "system-keyring",
+        "secret_scope_id": "test-scope",
+        "external_lyrics_enabled": true,
+        "discord_presence_enabled": false
+    }"#;
+
+    let settings = serde_json::from_str::<AppSettings>(json).expect("deserialize settings");
+
+    assert_eq!(
+        settings.secret_storage_mode,
+        SecretStorageMode::SystemKeyring
+    );
+    assert_eq!(settings.secret_scope_id, "test-scope");
+    assert_eq!(
+        settings.layout.default_profile.left_sidebar,
+        LeftSidebarMode::Full
+    );
+    assert_eq!(
+        settings.layout.default_profile.right_sidebar,
+        RightSidebarMode::Default
+    );
+    assert_eq!(
+        settings.layout.default_profile.last_visible_right_sidebar,
+        RightSidebarMode::Default
+    );
+    assert_eq!(
+        settings.layout.narrow_profile.left_sidebar,
+        LeftSidebarMode::Hidden
+    );
+    assert_eq!(
+        settings.layout.narrow_profile.right_sidebar,
+        RightSidebarMode::Comfortable
+    );
 }
 
 #[test]

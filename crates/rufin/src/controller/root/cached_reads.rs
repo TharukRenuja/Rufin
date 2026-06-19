@@ -518,7 +518,10 @@ pub(in crate::controller) fn trimmed_optional(value: Option<&str>) -> Option<Str
         .map(ToString::to_string)
 }
 pub(in crate::controller) fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
-    let mut settings = store.load_settings().unwrap_or_default();
+    let mut settings = store.load_settings().unwrap_or_else(|error| {
+        warn!(%error, "failed to load settings, using defaults");
+        AppSettings::default()
+    });
     settings.migrate_defaults();
     settings
 }
