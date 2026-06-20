@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-20 18:04+0000\n"
+"PO-Revision-Date: 2026-06-21 21:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -81,7 +81,7 @@ msgid "Add music to start a queue."
 msgstr "Добавьте музыку, чтобы начать создавать очередь воспроизведения."
 
 msgid "Add to Favorites"
-msgstr "Добавить в Избранное"
+msgstr "Добавить в избранное"
 
 msgid "Add to Playlist"
 msgstr "Добавить в плейлист"
@@ -186,11 +186,10 @@ msgstr "Кэшировано"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Кэшированные элементы появятся здесь после завершения синхронизации"
 
-#, fuzzy
 msgid "Cached library data will appear here as sync pages finish."
 msgstr ""
-"Кэшированные данные библиотеки будут отображаться здесь после завершения "
-"синхронизации страниц"
+"Кэшированные данные библиотеки будут отображаться здесь по мере завершения "
+"синхронизации."
 
 msgid "Cached library ready"
 msgstr "Кэшированная библиотека готова"
@@ -198,19 +197,15 @@ msgstr "Кэшированная библиотека готова"
 msgid "Caching Library"
 msgstr "Кэшированная библиотека"
 
-#, fuzzy
 msgid "Caching library artwork…"
 msgstr "Кэширование обложек альбомов…"
 
-#, fuzzy
 msgid "Caching library… This may take some time."
 msgstr "Кэширование библиотеки… Это может занять некоторое время."
 
-#, fuzzy
 msgid "Caching local library…"
 msgstr "Кэширование локальной библиотеки…"
 
-#, fuzzy
 msgid "Caching local library… This may take some time."
 msgstr "Кэширование локальной библиотеки… Это может занять некоторое время."
 
@@ -234,7 +229,7 @@ msgstr ""
 "данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
 "приложения не затрагивается."
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Checking {provider} server…"
 msgstr "Проверка сервера {provider}…"
 
@@ -338,7 +333,6 @@ msgstr "Подключено"
 msgid "Connected as {username}"
 msgstr "Вы вошли как {username}"
 
-#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Подключение к музыкальному серверу…"
 
@@ -590,7 +584,7 @@ msgid "Image"
 msgstr "Изображение"
 
 msgid "Installed"
-msgstr ""
+msgstr "Установлено"
 
 msgid "Interface"
 msgstr "Интерфейс"
@@ -655,7 +649,6 @@ msgstr "Отправка данных о прослушивании в ListenBra
 msgid "Loaded in lyrics panel."
 msgstr "Загружено в панель с текстами песен."
 
-#, fuzzy
 msgid "Loading folders…"
 msgstr "Загрузка папок…"
 
@@ -813,9 +806,8 @@ msgstr ""
 msgid "No Servers Found"
 msgstr "Серверы не найдены"
 
-#, fuzzy
 msgid "No cached results found."
-msgstr "Кэшированные результаты не найдены"
+msgstr "Кэшированных результатов не найдено."
 
 msgid "No cached server path yet"
 msgstr "Пока нет кэшированных путей к серверу"
@@ -927,13 +919,11 @@ msgstr "Открыть на MusicBrainz"
 msgid "Open release notes"
 msgstr "Открыть примечания к выпуску"
 
-#, fuzzy
 msgid "Opening Last.fm authorization…"
-msgstr "Запуск процесса авторизации в Last.fm…"
+msgstr "Запуск авторизации в Last.fm…"
 
-#, fuzzy
 msgid "Opening Libre.fm authorization…"
-msgstr "Запуск процесса авторизации в Libre.fm…"
+msgstr "Открытие окна авторизации Libre.fm…"
 
 msgid "Optionally map server tracks to files on this computer"
 msgstr ""
@@ -958,10 +948,10 @@ msgid "Play"
 msgstr "Воспроизвести"
 
 msgid "Play Later"
-msgstr "Воспроизвести Позже"
+msgstr "Воспроизвести позже"
 
 msgid "Play Next"
-msgstr "Воспроизвести следующий"
+msgstr "Воспроизвести следующим"
 
 msgid "Play Now"
 msgstr "Воспроизвести Сейчас"
@@ -1026,7 +1016,6 @@ msgstr "Предпочитать обложки плейлистов, храня
 msgid "Preferences"
 msgstr "Настройки"
 
-#, fuzzy
 msgid "Preparing library…"
 msgstr "Подготовка библиотеки…"
 
@@ -1249,18 +1238,15 @@ msgstr "Поиск в очереди воспроизведения"
 msgid "Searching Local Network"
 msgstr "Поиск в локальной сети"
 
-#, fuzzy
 msgid "Searching for Jellyfin servers on the local network…"
 msgstr "Поиск серверов Jellyfin в локальной сети…"
 
 msgid "Searching will start automatically"
 msgstr "Поиск начнётся автоматически"
 
-#, fuzzy
 msgid "Searching..."
-msgstr "Поиск…"
+msgstr "Выполняется поиск..."
 
-#, fuzzy
 msgid "Searching…"
 msgstr "Поиск…"
 
@@ -1322,7 +1308,6 @@ msgstr "Выбор сервера"
 msgid "Server settings saved."
 msgstr "Настройки сервера сохранены."
 
-#, fuzzy
 msgid "Server settings saved. Resyncing library…"
 msgstr ""
 "Настройки сервера сохранены. Выполняется повторная синхронизация библиотеки…"
@@ -1444,7 +1429,6 @@ msgstr "Качество потока"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-#, fuzzy
 msgid "Switching library…"
 msgstr "Переключение библиотеки…"
 
@@ -1454,7 +1438,7 @@ msgstr "Синхронизация уже выполняется."
 msgid "Synced lyrics"
 msgstr "Синхронизированные тексты песен"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Syncing {provider} library…"
 msgstr "Синхронизация библиотеки {provider}…"
 
@@ -1586,7 +1570,7 @@ msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
 
 msgid "Version History"
-msgstr ""
+msgstr "История версий"
 
 msgid "View"
 msgstr "Вид"
@@ -1661,10 +1645,10 @@ msgid "to"
 msgstr "до"
 
 msgid "today"
-msgstr ""
+msgstr "сегодня"
 
 msgid "yesterday"
-msgstr ""
+msgstr "вчера"
 
 #, rust-format
 msgid "{count} album"
@@ -1673,12 +1657,12 @@ msgstr[0] "{count} альбом"
 msgstr[1] "{count} альбома"
 msgstr[2] "{count} альбомов"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
-msgstr[0] "{count} альбом"
-msgstr[1] "{count} альбома"
-msgstr[2] "{count} альбомов"
+msgstr[0] "{count} день назад"
+msgstr[1] "{count} дня назад"
+msgstr[2] "{count} дней назад"
 
 #, rust-format
 msgid "{count} folder"
@@ -1694,12 +1678,12 @@ msgstr[0] "{count} папка выбрана"
 msgstr[1] "{count} папки выбрано"
 msgstr[2] "{count} папок выбрано"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
-msgstr[0] "{count} трек"
-msgstr[1] "{count} трека"
-msgstr[2] "{count} треков"
+msgstr[0] "{count} месяц назад"
+msgstr[1] "{count} месяца назад"
+msgstr[2] "{count} месяцев назад"
 
 #, rust-format
 msgid "{count} result"
@@ -1715,19 +1699,19 @@ msgstr[0] "{count} трек"
 msgstr[1] "{count} трека"
 msgstr[2] "{count} треков"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
-msgstr[0] "{count} альбом"
-msgstr[1] "{count} альбома"
-msgstr[2] "{count} альбомов"
+msgstr[0] "{count} неделю назад"
+msgstr[1] "{count} недели назад"
+msgstr[2] "{count} недель назад"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
-msgstr[0] "{count} трек"
-msgstr[1] "{count} трека"
-msgstr[2] "{count} треков"
+msgstr[0] "{count} год назад"
+msgstr[1] "{count} года назад"
+msgstr[2] "{count} лет назад"
 
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
