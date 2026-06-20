@@ -34,6 +34,46 @@ pub(super) fn saved_server_with_id(server_id: &str) -> SavedServer {
     }
 }
 
+pub(super) struct StoreCase {
+    pub(super) store: Store,
+    pub(super) id: ServerId,
+}
+
+impl StoreCase {
+    pub(super) fn open() -> Self {
+        Self::with_server(saved_server())
+    }
+
+    pub(super) fn with_server_id(server_id: &str) -> Self {
+        Self::with_server(saved_server_with_id(server_id))
+    }
+
+    pub(super) fn start_sync(&self, label: &str) -> i64 {
+        self.store.begin_sync(&self.id).expect(label)
+    }
+
+    pub(super) fn finish_sync(&self, generation: i64, label: &str) {
+        self.store.complete_sync(&self.id, generation).expect(label);
+    }
+
+    fn with_server(saved: SavedServer) -> Self {
+        let store = Store::open_memory().expect("open store");
+        store.save_server(&saved).expect("save server");
+        Self {
+            store,
+            id: saved.server.id,
+        }
+    }
+}
+
+impl std::ops::Deref for StoreCase {
+    type Target = Store;
+
+    fn deref(&self) -> &Self::Target {
+        &self.store
+    }
+}
+
 pub(super) fn album(number: u32) -> Album {
     Album {
         id: AlbumId::fake(number),

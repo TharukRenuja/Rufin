@@ -769,50 +769,37 @@ fn schema_load_source() {
 }
 #[test]
 fn schema_clear_lifecycle() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server_with_id("local:server:manifest");
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::with_server_id("local:server:manifest");
     let entry = local_manifest_entry();
 
-    store
-        .replace_local_manifest(&saved.server.id, 1, std::slice::from_ref(&entry))
+    case.replace_local_manifest(&case.id, 1, std::slice::from_ref(&entry))
         .expect("replace manifest");
 
     assert_eq!(
-        store
-            .load_local_manifest(&saved.server.id)
-            .expect("load manifest"),
+        case.load_local_manifest(&case.id).expect("load manifest"),
         vec![entry.clone()]
     );
 
-    store
-        .clear_library_cache(&saved.server.id)
+    case.clear_library_cache(&case.id)
         .expect("clear library cache");
     assert!(
-        store
-            .load_local_manifest(&saved.server.id)
+        case.load_local_manifest(&case.id)
             .expect("load cleared manifest")
             .is_empty()
     );
 
-    store
-        .replace_local_manifest(&saved.server.id, 2, std::slice::from_ref(&entry))
+    case.replace_local_manifest(&case.id, 2, std::slice::from_ref(&entry))
         .expect("replace manifest again");
-    store
-        .forget_server(&saved.server.id)
-        .expect("forget server");
+    case.forget_server(&case.id).expect("forget server");
     assert!(
-        store
-            .load_local_manifest(&saved.server.id)
+        case.load_local_manifest(&case.id)
             .expect("load forgotten manifest")
             .is_empty()
     );
 }
 #[test]
 fn schema_track_commit() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server_with_id("local:server:rollback");
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::with_server_id("local:server:rollback");
     let album = album(1);
     let mut kept = track(1, &album);
     kept.local_path = Some("/music/Album/kept.mp3".to_string());
@@ -830,40 +817,23 @@ fn schema_track_commit() {
     removed_entry.facts.relative_path = "Album/removed.mp3".to_string();
     removed_entry.metadata_hash = "metadata-removed".to_string();
     removed_entry.search_hash = "search-removed".to_string();
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[kept.clone(), removed.clone()],
-            first_generation,
-        )
+    case.upsert_tracks(&case.id, &[kept.clone(), removed.clone()], first_generation)
         .expect("upsert tracks");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
-    store
-        .replace_local_manifest(
-            &saved.server.id,
-            first_generation,
-            &[kept_entry.clone(), removed_entry],
-        )
-        .expect("replace manifest");
-    let failed_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin failed sync");
+    case.finish_sync(first_generation, "complete first sync");
+    case.replace_local_manifest(
+        &case.id,
+        first_generation,
+        &[kept_entry.clone(), removed_entry],
+    )
+    .expect("replace manifest");
+    let failed_generation = case.start_sync("begin failed sync");
     let mut duplicate_manifest = kept_entry.clone();
     duplicate_manifest.track.id = TrackId::fake(99);
-    let error = store.commit_local_library_delta(
-        &saved.server.id,
+    let error = case.commit_local_library_delta(
+        &case.id,
         failed_generation,
         LocalLibraryDelta {
             deleted_track_ids: vec![removed.id.clone()],
@@ -876,13 +846,12 @@ fn schema_track_commit() {
     );
 
     let _error = error.expect_err("duplicate manifest should fail");
-    let tracks = store
-        .load_tracks(&saved.server.id, 0, 10)
+    let tracks = case
+        .load_tracks(&case.id, 0, 10)
         .expect("tracks after failed delta");
     assert_eq!(tracks.total, 2);
     assert_eq!(
-        store
-            .track_local_path(&saved.server.id, &removed.id)
+        case.track_local_path(&case.id, &removed.id)
             .expect("removed path after failed delta")
             .as_deref(),
         Some("/music/Album/removed.mp3")
@@ -891,9 +860,7 @@ fn schema_track_commit() {
 
 #[test]
 fn schema_local_delta_preserves_favorite_flags() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server_with_id("local:server:favorites");
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::with_server_id("local:server:favorites");
     let mut album = album(1);
     album.favorite = true;
     let mut changed_track = track(10, &album);
@@ -906,42 +873,30 @@ fn schema_local_delta_preserves_favorite_flags() {
     let mut album_artist = artist(21, None);
     album_artist.id = ArtistId::new("local:album-artist:favorites-artist");
     album_artist.favorite = true;
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[changed_track.clone(), metadata_track.clone()],
-            first_generation,
-        )
-        .expect("upsert tracks");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&library_artist),
-            false,
-            first_generation,
-        )
-        .expect("upsert artist");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&album_artist),
-            true,
-            first_generation,
-        )
-        .expect("upsert album artist");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
+    case.upsert_tracks(
+        &case.id,
+        &[changed_track.clone(), metadata_track.clone()],
+        first_generation,
+    )
+    .expect("upsert tracks");
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&library_artist),
+        false,
+        first_generation,
+    )
+    .expect("upsert artist");
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&album_artist),
+        true,
+        first_generation,
+    )
+    .expect("upsert album artist");
+    case.finish_sync(first_generation, "complete first sync");
 
     let mut incoming_album = album.clone();
     incoming_album.favorite = false;
@@ -960,54 +915,51 @@ fn schema_local_delta_preserves_favorite_flags() {
     let mut incoming_album_artist = album_artist.clone();
     incoming_album_artist.favorite = false;
     incoming_album_artist.album_count += 1;
-    let second_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin second sync");
-    store
-        .commit_local_library_delta(
-            &saved.server.id,
-            second_generation,
-            LocalLibraryDelta {
-                changed_tracks: vec![incoming_changed_track.clone(), new_track.clone()],
-                metadata_tracks: vec![incoming_metadata_track.clone()],
-                current_track_ids: vec![
-                    changed_track.id.clone(),
-                    metadata_track.id.clone(),
-                    new_track.id.clone(),
-                ],
-                current_album_ids: vec![album.id.clone()],
-                current_artist_ids: vec![library_artist.id.clone()],
-                current_album_artist_ids: vec![album_artist.id.clone()],
-                dirty_albums: vec![incoming_album.clone()],
-                dirty_artists: vec![incoming_artist.clone()],
-                dirty_album_artists: vec![incoming_album_artist.clone()],
-                ..LocalLibraryDelta::default()
-            },
-        )
-        .expect("commit local delta");
+    let second_generation = case.start_sync("begin second sync");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        LocalLibraryDelta {
+            changed_tracks: vec![incoming_changed_track.clone(), new_track.clone()],
+            metadata_tracks: vec![incoming_metadata_track.clone()],
+            current_track_ids: vec![
+                changed_track.id.clone(),
+                metadata_track.id.clone(),
+                new_track.id.clone(),
+            ],
+            current_album_ids: vec![album.id.clone()],
+            current_artist_ids: vec![library_artist.id.clone()],
+            current_album_artist_ids: vec![album_artist.id.clone()],
+            dirty_albums: vec![incoming_album.clone()],
+            dirty_artists: vec![incoming_artist.clone()],
+            dirty_album_artists: vec![incoming_album_artist.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit local delta");
 
-    let loaded_changed = store
-        .load_track(&saved.server.id, &changed_track.id)
+    let loaded_changed = case
+        .load_track(&case.id, &changed_track.id)
         .expect("load changed track")
         .expect("changed track");
-    let loaded_metadata = store
-        .load_track(&saved.server.id, &metadata_track.id)
+    let loaded_metadata = case
+        .load_track(&case.id, &metadata_track.id)
         .expect("load metadata track")
         .expect("metadata track");
-    let loaded_new = store
-        .load_track(&saved.server.id, &new_track.id)
+    let loaded_new = case
+        .load_track(&case.id, &new_track.id)
         .expect("load new track")
         .expect("new track");
-    let loaded_albums = store
-        .load_albums(&saved.server.id, 0, 10)
+    let loaded_albums = case
+        .load_albums(&case.id, 0, 10)
         .expect("load albums")
         .items;
-    let loaded_artists = store
-        .load_artists(&saved.server.id, false, 0, 10)
+    let loaded_artists = case
+        .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
         .items;
-    let loaded_album_artists = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded_album_artists = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists")
         .items;
     let loaded_album = loaded_albums
@@ -1044,39 +996,23 @@ fn schema_local_delta_preserves_favorite_flags() {
 
 #[test]
 fn artwork_delta_update() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let mut album = album(1);
     album.genres = vec!["Dream Pop".to_string()];
     album.image_ref = Some(image_ref("local:cover:file:album", "cover-one"));
     let mut track = track(1, &album);
     track.local_path = Some("/music/Album/track.mp3".to_string());
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&track),
-            first_generation,
-        )
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
         .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
-    let fts_rowid = library_fts_rowid(&store, &saved.server.id, &track.id);
-    let genre_rowid = track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop");
+    case.finish_sync(first_generation, "complete first sync");
+    let fts_rowid = library_fts_rowid(&case, &case.id, &track.id);
+    let genre_rowid = track_genre_rowid(&case, &case.id, &track.id, "Dream Pop");
     let artist_rowid = track_artist_link_rowid(
-        &store,
-        &saved.server.id,
+        &case,
+        &case.id,
         &track.id,
         track.artist_id.as_ref().expect("artist id"),
     );
@@ -1085,26 +1021,23 @@ fn artwork_delta_update() {
     updated_album.image_ref = Some(image_ref("local:cover:file:album", "cover-two"));
     let mut artwork_track = track.clone();
     artwork_track.image_ref = updated_album.image_ref.clone();
-    let second_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin artwork sync");
-    store
-        .commit_local_library_delta(
-            &saved.server.id,
-            second_generation,
-            LocalLibraryDelta {
-                artwork_tracks: vec![artwork_track],
-                current_track_ids: vec![track.id.clone()],
-                current_album_ids: vec![updated_album.id.clone()],
-                dirty_albums: vec![updated_album],
-                manifest_entries: vec![local_manifest_entry()],
-                ..LocalLibraryDelta::default()
-            },
-        )
-        .expect("commit artwork delta");
+    let second_generation = case.start_sync("begin artwork sync");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        LocalLibraryDelta {
+            artwork_tracks: vec![artwork_track],
+            current_track_ids: vec![track.id.clone()],
+            current_album_ids: vec![updated_album.id.clone()],
+            dirty_albums: vec![updated_album],
+            manifest_entries: vec![local_manifest_entry()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit artwork delta");
 
-    let loaded = store
-        .load_track(&saved.server.id, &track.id)
+    let loaded = case
+        .load_track(&case.id, &track.id)
         .expect("load track")
         .expect("track");
     assert_eq!(
@@ -1114,18 +1047,15 @@ fn artwork_delta_update() {
             .and_then(|image| image.tag.as_deref()),
         Some("cover-two")
     );
+    assert_eq!(library_fts_rowid(&case, &case.id, &track.id), fts_rowid);
     assert_eq!(
-        library_fts_rowid(&store, &saved.server.id, &track.id),
-        fts_rowid
-    );
-    assert_eq!(
-        track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop"),
+        track_genre_rowid(&case, &case.id, &track.id, "Dream Pop"),
         genre_rowid
     );
     assert_eq!(
         track_artist_link_rowid(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             &track.id,
             track.artist_id.as_ref().expect("artist id"),
         ),
@@ -1135,120 +1065,91 @@ fn artwork_delta_update() {
 
 #[test]
 fn meta_delta_update() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let mut album = album(1);
     album.genres = vec!["Dream Pop".to_string()];
     let mut track = super::test_support::track(1, &album);
     track.local_path = Some("/music/Album/track.mp3".to_string());
     let mut retained_track = super::test_support::track(2, &album);
     retained_track.local_path = Some("/music/Album/retained.mp3".to_string());
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[track.clone(), retained_track.clone()],
-            first_generation,
-        )
-        .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
-    let fts_rowid = library_fts_rowid(&store, &saved.server.id, &track.id);
-    let genre_rowid = track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop");
+    case.upsert_tracks(
+        &case.id,
+        &[track.clone(), retained_track.clone()],
+        first_generation,
+    )
+    .expect("upsert track");
+    case.finish_sync(first_generation, "complete first sync");
+    let fts_rowid = library_fts_rowid(&case, &case.id, &track.id);
+    let genre_rowid = track_genre_rowid(&case, &case.id, &track.id, "Dream Pop");
     let artist_rowid = track_artist_link_rowid(
-        &store,
-        &saved.server.id,
+        &case,
+        &case.id,
         &track.id,
         track.artist_id.as_ref().expect("artist id"),
     );
     let retained_track_generation =
-        track_table_generation(&store, "tracks", &saved.server.id, &retained_track.id);
+        track_table_generation(&case, "tracks", &case.id, &retained_track.id);
     let retained_genre_generation =
-        track_table_generation(&store, "track_genres", &saved.server.id, &retained_track.id);
-    let retained_artist_generation = track_table_generation(
-        &store,
-        "track_artist_links",
-        &saved.server.id,
-        &retained_track.id,
-    );
+        track_table_generation(&case, "track_genres", &case.id, &retained_track.id);
+    let retained_artist_generation =
+        track_table_generation(&case, "track_artist_links", &case.id, &retained_track.id);
 
     let mut updated_track = track.clone();
     updated_track.duration_seconds += 1;
-    let second_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin metadata sync");
-    store
-        .commit_local_library_delta(
-            &saved.server.id,
-            second_generation,
-            LocalLibraryDelta {
-                metadata_tracks: vec![updated_track.clone()],
-                current_track_ids: vec![track.id.clone(), retained_track.id.clone()],
-                current_album_ids: vec![album.id.clone()],
-                dirty_albums: vec![album],
-                manifest_entries: vec![local_manifest_entry()],
-                ..LocalLibraryDelta::default()
-            },
-        )
-        .expect("commit metadata delta");
+    let second_generation = case.start_sync("begin metadata sync");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        LocalLibraryDelta {
+            metadata_tracks: vec![updated_track.clone()],
+            current_track_ids: vec![track.id.clone(), retained_track.id.clone()],
+            current_album_ids: vec![album.id.clone()],
+            dirty_albums: vec![album],
+            manifest_entries: vec![local_manifest_entry()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit metadata delta");
 
-    let loaded = store
-        .load_track(&saved.server.id, &track.id)
+    let loaded = case
+        .load_track(&case.id, &track.id)
         .expect("load track")
         .expect("track");
     assert_eq!(loaded.duration_seconds, updated_track.duration_seconds);
+    assert_eq!(library_fts_rowid(&case, &case.id, &track.id), fts_rowid);
     assert_eq!(
-        library_fts_rowid(&store, &saved.server.id, &track.id),
-        fts_rowid
-    );
-    assert_eq!(
-        track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop"),
+        track_genre_rowid(&case, &case.id, &track.id, "Dream Pop"),
         genre_rowid
     );
     assert_eq!(
         track_artist_link_rowid(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             &track.id,
             track.artist_id.as_ref().expect("artist id"),
         ),
         artist_rowid
     );
     assert_eq!(
-        track_table_generation(&store, "tracks", &saved.server.id, &retained_track.id),
+        track_table_generation(&case, "tracks", &case.id, &retained_track.id),
         retained_track_generation
     );
     assert_eq!(
-        track_table_generation(&store, "track_genres", &saved.server.id, &retained_track.id),
+        track_table_generation(&case, "track_genres", &case.id, &retained_track.id),
         retained_genre_generation
     );
     assert_eq!(
-        track_table_generation(
-            &store,
-            "track_artist_links",
-            &saved.server.id,
-            &retained_track.id
-        ),
+        track_table_generation(&case, "track_artist_links", &case.id, &retained_track.id),
         retained_artist_generation
     );
 }
 
 #[test]
 fn schema_update_id() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let mut first_album = album(1);
     first_album.artist = "Primary Artist".to_string();
     first_album.artist_id = Some(ArtistId::fake(10));
@@ -1262,57 +1163,44 @@ fn schema_update_id() {
     track.artist_id = first_album.artist_id.clone();
     track.artist_credits = vec![credit(credited_artist_id.clone(), "Featured Artist")];
     track.local_path = Some("/music/Album/track.mp3".to_string());
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&first_album),
-            first_generation,
-        )
-        .expect("upsert first album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&track),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(
+        &case.id,
+        std::slice::from_ref(&first_album),
+        first_generation,
+    )
+    .expect("upsert first album");
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
         .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
+    case.finish_sync(first_generation, "complete first sync");
     assert_eq!(
-        track_artist_link_album_id(&store, &saved.server.id, &track.id, &credited_artist_id),
+        track_artist_link_album_id(&case, &case.id, &track.id, &credited_artist_id),
         first_album.id
     );
 
     let mut updated_track = track.clone();
     updated_track.album_id = second_album.id.clone();
-    let second_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin album move sync");
-    store
-        .commit_local_library_delta(
-            &saved.server.id,
-            second_generation,
-            LocalLibraryDelta {
-                changed_tracks: vec![updated_track.clone()],
-                current_track_ids: vec![updated_track.id.clone()],
-                current_album_ids: vec![second_album.id.clone()],
-                dirty_albums: vec![second_album.clone()],
-                manifest_entries: vec![local_manifest_entry()],
-                ..LocalLibraryDelta::default()
-            },
-        )
-        .expect("commit changed track delta");
+    let second_generation = case.start_sync("begin album move sync");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        LocalLibraryDelta {
+            changed_tracks: vec![updated_track.clone()],
+            current_track_ids: vec![updated_track.id.clone()],
+            current_album_ids: vec![second_album.id.clone()],
+            dirty_albums: vec![second_album.clone()],
+            manifest_entries: vec![local_manifest_entry()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit changed track delta");
 
     assert_eq!(
-        track_artist_link_album_id(&store, &saved.server.id, &track.id, &credited_artist_id),
+        track_artist_link_album_id(&case, &case.id, &track.id, &credited_artist_id),
         second_album.id
     );
-    let detail = store
-        .load_artist_detail(&saved.server.id, &credited_artist_id)
+    let detail = case
+        .load_artist_detail(&case.id, &credited_artist_id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(
@@ -1429,21 +1317,17 @@ fn track_table_generation(
 
 #[test]
 fn server_local_access_round_trips() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let access = ServerLocalAccess {
-        server_id: saved.server.id.clone(),
+        server_id: case.id.clone(),
         root_path: "/home/me/Music".to_string(),
         path_replace_from: Some("/media/music".to_string()),
         path_replace_to: Some("/home/me/Music".to_string()),
     };
-    store
-        .save_server_local_access(&access)
+    case.save_server_local_access(&access)
         .expect("save local access");
     assert_eq!(
-        store
-            .server_local_access(&saved.server.id)
+        case.server_local_access(&case.id)
             .expect("load local access"),
         Some(access)
     );
@@ -1451,19 +1335,16 @@ fn server_local_access_round_trips() {
 
 #[test]
 fn local_access_status_counts_cached_mapping() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let access = ServerLocalAccess {
-        server_id: saved.server.id.clone(),
+        server_id: case.id.clone(),
         root_path: "/home/demo/Music".to_string(),
         path_replace_from: Some("/server/music".to_string()),
         path_replace_to: Some("/home/demo/Music".to_string()),
     };
-    store
-        .save_server_local_access(&access)
+    case.save_server_local_access(&access)
         .expect("save local access");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut direct = track(1, &album);
     direct.local_path = Some("/mnt/library/direct.flac".to_string());
@@ -1474,25 +1355,23 @@ fn local_access_status_counts_cached_mapping() {
     let mut metadata = track(4, &album);
     metadata.local_path = Some("/server/music/Album/metadata.flac".to_string());
     let unmatched = track(5, &album);
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[direct, prefix, relative, metadata.clone(), unmatched],
-            generation,
-        )
-        .expect("upsert tracks");
-    store
-        .replace_track_local_matches(
-            &saved.server.id,
-            &[(
-                metadata.id.clone(),
-                "/home/demo/Music/Album/metadata.flac".to_string(),
-                "metadata".to_string(),
-            )],
-        )
-        .expect("replace local matches");
+    case.upsert_tracks(
+        &case.id,
+        &[direct, prefix, relative, metadata.clone(), unmatched],
+        generation,
+    )
+    .expect("upsert tracks");
+    case.replace_track_local_matches(
+        &case.id,
+        &[(
+            metadata.id.clone(),
+            "/home/demo/Music/Album/metadata.flac".to_string(),
+            "metadata".to_string(),
+        )],
+    )
+    .expect("replace local matches");
 
-    let status = store
+    let status = case
         .local_access_status_facts(&access)
         .expect("local access status");
 
@@ -1513,45 +1392,37 @@ fn local_access_status_counts_cached_mapping() {
 
 #[test]
 fn track_local_path_round_trips() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.local_path = Some("/home/me/Music/Track 1.flac".to_string());
     track.source_format = Some("flac".to_string());
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     assert_eq!(
-        store
-            .track_local_path(&saved.server.id, &track.id)
+        case.track_local_path(&case.id, &track.id)
             .expect("track local path"),
         track.local_path
     );
     assert_eq!(
-        store
-            .track_source_format(&saved.server.id, &track.id)
+        case.track_source_format(&case.id, &track.id)
             .expect("track source format"),
         track.source_format
     );
 }
 #[test]
 fn schema_album_prefetch() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            &[album(1), album_with_image(2), album(3)],
-            generation,
-        )
-        .expect("upsert albums");
-    let albums = store
-        .load_albums_without_image_ref(&saved.server.id, 0, 10)
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    case.upsert_albums(
+        &case.id,
+        &[album(1), album_with_image(2), album(3)],
+        generation,
+    )
+    .expect("upsert albums");
+    let albums = case
+        .load_albums_without_image_ref(&case.id, 0, 10)
         .expect("load albums without image ref");
     assert_eq!(
         albums.into_iter().map(|album| album.id).collect::<Vec<_>>(),
@@ -1560,23 +1431,20 @@ fn schema_album_prefetch() {
 }
 #[test]
 fn schema_artist_prefetch() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            &[
-                artist(1, None),
-                artist(2, Some(image_ref("artist-two", "tag-two"))),
-            ],
-            false,
-            generation,
-        )
-        .expect("upsert artists");
-    let artists = store
-        .load_artists_without_image_ref(&saved.server.id, false, 0, 10)
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    case.upsert_artists(
+        &case.id,
+        &[
+            artist(1, None),
+            artist(2, Some(image_ref("artist-two", "tag-two"))),
+        ],
+        false,
+        generation,
+    )
+    .expect("upsert artists");
+    let artists = case
+        .load_artists_without_image_ref(&case.id, false, 0, 10)
         .expect("load artists without image ref");
     assert_eq!(
         artists
@@ -1588,45 +1456,33 @@ fn schema_artist_prefetch() {
 }
 #[test]
 fn artist_image_use() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album_with_image(1);
     let track = track(1, &album);
     let artist = artist(1, None);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
-    let loaded = store
-        .load_artists(&saved.server.id, false, 0, 10)
+    case.finish_sync(generation, "complete sync");
+    let loaded = case
+        .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
         .items
         .remove(0);
-    let matching = store
-        .load_artists_matching(&saved.server.id, false, "Artist 1", 0, 10)
+    let matching = case
+        .load_artists_matching(&case.id, false, "Artist 1", 0, 10)
         .expect("search artists")
         .items
         .remove(0);
-    let global_search = store
-        .search_library(&saved.server.id, "Artist 1", 10)
+    let global_search = case
+        .search_library(&case.id, "Artist 1", 10)
         .expect("search library");
-    let detail = store
-        .load_artist_detail(&saved.server.id, &artist.id)
+    let detail = case
+        .load_artist_detail(&case.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(loaded.image_ref, album.image_ref);
@@ -1636,10 +1492,8 @@ fn artist_image_use() {
 }
 #[test]
 fn album_external_fallback_repairs_to_track_source_ref() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let track_ref = image_ref("track-source-cover", "track-source-tag");
     let mut album = album(1);
     album.image_ref = Some(image_ref(
@@ -1648,18 +1502,14 @@ fn album_external_fallback_repairs_to_track_source_ref() {
     ));
     let mut track = track(1, &album);
     track.image_ref = Some(track_ref.clone());
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let loaded = store
-        .load_albums(&saved.server.id, 0, 10)
+    let loaded = case
+        .load_albums(&case.id, 0, 10)
         .expect("load albums")
         .items
         .remove(0);
@@ -1668,28 +1518,22 @@ fn album_external_fallback_repairs_to_track_source_ref() {
 }
 #[test]
 fn album_source_ref_survives_track_fallback_repair() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album_ref = image_ref("album-source-cover", "album-source-tag");
     let track_ref = image_ref("track-source-cover", "track-source-tag");
     let mut album = album(1);
     album.image_ref = Some(album_ref.clone());
     let mut track = track(1, &album);
     track.image_ref = Some(track_ref);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let loaded = store
-        .load_albums(&saved.server.id, 0, 10)
+    let loaded = case
+        .load_albums(&case.id, 0, 10)
         .expect("load albums")
         .items
         .remove(0);
@@ -1698,10 +1542,8 @@ fn album_source_ref_survives_track_fallback_repair() {
 }
 #[test]
 fn artist_source_fallback_wins_over_external_album_ref() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
     let mut single = album(1);
     single.title = "Example Single".to_string();
@@ -1712,31 +1554,21 @@ fn artist_source_fallback_wins_over_external_album_ref() {
     album.year = 2001;
     let tracks = vec![track(1, &single), track(2, &album)];
     let artist = artist(1, None);
-    store
-        .upsert_albums(&saved.server.id, &[single, album.clone()], generation)
+    case.upsert_albums(&case.id, &[single, album.clone()], generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let loaded = store
-        .load_artists(&saved.server.id, false, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
         .items
         .remove(0);
-    let detail = store
-        .load_artist_detail(&saved.server.id, &artist.id)
+    let detail = case
+        .load_artist_detail(&case.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
 
@@ -1745,10 +1577,8 @@ fn artist_source_fallback_wins_over_external_album_ref() {
 }
 #[test]
 fn artist_external_fallback_repairs_to_source_ref() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
     let mut single = album(1);
     single.title = "Example Single".to_string();
@@ -1759,31 +1589,21 @@ fn artist_external_fallback_repairs_to_source_ref() {
     album.year = 2001;
     let tracks = vec![track(1, &single), track(2, &album)];
     let artist = artist(1, Some(external_ref));
-    store
-        .upsert_albums(&saved.server.id, &[single, album.clone()], generation)
+    case.upsert_albums(&case.id, &[single, album.clone()], generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let loaded = store
-        .load_artists(&saved.server.id, false, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
         .items
         .remove(0);
-    let detail = store
-        .load_artist_detail(&saved.server.id, &artist.id)
+    let detail = case
+        .load_artist_detail(&case.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
 
@@ -1792,35 +1612,25 @@ fn artist_external_fallback_repairs_to_source_ref() {
 }
 #[test]
 fn schema_win_fallback() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album_with_image(1);
     let track = track(1, &album);
     let artist_image = image_ref("artist-one", "artist-tag-one");
     let artist = artist(1, Some(artist_image.clone()));
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    let loaded = store
-        .load_artists(&saved.server.id, false, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
         .items
         .remove(0);
-    let detail = store
-        .load_artist_detail(&saved.server.id, &artist.id)
+    let detail = case
+        .load_artist_detail(&case.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(loaded.image_ref, Some(artist_image.clone()));
@@ -1828,39 +1638,33 @@ fn schema_win_fallback() {
 }
 #[test]
 fn album_artist_image() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album_artist_id = ArtistId::fake(8);
     let mut album = album_with_image(8);
     album.artist_id = Some(ArtistId::fake(99));
     album.album_artist_credits = vec![credit(album_artist_id.clone(), "Linked Album Artist")];
     let mut album_artist = artist(8, None);
     album_artist.name = "Linked Album Artist".to_string();
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&album_artist),
-            true,
-            generation,
-        )
-        .expect("upsert album artist");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&album_artist),
+        true,
+        generation,
+    )
+    .expect("upsert album artist");
+    case.finish_sync(generation, "complete sync");
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists")
         .items
         .into_iter()
         .find(|artist| artist.id == album_artist_id)
         .expect("album artist");
-    let matching = store
-        .load_artists_matching(&saved.server.id, true, "Linked Album Artist", 0, 10)
+    let matching = case
+        .load_artists_matching(&case.id, true, "Linked Album Artist", 0, 10)
         .expect("search album artists")
         .items
         .remove(0);
@@ -1870,10 +1674,8 @@ fn album_artist_image() {
 
 #[test]
 fn album_artist_provider_page_does_not_merge_label_only_projection() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let linked_id = ArtistId::new("jellyfin:artist:linked-album-artist");
     let page_id = ArtistId::new("jellyfin:artist:provider-page-album-artist");
     let mut album = album_with_image(9);
@@ -1890,66 +1692,47 @@ fn album_artist_provider_page_does_not_merge_label_only_projection() {
     page_artist.play_count = Some(7);
     page_artist.user_rating = Some(80);
 
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&page_artist),
-            true,
-            generation,
-        )
-        .expect("seed provider page artist");
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&page_artist),
+        true,
+        generation,
+    )
+    .expect("seed provider page artist");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
-    store
-        .upsert_artists_delta(
-            &saved.server.id,
-            std::slice::from_ref(&page_artist),
-            true,
-            generation,
-        )
-        .expect("upsert provider page artist");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.upsert_artists_delta(
+        &case.id,
+        std::slice::from_ref(&page_artist),
+        true,
+        generation,
+    )
+    .expect("upsert provider page artist");
+    case.finish_sync(generation, "complete sync");
 
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists");
-    let matching = store
-        .load_artists_matching(&saved.server.id, true, "Linked Album Artist", 0, 10)
+    let matching = case
+        .load_artists_matching(&case.id, true, "Linked Album Artist", 0, 10)
         .expect("search album artists");
     assert_eq!(loaded.total, 2);
     assert_eq!(matching.total, 2);
     assert!(loaded.items.iter().any(|artist| artist.id == linked_id));
     assert!(loaded.items.iter().any(|artist| artist.id == page_id));
 
-    let next_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin no-op sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            next_generation,
-        )
+    let next_generation = case.start_sync("begin no-op sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), next_generation)
         .expect("upsert same album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&track),
-            next_generation,
-        )
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), next_generation)
         .expect("upsert same track");
-    let delta = store
+    let delta = case
         .upsert_artists_delta(
-            &saved.server.id,
+            &case.id,
             std::slice::from_ref(&page_artist),
             true,
             next_generation,
@@ -1960,10 +1743,8 @@ fn album_artist_provider_page_does_not_merge_label_only_projection() {
 
 #[test]
 fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let first_id = ArtistId::new("jellyfin:artist:first-linked");
     let second_id = ArtistId::new("jellyfin:artist:second-linked");
     let page_id = ArtistId::new("jellyfin:artist:ambiguous-page");
@@ -1983,16 +1764,13 @@ fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
     page_artist.id = page_id.clone();
     page_artist.name = "Shared Name".to_string();
 
-    store
-        .upsert_albums(&saved.server.id, &[first_album, second_album], generation)
+    case.upsert_albums(&case.id, &[first_album, second_album], generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &[first_track, second_track], generation)
+    case.upsert_tracks(&case.id, &[first_track, second_track], generation)
         .expect("upsert tracks");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
-    let linked_count: i64 = store
+    let linked_count: i64 = case
         .connection
         .query_row(
             "
@@ -2001,22 +1779,21 @@ fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
             WHERE server_id = ?1
               AND LOWER(TRIM(name)) = LOWER(TRIM('Shared Name'))
             ",
-            rusqlite::params![saved.server.id.as_str()],
+            rusqlite::params![case.id.as_str()],
             |row| row.get(0),
         )
         .expect("linked count");
     assert_eq!(linked_count, 2);
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&page_artist),
-            true,
-            generation,
-        )
-        .expect("upsert provider page artist");
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&page_artist),
+        true,
+        generation,
+    )
+    .expect("upsert provider page artist");
 
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists");
     let ids = loaded
         .items
@@ -2033,10 +1810,8 @@ fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
 
 #[test]
 fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let linked_id = ArtistId::new("jellyfin:artist:linked-credit");
     let page_id = ArtistId::new("jellyfin:artist:provider-page");
     let mut album = album(12);
@@ -2050,27 +1825,24 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
     page_artist.name = "Credit Artist".to_string();
     page_artist.musicbrainz_artist_id = Some("mb-credit-artist".to_string());
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("repair linked album artist");
-    let delta = store
+    let delta = case
         .upsert_artists_delta(
-            &saved.server.id,
+            &case.id,
             std::slice::from_ref(&page_artist),
             true,
             generation,
         )
         .expect("upsert provider page artist");
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists");
-    let alias_entity_id: String = store
+    let alias_entity_id: String = case
         .connection
         .query_row(
             "
@@ -2081,11 +1853,11 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
               AND namespace = 'source:artist_id'
               AND value = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), page_id.as_str()],
+            rusqlite::params![case.id.as_str(), page_id.as_str()],
             |row| row.get(0),
         )
         .expect("alias identity");
-    let linked_mbid_count: i64 = store
+    let linked_mbid_count: i64 = case
         .connection
         .query_row(
             "
@@ -2097,11 +1869,11 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
               AND entity_id = ?2
               AND value = 'mb-credit-artist'
             ",
-            rusqlite::params![saved.server.id.as_str(), linked_id.as_str()],
+            rusqlite::params![case.id.as_str(), linked_id.as_str()],
             |row| row.get(0),
         )
         .expect("linked mbid keys");
-    let alias_row_count: i64 = store
+    let alias_row_count: i64 = case
         .connection
         .query_row(
             "
@@ -2110,7 +1882,7 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
             WHERE server_id = ?1
               AND artist_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), page_id.as_str()],
+            rusqlite::params![case.id.as_str(), page_id.as_str()],
             |row| row.get(0),
         )
         .expect("alias rows");
@@ -2125,10 +1897,8 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
 
 #[test]
 fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let primary_id = ArtistId::new("jellyfin:artist:primary-name");
     let alias_id = ArtistId::new("jellyfin:artist:alias-name");
     let mut primary = artist(92, None);
@@ -2146,24 +1916,17 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
     let mut track = track(1, &album);
     track.album_artist_credits = album.album_artist_credits.clone();
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    let delta = store
-        .upsert_artists_delta(
-            &saved.server.id,
-            &[primary.clone(), alias],
-            true,
-            generation,
-        )
+    let delta = case
+        .upsert_artists_delta(&case.id, &[primary.clone(), alias], true, generation)
         .expect("upsert album artists");
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists");
-    let alias_entity_id: String = store
+    let alias_entity_id: String = case
         .connection
         .query_row(
             "
@@ -2174,11 +1937,11 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
               AND namespace = 'source:artist_id'
               AND value = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            rusqlite::params![case.id.as_str(), alias_id.as_str()],
             |row| row.get(0),
         )
         .expect("alias identity");
-    let alias_mbid_key_count: i64 = store
+    let alias_mbid_key_count: i64 = case
         .connection
         .query_row(
             "
@@ -2189,11 +1952,11 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
               AND namespace = 'musicbrainz:artist'
               AND entity_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            rusqlite::params![case.id.as_str(), alias_id.as_str()],
             |row| row.get(0),
         )
         .expect("alias mbid keys");
-    let alias_link_count: i64 = store
+    let alias_link_count: i64 = case
         .connection
         .query_row(
             "
@@ -2202,11 +1965,11 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             WHERE server_id = ?1
               AND artist_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            rusqlite::params![case.id.as_str(), alias_id.as_str()],
             |row| row.get(0),
         )
         .expect("alias links");
-    let canonical_link_count: i64 = store
+    let canonical_link_count: i64 = case
         .connection
         .query_row(
             "
@@ -2215,12 +1978,12 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             WHERE server_id = ?1
               AND artist_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), primary_id.as_str()],
+            rusqlite::params![case.id.as_str(), primary_id.as_str()],
             |row| row.get(0),
         )
         .expect("canonical links");
-    let detail = store
-        .load_artist_detail(&saved.server.id, &primary_id)
+    let detail = case
+        .load_artist_detail(&case.id, &primary_id)
         .expect("load detail")
         .expect("detail");
 
@@ -2242,8 +2005,8 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album_artist",
             "musicbrainz:artist",
             "mb-artist-shared"
@@ -2251,19 +2014,13 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
         1
     );
 
-    let next_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin no-op sync");
-    let album_delta = store
-        .upsert_albums_delta(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            next_generation,
-        )
+    let next_generation = case.start_sync("begin no-op sync");
+    let album_delta = case
+        .upsert_albums_delta(&case.id, std::slice::from_ref(&album), next_generation)
         .expect("upsert same alias album");
-    let delta = store
+    let delta = case
         .upsert_artists_delta(
-            &saved.server.id,
+            &case.id,
             &[primary.clone(), {
                 let mut artist = primary.clone();
                 artist.id = alias_id;
@@ -2280,27 +2037,19 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
 
 #[test]
 fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let artist_id = ArtistId::new("jellyfin:artist:stale-mbid");
     let mut artist = artist(94, None);
     artist.id = artist_id;
     artist.name = "Changing Artist".to_string();
     artist.musicbrainz_artist_id = Some("mbid-before".to_string());
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            true,
-            generation,
-        )
+    let generation = case.start_sync("begin sync");
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), true, generation)
         .expect("upsert artist with mbid");
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album_artist",
             "musicbrainz:artist",
             "mbid-before"
@@ -2309,20 +2058,19 @@ fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
     );
 
     artist.musicbrainz_artist_id = Some("mbid-after".to_string());
-    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            true,
-            next_generation,
-        )
-        .expect("upsert artist without mbid");
+    let next_generation = case.start_sync("begin next sync");
+    case.upsert_artists(
+        &case.id,
+        std::slice::from_ref(&artist),
+        true,
+        next_generation,
+    )
+    .expect("upsert artist without mbid");
 
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album_artist",
             "musicbrainz:artist",
             "mbid-before"
@@ -2331,8 +2079,8 @@ fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album_artist",
             "musicbrainz:artist",
             "mbid-after"
@@ -2343,10 +2091,8 @@ fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
 
 #[test]
 fn album_artist_musicbrainz_fallback_merges_to_provider_artist() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let fallback_id = ArtistId::new("jellyfin:artist:musicbrainz:mb-artist-one");
     let provider_id = ArtistId::new("jellyfin:artist:artist-one");
     let mut album = album(1);
@@ -2354,23 +2100,20 @@ fn album_artist_musicbrainz_fallback_merges_to_provider_artist() {
     album.artist_id = Some(fallback_id.clone());
     album.album_artist_credits = vec![credit(fallback_id.clone(), "Example Artist")];
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
 
     let mut artist = artist(1, None);
     artist.id = provider_id.clone();
     artist.name = "Example Artist".to_string();
     artist.musicbrainz_artist_id = Some("mb-artist-one".to_string());
-    store
-        .upsert_artists(&saved.server.id, &[artist], true, generation)
+    case.upsert_artists(&case.id, &[artist], true, generation)
         .expect("upsert album artist");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
 
-    let detail = store
-        .load_album_detail(&saved.server.id, &album.id)
+    let detail = case
+        .load_album_detail(&case.id, &album.id)
         .expect("load album detail")
         .expect("album detail");
 
@@ -2380,9 +2123,7 @@ fn album_artist_musicbrainz_fallback_merges_to_provider_artist() {
 
 #[test]
 fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let artist_id = ArtistId::new("local:artist:musicbrainz:credit-page");
     let album = album(14);
     let mut track = track(1, &album);
@@ -2391,30 +2132,22 @@ fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
         "Credit Page Artist",
         "credit-page-mbid",
     )];
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    let generation = case.start_sync("begin sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     let mut artist = artist(95, None);
     artist.id = artist_id;
     artist.name = "Credit Page Artist".to_string();
     artist.musicbrainz_artist_id = None;
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist page");
 
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "artist",
             "musicbrainz:artist",
             "credit-page-mbid"
@@ -2425,10 +2158,8 @@ fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
 
 #[test]
 fn album_artist_repair_splits_compound_credit_when_track_artists_match() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let first_id = ArtistId::new("jellyfin:artist:compound-first");
     let second_id = ArtistId::new("jellyfin:artist:compound-second");
     let compound_id = ArtistId::new("jellyfin:artist:compound-alias");
@@ -2443,18 +2174,15 @@ fn album_artist_repair_splits_compound_credit_when_track_artists_match() {
     ];
     track.album_artist_credits = album.album_artist_credits.clone();
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
 
-    let loaded = store
-        .load_artists(&saved.server.id, true, 0, 10)
+    let loaded = case
+        .load_artists(&case.id, true, 0, 10)
         .expect("load album artists");
     let ids = loaded
         .items
@@ -2472,56 +2200,45 @@ fn album_artist_repair_splits_compound_credit_when_track_artists_match() {
         .expect("first resolved artist");
     assert_eq!(first.name, "Primary Artist");
 
-    let next_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin no-op sync");
-    let delta = store
-        .upsert_albums_delta(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            next_generation,
-        )
+    let next_generation = case.start_sync("begin no-op sync");
+    let delta = case
+        .upsert_albums_delta(&case.id, std::slice::from_ref(&album), next_generation)
         .expect("upsert same compound album");
     assert!(delta.albums.links.is_empty());
 }
 #[test]
 fn schema_replace_local() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let track_id = TrackId::fake(1);
-    store
-        .replace_track_local_matches(
-            &saved.server.id,
-            &[(
-                track_id.clone(),
-                "/home/me/Music/Track 1.flac".to_string(),
-                "metadata".to_string(),
-            )],
-        )
-        .expect("replace local matches");
-    store
-        .connection
+    case.replace_track_local_matches(
+        &case.id,
+        &[(
+            track_id.clone(),
+            "/home/me/Music/Track 1.flac".to_string(),
+            "metadata".to_string(),
+        )],
+    )
+    .expect("replace local matches");
+    case.connection
         .execute(
             "
             UPDATE track_local_matches
             SET updated_at = '2000-01-01 00:00:00'
             WHERE server_id = ?1 AND track_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), track_id.as_str()],
+            rusqlite::params![case.id.as_str(), track_id.as_str()],
         )
         .expect("mark local match timestamp");
-    store
-        .replace_track_local_matches(
-            &saved.server.id,
-            &[(
-                track_id.clone(),
-                "/home/me/Music/Track 1.flac".to_string(),
-                "metadata".to_string(),
-            )],
-        )
-        .expect("replace unchanged local matches");
-    let updated_at = store
+    case.replace_track_local_matches(
+        &case.id,
+        &[(
+            track_id.clone(),
+            "/home/me/Music/Track 1.flac".to_string(),
+            "metadata".to_string(),
+        )],
+    )
+    .expect("replace unchanged local matches");
+    let updated_at = case
         .connection
         .query_row(
             "
@@ -2529,81 +2246,64 @@ fn schema_replace_local() {
             FROM track_local_matches
             WHERE server_id = ?1 AND track_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), track_id.as_str()],
+            rusqlite::params![case.id.as_str(), track_id.as_str()],
             |row| row.get::<_, String>(0),
         )
         .expect("local match timestamp");
     assert_eq!(updated_at, "2000-01-01 00:00:00");
     assert_eq!(
-        store
-            .track_local_match_path(&saved.server.id, &track_id)
+        case.track_local_match_path(&case.id, &track_id)
             .expect("match path")
             .as_deref(),
         Some("/home/me/Music/Track 1.flac")
     );
     assert_eq!(
-        store
-            .track_local_match_paths(&saved.server.id)
-            .expect("match paths"),
+        case.track_local_match_paths(&case.id).expect("match paths"),
         vec![(track_id.clone(), "/home/me/Music/Track 1.flac".to_string())]
     );
-    store
-        .replace_track_local_matches(&saved.server.id, &[])
+    case.replace_track_local_matches(&case.id, &[])
         .expect("clear local matches");
     assert_eq!(
-        store
-            .track_local_match_path(&saved.server.id, &track_id)
+        case.track_local_match_path(&case.id, &track_id)
             .expect("match path"),
         None
     );
     assert!(
-        store
-            .track_local_match_paths(&saved.server.id)
+        case.track_local_match_paths(&case.id)
             .expect("match paths")
             .is_empty()
     );
 }
 #[test]
 fn schema_track_search() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let tracks = vec![track(1, &album), track(2, &album)];
     let folder = MusicFolder {
         id: MusicFolderId::fake(1),
         name: "Music".to_string(),
     };
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), generation)
         .expect("upsert folder");
-    store
-        .upsert_track_music_folder_memberships(
-            &saved.server.id,
-            &folder.id,
-            std::slice::from_ref(&tracks[1]),
-            generation,
-        )
-        .expect("upsert membership");
-    store
-        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+    case.upsert_track_music_folder_memberships(
+        &case.id,
+        &folder.id,
+        std::slice::from_ref(&tracks[1]),
+        generation,
+    )
+    .expect("upsert membership");
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
-    let page = store
-        .load_tracks(&saved.server.id, 0, 10)
-        .expect("load tracks");
-    let search = store
-        .load_tracks_matching(&saved.server.id, "Track", 0, 10)
+    let page = case.load_tracks(&case.id, 0, 10).expect("load tracks");
+    let search = case
+        .load_tracks_matching(&case.id, "Track", 0, 10)
         .expect("search tracks");
-    let favorites = store
-        .load_favorite_tracks(&saved.server.id)
-        .expect("load favorites");
+    let favorites = case.load_favorite_tracks(&case.id).expect("load favorites");
     assert_eq!(page.total, 1);
     assert_eq!(page.items[0].id, tracks[1].id);
     assert_eq!(search.total, 1);
@@ -2613,10 +2313,8 @@ fn schema_track_search() {
 
 #[test]
 fn schema_album_search_uses_selected_music_folder() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut outside_album = album(1);
     outside_album.title = "Shared Search Outside".to_string();
     outside_album.genres = vec!["Fallback Tag".to_string()];
@@ -2629,35 +2327,28 @@ fn schema_album_search_uses_selected_music_folder() {
         id: MusicFolderId::fake(1),
         name: "Music".to_string(),
     };
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), generation)
         .expect("upsert folder");
-    store
-        .upsert_track_music_folder_memberships(
-            &saved.server.id,
-            &folder.id,
-            std::slice::from_ref(&tracks[1]),
-            generation,
-        )
-        .expect("upsert membership");
-    store
-        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+    case.upsert_track_music_folder_memberships(
+        &case.id,
+        &folder.id,
+        std::slice::from_ref(&tracks[1]),
+        generation,
+    )
+    .expect("upsert membership");
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
 
-    let page = store
-        .load_albums(&saved.server.id, 0, 10)
-        .expect("load albums");
-    let fts_search = store
-        .load_albums_matching(&saved.server.id, "Shared Search", 0, 10)
+    let page = case.load_albums(&case.id, 0, 10).expect("load albums");
+    let fts_search = case
+        .load_albums_matching(&case.id, "Shared Search", 0, 10)
         .expect("search albums with fts");
-    let like_search = store
-        .load_albums_matching(&saved.server.id, "Fallback Tag", 0, 10)
+    let like_search = case
+        .load_albums_matching(&case.id, "Fallback Tag", 0, 10)
         .expect("search albums with like");
 
     assert_eq!(page.total, 1);
@@ -2670,10 +2361,8 @@ fn schema_album_search_uses_selected_music_folder() {
 
 #[test]
 fn schema_favorite_tracks_are_not_capped() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let tracks = (1..=525)
         .map(|number| {
@@ -2682,26 +2371,20 @@ fn schema_favorite_tracks_are_not_capped() {
             track
         })
         .collect::<Vec<_>>();
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
 
-    let favorites = store
-        .load_favorite_tracks(&saved.server.id)
-        .expect("load favorites");
+    let favorites = case.load_favorite_tracks(&case.id).expect("load favorites");
 
     assert_eq!(track_id_set(&favorites), track_id_set(&tracks));
 }
 
 #[test]
 fn schema_folder_favorite_tracks_are_not_capped() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let folder = MusicFolder {
         id: MusicFolderId::fake(1),
@@ -2718,30 +2401,18 @@ fn schema_folder_favorite_tracks_are_not_capped() {
     outside_track.favorite = true;
     let mut tracks = selected_tracks.clone();
     tracks.push(outside_track);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), generation)
         .expect("upsert folder");
-    store
-        .upsert_track_music_folder_memberships(
-            &saved.server.id,
-            &folder.id,
-            &selected_tracks,
-            generation,
-        )
+    case.upsert_track_music_folder_memberships(&case.id, &folder.id, &selected_tracks, generation)
         .expect("upsert memberships");
-    store
-        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
 
-    let favorites = store
-        .load_favorite_tracks(&saved.server.id)
-        .expect("load favorites");
+    let favorites = case.load_favorite_tracks(&case.id).expect("load favorites");
 
     assert_eq!(track_id_set(&favorites), track_id_set(&selected_tracks));
 }
@@ -2763,88 +2434,65 @@ fn mbid_credit(id: ArtistId, name: &str, mbid: &str) -> ArtistCredit {
 
 #[test]
 fn schema_filter_folder() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let tracks = vec![track(1, &album), track(2, &album)];
     let folder = MusicFolder {
         id: MusicFolderId::fake(1),
         name: "Music".to_string(),
     };
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), generation)
         .expect("upsert folder");
-    store
-        .upsert_track_music_folder_memberships(
-            &saved.server.id,
-            &folder.id,
-            std::slice::from_ref(&tracks[1]),
-            generation,
-        )
-        .expect("upsert membership");
-    store
-        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+    case.upsert_track_music_folder_memberships(
+        &case.id,
+        &folder.id,
+        std::slice::from_ref(&tracks[1]),
+        generation,
+    )
+    .expect("upsert membership");
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
-    let loaded = store
-        .load_track(&saved.server.id, &tracks[0].id)
+    let loaded = case
+        .load_track(&case.id, &tracks[0].id)
         .expect("load track")
         .expect("track");
     assert_eq!(loaded.id, tracks[0].id);
 }
 #[test]
 fn schema_stale_sync() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let folder = MusicFolder {
         id: MusicFolderId::fake(1),
         name: "Music".to_string(),
     };
-    let first_generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    store
-        .upsert_music_folders(
-            &saved.server.id,
-            std::slice::from_ref(&folder),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin sync");
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), first_generation)
         .expect("upsert folder");
-    store
-        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
-    store
-        .complete_sync(&saved.server.id, first_generation)
-        .expect("complete first sync");
-    let second_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
-    store
-        .complete_sync(&saved.server.id, second_generation)
-        .expect("complete second sync");
+    case.finish_sync(first_generation, "complete first sync");
+    let second_generation = case.start_sync("begin next sync");
+    case.finish_sync(second_generation, "complete second sync");
     assert!(
-        store
-            .list_music_folders(&saved.server.id)
+        case.list_music_folders(&case.id)
             .expect("list folders")
             .is_empty()
     );
     assert_eq!(
-        store
-            .selected_music_folder_id(&saved.server.id)
+        case.selected_music_folder_id(&case.id)
             .expect("selected folder"),
         None
     );
 }
 #[test]
 fn schema_trip_page() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut album = album(1);
     album.release_types = vec!["album".to_string(), "ep".to_string()];
     album.is_compilation = Some(false);
@@ -2865,20 +2513,14 @@ fn schema_trip_page() {
             track
         })
         .collect::<Vec<_>>();
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
-    let albums = store
-        .load_albums(&saved.server.id, 0, 25)
-        .expect("load albums");
-    let detail = store
-        .load_album_detail(&saved.server.id, &album.id)
+    case.finish_sync(generation, "complete sync");
+    let albums = case.load_albums(&case.id, 0, 25).expect("load albums");
+    let detail = case
+        .load_album_detail(&case.id, &album.id)
         .expect("load detail")
         .expect("detail");
     assert_eq!(albums.total, 1);
@@ -2888,10 +2530,8 @@ fn schema_trip_page() {
 }
 #[test]
 fn album_release_type_lookup_candidates_skip_cached_and_misses() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut release_group_album = album(1);
     release_group_album.musicbrainz_album_id = Some("release-one".to_string());
     release_group_album.musicbrainz_release_group_id = Some("group-one".to_string());
@@ -2901,24 +2541,21 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     cached_album.musicbrainz_release_group_id = Some("group-three".to_string());
     cached_album.release_types = vec!["album".to_string()];
     let missing_album = album(4);
-    store
-        .upsert_albums(
-            &saved.server.id,
-            &[
-                release_group_album.clone(),
-                release_album.clone(),
-                cached_album,
-                missing_album,
-            ],
-            generation,
-        )
-        .expect("upsert albums");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.upsert_albums(
+        &case.id,
+        &[
+            release_group_album.clone(),
+            release_album.clone(),
+            cached_album,
+            missing_album,
+        ],
+        generation,
+    )
+    .expect("upsert albums");
+    case.finish_sync(generation, "complete sync");
 
-    let candidates = store
-        .load_album_release_type_lookup_candidates(&saved.server.id, 10)
+    let candidates = case
+        .load_album_release_type_lookup_candidates(&case.id, 10)
         .expect("load candidates");
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].album_id, release_group_album.id);
@@ -2926,32 +2563,27 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     assert_eq!(candidates[1].album_id, release_album.id);
     assert_eq!(candidates[1].lookup_key, "release:release-two");
 
-    store
-        .save_album_release_type_lookup_miss(
-            &saved.server.id,
-            &release_group_album.id,
-            "release-group:group-one",
-            "not found",
-        )
-        .expect("save miss");
-    store
-        .update_album_release_metadata(
-            &saved.server.id,
-            &release_album.id,
-            &["single".to_string()],
-            Some(false),
-        )
-        .expect("update release metadata");
+    case.save_album_release_type_lookup_miss(
+        &case.id,
+        &release_group_album.id,
+        "release-group:group-one",
+        "not found",
+    )
+    .expect("save miss");
+    case.update_album_release_metadata(
+        &case.id,
+        &release_album.id,
+        &["single".to_string()],
+        Some(false),
+    )
+    .expect("update release metadata");
 
     assert!(
-        store
-            .load_album_release_type_lookup_candidates(&saved.server.id, 10)
+        case.load_album_release_type_lookup_candidates(&case.id, 10)
             .expect("reload candidates")
             .is_empty()
     );
-    let albums = store
-        .load_albums(&saved.server.id, 0, 10)
-        .expect("load albums");
+    let albums = case.load_albums(&case.id, 0, 10).expect("load albums");
     let updated_album = albums
         .items
         .iter()
@@ -2963,10 +2595,8 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
 
 #[test]
 fn projection_writes_populate_entity_identity_rows() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut album = album(1);
     album.musicbrainz_album_id = Some("release-one".to_string());
     album.musicbrainz_release_group_id = Some("group-one".to_string());
@@ -2982,17 +2612,15 @@ fn projection_writes_populate_entity_identity_rows() {
         musicbrainz_artist_id: Some("artist-one".to_string()),
     }];
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert tracks");
 
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album",
             "musicbrainz:release",
             "release-one"
@@ -3001,8 +2629,8 @@ fn projection_writes_populate_entity_identity_rows() {
     );
     assert_eq!(
         grouping_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album",
             "musicbrainz:release_group",
             "group-one"
@@ -3010,19 +2638,13 @@ fn projection_writes_populate_entity_identity_rows() {
         1
     );
     assert_eq!(
-        entity_fact_count(
-            &store,
-            &saved.server.id,
-            "album",
-            album.id.as_str(),
-            "release_types"
-        ),
+        entity_fact_count(&case, &case.id, "album", album.id.as_str(), "release_types"),
         1
     );
     assert_eq!(
         grouping_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:recording",
             "recording-one"
@@ -3031,8 +2653,8 @@ fn projection_writes_populate_entity_identity_rows() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:release_track",
             "release-track-one"
@@ -3041,8 +2663,8 @@ fn projection_writes_populate_entity_identity_rows() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "artist",
             "musicbrainz:artist",
             "artist-one"
@@ -3050,33 +2672,19 @@ fn projection_writes_populate_entity_identity_rows() {
         1
     );
     assert_eq!(
-        content_ref_count(
-            &store,
-            &saved.server.id,
-            "album",
-            album.id.as_str(),
-            "cover"
-        ),
+        content_ref_count(&case, &case.id, "album", album.id.as_str(), "cover"),
         1
     );
     assert_eq!(
-        content_ref_count(
-            &store,
-            &saved.server.id,
-            "track",
-            track.id.as_str(),
-            "cover"
-        ),
+        content_ref_count(&case, &case.id, "track", track.id.as_str(), "cover"),
         1
     );
 }
 
 #[test]
 fn projection_loads_artist_credit_musicbrainz_ids() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album_artist_id = ArtistId::new("local:artist:musicbrainz:album-artist-one");
     let track_artist_id = ArtistId::new("local:artist:musicbrainz:track-artist-one");
     let mut album = album(1);
@@ -3096,19 +2704,17 @@ fn projection_loads_artist_credit_musicbrainz_ids() {
     track.artist_credits = album.artist_credits.clone();
     track.album_artist_credits = album.album_artist_credits.clone();
 
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
 
-    let loaded_track = store
-        .load_track(&saved.server.id, &track.id)
+    let loaded_track = case
+        .load_track(&case.id, &track.id)
         .expect("load track")
         .expect("track");
-    let loaded_album = store
-        .load_albums(&saved.server.id, 0, 10)
+    let loaded_album = case
+        .load_albums(&case.id, 0, 10)
         .expect("load albums")
         .items
         .into_iter()
@@ -3137,46 +2743,29 @@ fn projection_loads_artist_credit_musicbrainz_ids() {
 
 #[test]
 fn projection_preserves_and_replaces_artist_credit_musicbrainz_ids() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let case = StoreCase::open();
     let artist_id = ArtistId::new("local:artist:musicbrainz:credit-one");
     let album = album(1);
     let mut track = track(1, &album);
     track.artist_id = Some(artist_id.clone());
     track.artist_credits = vec![mbid_credit(artist_id.clone(), "Credit Artist", "old-mbid")];
-    let first_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin first sync");
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            first_generation,
-        )
+    let first_generation = case.start_sync("begin first sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&track),
-            first_generation,
-        )
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
         .expect("upsert first track");
 
     let mut unknown_track = track.clone();
     unknown_track.artist_credits = vec![credit(artist_id.clone(), "Credit Artist")];
-    let second_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin second sync");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&unknown_track),
-            second_generation,
-        )
-        .expect("upsert unknown track");
-    let loaded_unknown = store
-        .load_track(&saved.server.id, &track.id)
+    let second_generation = case.start_sync("begin second sync");
+    case.upsert_tracks(
+        &case.id,
+        std::slice::from_ref(&unknown_track),
+        second_generation,
+    )
+    .expect("upsert unknown track");
+    let loaded_unknown = case
+        .load_track(&case.id, &track.id)
         .expect("load unknown track")
         .expect("track");
     assert_eq!(
@@ -3188,18 +2777,15 @@ fn projection_preserves_and_replaces_artist_credit_musicbrainz_ids() {
 
     let mut changed_track = unknown_track.clone();
     changed_track.artist_credits = vec![mbid_credit(artist_id, "Credit Artist", "new-mbid")];
-    let third_generation = store
-        .begin_sync(&saved.server.id)
-        .expect("begin third sync");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&changed_track),
-            third_generation,
-        )
-        .expect("upsert changed track");
-    let loaded_changed = store
-        .load_track(&saved.server.id, &track.id)
+    let third_generation = case.start_sync("begin third sync");
+    case.upsert_tracks(
+        &case.id,
+        std::slice::from_ref(&changed_track),
+        third_generation,
+    )
+    .expect("upsert changed track");
+    let loaded_changed = case
+        .load_track(&case.id, &track.id)
         .expect("load changed track")
         .expect("track");
 
@@ -3210,50 +2796,31 @@ fn projection_preserves_and_replaces_artist_credit_musicbrainz_ids() {
         Some("new-mbid")
     );
     assert_eq!(
-        entity_key_count(
-            &store,
-            &saved.server.id,
-            "artist",
-            "musicbrainz:artist",
-            "old-mbid"
-        ),
+        entity_key_count(&case, &case.id, "artist", "musicbrainz:artist", "old-mbid"),
         0
     );
     assert_eq!(
-        entity_key_count(
-            &store,
-            &saved.server.id,
-            "artist",
-            "musicbrainz:artist",
-            "new-mbid"
-        ),
+        entity_key_count(&case, &case.id, "artist", "musicbrainz:artist", "new-mbid"),
         1
     );
 }
 
 #[test]
 fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut album = album(1);
     album.musicbrainz_album_id = Some("release-one".to_string());
     album.musicbrainz_release_group_id = Some("group-one".to_string());
     let mut track = track(1, &album);
     track.musicbrainz_recording_id = Some("recording-one".to_string());
     track.musicbrainz_release_track_id = Some("release-track-one".to_string());
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert tracks");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete first sync");
-    store
-        .connection
+    case.finish_sync(generation, "complete first sync");
+    case.connection
         .execute(
             "
             INSERT INTO entity_links (
@@ -3262,40 +2829,32 @@ fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
             VALUES (?1, 'album', ?2, 'lastfm:album', ?3, 'Last.fm', 'lastfm', 'resolved')
             ",
             rusqlite::params![
-                saved.server.id.as_str(),
+                case.id.as_str(),
                 album.id.as_str(),
                 "https://www.last.fm/music/Example+Artist/Example+Album"
             ],
         )
         .expect("insert album link");
     assert_eq!(
-        entity_link_count(
-            &store,
-            &saved.server.id,
-            "album",
-            album.id.as_str(),
-            "lastfm:album"
-        ),
+        entity_link_count(&case, &case.id, "album", album.id.as_str(), "lastfm:album"),
         1
     );
 
-    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
-    store
-        .complete_sync(&saved.server.id, next_generation)
-        .expect("complete empty sync");
+    let next_generation = case.start_sync("begin next sync");
+    case.finish_sync(next_generation, "complete empty sync");
 
     assert_eq!(
-        entity_row_count(&store, &saved.server.id, "album", album.id.as_str()),
+        entity_row_count(&case, &case.id, "album", album.id.as_str()),
         0
     );
     assert_eq!(
-        entity_row_count(&store, &saved.server.id, "track", track.id.as_str()),
+        entity_row_count(&case, &case.id, "track", track.id.as_str()),
         0
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album",
             "musicbrainz:release",
             "release-one"
@@ -3304,8 +2863,8 @@ fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
     );
     assert_eq!(
         grouping_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:recording",
             "recording-one"
@@ -3313,50 +2872,35 @@ fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
         0
     );
     assert_eq!(
-        entity_link_count(
-            &store,
-            &saved.server.id,
-            "album",
-            album.id.as_str(),
-            "lastfm:album"
-        ),
+        entity_link_count(&case, &case.id, "album", album.id.as_str(), "lastfm:album"),
         0
     );
 }
 
 #[test]
 fn local_metadata_update_refreshes_track_identity_rows() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.local_path = Some("/music/Album/track.mp3".to_string());
     track.musicbrainz_recording_id = Some("recording-old".to_string());
     track.musicbrainz_release_track_id = Some("release-track-old".to_string());
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert tracks");
 
-    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    let next_generation = case.start_sync("begin next sync");
     track.musicbrainz_recording_id = Some("recording-new".to_string());
     track.musicbrainz_release_track_id = Some("release-track-new".to_string());
-    store
-        .update_local_track_metadata_rows(
-            &saved.server.id,
-            std::slice::from_ref(&track),
-            next_generation,
-        )
+    case.update_local_track_metadata_rows(&case.id, std::slice::from_ref(&track), next_generation)
         .expect("update local metadata");
 
     assert_eq!(
         grouping_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:recording",
             "recording-old"
@@ -3365,8 +2909,8 @@ fn local_metadata_update_refreshes_track_identity_rows() {
     );
     assert_eq!(
         grouping_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:recording",
             "recording-new"
@@ -3375,8 +2919,8 @@ fn local_metadata_update_refreshes_track_identity_rows() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:release_track",
             "release-track-old"
@@ -3385,8 +2929,8 @@ fn local_metadata_update_refreshes_track_identity_rows() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "track",
             "musicbrainz:release_track",
             "release-track-new"
@@ -3397,38 +2941,24 @@ fn local_metadata_update_refreshes_track_identity_rows() {
 
 #[test]
 fn album_identity_change_clears_stale_release_metadata() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut album = album(1);
     album.musicbrainz_album_id = Some("release-old".to_string());
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert albums");
-    store
-        .update_album_identity_metadata(
-            &saved.server.id,
-            &album.id,
-            &["single".to_string()],
-            Some(false),
-        )
+    case.update_album_identity_metadata(&case.id, &album.id, &["single".to_string()], Some(false))
         .expect("save resolved metadata");
 
-    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    let next_generation = case.start_sync("begin next sync");
     album.musicbrainz_album_id = Some("release-new".to_string());
     album.release_types.clear();
     album.is_compilation = None;
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album),
-            next_generation,
-        )
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), next_generation)
         .expect("upsert changed album identity");
 
-    let loaded = store
-        .load_album_detail(&saved.server.id, &album.id)
+    let loaded = case
+        .load_album_detail(&case.id, &album.id)
         .expect("load album")
         .expect("album")
         .0;
@@ -3437,8 +2967,8 @@ fn album_identity_change_clears_stale_release_metadata() {
     assert_eq!(loaded.is_compilation, None);
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album",
             "musicbrainz:release",
             "release-old"
@@ -3447,8 +2977,8 @@ fn album_identity_change_clears_stale_release_metadata() {
     );
     assert_eq!(
         entity_key_count(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "album",
             "musicbrainz:release",
             "release-new"
@@ -3456,45 +2986,26 @@ fn album_identity_change_clears_stale_release_metadata() {
         1
     );
     assert_eq!(
-        entity_fact_count(
-            &store,
-            &saved.server.id,
-            "album",
-            album.id.as_str(),
-            "release_types"
-        ),
+        entity_fact_count(&case, &case.id, "album", album.id.as_str(), "release_types"),
         0
     );
 }
 
 #[test]
 fn local_manifest_writes_physical_file_source_objects() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let entry = local_manifest_entry();
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&album(1)),
-            generation,
-        )
+    case.upsert_albums(&case.id, std::slice::from_ref(&album(1)), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            std::slice::from_ref(&entry.track),
-            generation,
-        )
+    case.upsert_tracks(&case.id, std::slice::from_ref(&entry.track), generation)
         .expect("upsert track");
-    store
-        .replace_local_manifest(&saved.server.id, generation, std::slice::from_ref(&entry))
+    case.replace_local_manifest(&case.id, generation, std::slice::from_ref(&entry))
         .expect("replace manifest");
 
     let source_object_id = local_file_source_object_id("/music", "Album/track.mp3");
-    let source = store
-        .load_source_object(&saved.server.id, &source_object_id)
+    let source = case
+        .load_source_object(&case.id, &source_object_id)
         .expect("load source object")
         .expect("source object");
     assert_eq!(source.source_kind, "local_file");
@@ -3505,7 +3016,7 @@ fn local_manifest_writes_physical_file_source_objects() {
         Some("/music/Album/track.mp3")
     );
 
-    let entity_source_object_id = store
+    let entity_source_object_id = case
         .connection
         .query_row(
             "
@@ -3515,7 +3026,7 @@ fn local_manifest_writes_physical_file_source_objects() {
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), entry.track.id.as_str()],
+            rusqlite::params![case.id.as_str(), entry.track.id.as_str()],
             |row| row.get::<_, String>(0),
         )
         .expect("load entity source object id");
@@ -3524,12 +3035,10 @@ fn local_manifest_writes_physical_file_source_objects() {
 
 #[test]
 fn typed_source_object_api_writes_cue_segment_shape() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let parent_id = store
+    let case = StoreCase::open();
+    let parent_id = case
         .upsert_local_file_source_object(
-            &saved.server.id,
+            &case.id,
             &LocalFileSourceObject {
                 source_path: "/music/album.flac".to_string(),
                 root_path: "/music".to_string(),
@@ -3550,20 +3059,19 @@ fn typed_source_object_api_writes_cue_segment_shape() {
         segment_end_ms: 67890,
         sync_generation: 7,
     };
-    store
-        .upsert_cue_track_source_object(&saved.server.id, &cue)
+    case.upsert_cue_track_source_object(&case.id, &cue)
         .expect("upsert cue source object");
 
-    let file_source = store
-        .load_source_object(&saved.server.id, &parent_id)
+    let file_source = case
+        .load_source_object(&case.id, &parent_id)
         .expect("load file source object")
         .expect("file source object");
     assert_eq!(file_source.source_kind, "local_file");
     assert_eq!(file_source.entity_kind, None);
     assert_eq!(file_source.entity_id, None);
 
-    let cue_source = store
-        .load_source_object(&saved.server.id, &cue.source_object_id)
+    let cue_source = case
+        .load_source_object(&case.id, &cue.source_object_id)
         .expect("load cue source object")
         .expect("cue source object");
     assert_eq!(cue_source.source_kind, "cue_track");
@@ -3579,7 +3087,7 @@ fn typed_source_object_api_writes_cue_segment_shape() {
     assert_eq!(cue_source.segment_start_ms, Some(12345));
     assert_eq!(cue_source.segment_end_ms, Some(67890));
 
-    let entity_source_object_id = store
+    let entity_source_object_id = case
         .connection
         .query_row(
             "
@@ -3589,7 +3097,7 @@ fn typed_source_object_api_writes_cue_segment_shape() {
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), cue.track_id.as_str()],
+            rusqlite::params![case.id.as_str(), cue.track_id.as_str()],
             |row| row.get::<_, String>(0),
         )
         .expect("load cue entity source object id");
@@ -3598,10 +3106,8 @@ fn typed_source_object_api_writes_cue_segment_shape() {
 
 #[test]
 fn local_delta_commit_writes_cue_track_source_objects() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.local_path = Some("/music/album.flac".to_string());
@@ -3619,23 +3125,22 @@ fn local_delta_commit_writes_cue_track_source_objects() {
         sync_generation: generation,
     };
 
-    store
-        .commit_local_library_delta(
-            &saved.server.id,
-            generation,
-            LocalLibraryDelta {
-                changed_tracks: vec![track.clone()],
-                current_track_ids: vec![track.id.clone()],
-                current_album_ids: vec![album.id.clone()],
-                dirty_albums: vec![album],
-                cue_track_sources: vec![cue_source.clone()],
-                ..LocalLibraryDelta::default()
-            },
-        )
-        .expect("commit cue delta");
+    case.commit_local_library_delta(
+        &case.id,
+        generation,
+        LocalLibraryDelta {
+            changed_tracks: vec![track.clone()],
+            current_track_ids: vec![track.id.clone()],
+            current_album_ids: vec![album.id.clone()],
+            dirty_albums: vec![album],
+            cue_track_sources: vec![cue_source.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit cue delta");
 
-    let source = store
-        .load_track_source_object(&saved.server.id, &track.id)
+    let source = case
+        .load_track_source_object(&case.id, &track.id)
         .expect("load track source object")
         .expect("source object");
     assert_eq!(source.source_kind, "cue_track");
@@ -3647,12 +3152,10 @@ fn local_delta_commit_writes_cue_track_source_objects() {
 
 #[test]
 fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let parent_id = store
+    let case = StoreCase::open();
+    let parent_id = case
         .upsert_local_file_source_object(
-            &saved.server.id,
+            &case.id,
             &LocalFileSourceObject {
                 source_path: "/music/album.flac".to_string(),
                 root_path: "/music".to_string(),
@@ -3661,9 +3164,9 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
             },
         )
         .expect("upsert backing source");
-    let stale_id = store
+    let stale_id = case
         .upsert_local_file_source_object(
-            &saved.server.id,
+            &case.id,
             &LocalFileSourceObject {
                 source_path: "/music/album.cue#track=01".to_string(),
                 root_path: "/music".to_string(),
@@ -3673,25 +3176,23 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
         )
         .expect("upsert stale source");
     let track_id = TrackId::new("track-cue-1");
-    store
-        .upsert_cue_track_source_object(
-            &saved.server.id,
-            &CueTrackSourceObject {
-                source_object_id: "local:cue:track:1".to_string(),
-                track_id: track_id.clone(),
-                source_path: "/music/album.flac".to_string(),
-                parent_source_object_id: parent_id,
-                cue_path: "/music/album.cue".to_string(),
-                cue_revision: "cue-revision-one".to_string(),
-                cue_track_index: 1,
-                segment_start_ms: 12345,
-                segment_end_ms: 67890,
-                sync_generation: 1,
-            },
-        )
-        .expect("upsert cue source");
-    store
-        .connection
+    case.upsert_cue_track_source_object(
+        &case.id,
+        &CueTrackSourceObject {
+            source_object_id: "local:cue:track:1".to_string(),
+            track_id: track_id.clone(),
+            source_path: "/music/album.flac".to_string(),
+            parent_source_object_id: parent_id,
+            cue_path: "/music/album.cue".to_string(),
+            cue_revision: "cue-revision-one".to_string(),
+            cue_track_index: 1,
+            segment_start_ms: 12345,
+            segment_end_ms: 67890,
+            sync_generation: 1,
+        },
+    )
+    .expect("upsert cue source");
+    case.connection
         .execute(
             "
             UPDATE entities
@@ -3700,12 +3201,12 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), track_id.as_str(), stale_id],
+            rusqlite::params![case.id.as_str(), track_id.as_str(), stale_id],
         )
         .expect("reset entity pointer");
 
-    let source = store
-        .load_track_source_object(&saved.server.id, &track_id)
+    let source = case
+        .load_track_source_object(&case.id, &track_id)
         .expect("load source")
         .expect("source");
 
@@ -3716,12 +3217,10 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
 
 #[test]
 fn cue_track_source_object_requires_local_file_parent() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let error = store
+    let case = StoreCase::open();
+    let error = case
         .upsert_cue_track_source_object(
-            &saved.server.id,
+            &case.id,
             &CueTrackSourceObject {
                 source_object_id: "local:cue:track:1".to_string(),
                 track_id: TrackId::new("track-cue-1"),
@@ -3741,75 +3240,45 @@ fn cue_track_source_object_requires_local_file_parent() {
 
 #[test]
 fn schema_trip_model() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let artist = artist(1, Some(image_ref("artist-one", "artist-tag")));
     let genre = genre(1, Some(image_ref("genre-one", "genre-tag")));
     let mut album = album_with_image(1);
     album.genres = vec![genre.name.clone()];
     let track = track(1, &album);
     let playlist = playlist(1, Some(image_ref("playlist-one", "playlist-tag")));
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .upsert_genres(&saved.server.id, std::slice::from_ref(&genre), generation)
+    case.upsert_genres(&case.id, std::slice::from_ref(&genre), generation)
         .expect("upsert genre");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
     assert_eq!(
-        store
-            .load_albums(&saved.server.id, 0, 1)
-            .expect("load albums")
-            .items[0]
-            .image_ref,
+        case.load_albums(&case.id, 0, 1).expect("load albums").items[0].image_ref,
         album.image_ref
     );
     assert_eq!(
-        store
-            .load_tracks(&saved.server.id, 0, 1)
-            .expect("load tracks")
-            .items[0]
-            .image_ref,
+        case.load_tracks(&case.id, 0, 1).expect("load tracks").items[0].image_ref,
         track.image_ref
     );
     assert_eq!(
-        store
-            .load_artists(&saved.server.id, false, 0, 1)
+        case.load_artists(&case.id, false, 0, 1)
             .expect("load artists")
             .items[0]
             .image_ref,
         artist.image_ref
     );
     assert_eq!(
-        store
-            .load_genres(&saved.server.id, 0, 1)
-            .expect("load genres")
-            .items[0]
-            .image_ref,
+        case.load_genres(&case.id, 0, 1).expect("load genres").items[0].image_ref,
         genre.image_ref
     );
     assert_eq!(
-        store
-            .load_playlists(&saved.server.id, 0, 1)
+        case.load_playlists(&case.id, 0, 1)
             .expect("load playlists")
             .items[0]
             .image_ref,
@@ -3819,10 +3288,8 @@ fn schema_trip_model() {
 
 #[test]
 fn schema_collection_playlist() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut albums = (1..=5).map(album_with_image).collect::<Vec<_>>();
     let genre = genre(1, None);
     for album in &mut albums {
@@ -3844,37 +3311,23 @@ fn schema_collection_playlist() {
             tracks[3].clone(),
         ],
     );
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_genres(&saved.server.id, std::slice::from_ref(&genre), generation)
+    case.upsert_genres(&case.id, std::slice::from_ref(&genre), generation)
         .expect("upsert genre");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
-    store
-        .upsert_playlist_entries(&saved.server.id, &playlist.id, &entries, generation)
+    case.upsert_playlist_entries(&case.id, &playlist.id, &entries, generation)
         .expect("upsert playlist entries");
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let genre_page = store
-        .load_genres(&saved.server.id, 0, 20)
-        .expect("load genres");
-    let playlist_page = store
-        .load_playlists(&saved.server.id, 0, 20)
+    let genre_page = case.load_genres(&case.id, 0, 20).expect("load genres");
+    let playlist_page = case
+        .load_playlists(&case.id, 0, 20)
         .expect("load playlists");
     assert_eq!(
         genre_page.items[0].image_refs,
@@ -3896,15 +3349,10 @@ fn schema_collection_playlist() {
 
     let mut changed_album = albums[0].clone();
     changed_album.image_ref = Some(image_ref("changed-cover", "changed-tag"));
-    store
-        .upsert_albums(
-            &saved.server.id,
-            std::slice::from_ref(&changed_album),
-            generation,
-        )
+    case.upsert_albums(&case.id, std::slice::from_ref(&changed_album), generation)
         .expect("change album");
-    let cached_again = store
-        .load_genres(&saved.server.id, 0, 20)
+    let cached_again = case
+        .load_genres(&case.id, 0, 20)
         .expect("load cached genres");
     assert_eq!(
         cached_again.items[0].image_refs,
@@ -3914,10 +3362,8 @@ fn schema_collection_playlist() {
 
 #[test]
 fn schema_repair_cache() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut albums = (1..=4).map(album_with_image).collect::<Vec<_>>();
     let mut genre = genre(1, None);
     for album in &mut albums {
@@ -3930,39 +3376,28 @@ fn schema_repair_cache() {
         .collect::<Vec<_>>();
     let playlist = playlist(1, Some(image_ref("playlist-cover", "playlist-tag")));
 
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_genres(&saved.server.id, std::slice::from_ref(&genre), generation)
+    case.upsert_genres(&case.id, std::slice::from_ref(&genre), generation)
         .expect("upsert genre");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
 
     genre.image_refs.clear();
     assert_eq!(
-        store
-            .load_genres(&saved.server.id, 0, 20)
+        case.load_genres(&case.id, 0, 20)
             .expect("load stale genres")
             .items[0]
             .image_refs,
         genre.image_refs
     );
 
-    store
-        .ensure_collection_cover_refs(&saved.server.id)
+    case.ensure_collection_cover_refs(&case.id)
         .expect("ensure cover refs");
     assert_eq!(
-        store
-            .load_genres(&saved.server.id, 0, 20)
+        case.load_genres(&case.id, 0, 20)
             .expect("load repaired genres")
             .items[0]
             .image_refs,
@@ -3976,10 +3411,8 @@ fn schema_repair_cache() {
 
 #[test]
 fn schema_repair_genre() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut albums = (1..=8).map(album_with_image).collect::<Vec<_>>();
     let first_genre = genre(1, None);
     let second_genre = genre(2, None);
@@ -3995,24 +3428,18 @@ fn schema_repair_genre() {
         .map(|(index, album)| track(index as u32 + 1, album))
         .collect::<Vec<_>>();
 
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_genres(
-            &saved.server.id,
-            &[first_genre.clone(), second_genre.clone()],
-            generation,
-        )
-        .expect("upsert genres");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
-    store
-        .connection
+    case.upsert_genres(
+        &case.id,
+        &[first_genre.clone(), second_genre.clone()],
+        generation,
+    )
+    .expect("upsert genres");
+    case.finish_sync(generation, "complete sync");
+    case.connection
         .execute(
             "
             DELETE FROM collection_cover_refs
@@ -4021,15 +3448,15 @@ fn schema_repair_genre() {
               AND collection_id = ?3
             ",
             rusqlite::params![
-                saved.server.id.as_str(),
+                case.id.as_str(),
                 COLLECTION_COVER_GENRE,
                 second_genre.id.as_str()
             ],
         )
         .expect("drop one genre cover cache row");
 
-    let partial = store
-        .load_genres(&saved.server.id, 0, 20)
+    let partial = case
+        .load_genres(&case.id, 0, 20)
         .expect("load partially cached genres");
     assert!(partial.items[0].image_refs.len() >= 4);
     assert!(
@@ -4037,11 +3464,10 @@ fn schema_repair_genre() {
         "second genre should simulate an interrupted cover-ref cache"
     );
 
-    store
-        .ensure_collection_cover_refs(&saved.server.id)
+    case.ensure_collection_cover_refs(&case.id)
         .expect("ensure cover refs");
-    let repaired = store
-        .load_genres(&saved.server.id, 0, 20)
+    let repaired = case
+        .load_genres(&case.id, 0, 20)
         .expect("load repaired genres");
     assert_eq!(
         repaired.items[1].image_refs,
@@ -4065,31 +3491,25 @@ fn schema_track_test(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<Playlist
 }
 #[test]
 fn schema_track_missing() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let fallback_image = image_ref("album-track-cover", "album-track-tag");
     let mut first_track = track(1, &album);
     first_track.image_ref = Some(fallback_image.clone());
     let second_track = track(2, &album);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[first_track.clone(), second_track.clone()],
-            generation,
-        )
-        .expect("upsert tracks");
+    case.upsert_tracks(
+        &case.id,
+        &[first_track.clone(), second_track.clone()],
+        generation,
+    )
+    .expect("upsert tracks");
 
-    let albums = store
-        .load_albums(&saved.server.id, 0, 25)
-        .expect("load albums");
-    let detail = store
-        .load_album_detail(&saved.server.id, &album.id)
+    let albums = case.load_albums(&case.id, 0, 25).expect("load albums");
+    let detail = case
+        .load_album_detail(&case.id, &album.id)
         .expect("load detail")
         .expect("detail");
 
@@ -4100,10 +3520,8 @@ fn schema_track_missing() {
 
 #[test]
 fn selected_image_origin_marks_source_fallback_and_external_refs() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
 
     let source_album = album(1);
     let track_image = image_ref("track-source-cover", "track-source-tag");
@@ -4113,21 +3531,19 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
     external_album.musicbrainz_release_group_id =
         Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
 
-    store
-        .upsert_albums(
-            &saved.server.id,
-            &[source_album.clone(), external_album.clone()],
-            generation,
-        )
-        .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &[source_track.clone()], generation)
+    case.upsert_albums(
+        &case.id,
+        &[source_album.clone(), external_album.clone()],
+        generation,
+    )
+    .expect("upsert albums");
+    case.upsert_tracks(&case.id, &[source_track.clone()], generation)
         .expect("upsert tracks");
 
     assert_eq!(
         selected_image_origin(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "tracks",
             "track_id",
             source_track.id.as_str(),
@@ -4135,14 +3551,12 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
         "source"
     );
 
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
     assert_eq!(
         selected_image_origin(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "albums",
             "album_id",
             source_album.id.as_str(),
@@ -4151,8 +3565,8 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
     );
     assert_eq!(
         selected_image_origin(
-            &store,
-            &saved.server.id,
+            &case,
+            &case.id,
             "albums",
             "album_id",
             external_album.id.as_str(),
@@ -4163,10 +3577,8 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
 
 #[test]
 fn source_artist_image_seeds_album_before_external_identity() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
 
     let artist_image = image_ref("artist-source-cover", "artist-source-tag");
     let artist = artist(1, Some(artist_image.clone()));
@@ -4174,79 +3586,46 @@ fn source_artist_image_seeds_album_before_external_identity() {
     album.musicbrainz_release_group_id = Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
     let track = track(1, &album);
 
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .complete_sync(&saved.server.id, generation)
-        .expect("complete sync");
+    case.finish_sync(generation, "complete sync");
 
-    let detail = store
-        .load_album_detail(&saved.server.id, &album.id)
+    let detail = case
+        .load_album_detail(&case.id, &album.id)
         .expect("load detail")
         .expect("detail");
 
     assert_eq!(detail.0.image_ref, Some(artist_image.clone()));
     assert_eq!(detail.1[0].image_ref, Some(artist_image));
     assert_eq!(
-        selected_image_origin(
-            &store,
-            &saved.server.id,
-            "albums",
-            "album_id",
-            album.id.as_str(),
-        ),
+        selected_image_origin(&case, &case.id, "albums", "album_id", album.id.as_str(),),
         "fallback"
     );
     assert_eq!(
-        selected_image_origin(
-            &store,
-            &saved.server.id,
-            "tracks",
-            "track_id",
-            track.id.as_str(),
-        ),
+        selected_image_origin(&case, &case.id, "tracks", "track_id", track.id.as_str(),),
         "fallback"
     );
 }
 
 #[test]
 fn fallback_artist_image_does_not_seed_album_fallback() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
 
     let album = album(1);
     let artist = artist(1, None);
     let track = track(1, &album);
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .connection
+    case.connection
         .execute(
             "
             UPDATE artists
@@ -4255,15 +3634,14 @@ fn fallback_artist_image_does_not_seed_album_fallback() {
                 image_origin = 'fallback'
             WHERE server_id = ?1 AND artist_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), artist.id.as_str()],
+            rusqlite::params![case.id.as_str(), artist.id.as_str()],
         )
         .expect("mark derived artist image");
 
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
 
-    let album_image: Option<String> = store
+    let album_image: Option<String> = case
         .connection
         .query_row(
             "
@@ -4271,7 +3649,7 @@ fn fallback_artist_image_does_not_seed_album_fallback() {
             FROM albums
             WHERE server_id = ?1 AND album_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), album.id.as_str()],
+            rusqlite::params![case.id.as_str(), album.id.as_str()],
             |row| row.get(0),
         )
         .expect("album image");
@@ -4281,30 +3659,19 @@ fn fallback_artist_image_does_not_seed_album_fallback() {
 
 #[test]
 fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
 
     let album = album(1);
     let artist = artist(1, None);
     let track = track(1, &album);
-    store
-        .upsert_artists(
-            &saved.server.id,
-            std::slice::from_ref(&artist),
-            false,
-            generation,
-        )
+    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
         .expect("upsert artist");
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    store
-        .connection
+    case.connection
         .execute(
             "
             UPDATE tracks
@@ -4313,15 +3680,14 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
                 image_origin = 'fallback'
             WHERE server_id = ?1 AND track_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), track.id.as_str()],
+            rusqlite::params![case.id.as_str(), track.id.as_str()],
         )
         .expect("mark derived track image");
 
-    store
-        .refresh_library_counts(&saved.server.id)
+    case.refresh_library_counts(&case.id)
         .expect("refresh counts");
 
-    let album_image: Option<String> = store
+    let album_image: Option<String> = case
         .connection
         .query_row(
             "
@@ -4329,11 +3695,11 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
             FROM albums
             WHERE server_id = ?1 AND album_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), album.id.as_str()],
+            rusqlite::params![case.id.as_str(), album.id.as_str()],
             |row| row.get(0),
         )
         .expect("album image");
-    let artist_image: Option<String> = store
+    let artist_image: Option<String> = case
         .connection
         .query_row(
             "
@@ -4341,7 +3707,7 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
             FROM artists
             WHERE server_id = ?1 AND artist_id = ?2
             ",
-            rusqlite::params![saved.server.id.as_str(), artist.id.as_str()],
+            rusqlite::params![case.id.as_str(), artist.id.as_str()],
             |row| row.get(0),
         )
         .expect("artist image");
@@ -4349,38 +3715,28 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
     assert_eq!(album_image, None);
     assert_eq!(artist_image, None);
     assert_eq!(
-        selected_image_origin(
-            &store,
-            &saved.server.id,
-            "albums",
-            "album_id",
-            album.id.as_str(),
-        ),
+        selected_image_origin(&case, &case.id, "albums", "album_id", album.id.as_str(),),
         "unknown"
     );
 }
 
 #[test]
 fn paged_read_return() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let albums = (1..=505).map(album).collect::<Vec<_>>();
     let tracks = (1..=1005)
         .map(|number| track(number, &albums[(number as usize - 1) % albums.len()]))
         .collect::<Vec<_>>();
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    let album_page = store
-        .load_albums(&saved.server.id, 500, 10)
+    let album_page = case
+        .load_albums(&case.id, 500, 10)
         .expect("load album page");
-    let track_page = store
-        .load_tracks(&saved.server.id, 1000, 10)
+    let track_page = case
+        .load_tracks(&case.id, 1000, 10)
         .expect("load track page");
     assert_eq!(album_page.total, 505);
     assert_eq!(album_page.items.len(), 5);
@@ -4389,10 +3745,8 @@ fn paged_read_return() {
 }
 #[test]
 fn schema_keep_boundaries() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut first_album = album(1);
     first_album.title = "Alpha Album".to_string();
     let mut second_album = album(2);
@@ -4406,21 +3760,19 @@ fn schema_keep_boundaries() {
     for track in &mut tracks {
         track.title = format!("Needle {}", track.track_number);
     }
-    store
-        .upsert_albums(&saved.server.id, &[first_album, second_album], generation)
+    case.upsert_albums(&case.id, &[first_album, second_album], generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
 
-    let full_page = store
-        .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 0, 10)
+    let full_page = case
+        .load_tracks_sorted(&case.id, LibraryField::Album, false, 0, 10)
         .expect("load full sorted page");
-    let first_page = store
-        .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 0, 2)
+    let first_page = case
+        .load_tracks_sorted(&case.id, LibraryField::Album, false, 0, 2)
         .expect("load first sorted page");
-    let second_page = store
-        .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 2, 2)
+    let second_page = case
+        .load_tracks_sorted(&case.id, LibraryField::Album, false, 2, 2)
         .expect("load second sorted page");
     let combined_ids = first_page
         .items
@@ -4445,15 +3797,8 @@ fn schema_keep_boundaries() {
     );
     assert_eq!(combined_ids, full_ids);
 
-    let search_page = store
-        .load_tracks_matching_sorted(
-            &saved.server.id,
-            "Needle",
-            LibraryField::Album,
-            false,
-            0,
-            10,
-        )
+    let search_page = case
+        .load_tracks_matching_sorted(&case.id, "Needle", LibraryField::Album, false, 0, 10)
         .expect("load sorted search page");
     assert_eq!(
         search_page
@@ -4466,10 +3811,8 @@ fn schema_keep_boundaries() {
 }
 #[test]
 fn paged_search_read() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let mut albums = (1..=505).map(album).collect::<Vec<_>>();
     albums[504].genres = vec!["Needle Genre".to_string()];
     let tracks = (1..=1005)
@@ -4488,41 +3831,35 @@ fn paged_search_read() {
     let playlists = (1..=505)
         .map(|number| playlist(number, None))
         .collect::<Vec<_>>();
-    store
-        .upsert_albums(&saved.server.id, &albums, generation)
+    case.upsert_albums(&case.id, &albums, generation)
         .expect("upsert albums");
-    store
-        .upsert_tracks(&saved.server.id, &tracks, generation)
+    case.upsert_tracks(&case.id, &tracks, generation)
         .expect("upsert tracks");
-    store
-        .upsert_artists(&saved.server.id, &artists, false, generation)
+    case.upsert_artists(&case.id, &artists, false, generation)
         .expect("upsert artists");
-    store
-        .upsert_artists(&saved.server.id, &album_artists, true, generation)
+    case.upsert_artists(&case.id, &album_artists, true, generation)
         .expect("upsert album artists");
-    store
-        .upsert_genres(&saved.server.id, &genres, generation)
+    case.upsert_genres(&case.id, &genres, generation)
         .expect("upsert genres");
-    store
-        .upsert_playlists(&saved.server.id, &playlists, generation)
+    case.upsert_playlists(&case.id, &playlists, generation)
         .expect("upsert playlists");
-    let album_page = store
-        .load_albums_matching(&saved.server.id, "Needle Genre", 0, 10)
+    let album_page = case
+        .load_albums_matching(&case.id, "Needle Genre", 0, 10)
         .expect("search albums");
-    let track_page = store
-        .load_tracks_matching(&saved.server.id, "Track 1005", 0, 10)
+    let track_page = case
+        .load_tracks_matching(&case.id, "Track 1005", 0, 10)
         .expect("search tracks");
-    let artist_page = store
-        .load_artists_matching(&saved.server.id, false, "Artist 505", 0, 10)
+    let artist_page = case
+        .load_artists_matching(&case.id, false, "Artist 505", 0, 10)
         .expect("search artists");
-    let album_artist_page = store
-        .load_artists_matching(&saved.server.id, true, "Artist 505", 0, 10)
+    let album_artist_page = case
+        .load_artists_matching(&case.id, true, "Artist 505", 0, 10)
         .expect("search album artists");
-    let genre_page = store
-        .load_genres_matching(&saved.server.id, "Needle Genre", 0, 10)
+    let genre_page = case
+        .load_genres_matching(&case.id, "Needle Genre", 0, 10)
         .expect("search genres");
-    let playlist_page = store
-        .load_playlists_matching(&saved.server.id, "Playlist 505", 0, 10)
+    let playlist_page = case
+        .load_playlists_matching(&case.id, "Playlist 505", 0, 10)
         .expect("search playlists");
     assert_eq!(album_page.items, vec![albums[504].clone()]);
     assert_eq!(track_page.items, vec![tracks[1004].clone()]);
@@ -4533,41 +3870,31 @@ fn paged_search_read() {
 }
 #[test]
 fn playlist_detail_stores_ordered_tracks() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let track_one = track(1, &album);
     let track_two = track(2, &album);
     let playlist = playlist(1, None);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[track_one.clone(), track_two.clone()],
-            generation,
-        )
-        .expect("upsert tracks");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_tracks(
+        &case.id,
+        &[track_one.clone(), track_two.clone()],
+        generation,
+    )
+    .expect("upsert tracks");
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
-    store
-        .upsert_playlist_tracks(
-            &saved.server.id,
-            &playlist.id,
-            &[track_two.clone(), track_one.clone()],
-            generation,
-        )
-        .expect("upsert playlist tracks");
-    let detail = store
-        .load_playlist_detail(&saved.server.id, &playlist.id)
+    case.upsert_playlist_tracks(
+        &case.id,
+        &playlist.id,
+        &[track_two.clone(), track_one.clone()],
+        generation,
+    )
+    .expect("upsert playlist tracks");
+    let detail = case
+        .load_playlist_detail(&case.id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
     assert_eq!(detail.playlist, playlist);
@@ -4576,10 +3903,8 @@ fn playlist_detail_stores_ordered_tracks() {
 
 #[test]
 fn playlist_entries_derive_cached_stats() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track_one = track(1, &album);
     track_one.duration_seconds = 120;
@@ -4590,26 +3915,19 @@ fn playlist_entries_derive_cached_stats() {
     let mut playlist = playlist(1, None);
     playlist.track_count = 0;
     playlist.duration_seconds = 0;
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[track_one.clone(), track_two.clone()],
-            generation,
-        )
-        .expect("upsert tracks");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_tracks(
+        &case.id,
+        &[track_one.clone(), track_two.clone()],
+        generation,
+    )
+    .expect("upsert tracks");
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
-    let delta = store
+    let delta = case
         .upsert_playlist_entries_delta(
-            &saved.server.id,
+            &case.id,
             &playlist.id,
             &[
                 PlaylistEntry {
@@ -4626,14 +3944,14 @@ fn playlist_entries_derive_cached_stats() {
         .expect("upsert entries");
 
     assert_eq!(delta.playlists.entries, vec![playlist.id.clone()]);
-    let page = store
-        .load_playlists(&saved.server.id, 0, 10)
+    let page = case
+        .load_playlists(&case.id, 0, 10)
         .expect("load playlists");
     assert_eq!(page.items[0].track_count, 2);
     assert_eq!(page.items[0].duration_seconds, 330);
     assert_eq!(page.items[0].top_genres, vec!["Rock", "Pop"]);
-    let detail = store
-        .load_playlist_detail(&saved.server.id, &playlist.id)
+    let detail = case
+        .load_playlist_detail(&case.id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
     assert_eq!(detail.playlist.track_count, 2);
@@ -4643,63 +3961,49 @@ fn playlist_entries_derive_cached_stats() {
 
 #[test]
 fn track_genre_change_refreshes_playlist_top_genres() {
-    let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track_one = track(1, &album);
     track_one.genres = vec!["Rock".to_string()];
     let mut track_two = track(2, &album);
     track_two.genres = vec!["Rock".to_string()];
     let playlist = playlist(1, None);
-    store
-        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    store
-        .upsert_tracks(
-            &saved.server.id,
-            &[track_one.clone(), track_two.clone()],
-            generation,
-        )
-        .expect("upsert tracks");
-    store
-        .upsert_playlists(
-            &saved.server.id,
-            std::slice::from_ref(&playlist),
-            generation,
-        )
+    case.upsert_tracks(
+        &case.id,
+        &[track_one.clone(), track_two.clone()],
+        generation,
+    )
+    .expect("upsert tracks");
+    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
-    store
-        .upsert_playlist_entries_delta(
-            &saved.server.id,
-            &playlist.id,
-            &[
-                PlaylistEntry {
-                    entry_id: "entry-one".to_string(),
-                    track: track_one,
-                },
-                PlaylistEntry {
-                    entry_id: "entry-two".to_string(),
-                    track: track_two.clone(),
-                },
-            ],
-            generation,
-        )
-        .expect("upsert entries");
+    case.upsert_playlist_entries_delta(
+        &case.id,
+        &playlist.id,
+        &[
+            PlaylistEntry {
+                entry_id: "entry-one".to_string(),
+                track: track_one,
+            },
+            PlaylistEntry {
+                entry_id: "entry-two".to_string(),
+                track: track_two.clone(),
+            },
+        ],
+        generation,
+    )
+    .expect("upsert entries");
 
     track_two.genres = vec!["Pop".to_string()];
-    let delta = store
-        .upsert_tracks_delta(
-            &saved.server.id,
-            std::slice::from_ref(&track_two),
-            generation,
-        )
+    let delta = case
+        .upsert_tracks_delta(&case.id, std::slice::from_ref(&track_two), generation)
         .expect("update track");
 
     assert_eq!(delta.playlists.entries, vec![playlist.id.clone()]);
-    let detail = store
-        .load_playlist_detail(&saved.server.id, &playlist.id)
+    let detail = case
+        .load_playlist_detail(&case.id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
     assert_eq!(detail.playlist.top_genres, vec!["Pop", "Rock"]);
