@@ -18,7 +18,7 @@ use domain::{
     ServerIdentity, Track, TrackId,
 };
 use library::{SavedServer, ServerLocalAccess};
-use playback::{PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState};
+use playback::PlaybackState;
 use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
 use source::{
@@ -30,8 +30,8 @@ use source::{
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -47,28 +47,6 @@ impl SecretStore for SaveFailingSecretStore {
 
     fn delete_secret(&self, _key: &secrets::SecretKey) -> secrets::SecretResult<()> {
         Ok(())
-    }
-}
-
-fn disk_store_for_test(label: &str) -> (StoreHandle, PathBuf) {
-    let root = unique_test_dir(label);
-    let _cleanup = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create store root");
-    let store = StoreHandle::Path {
-        cache_database_path: root.join(CACHE_DATABASE_FILE_NAME),
-        settings_path: root.join("config").join(SETTINGS_FILE_NAME),
-    };
-    store.with_store(|_| Ok(())).expect("open disk store");
-    (store, root)
-}
-
-fn disk_store_database_path(store: &StoreHandle) -> PathBuf {
-    match store {
-        StoreHandle::Path {
-            cache_database_path,
-            ..
-        } => cache_database_path.clone(),
-        StoreHandle::Memory { .. } => panic!("expected disk store"),
     }
 }
 
@@ -92,48 +70,6 @@ pub(in crate::controller) fn startup_jellyfin_saved() {
     );
 }
 
-pub(in crate::controller) struct RecordingPlaybackBackend {
-    commands: Arc<Mutex<Vec<PlaybackCommand>>>,
-    events: Vec<PlaybackEvent>,
-}
-impl RecordingPlaybackBackend {
-    pub(in crate::controller) fn new(commands: Arc<Mutex<Vec<PlaybackCommand>>>) -> Self {
-        Self {
-            commands,
-            events: Vec::new(),
-        }
-    }
-}
-impl PlaybackBackend for RecordingPlaybackBackend {
-    fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
-        self.commands
-            .lock()
-            .expect("commands")
-            .push(command.clone());
-        match command {
-            PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. } => {
-                self.events
-                    .push(PlaybackEvent::StateChanged(PlaybackState::Playing));
-            }
-            PlaybackCommand::PrepareNext(_) => {}
-            PlaybackCommand::SetVolume(volume) => {
-                self.events.push(PlaybackEvent::VolumeChanged {
-                    volume,
-                    muted: false,
-                });
-            }
-            PlaybackCommand::SetMuted(muted) => {
-                self.events
-                    .push(PlaybackEvent::VolumeChanged { volume: 1.0, muted });
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    fn drain_events(&mut self) -> Vec<PlaybackEvent> {
-        std::mem::take(&mut self.events)
-    }
-}
 #[test]
 pub(in crate::controller) fn startup_server_state() {
     let (_controller, _events, snapshot, queue, player) =
@@ -4265,77 +4201,6 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         .expect("changed remote sync");
     assert!(changed.delta.albums.fields.contains(&stale_album.id));
     assert!(changed.post_sync_work);
-}
-fn seed_cached_library(
-    store: &StoreHandle,
-    saved: &SavedServer,
-    albums: &[Album],
-    tracks: &[Track],
-    home_sections: &[HomeSection],
-) {
-    store
-        .with_store(|store| {
-            store.save_server(saved)?;
-            store.set_active_server(&saved.server.id)?;
-            let generation = store.begin_sync(&saved.server.id)?;
-            if !albums.is_empty() {
-                store.upsert_albums(&saved.server.id, albums, generation)?;
-            }
-            if !tracks.is_empty() {
-                store.upsert_tracks(&saved.server.id, tracks, generation)?;
-            }
-            if !home_sections.is_empty() {
-                store.upsert_home_sections(&saved.server.id, home_sections, generation)?;
-            }
-            store.complete_sync(&saved.server.id, generation)
-        })
-        .expect("seed library cache");
-}
-
-fn local_album_with_image_ref(image_ref: ImageRef) -> Album {
-    Album {
-        id: AlbumId::new("local:album:one"),
-        title: "Example Album".to_string(),
-        artist: "Example Artist".to_string(),
-        artist_id: Some(ArtistId::new("local:artist:one")),
-        album_artist_credits: Vec::new(),
-        artist_credits: Vec::new(),
-        year: 2026,
-        release_date: None,
-        date_added: None,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        track_count: 1,
-        duration_seconds: 180,
-        favorite: false,
-        color_seed: 1,
-        image_ref: Some(image_ref),
-        genres: Vec::new(),
-        release_types: Vec::new(),
-        is_compilation: None,
-        musicbrainz_album_id: None,
-        musicbrainz_release_group_id: None,
-    }
-}
-fn local_track_with_image_ref(number: u32, album: &Album, image_ref: ImageRef) -> Track {
-    let mut track = library_track(
-        number,
-        Some(ArtistId::new("local:artist:one")),
-        album.id.clone(),
-        "Example Artist",
-        &[],
-    );
-    track.id = TrackId::new(format!("local:track:{number}"));
-    track.album = album.title.clone();
-    track.image_ref = Some(image_ref);
-    track
-}
-fn remote_album_with_image_ref(image_ref: ImageRef) -> Album {
-    let mut album = local_album_with_image_ref(image_ref);
-    album.id = AlbumId::new("jellyfin:album:one");
-    album.artist_id = Some(ArtistId::new("jellyfin:artist:one"));
-    album
 }
 fn startup_assert_ref(image_ref: Option<&ImageRef>) {
     assert!(

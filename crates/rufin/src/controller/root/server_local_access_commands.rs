@@ -586,12 +586,7 @@ mod tests {
             .with_store(|store| {
                 store.save_server(saved)?;
                 let generation = store.begin_sync(&saved.server.id)?;
-                let album = super::super::lyrics_local_access_tests::library_album(
-                    1,
-                    "Example Artist",
-                    "Example Album",
-                    None,
-                );
+                let album = library_album(1, "Example Artist", "Example Album", None);
                 store.upsert_albums(&saved.server.id, &[album], generation)?;
                 store.complete_sync(&saved.server.id, generation)?;
                 let queue = QueueEngine::new(saved.server.id.clone());

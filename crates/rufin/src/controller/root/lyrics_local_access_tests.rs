@@ -540,19 +540,16 @@ pub(in crate::controller) fn lyrics_use_file() {
     let saved = self::saved_server();
     let dir = self::unique_test_dir("local-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: dir.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(dir.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: dir.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(dir.to_string_lossy().into_owned()),
+        },
+    );
     let audio = dir.join("07 I'm feeling lucky.flac");
     let lrc = dir.join("07 I'm feeling lucky.lrc");
     fs::write(&audio, []).expect("audio");
@@ -576,19 +573,16 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks
     let saved = self::saved_server();
     let dir = self::unique_test_dir("title-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: dir.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(dir.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: dir.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(dir.to_string_lossy().into_owned()),
+        },
+    );
     let audio = dir.join("01 Apple.flac");
     let lrc = dir.join("Apple.lrc");
     fs::write(&audio, []).expect("audio");
@@ -723,19 +717,16 @@ pub(in crate::controller) fn lyrics_ignore_files() {
     let saved = self::saved_server();
     let dir = self::unique_test_dir("local-sidecar-large");
     fs::create_dir_all(&dir).expect("create dir");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: dir.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(dir.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: dir.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(dir.to_string_lossy().into_owned()),
+        },
+    );
     let audio = dir.join("Track.flac");
     let lrc = dir.join("Track.lrc");
     fs::write(&audio, []).expect("audio");
@@ -797,13 +788,7 @@ pub(in crate::controller) fn lyrics_use_replacement() {
 pub(in crate::controller) fn lyrics_require_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_active_sync(&store, &saved);
     let dir = self::unique_test_dir("remote-no-local-access");
     fs::create_dir_all(&dir).expect("create dir");
     let audio = dir.join("Track.flac");
@@ -825,19 +810,16 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: root.to_string_lossy().into_owned(),
-                path_replace_from: Some("/server/music".to_string()),
-                path_replace_to: Some(root.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: root.to_string_lossy().into_owned(),
+            path_replace_from: Some("/server/music".to_string()),
+            path_replace_to: Some(root.to_string_lossy().into_owned()),
+        },
+    );
     let mut track = restored_track();
     track.local_path = Some("/server/music/Album/Track.flac".to_string());
     store
@@ -909,13 +891,7 @@ pub(in crate::controller) fn lyrics_use_source() {
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_active_sync(&store, &saved);
     let mut track = restored_track();
     track.id = TrackId::new("local:track:stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
@@ -948,13 +924,7 @@ pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_active_sync(&store, &saved);
     let mut track = restored_track();
     track.id = TrackId::new("local:track:stale-stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
@@ -1010,13 +980,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         .next()
         .expect("track");
     track.local_path = None;
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_active_sync(&store, &saved);
     store
         .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
         .expect("upsert track");
@@ -1044,19 +1008,16 @@ pub(in crate::controller) fn lyrics_match_path() {
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: root.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(root.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: root.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(root.to_string_lossy().into_owned()),
+        },
+    );
     let track = restored_track();
     store
         .with_store(|store| {
@@ -1095,19 +1056,16 @@ pub(in crate::controller) fn lyrics_use_prefix() {
     let audio = local_root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: scan_root.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(local_root.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: scan_root.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(local_root.to_string_lossy().into_owned()),
+        },
+    );
     let mut track = restored_track();
     track.local_path = Some("Album/Track.flac".to_string());
     store
@@ -1127,19 +1085,16 @@ pub(in crate::controller) fn access_match_use() {
     let audio = root.join("Album/Filename Fallback.mp3");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: root.to_string_lossy().into_owned(),
-                path_replace_from: None,
-                path_replace_to: Some(root.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: root.to_string_lossy().into_owned(),
+            path_replace_from: None,
+            path_replace_to: Some(root.to_string_lossy().into_owned()),
+        },
+    );
     let mut remote = restored_track();
     remote.title = "Manifest Title".to_string();
     remote.album = "Manifest Album".to_string();
@@ -1198,19 +1153,16 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     fs::write(&direct_audio, []).expect("direct audio");
     fs::write(&prefix_audio, []).expect("prefix audio");
     fs::write(&metadata_audio, []).expect("metadata audio");
-    let generation = store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
-                root_path: root.to_string_lossy().into_owned(),
-                path_replace_from: Some("/server/music".to_string()),
-                path_replace_to: Some(local_prefix.to_string_lossy().into_owned()),
-            })?;
-            store.begin_sync(&saved.server.id)
-        })
-        .expect("begin sync");
+    let generation = begin_sync_with_access(
+        &store,
+        &saved,
+        &ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: root.to_string_lossy().into_owned(),
+            path_replace_from: Some("/server/music".to_string()),
+            path_replace_to: Some(local_prefix.to_string_lossy().into_owned()),
+        },
+    );
     let mut direct = restored_track();
     direct.id = TrackId::new("jellyfin:track:direct");
     direct.title = "Direct".to_string();
@@ -1816,100 +1768,6 @@ pub(in crate::controller) fn lyrics_found_classified() {
         "provider network failed: offline"
     ));
 }
-pub(in crate::controller) fn controller_from_store_for_test(
-    store: StoreHandle,
-) -> (AppController, Receiver<ControllerEvent>) {
-    let test_permit = Some(super::controller_test_permit());
-    let (events, receiver) = channel();
-    let runtime = Runtime::new()
-        .map(Arc::new)
-        .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
-    let snapshot = load_snapshot(&store).expect("load snapshot");
-    let settings = load_settings_from_store(&store);
-    let queue = restore_queue(&store, snapshot.server.as_ref());
-    let playback_snapshot =
-        playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled, &settings.playback);
-    let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
-        MemorySecretStore::new(),
-    )));
-    let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
-    let controller = AppController {
-        settings: super::settings_controller::SettingsController::new(
-            store.clone(),
-            Arc::<dyn SecretStore>::clone(&secrets),
-        ),
-        store,
-        runtime,
-        secrets,
-        secret_switch,
-        queue: Arc::new(Mutex::new(queue)),
-        play_activation_generation: Arc::new(AtomicU64::new(0)),
-        queue_persist_generation: Arc::new(AtomicU64::new(0)),
-        playback_request_generation: Arc::new(AtomicU64::new(0)),
-        next_preload: Arc::new(Mutex::new(NextPreloadState::default())),
-        waveform_warm_generation: Arc::new(AtomicU64::new(0)),
-        playback: Arc::new(Mutex::new(Box::new(playback::FakePlaybackBackend::new()))),
-        playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
-        playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
-        auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
-        last_progress_snapshot: Arc::new(Mutex::new(None)),
-        last_report_snapshot: Arc::new(Mutex::new(None)),
-        external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-        external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
-        events,
-        sync_in_flight: InFlightGuards::new("Sync"),
-        home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-        explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
-        cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
-        external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashMap::new())),
-        cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
-        _test_permit: test_permit,
-    };
-    (controller, receiver)
-}
-pub(in crate::controller) fn restored_track() -> Track {
-    Track {
-        id: TrackId::new("jellyfin:track:lyrics"),
-        album_id: AlbumId::fake(1),
-        title: "Restored Track".to_string(),
-        artist: "Artist".to_string(),
-        artist_id: Some(ArtistId::fake(1)),
-        artist_credits: Vec::new(),
-        album_artist_credits: Vec::new(),
-        album: "Album".to_string(),
-        year: 2026,
-        release_date: None,
-        date_added: None,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        duration_seconds: 180,
-        favorite: false,
-        disc_number: 1,
-        track_number: 1,
-        image_ref: None,
-        genres: Vec::new(),
-        musicbrainz_recording_id: None,
-        musicbrainz_release_track_id: None,
-        local_path: None,
-        source_format: None,
-        comment: None,
-        skip_count: None,
-    }
-}
-pub(in crate::controller) fn saved_server() -> SavedServer {
-    SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:test"),
-            provider: "jellyfin".to_string(),
-            name: "Test Server".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    }
-}
 #[test]
 pub(in crate::controller) fn lyrics_keep_size() {
     let cover = test_image_ref(1);
@@ -1944,90 +1802,4 @@ pub(in crate::controller) fn lyrics_cover_four() {
     tracks[2].image_ref = Some(fifth);
     let refs = super::grouped_cover_refs_for_items(&albums, &tracks);
     assert_eq!(refs, vec![first, second, third, fourth]);
-}
-pub(in crate::controller) fn unique_test_dir(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "rufin-{label}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ))
-}
-pub(in crate::controller) fn local_manifest_file_facts(
-    root: &std::path::Path,
-    path: &std::path::Path,
-) -> domain::LocalFileFacts {
-    let metadata = fs::metadata(path).expect("metadata");
-    let modified = metadata.modified().expect("modified time");
-    let duration = modified
-        .duration_since(UNIX_EPOCH)
-        .expect("modified after epoch");
-    domain::LocalFileFacts {
-        path: path.to_path_buf(),
-        root_path: root.to_path_buf(),
-        relative_path: path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned(),
-        file_size: metadata.len(),
-        mtime_seconds: duration.as_secs().min(i64::MAX as u64) as i64,
-        mtime_nanos: duration.subsec_nanos(),
-        inode: local_manifest_inode(&metadata),
-        device: local_manifest_device(&metadata),
-    }
-}
-#[cfg(unix)]
-fn local_manifest_inode(metadata: &fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.ino())
-}
-#[cfg(not(unix))]
-fn local_manifest_inode(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
-#[cfg(unix)]
-fn local_manifest_device(metadata: &fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.dev())
-}
-#[cfg(not(unix))]
-fn local_manifest_device(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
-pub(in crate::controller) fn test_image_ref(number: u32) -> ImageRef {
-    ImageRef::new(
-        format!("jellyfin:album:{number}"),
-        Some(format!("tag-{number}")),
-    )
-}
-pub(in crate::controller) fn library_album(
-    number: u32,
-    artist: &str,
-    title: &str,
-    image_ref: Option<ImageRef>,
-) -> Album {
-    Album {
-        id: AlbumId::fake(number),
-        title: title.to_string(),
-        artist: artist.to_string(),
-        artist_id: Some(ArtistId::fake(number)),
-        album_artist_credits: Vec::new(),
-        artist_credits: Vec::new(),
-        year: 2026,
-        release_date: None,
-        date_added: None,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        track_count: 1,
-        duration_seconds: 180,
-        favorite: false,
-        color_seed: number,
-        image_ref,
-        genres: Vec::new(),
-        release_types: Vec::new(),
-        is_compilation: None,
-        musicbrainz_album_id: None,
-        musicbrainz_release_group_id: None,
-    }
 }

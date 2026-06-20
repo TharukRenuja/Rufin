@@ -118,10 +118,6 @@ mod test_support;
 
 pub(in crate::controller) use cached_reads::*;
 pub(in crate::controller) use controller_startup::*;
-#[cfg(test)]
-pub(in crate::controller) use lyrics_local_access_tests::{
-    controller_from_store_for_test, saved_server, unique_test_dir,
-};
 pub(crate) use play_activation::{
     FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
@@ -155,8 +151,6 @@ use source_refs::{
     track_album_refs,
 };
 pub(crate) use source_refs::{grouped_cover_refs_for_items, track_cover_refs_for_items};
-#[cfg(test)]
-pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
 pub(in crate::controller) use sync_requests::*;
 #[cfg(test)]
 pub(in crate::controller) use test_support::*;
