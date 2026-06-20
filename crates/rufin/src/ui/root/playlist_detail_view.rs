@@ -25,9 +25,6 @@ pub(in crate::ui) fn playlist_route_margin(width: i32) -> i32 {
     }
 }
 
-pub(in crate::ui) fn playlist_header_orientation(_width: i32) -> gtk::Orientation {
-    gtk::Orientation::Horizontal
-}
 pub(in crate::ui) fn playlist_toolbar_orientation(_width: i32) -> gtk::Orientation {
     gtk::Orientation::Horizontal
 }
@@ -160,7 +157,6 @@ impl Shell {
         smart_playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
         let content_width = route_content_width(self);
-        let cover_only = detail_showcase_cover_only(content_width);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -173,16 +169,6 @@ impl Shell {
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
 
-        let header = gtk::Box::new(
-            playlist_header_orientation(content_width),
-            if compact { 20 } else { 28 },
-        );
-        header.add_css_class("playlist-detail-showcase");
-        mark_tiny_detail_showcase(&header, content_width);
-        add_album_seed_gradient_class(&header, seed);
-        header.set_hexpand(true);
-        header.set_halign(gtk::Align::Fill);
-        header.set_width_request(1);
         let cover = self.cover_group_tile_for_artwork(
             &artwork,
             seed,
@@ -190,19 +176,7 @@ impl Shell {
             playlist_detail_cover_fetch_size(),
         );
         cover.add_css_class("playlist-detail-cover");
-        header.append(&cover);
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_valign(gtk::Align::Center);
-        metadata.set_hexpand(true);
-        metadata.set_halign(gtk::Align::Fill);
-        metadata.set_width_request(1);
-        metadata.set_visible(!cover_only);
-        let title = gtk::Label::new(Some(&smart_playlist_display_name(&detail.smart_playlist)));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        fit_playlist_detail_label(&title);
+        let title = detail_title_label(&smart_playlist_display_name(&detail.smart_playlist));
         let kind_row = self.playlist_detail_kind_row(&[]);
         let summary = playlist_detail_summary(
             detail.smart_playlist.track_count,
@@ -228,13 +202,19 @@ impl Shell {
         let delete_id = detail.smart_playlist.id.clone();
         delete.connect_clicked(move |_| controller.delete_smart_playlist(delete_id.clone()));
         actions.append(&delete);
-        metadata.append(&kind_row);
-        metadata.append(&title);
-        metadata.append(&summary);
-        metadata.append(&actions);
-        header.append(&metadata);
-        let showcase = detail_showcase_frame_with_back(self, header.upcast());
-        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
+        let showcase = playlist_detail_showcase(
+            self,
+            PlaylistDetailShowcase {
+                seed,
+                content_width,
+                compact,
+                cover,
+                kind_row: kind_row.upcast(),
+                title: title.upcast(),
+                summary: summary.upcast(),
+                actions: actions.upcast(),
+            },
+        );
         wrapper.append(&showcase);
 
         if detail.tracks.is_empty() {
@@ -316,7 +296,6 @@ impl Shell {
         playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
         let content_width = route_content_width(self);
-        let cover_only = detail_showcase_cover_only(content_width);
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -329,16 +308,6 @@ impl Shell {
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
 
-        let header = gtk::Box::new(
-            playlist_header_orientation(content_width),
-            if compact { 20 } else { 28 },
-        );
-        header.add_css_class("playlist-detail-showcase");
-        mark_tiny_detail_showcase(&header, content_width);
-        add_album_seed_gradient_class(&header, seed);
-        header.set_hexpand(true);
-        header.set_halign(gtk::Align::Fill);
-        header.set_width_request(1);
         let cover = self.cover_group_tile_for_artwork(
             &artwork,
             seed,
@@ -346,19 +315,7 @@ impl Shell {
             playlist_detail_cover_fetch_size(),
         );
         cover.add_css_class("playlist-detail-cover");
-        header.append(&cover);
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_valign(gtk::Align::Center);
-        metadata.set_hexpand(true);
-        metadata.set_halign(gtk::Align::Fill);
-        metadata.set_width_request(1);
-        metadata.set_visible(!cover_only);
-        let title = gtk::Label::new(Some(&detail.playlist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        fit_playlist_detail_label(&title);
+        let title = detail_title_label(&detail.playlist.name);
         let kind_row = self.playlist_detail_kind_row(&detail.playlist.top_genres);
         let summary = playlist_detail_summary(
             detail.playlist.track_count,
@@ -438,13 +395,19 @@ impl Shell {
             present_light_dismiss_dialog(&dialog, &window);
         });
         actions.append(&delete);
-        metadata.append(&kind_row);
-        metadata.append(&title);
-        metadata.append(&summary);
-        metadata.append(&actions);
-        header.append(&metadata);
-        let showcase = detail_showcase_frame_with_back(self, header.upcast());
-        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
+        let showcase = playlist_detail_showcase(
+            self,
+            PlaylistDetailShowcase {
+                seed,
+                content_width,
+                compact,
+                cover,
+                kind_row: kind_row.upcast(),
+                title: title.upcast(),
+                summary: summary.upcast(),
+                actions: actions.upcast(),
+            },
+        );
         wrapper.append(&showcase);
 
         if detail.entries.is_empty() {
@@ -580,14 +543,6 @@ impl Shell {
         wrapper.append(&table);
         wrapper.upcast()
     }
-}
-
-fn fit_playlist_detail_label(label: &gtk::Label) {
-    label.set_hexpand(true);
-    label.set_halign(gtk::Align::Fill);
-    label.set_width_request(1);
-    label.set_width_chars(1);
-    label.set_max_width_chars(32);
 }
 
 fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box {

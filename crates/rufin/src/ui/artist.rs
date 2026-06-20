@@ -9,7 +9,6 @@ use domain::{
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
-const DETAIL_HEADER_SPACING: i32 = 18;
 const ARTIST_COUNT_ICON_SIZE: i32 = 16;
 
 impl Shell {
@@ -205,20 +204,9 @@ impl Shell {
         track_count: u32,
     ) -> gtk::Widget {
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
-        let cover_only = detail_showcase_cover_only(content_width);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
-        let header = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        header.add_css_class("detail-showcase");
-        header.add_css_class("artist-detail-showcase");
-        header.add_css_class("detail-showcase-horizontal");
-        mark_tiny_detail_showcase(&header, content_width);
-        add_album_seed_gradient_class(&header, seed);
         let external_links = artist_external_links(self, artist, tracks);
-        let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
-        body.set_hexpand(true);
-        body.set_halign(gtk::Align::Fill);
-        body.set_width_request(1);
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
@@ -231,23 +219,6 @@ impl Shell {
             "artist-detail-cover",
         );
         let counts = self.artist_count_buttons(artist, album_count + appears_on_count, track_count);
-        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        cover_column.set_halign(gtk::Align::Start);
-        cover_column.set_width_request(cover_size);
-        cover_column.append(&cover);
-        if let Some(external_links) = external_links {
-            external_links.set_halign(gtk::Align::Center);
-            external_links.set_visible(!cover_only);
-            cover_column.append(&external_links);
-        }
-        body.append(&cover_column);
-
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_hexpand(true);
-        metadata.set_valign(gtk::Align::Start);
-        metadata.set_halign(gtk::Align::Fill);
-        metadata.set_width_request(1);
-        metadata.set_visible(!cover_only);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
@@ -257,18 +228,7 @@ impl Shell {
         kind.set_xalign(0.0);
         kind.set_halign(gtk::Align::Start);
 
-        let title = gtk::Label::new(Some(&artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_justify(gtk::Justification::Left);
-        title.set_hexpand(true);
-        title.set_halign(gtk::Align::Fill);
-        title.set_wrap(true);
-        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        title.set_width_request(1);
-        title.set_width_chars(1);
-        title.set_max_width_chars(32);
-        fit_detail_text(&title, &artist.name);
+        let title = fitted_detail_title_label(&artist.name);
 
         let actions = detail_action_row();
         actions.add_css_class("artist-detail-actions");
@@ -292,21 +252,7 @@ impl Shell {
         });
         actions.append(&play);
 
-        let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
-        let controller = self.controller.clone();
-        let next_tracks = Rc::clone(&action_tracks);
-        play_next.connect_clicked(move |_| {
-            for track in next_tracks.as_ref().iter().rev() {
-                controller.play_next(track.clone());
-            }
-        });
-        actions.append(&play_next);
-
-        let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
-        let controller = self.controller.clone();
-        let later_tracks = Rc::clone(&action_tracks);
-        play_later.connect_clicked(move |_| controller.play_last(later_tracks.as_ref().clone()));
-        actions.append(&play_later);
+        append_track_batch_queue_actions(&actions, &self.controller, Rc::clone(&action_tracks));
 
         let favorite = favorite_icon_button("Favorite");
         favorite.add_css_class("detail-showcase-action-button");
@@ -327,13 +273,20 @@ impl Shell {
         text_stack.append(&kind);
         text_stack.append(&title);
         text_stack.append(&counts);
-        metadata.append(&text_stack);
-        metadata.append(&actions);
-        body.append(&metadata);
-        header.append(&body);
-        let showcase = detail_showcase_frame_with_back(self, header.upcast());
-        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-        showcase
+        media_detail_showcase(
+            self,
+            MediaDetailShowcase {
+                route_class: "artist-detail-showcase",
+                seed,
+                content_width,
+                cover_size,
+                cover: cover.upcast(),
+                external_links,
+                external_links_class: None,
+                text_stack: text_stack.upcast(),
+                actions: actions.upcast(),
+            },
+        )
     }
 
     fn artist_subroute_header(

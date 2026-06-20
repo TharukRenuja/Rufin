@@ -485,11 +485,7 @@ fn append_rule_row(
         let rules = Rc::clone(&rules);
         let rerender = Rc::clone(&rerender);
         remove.connect_clicked(move |_| {
-            let mut rules = rules.borrow_mut();
-            if index < rules.len() {
-                rules.remove(index);
-            }
-            rerender();
+            remove_rule(&rules, index, || rerender());
         });
     }
     row.append(&remove);
@@ -857,6 +853,20 @@ fn change_rule_operator(
     after_change();
 }
 
+fn remove_rule(
+    rules: &Rc<RefCell<Vec<SmartPlaylistRule>>>,
+    index: usize,
+    after_change: impl FnOnce(),
+) {
+    {
+        let mut rules = rules.borrow_mut();
+        if index < rules.len() {
+            rules.remove(index);
+        }
+    }
+    after_change();
+}
+
 fn flat_rules(group: &SmartPlaylistRuleGroup) -> Option<Vec<SmartPlaylistRule>> {
     group
         .rules
@@ -1168,6 +1178,36 @@ mod tests {
         let rules = rules.borrow();
         assert_eq!(rules[0].operator, SmartPlaylistRuleOperator::IsEmpty);
         assert_eq!(rules[0].value, None);
+    }
+
+    #[test]
+    fn new_remove_rule_releases_state_before_rerender() {
+        let rules = Rc::new(RefCell::new(vec![
+            SmartPlaylistRule {
+                field: SmartPlaylistRuleField::Title,
+                operator: SmartPlaylistRuleOperator::Contains,
+                value: Some(SmartPlaylistRuleValue::Text("needle".to_string())),
+            },
+            SmartPlaylistRule {
+                field: SmartPlaylistRuleField::Genre,
+                operator: SmartPlaylistRuleOperator::Equals,
+                value: Some(SmartPlaylistRuleValue::Text("Rock".to_string())),
+            },
+        ]));
+        let rerendered = std::cell::Cell::new(false);
+
+        remove_rule(&rules, 0, || {
+            rerendered.set(true);
+            assert!(
+                rules.try_borrow().is_ok(),
+                "rerender needs to read the editor state after a rule is removed"
+            );
+        });
+
+        assert!(rerendered.get());
+        let rules = rules.borrow();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].field, SmartPlaylistRuleField::Genre);
     }
 
     #[test]

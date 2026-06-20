@@ -220,7 +220,7 @@ msgstr ""
 msgid "Auto DJ refill threshold"
 msgstr ""
 
-#: crates/rufin/src/ui/root/cover_startup.rs crates/rufin/src/ui/root/layout_rendering.rs
+#: crates/rufin/src/ui/root/cover_startup.rs crates/rufin/src/ui/root/detail_showcase.rs
 msgid "Back"
 msgstr ""
 
@@ -932,7 +932,7 @@ msgstr ""
 msgid "Newly added"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs crates/rufin/src/ui/root/album_detail_view.rs crates/rufin/src/ui/root/cover_startup.rs
+#: crates/rufin/src/ui/root/cover_startup.rs crates/rufin/src/ui/root/detail_showcase.rs
 msgid "Next"
 msgstr ""
 
@@ -1112,7 +1112,7 @@ msgstr ""
 msgid "Play"
 msgstr ""
 
-#: crates/rufin/src/ui/artist.rs crates/rufin/src/ui/cards.rs crates/rufin/src/ui/root/album_detail_view.rs crates/rufin/src/ui/root/home_refresh.rs
+#: crates/rufin/src/ui/cards.rs crates/rufin/src/ui/root/detail_showcase.rs crates/rufin/src/ui/root/home_refresh.rs
 msgid "Play Later"
 msgstr ""
 

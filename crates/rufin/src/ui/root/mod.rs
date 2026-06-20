@@ -187,6 +187,7 @@ mod album_detail_view;
 mod build;
 mod cover;
 mod cover_startup;
+mod detail_showcase;
 mod empty_states;
 mod favorite_controls;
 mod folder_route_state;
@@ -224,6 +225,7 @@ pub(in crate::ui) use cover::{
     cover_request_id_for_key,
 };
 pub(in crate::ui) use cover_startup::*;
+pub(in crate::ui) use detail_showcase::*;
 pub(in crate::ui) use equalizer::{
     build_equalizer_preset_dropdown, build_equalizer_preset_row, connect_equalizer_scale_commit,
     equalizer_band_label_parts, equalizer_band_title, equalizer_default_preset_bands,
