@@ -6,6 +6,8 @@ use domain::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod remote_http;
+
 pub use domain::{
     AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
     ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse,

@@ -1,5 +1,6 @@
 use super::*;
 
+use source::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
 use std::time::Duration;
 
 const JELLYFIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -7,6 +8,14 @@ const JELLYFIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const JELLYFIN_JSON_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const JELLYFIN_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const JELLYFIN_ERROR_BODY_MAX_BYTES: usize = 64 * 1024;
+const JELLYFIN_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
+    auth_context: "Jellyfin returned",
+    error_body: BodyLimit {
+        max_bytes: JELLYFIN_ERROR_BODY_MAX_BYTES,
+        context: "Jellyfin error response",
+    },
+    redact_error_url: None,
+};
 
 #[async_trait(?Send)]
 impl MusicProvider for JellyfinProvider {
@@ -632,136 +641,29 @@ pub(super) async fn public_server_name(
 pub(super) async fn send_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> ProviderResult<T> {
-    let response = request.send().await.map_err(map_reqwest_error)?;
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ProviderError::Auth(format!(
-            "Jellyfin returned {}",
-            status.as_u16()
-        )));
-    }
-    if status == StatusCode::NOT_FOUND {
-        return Err(ProviderError::NotFound);
-    }
-    if status.is_client_error() || status.is_server_error() {
-        let message = response_text_or_status(response, status).await;
-        return Err(ProviderError::Server {
-            status: status.as_u16(),
-            message,
-        });
-    }
-
-    let bytes =
-        response_bytes_bounded(response, JELLYFIN_JSON_MAX_BYTES, "Jellyfin JSON response").await?;
-    serde_json::from_slice::<T>(&bytes).map_err(|error| ProviderError::Other(error.to_string()))
-}
-pub(super) async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
-    let response = request.send().await.map_err(map_reqwest_error)?;
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ProviderError::Auth(format!(
-            "Jellyfin returned {}",
-            status.as_u16()
-        )));
-    }
-    if status == StatusCode::NOT_FOUND {
-        return Err(ProviderError::NotFound);
-    }
-    if status.is_client_error() || status.is_server_error() {
-        let message = response_text_or_status(response, status).await;
-        return Err(ProviderError::Server {
-            status: status.as_u16(),
-            message,
-        });
-    }
-    Ok(())
-}
-pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
-    let response = request.send().await.map_err(map_reqwest_error)?;
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ProviderError::Auth(format!(
-            "Jellyfin returned {}",
-            status.as_u16()
-        )));
-    }
-    if status == StatusCode::NOT_FOUND {
-        return Err(ProviderError::NotFound);
-    }
-    if status.is_client_error() || status.is_server_error() {
-        let message = response_text_or_status(response, status).await;
-        return Err(ProviderError::Server {
-            status: status.as_u16(),
-            message,
-        });
-    }
-
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let bytes = response_bytes_bounded(
-        response,
-        JELLYFIN_IMAGE_MAX_BYTES,
-        "Jellyfin image response",
-    )
-    .await?;
-    Ok(ImageBytes {
-        bytes,
-        content_type,
-    })
-}
-async fn response_text_or_status(response: reqwest::Response, status: StatusCode) -> String {
-    match response_bytes_bounded(
-        response,
-        JELLYFIN_ERROR_BODY_MAX_BYTES,
-        "Jellyfin error response",
+    remote_http::json(
+        request,
+        JELLYFIN_HTTP,
+        BodyLimit {
+            max_bytes: JELLYFIN_JSON_MAX_BYTES,
+            context: "Jellyfin JSON response",
+        },
     )
     .await
-    {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(_) => status.to_string(),
-    }
 }
-async fn response_bytes_bounded(
-    mut response: reqwest::Response,
-    limit: usize,
-    context: &str,
-) -> ProviderResult<Vec<u8>> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(ProviderError::Other(format!(
-            "{context} exceeded {} MiB limit",
-            bytes_to_mib(limit)
-        )));
-    }
-
-    let mut bytes = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or_default()
-            .min(limit as u64) as usize,
-    );
-    while let Some(chunk) = response.chunk().await.map_err(map_reqwest_error)? {
-        if bytes
-            .len()
-            .checked_add(chunk.len())
-            .is_none_or(|length| length > limit)
-        {
-            return Err(ProviderError::Other(format!(
-                "{context} exceeded {} MiB limit",
-                bytes_to_mib(limit)
-            )));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
+pub(super) async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
+    remote_http::unit(request, JELLYFIN_HTTP).await
 }
-fn bytes_to_mib(bytes: usize) -> usize {
-    bytes / 1024 / 1024
+pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+    remote_http::bytes(
+        request,
+        JELLYFIN_HTTP,
+        BodyLimit {
+            max_bytes: JELLYFIN_IMAGE_MAX_BYTES,
+            context: "Jellyfin image response",
+        },
+    )
+    .await
 }
 pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
     build_client_with_timeouts(
@@ -776,12 +678,14 @@ pub(super) fn build_client_with_timeouts(
     connect_timeout: Duration,
     request_timeout: Duration,
 ) -> ProviderResult<Client> {
-    Client::builder()
-        .danger_accept_invalid_certs(trust_invalid_cert)
-        .connect_timeout(connect_timeout)
-        .timeout(request_timeout)
-        .build()
-        .map_err(map_reqwest_error)
+    remote_http::build_client(
+        trust_invalid_cert,
+        RemoteTimeouts {
+            connect: connect_timeout,
+            request: request_timeout,
+        },
+        JELLYFIN_HTTP,
+    )
 }
 
 pub(super) fn stream_descriptor(
@@ -878,21 +782,6 @@ pub(super) fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) ->
         value.push_str(&format!(", Token=\"{token}\""));
     }
     value
-}
-pub(super) fn map_reqwest_error(error: reqwest::Error) -> ProviderError {
-    let message = error.to_string();
-    if message.to_lowercase().contains("certificate") || message.to_lowercase().contains("tls") {
-        ProviderError::Tls(message)
-    } else if error.is_connect() || error.is_request() || error.is_timeout() {
-        ProviderError::Network(message)
-    } else if let Some(status) = error.status() {
-        ProviderError::Server {
-            status: status.as_u16(),
-            message,
-        }
-    } else {
-        ProviderError::Other(message)
-    }
 }
 pub(super) fn raw_item_id(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)

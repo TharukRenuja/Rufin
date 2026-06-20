@@ -12,7 +12,7 @@ use domain::{
 };
 #[cfg(test)]
 use domain::{ArtistCredit, ArtistId, ImageRef};
-use reqwest::{Client, StatusCode, Url, header};
+use reqwest::{Client, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use source::{
     AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,

@@ -381,7 +381,10 @@ async fn subsonic_map_error() {
         .mount(&server)
         .await;
     let base_url = normalize_base_url(&server.uri()).expect("base url");
-    let url = endpoint(&base_url, "getUser").expect("endpoint");
+    let credential = SubsonicCredential::from_password("secret");
+    let mut url = endpoint(&base_url, "getUser").expect("endpoint");
+    url.query_pairs_mut()
+        .extend_pairs(credential.common_query("demo", &[("username", "demo")]));
     let client =
         build_client_with_timeouts(false, Duration::from_secs(1), Duration::from_millis(20))
             .expect("client");
@@ -391,6 +394,10 @@ async fn subsonic_map_error() {
         .expect_err("timeout");
 
     assert!(matches!(error, ProviderError::Network(_)));
+    assert!(!format!("{error:?}").contains(&credential.salt));
+    assert!(!format!("{error:?}").contains(&credential.token));
+    assert!(!error.to_string().contains(&credential.salt));
+    assert!(!error.to_string().contains(&credential.token));
 }
 #[tokio::test]
 async fn music_load_folders() {
