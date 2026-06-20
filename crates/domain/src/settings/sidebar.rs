@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{HomeBlockKind, HomeSectionKind};
+use crate::{
+    domain::{HomeBlockKind, HomeSectionKind},
+    msgid,
+};
 
 use super::*;
 
@@ -399,10 +402,10 @@ impl ExternalLyricsProvider {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Lrclib => "LRCLIB",
-            Self::Netease => "NetEase",
-            Self::Genius => "Genius",
-            Self::SimpMusic => "SimpMusic",
+            Self::Lrclib => msgid("LRCLIB"),
+            Self::Netease => msgid("NetEase"),
+            Self::Genius => msgid("Genius"),
+            Self::SimpMusic => msgid("SimpMusic"),
         }
     }
 }

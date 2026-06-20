@@ -1,7 +1,10 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::sidebar::*;
-use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
+use crate::{
+    domain::{HomeBlockKind, HomeSectionKind, ServerId},
+    msgid,
+};
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
@@ -546,20 +549,20 @@ impl LibraryListKey {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Albums => "Albums",
-            Self::Artists => "Artists",
-            Self::AlbumArtists => "Album artists",
-            Self::Tracks => "Tracks",
-            Self::FavoriteTracks => "Favorites",
-            Self::Genres => "Genres",
-            Self::Playlists => "Playlists",
-            Self::SmartPlaylists => "Smart playlists",
-            Self::AlbumDetailTracks => "Album tracks",
-            Self::ArtistAlbums => "Artist albums",
-            Self::ArtistTracks => "Artist tracks",
-            Self::GenreTracks => "Genre tracks",
-            Self::PlaylistTracks => "Playlist tracks",
-            Self::SmartPlaylistTracks => "Smart playlist tracks",
+            Self::Albums => msgid("Albums"),
+            Self::Artists => msgid("Artists"),
+            Self::AlbumArtists => msgid("Album artists"),
+            Self::Tracks => msgid("Tracks"),
+            Self::FavoriteTracks => msgid("Favorites"),
+            Self::Genres => msgid("Genres"),
+            Self::Playlists => msgid("Playlists"),
+            Self::SmartPlaylists => msgid("Smart playlists"),
+            Self::AlbumDetailTracks => msgid("Album tracks"),
+            Self::ArtistAlbums => msgid("Artist albums"),
+            Self::ArtistTracks => msgid("Artist tracks"),
+            Self::GenreTracks => msgid("Genre tracks"),
+            Self::PlaylistTracks => msgid("Playlist tracks"),
+            Self::SmartPlaylistTracks => msgid("Smart playlist tracks"),
         }
     }
 
@@ -616,25 +619,25 @@ impl LibraryField {
     pub fn title(self) -> &'static str {
         match self {
             Self::RowIndex => "#",
-            Self::Image => "Image",
-            Self::Title => "Title",
-            Self::TitleMerged => "Title (merged)",
-            Self::Artist => "Artist",
-            Self::AlbumArtist => "Album artist",
-            Self::Album => "Album",
-            Self::Year => "Year",
-            Self::ReleaseDate => "Release date",
-            Self::DateAdded => "Date added",
-            Self::LastPlayed => "Last played",
-            Self::PlayCount => "Plays",
-            Self::UserRating => "Rating",
-            Self::Genre => "Genre",
-            Self::TrackNumber => "Track",
-            Self::DiscNumber => "Disc",
-            Self::SongCount => "Number of songs",
-            Self::AlbumCount => "Albums",
-            Self::Duration => "Duration",
-            Self::Favorite => "Favorite",
+            Self::Image => msgid("Image"),
+            Self::Title => msgid("Title"),
+            Self::TitleMerged => msgid("Title (merged)"),
+            Self::Artist => msgid("Artist"),
+            Self::AlbumArtist => msgid("Album artist"),
+            Self::Album => msgid("Album"),
+            Self::Year => msgid("Year"),
+            Self::ReleaseDate => msgid("Release date"),
+            Self::DateAdded => msgid("Date added"),
+            Self::LastPlayed => msgid("Last played"),
+            Self::PlayCount => msgid("Plays"),
+            Self::UserRating => msgid("Rating"),
+            Self::Genre => msgid("Genre"),
+            Self::TrackNumber => msgid("Track"),
+            Self::DiscNumber => msgid("Disc"),
+            Self::SongCount => msgid("Number of songs"),
+            Self::AlbumCount => msgid("Albums"),
+            Self::Duration => msgid("Duration"),
+            Self::Favorite => msgid("Favorite"),
         }
     }
 }

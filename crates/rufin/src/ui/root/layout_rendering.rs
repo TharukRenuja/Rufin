@@ -3,6 +3,7 @@ use super::library::{
     play_count_column_width, route_column_view_initial_width_with_inset,
 };
 use super::*;
+use crate::i18n::msgid;
 
 const PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH: i32 = 30;
 const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
@@ -11,10 +12,10 @@ const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
         match self {
-            Self::Order => "Playlist order",
-            Self::Title => "Title",
-            Self::Artist => "Artist",
-            Self::Album => "Album",
+            Self::Order => msgid("Playlist order"),
+            Self::Title => msgid("Title"),
+            Self::Artist => msgid("Artist"),
+            Self::Album => msgid("Album"),
         }
     }
 }
@@ -477,7 +478,7 @@ fn playlist_entry_play_count_column(
 ) -> gtk::ColumnViewColumn {
     playlist_entry_text_column(
         shell,
-        "Plays",
+        msgid("Plays"),
         play_count_column_width(),
         entries,
         playlist_id,

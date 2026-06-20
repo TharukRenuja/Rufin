@@ -1,5 +1,6 @@
 use super::layout::large_popup_content_width;
 use super::*;
+use crate::i18n::msgid;
 use domain::smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind};
 use std::cell::Cell;
 
@@ -485,7 +486,7 @@ fn append_value_editor(
         }
         SmartPlaylistRuleValueKind::Bool => {
             let active = matches!(rule.value, Some(SmartPlaylistRuleValue::Bool(true)));
-            let dropdown = dropdown_from_titles(&["Yes", "No"], usize::from(!active));
+            let dropdown = dropdown_from_titles(&[msgid("Yes"), msgid("No")], usize::from(!active));
             dropdown.connect_selected_notify(move |dropdown| {
                 if let Some(rule) = rules.borrow_mut().get_mut(index) {
                     rule.value = Some(SmartPlaylistRuleValue::Bool(dropdown.selected() == 0));
@@ -581,7 +582,7 @@ fn remove_rule(
 
 fn match_mode_dropdown(mode: SmartPlaylistMatchMode) -> gtk::DropDown {
     dropdown_from_titles(
-        &["All", "Any"],
+        &[msgid("All"), msgid("Any")],
         match mode {
             SmartPlaylistMatchMode::All => 0,
             SmartPlaylistMatchMode::Any => 1,
@@ -623,54 +624,56 @@ fn op_labels(
 
 fn field_title(field: SmartPlaylistRuleField) -> &'static str {
     match field {
-        SmartPlaylistRuleField::Title => "Title",
-        SmartPlaylistRuleField::Artist => "Artist",
-        SmartPlaylistRuleField::Album => "Album",
-        SmartPlaylistRuleField::Comment => "Comment",
-        SmartPlaylistRuleField::Genre => "Genre",
-        SmartPlaylistRuleField::Rating => "Rating",
-        SmartPlaylistRuleField::Year => "Year",
-        SmartPlaylistRuleField::Favorite => "Favorite",
-        SmartPlaylistRuleField::Played => "Played",
-        SmartPlaylistRuleField::PlayCount => "Play count",
-        SmartPlaylistRuleField::SkipCount => "Skip count",
-        SmartPlaylistRuleField::LastPlayed => "Last played",
-        SmartPlaylistRuleField::DateAdded => "Date added",
+        SmartPlaylistRuleField::Title => msgid("Title"),
+        SmartPlaylistRuleField::Artist => msgid("Artist"),
+        SmartPlaylistRuleField::Album => msgid("Album"),
+        SmartPlaylistRuleField::Comment => msgid("Comment"),
+        SmartPlaylistRuleField::Genre => msgid("Genre"),
+        SmartPlaylistRuleField::Rating => msgid("Rating"),
+        SmartPlaylistRuleField::Year => msgid("Year"),
+        SmartPlaylistRuleField::Favorite => msgid("Favorite"),
+        SmartPlaylistRuleField::Played => msgid("Played"),
+        SmartPlaylistRuleField::PlayCount => msgid("Play count"),
+        SmartPlaylistRuleField::SkipCount => msgid("Skip count"),
+        SmartPlaylistRuleField::LastPlayed => msgid("Last played"),
+        SmartPlaylistRuleField::DateAdded => msgid("Date added"),
     }
 }
 
 fn sort_title(field: SmartPlaylistSortField) -> &'static str {
     match field {
-        SmartPlaylistSortField::Title => "Title",
-        SmartPlaylistSortField::Artist => "Artist",
-        SmartPlaylistSortField::Album => "Album",
-        SmartPlaylistSortField::Year => "Year",
-        SmartPlaylistSortField::DateAdded => "Date added",
-        SmartPlaylistSortField::LastPlayed => "Last played",
-        SmartPlaylistSortField::PlayCount => "Play count",
-        SmartPlaylistSortField::SkipCount => "Skip count",
-        SmartPlaylistSortField::Rating => "Rating",
-        SmartPlaylistSortField::Duration => "Duration",
+        SmartPlaylistSortField::Title => msgid("Title"),
+        SmartPlaylistSortField::Artist => msgid("Artist"),
+        SmartPlaylistSortField::Album => msgid("Album"),
+        SmartPlaylistSortField::Year => msgid("Year"),
+        SmartPlaylistSortField::DateAdded => msgid("Date added"),
+        SmartPlaylistSortField::LastPlayed => msgid("Last played"),
+        SmartPlaylistSortField::PlayCount => msgid("Play count"),
+        SmartPlaylistSortField::SkipCount => msgid("Skip count"),
+        SmartPlaylistSortField::Rating => msgid("Rating"),
+        SmartPlaylistSortField::Duration => msgid("Duration"),
     }
 }
 
 fn op_title(field: SmartPlaylistRuleField, operator: SmartPlaylistRuleOperator) -> &'static str {
     match (field, operator) {
-        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotContains) => "excludes",
-        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotEquals) => "is not",
-        (_, SmartPlaylistRuleOperator::Contains) => "contains",
-        (_, SmartPlaylistRuleOperator::NotContains) => "does not contain",
-        (_, SmartPlaylistRuleOperator::Equals) => "equals",
-        (_, SmartPlaylistRuleOperator::NotEquals) => "does not equal",
-        (_, SmartPlaylistRuleOperator::Above) => "above",
-        (_, SmartPlaylistRuleOperator::Below) => "below",
-        (_, SmartPlaylistRuleOperator::Between) => "range",
-        (_, SmartPlaylistRuleOperator::Is) => "is",
-        (_, SmartPlaylistRuleOperator::IsNot) => "is not",
-        (_, SmartPlaylistRuleOperator::Before) => "before",
-        (_, SmartPlaylistRuleOperator::After) => "after",
-        (_, SmartPlaylistRuleOperator::IsEmpty) => "is empty",
-        (_, SmartPlaylistRuleOperator::IsNotEmpty) => "is not empty",
+        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotContains) => {
+            msgid("excludes")
+        }
+        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotEquals) => msgid("is not"),
+        (_, SmartPlaylistRuleOperator::Contains) => msgid("contains"),
+        (_, SmartPlaylistRuleOperator::NotContains) => msgid("does not contain"),
+        (_, SmartPlaylistRuleOperator::Equals) => msgid("equals"),
+        (_, SmartPlaylistRuleOperator::NotEquals) => msgid("does not equal"),
+        (_, SmartPlaylistRuleOperator::Above) => msgid("above"),
+        (_, SmartPlaylistRuleOperator::Below) => msgid("below"),
+        (_, SmartPlaylistRuleOperator::Between) => msgid("range"),
+        (_, SmartPlaylistRuleOperator::Is) => msgid("is"),
+        (_, SmartPlaylistRuleOperator::IsNot) => msgid("is not"),
+        (_, SmartPlaylistRuleOperator::Before) => msgid("before"),
+        (_, SmartPlaylistRuleOperator::After) => msgid("after"),
+        (_, SmartPlaylistRuleOperator::IsEmpty) => msgid("is empty"),
+        (_, SmartPlaylistRuleOperator::IsNotEmpty) => msgid("is not empty"),
     }
 }
 

@@ -1,4 +1,7 @@
-use crate::domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId, SmartPlaylistId};
+use crate::{
+    domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId, SmartPlaylistId},
+    msgid,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -41,24 +44,24 @@ pub enum Route {
 impl Route {
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Home => "Home",
-            Self::Favorites => "Favorites",
-            Self::Albums => "Albums",
-            Self::AlbumDetail(_) => "Album",
-            Self::Tracks => "Tracks",
-            Self::Artists => "Artists",
-            Self::ArtistDetail(_) => "Artist",
-            Self::ArtistDiscography(_) => "Discography",
-            Self::ArtistTracks(_) => "Tracks",
-            Self::AlbumArtists => "Album Artists",
-            Self::Genres => "Genres",
-            Self::GenreDetail(_) => "Genre",
-            Self::Folders { .. } => "Folders",
-            Self::Playlists => "Playlists",
-            Self::PlaylistDetail(_) => "Playlist",
-            Self::SmartPlaylists => "Smart Playlists",
-            Self::SmartPlaylistDetail(_) => "Smart Playlist",
-            Self::Search { .. } => "Search",
+            Self::Home => msgid("Home"),
+            Self::Favorites => msgid("Favorites"),
+            Self::Albums => msgid("Albums"),
+            Self::AlbumDetail(_) => msgid("Album"),
+            Self::Tracks => msgid("Tracks"),
+            Self::Artists => msgid("Artists"),
+            Self::ArtistDetail(_) => msgid("Artist"),
+            Self::ArtistDiscography(_) => msgid("Discography"),
+            Self::ArtistTracks(_) => msgid("Tracks"),
+            Self::AlbumArtists => msgid("Album Artists"),
+            Self::Genres => msgid("Genres"),
+            Self::GenreDetail(_) => msgid("Genre"),
+            Self::Folders { .. } => msgid("Folders"),
+            Self::Playlists => msgid("Playlists"),
+            Self::PlaylistDetail(_) => msgid("Playlist"),
+            Self::SmartPlaylists => msgid("Smart Playlists"),
+            Self::SmartPlaylistDetail(_) => msgid("Smart Playlist"),
+            Self::Search { .. } => msgid("Search"),
         }
     }
 }

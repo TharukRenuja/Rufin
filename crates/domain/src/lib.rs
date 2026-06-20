@@ -5,6 +5,10 @@ pub mod settings;
 pub mod smart_playlists;
 pub mod source;
 
+pub(crate) const fn msgid(message: &'static str) -> &'static str {
+    message
+}
+
 pub use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
     HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,

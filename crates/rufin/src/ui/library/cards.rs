@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::msgid;
 
 pub(in crate::ui) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
     genres.sort_by(|left, right| {
@@ -685,9 +686,9 @@ pub(in crate::ui) fn supported_layouts(key: LibraryListKey) -> Vec<LibraryLayout
 }
 pub(in crate::ui) fn field_group_title(field_set: LibraryFieldSet) -> &'static str {
     match field_set {
-        LibraryFieldSet::Row => "Columns",
-        LibraryFieldSet::Grid => "Grid labels",
-        LibraryFieldSet::Detail => "Detail track columns",
+        LibraryFieldSet::Row => msgid("Columns"),
+        LibraryFieldSet::Grid => msgid("Grid labels"),
+        LibraryFieldSet::Detail => msgid("Detail track columns"),
     }
 }
 pub(in crate::ui) fn field_set_for_layout(layout: LibraryLayout) -> LibraryFieldSet {
@@ -882,9 +883,9 @@ pub(in crate::ui) fn layout_icon(layout: LibraryLayout) -> &'static str {
 }
 pub(in crate::ui) fn layout_title(layout: LibraryLayout) -> &'static str {
     match layout {
-        LibraryLayout::Grid => "Grid",
-        LibraryLayout::Row => "Rows",
-        LibraryLayout::Detail => "Detail",
+        LibraryLayout::Grid => msgid("Grid"),
+        LibraryLayout::Row => msgid("Rows"),
+        LibraryLayout::Detail => msgid("Detail"),
     }
 }
 pub(in crate::ui) fn column_width(field: LibraryField) -> i32 {
@@ -904,7 +905,7 @@ pub(in crate::ui) fn column_width(field: LibraryField) -> i32 {
     }
 }
 pub(in crate::ui) fn play_count_column_width() -> i32 {
-    compact_header_column_width("Plays", 56)
+    compact_header_column_width(msgid("Plays"), 56)
 }
 pub(in crate::ui) fn compact_header_column_width(header: &str, min_width: i32) -> i32 {
     let width = tr(header).chars().count().min(i32::MAX as usize / 8) as i32 * 8 + 20;
