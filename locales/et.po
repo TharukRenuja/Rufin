@@ -7,8 +7,8 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-18 21:00+0000\n"
-"Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
+"PO-Revision-Date: 2026-06-20 18:04+0000\n"
+"Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
 "MIME-Version: 1.0\n"
@@ -41,9 +41,8 @@ msgstr "API võtmed"
 msgid "About Rufin"
 msgstr "Rakenduse teave: Rufin"
 
-#, fuzzy
 msgid "Activity links and MusicBrainz covers"
-msgstr "Tegevuse lingid ja MusicBrainz’i kaaned"
+msgstr "Tegevuste lingid ja kaanepildid MusicBrainz’ist"
 
 msgid "Add"
 msgstr "Lisa"
@@ -63,9 +62,8 @@ msgstr "Lisa reegel"
 msgid "Add Server"
 msgstr "Lisa server"
 
-#, fuzzy
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
-msgstr "Lisa server, et kasutada Jellyfinit, Subsonicit või OpenSubsonicit."
+msgstr "Lisa kasutatav Jellyfini, Subsonicu või OpenSubsonicu server."
 
 msgid "Add another folder to the Local source"
 msgstr "Lisa veel mõni kaust kohalikuks allikaks"
@@ -90,7 +88,6 @@ msgstr "Lisa esitusloendisse"
 msgid "Add tracks when fewer than this many remain"
 msgstr "Kui jäänud alla antud piiri lugusid, siis lisa neid juurde"
 
-#, fuzzy
 msgid "Added to favorites"
 msgstr "Lisatud lemmikute hulka"
 
@@ -100,18 +97,15 @@ msgstr "Album"
 msgid "Album Artists"
 msgstr "Albumi esitajad"
 
-#, fuzzy
 msgid "Album artist"
 msgstr "Albumi esitaja"
 
-#, fuzzy
 msgid "Album artists"
 msgstr "Albumi esitajad"
 
 msgid "Album title"
 msgstr "Albumi pealkiri"
 
-#, fuzzy
 msgid "Album tracks"
 msgstr "Albumi lood"
 
@@ -148,21 +142,18 @@ msgstr "Esitaja"
 msgid "Artist / Album"
 msgstr "Esitaja / Album"
 
-#, fuzzy
 msgid "Artist albums"
 msgstr "Esitajate albumid"
 
 msgid "Artist name"
 msgstr "Esitaja nimi"
 
-#, fuzzy
 msgid "Artist tracks"
 msgstr "Esitaja lood"
 
 msgid "Artists"
 msgstr "Esitajad"
 
-#, fuzzy
 msgid "Audio"
 msgstr "Heli"
 
@@ -192,9 +183,8 @@ msgstr "Tagasi"
 msgid "Cached"
 msgstr "Puhverdatud"
 
-#, fuzzy
 msgid "Cached entries will appear here after sync finishes"
-msgstr "Puhverdatud kirjed ilmuvad siia pärast sünkroonimise lõppu"
+msgstr "Puhverdatud kirjed on siin nähtavad pärast sünkroonimise lõppu"
 
 #, fuzzy
 msgid "Cached library data will appear here as sync pages finish."
