@@ -10,11 +10,12 @@ use crate::controller::AppController;
 use crate::i18n::tr;
 
 use super::{
-    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, FAVORITE_ADD_ICON, FAVORITE_EMPTY_GLYPH,
-    FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
-    context_menu_action, context_menu_box, context_menu_can_add_to_playlist,
-    context_menu_picker_button, context_popover, favorite_button_is_active, favorite_icon_button,
-    set_favorite_button_active, track_from_queue_entry,
+    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, FAVORITE_ADD_ICON,
+    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE,
+    add_dynamic_link_hover, context_menu_action, context_menu_box,
+    context_menu_can_add_to_playlist, context_menu_picker_button, favorite_button_is_active,
+    favorite_icon_button, install_context_menu_openers, set_favorite_button_active,
+    track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -1032,65 +1033,18 @@ fn install_queue_row_drop(
 fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &QueueEntry) {
     let shell = Rc::clone(shell);
     let entry = entry.clone();
-
-    let click_shell = Rc::clone(&shell);
-    let click_entry = entry.clone();
-    let click_row = row.downgrade();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    click.connect_pressed(move |click, _, x, y| {
-        click.set_state(gtk::EventSequenceState::Claimed);
-        if let Some(row) = click_row.upgrade() {
-            show_queue_row_context_menu(
-                &row,
-                &click_shell,
-                &click_entry,
-                Some(gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)),
-            );
-        }
-    });
-    row.add_controller(click);
-
-    let press_shell = Rc::clone(&shell);
-    let press_entry = entry.clone();
-    let press_row = row.downgrade();
-    let press = gtk::GestureLongPress::new();
-    press.set_propagation_phase(gtk::PropagationPhase::Capture);
-    press.connect_pressed(move |press, x, y| {
-        press.set_state(gtk::EventSequenceState::Claimed);
-        if let Some(row) = press_row.upgrade() {
-            show_queue_row_context_menu(
-                &row,
-                &press_shell,
-                &press_entry,
-                Some(gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)),
-            );
-        }
-    });
-    row.add_controller(press);
-
-    let key_shell = Rc::clone(&shell);
-    let key_entry = entry;
-    let key_row = row.downgrade();
-    let key_controller = gtk::EventControllerKey::new();
-    key_controller.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if opens_menu {
-            if let Some(row) = key_row.upgrade() {
-                show_queue_row_context_menu(&row, &key_shell, &key_entry, None);
-            }
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    row.add_controller(key_controller);
+    install_context_menu_openers(
+        row,
+        Rc::new(move |target, position| {
+            let pointing_to =
+                position.map(|(x, y)| gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1));
+            show_queue_row_context_menu(target, &shell, &entry, pointing_to);
+        }),
+    );
 }
 
 fn show_queue_row_context_menu(
-    row: &gtk::Box,
+    row: &gtk::Widget,
     shell: &Rc<Shell>,
     entry: &QueueEntry,
     pointing_to: Option<gtk::gdk::Rectangle>,
@@ -1158,102 +1112,70 @@ fn show_queue_row_context_menu(
         ));
     }
 
-    let popover = context_popover(row.upcast_ref(), "queue-context-menu", None, &main_menu);
-    popover.set_pointing_to(pointing_to.as_ref());
-    popover.connect_closed(|popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
-    });
+    let surface = ContextMenuSurface::new(row, "queue", "queue-context-menu", None, &main_menu);
+    surface.popover().set_pointing_to(pointing_to.as_ref());
 
-    let actions = gio::SimpleActionGroup::new();
     let controller = shell.controller.clone();
     let entry_id = entry.id.clone();
 
-    let remove = gio::SimpleAction::new("remove", None);
-    let remove_controller = controller.clone();
-    let remove_id = entry_id.clone();
-    let remove_popover = popover.downgrade();
-    remove.connect_activate(move |_, _| {
-        if let Some(popover) = remove_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("remove", {
+        let remove_controller = controller.clone();
+        let remove_id = entry_id.clone();
+        move || {
+            remove_controller.remove_from_queue(remove_id.clone());
         }
-        remove_controller.remove_from_queue(remove_id.clone());
     });
-    actions.add_action(&remove);
 
-    let play_now = gio::SimpleAction::new("play-now", None);
-    let play_now_controller = controller.clone();
-    let play_now_id = entry_id.clone();
-    let play_now_popover = popover.downgrade();
-    play_now.connect_activate(move |_, _| {
-        if let Some(popover) = play_now_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play-now", {
+        let play_now_controller = controller.clone();
+        let play_now_id = entry_id.clone();
+        move || {
+            play_now_controller.activate_queue_entry(play_now_id.clone());
         }
-        play_now_controller.activate_queue_entry(play_now_id.clone());
     });
-    actions.add_action(&play_now);
 
-    let play_next = gio::SimpleAction::new("play-next", None);
-    let play_next_controller = controller.clone();
-    let play_next_popover = popover.downgrade();
-    play_next.connect_activate(move |_, _| {
-        if let Some(popover) = play_next_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play-next", {
+        let play_next_controller = controller.clone();
+        move || {
+            play_next_controller.move_queue_entry_after_current(entry_id.clone());
         }
-        play_next_controller.move_queue_entry_after_current(entry_id.clone());
     });
-    actions.add_action(&play_next);
 
-    let favorite = gio::SimpleAction::new("favorite", None);
-    let favorite_shell = Rc::clone(shell);
-    let favorite_track_id = entry.track_id.clone();
-    let favorite_value = !entry.favorite;
-    let favorite_popover = popover.downgrade();
-    favorite.connect_activate(move |_, _| {
-        if let Some(popover) = favorite_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("favorite", {
+        let favorite_shell = Rc::clone(shell);
+        let favorite_track_id = entry.track_id.clone();
+        let favorite_value = !entry.favorite;
+        move || {
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Track(favorite_track_id.clone()),
+                favorite_value,
+                None,
+            );
         }
-        favorite_shell.set_favorite_with_feedback(
-            source::FavoriteItemId::Track(favorite_track_id.clone()),
-            favorite_value,
-            None,
-        );
     });
-    actions.add_action(&favorite);
 
     if let Some(artist_route) = artist_route {
-        let go_artist = gio::SimpleAction::new("go-artist", None);
-        let action_shell = Rc::clone(shell);
-        let go_artist_popover = popover.downgrade();
-        go_artist.connect_activate(move |_, _| {
-            if let Some(popover) = go_artist_popover.upgrade() {
-                popover.popdown();
+        surface.add_action("go-artist", {
+            let action_shell = Rc::clone(shell);
+            move || {
+                let shell = Rc::clone(&action_shell);
+                let route = artist_route.clone();
+                glib::idle_add_local_once(move || shell.navigate(route));
             }
-            let shell = Rc::clone(&action_shell);
-            let route = artist_route.clone();
-            glib::idle_add_local_once(move || shell.navigate(route));
         });
-        actions.add_action(&go_artist);
     }
     if let Some(album_route) = album_route {
-        let go_album = gio::SimpleAction::new("go-album", None);
-        let action_shell = Rc::clone(shell);
-        let go_album_popover = popover.downgrade();
-        go_album.connect_activate(move |_, _| {
-            if let Some(popover) = go_album_popover.upgrade() {
-                popover.popdown();
+        surface.add_action("go-album", {
+            let action_shell = Rc::clone(shell);
+            move || {
+                let shell = Rc::clone(&action_shell);
+                let route = album_route.clone();
+                glib::idle_add_local_once(move || shell.navigate(route));
             }
-            let shell = Rc::clone(&action_shell);
-            let route = album_route.clone();
-            glib::idle_add_local_once(move || shell.navigate(route));
         });
-        actions.add_action(&go_album);
     }
 
-    row.insert_action_group("queue", Some(&actions));
-    popover.popup();
+    surface.popup();
 }
 
 fn queue_artist_route(entry: &QueueEntry) -> Option<Route> {
