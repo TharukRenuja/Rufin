@@ -130,121 +130,85 @@ fn present_track_context_menu_inner(
         ));
     }
 
-    let popover = context_popover(target, "track-context-menu", position, &main_menu);
+    let surface =
+        ContextMenuSurface::new(target, "track", "track-context-menu", position, &main_menu);
     if let Some(popover_position) = popover_position {
-        popover.set_position(popover_position);
+        surface.popover().set_position(popover_position);
     }
 
-    let actions = gio::SimpleActionGroup::new();
-
-    let play = gio::SimpleAction::new("play", None);
-    let controller = shell.controller.clone();
-    let action_track = track.clone();
-    let action_popover = popover.downgrade();
-    play.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_now(action_track.clone());
         }
-        controller.play_now(action_track.clone());
     });
-    actions.add_action(&play);
 
-    let play_next = gio::SimpleAction::new("play-next", None);
-    let controller = shell.controller.clone();
-    let action_track = track.clone();
-    let action_popover = popover.downgrade();
-    play_next.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play-next", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_next(action_track.clone());
         }
-        controller.play_next(action_track.clone());
     });
-    actions.add_action(&play_next);
 
-    let play_last = gio::SimpleAction::new("play-last", None);
-    let controller = shell.controller.clone();
-    let action_track = track.clone();
-    let action_popover = popover.downgrade();
-    play_last.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play-last", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_last(vec![action_track.clone()]);
         }
-        controller.play_last(vec![action_track.clone()]);
     });
-    actions.add_action(&play_last);
 
-    let favorite_action = gio::SimpleAction::new("favorite", None);
-    let favorite_shell = Rc::clone(shell);
-    let track_id = track.id.clone();
-    let favorite = !track.favorite;
-    let action_popover = popover.downgrade();
-    favorite_action.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("favorite", {
+        let favorite_shell = Rc::clone(shell);
+        let track_id = track.id.clone();
+        let favorite = !track.favorite;
+        move || {
+            favorite_shell.set_favorite_with_feedback(
+                FavoriteItemId::Track(track_id.clone()),
+                favorite,
+                None,
+            );
         }
-        favorite_shell.set_favorite_with_feedback(
-            FavoriteItemId::Track(track_id.clone()),
-            favorite,
-            None,
-        );
     });
-    actions.add_action(&favorite_action);
 
     if let Some(artist_route) = artist_route {
-        let go_artist = gio::SimpleAction::new("go-artist", None);
-        let action_shell = Rc::clone(shell);
-        let action_popover = popover.downgrade();
-        go_artist.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
+        surface.add_action("go-artist", {
+            let action_shell = Rc::clone(shell);
+            move || {
+                let shell = Rc::clone(&action_shell);
+                let route = artist_route.clone();
+                glib::idle_add_local_once(move || shell.navigate(route));
             }
-            let shell = Rc::clone(&action_shell);
-            let route = artist_route.clone();
-            glib::idle_add_local_once(move || shell.navigate(route));
         });
-        actions.add_action(&go_artist);
     }
 
-    let go_album = gio::SimpleAction::new("go-album", None);
-    let go_album_shell = Rc::clone(shell);
-    let album_id = track.album_id.clone();
-    let action_popover = popover.downgrade();
-    go_album.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("go-album", {
+        let go_album_shell = Rc::clone(shell);
+        let album_id = track.album_id.clone();
+        move || {
+            let shell = Rc::clone(&go_album_shell);
+            let album_id = album_id.clone();
+            glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
         }
-        let shell = Rc::clone(&go_album_shell);
-        let album_id = album_id.clone();
-        glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
     });
-    actions.add_action(&go_album);
 
     if let Some(remove_action) = remove_action {
-        let remove_from_playlist = gio::SimpleAction::new("remove-from-playlist", None);
-        let shell = Rc::clone(shell);
-        let action_popover = popover.downgrade();
-        remove_from_playlist.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
+        surface.add_action("remove-from-playlist", {
+            let shell = Rc::clone(shell);
+            move || {
+                confirm_remove_playlist_entry(
+                    &shell,
+                    remove_action.playlist_id.clone(),
+                    remove_action.entry_id.clone(),
+                    remove_action.title.clone(),
+                );
             }
-            confirm_remove_playlist_entry(
-                &shell,
-                remove_action.playlist_id.clone(),
-                remove_action.entry_id.clone(),
-                remove_action.title.clone(),
-            );
         });
-        actions.add_action(&remove_from_playlist);
     }
 
-    target.insert_action_group("track", Some(&actions));
-    popover.connect_closed(move |popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
-    });
-    popover.popup();
+    surface.popup();
 }
 pub(in crate::ui) fn present_album_context_menu(
     target: &gtk::Widget,
@@ -317,106 +281,74 @@ pub(in crate::ui) fn present_album_context_menu(
         ALBUM_ICON,
     ));
 
-    let popover = context_popover(target, "album-context-menu", position, &main_menu);
+    let surface =
+        ContextMenuSurface::new(target, "album", "album-context-menu", position, &main_menu);
 
-    let actions = gio::SimpleActionGroup::new();
-
-    let play = gio::SimpleAction::new("play", None);
-    let controller = shell.controller.clone();
-    let album_id = album.id.clone();
-    let action_popover = popover.downgrade();
-    play.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let album_id = album.id.clone();
+        move || {
+            controller.play_album_now(album_id.clone());
         }
-        controller.play_album_now(album_id.clone());
     });
-    actions.add_action(&play);
 
-    let play_next = gio::SimpleAction::new("play-next", None);
-    let controller = shell.controller.clone();
-    let album_id = album.id.clone();
-    let action_popover = popover.downgrade();
-    play_next.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-            for track in tracks.iter().rev() {
-                controller.play_next(track.clone());
+    surface.add_action("play-next", {
+        let controller = shell.controller.clone();
+        let album_id = album.id.clone();
+        move || {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                for track in tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
             }
         }
     });
-    actions.add_action(&play_next);
 
-    let play_last = gio::SimpleAction::new("play-last", None);
-    let controller = shell.controller.clone();
-    let album_id = album.id.clone();
-    let action_popover = popover.downgrade();
-    play_last.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-            controller.play_last(tracks);
+    surface.add_action("play-last", {
+        let controller = shell.controller.clone();
+        let album_id = album.id.clone();
+        move || {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                controller.play_last(tracks);
+            }
         }
     });
-    actions.add_action(&play_last);
 
-    let favorite_action = gio::SimpleAction::new("favorite", None);
-    let favorite_shell = Rc::clone(shell);
-    let album_id = album.id.clone();
-    let favorite = !album.favorite;
-    let action_popover = popover.downgrade();
-    favorite_action.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("favorite", {
+        let favorite_shell = Rc::clone(shell);
+        let album_id = album.id.clone();
+        let favorite = !album.favorite;
+        move || {
+            favorite_shell.set_favorite_with_feedback(
+                FavoriteItemId::Album(album_id.clone()),
+                favorite,
+                None,
+            );
         }
-        favorite_shell.set_favorite_with_feedback(
-            FavoriteItemId::Album(album_id.clone()),
-            favorite,
-            None,
-        );
     });
-    actions.add_action(&favorite_action);
 
     if let Some(artist_route) = artist_route {
-        let go_artist = gio::SimpleAction::new("go-artist", None);
-        let action_shell = Rc::clone(shell);
-        let action_popover = popover.downgrade();
-        go_artist.connect_activate(move |_, _| {
-            if let Some(popover) = action_popover.upgrade() {
-                popover.popdown();
+        surface.add_action("go-artist", {
+            let action_shell = Rc::clone(shell);
+            move || {
+                let shell = Rc::clone(&action_shell);
+                let route = artist_route.clone();
+                glib::idle_add_local_once(move || shell.navigate(route));
             }
-            let shell = Rc::clone(&action_shell);
-            let route = artist_route.clone();
-            glib::idle_add_local_once(move || shell.navigate(route));
         });
-        actions.add_action(&go_artist);
     }
 
-    let go_album = gio::SimpleAction::new("go-album", None);
-    let shell = Rc::clone(shell);
-    let album_id = album.id.clone();
-    let action_popover = popover.downgrade();
-    go_album.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("go-album", {
+        let shell = Rc::clone(shell);
+        let album_id = album.id.clone();
+        move || {
+            let shell = Rc::clone(&shell);
+            let album_id = album_id.clone();
+            glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
         }
-        let shell = Rc::clone(&shell);
-        let album_id = album_id.clone();
-        glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
     });
-    actions.add_action(&go_album);
 
-    target.insert_action_group("album", Some(&actions));
-    popover.connect_closed(move |popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
-    });
-    popover.popup();
+    surface.popup();
 }
 pub(in crate::ui) fn present_artist_context_menu(
     target: &gtk::Widget,
@@ -474,97 +406,74 @@ pub(in crate::ui) fn present_artist_context_menu(
         ARTIST_ICON,
     ));
 
-    let popover = context_popover(target, "artist-context-menu", position, &main_menu);
+    let surface = ContextMenuSurface::new(
+        target,
+        "artist",
+        "artist-context-menu",
+        position,
+        &main_menu,
+    );
 
-    let actions = gio::SimpleActionGroup::new();
-
-    let play = gio::SimpleAction::new("play", None);
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    let action_popover = popover.downgrade();
-    play.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            controller.play_artist_tracks_window(
-                artist_id.clone(),
-                ArtistTrackScope::AllCredits,
-                tracks.len(),
-                0,
-                |index| tracks.get(index).cloned(),
-            );
-        }
-    });
-    actions.add_action(&play);
-
-    let play_next = gio::SimpleAction::new("play-next", None);
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    let action_popover = popover.downgrade();
-    play_next.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            for track in tracks.iter().rev() {
-                controller.play_next(track.clone());
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let artist_id = artist.id.clone();
+        move || {
+            if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+                controller.play_artist_tracks_window(
+                    artist_id.clone(),
+                    ArtistTrackScope::AllCredits,
+                    tracks.len(),
+                    0,
+                    |index| tracks.get(index).cloned(),
+                );
             }
         }
     });
-    actions.add_action(&play_next);
 
-    let play_last = gio::SimpleAction::new("play-last", None);
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    let action_popover = popover.downgrade();
-    play_last.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            controller.play_last(tracks);
+    surface.add_action("play-next", {
+        let controller = shell.controller.clone();
+        let artist_id = artist.id.clone();
+        move || {
+            if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+                for track in tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
         }
     });
-    actions.add_action(&play_last);
 
-    let favorite_action = gio::SimpleAction::new("favorite", None);
-    let favorite_shell = Rc::clone(shell);
-    let artist_id = artist.id.clone();
-    let favorite = !artist.favorite;
-    let action_popover = popover.downgrade();
-    favorite_action.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play-last", {
+        let controller = shell.controller.clone();
+        let artist_id = artist.id.clone();
+        move || {
+            if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+                controller.play_last(tracks);
+            }
         }
-        favorite_shell.set_favorite_with_feedback(
-            FavoriteItemId::Artist(artist_id.clone()),
-            favorite,
-            None,
-        );
     });
-    actions.add_action(&favorite_action);
 
-    let go_artist = gio::SimpleAction::new("go-artist", None);
-    let shell = Rc::clone(shell);
-    let artist_id = artist.id.clone();
-    let action_popover = popover.downgrade();
-    go_artist.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("favorite", {
+        let favorite_shell = Rc::clone(shell);
+        let artist_id = artist.id.clone();
+        let favorite = !artist.favorite;
+        move || {
+            favorite_shell.set_favorite_with_feedback(
+                FavoriteItemId::Artist(artist_id.clone()),
+                favorite,
+                None,
+            );
         }
-        shell.navigate(Route::ArtistDetail(artist_id.clone()));
     });
-    actions.add_action(&go_artist);
 
-    target.insert_action_group("artist", Some(&actions));
-    popover.connect_closed(move |popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
+    surface.add_action("go-artist", {
+        let shell = Rc::clone(shell);
+        let artist_id = artist.id.clone();
+        move || {
+            shell.navigate(Route::ArtistDetail(artist_id.clone()));
+        }
     });
-    popover.popup();
+
+    surface.popup();
 }
 pub(in crate::ui) fn artist_tracks_for_context(
     controller: &AppController,
@@ -595,56 +504,42 @@ pub(in crate::ui) fn present_playlist_context_menu(
         "user-trash-symbolic",
     ));
 
-    let popover = context_popover(target, "playlist-context-menu", position, &menu);
+    let surface =
+        ContextMenuSurface::new(target, "playlist", "playlist-context-menu", position, &menu);
 
-    let actions = gio::SimpleActionGroup::new();
-    let play = gio::SimpleAction::new("play", None);
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    let action_popover = popover.downgrade();
-    play.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id.clone();
+        move || {
+            controller.play_cached_playlist(playlist_id.clone());
         }
-        controller.play_cached_playlist(playlist_id.clone());
     });
-    actions.add_action(&play);
 
-    let delete = gio::SimpleAction::new("delete", None);
-    let controller = shell.controller.clone();
-    let window = shell.window.clone();
-    let playlist_id = playlist.id.clone();
-    let playlist_name = playlist.name.clone();
-    let action_popover = popover.downgrade();
-    delete.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("delete", {
+        let controller = shell.controller.clone();
+        let window = shell.window.clone();
+        let playlist_id = playlist.id.clone();
+        let playlist_name = playlist.name.clone();
+        move || {
+            let dialog = adw::AlertDialog::builder()
+                .heading(tr("Delete Playlist"))
+                .body(format!("Delete \"{playlist_name}\"?"))
+                .build();
+            dialog.add_response("cancel", &tr("Cancel"));
+            dialog.add_response("delete", &tr("Delete"));
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            let controller = controller.clone();
+            let playlist_id = playlist_id.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "delete" {
+                    controller.delete_playlist(playlist_id.clone());
+                }
+            });
+            present_light_dismiss_dialog(&dialog, &window);
         }
-        let dialog = adw::AlertDialog::builder()
-            .heading(tr("Delete Playlist"))
-            .body(format!("Delete \"{playlist_name}\"?"))
-            .build();
-        dialog.add_response("cancel", &tr("Cancel"));
-        dialog.add_response("delete", &tr("Delete"));
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-        let controller = controller.clone();
-        let playlist_id = playlist_id.clone();
-        dialog.connect_response(None, move |_, response| {
-            if response == "delete" {
-                controller.delete_playlist(playlist_id.clone());
-            }
-        });
-        present_light_dismiss_dialog(&dialog, &window);
     });
-    actions.add_action(&delete);
-    target.insert_action_group("playlist", Some(&actions));
-    popover.connect_closed(move |popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
-    });
-    popover.popup();
+
+    surface.popup();
 }
 pub(in crate::ui) fn present_smart_playlist_context_menu(
     target: &gtk::Widget,
@@ -664,43 +559,86 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
         "user-trash-symbolic",
     ));
 
-    let popover = context_popover(target, "playlist-context-menu", position, &menu);
+    let surface = ContextMenuSurface::new(
+        target,
+        "smart-playlist",
+        "playlist-context-menu",
+        position,
+        &menu,
+    );
 
-    let actions = gio::SimpleActionGroup::new();
-    let play = gio::SimpleAction::new("play", None);
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    let action_popover = popover.downgrade();
-    play.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
-        }
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            controller.play_smart_playlist_detail(detail);
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id.clone();
+        move || {
+            if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+                controller.play_smart_playlist_detail(detail);
+            }
         }
     });
-    actions.add_action(&play);
 
-    let delete = gio::SimpleAction::new("delete", None);
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    let action_popover = popover.downgrade();
-    delete.connect_activate(move |_, _| {
-        if let Some(popover) = action_popover.upgrade() {
-            popover.popdown();
+    surface.add_action("delete", {
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id.clone();
+        move || {
+            controller.delete_smart_playlist(playlist_id.clone());
         }
-        controller.delete_smart_playlist(playlist_id.clone());
     });
-    actions.add_action(&delete);
-    target.insert_action_group("smart-playlist", Some(&actions));
-    popover.connect_closed(move |popover| {
-        let popover = popover.clone();
-        glib::idle_add_local_once(move || {
-            popover.unparent();
-        });
-    });
-    popover.popup();
+
+    surface.popup();
 }
+pub(in crate::ui) struct ContextMenuSurface {
+    target: gtk::Widget,
+    group_name: &'static str,
+    popover: gtk::Popover,
+    actions: gio::SimpleActionGroup,
+}
+
+impl ContextMenuSurface {
+    pub(in crate::ui) fn new(
+        target: &gtk::Widget,
+        group_name: &'static str,
+        css_class: &str,
+        position: Option<(f64, f64)>,
+        child: &impl IsA<gtk::Widget>,
+    ) -> Self {
+        Self {
+            target: target.clone(),
+            group_name,
+            popover: context_popover(target, css_class, position, child),
+            actions: gio::SimpleActionGroup::new(),
+        }
+    }
+
+    pub(in crate::ui) fn popover(&self) -> &gtk::Popover {
+        &self.popover
+    }
+
+    pub(in crate::ui) fn add_action(&self, name: &str, run: impl Fn() + 'static) {
+        let action = gio::SimpleAction::new(name, None);
+        let popover = self.popover.downgrade();
+        action.connect_activate(move |_, _| {
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
+            run();
+        });
+        self.actions.add_action(&action);
+    }
+
+    pub(in crate::ui) fn popup(self) {
+        self.target
+            .insert_action_group(self.group_name, Some(&self.actions));
+        self.popover.connect_closed(move |popover| {
+            let popover = popover.clone();
+            glib::idle_add_local_once(move || {
+                popover.unparent();
+            });
+        });
+        self.popover.popup();
+    }
+}
+
 pub(in crate::ui) fn context_menu_box() -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, 0)
 }

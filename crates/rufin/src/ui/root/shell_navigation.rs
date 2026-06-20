@@ -545,133 +545,38 @@ pub(in crate::ui) fn install_dynamic_playlist_entry_context_menu(
     shell: &Rc<Shell>,
     state: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_state = Rc::clone(&state);
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        let Some(target) = target_weak.upgrade() else {
-            return;
-        };
-        let Some(state) = click_state.borrow().clone() else {
-            return;
-        };
-        present_track_menu(
-            &target,
-            &click_shell,
-            context_track(&click_shell, &state.track),
-            state.remove_action,
-            Some((x, y)),
-        );
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_state = Rc::clone(&state);
-    install_context_long_press(target, move |target, x, y| {
-        let Some(state) = long_state.borrow().clone() else {
-            return;
-        };
-        present_track_menu(
-            target,
-            &long_shell,
-            context_track(&long_shell, &state.track),
-            state.remove_action,
-            Some((x, y)),
-        );
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key_state = state;
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade()
-            && let Some(state) = key_state.borrow().clone()
-        {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(state) = state.borrow().clone() else {
+                return;
+            };
             present_track_menu(
-                &target,
-                &key_shell,
-                context_track(&key_shell, &state.track),
+                target,
+                &shell,
+                context_track(&shell, &state.track),
                 state.remove_action,
-                None,
+                position,
             );
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+        }),
+    );
 }
 pub(in crate::ui) fn install_dynamic_track_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     track: Rc<RefCell<Option<Track>>>,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_track = Rc::clone(&track);
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        let Some(target) = target_weak.upgrade() else {
-            return;
-        };
-        let Some(track) = click_track.borrow().clone() else {
-            return;
-        };
-        present_track_context_menu(
-            &target,
-            &click_shell,
-            context_track(&click_shell, &track),
-            Some((x, y)),
-        );
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_track = Rc::clone(&track);
-    install_context_long_press(target, move |target, x, y| {
-        let Some(track) = long_track.borrow().clone() else {
-            return;
-        };
-        present_track_context_menu(
-            target,
-            &long_shell,
-            context_track(&long_shell, &track),
-            Some((x, y)),
-        );
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key_track = track;
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade()
-            && let Some(track) = key_track.borrow().clone()
-        {
-            present_track_context_menu(
-                &target,
-                &key_shell,
-                context_track(&key_shell, &track),
-                None,
-            );
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(track) = track.borrow().clone() else {
+                return;
+            };
+            present_track_context_menu(target, &shell, context_track(&shell, &track), position);
+        }),
+    );
 }
 pub(in crate::ui) fn install_album_context_menu(
     target: &impl IsA<gtk::Widget>,
@@ -685,261 +590,69 @@ pub(in crate::ui) fn install_dynamic_album_context_menu(
     shell: &Rc<Shell>,
     album: Rc<RefCell<Option<Album>>>,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_album = Rc::clone(&album);
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        let Some(target) = target_weak.upgrade() else {
-            return;
-        };
-        let Some(album) = click_album.borrow().clone() else {
-            return;
-        };
-        present_album_context_menu(
-            &target,
-            &click_shell,
-            context_album(&click_shell, &album),
-            Some((x, y)),
-        );
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_album = Rc::clone(&album);
-    install_context_long_press(target, move |target, x, y| {
-        let Some(album) = long_album.borrow().clone() else {
-            return;
-        };
-        present_album_context_menu(
-            target,
-            &long_shell,
-            context_album(&long_shell, &album),
-            Some((x, y)),
-        );
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key_album = album;
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade()
-            && let Some(album) = key_album.borrow().clone()
-        {
-            present_album_context_menu(
-                &target,
-                &key_shell,
-                context_album(&key_shell, &album),
-                None,
-            );
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(album) = album.borrow().clone() else {
+                return;
+            };
+            present_album_context_menu(target, &shell, context_album(&shell, &album), position);
+        }),
+    );
 }
 pub(in crate::ui) fn install_playlist_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     playlist: Playlist,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_playlist = playlist.clone();
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        if let Some(target) = target_weak.upgrade() {
-            present_playlist_context_menu(
-                &target,
-                &click_shell,
-                click_playlist.clone(),
-                Some((x, y)),
-            );
-        }
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_playlist = playlist.clone();
-    install_context_long_press(target, move |target, x, y| {
-        present_playlist_context_menu(target, &long_shell, long_playlist.clone(), Some((x, y)));
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade() {
-            present_playlist_context_menu(&target, &key_shell, playlist.clone(), None);
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            present_playlist_context_menu(target, &shell, playlist.clone(), position);
+        }),
+    );
 }
 pub(in crate::ui) fn install_smart_playlist_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     playlist: SmartPlaylist,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_playlist = playlist.clone();
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        if let Some(target) = target_weak.upgrade() {
-            present_smart_playlist_context_menu(
-                &target,
-                &click_shell,
-                click_playlist.clone(),
-                Some((x, y)),
-            );
-        }
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_playlist = playlist.clone();
-    install_context_long_press(target, move |target, x, y| {
-        present_smart_playlist_context_menu(
-            target,
-            &long_shell,
-            long_playlist.clone(),
-            Some((x, y)),
-        );
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade() {
-            present_smart_playlist_context_menu(&target, &key_shell, playlist.clone(), None);
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            present_smart_playlist_context_menu(target, &shell, playlist.clone(), position);
+        }),
+    );
 }
 pub(in crate::ui) fn install_artist_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     artist: Artist,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click_artist = artist.clone();
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        let Some(target) = target_weak.upgrade() else {
-            return;
-        };
-        present_artist_context_menu(
-            &target,
-            &click_shell,
-            context_artist(&click_shell, &click_artist),
-            Some((x, y)),
-        );
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    let long_artist = artist.clone();
-    install_context_long_press(target, move |target, x, y| {
-        present_artist_context_menu(
-            target,
-            &long_shell,
-            context_artist(&long_shell, &long_artist),
-            Some((x, y)),
-        );
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key_artist = artist;
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade() {
-            present_artist_context_menu(
-                &target,
-                &key_shell,
-                context_artist(&key_shell, &key_artist),
-                None,
-            );
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            present_artist_context_menu(target, &shell, context_artist(&shell, &artist), position);
+        }),
+    );
 }
 pub(in crate::ui) fn install_current_track_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
 ) {
-    let target = target.as_ref();
-    let target_weak = target.downgrade();
-    let click_shell = Rc::clone(shell);
-    let click = context_click_gesture();
-    click.connect_pressed(move |click, _, x, y| {
-        claim_context_click(click);
-        let Some(target) = target_weak.upgrade() else {
-            return;
-        };
-        if let Some(track) = current_player_track(&click_shell) {
-            present_track_context_menu(&target, &click_shell, track, Some((x, y)));
-        }
-    });
-    target.add_controller(click);
-
-    let long_shell = Rc::clone(shell);
-    install_context_long_press(target, move |target, x, y| {
-        if let Some(track) = current_player_track(&long_shell) {
-            present_track_context_menu(target, &long_shell, track, Some((x, y)));
-        }
-    });
-
-    let target_weak = target.downgrade();
-    let key_shell = Rc::clone(shell);
-    let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if !opens_menu {
-            return glib::Propagation::Proceed;
-        }
-        if let Some(target) = target_weak.upgrade()
-            && let Some(track) = current_player_track(&key_shell)
-        {
-            present_track_context_menu(&target, &key_shell, track, None);
-        }
-        glib::Propagation::Stop
-    });
-    target.add_controller(key);
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            if let Some(track) = current_player_track(&shell) {
+                present_track_context_menu(target, &shell, track, position);
+            }
+        }),
+    );
 }
 pub(in crate::ui) fn present_current_track_context_menu(
     target: &impl IsA<gtk::Widget>,
@@ -960,6 +673,45 @@ fn context_click_gesture() -> gtk::GestureClick {
 
 fn claim_context_click(click: &gtk::GestureClick) {
     click.set_state(gtk::EventSequenceState::Claimed);
+}
+
+type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
+
+pub(in crate::ui) fn install_context_menu_openers(
+    target: &impl IsA<gtk::Widget>,
+    open: ContextMenuOpen,
+) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_open = Rc::clone(&open);
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
+        if let Some(target) = target_weak.upgrade() {
+            click_open(&target, Some((x, y)));
+        }
+    });
+    target.add_controller(click);
+
+    let long_open = Rc::clone(&open);
+    install_context_long_press(target, move |target, x, y| {
+        long_open(target, Some((x, y)));
+    });
+
+    let target_weak = target.downgrade();
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            open(&target, None);
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
 }
 
 fn install_context_long_press(
