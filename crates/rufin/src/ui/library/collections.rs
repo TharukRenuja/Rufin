@@ -183,42 +183,14 @@ pub(in crate::ui) fn album_grid(
 ) -> gtk::GridView {
     let settings = shell.library_settings(key);
     let (columns, card_size) = shell.collection_card_grid_metrics_for(key, &settings);
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let album = boxed.borrow::<Album>();
-        item.set_child(Some(&album_card(
-            &shell_for_factory,
-            &album,
-            key,
-            card_size,
-        )));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    let shell = Rc::clone(shell);
-    grid.connect_activate(move |_, position| {
-        if let Some(album) = item_at::<Album>(&model, position) {
-            shell.navigate(Route::AlbumDetail(album.id));
-        }
-    });
-    grid
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    collection_grid(
+        model,
+        columns,
+        move |album| album_card(&card_shell, album, key, card_size),
+        move |_, album: Album| activate_shell.navigate(Route::AlbumDetail(album.id)),
+    )
 }
 pub(in crate::ui) fn artist_grid(
     shell: &Rc<Shell>,
@@ -226,155 +198,52 @@ pub(in crate::ui) fn artist_grid(
     key: LibraryListKey,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let artist = boxed.borrow::<Artist>();
-        item.set_child(Some(&artist_card(
-            &shell_for_factory,
-            &artist,
-            key,
-            card_size,
-        )));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    let shell = Rc::clone(shell);
-    grid.connect_activate(move |_, position| {
-        if let Some(artist) = item_at::<Artist>(&model, position) {
-            shell.navigate(Route::ArtistDetail(artist.id));
-        }
-    });
-    grid
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    collection_grid(
+        model,
+        columns,
+        move |artist| artist_card(&card_shell, artist, key, card_size),
+        move |_, artist: Artist| activate_shell.navigate(Route::ArtistDetail(artist.id)),
+    )
 }
 pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let genre = boxed.borrow::<Genre>();
-        item.set_child(Some(&genre_card(&shell_for_factory, &genre, card_size)));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    let shell = Rc::clone(shell);
-    grid.connect_activate(move |_, position| {
-        if let Some(genre) = item_at::<Genre>(&model, position) {
-            shell.navigate(Route::GenreDetail(genre.id));
-        }
-    });
-    grid
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    collection_grid(
+        model,
+        columns,
+        move |genre| genre_card(&card_shell, genre, card_size),
+        move |_, genre: Genre| activate_shell.navigate(Route::GenreDetail(genre.id)),
+    )
 }
 pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let playlist = boxed.borrow::<Playlist>();
-        item.set_child(Some(&playlist_card(
-            &shell_for_factory,
-            &playlist,
-            card_size,
-        )));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    let shell = Rc::clone(shell);
-    grid.connect_activate(move |_, position| {
-        if let Some(playlist) = item_at::<Playlist>(&model, position) {
-            shell.navigate(Route::PlaylistDetail(playlist.id));
-        }
-    });
-    grid
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    collection_grid(
+        model,
+        columns,
+        move |playlist| playlist_card(&card_shell, playlist, card_size),
+        move |_, playlist: Playlist| activate_shell.navigate(Route::PlaylistDetail(playlist.id)),
+    )
 }
 pub(in crate::ui) fn smart_playlist_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let playlist = boxed.borrow::<SmartPlaylist>();
-        item.set_child(Some(&smart_playlist_card(
-            &shell_for_factory,
-            &playlist,
-            card_size,
-        )));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    let shell = Rc::clone(shell);
-    grid.connect_activate(move |_, position| {
-        if let Some(playlist) = item_at::<SmartPlaylist>(&model, position) {
-            shell.navigate(Route::SmartPlaylistDetail(playlist.id));
-        }
-    });
-    grid
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    collection_grid(
+        model,
+        columns,
+        move |playlist| smart_playlist_card(&card_shell, playlist, card_size),
+        move |_, playlist: SmartPlaylist| {
+            activate_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
+        },
+    )
 }
 pub(in crate::ui) fn track_grid(
     shell: &Rc<Shell>,
@@ -383,11 +252,50 @@ pub(in crate::ui) fn track_grid(
     play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
+    let card_shell = Rc::clone(shell);
+    let card_model = model.clone();
+    let card_play_context = play_context.clone();
+    let controller = shell.controller.clone();
+    let activate_model = model.clone();
+    collection_grid(
+        model,
+        columns,
+        move |track: &Track| {
+            let play_action = card_play_context.as_ref().map(|context| {
+                track_model_play_action(
+                    &card_shell,
+                    &card_model,
+                    context.clone(),
+                    None,
+                    track.clone(),
+                )
+            });
+            track_card(&card_shell, track, key, card_size, play_action)
+        },
+        move |position, track: Track| {
+            play_track_from_model(
+                &controller,
+                &activate_model,
+                play_context.as_ref(),
+                Some(position),
+                track,
+            );
+        },
+    )
+}
+fn collection_grid<T, Card, Activate>(
+    model: gio::ListStore,
+    columns: usize,
+    card: Card,
+    activate: Activate,
+) -> gtk::GridView
+where
+    T: Clone + 'static,
+    Card: Fn(&T) -> gtk::Widget + 'static,
+    Activate: Fn(u32, T) + 'static,
+{
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    let model_for_factory = model.clone();
-    let play_context_for_factory = play_context.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -398,23 +306,8 @@ pub(in crate::ui) fn track_grid(
         else {
             return;
         };
-        let track = boxed.borrow::<Track>();
-        let play_action = play_context_for_factory.as_ref().map(|context| {
-            track_model_play_action(
-                &shell_for_factory,
-                &model_for_factory,
-                context.clone(),
-                None,
-                track.clone(),
-            )
-        });
-        item.set_child(Some(&track_card(
-            &shell_for_factory,
-            &track,
-            key,
-            card_size,
-            play_action,
-        )));
+        let value = boxed.borrow::<T>();
+        item.set_child(Some(&card(&value)));
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));
@@ -424,17 +317,9 @@ pub(in crate::ui) fn track_grid(
     grid.set_single_click_activate(true);
     grid.set_hexpand(true);
     grid.set_vexpand(true);
-    let controller = shell.controller.clone();
-    let play_context = play_context.clone();
     grid.connect_activate(move |_, position| {
-        if let Some(track) = item_at::<Track>(&model, position) {
-            play_track_from_model(
-                &controller,
-                &model,
-                play_context.as_ref(),
-                Some(position),
-                track,
-            );
+        if let Some(value) = item_at::<T>(&model, position) {
+            activate(position, value);
         }
     });
     grid
@@ -444,146 +329,168 @@ pub(in crate::ui) fn album_table(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
-    table.add_css_class("track-table");
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
     let fields = shell.library_settings(key).row_fields;
-    let mut columns = Vec::with_capacity(fields.len());
-    for field in fields {
-        let column = album_column(shell, field);
-        table.append_column(&column);
-        columns.push((column, column_fit_width(field, column_width(field))));
-    }
-    install_column_view_width_fit(shell, &table, columns, initial_width);
-    let shell = Rc::clone(shell);
-    table.connect_activate(move |_, position| {
-        if let Some(album) = item_at::<Album>(&model, position) {
-            shell.navigate(Route::AlbumDetail(album.id));
-        }
-    });
-    table
+    let columns =
+        collection_table_columns(fields, |field| album_column(shell, field), column_width);
+    let activate_shell = Rc::clone(shell);
+    collection_table(
+        shell,
+        model,
+        columns,
+        false,
+        Some(Box::new(move |_, album: Album| {
+            activate_shell.navigate(Route::AlbumDetail(album.id));
+        })),
+    )
 }
 pub(in crate::ui) fn artist_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
-    table.add_css_class("track-table");
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
     let fields = shell.library_settings(key).row_fields;
-    let mut columns = Vec::with_capacity(fields.len());
-    for field in fields {
-        let column = artist_column(shell, field);
-        table.append_column(&column);
-        columns.push((column, column_fit_width(field, column_width(field))));
-    }
-    install_column_view_width_fit(shell, &table, columns, initial_width);
-    let shell = Rc::clone(shell);
-    table.connect_activate(move |_, position| {
-        if let Some(artist) = item_at::<Artist>(&model, position) {
-            shell.navigate(Route::ArtistDetail(artist.id));
-        }
-    });
-    table
+    let columns =
+        collection_table_columns(fields, |field| artist_column(shell, field), column_width);
+    let activate_shell = Rc::clone(shell);
+    collection_table(
+        shell,
+        model,
+        columns,
+        false,
+        Some(Box::new(move |_, artist: Artist| {
+            activate_shell.navigate(Route::ArtistDetail(artist.id));
+        })),
+    )
 }
 pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
-    table.add_css_class("track-table");
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
     let fields = shell.library_settings(LibraryListKey::Genres).row_fields;
-    let mut columns = Vec::with_capacity(fields.len());
-    for field in fields {
-        let column = genre_column(field);
-        table.append_column(&column);
-        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+    let columns = collection_table_columns(fields, genre_column, |field| {
+        if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
             180
         } else {
             column_width(field)
-        };
-        columns.push((column, column_fit_width(field, width)));
-    }
-    install_column_view_width_fit(shell, &table, columns, initial_width);
-    table
-}
-pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
-    table.add_css_class("track-table");
-    table.set_single_click_activate(true);
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
-    let fields = shell.library_settings(LibraryListKey::Playlists).row_fields;
-    let mut columns = Vec::with_capacity(fields.len());
-    for field in fields {
-        let column = playlist_column(shell, field);
-        table.append_column(&column);
-        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-            220
-        } else {
-            column_width(field)
-        };
-        columns.push((column, column_fit_width(field, width)));
-    }
-    install_column_view_width_fit(shell, &table, columns, initial_width);
-    let shell = Rc::clone(shell);
-    table.connect_activate(move |_, position| {
-        if let Some(playlist) = item_at::<Playlist>(&model, position) {
-            shell.navigate(Route::PlaylistDetail(playlist.id));
         }
     });
-    table
+    collection_table::<Genre>(shell, model, columns, false, None)
+}
+pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
+    let fields = shell.library_settings(LibraryListKey::Playlists).row_fields;
+    let columns = collection_table_columns(
+        fields,
+        |field| playlist_column(shell, field),
+        playlist_column_width,
+    );
+    let activate_shell = Rc::clone(shell);
+    collection_table(
+        shell,
+        model,
+        columns,
+        true,
+        Some(Box::new(move |_, playlist: Playlist| {
+            activate_shell.navigate(Route::PlaylistDetail(playlist.id));
+        })),
+    )
 }
 pub(in crate::ui) fn smart_playlist_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
 ) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
-    table.add_css_class("track-table");
-    table.set_single_click_activate(true);
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
     let fields = shell
         .library_settings(LibraryListKey::SmartPlaylists)
         .row_fields;
     let reorder_column = smart_playlist_reorder_column(shell);
-    table.append_column(&reorder_column);
-    let mut columns = Vec::with_capacity(fields.len() + 1);
-    columns.push((reorder_column, SMART_PLAYLIST_REORDER_WIDTH));
-    for field in fields {
-        let column = smart_playlist_column(shell, field);
-        table.append_column(&column);
-        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-            220
-        } else {
-            column_width(field)
-        };
-        columns.push((column, column_fit_width(field, width)));
+    let mut columns = vec![(reorder_column, SMART_PLAYLIST_REORDER_WIDTH)];
+    columns.extend(collection_table_columns(
+        fields,
+        |field| smart_playlist_column(shell, field),
+        playlist_column_width,
+    ));
+    let activate_shell = Rc::clone(shell);
+    collection_table(
+        shell,
+        model,
+        columns,
+        true,
+        Some(Box::new(move |_, playlist: SmartPlaylist| {
+            activate_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
+        })),
+    )
+}
+
+fn playlist_column_width(field: LibraryField) -> i32 {
+    if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+        220
+    } else {
+        column_width(field)
+    }
+}
+
+fn collection_table_columns(
+    fields: Vec<LibraryField>,
+    mut column_for_field: impl FnMut(LibraryField) -> gtk::ColumnViewColumn,
+    mut width_for_field: impl FnMut(LibraryField) -> i32,
+) -> Vec<(gtk::ColumnViewColumn, i32)> {
+    fields
+        .into_iter()
+        .map(|field| {
+            let column = column_for_field(field);
+            (column, column_fit_width(field, width_for_field(field)))
+        })
+        .collect()
+}
+
+fn collection_table<T>(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    columns: Vec<(gtk::ColumnViewColumn, i32)>,
+    single_click_activate: bool,
+    activate: Option<Box<dyn Fn(u32, T)>>,
+) -> gtk::ColumnView
+where
+    T: Clone + 'static,
+{
+    let initial_width = route_column_view_initial_width(shell);
+    collection_table_with_width(
+        shell,
+        model,
+        columns,
+        initial_width,
+        single_click_activate,
+        activate,
+    )
+}
+
+fn collection_table_with_width<T>(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    columns: Vec<(gtk::ColumnViewColumn, i32)>,
+    initial_width: i32,
+    single_click_activate: bool,
+    activate: Option<Box<dyn Fn(u32, T)>>,
+) -> gtk::ColumnView
+where
+    T: Clone + 'static,
+{
+    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let table = gtk::ColumnView::new(Some(selection));
+    table.add_css_class("track-table");
+    if single_click_activate {
+        table.set_single_click_activate(true);
+    }
+    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
+    table.set_hexpand(true);
+    table.set_vexpand(true);
+    for (column, _) in &columns {
+        table.append_column(column);
     }
     install_column_view_width_fit(shell, &table, columns, initial_width);
-    let shell = Rc::clone(shell);
-    table.connect_activate(move |_, position| {
-        if let Some(playlist) = item_at::<SmartPlaylist>(&model, position) {
-            shell.navigate(Route::SmartPlaylistDetail(playlist.id));
-        }
-    });
+    if let Some(activate) = activate {
+        table.connect_activate(move |_, position| {
+            if let Some(value) = item_at::<T>(&model, position) {
+                activate(position, value);
+            }
+        });
+    }
     table
 }
 
@@ -615,39 +522,37 @@ pub(in crate::ui) fn track_table(
     content_inset: i32,
     width_mode: ColumnViewWidthMode,
 ) -> gtk::ColumnView {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = column_view_initial_width(shell, content_inset, width_mode);
-    table.add_css_class("track-table");
-    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-    table.set_hexpand(true);
-    table.set_vexpand(true);
     let fields = if detail {
         shell.library_settings(key).detail_track_fields
     } else {
         shell.library_settings(key).row_fields
     };
-    let mut columns = Vec::with_capacity(fields.len());
-    for field in fields {
-        let column = track_column_for_key(shell, key, field);
-        table.append_column(&column);
-        columns.push((column, track_column_fit_width(key, field)));
-    }
-    install_column_view_width_fit(shell, &table, columns, initial_width);
+    let columns = fields
+        .into_iter()
+        .map(|field| {
+            let column = track_column_for_key(shell, key, field);
+            (column, track_column_fit_width(key, field))
+        })
+        .collect::<Vec<_>>();
     let controller = shell.controller.clone();
-    let play_context = play_context.clone();
-    table.connect_activate(move |_, position| {
-        if let Some(track) = item_at::<Track>(&model, position) {
-            play_track_from_model(
-                &controller,
-                &model,
-                play_context.as_ref(),
-                Some(position),
-                track,
-            );
-        }
+    let activate_model = model.clone();
+    let activate = Box::new(move |position, track: Track| {
+        play_track_from_model(
+            &controller,
+            &activate_model,
+            play_context.as_ref(),
+            Some(position),
+            track,
+        );
     });
-    table
+    collection_table_with_width(
+        shell,
+        model,
+        columns,
+        column_view_initial_width(shell, content_inset, width_mode),
+        false,
+        Some(activate),
+    )
 }
 pub(in crate::ui) fn set_library_table_content_height(
     scroller: &gtk::ScrolledWindow,
