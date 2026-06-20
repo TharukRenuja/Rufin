@@ -2,112 +2,12 @@ use super::servers::*;
 use super::*;
 use std::time::Duration;
 
-const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
-    SchemaMigration {
-        from_version: PRE_SMART_PLAYLISTS_SCHEMA_VERSION,
-        run: migrate_to_smart_playlists_schema,
-    },
-    SchemaMigration {
-        from_version: 11,
-        run: migrate_cover_refs,
-    },
-    SchemaMigration {
-        from_version: 12,
-        run: migrate_to_local_manifest_schema,
-    },
-    SchemaMigration {
-        from_version: 13,
-        run: migrate_to_album_release_metadata_schema,
-    },
-    SchemaMigration {
-        from_version: 14,
-        run: migrate_to_album_release_type_lookup_schema,
-    },
-    SchemaMigration {
-        from_version: 15,
-        run: migrate_to_entity_identity_schema,
-    },
-    SchemaMigration {
-        from_version: 16,
-        run: migrate_to_playlist_top_genres_schema,
-    },
-    SchemaMigration {
-        from_version: 17,
-        run: migrate_to_image_origin_schema,
-    },
-    SchemaMigration {
-        from_version: 18,
-        run: migrate_to_genre_duration_schema,
-    },
-];
-const SCHEMA_VERSION_10_TABLES: &[&str] = &[
-    "queue_snapshots",
-    "servers",
-    "server_local_access",
-    "server_music_folders",
-    "track_music_folders",
-    "track_local_matches",
-    "server_library_preferences",
-    "active_server",
-    "sync_state",
-    "albums",
-    "tracks",
-    "artists",
-    "album_artists",
-    "genres",
-    "playlists",
-    "album_genres",
-    "track_genres",
-    "album_artist_links",
-    "track_artist_links",
-    "playlist_tracks",
-    "home_section_items",
-    "home_section_prefetch_items",
-    "lyrics_cache",
-    "cover_cache",
-    "external_image_lookup_misses",
-    "library_fts",
-];
-const SCHEMA_VERSION_10_COLUMNS: &[(&str, &str)] = &[
-    ("albums", "image_item_id"),
-    ("albums", "image_tag"),
-    ("albums", "release_date"),
-    ("albums", "date_added"),
-    ("albums", "last_played"),
-    ("albums", "play_count"),
-    ("albums", "user_rating"),
-    ("tracks", "image_item_id"),
-    ("tracks", "image_tag"),
-    ("tracks", "release_date"),
-    ("tracks", "date_added"),
-    ("tracks", "last_played"),
-    ("tracks", "play_count"),
-    ("tracks", "user_rating"),
-    ("tracks", "local_path"),
-    ("artists", "image_item_id"),
-    ("artists", "image_tag"),
-    ("artists", "last_played"),
-    ("artists", "play_count"),
-    ("artists", "user_rating"),
-    ("album_artists", "image_item_id"),
-    ("album_artists", "image_tag"),
-    ("album_artists", "last_played"),
-    ("album_artists", "play_count"),
-    ("album_artists", "user_rating"),
-    ("genres", "image_item_id"),
-    ("genres", "image_tag"),
-    ("playlists", "image_item_id"),
-    ("playlists", "image_tag"),
-    ("playlist_tracks", "entry_id"),
-    ("server_music_folders", "folder_id"),
-    ("track_music_folders", "folder_id"),
-    ("track_local_matches", "local_path"),
-    ("server_library_preferences", "selected_music_folder_id"),
-    ("lyrics_cache", "value"),
-    ("cover_cache", "path"),
-    ("external_image_lookup_misses", "reason"),
-];
-const SCHEMA_VERSION_11_TABLES: &[&str] = &[
+const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[SchemaMigration {
+    from_version: MIN_SUPPORTED_SCHEMA_VERSION,
+    run: migrate_to_genre_duration_schema,
+}];
+const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
+const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
     "server_local_access",
@@ -137,109 +37,10 @@ const SCHEMA_VERSION_11_TABLES: &[&str] = &[
     "cover_cache",
     "external_image_lookup_misses",
     "library_fts",
-];
-const SCHEMA_VERSION_11_COLUMNS: &[(&str, &str)] = &[
-    ("albums", "image_item_id"),
-    ("albums", "image_tag"),
-    ("albums", "release_date"),
-    ("albums", "date_added"),
-    ("albums", "last_played"),
-    ("albums", "play_count"),
-    ("albums", "user_rating"),
-    ("tracks", "image_item_id"),
-    ("tracks", "image_tag"),
-    ("tracks", "release_date"),
-    ("tracks", "date_added"),
-    ("tracks", "last_played"),
-    ("tracks", "play_count"),
-    ("tracks", "user_rating"),
-    ("tracks", "local_path"),
-    ("tracks", "source_format"),
-    ("tracks", "comment"),
-    ("tracks", "skip_count"),
-    ("track_activity", "play_count"),
-    ("track_activity", "last_played"),
-    ("track_activity", "skip_count"),
-    ("artists", "image_item_id"),
-    ("artists", "image_tag"),
-    ("artists", "last_played"),
-    ("artists", "play_count"),
-    ("artists", "user_rating"),
-    ("album_artists", "image_item_id"),
-    ("album_artists", "image_tag"),
-    ("album_artists", "last_played"),
-    ("album_artists", "play_count"),
-    ("album_artists", "user_rating"),
-    ("genres", "image_item_id"),
-    ("genres", "image_tag"),
-    ("playlists", "image_item_id"),
-    ("playlists", "image_tag"),
-    ("smart_playlists", "builtin_key"),
-    ("smart_playlists", "definition_json"),
-    ("smart_playlists", "position"),
-    ("playlist_tracks", "entry_id"),
-    ("server_music_folders", "folder_id"),
-    ("track_music_folders", "folder_id"),
-    ("track_local_matches", "local_path"),
-    ("server_library_preferences", "selected_music_folder_id"),
-    ("lyrics_cache", "value"),
-    ("cover_cache", "path"),
-    ("external_image_lookup_misses", "reason"),
-];
-const COLLECTION_COVER_REF_TABLES: &[&str] = &["collection_cover_refs"];
-const COLLECTION_COVER_REF_COLUMNS: &[(&str, &str)] = &[
-    ("collection_cover_refs", "collection_type"),
-    ("collection_cover_refs", "collection_id"),
-    ("collection_cover_refs", "position"),
-    ("collection_cover_refs", "image_item_id"),
-    ("collection_cover_refs", "image_tag"),
-];
-const LOCAL_MANIFEST_TABLES: &[&str] = &[
+    "collection_cover_refs",
     "local_file_manifest",
     "local_track_manifest_data",
     "local_artwork_manifest",
-];
-const LOCAL_MANIFEST_COLUMNS: &[(&str, &str)] = &[
-    ("local_file_manifest", "manifest_version"),
-    ("local_file_manifest", "path"),
-    ("local_file_manifest", "root_path"),
-    ("local_file_manifest", "relative_path"),
-    ("local_file_manifest", "file_size"),
-    ("local_file_manifest", "mtime_seconds"),
-    ("local_file_manifest", "mtime_nanos"),
-    ("local_file_manifest", "inode"),
-    ("local_file_manifest", "device"),
-    ("local_file_manifest", "track_id"),
-    ("local_file_manifest", "metadata_hash"),
-    ("local_file_manifest", "search_hash"),
-    ("local_file_manifest", "artwork_revision"),
-    ("local_track_manifest_data", "track_json"),
-    ("local_track_manifest_data", "album_artist"),
-    ("local_track_manifest_data", "cover_kind"),
-    ("local_track_manifest_data", "cover_path"),
-    ("local_track_manifest_data", "cover_embedded_index"),
-    ("local_track_manifest_data", "cover_revision"),
-    ("local_artwork_manifest", "cover_item_id"),
-    ("local_artwork_manifest", "source_kind"),
-    ("local_artwork_manifest", "source_path"),
-    ("local_artwork_manifest", "revision"),
-];
-const LOCAL_MANIFEST_ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
-    ("local_track_manifest_data", "musicbrainz_album_id"),
-    ("local_track_manifest_data", "musicbrainz_release_group_id"),
-];
-const ALBUM_RELEASE_METADATA_COLUMNS: &[(&str, &str)] = &[
-    ("albums", "release_types_json"),
-    ("albums", "is_compilation"),
-    ("albums", "musicbrainz_album_id"),
-    ("albums", "musicbrainz_release_group_id"),
-];
-const ALBUM_RELEASE_TYPE_LOOKUP_TABLES: &[&str] = &["album_release_type_lookup_misses"];
-const ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS: &[(&str, &str)] = &[
-    ("album_release_type_lookup_misses", "lookup_key"),
-    ("album_release_type_lookup_misses", "reason"),
-];
-const ENTITY_IDENTITY_TABLES: &[&str] = &[
     "source_objects",
     "entities",
     "entity_identity_keys",
@@ -250,33 +51,23 @@ const ENTITY_IDENTITY_TABLES: &[&str] = &[
     "entity_links",
     "content_cache_entries",
 ];
-const ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
-    ("source_objects", "source_kind"),
-    ("source_objects", "parent_source_object_id"),
+const SUPPORTED_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("albums", "release_types_json"),
+    ("albums", "musicbrainz_album_id"),
+    ("albums", "musicbrainz_release_group_id"),
+    ("tracks", "source_format"),
+    ("tracks", "comment"),
+    ("tracks", "skip_count"),
+    ("playlists", "top_genres_json"),
+    ("local_track_manifest_data", "musicbrainz_album_id"),
+    ("local_track_manifest_data", "musicbrainz_release_group_id"),
     ("source_objects", "cue_path"),
-    ("source_objects", "cue_revision"),
     ("source_objects", "cue_track_index"),
     ("source_objects", "segment_start_ms"),
     ("source_objects", "segment_end_ms"),
-    ("entities", "entity_kind"),
-    ("entities", "source_object_id"),
-    ("entity_identity_keys", "namespace"),
-    ("entity_identity_keys", "strength"),
-    ("entity_grouping_keys", "namespace"),
-    ("entity_facts", "fact_key"),
-    ("entity_facts", "value_json"),
-    ("entity_resolver_state", "purpose"),
-    ("entity_resolver_state", "resolver_namespace"),
     ("entity_content_refs", "content_kind"),
-    ("entity_content_refs", "content_key"),
     ("entity_links", "namespace"),
-    ("entity_links", "url"),
-    ("entity_links", "status"),
     ("content_cache_entries", "cache_scope"),
-    ("content_cache_entries", "variant"),
-];
-const PLAYLIST_TOP_GENRES_COLUMNS: &[(&str, &str)] = &[("playlists", "top_genres_json")];
-const IMAGE_ORIGIN_COLUMNS: &[(&str, &str)] = &[
     ("albums", "image_origin"),
     ("tracks", "image_origin"),
     ("artists", "image_origin"),
@@ -284,7 +75,15 @@ const IMAGE_ORIGIN_COLUMNS: &[(&str, &str)] = &[
     ("genres", "image_origin"),
     ("playlists", "image_origin"),
 ];
-const GENRE_DURATION_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
+const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
+const IMAGE_ORIGIN_TABLES: &[&str] = &[
+    "albums",
+    "tracks",
+    "artists",
+    "album_artists",
+    "genres",
+    "playlists",
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -320,92 +119,6 @@ fn schema_migration_path(
     Some(path)
 }
 
-fn migrate_to_smart_playlists_schema(store: &Store) -> StoreResult<()> {
-    store.connection.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS track_activity (
-            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
-            track_id TEXT NOT NULL,
-            play_count INTEGER NOT NULL DEFAULT 0,
-            last_played TEXT,
-            skip_count INTEGER NOT NULL DEFAULT 0,
-            play_recorded_session TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (server_id, track_id)
-        );
-        CREATE TABLE IF NOT EXISTS smart_playlists (
-            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
-            smart_playlist_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            builtin_key TEXT,
-            definition_json TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (server_id, smart_playlist_id)
-        );
-        CREATE TABLE IF NOT EXISTS smart_playlist_seed_state (
-            server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
-            seeded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        ",
-    )?;
-    store.ensure_column("tracks", "source_format", "TEXT")?;
-    store.ensure_column("tracks", "comment", "TEXT")?;
-    store.ensure_column("tracks", "skip_count", "INTEGER")?;
-    store.connection.execute_batch(
-        "
-        CREATE INDEX IF NOT EXISTS tracks_server_comment_nocase_idx
-            ON tracks(server_id, comment COLLATE NOCASE);
-        CREATE INDEX IF NOT EXISTS track_activity_server_skip_idx
-            ON track_activity(server_id, skip_count DESC);
-        CREATE INDEX IF NOT EXISTS smart_playlists_server_position_idx
-            ON smart_playlists(server_id, position, name COLLATE NOCASE);
-        ",
-    )?;
-    Ok(())
-}
-fn migrate_cover_refs(store: &Store) -> StoreResult<()> {
-    store.connection.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS collection_cover_refs (
-            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
-            collection_type TEXT NOT NULL,
-            collection_id TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            image_item_id TEXT NOT NULL,
-            image_tag TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (server_id, collection_type, collection_id, position)
-        );
-        CREATE INDEX IF NOT EXISTS collection_cover_refs_lookup_idx
-            ON collection_cover_refs(server_id, collection_type, collection_id, position);
-        ",
-    )?;
-    Ok(())
-}
-fn migrate_to_local_manifest_schema(store: &Store) -> StoreResult<()> {
-    store.create_local_manifest_schema()
-}
-fn migrate_to_album_release_metadata_schema(store: &Store) -> StoreResult<()> {
-    store.ensure_column("albums", "release_types_json", "TEXT NOT NULL DEFAULT '[]'")?;
-    store.ensure_column("albums", "is_compilation", "INTEGER")?;
-    store.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
-    store.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
-    Ok(())
-}
-fn migrate_to_album_release_type_lookup_schema(store: &Store) -> StoreResult<()> {
-    store.create_album_release_type_lookup_schema()
-}
-fn migrate_to_entity_identity_schema(store: &Store) -> StoreResult<()> {
-    store.create_entity_identity_schema()
-}
-fn migrate_to_playlist_top_genres_schema(store: &Store) -> StoreResult<()> {
-    store.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")
-}
-fn migrate_to_image_origin_schema(store: &Store) -> StoreResult<()> {
-    store.ensure_image_origin_columns()
-}
 fn migrate_to_genre_duration_schema(store: &Store) -> StoreResult<()> {
     store.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
     store.connection.execute(
@@ -526,38 +239,12 @@ impl Store {
     }
     fn schema_is_complete_for_version(&self, version: i64) -> StoreResult<bool> {
         match version {
-            10 => {
-                self.schema_has_required_parts(SCHEMA_VERSION_10_TABLES, SCHEMA_VERSION_10_COLUMNS)
+            MIN_SUPPORTED_SCHEMA_VERSION => {
+                self.schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)
             }
-            11 => {
-                self.schema_has_required_parts(SCHEMA_VERSION_11_TABLES, SCHEMA_VERSION_11_COLUMNS)
-            }
-            12 => Ok(self
-                .schema_has_required_parts(SCHEMA_VERSION_11_TABLES, SCHEMA_VERSION_11_COLUMNS)?
-                && self.schema_has_required_parts(
-                    COLLECTION_COVER_REF_TABLES,
-                    COLLECTION_COVER_REF_COLUMNS,
-                )?),
-            13 => Ok(self.schema_is_complete_for_version(12)?
-                && self
-                    .schema_has_required_parts(LOCAL_MANIFEST_TABLES, LOCAL_MANIFEST_COLUMNS)?),
-            14 => Ok(self.schema_is_complete_for_version(13)?
-                && self.schema_has_required_parts(&[], ALBUM_RELEASE_METADATA_COLUMNS)?),
-            15 => Ok(self.schema_is_complete_for_version(14)?
-                && self.schema_has_required_parts(
-                    ALBUM_RELEASE_TYPE_LOOKUP_TABLES,
-                    ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS,
-                )?),
-            16 => Ok(self.schema_is_complete_for_version(14)?
-                && self.schema_has_required_parts(&[], LOCAL_MANIFEST_ENTITY_IDENTITY_COLUMNS)?
-                && self
-                    .schema_has_required_parts(ENTITY_IDENTITY_TABLES, ENTITY_IDENTITY_COLUMNS)?),
-            17 => Ok(self.schema_is_complete_for_version(16)?
-                && self.schema_has_required_parts(&[], PLAYLIST_TOP_GENRES_COLUMNS)?),
-            18 => Ok(self.schema_is_complete_for_version(17)?
-                && self.schema_has_required_parts(&[], IMAGE_ORIGIN_COLUMNS)?),
-            19 => Ok(self.schema_is_complete_for_version(18)?
-                && self.schema_has_required_parts(&[], GENRE_DURATION_COLUMNS)?),
+            SCHEMA_VERSION => Ok(self
+                .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
+                && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -1028,21 +715,6 @@ impl Store {
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
-    fn create_album_release_type_lookup_schema(&self) -> StoreResult<()> {
-        self.connection.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS album_release_type_lookup_misses (
-                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
-                album_id TEXT NOT NULL,
-                lookup_key TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (server_id, album_id, lookup_key)
-            );
-            ",
-        )?;
-        Ok(())
-    }
     fn create_entity_identity_schema(&self) -> StoreResult<()> {
         self.connection.execute_batch(
             "
@@ -1352,7 +1024,7 @@ impl Store {
         Ok(())
     }
     fn ensure_image_origin_columns(&self) -> StoreResult<()> {
-        for (table, _) in IMAGE_ORIGIN_COLUMNS {
+        for table in IMAGE_ORIGIN_TABLES {
             self.ensure_column(
                 table,
                 "image_origin",
