@@ -100,6 +100,23 @@ pub(in crate::ui) fn equalizer_preset_name_at(position: u32) -> Option<String> {
         .map(|name| (*name).to_string())
 }
 
+fn equalizer_preset_title(name: &str) -> String {
+    match name {
+        "Custom" => tr("Custom"),
+        "Flat" => tr("Flat"),
+        "Classical" => tr("Classical"),
+        "Club" => tr("Club"),
+        "Dance" => tr("Dance"),
+        "Full Bass" => tr("Full Bass"),
+        "Full Treble" => tr("Full Treble"),
+        "Laptop/Headphones" => tr("Laptop/Headphones"),
+        "Rock" => tr("Rock"),
+        "Pop" => tr("Pop"),
+        "Techno" => tr("Techno"),
+        _ => name.to_string(),
+    }
+}
+
 pub(in crate::ui) fn equalizer_default_preset_bands(name: &str) -> Vec<f64> {
     if name == CUSTOM_PRESET {
         return vec![0.0; EQUALIZER_BAND_COUNT];
@@ -117,7 +134,7 @@ pub(in crate::ui) fn equalizer_preset_bands(name: &str) -> Vec<f64> {
 fn equalizer_preset_model() -> gtk::StringList {
     let titles = equalizer_preset_names()
         .into_iter()
-        .map(tr)
+        .map(equalizer_preset_title)
         .collect::<Vec<_>>();
     let title_refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
     gtk::StringList::new(&title_refs)

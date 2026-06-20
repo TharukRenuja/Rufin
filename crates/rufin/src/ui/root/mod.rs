@@ -280,10 +280,13 @@ pub(in crate::ui) const HOME_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const GRID_COVER_LIMIT: usize = 192;
 pub(in crate::ui) const WARM_SETTLE_MS: u64 = RESPONSIVE_RENDER_DELAY_MS * 5;
 pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
-pub(in crate::ui) const LIBRARY_PREPARING_STATUS: &str = "Preparing library…";
 pub(in crate::ui) const FAVORITE_EMPTY_GLYPH: &str = "♡";
 pub(in crate::ui) const FAVORITE_FILLED_GLYPH: &str = "♥";
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
+
+pub(in crate::ui) fn library_preparing_status() -> String {
+    tr("Preparing library…")
+}
 pub(in crate::ui) const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
 pub(in crate::ui) const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
 pub(in crate::ui) const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;

@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::i18n::msgid;
+
 impl Shell {
     pub(in crate::ui) fn search_view(
         self: &Rc<Self>,
@@ -45,11 +47,11 @@ impl Shell {
                 PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END + DETAIL_ROUTE_SCROLL_GUTTER,
             ));
         } else if loading {
-            content.append(&self.route_empty_view("Searching..."));
+            content.append(&self.route_empty_view(msgid("Searching...")));
         } else if error.is_some() {
-            content.append(&self.route_empty_view("Search failed."));
+            content.append(&self.route_empty_view(msgid("Search failed.")));
         } else if !has_albums && !has_artists && !has_playlists {
-            content.append(&self.route_empty_view("No cached results found."));
+            content.append(&self.route_empty_view(msgid("No cached results found.")));
         }
 
         wrapper.append(&detail_route_scroller(self, content.upcast()));

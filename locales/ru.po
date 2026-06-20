@@ -132,6 +132,9 @@ msgstr "Любой жанр"
 msgid "App window"
 msgstr "Окно приложения"
 
+msgid "Appears On"
+msgstr "Появляется в"
+
 msgid "Application name"
 msgstr "Название приложения"
 
@@ -183,21 +186,31 @@ msgstr "Кэшировано"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Кэшированные элементы появятся здесь после завершения синхронизации"
 
+#, fuzzy
+msgid "Cached library data will appear here as sync pages finish."
+msgstr ""
+"Кэшированные данные библиотеки будут отображаться здесь после завершения "
+"синхронизации страниц"
+
 msgid "Cached library ready"
 msgstr "Кэшированная библиотека готова"
 
 msgid "Caching Library"
 msgstr "Кэшированная библиотека"
 
+#, fuzzy
 msgid "Caching library artwork…"
 msgstr "Кэширование обложек альбомов…"
 
+#, fuzzy
 msgid "Caching library… This may take some time."
 msgstr "Кэширование библиотеки… Это может занять некоторое время."
 
+#, fuzzy
 msgid "Caching local library…"
 msgstr "Кэширование локальной библиотеки…"
 
+#, fuzzy
 msgid "Caching local library… This may take some time."
 msgstr "Кэширование локальной библиотеки… Это может занять некоторое время."
 
@@ -221,7 +234,7 @@ msgstr ""
 "данных и завершению всех сеансов, включая ключи доступа к API. Кэш "
 "приложения не затрагивается."
 
-#, rust-format
+#, fuzzy, rust-format
 msgid "Checking {provider} server…"
 msgstr "Проверка сервера {provider}…"
 
@@ -259,6 +272,9 @@ msgstr ""
 "Выберите папку для сканирования и воспроизведения файлов непосредственно с "
 "этого компьютера"
 
+msgid "Classical"
+msgstr "Классическая"
+
 msgid "Clear Cache"
 msgstr "Очистить Кэш"
 
@@ -279,6 +295,15 @@ msgstr "Закрыть"
 
 msgid "Close fullscreen player"
 msgstr "Закрыть полноэкранный плеер"
+
+msgid "Club"
+msgstr "Клубная"
+
+msgid "Collection"
+msgstr "Коллекция"
+
+msgid "Collections"
+msgstr "Коллекции"
 
 msgid "Columns"
 msgstr "Столбцы"
@@ -313,6 +338,7 @@ msgstr "Подключено"
 msgid "Connected as {username}"
 msgstr "Вы вошли как {username}"
 
+#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Подключение к музыкальному серверу…"
 
@@ -331,11 +357,14 @@ msgstr "Плавный между треками"
 msgid "Crossfade duration"
 msgstr "Длительность плавного перехода между треками"
 
-msgid "Current version:"
-msgstr "Текущая версия:"
+msgid "Custom"
+msgstr "Настраиваемый"
 
 msgid "Customize display"
 msgstr "Настроить отображение"
+
+msgid "Dance"
+msgstr "Танцевальная"
 
 msgid "Date added"
 msgstr "Дата добавления"
@@ -384,6 +413,12 @@ msgstr "Перетащите, чтобы изменить порядок"
 
 msgid "Duration"
 msgstr "Продолжительность"
+
+msgid "EP"
+msgstr "EP"
+
+msgid "EPs"
+msgstr "EP-альбомы"
 
 msgid "Edit"
 msgstr "Редактировать"
@@ -440,6 +475,9 @@ msgstr ""
 msgid "Favorite"
 msgstr "Избранное"
 
+msgid "Favorite tracks"
+msgstr "Любимые треки"
+
 msgid "Favorites"
 msgstr "Избранные"
 
@@ -448,6 +486,9 @@ msgstr "Рекомендованные жанры"
 
 msgid "Find your ListenBrainz user token"
 msgstr "Найдите свой токен пользователя ListenBrainz"
+
+msgid "Flat"
+msgstr "Плоский"
 
 msgid "Folder"
 msgstr "Папка"
@@ -476,6 +517,12 @@ msgstr[2] "Найдено {count} серверов Jellyfin"
 
 msgid "Full"
 msgstr "Полный"
+
+msgid "Full Bass"
+msgstr "Максимальные басы"
+
+msgid "Full Treble"
+msgstr "Максимальные высокие частоты"
 
 msgid "Gapless"
 msgstr "Бесшовный"
@@ -519,6 +566,12 @@ msgstr "Скрыт"
 msgid "Hidden server section"
 msgstr "Скрытый раздел сервера"
 
+msgid "Hide lyrics"
+msgstr "Скрыть текст песни"
+
+msgid "Hide sidebar"
+msgstr "Скрыть боковую панель"
+
 msgid "Home"
 msgstr "Главная"
 
@@ -535,6 +588,9 @@ msgstr "Если у вас нет ключей API, создайте их"
 
 msgid "Image"
 msgstr "Изображение"
+
+msgid "Installed"
+msgstr ""
 
 msgid "Interface"
 msgstr "Интерфейс"
@@ -553,6 +609,9 @@ msgstr "LRCLIB"
 
 msgid "Language"
 msgstr "Язык"
+
+msgid "Laptop/Headphones"
+msgstr "Ноутбук/Наушники"
 
 msgid "Last played"
 msgstr "Посл. прослушано"
@@ -595,6 +654,10 @@ msgstr "Отправка данных о прослушивании в ListenBra
 
 msgid "Loaded in lyrics panel."
 msgstr "Загружено в панель с текстами песен."
+
+#, fuzzy
+msgid "Loading folders…"
+msgstr "Загрузка папок…"
 
 msgid "Local"
 msgstr "Локальный источник"
@@ -685,6 +748,9 @@ msgstr "Папка с музыкой"
 msgid "Music Folders"
 msgstr "Папки с музыкой"
 
+msgid "Music Server"
+msgstr "Музыкальный сервер"
+
 msgid "MusicBrainz"
 msgstr "MusicBrainz"
 
@@ -746,6 +812,10 @@ msgstr ""
 
 msgid "No Servers Found"
 msgstr "Серверы не найдены"
+
+#, fuzzy
+msgid "No cached results found."
+msgstr "Кэшированные результаты не найдены"
 
 msgid "No cached server path yet"
 msgstr "Пока нет кэшированных путей к серверу"
@@ -845,12 +915,23 @@ msgstr "Только непрослушанные треки"
 msgid "Open fullscreen player"
 msgstr "Открыть полноэкранный плеер"
 
+msgid "Open on Jellyfin"
+msgstr "Открыть в Jellyfin"
+
+msgid "Open on Last.fm"
+msgstr "Открыть на Last.fm"
+
+msgid "Open on MusicBrainz"
+msgstr "Открыть на MusicBrainz"
+
 msgid "Open release notes"
 msgstr "Открыть примечания к выпуску"
 
+#, fuzzy
 msgid "Opening Last.fm authorization…"
 msgstr "Запуск процесса авторизации в Last.fm…"
 
+#, fuzzy
 msgid "Opening Libre.fm authorization…"
 msgstr "Запуск процесса авторизации в Libre.fm…"
 
@@ -861,8 +942,14 @@ msgstr ""
 msgid "Original"
 msgstr "Оригинал"
 
+msgid "Other"
+msgstr "Другие"
+
 msgid "Password"
 msgstr "Пароль"
+
+msgid "Pause"
+msgstr "Приостановить"
 
 msgid "Plain lyrics"
 msgstr "Обычный текст песен"
@@ -924,6 +1011,9 @@ msgstr "Плейлисты"
 msgid "Plays"
 msgstr "Прослушано раз"
 
+msgid "Pop"
+msgstr "Поп"
+
 msgid "Position"
 msgstr "Позиция"
 
@@ -935,6 +1025,10 @@ msgstr "Предпочитать обложки плейлистов, храня
 
 msgid "Preferences"
 msgstr "Настройки"
+
+#, fuzzy
+msgid "Preparing library…"
+msgstr "Подготовка библиотеки…"
 
 msgid "Preset"
 msgstr "Предустановка"
@@ -990,11 +1084,11 @@ msgstr "Повторное подключение"
 msgid "Refresh section"
 msgstr "Обновить раздел"
 
+msgid "Release"
+msgstr "Выпуск"
+
 msgid "Release date"
 msgstr "Дата выпуска"
-
-msgid "Release notes"
-msgstr "Примечания к выпуску"
 
 msgid "Release notifications"
 msgstr "Уведомления о новых версиях"
@@ -1067,11 +1161,17 @@ msgstr ""
 "Восстановить выбранный пресет до значений по умолчанию для каждой полосы "
 "частот."
 
+msgid "Resume"
+msgstr "Возобновить"
+
 msgid "Resync Library"
 msgstr "Синхронизировать библиотеку"
 
 msgid "Rich presence"
 msgstr "Расширенная информация о текущем воспроизведении"
+
+msgid "Rock"
+msgstr "Рок"
 
 msgid "Rows"
 msgstr "Строки"
@@ -1149,12 +1249,18 @@ msgstr "Поиск в очереди воспроизведения"
 msgid "Searching Local Network"
 msgstr "Поиск в локальной сети"
 
+#, fuzzy
 msgid "Searching for Jellyfin servers on the local network…"
 msgstr "Поиск серверов Jellyfin в локальной сети…"
 
 msgid "Searching will start automatically"
 msgstr "Поиск начнётся автоматически"
 
+#, fuzzy
+msgid "Searching..."
+msgstr "Поиск…"
+
+#, fuzzy
 msgid "Searching…"
 msgstr "Поиск…"
 
@@ -1216,6 +1322,7 @@ msgstr "Выбор сервера"
 msgid "Server settings saved."
 msgstr "Настройки сервера сохранены."
 
+#, fuzzy
 msgid "Server settings saved. Resyncing library…"
 msgstr ""
 "Настройки сервера сохранены. Выполняется повторная синхронизация библиотеки…"
@@ -1241,6 +1348,9 @@ msgstr ""
 
 msgid "Show external site links"
 msgstr "Показывать ссылки на внешние сайты"
+
+msgid "Show lyrics"
+msgstr "Показать текст песни"
 
 msgid "Show paused status"
 msgstr "Показывать статус \"на паузе\""
@@ -1277,6 +1387,12 @@ msgstr "Элементы боковой панели"
 
 msgid "SimpMusic"
 msgstr "SimpMusic"
+
+msgid "Single"
+msgstr "Сингл"
+
+msgid "Singles"
+msgstr "Синглы"
 
 msgid "Skip count"
 msgstr "Количество пропусков"
@@ -1328,6 +1444,7 @@ msgstr "Качество потока"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
+#, fuzzy
 msgid "Switching library…"
 msgstr "Переключение библиотеки…"
 
@@ -1337,7 +1454,7 @@ msgstr "Синхронизация уже выполняется."
 msgid "Synced lyrics"
 msgstr "Синхронизированные тексты песен"
 
-#, rust-format
+#, fuzzy, rust-format
 msgid "Syncing {provider} library…"
 msgstr "Синхронизация библиотеки {provider}…"
 
@@ -1351,6 +1468,9 @@ msgstr ""
 "Нажмите на запись, чтобы загрузить текст песни и сохранить его в кэше "
 "приложения. Нажмите «Сохранить», только если вы также хотите сохранить его в "
 "папке с музыкой"
+
+msgid "Techno"
+msgstr "Техно"
 
 msgid "Text"
 msgstr "Текст"
@@ -1465,6 +1585,9 @@ msgstr "Имя пользователя"
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
 
+msgid "Version History"
+msgstr ""
+
 msgid "View"
 msgstr "Вид"
 
@@ -1537,9 +1660,22 @@ msgstr "диапазон"
 msgid "to"
 msgstr "до"
 
+msgid "today"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
+msgstr[0] "{count} альбом"
+msgstr[1] "{count} альбома"
+msgstr[2] "{count} альбомов"
+
+#, fuzzy, rust-format
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
 msgstr[0] "{count} альбом"
 msgstr[1] "{count} альбома"
 msgstr[2] "{count} альбомов"
@@ -1558,6 +1694,13 @@ msgstr[0] "{count} папка выбрана"
 msgstr[1] "{count} папки выбрано"
 msgstr[2] "{count} папок выбрано"
 
+#, fuzzy, rust-format
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
+msgstr[0] "{count} трек"
+msgstr[1] "{count} трека"
+msgstr[2] "{count} треков"
+
 #, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
@@ -1568,6 +1711,20 @@ msgstr[2] "{count} результатов"
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
+msgstr[0] "{count} трек"
+msgstr[1] "{count} трека"
+msgstr[2] "{count} треков"
+
+#, fuzzy, rust-format
+msgid "{count} week ago"
+msgid_plural "{count} weeks ago"
+msgstr[0] "{count} альбом"
+msgstr[1] "{count} альбома"
+msgstr[2] "{count} альбомов"
+
+#, fuzzy, rust-format
+msgid "{count} year ago"
+msgid_plural "{count} years ago"
 msgstr[0] "{count} трек"
 msgstr[1] "{count} трека"
 msgstr[2] "{count} треков"
@@ -1588,121 +1745,25 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 msgid "{track_count} songs added to {playlist_count} playlists"
 msgstr "Добавлено {track_count} треков в {playlist_count} плейлистов"
 
-#~ msgid "View all tracks"
-#~ msgstr "Показать все треки"
-
-#~ msgid "albums"
-#~ msgstr "альбомы"
-
-#~ msgid "tracks"
-#~ msgstr "треки"
-
-#~ msgid "Unsaved changes."
-#~ msgstr "Несохраненные изменения."
-
-#~ msgid "Saved mapping."
-#~ msgstr "Сохраненные сопоставления."
-
-#~ msgid "folders selected"
-#~ msgstr "папок выбрано"
-
-#~ msgid "results"
-#~ msgstr "результаты"
-
-#~ msgid "folders"
-#~ msgstr "папки"
-
-#~ msgid "Settings"
-#~ msgstr "Настройки"
-
-#~ msgid "Favorite tracks"
-#~ msgstr "Любимые треки"
-
-#~ msgid "Appears On"
-#~ msgstr "Появляется в"
-
-#~ msgid "appears on"
-#~ msgstr "появляется в"
-
-#~ msgid "Menu"
-#~ msgstr "Меню"
-
 #~ msgid "Actions"
 #~ msgstr "Действия"
-
-#~ msgid "Sync Status"
-#~ msgstr "Статус Синхронизации"
-
-#~ msgid "Open on Last.fm"
-#~ msgstr "Открыть на Last.fm"
-
-#~ msgid "Open on MusicBrainz"
-#~ msgstr "Открыть на MusicBrainz"
-
-#~ msgid "Open on Jellyfin"
-#~ msgstr "Открыть в Jellyfin"
-
-#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
-#~ msgstr "Выполняет поиск в базах данных MusicBrainz и Cover Art Archive"
-
-#~ msgid "Try to fetch artwork from internet when server artwork is missing"
-#~ msgstr ""
-#~ "Попытаться загрузить обложку из интернета, если на сервере отсутствует "
-#~ "обложка"
-
-#~ msgid "Clears cached data for the server, login stays saved"
-#~ msgstr ""
-#~ "Очищает кэшированные данные сервера, при этом сохранённые данные для "
-#~ "входа остаются неизменными"
-
-#~ msgid "No active server"
-#~ msgstr "Активный сервер не найден"
-
-#~ msgid "Configure local folder access"
-#~ msgstr "Настроить доступ к локальным папкам"
-
-#~ msgid "Sources"
-#~ msgstr "Источники"
-
-#~ msgid "Configure saved music servers and local playback mappings"
-#~ msgstr ""
-#~ "Настроить сохраненные музыкальные серверы и параметры локального "
-#~ "воспроизведения"
 
 #~ msgid "Active Source Actions"
 #~ msgstr "Активные действия для текущего источника"
 
-#~ msgid "Map Local"
-#~ msgstr "Сопоставить локальные данные"
-
-#~ msgid "Edit Mapping"
-#~ msgstr "Редактировать соответствия"
-
-#~ msgid "Selected Source"
-#~ msgstr "Выбранный Источник"
-
-#~ msgid "Local mapping saved. Sync to preview matches"
-#~ msgstr ""
-#~ "Локальное сопоставление сохранено. Синхронизируйте для предварительного "
-#~ "просмотра соответствий"
-
-#~ msgid "Use server streams only"
-#~ msgstr "Использовать только потоковое вещание с сервера"
-
-#~ msgid "Choose Folder"
-#~ msgstr "Выбрать Папку"
-
 #~ msgid "Add local folder access"
 #~ msgstr "Предоставить доступ к локальной папке"
 
-#~ msgid "This removes the folder from the Local source"
-#~ msgstr "Это удаляет папку из Локального источника"
+#~ msgid "Add to queue"
+#~ msgstr "Добавить в очередь воспроизведения"
 
-#~ msgid "Preparing library…"
-#~ msgstr "Подготовка библиотеки…"
+#~ msgid "Artist detail will use cached album and track groups"
+#~ msgstr ""
+#~ "Для отображения информации об исполнителе будут использоваться "
+#~ "кэшированные группы альбомов и треков"
 
-#~ msgid "Choose a provider, pick a server, or enter the address manually"
-#~ msgstr "Выберите провайдера, выберите сервер или введите адрес вручную"
+#~ msgid "Choose Folder"
+#~ msgstr "Выбрать Папку"
 
 #~ msgid ""
 #~ "Choose a folder to scan and play locally from the computer (For flatpak "
@@ -1713,26 +1774,52 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ "компьютера. (Для пользователей Flatpak: если папка находится не в "
 #~ "каталоге ~/Music, необходимо предоставить ей разрешения через Flatseal)"
 
-#~ msgid "Resume"
-#~ msgstr "Возобновить"
+#~ msgid "Choose a provider, pick a server, or enter the address manually"
+#~ msgstr "Выберите провайдера, выберите сервер или введите адрес вручную"
 
-#~ msgid "Pause"
-#~ msgstr "Приостановить"
+#~ msgid "Choose when the left sidebar uses compact navigation"
+#~ msgstr ""
+#~ "Выбрать, когда в левой боковой панели использовать компактную навигацию"
 
-#~ msgid "Stop"
-#~ msgstr "Остановить"
+#~ msgid "Clears cached data for the server, login stays saved"
+#~ msgstr ""
+#~ "Очищает кэшированные данные сервера, при этом сохранённые данные для "
+#~ "входа остаются неизменными"
 
-#~ msgid "Hide sidebar"
-#~ msgstr "Скрыть боковую панель"
+#~ msgid "Configure columns"
+#~ msgstr "Настроить столбцы"
 
-#~ msgid "Show lyrics"
-#~ msgstr "Показать текст песни"
+#~ msgid "Configure local folder access"
+#~ msgstr "Настроить доступ к локальным папкам"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Скрыть текст песни"
+#~ msgid "Configure saved music servers and local playback mappings"
+#~ msgstr ""
+#~ "Настроить сохраненные музыкальные серверы и параметры локального "
+#~ "воспроизведения"
+
+#~ msgid "Connected as"
+#~ msgstr "Подключено как"
+
+#~ msgid "Current server"
+#~ msgstr "Текущий сервер"
+
+#~ msgid "Current version:"
+#~ msgstr "Текущая версия:"
 
 #~ msgid "Disable automatic lyric search for this track"
 #~ msgstr "Отключить автоматический поиск текста для этого трека"
+
+#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
+#~ msgstr "Выполняет поиск в базах данных MusicBrainz и Cover Art Archive"
+
+#~ msgid "Edit Mapping"
+#~ msgstr "Редактировать соответствия"
+
+#~ msgid "Genre detail keeps albums above tracks"
+#~ msgstr "В разделе с информацией о жанре альбомы отображаются выше треков"
+
+#~ msgid "Issues"
+#~ msgstr "Проблемы"
 
 #~ msgid "Keep the lyrics section visible below the queue"
 #~ msgstr ""
@@ -1741,15 +1828,79 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ msgid "Keep the queue sidebar visible in the main window"
 #~ msgstr "Оставить боковую панель очереди видимой в главном окне"
 
+#~ msgid "Left sidebar density"
+#~ msgstr "Плотность элементов в левой боковой панели"
+
+#~ msgid "Loading…"
+#~ msgstr "Загрузка…"
+
+#~ msgid "Local mapping saved. Sync to preview matches"
+#~ msgstr ""
+#~ "Локальное сопоставление сохранено. Синхронизируйте для предварительного "
+#~ "просмотра соответствий"
+
+#~ msgid "Map Local"
+#~ msgstr "Сопоставить локальные данные"
+
+#~ msgid "Menu"
+#~ msgstr "Меню"
+
+#~ msgid "No active server"
+#~ msgstr "Активный сервер не найден"
+
+#~ msgid "No queue items match the search"
+#~ msgstr "В очереди нет элементов, соответствующих запросу"
+
+#~ msgid "No server"
+#~ msgstr "Сервер не найден"
+
+#~ msgid "No tracks match the search."
+#~ msgstr "Не найдено треков, соответствующих запросу."
+
+#~ msgid "Play next"
+#~ msgstr "Воспроизвести следующий трек"
+
+#~ msgid "Play now"
+#~ msgstr "Воспроизвести сейчас"
+
+#~ msgid "Playlist detail will use the track table"
+#~ msgstr ""
+#~ "В детальной информации плейлиста будет использоваться таблица треков"
+
+#~ msgid "Release notes"
+#~ msgstr "Примечания к выпуску"
+
+#~ msgid "Remove from queue"
+#~ msgstr "Удалить из очереди"
+
+#~ msgid "Restore neutral bands and disable equalizer."
+#~ msgstr "Восстановить нейтральные полосы и отключить эквалайзер."
+
+#~ msgid "Saved mapping."
+#~ msgstr "Сохраненные сопоставления."
+
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr ""
 #~ "Искать тексты песен на локальном сервере перед обращением к внешним "
 #~ "провайдерам"
 
-#~ msgid "Use remote lyric providers when server lyrics are unavailable"
-#~ msgstr ""
-#~ "Использовать удалённые источники текстов песен, если на сервере они "
-#~ "недоступны"
+#~ msgid "Seekbar"
+#~ msgstr "Индикатор прогресса"
+
+#~ msgid "Selected Source"
+#~ msgstr "Выбранный Источник"
+
+#~ msgid "Settings"
+#~ msgstr "Настройки"
+
+#~ msgid "Sort by"
+#~ msgstr "Сортировать по"
+
+#~ msgid "Sources"
+#~ msgstr "Источники"
+
+#~ msgid "Stop"
+#~ msgstr "Остановить"
 
 #~ msgid ""
 #~ "Stop playback reporting, external lyrics, external metadata, "
@@ -1758,76 +1909,8 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ "Прекратить отправку данных о воспроизведении, внешних текстах песен, "
 #~ "внешних метаданных, уведомлений и через Discord IPC"
 
-#~ msgid "Music Server"
-#~ msgstr "Музыкальный сервер"
-
-#~ msgid "Left sidebar density"
-#~ msgstr "Плотность элементов в левой боковой панели"
-
-#~ msgid "Choose when the left sidebar uses compact navigation"
-#~ msgstr ""
-#~ "Выбрать, когда в левой боковой панели использовать компактную навигацию"
-
-#~ msgid "Remove from queue"
-#~ msgstr "Удалить из очереди"
-
-#~ msgid "Seekbar"
-#~ msgstr "Индикатор прогресса"
-
-#~ msgid "Play now"
-#~ msgstr "Воспроизвести сейчас"
-
-#~ msgid "Play next"
-#~ msgstr "Воспроизвести следующий трек"
-
-#~ msgid "Add to queue"
-#~ msgstr "Добавить в очередь воспроизведения"
-
-#~ msgid "No server"
-#~ msgstr "Сервер не найден"
-
-#~ msgid "Current server"
-#~ msgstr "Текущий сервер"
-
-#~ msgid "no account"
-#~ msgstr "нет учётной записи"
-
-#~ msgid "No queue items match the search"
-#~ msgstr "В очереди нет элементов, соответствующих запросу"
-
-#~ msgid "Artist detail will use cached album and track groups"
-#~ msgstr ""
-#~ "Для отображения информации об исполнителе будут использоваться "
-#~ "кэшированные группы альбомов и треков"
-
-#~ msgid "Genre detail keeps albums above tracks"
-#~ msgstr "В разделе с информацией о жанре альбомы отображаются выше треков"
-
-#~ msgid "Playlist detail will use the track table"
-#~ msgstr ""
-#~ "В детальной информации плейлиста будет использоваться таблица треков"
-
-#~ msgid "Loading…"
-#~ msgstr "Загрузка…"
-
-#~ msgid "Loading folders…"
-#~ msgstr "Загрузка папок…"
-
-#~ msgid "Cached library data will appear here as sync pages finish"
-#~ msgstr ""
-#~ "Кэшированные данные библиотеки будут отображаться здесь после завершения "
-#~ "синхронизации страниц"
-
-#~ msgid "The selected cached album was not found"
-#~ msgstr "Выбранный альбом из кэша не найден"
-
-#~ msgid "No cached results found"
-#~ msgstr "Кэшированные результаты не найдены"
-
-#~ msgid "Type a query in the sidebar search field to search the local cache"
-#~ msgstr ""
-#~ "Введите запрос в поле поиска на боковой панели, чтобы выполнить поиск в "
-#~ "локальном кэше"
+#~ msgid "Sync Status"
+#~ msgstr "Статус Синхронизации"
 
 #~ msgid ""
 #~ "Thank you for trying out Rufin! This a new app that is still in heavy "
@@ -1838,80 +1921,56 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ "находится в активной разработке. Если у вас возникли проблемы или есть "
 #~ "предложения, пожалуйста, создайте запрос на Github."
 
+#~ msgid "The selected cached album was not found"
+#~ msgstr "Выбранный альбом из кэша не найден"
+
+#~ msgid "This removes the folder from the Local source"
+#~ msgstr "Это удаляет папку из Локального источника"
+
+#~ msgid "Try to fetch artwork from internet when server artwork is missing"
+#~ msgstr ""
+#~ "Попытаться загрузить обложку из интернета, если на сервере отсутствует "
+#~ "обложка"
+
+#~ msgid "Type a query in the sidebar search field to search the local cache"
+#~ msgstr ""
+#~ "Введите запрос в поле поиска на боковой панели, чтобы выполнить поиск в "
+#~ "локальном кэше"
+
+#~ msgid "Unsaved changes."
+#~ msgstr "Несохраненные изменения."
+
+#~ msgid "Use remote lyric providers when server lyrics are unavailable"
+#~ msgstr ""
+#~ "Использовать удалённые источники текстов песен, если на сервере они "
+#~ "недоступны"
+
+#~ msgid "Use server streams only"
+#~ msgstr "Использовать только потоковое вещание с сервера"
+
+#~ msgid "View all tracks"
+#~ msgstr "Показать все треки"
+
 #~ msgid "Website"
 #~ msgstr "Веб-сайт"
 
-#~ msgid "Issues"
-#~ msgstr "Проблемы"
+#~ msgid "albums"
+#~ msgstr "альбомы"
 
-#~ msgid "Flat"
-#~ msgstr "Плоский"
+#~ msgid "appears on"
+#~ msgstr "появляется в"
 
-#~ msgid "Classical"
-#~ msgstr "Классическая"
+#~ msgid "folders"
+#~ msgstr "папки"
 
-#~ msgid "Club"
-#~ msgstr "Клубная"
+#~ msgid "folders selected"
+#~ msgstr "папок выбрано"
 
-#~ msgid "Dance"
-#~ msgstr "Танцевальная"
+#~ msgid "no account"
+#~ msgstr "нет учётной записи"
 
-#~ msgid "Full Bass"
-#~ msgstr "Максимальные басы"
+#~ msgid "results"
+#~ msgstr "результаты"
 
-#~ msgid "Full Treble"
-#~ msgstr "Максимальные высокие частоты"
-
-#~ msgid "Laptop/Headphones"
-#~ msgstr "Ноутбук/Наушники"
-
-#~ msgid "Rock"
-#~ msgstr "Рок"
-
-#~ msgid "Pop"
-#~ msgstr "Поп"
-
-#~ msgid "Techno"
-#~ msgstr "Техно"
-
-#~ msgid "Custom"
-#~ msgstr "Настраиваемый"
-
-#~ msgid "Restore neutral bands and disable equalizer."
-#~ msgstr "Восстановить нейтральные полосы и отключить эквалайзер."
-
-#~ msgid "No tracks match the search."
-#~ msgstr "Не найдено треков, соответствующих запросу."
-
-#~ msgid "Configure columns"
-#~ msgstr "Настроить столбцы"
-
-#~ msgid "Sort by"
-#~ msgstr "Сортировать по"
-
-#~ msgid "EPs"
-#~ msgstr "EP-альбомы"
-
-#~ msgid "EP"
-#~ msgstr "EP"
-
-#~ msgid "Singles"
-#~ msgstr "Синглы"
-
-#~ msgid "Single"
-#~ msgstr "Сингл"
-
-#~ msgid "Collections"
-#~ msgstr "Коллекции"
-
-#~ msgid "Collection"
-#~ msgstr "Коллекция"
-
-#~ msgid "Other"
-#~ msgstr "Другие"
-
-#~ msgid "Release"
-#~ msgstr "Выпуск"
-
-#~ msgid "Connected as"
-#~ msgstr "Подключено как"
+#~ msgid "tracks"
+#~ msgstr "треки"

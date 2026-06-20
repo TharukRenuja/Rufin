@@ -5,7 +5,7 @@ use adw::prelude::*;
 use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route};
 
 use crate::controller::LibrarySnapshot;
-use crate::i18n::tr;
+use crate::i18n::{msgid, tr};
 
 use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
 use super::home_layout::{
@@ -104,10 +104,9 @@ impl Shell {
         }
 
         if !appended {
-            content
-                .append(&self.route_empty_view(
-                    "Cached library data will appear here as sync pages finish.",
-                ));
+            content.append(&self.route_empty_view(msgid(
+                "Cached library data will appear here as sync pages finish.",
+            )));
         }
 
         scroller.set_child(Some(&content));

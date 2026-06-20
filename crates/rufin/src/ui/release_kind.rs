@@ -1,5 +1,7 @@
 use domain::{Album, normalize_release_types};
 
+use crate::i18n::msgid;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AlbumReleaseKind {
     Album,
@@ -46,21 +48,21 @@ pub(super) fn album_release_kind_label(album: &Album) -> &'static str {
 impl AlbumReleaseKind {
     pub(super) fn section_title(self) -> &'static str {
         match self {
-            AlbumReleaseKind::Album => "Albums",
-            AlbumReleaseKind::Ep => "EPs",
-            AlbumReleaseKind::Single => "Singles",
-            AlbumReleaseKind::Collection => "Collections",
-            AlbumReleaseKind::Other => "Other",
+            AlbumReleaseKind::Album => msgid("Albums"),
+            AlbumReleaseKind::Ep => msgid("EPs"),
+            AlbumReleaseKind::Single => msgid("Singles"),
+            AlbumReleaseKind::Collection => msgid("Collections"),
+            AlbumReleaseKind::Other => msgid("Other"),
         }
     }
 
     fn detail_label(self) -> &'static str {
         match self {
-            AlbumReleaseKind::Album => "Album",
-            AlbumReleaseKind::Ep => "EP",
-            AlbumReleaseKind::Single => "Single",
-            AlbumReleaseKind::Collection => "Collection",
-            AlbumReleaseKind::Other => "Release",
+            AlbumReleaseKind::Album => msgid("Album"),
+            AlbumReleaseKind::Ep => msgid("EP"),
+            AlbumReleaseKind::Single => msgid("Single"),
+            AlbumReleaseKind::Collection => msgid("Collection"),
+            AlbumReleaseKind::Other => msgid("Release"),
         }
     }
 }

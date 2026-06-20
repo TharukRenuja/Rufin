@@ -6,6 +6,8 @@ use domain::{
     Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, Route, Track,
 };
 
+use crate::i18n::msgid;
+
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
@@ -70,7 +72,7 @@ impl Shell {
         ));
 
         if has_favorite_tracks {
-            content.append(&section_heading("Favorite tracks"));
+            content.append(&section_heading(msgid("Favorite tracks")));
             let favorite_artist_id = artist.id.clone();
             let selected_music_folder_id = selected_music_folder_id(self);
             let source_descriptor = PlaySourceDescriptor::HomeCollection {
@@ -93,7 +95,7 @@ impl Shell {
         }
 
         if !appears_on.is_empty() {
-            content.append(&self.artist_album_section("Appears On", &appears_on));
+            content.append(&self.artist_album_section(msgid("Appears On"), &appears_on));
         }
 
         if !has_favorite_tracks && albums.is_empty() && appears_on.is_empty() {
@@ -137,7 +139,7 @@ impl Shell {
             self.append_artist_release_sections(&content, &detail.albums);
         }
         if !detail.appears_on.is_empty() {
-            content.append(&self.artist_album_section("Appears On", &detail.appears_on));
+            content.append(&self.artist_album_section(msgid("Appears On"), &detail.appears_on));
         }
         if detail.albums.is_empty() && detail.appears_on.is_empty() {
             content.append(&self.placeholder_view(

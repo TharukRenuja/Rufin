@@ -477,12 +477,12 @@ pub(in crate::ui) fn startup_loading_status_parts(status: &str) -> (String, Opti
 
 pub(in crate::ui) fn connection_progress_status_label(sync_status: &str) -> Option<String> {
     let Some(status) = startup_loading_status_label(sync_status) else {
-        return Some(tr(LIBRARY_PREPARING_STATUS));
+        return Some(library_preparing_status());
     };
     let (_title, detail) = startup_loading_status_parts(&status);
     Some(detail.unwrap_or_else(|| {
         if connection_progress_status_is_cache_headline(&status) {
-            tr(LIBRARY_PREPARING_STATUS)
+            library_preparing_status()
         } else {
             status
         }

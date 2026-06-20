@@ -10,7 +10,7 @@ use super::{
     install_track_context_menu, mark_route_scroll_owner, route_content_width,
     sort_tracks_with_options, stable_seed, track_matches_query,
 };
-use crate::i18n::tr;
+use crate::i18n::{msgid, tr};
 
 const FOLDER_TREE_WIDTH: i32 = 260;
 const FOLDER_TREE_MIN_WIDTH: i32 = 132;
@@ -45,7 +45,7 @@ impl Shell {
         wrapper.append(&folder_breadcrumbs(self, &path));
 
         if state.loading {
-            wrapper.append(&self.route_empty_view("Loading folders…"));
+            wrapper.append(&self.route_empty_view(msgid("Loading folders…")));
             return wrapper.upcast();
         }
 
@@ -55,7 +55,7 @@ impl Shell {
         }
 
         let Some(detail) = state.detail else {
-            wrapper.append(&self.route_empty_view("No folder contents found."));
+            wrapper.append(&self.route_empty_view(msgid("No folder contents found.")));
             return wrapper.upcast();
         };
 

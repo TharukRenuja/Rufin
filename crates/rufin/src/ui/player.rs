@@ -487,7 +487,7 @@ impl Shell {
         controls.play_icon.queue_draw();
         controls
             .play_button
-            .set_tooltip_text(Some(&crate::i18n::tr(playback_state_label(player.state))));
+            .set_tooltip_text(Some(&playback_state_label(player.state)));
 
         let title = player
             .current
@@ -534,11 +534,11 @@ impl Shell {
         set_active_class(&controls.dj_button, player.auto_dj_enabled);
         controls
             .dj_button
-            .set_tooltip_text(Some(&crate::i18n::tr(if player.auto_dj_enabled {
-                "Auto DJ on"
+            .set_tooltip_text(Some(&if player.auto_dj_enabled {
+                tr("Auto DJ on")
             } else {
-                "Auto DJ"
-            })));
+                tr("Auto DJ")
+            }));
         set_favorite_button_active(
             &controls.favorite_button,
             player.current.as_ref().is_some_and(|entry| entry.favorite),
@@ -548,7 +548,7 @@ impl Shell {
             .set_sensitive(player.current.is_some());
         controls
             .repeat_button
-            .set_tooltip_text(Some(&crate::i18n::tr(repeat_label(player.repeat_mode))));
+            .set_tooltip_text(Some(&repeat_label(player.repeat_mode)));
 
         let preview_seconds = self.state.seek_preview_seconds.get();
         let displayed_seconds = preview_seconds.unwrap_or(player.position_seconds);
@@ -1242,20 +1242,20 @@ fn player_link(css_class: &str) -> gtk::Label {
     label
 }
 
-fn playback_state_label(state: PlaybackState) -> &'static str {
+fn playback_state_label(state: PlaybackState) -> String {
     match state {
-        PlaybackState::Stopped => "Play",
-        PlaybackState::Paused => "Resume",
-        PlaybackState::Buffering => "Pause",
-        PlaybackState::Playing => "Pause",
+        PlaybackState::Stopped => tr("Play"),
+        PlaybackState::Paused => tr("Resume"),
+        PlaybackState::Buffering => tr("Pause"),
+        PlaybackState::Playing => tr("Pause"),
     }
 }
 
-fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
+fn repeat_label(repeat_mode: RepeatMode) -> String {
     match repeat_mode {
-        RepeatMode::Off => "Repeat off",
-        RepeatMode::One => "Repeat one",
-        RepeatMode::All => "Repeat all",
+        RepeatMode::Off => tr("Repeat off"),
+        RepeatMode::One => tr("Repeat one"),
+        RepeatMode::All => tr("Repeat all"),
     }
 }
 
