@@ -1,6 +1,5 @@
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
 use super::servers::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 use crate::{
@@ -468,30 +467,51 @@ fn schema_upgrade_servers() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
         std::process::id(),
-        "v10-upgrade"
+        "v18-upgrade"
     ));
     let _cleanup = fs::remove_file(&path);
     let saved = saved_server();
+    let genre_name = "Genre 1".to_string();
     {
         let store = Store::open(&path).expect("open current store");
         store.save_server(&saved).expect("save server");
         store
             .set_active_server(&saved.server.id)
             .expect("set active server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.genres = vec![genre_name.clone()];
+        let mut first_track = track(1, &album);
+        first_track.genres = vec![genre_name.clone()];
+        first_track.duration_seconds = 180;
+        let mut second_track = track(2, &album);
+        second_track.genres = vec![genre_name.clone()];
+        second_track.duration_seconds = 240;
+        let mut cached_genre = genre(1, None);
+        cached_genre.name = genre_name.clone();
+        cached_genre.duration_seconds = 0;
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, &[first_track, second_track], generation)
+            .expect("upsert tracks");
+        store
+            .upsert_genres(&saved.server.id, &[cached_genre], generation)
+            .expect("upsert genre");
+        store
+            .complete_sync(&saved.server.id, generation)
+            .expect("complete sync");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
     connection
         .execute_batch(
             "
-                DROP TABLE track_activity;
-                DROP TABLE smart_playlists;
-                DROP TABLE smart_playlist_seed_state;
+                ALTER TABLE genres DROP COLUMN duration_seconds;
+                PRAGMA user_version = 18;
                 ",
         )
-        .expect("remove smart playlist schema");
-    connection
-        .pragma_update(None, "user_version", PRE_SMART_PLAYLISTS_SCHEMA_VERSION)
-        .expect("set previous schema version");
+        .expect("simulate previous schema");
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
@@ -504,53 +524,17 @@ fn schema_upgrade_servers() {
         store.active_server().expect("active server"),
         Some(saved.clone())
     );
-    assert!(store.table_exists("track_activity").expect("table lookup"));
-    assert!(store.table_exists("smart_playlists").expect("table lookup"));
     assert!(
         store
-            .table_exists("smart_playlist_seed_state")
-            .expect("table lookup")
+            .table_has_column("genres", "duration_seconds")
+            .expect("column lookup"),
+        "genres.duration_seconds should exist after migration"
     );
-    assert!(
-        store
-            .table_exists("collection_cover_refs")
-            .expect("table lookup")
-    );
-    assert!(
-        store
-            .table_exists("local_file_manifest")
-            .expect("table lookup")
-    );
-    for column in [
-        "release_types_json",
-        "is_compilation",
-        "musicbrainz_album_id",
-        "musicbrainz_release_group_id",
-    ] {
-        assert!(
-            store
-                .table_has_column("albums", column)
-                .expect("column lookup"),
-            "albums.{column} should exist after migration"
-        );
-    }
-    assert!(store.table_exists("entities").expect("table lookup"));
-    assert!(
-        store
-            .table_exists("entity_identity_keys")
-            .expect("table lookup")
-    );
-    assert!(
-        store
-            .table_exists("entity_resolver_state")
-            .expect("table lookup")
-    );
-    assert!(
-        !store
-            .table_exists("album_release_type_lookup_misses")
-            .expect("table lookup")
-    );
-    assert!(!store.table_exists("album_identity").expect("table lookup"));
+    let genres = store
+        .load_genres(&saved.server.id, 0, 10)
+        .expect("load genres")
+        .items;
+    assert_eq!(genres[0].duration_seconds, 420);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -558,11 +542,11 @@ fn schema_upgrade_servers() {
 }
 
 #[test]
-fn schema_v13_local_manifest_without_identity_columns_migrates() {
+fn schema_seventeen_resets() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
         std::process::id(),
-        "v13-local-manifest-upgrade"
+        "v17-reset"
     ));
     let _cleanup = fs::remove_file(&path);
     let saved = saved_server();
@@ -572,32 +556,13 @@ fn schema_v13_local_manifest_without_identity_columns_migrates() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
     connection
-        .execute_batch(
-            "
-            ALTER TABLE local_track_manifest_data DROP COLUMN musicbrainz_album_id;
-            ALTER TABLE local_track_manifest_data DROP COLUMN musicbrainz_release_group_id;
-            PRAGMA user_version = 13;
-            ",
-        )
-        .expect("simulate v13 local manifest schema");
+        .pragma_update(None, "user_version", 17)
+        .expect("set unsupported schema version");
     drop(connection);
 
-    let store = Store::open(&path).expect("open upgraded store");
+    let store = Store::open(&path).expect("open reset store");
     assert_eq!(store.schema_version().expect("schema version"), 19);
-    assert_eq!(
-        store.list_servers().expect("list servers"),
-        vec![saved.clone()]
-    );
-    assert!(
-        store
-            .table_has_column("local_track_manifest_data", "musicbrainz_album_id")
-            .expect("column lookup")
-    );
-    assert!(
-        store
-            .table_has_column("local_track_manifest_data", "musicbrainz_release_group_id")
-            .expect("column lookup")
-    );
+    assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));

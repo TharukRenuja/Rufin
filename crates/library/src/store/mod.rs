@@ -19,7 +19,6 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, typ
 use thiserror::Error;
 
 const SCHEMA_VERSION: i64 = 19;
-const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
