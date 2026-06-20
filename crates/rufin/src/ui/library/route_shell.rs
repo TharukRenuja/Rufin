@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::msgid;
 
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
@@ -246,7 +247,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Tracks,
             empty: tracks.borrow().is_empty(),
-            empty_body: "Cached entries will appear here after sync finishes",
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
             search,
             content: track_collection_widget(
                 self,

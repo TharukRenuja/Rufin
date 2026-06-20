@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::msgid;
 
 const EMBEDDED_SCROLL_LATCH_MS: u128 = 280;
 const EMBEDDED_SURFACE_SCROLL_FACTOR: f64 = 2.5;
@@ -290,7 +291,7 @@ impl Shell {
         let view = self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Albums,
             empty: albums.borrow().is_empty(),
-            empty_body: "Cached entries will appear here after sync finishes",
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
@@ -627,7 +628,7 @@ impl Shell {
         let view = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: artists.borrow().is_empty(),
-            empty_body: "Cached entries will appear here after sync finishes",
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
@@ -861,7 +862,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Genres,
             empty: genres.borrow().is_empty(),
-            empty_body: "Cached entries will appear here after sync finishes",
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
             search,
             content: genre_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
@@ -1078,7 +1079,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Playlists,
             empty: playlists.borrow().is_empty(),
-            empty_body: "Cached entries will appear here after sync finishes",
+            empty_body: msgid("Cached entries will appear here after sync finishes"),
             search,
             content: playlist_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
@@ -1139,7 +1140,7 @@ impl Shell {
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::SmartPlaylists,
             empty: playlists.borrow().is_empty(),
-            empty_body: "Smart playlists will appear here after the default set is seeded.",
+            empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
             search,
             content: smart_playlist_collection_widget(self, model),
             load_next: None,

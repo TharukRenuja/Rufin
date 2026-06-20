@@ -9,7 +9,7 @@ use playback::PlaybackState;
 use tracing::info;
 
 use crate::controller::PlaybackSnapshot;
-use crate::i18n::tr;
+use crate::i18n::{msgid, tr};
 
 use super::player_icons::{
     VolumeIcon, auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
@@ -189,7 +189,7 @@ impl WaveformSeekBar {
         area.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
         area.set_focusable(true);
         area.set_valign(gtk::Align::Center);
-        let seek_label = crate::i18n::tr("Seek playback");
+        let seek_label = crate::i18n::tr(msgid("Seek playback"));
         area.set_tooltip_text(Some(&seek_label));
         area.update_property(&[
             gtk::accessible::Property::Label(&seek_label),

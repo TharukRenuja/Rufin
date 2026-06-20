@@ -1,5 +1,6 @@
 use std::{fmt, path::PathBuf};
 
+use crate::msgid;
 use serde::{Deserialize, Serialize};
 
 macro_rules! opaque_id {
@@ -314,9 +315,9 @@ impl SmartPlaylistBuiltin {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::MostPlayed => "Most Played",
-            Self::NeverPlayed => "Never Played",
-            Self::MostSkipped => "Most Skipped",
+            Self::MostPlayed => msgid("Most Played"),
+            Self::NeverPlayed => msgid("Never Played"),
+            Self::MostSkipped => msgid("Most Skipped"),
         }
     }
 
@@ -519,11 +520,11 @@ pub const HOME_SECTION_ITEM_LIMIT: usize = 24;
 impl HomeSectionKind {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Explore => "Explore",
-            Self::MostPlayed => "Most played",
-            Self::NewlyAdded => "Newly added",
-            Self::RecentlyPlayed => "Recently played",
-            Self::RecentlyReleased => "Recently released",
+            Self::Explore => msgid("Explore"),
+            Self::MostPlayed => msgid("Most played"),
+            Self::NewlyAdded => msgid("Newly added"),
+            Self::RecentlyPlayed => msgid("Recently played"),
+            Self::RecentlyReleased => msgid("Recently released"),
         }
     }
 }
@@ -543,13 +544,13 @@ impl HomeBlockKind {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Showcase => "Showcase",
+            Self::Showcase => msgid("Showcase"),
             Self::Explore => HomeSectionKind::Explore.title(),
             Self::MostPlayed => HomeSectionKind::MostPlayed.title(),
             Self::NewlyAdded => HomeSectionKind::NewlyAdded.title(),
             Self::RecentlyPlayed => HomeSectionKind::RecentlyPlayed.title(),
             Self::RecentlyReleased => HomeSectionKind::RecentlyReleased.title(),
-            Self::Genres => "Featured genres",
+            Self::Genres => msgid("Featured genres"),
         }
     }
 

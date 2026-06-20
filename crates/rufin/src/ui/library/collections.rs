@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::msgid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LibraryRouteInsetSpec {
@@ -919,7 +920,7 @@ pub(in crate::ui) fn artist_cover_tile(
         .connect_clicked(move |_| open_shell.navigate(Route::ArtistDetail(open_artist_id.clone())));
     overlay.set_child(Some(&artist_button));
 
-    let mut controls = cards::cover_hover_controls(size, "Play artist", artist.favorite);
+    let mut controls = cards::cover_hover_controls(size, msgid("Play artist"), artist.favorite);
     let menu = controls.add_context_button();
     let menu_target = overlay.clone();
     let menu_shell = Rc::clone(shell);

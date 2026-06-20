@@ -168,6 +168,10 @@ pub fn trn_with(singular: &str, plural: &str, count: u64, args: &[(&str, &str)])
     replace_placeholders(trn(singular, plural, count), args)
 }
 
+pub const fn msgid(message: &'static str) -> &'static str {
+    message
+}
+
 pub fn set_language_preference(language_preference: &str) {
     if let Ok(mut state) = state().lock() {
         state.set_language_preference(language_preference);
