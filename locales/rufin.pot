@@ -477,7 +477,7 @@ msgstr ""
 msgid "Drag to reorder"
 msgstr ""
 
-#: crates/domain/src/settings/layout.rs crates/rufin/src/ui/folders.rs crates/rufin/src/ui/library/album_detail.rs crates/rufin/src/ui/queue.rs
+#: crates/domain/src/settings/layout.rs crates/rufin/src/ui/folders.rs crates/rufin/src/ui/library/album_detail.rs crates/rufin/src/ui/queue.rs crates/rufin/src/ui/root/new_smart_playlist_dialog.rs
 msgid "Duration"
 msgstr ""
 

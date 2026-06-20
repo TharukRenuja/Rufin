@@ -3,6 +3,7 @@ use super::servers::{
     track_from_row, u32_from_i64,
 };
 use super::*;
+use domain::smart_playlists as smart_policy;
 
 const SMART_TRACK_DEFAULT_LIMIT: usize = 25_000;
 const RETIRED_SMART_PLAYLIST_BUILTIN_KEYS: &[&str] = &[
@@ -632,7 +633,7 @@ impl Store {
         builtin: SmartPlaylistBuiltin,
         position: i64,
     ) -> StoreResult<()> {
-        let definition = definition_for_builtin(builtin);
+        let definition = smart_policy::builtin_definition(builtin);
         let definition_json = serde_json::to_string(&definition)?;
         let smart_playlist_id = smart_builtin_id(builtin);
         self.connection.execute(
@@ -721,60 +722,6 @@ pub(super) fn smart_builtin_id(builtin: SmartPlaylistBuiltin) -> SmartPlaylistId
     SmartPlaylistId::new(format!("builtin:{}", builtin.key()))
 }
 
-fn definition_for_builtin(builtin: SmartPlaylistBuiltin) -> SmartPlaylistDefinition {
-    match builtin {
-        SmartPlaylistBuiltin::MostPlayed => SmartPlaylistDefinition {
-            root: group_all(vec![played_rule(true)]),
-            sort_field: SmartPlaylistSortField::PlayCount,
-            descending: true,
-            limit: None,
-        },
-        SmartPlaylistBuiltin::NeverPlayed => SmartPlaylistDefinition {
-            root: group_all(vec![played_rule(false)]),
-            sort_field: SmartPlaylistSortField::Title,
-            descending: false,
-            limit: None,
-        },
-        SmartPlaylistBuiltin::MostSkipped => SmartPlaylistDefinition {
-            root: group_all(vec![number_rule(
-                SmartPlaylistRuleField::SkipCount,
-                SmartPlaylistRuleOperator::Above,
-                0,
-            )]),
-            sort_field: SmartPlaylistSortField::SkipCount,
-            descending: true,
-            limit: None,
-        },
-    }
-}
-
-fn group_all(rules: Vec<SmartPlaylistRuleNode>) -> SmartPlaylistRuleGroup {
-    SmartPlaylistRuleGroup {
-        mode: SmartPlaylistMatchMode::All,
-        rules,
-    }
-}
-
-fn played_rule(played: bool) -> SmartPlaylistRuleNode {
-    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-        field: SmartPlaylistRuleField::Played,
-        operator: SmartPlaylistRuleOperator::Is,
-        value: Some(SmartPlaylistRuleValue::Bool(played)),
-    })
-}
-
-fn number_rule(
-    field: SmartPlaylistRuleField,
-    operator: SmartPlaylistRuleOperator,
-    value: i64,
-) -> SmartPlaylistRuleNode {
-    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-        field,
-        operator,
-        value: Some(SmartPlaylistRuleValue::Number(value)),
-    })
-}
-
 fn compile_group(group: &SmartPlaylistRuleGroup) -> SmartSql {
     if group.rules.is_empty() {
         return SmartSql {
@@ -835,7 +782,7 @@ fn compile_text_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
             params: Vec::new(),
         },
         SmartPlaylistRuleOperator::Contains | SmartPlaylistRuleOperator::NotContains => {
-            let Some(value) = text_value(rule) else {
+            let Some(value) = smart_policy::text_value(rule) else {
                 return false_sql();
             };
             let clause = format!("LOWER({expression}) LIKE ? ESCAPE '\\'");
@@ -853,7 +800,7 @@ fn compile_text_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
             }
         }
         SmartPlaylistRuleOperator::Equals | SmartPlaylistRuleOperator::NotEquals => {
-            let Some(value) = text_value(rule) else {
+            let Some(value) = smart_policy::text_value(rule) else {
                 return false_sql();
             };
             let operator = if rule.operator == SmartPlaylistRuleOperator::Equals {
@@ -877,7 +824,7 @@ fn compile_text_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
 }
 
 fn compile_genre_rule(rule: &SmartPlaylistRule) -> SmartSql {
-    let Some(value) = text_value(rule) else {
+    let Some(value) = smart_policy::text_value(rule) else {
         return false_sql();
     };
     let (operator, pattern) = match rule.operator {
@@ -941,7 +888,7 @@ fn compile_number_rule(expression: &str, nullable: bool, rule: &SmartPlaylistRul
         | SmartPlaylistRuleOperator::Below
         | SmartPlaylistRuleOperator::Equals
         | SmartPlaylistRuleOperator::NotEquals => {
-            let Some(value) = number_value(rule) else {
+            let Some(value) = smart_policy::number_value(rule) else {
                 return false_sql();
             };
             let operator = match rule.operator {
@@ -965,7 +912,7 @@ fn compile_number_rule(expression: &str, nullable: bool, rule: &SmartPlaylistRul
             }
         }
         SmartPlaylistRuleOperator::Between => {
-            let Some((min, max)) = number_range_value(rule) else {
+            let Some((min, max)) = smart_policy::number_range_value(rule) else {
                 return false_sql();
             };
             SmartSql {
@@ -985,7 +932,7 @@ fn compile_number_rule(expression: &str, nullable: bool, rule: &SmartPlaylistRul
 }
 
 fn compile_bool_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
-    let Some(value) = bool_value(rule) else {
+    let Some(value) = smart_policy::bool_value(rule) else {
         return false_sql();
     };
     let expected = if matches!(rule.operator, SmartPlaylistRuleOperator::IsNot) {
@@ -1000,7 +947,7 @@ fn compile_bool_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
 }
 
 fn compile_played_rule(rule: &SmartPlaylistRule) -> SmartSql {
-    let Some(value) = bool_value(rule) else {
+    let Some(value) = smart_policy::bool_value(rule) else {
         return false_sql();
     };
     let expected = if matches!(rule.operator, SmartPlaylistRuleOperator::IsNot) {
@@ -1037,7 +984,7 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
         | SmartPlaylistRuleOperator::After
         | SmartPlaylistRuleOperator::Equals
         | SmartPlaylistRuleOperator::NotEquals => {
-            let Some(value) = date_value(rule) else {
+            let Some(value) = smart_policy::date_value(rule) else {
                 return false_sql();
             };
             let operator = match rule.operator {
@@ -1061,7 +1008,7 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
             }
         }
         SmartPlaylistRuleOperator::Between => {
-            let Some((start, end)) = date_range_value(rule) else {
+            let Some((start, end)) = smart_policy::date_range_value(rule) else {
                 return false_sql();
             };
             SmartSql {
@@ -1075,68 +1022,6 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
         | SmartPlaylistRuleOperator::Below
         | SmartPlaylistRuleOperator::Is
         | SmartPlaylistRuleOperator::IsNot => false_sql(),
-    }
-}
-
-fn text_value(rule: &SmartPlaylistRule) -> Option<String> {
-    let SmartPlaylistRuleValue::Text(value) = rule.value.as_ref()? else {
-        return None;
-    };
-    (!value.trim().is_empty()).then(|| value.trim().to_string())
-}
-
-fn number_value(rule: &SmartPlaylistRule) -> Option<i64> {
-    let SmartPlaylistRuleValue::Number(value) = rule.value.as_ref()? else {
-        return None;
-    };
-    Some(*value)
-}
-
-fn number_range_value(rule: &SmartPlaylistRule) -> Option<(i64, i64)> {
-    let SmartPlaylistRuleValue::NumberRange { min, max } = rule.value.as_ref()? else {
-        return None;
-    };
-    Some((*min, *max))
-}
-
-fn bool_value(rule: &SmartPlaylistRule) -> Option<bool> {
-    let SmartPlaylistRuleValue::Bool(value) = rule.value.as_ref()? else {
-        return None;
-    };
-    Some(*value)
-}
-
-fn date_value(rule: &SmartPlaylistRule) -> Option<String> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::Date(value) | SmartPlaylistRuleValue::Text(value) => {
-            Some(value.trim().to_string())
-        }
-        SmartPlaylistRuleValue::Number(_)
-        | SmartPlaylistRuleValue::NumberRange { .. }
-        | SmartPlaylistRuleValue::Bool(_)
-        | SmartPlaylistRuleValue::DateRange { .. } => None,
-    }
-    .filter(|value| !value.is_empty())
-}
-
-fn date_range_value(rule: &SmartPlaylistRule) -> Option<(String, String)> {
-    match rule.value.as_ref()? {
-        SmartPlaylistRuleValue::DateRange { start, end } => {
-            let start = start.trim().to_string();
-            let end = end.trim().to_string();
-            if start.is_empty() || end.is_empty() {
-                None
-            } else if start <= end {
-                Some((start, end))
-            } else {
-                Some((end, start))
-            }
-        }
-        SmartPlaylistRuleValue::Text(_)
-        | SmartPlaylistRuleValue::Number(_)
-        | SmartPlaylistRuleValue::NumberRange { .. }
-        | SmartPlaylistRuleValue::Bool(_)
-        | SmartPlaylistRuleValue::Date(_) => None,
     }
 }
 
@@ -1201,6 +1086,7 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
 mod tests {
     use super::*;
     use crate::store::test_support::{album, album_with_image, saved_server, track};
+    use domain::SmartPlaylistRuleValue;
 
     #[test]
     fn smart_playlist_restored() {
@@ -1325,9 +1211,10 @@ mod tests {
         store
             .load_smart_playlists(&saved.server.id, 0, 20)
             .expect("seed defaults");
-        let definition =
-            serde_json::to_string(&definition_for_builtin(SmartPlaylistBuiltin::MostPlayed))
-                .expect("definition");
+        let definition = serde_json::to_string(&smart_policy::builtin_definition(
+            SmartPlaylistBuiltin::MostPlayed,
+        ))
+        .expect("definition");
         for key in RETIRED_SMART_PLAYLIST_BUILTIN_KEYS {
             let retired_id = format!("builtin:{key}");
             store

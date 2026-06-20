@@ -105,6 +105,9 @@ fn expected_messages(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
             messages.extend(call_arg_strings(source, "op", 1));
             messages.extend(field_strings(source, "title"));
             messages.extend(dropdown_array_strings(source));
+            messages.extend(function_return_strings(source, "field_title"));
+            messages.extend(function_return_strings(source, "sort_title"));
+            messages.extend(function_return_strings(source, "op_title"));
         }
         if path.ends_with("domain.rs")
             || path.ends_with("route.rs")

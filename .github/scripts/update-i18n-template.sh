@@ -372,6 +372,9 @@ def source_messages():
             items.extend(call_arg_strings(source, "op", 1))
             items.extend(field_strings(source, "title"))
             items.extend(dropdown_array_strings(source))
+            items.extend(function_return_strings(source, "field_title"))
+            items.extend(function_return_strings(source, "sort_title"))
+            items.extend(function_return_strings(source, "op_title"))
         if (
             rel.endswith("domain.rs")
             or rel.endswith("route.rs")

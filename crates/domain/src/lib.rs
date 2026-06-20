@@ -2,6 +2,7 @@ pub mod domain;
 pub mod queue;
 pub mod route;
 pub mod settings;
+pub mod smart_playlists;
 pub mod source;
 
 pub use domain::{

@@ -13,8 +13,7 @@ use domain::{
     QueueSnapshot, SearchResults, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
     SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
-    normalize_release_types,
+    SmartPlaylistRuleOperator, SmartPlaylistSortField, Track, TrackId, normalize_release_types,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;

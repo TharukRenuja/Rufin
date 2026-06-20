@@ -1,5 +1,6 @@
 use super::layout::large_popup_content_width;
 use super::*;
+use domain::smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind};
 use std::cell::Cell;
 
 const SMART_PLAYLIST_DIALOG_WIDTH: i32 = 700;
@@ -17,98 +18,6 @@ struct SmartPlaylistEditor {
     descending: gtk::CheckButton,
     limit: gtk::Entry,
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RuleInputKind {
-    None,
-    Text,
-    Number,
-    NumberRange,
-    Date,
-    DateRange,
-    Bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RuleFieldSpec {
-    field: SmartPlaylistRuleField,
-    title: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RuleOperatorSpec {
-    operator: SmartPlaylistRuleOperator,
-    title: &'static str,
-    input: RuleInputKind,
-}
-
-const RULE_FIELDS: [RuleFieldSpec; 13] = [
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Title,
-        title: "Title",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Artist,
-        title: "Artist",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Album,
-        title: "Album",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Comment,
-        title: "Comment",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Genre,
-        title: "Genre",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Rating,
-        title: "Rating",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Year,
-        title: "Year",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Favorite,
-        title: "Favorite",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::Played,
-        title: "Played",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::PlayCount,
-        title: "Play count",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::SkipCount,
-        title: "Skip count",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::LastPlayed,
-        title: "Last played",
-    },
-    RuleFieldSpec {
-        field: SmartPlaylistRuleField::DateAdded,
-        title: "Date added",
-    },
-];
-
-const SORT_FIELDS: [(SmartPlaylistSortField, &str); 10] = [
-    (SmartPlaylistSortField::Title, "Title"),
-    (SmartPlaylistSortField::Artist, "Artist"),
-    (SmartPlaylistSortField::Album, "Album"),
-    (SmartPlaylistSortField::Year, "Year"),
-    (SmartPlaylistSortField::DateAdded, "Date added"),
-    (SmartPlaylistSortField::LastPlayed, "Last played"),
-    (SmartPlaylistSortField::PlayCount, "Play count"),
-    (SmartPlaylistSortField::SkipCount, "Skip count"),
-    (SmartPlaylistSortField::Rating, "Rating"),
-    (SmartPlaylistSortField::Duration, "Duration"),
-];
 
 impl Shell {
     pub(in crate::ui) fn new_smart_playlist_dialog(self: &Rc<Self>) {
@@ -223,7 +132,7 @@ impl SmartPlaylistEditor {
                     .collect(),
             }
         };
-        normalize_root_group(&mut root);
+        smart_policy::normalize_root(&mut root);
         let limit = self
             .limit
             .text()
@@ -231,9 +140,9 @@ impl SmartPlaylistEditor {
             .parse::<usize>()
             .ok()
             .filter(|value| *value > 0);
-        let sort_field = SORT_FIELDS
+        let sort_field = smart_policy::sort_fields()
             .get(self.sort.selected() as usize)
-            .map(|(field, _)| *field)
+            .copied()
             .unwrap_or(SmartPlaylistSortField::Title);
         Some((
             name,
@@ -257,14 +166,11 @@ fn smart_playlist_editor(
         name_entry.set_text(name);
     }
 
-    let definition = definition.cloned().unwrap_or_else(default_definition);
-    let sort = dropdown_from_titles(
-        &SORT_FIELDS
-            .iter()
-            .map(|(_, title)| *title)
-            .collect::<Vec<_>>(),
-        sort_index(definition.sort_field),
-    );
+    let definition = definition
+        .cloned()
+        .unwrap_or_else(smart_policy::default_definition);
+    let sort_labels = sort_labels();
+    let sort = dropdown_from_labels(&sort_labels, sort_index(definition.sort_field));
     let descending = gtk::CheckButton::with_label(&tr("Descending"));
     descending.set_active(definition.descending);
     let limit = gtk::Entry::new();
@@ -273,7 +179,7 @@ fn smart_playlist_editor(
     if let Some(value) = definition.limit {
         limit.set_text(&value.to_string());
     }
-    let (rules, nested_root) = match flat_rules(&definition.root) {
+    let (rules, nested_root) = match smart_policy::flat_rules(&definition.root) {
         Some(rules) => (rules, None),
         None => (
             Vec::new(),
@@ -390,7 +296,7 @@ fn append_rule_list(
         add_rule.connect_clicked(move |_| {
             rules
                 .borrow_mut()
-                .push(default_rule(SmartPlaylistRuleField::Title));
+                .push(smart_policy::default_rule(SmartPlaylistRuleField::Title));
             rerender();
         });
     }
@@ -434,33 +340,29 @@ fn append_rule_row(
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     row.set_hexpand(true);
 
-    let field_titles = RULE_FIELDS
-        .iter()
-        .map(|spec| spec.title)
-        .collect::<Vec<_>>();
-    let field = dropdown_from_titles(&field_titles, field_index(rule.field));
+    let field_labels = field_labels();
+    let field = dropdown_from_labels(&field_labels, field_index(rule.field));
     field.set_hexpand(false);
     field.set_size_request(150, -1);
     {
         let rules = Rc::clone(&rules);
         let rerender = Rc::clone(&rerender);
         field.connect_selected_notify(move |dropdown| {
-            let selected = RULE_FIELDS
+            let selected = smart_policy::rule_fields()
                 .get(dropdown.selected() as usize)
-                .map(|spec| spec.field)
+                .copied()
                 .unwrap_or(SmartPlaylistRuleField::Title);
             if let Some(rule) = rules.borrow_mut().get_mut(index) {
-                *rule = default_rule(selected);
+                *rule = smart_policy::default_rule(selected);
             }
             rerender();
         });
     }
     row.append(&field);
 
-    let operators = operator_specs(rule.field);
-    let operator_titles = operators.iter().map(|spec| spec.title).collect::<Vec<_>>();
-    let operator =
-        dropdown_from_titles(&operator_titles, operator_index(&operators, rule.operator));
+    let operators = smart_policy::rule_ops(rule.field);
+    let operator_titles = op_labels(rule.field, operators);
+    let operator = dropdown_from_labels(&operator_titles, operator_index(operators, rule.operator));
     operator.set_size_request(150, -1);
     {
         let rules = Rc::clone(&rules);
@@ -498,13 +400,15 @@ fn append_value_editor(
     index: usize,
     rule: &SmartPlaylistRule,
 ) {
-    match input_kind(rule.field, rule.operator) {
-        RuleInputKind::None => {
+    match smart_policy::value_kind(rule.field, rule.operator)
+        .unwrap_or(SmartPlaylistRuleValueKind::None)
+    {
+        SmartPlaylistRuleValueKind::None => {
             let label = gtk::Label::new(None);
             label.set_hexpand(true);
             container.append(&label);
         }
-        RuleInputKind::Text => {
+        SmartPlaylistRuleValueKind::Text => {
             let entry = gtk::Entry::new();
             entry.set_hexpand(true);
             entry.set_placeholder_text(Some(&text_placeholder(rule.field)));
@@ -518,8 +422,8 @@ fn append_value_editor(
             });
             container.append(&entry);
         }
-        RuleInputKind::Number => {
-            let (min, max, default) = number_bounds(rule.field);
+        SmartPlaylistRuleValueKind::Number => {
+            let (min, max, default) = smart_policy::number_bounds(rule.field);
             let value = match rule.value.as_ref() {
                 Some(SmartPlaylistRuleValue::Number(value)) => *value,
                 _ => default,
@@ -534,8 +438,8 @@ fn append_value_editor(
             });
             container.append(&spin);
         }
-        RuleInputKind::NumberRange => {
-            let (min_bound, max_bound, default) = number_bounds(rule.field);
+        SmartPlaylistRuleValueKind::NumberRange => {
+            let (min_bound, max_bound, default) = smart_policy::number_bounds(rule.field);
             let (min_value, max_value) = match rule.value.as_ref() {
                 Some(SmartPlaylistRuleValue::NumberRange { min, max }) => (*min, *max),
                 _ => (default, default),
@@ -547,7 +451,7 @@ fn append_value_editor(
             container.append(&gtk::Label::new(Some(&tr("to"))));
             container.append(&max_spin);
         }
-        RuleInputKind::Date => {
+        SmartPlaylistRuleValueKind::Date => {
             let entry = gtk::Entry::new();
             entry.set_hexpand(true);
             entry.set_placeholder_text(Some("YYYY-MM-DD"));
@@ -561,7 +465,7 @@ fn append_value_editor(
             });
             container.append(&entry);
         }
-        RuleInputKind::DateRange => {
+        SmartPlaylistRuleValueKind::DateRange => {
             let start = gtk::Entry::new();
             let end = gtk::Entry::new();
             start.set_placeholder_text(Some("YYYY-MM-DD"));
@@ -579,7 +483,7 @@ fn append_value_editor(
             container.append(&gtk::Label::new(Some(&tr("to"))));
             container.append(&end);
         }
-        RuleInputKind::Bool => {
+        SmartPlaylistRuleValueKind::Bool => {
             let active = matches!(rule.value, Some(SmartPlaylistRuleValue::Bool(true)));
             let dropdown = dropdown_from_titles(&["Yes", "No"], usize::from(!active));
             dropdown.connect_selected_notify(move |dropdown| {
@@ -636,198 +540,6 @@ fn connect_date_range(
     end.connect_changed(move |_| update());
 }
 
-fn operator_specs(field: SmartPlaylistRuleField) -> Vec<RuleOperatorSpec> {
-    use RuleInputKind::*;
-    use SmartPlaylistRuleOperator::*;
-    match field {
-        SmartPlaylistRuleField::Title
-        | SmartPlaylistRuleField::Artist
-        | SmartPlaylistRuleField::Album
-        | SmartPlaylistRuleField::Comment => vec![
-            op(Contains, "contains", Text),
-            op(Equals, "equals", Text),
-            op(NotContains, "does not contain", Text),
-            op(NotEquals, "does not equal", Text),
-            op(IsEmpty, "is empty", None),
-            op(IsNotEmpty, "is not empty", None),
-        ],
-        SmartPlaylistRuleField::Genre => vec![
-            op(Contains, "contains", Text),
-            op(Equals, "equals", Text),
-            op(NotContains, "excludes", Text),
-            op(NotEquals, "is not", Text),
-        ],
-        SmartPlaylistRuleField::Rating => vec![
-            op(Above, "above", Number),
-            op(Below, "below", Number),
-            op(Equals, "equals", Number),
-            op(Between, "range", NumberRange),
-            op(IsEmpty, "is empty", None),
-            op(IsNotEmpty, "is not empty", None),
-        ],
-        SmartPlaylistRuleField::Year
-        | SmartPlaylistRuleField::PlayCount
-        | SmartPlaylistRuleField::SkipCount => vec![
-            op(Between, "range", NumberRange),
-            op(Above, "above", Number),
-            op(Below, "below", Number),
-            op(Equals, "equals", Number),
-            op(NotEquals, "does not equal", Number),
-        ],
-        SmartPlaylistRuleField::Favorite | SmartPlaylistRuleField::Played => {
-            vec![op(Is, "is", Bool), op(IsNot, "is not", Bool)]
-        }
-        SmartPlaylistRuleField::LastPlayed | SmartPlaylistRuleField::DateAdded => vec![
-            op(Between, "range", DateRange),
-            op(After, "after", Date),
-            op(Before, "before", Date),
-            op(Equals, "equals", Date),
-            op(IsEmpty, "is empty", None),
-            op(IsNotEmpty, "is not empty", None),
-        ],
-    }
-}
-
-fn op(
-    operator: SmartPlaylistRuleOperator,
-    title: &'static str,
-    input: RuleInputKind,
-) -> RuleOperatorSpec {
-    RuleOperatorSpec {
-        operator,
-        title,
-        input,
-    }
-}
-
-fn default_definition() -> SmartPlaylistDefinition {
-    SmartPlaylistDefinition {
-        root: SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: Vec::new(),
-        },
-        sort_field: SmartPlaylistSortField::Title,
-        descending: false,
-        limit: None,
-    }
-}
-
-fn default_rule(field: SmartPlaylistRuleField) -> SmartPlaylistRule {
-    let operator = operator_specs(field)[0].operator;
-    SmartPlaylistRule {
-        field,
-        operator,
-        value: default_value(field, operator),
-    }
-}
-
-fn default_value(
-    field: SmartPlaylistRuleField,
-    operator: SmartPlaylistRuleOperator,
-) -> Option<SmartPlaylistRuleValue> {
-    match input_kind(field, operator) {
-        RuleInputKind::None => None,
-        RuleInputKind::Text => Some(SmartPlaylistRuleValue::Text(String::new())),
-        RuleInputKind::Number => Some(SmartPlaylistRuleValue::Number(number_bounds(field).2)),
-        RuleInputKind::NumberRange => {
-            let default = number_bounds(field).2;
-            Some(SmartPlaylistRuleValue::NumberRange {
-                min: default,
-                max: default,
-            })
-        }
-        RuleInputKind::Date => Some(SmartPlaylistRuleValue::Date(String::new())),
-        RuleInputKind::DateRange => Some(SmartPlaylistRuleValue::DateRange {
-            start: String::new(),
-            end: String::new(),
-        }),
-        RuleInputKind::Bool => Some(SmartPlaylistRuleValue::Bool(true)),
-    }
-}
-
-fn input_kind(field: SmartPlaylistRuleField, operator: SmartPlaylistRuleOperator) -> RuleInputKind {
-    operator_specs(field)
-        .into_iter()
-        .find(|spec| spec.operator == operator)
-        .map(|spec| spec.input)
-        .unwrap_or(RuleInputKind::None)
-}
-
-fn normalize_root_group(group: &mut SmartPlaylistRuleGroup) {
-    normalize_group_children(group);
-}
-
-fn normalize_group(group: &mut SmartPlaylistRuleGroup) -> Option<()> {
-    normalize_group_children(group);
-    (!group.rules.is_empty()).then_some(())
-}
-
-fn normalize_group_children(group: &mut SmartPlaylistRuleGroup) {
-    let mut normalized = Vec::with_capacity(group.rules.len());
-    for mut node in group.rules.drain(..) {
-        let keep = match &mut node {
-            SmartPlaylistRuleNode::Group(group) => normalize_group(group).is_some(),
-            SmartPlaylistRuleNode::Rule(rule) => normalize_rule(rule).is_some(),
-        };
-        if keep {
-            normalized.push(node);
-        }
-    }
-    group.rules = normalized;
-}
-
-fn normalize_rule(rule: &mut SmartPlaylistRule) -> Option<()> {
-    match input_kind(rule.field, rule.operator) {
-        RuleInputKind::None => {
-            rule.value = None;
-            Some(())
-        }
-        RuleInputKind::Text => match rule.value.as_mut()? {
-            SmartPlaylistRuleValue::Text(value) if !value.trim().is_empty() => {
-                *value = value.trim().to_string();
-                Some(())
-            }
-            _ => None,
-        },
-        RuleInputKind::Number => {
-            matches!(rule.value, Some(SmartPlaylistRuleValue::Number(_))).then_some(())
-        }
-        RuleInputKind::NumberRange => {
-            let Some(SmartPlaylistRuleValue::NumberRange { min, max }) = rule.value.as_mut() else {
-                return None;
-            };
-            if *min > *max {
-                std::mem::swap(min, max);
-            }
-            Some(())
-        }
-        RuleInputKind::Date => match rule.value.as_mut()? {
-            SmartPlaylistRuleValue::Date(value) if !value.trim().is_empty() => {
-                *value = value.trim().to_string();
-                Some(())
-            }
-            _ => None,
-        },
-        RuleInputKind::DateRange => {
-            let Some(SmartPlaylistRuleValue::DateRange { start, end }) = rule.value.as_mut() else {
-                return None;
-            };
-            *start = start.trim().to_string();
-            *end = end.trim().to_string();
-            if start.is_empty() || end.is_empty() {
-                return None;
-            }
-            if *start > *end {
-                std::mem::swap(start, end);
-            }
-            Some(())
-        }
-        RuleInputKind::Bool => {
-            matches!(rule.value, Some(SmartPlaylistRuleValue::Bool(_))).then_some(())
-        }
-    }
-}
-
 fn change_rule_operator(
     rules: &Rc<RefCell<Vec<SmartPlaylistRule>>>,
     index: usize,
@@ -839,7 +551,7 @@ fn change_rule_operator(
         let Some(rule) = rules.get_mut(index) else {
             return;
         };
-        let operators = operator_specs(rule.field);
+        let operators = smart_policy::rule_ops(rule.field);
         let Some(spec) = operators
             .get(selected as usize)
             .copied()
@@ -848,7 +560,7 @@ fn change_rule_operator(
             return;
         };
         rule.operator = spec.operator;
-        rule.value = default_value(rule.field, spec.operator);
+        rule.value = smart_policy::default_value(rule.field, spec.operator);
     }
     after_change();
 }
@@ -865,17 +577,6 @@ fn remove_rule(
         }
     }
     after_change();
-}
-
-fn flat_rules(group: &SmartPlaylistRuleGroup) -> Option<Vec<SmartPlaylistRule>> {
-    group
-        .rules
-        .iter()
-        .map(|node| match node {
-            SmartPlaylistRuleNode::Rule(rule) => Some(rule.clone()),
-            SmartPlaylistRuleNode::Group(_) => None,
-        })
-        .collect()
 }
 
 fn match_mode_dropdown(mode: SmartPlaylistMatchMode) -> gtk::DropDown {
@@ -896,8 +597,89 @@ fn match_mode_from_index(index: u32) -> SmartPlaylistMatchMode {
     }
 }
 
+fn field_labels() -> Vec<String> {
+    smart_policy::rule_fields()
+        .iter()
+        .map(|field| tr(field_title(*field)))
+        .collect()
+}
+
+fn sort_labels() -> Vec<String> {
+    smart_policy::sort_fields()
+        .iter()
+        .map(|field| tr(sort_title(*field)))
+        .collect()
+}
+
+fn op_labels(
+    field: SmartPlaylistRuleField,
+    operators: &[smart_policy::SmartPlaylistRuleOp],
+) -> Vec<String> {
+    operators
+        .iter()
+        .map(|spec| tr(op_title(field, spec.operator)))
+        .collect()
+}
+
+fn field_title(field: SmartPlaylistRuleField) -> &'static str {
+    match field {
+        SmartPlaylistRuleField::Title => "Title",
+        SmartPlaylistRuleField::Artist => "Artist",
+        SmartPlaylistRuleField::Album => "Album",
+        SmartPlaylistRuleField::Comment => "Comment",
+        SmartPlaylistRuleField::Genre => "Genre",
+        SmartPlaylistRuleField::Rating => "Rating",
+        SmartPlaylistRuleField::Year => "Year",
+        SmartPlaylistRuleField::Favorite => "Favorite",
+        SmartPlaylistRuleField::Played => "Played",
+        SmartPlaylistRuleField::PlayCount => "Play count",
+        SmartPlaylistRuleField::SkipCount => "Skip count",
+        SmartPlaylistRuleField::LastPlayed => "Last played",
+        SmartPlaylistRuleField::DateAdded => "Date added",
+    }
+}
+
+fn sort_title(field: SmartPlaylistSortField) -> &'static str {
+    match field {
+        SmartPlaylistSortField::Title => "Title",
+        SmartPlaylistSortField::Artist => "Artist",
+        SmartPlaylistSortField::Album => "Album",
+        SmartPlaylistSortField::Year => "Year",
+        SmartPlaylistSortField::DateAdded => "Date added",
+        SmartPlaylistSortField::LastPlayed => "Last played",
+        SmartPlaylistSortField::PlayCount => "Play count",
+        SmartPlaylistSortField::SkipCount => "Skip count",
+        SmartPlaylistSortField::Rating => "Rating",
+        SmartPlaylistSortField::Duration => "Duration",
+    }
+}
+
+fn op_title(field: SmartPlaylistRuleField, operator: SmartPlaylistRuleOperator) -> &'static str {
+    match (field, operator) {
+        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotContains) => "excludes",
+        (SmartPlaylistRuleField::Genre, SmartPlaylistRuleOperator::NotEquals) => "is not",
+        (_, SmartPlaylistRuleOperator::Contains) => "contains",
+        (_, SmartPlaylistRuleOperator::NotContains) => "does not contain",
+        (_, SmartPlaylistRuleOperator::Equals) => "equals",
+        (_, SmartPlaylistRuleOperator::NotEquals) => "does not equal",
+        (_, SmartPlaylistRuleOperator::Above) => "above",
+        (_, SmartPlaylistRuleOperator::Below) => "below",
+        (_, SmartPlaylistRuleOperator::Between) => "range",
+        (_, SmartPlaylistRuleOperator::Is) => "is",
+        (_, SmartPlaylistRuleOperator::IsNot) => "is not",
+        (_, SmartPlaylistRuleOperator::Before) => "before",
+        (_, SmartPlaylistRuleOperator::After) => "after",
+        (_, SmartPlaylistRuleOperator::IsEmpty) => "is empty",
+        (_, SmartPlaylistRuleOperator::IsNotEmpty) => "is not empty",
+    }
+}
+
 fn dropdown_from_titles(titles: &[&str], selected: usize) -> gtk::DropDown {
     let labels = titles.iter().map(|title| tr(title)).collect::<Vec<_>>();
+    dropdown_from_labels(&labels, selected)
+}
+
+fn dropdown_from_labels(labels: &[String], selected: usize) -> gtk::DropDown {
     let refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
     let model = gtk::StringList::new(&refs);
     let dropdown = gtk::DropDown::new(Some(model), None::<gtk::Expression>);
@@ -906,13 +688,16 @@ fn dropdown_from_titles(titles: &[&str], selected: usize) -> gtk::DropDown {
 }
 
 fn field_index(field: SmartPlaylistRuleField) -> usize {
-    RULE_FIELDS
+    smart_policy::rule_fields()
         .iter()
-        .position(|spec| spec.field == field)
+        .position(|candidate| *candidate == field)
         .unwrap_or(0)
 }
 
-fn operator_index(operators: &[RuleOperatorSpec], operator: SmartPlaylistRuleOperator) -> usize {
+fn operator_index(
+    operators: &[smart_policy::SmartPlaylistRuleOp],
+    operator: SmartPlaylistRuleOperator,
+) -> usize {
     operators
         .iter()
         .position(|spec| spec.operator == operator)
@@ -920,19 +705,10 @@ fn operator_index(operators: &[RuleOperatorSpec], operator: SmartPlaylistRuleOpe
 }
 
 fn sort_index(sort: SmartPlaylistSortField) -> usize {
-    SORT_FIELDS
+    smart_policy::sort_fields()
         .iter()
-        .position(|(field, _)| *field == sort)
+        .position(|field| *field == sort)
         .unwrap_or(0)
-}
-
-fn number_bounds(field: SmartPlaylistRuleField) -> (i64, i64, i64) {
-    match field {
-        SmartPlaylistRuleField::Rating => (0, 5, 4),
-        SmartPlaylistRuleField::Year => (0, 3000, 2000),
-        SmartPlaylistRuleField::PlayCount | SmartPlaylistRuleField::SkipCount => (0, 999_999, 1),
-        _ => (0, 999_999, 0),
-    }
 }
 
 fn number_spin(value: i64, min: i64, max: i64) -> gtk::SpinButton {
@@ -1043,121 +819,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_keep_rules() {
-        let mut group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: vec![
-                SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                    field: SmartPlaylistRuleField::Year,
-                    operator: SmartPlaylistRuleOperator::Between,
-                    value: Some(SmartPlaylistRuleValue::NumberRange {
-                        min: 2001,
-                        max: 1999,
-                    }),
-                }),
-                SmartPlaylistRuleNode::Group(SmartPlaylistRuleGroup {
-                    mode: SmartPlaylistMatchMode::Any,
-                    rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                        field: SmartPlaylistRuleField::Genre,
-                        operator: SmartPlaylistRuleOperator::Contains,
-                        value: Some(SmartPlaylistRuleValue::Text(" rock ".to_string())),
-                    })],
-                }),
-            ],
-        };
-
-        normalize_group(&mut group).expect("valid rules");
-
-        let SmartPlaylistRuleNode::Rule(rule) = &group.rules[0] else {
-            panic!("first node should be a rule");
-        };
-        assert_eq!(
-            rule.value,
-            Some(SmartPlaylistRuleValue::NumberRange {
-                min: 1999,
-                max: 2001,
-            })
-        );
-        let SmartPlaylistRuleNode::Group(group) = &group.rules[1] else {
-            panic!("second node should be a group");
-        };
-        let SmartPlaylistRuleNode::Rule(rule) = &group.rules[0] else {
-            panic!("nested node should be a rule");
-        };
-        assert_eq!(
-            rule.value,
-            Some(SmartPlaylistRuleValue::Text("rock".to_string()))
-        );
-    }
-
-    #[test]
-    fn normalize_group_supports_date_ranges() {
-        let mut group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                field: SmartPlaylistRuleField::DateAdded,
-                operator: SmartPlaylistRuleOperator::Between,
-                value: Some(SmartPlaylistRuleValue::DateRange {
-                    start: "2024-12-31".to_string(),
-                    end: "2024-01-01".to_string(),
-                }),
-            })],
-        };
-
-        normalize_group(&mut group).expect("valid date range");
-
-        let SmartPlaylistRuleNode::Rule(rule) = &group.rules[0] else {
-            panic!("node should be a rule");
-        };
-        assert_eq!(
-            rule.value,
-            Some(SmartPlaylistRuleValue::DateRange {
-                start: "2024-01-01".to_string(),
-                end: "2024-12-31".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn new_allow_rules() {
-        let mut group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: Vec::new(),
-        };
-
-        normalize_root_group(&mut group);
-
-        assert!(group.rules.is_empty());
-    }
-
-    #[test]
-    fn new_drop_rules() {
-        let mut group = SmartPlaylistRuleGroup {
-            mode: SmartPlaylistMatchMode::All,
-            rules: vec![
-                SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                    field: SmartPlaylistRuleField::Title,
-                    operator: SmartPlaylistRuleOperator::Contains,
-                    value: Some(SmartPlaylistRuleValue::Text(String::new())),
-                }),
-                SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
-                    field: SmartPlaylistRuleField::Genre,
-                    operator: SmartPlaylistRuleOperator::Contains,
-                    value: Some(SmartPlaylistRuleValue::Text("rock".to_string())),
-                }),
-            ],
-        };
-
-        normalize_group(&mut group).expect("valid remaining rule");
-
-        assert_eq!(group.rules.len(), 1);
-        let SmartPlaylistRuleNode::Rule(rule) = &group.rules[0] else {
-            panic!("remaining node should be a rule");
-        };
-        assert_eq!(rule.field, SmartPlaylistRuleField::Genre);
-    }
-
-    #[test]
     fn new_read_state() {
         let rules = Rc::new(RefCell::new(vec![SmartPlaylistRule {
             field: SmartPlaylistRuleField::Title,
@@ -1221,7 +882,7 @@ mod tests {
             })],
         };
 
-        let rules = flat_rules(&group).expect("top-level rules are flat");
+        let rules = smart_policy::flat_rules(&group).expect("top-level rules are flat");
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].field, SmartPlaylistRuleField::Title);
@@ -1241,6 +902,6 @@ mod tests {
             })],
         };
 
-        assert!(flat_rules(&group).is_none());
+        assert!(smart_policy::flat_rules(&group).is_none());
     }
 }
