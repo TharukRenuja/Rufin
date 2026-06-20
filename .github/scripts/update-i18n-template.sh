@@ -18,6 +18,7 @@ mkdir -p "$(dirname "$output")"
 xgettext \
   --from-code=UTF-8 \
   --language=Rust \
+  --escape \
   --no-location \
   --sort-output \
   --omit-header \

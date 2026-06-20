@@ -127,6 +127,9 @@ msgstr ""
 msgid "App window"
 msgstr ""
 
+msgid "Appears On"
+msgstr ""
+
 msgid "Application name"
 msgstr ""
 
@@ -178,22 +181,25 @@ msgstr ""
 msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
+msgid "Cached library data will appear here as sync pages finish."
+msgstr ""
+
 msgid "Cached library ready"
 msgstr ""
 
 msgid "Caching Library"
 msgstr ""
 
-msgid "Caching library artwork"
+msgid "Caching library artwork\342\200\246"
 msgstr ""
 
-msgid "Caching library This may take some time."
+msgid "Caching library\342\200\246 This may take some time."
 msgstr ""
 
-msgid "Caching local library"
+msgid "Caching local library\342\200\246"
 msgstr ""
 
-msgid "Caching local library This may take some time."
+msgid "Caching local library\342\200\246 This may take some time."
 msgstr ""
 
 msgid "Cancel"
@@ -214,7 +220,7 @@ msgid ""
 msgstr ""
 
 #, rust-format
-msgid "Checking {provider} server"
+msgid "Checking {provider} server\342\200\246"
 msgstr ""
 
 msgid "Choose"
@@ -245,6 +251,9 @@ msgstr ""
 msgid "Choose the folder to scan and play directly from this computer"
 msgstr ""
 
+msgid "Classical"
+msgstr ""
+
 msgid "Clear Cache"
 msgstr ""
 
@@ -264,6 +273,15 @@ msgid "Close"
 msgstr ""
 
 msgid "Close fullscreen player"
+msgstr ""
+
+msgid "Club"
+msgstr ""
+
+msgid "Collection"
+msgstr ""
+
+msgid "Collections"
 msgstr ""
 
 msgid "Columns"
@@ -297,7 +315,7 @@ msgstr ""
 msgid "Connected as {username}"
 msgstr ""
 
-msgid "Connecting to music server"
+msgid "Connecting to music server\342\200\246"
 msgstr ""
 
 msgid "Connection"
@@ -315,7 +333,13 @@ msgstr ""
 msgid "Crossfade duration"
 msgstr ""
 
+msgid "Custom"
+msgstr ""
+
 msgid "Customize display"
+msgstr ""
+
+msgid "Dance"
 msgstr ""
 
 msgid "Date added"
@@ -364,6 +388,12 @@ msgid "Drag to reorder"
 msgstr ""
 
 msgid "Duration"
+msgstr ""
+
+msgid "EP"
+msgstr ""
+
+msgid "EPs"
 msgstr ""
 
 msgid "Edit"
@@ -420,6 +450,9 @@ msgstr ""
 msgid "Favorite"
 msgstr ""
 
+msgid "Favorite tracks"
+msgstr ""
+
 msgid "Favorites"
 msgstr ""
 
@@ -427,6 +460,9 @@ msgid "Featured genres"
 msgstr ""
 
 msgid "Find your ListenBrainz user token"
+msgstr ""
+
+msgid "Flat"
 msgstr ""
 
 msgid "Folder"
@@ -454,6 +490,12 @@ msgstr[0] ""
 msgstr[1] ""
 
 msgid "Full"
+msgstr ""
+
+msgid "Full Bass"
+msgstr ""
+
+msgid "Full Treble"
 msgstr ""
 
 msgid "Gapless"
@@ -498,6 +540,12 @@ msgstr ""
 msgid "Hidden server section"
 msgstr ""
 
+msgid "Hide lyrics"
+msgstr ""
+
+msgid "Hide sidebar"
+msgstr ""
+
 msgid "Home"
 msgstr ""
 
@@ -532,6 +580,9 @@ msgid "LRCLIB"
 msgstr ""
 
 msgid "Language"
+msgstr ""
+
+msgid "Laptop/Headphones"
 msgstr ""
 
 msgid "Last played"
@@ -574,6 +625,9 @@ msgid "ListenBrainz scrobbling"
 msgstr ""
 
 msgid "Loaded in lyrics panel."
+msgstr ""
+
+msgid "Loading folders\342\200\246"
 msgstr ""
 
 msgid "Local"
@@ -663,6 +717,9 @@ msgstr ""
 msgid "Music Folders"
 msgstr ""
 
+msgid "Music Server"
+msgstr ""
+
 msgid "MusicBrainz"
 msgstr ""
 
@@ -721,6 +778,9 @@ msgid "No Jellyfin servers found. Enter the address manually or search again"
 msgstr ""
 
 msgid "No Servers Found"
+msgstr ""
+
+msgid "No cached results found."
 msgstr ""
 
 msgid "No cached server path yet"
@@ -816,13 +876,22 @@ msgstr ""
 msgid "Open fullscreen player"
 msgstr ""
 
+msgid "Open on Jellyfin"
+msgstr ""
+
+msgid "Open on Last.fm"
+msgstr ""
+
+msgid "Open on MusicBrainz"
+msgstr ""
+
 msgid "Open release notes"
 msgstr ""
 
-msgid "Opening Last.fm authorization"
+msgid "Opening Last.fm authorization\342\200\246"
 msgstr ""
 
-msgid "Opening Libre.fm authorization"
+msgid "Opening Libre.fm authorization\342\200\246"
 msgstr ""
 
 msgid "Optionally map server tracks to files on this computer"
@@ -831,7 +900,13 @@ msgstr ""
 msgid "Original"
 msgstr ""
 
+msgid "Other"
+msgstr ""
+
 msgid "Password"
+msgstr ""
+
+msgid "Pause"
 msgstr ""
 
 msgid "Plain lyrics"
@@ -894,6 +969,9 @@ msgstr ""
 msgid "Plays"
 msgstr ""
 
+msgid "Pop"
+msgstr ""
+
 msgid "Position"
 msgstr ""
 
@@ -904,6 +982,9 @@ msgid "Prefer server playlist covers"
 msgstr ""
 
 msgid "Preferences"
+msgstr ""
+
+msgid "Preparing library\342\200\246"
 msgstr ""
 
 msgid "Preset"
@@ -958,6 +1039,9 @@ msgid "Reconnect"
 msgstr ""
 
 msgid "Refresh section"
+msgstr ""
+
+msgid "Release"
 msgstr ""
 
 msgid "Release date"
@@ -1032,10 +1116,16 @@ msgstr ""
 msgid "Restore selected preset to default bands."
 msgstr ""
 
+msgid "Resume"
+msgstr ""
+
 msgid "Resync Library"
 msgstr ""
 
 msgid "Rich presence"
+msgstr ""
+
+msgid "Rock"
 msgstr ""
 
 msgid "Rows"
@@ -1105,13 +1195,16 @@ msgstr ""
 msgid "Searching Local Network"
 msgstr ""
 
-msgid "Searching for Jellyfin servers on the local network"
+msgid "Searching for Jellyfin servers on the local network\342\200\246"
 msgstr ""
 
 msgid "Searching will start automatically"
 msgstr ""
 
-msgid "Searching"
+msgid "Searching..."
+msgstr ""
+
+msgid "Searching\342\200\246"
 msgstr ""
 
 msgid "Seconds"
@@ -1172,7 +1265,7 @@ msgstr ""
 msgid "Server settings saved."
 msgstr ""
 
-msgid "Server settings saved. Resyncing library"
+msgid "Server settings saved. Resyncing library\342\200\246"
 msgstr ""
 
 msgid "Servers"
@@ -1194,6 +1287,9 @@ msgid "Show external service icons on album and artist pages"
 msgstr ""
 
 msgid "Show external site links"
+msgstr ""
+
+msgid "Show lyrics"
 msgstr ""
 
 msgid "Show paused status"
@@ -1230,6 +1326,12 @@ msgid "Sidebar Items"
 msgstr ""
 
 msgid "SimpMusic"
+msgstr ""
+
+msgid "Single"
+msgstr ""
+
+msgid "Singles"
 msgstr ""
 
 msgid "Skip count"
@@ -1280,7 +1382,7 @@ msgstr ""
 msgid "Subsonic / OpenSubsonic"
 msgstr ""
 
-msgid "Switching library"
+msgid "Switching library\342\200\246"
 msgstr ""
 
 msgid "Sync already running."
@@ -1290,7 +1392,7 @@ msgid "Synced lyrics"
 msgstr ""
 
 #, rust-format
-msgid "Syncing {provider} library"
+msgid "Syncing {provider} library\342\200\246"
 msgstr ""
 
 msgid "System default"
@@ -1299,6 +1401,9 @@ msgstr ""
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
 "only if you also want to save it in your music folder"
+msgstr ""
+
+msgid "Techno"
 msgstr ""
 
 msgid "Text"

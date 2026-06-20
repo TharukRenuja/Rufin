@@ -136,6 +136,9 @@ msgstr "Iga žanr"
 msgid "App window"
 msgstr "Rakenduse aken"
 
+msgid "Appears On"
+msgstr "Esineb"
+
 msgid "Application name"
 msgstr "Rakenduse nimi"
 
@@ -194,6 +197,10 @@ msgid "Cached entries will appear here after sync finishes"
 msgstr "Puhverdatud kirjed ilmuvad siia pärast sünkroonimise lõppu"
 
 #, fuzzy
+msgid "Cached library data will appear here as sync pages finish."
+msgstr "Puhverdatud kirjed ilmuvad siia pärast sünkroonimise lõppu"
+
+#, fuzzy
 msgid "Cached library ready"
 msgstr "Puhverdatud meediakogu on valmis"
 
@@ -209,6 +216,7 @@ msgstr "Meediakogu piltide puhverdamine…"
 msgid "Caching library… This may take some time."
 msgstr "Meediakogu puhverdamine... See võib võtta aega."
 
+#, fuzzy
 msgid "Caching local library…"
 msgstr "Puhverdan kokalikku muusikakogu…"
 
@@ -278,6 +286,9 @@ msgid "Choose the folder to scan and play directly from this computer"
 msgstr ""
 "Vali kaust, mida skannida ja millelt muusikat otse selle arvutiga esitada"
 
+msgid "Classical"
+msgstr ""
+
 msgid "Clear Cache"
 msgstr "Kustuta vahemälu"
 
@@ -298,6 +309,17 @@ msgstr "Sulge"
 
 msgid "Close fullscreen player"
 msgstr "Sulge muusikaesitaja täisekraanivaade"
+
+msgid "Club"
+msgstr ""
+
+#, fuzzy
+msgid "Collection"
+msgstr "Ühendus"
+
+#, fuzzy
+msgid "Collections"
+msgstr "Ühendus"
 
 msgid "Columns"
 msgstr "Veerud"
@@ -332,6 +354,7 @@ msgstr "Ühendatud"
 msgid "Connected as {username}"
 msgstr "Ühendatud kasutajanimega {username}"
 
+#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Ühendan muusikaserveriga…"
 
@@ -351,13 +374,16 @@ msgstr "Ristsulatatud"
 msgid "Crossfade duration"
 msgstr "Risthajumise kestus"
 
-#, fuzzy
-msgid "Current version:"
-msgstr "Praegune versioon:"
+msgid "Custom"
+msgstr ""
 
 #, fuzzy
 msgid "Customize display"
 msgstr "Kohanda kuva"
+
+#, fuzzy
+msgid "Dance"
+msgstr "Katkesta"
 
 msgid "Date added"
 msgstr "Lisamise kuupäev"
@@ -410,6 +436,12 @@ msgstr "Järjekorra muutmiseks lohista"
 
 msgid "Duration"
 msgstr "Kestus"
+
+msgid "EP"
+msgstr ""
+
+msgid "EPs"
+msgstr ""
 
 #, fuzzy
 msgid "Edit"
@@ -470,6 +502,9 @@ msgstr "Sujuv helitugevuse muutmine taasesituse peatamisel või jätkamisel"
 msgid "Favorite"
 msgstr "Lemmik"
 
+msgid "Favorite tracks"
+msgstr "Lemmiklood"
+
 msgid "Favorites"
 msgstr "Lemmikud"
 
@@ -479,6 +514,9 @@ msgstr "Esiletoodud žanrid"
 
 msgid "Find your ListenBrainz user token"
 msgstr "Vormista ListenBrainz-teenuse kasutaja tunnusluba"
+
+msgid "Flat"
+msgstr ""
 
 msgid "Folder"
 msgstr "Kaust"
@@ -506,6 +544,13 @@ msgstr[1] ""
 
 msgid "Full"
 msgstr "Täisvaates"
+
+#, fuzzy
+msgid "Full Bass"
+msgstr "Täisvaates"
+
+msgid "Full Treble"
+msgstr ""
 
 msgid "Gapless"
 msgstr "Vahepausideta"
@@ -553,6 +598,12 @@ msgstr "Peidetud"
 msgid "Hidden server section"
 msgstr "Peidetud plokk serverist"
 
+msgid "Hide lyrics"
+msgstr "Peida laulusõnad"
+
+msgid "Hide sidebar"
+msgstr "Peida külgriba"
+
 msgid "Home"
 msgstr "Avaleht"
 
@@ -569,6 +620,9 @@ msgstr "Kui sul pole APi võtmeid, siis saad nad luua"
 
 msgid "Image"
 msgstr "Pilt"
+
+msgid "Installed"
+msgstr ""
 
 msgid "Interface"
 msgstr "Kasutajaliides"
@@ -588,6 +642,9 @@ msgstr "LRCLIB"
 
 msgid "Language"
 msgstr "Keel"
+
+msgid "Laptop/Headphones"
+msgstr ""
 
 msgid "Last played"
 msgstr "Viimati esitatud"
@@ -631,6 +688,10 @@ msgstr "Kraasimine ListenBrainzi teenuses"
 
 msgid "Loaded in lyrics panel."
 msgstr "Laaditud laulusõnade plokis."
+
+#, fuzzy
+msgid "Loading folders…"
+msgstr "Laadin kaustu…"
 
 msgid "Local"
 msgstr "Kohalik andmekogu"
@@ -727,6 +788,9 @@ msgstr "Muusikafailide kaust"
 msgid "Music Folders"
 msgstr "Muusika kaustad"
 
+msgid "Music Server"
+msgstr "Muusikaserver"
+
 msgid "MusicBrainz"
 msgstr "MusicBrainz"
 
@@ -791,6 +855,10 @@ msgstr ""
 
 msgid "No Servers Found"
 msgstr "Ühtegi serverit ei leidu"
+
+#, fuzzy
+msgid "No cached results found."
+msgstr "Kaustasisu ei leidu."
 
 #, fuzzy
 msgid "No cached server path yet"
@@ -897,12 +965,26 @@ msgid "Open fullscreen player"
 msgstr "Ava muusikaesitaja täisekraanivaates"
 
 #, fuzzy
+msgid "Open on Jellyfin"
+msgstr "Jellyfin"
+
+#, fuzzy
+msgid "Open on Last.fm"
+msgstr "Last.fm"
+
+#, fuzzy
+msgid "Open on MusicBrainz"
+msgstr "MusicBrainz"
+
+#, fuzzy
 msgid "Open release notes"
 msgstr "Ava väljalasketeated"
 
+#, fuzzy
 msgid "Opening Last.fm authorization…"
 msgstr "Avan Last.fm-i autentimisvaate…"
 
+#, fuzzy
 msgid "Opening Libre.fm authorization…"
 msgstr "Avan Libre.fm-i autentimisvaate…"
 
@@ -913,8 +995,14 @@ msgstr ""
 msgid "Original"
 msgstr "Algne"
 
+msgid "Other"
+msgstr ""
+
 msgid "Password"
 msgstr "Salasõna"
+
+msgid "Pause"
+msgstr "Peata esitus"
 
 msgid "Plain lyrics"
 msgstr "Tavalised laulusõnad"
@@ -978,6 +1066,9 @@ msgstr "Esitusloendid"
 msgid "Plays"
 msgstr "Esitamisi"
 
+msgid "Pop"
+msgstr ""
+
 msgid "Position"
 msgstr "Asukoht"
 
@@ -990,6 +1081,10 @@ msgstr "Eelistatakse serveri esitusloendite kaanepilte"
 
 msgid "Preferences"
 msgstr "Eelistused"
+
+#, fuzzy
+msgid "Preparing library…"
+msgstr "Valmistan muusikakogu ette…"
 
 #, fuzzy
 msgid "Preset"
@@ -1048,12 +1143,12 @@ msgid "Refresh section"
 msgstr "Uuenda ploki andmeid"
 
 #, fuzzy
-msgid "Release date"
+msgid "Release"
 msgstr "Väljalaske kuupäev"
 
 #, fuzzy
-msgid "Release notes"
-msgstr "Väljalaske teave"
+msgid "Release date"
+msgstr "Väljalaske kuupäev"
 
 #, fuzzy
 msgid "Release notifications"
@@ -1129,12 +1224,18 @@ msgstr "Taasta vaikimisi väärtus"
 msgid "Restore selected preset to default bands."
 msgstr "Taasta valitud eelseadistus vaikeväärtustega."
 
+msgid "Resume"
+msgstr "Jätka"
+
 msgid "Resync Library"
 msgstr "Sünkrooni muusikakogu uuesti"
 
 #, fuzzy
 msgid "Rich presence"
 msgstr "Laiendatud teave"
+
+msgid "Rock"
+msgstr ""
 
 #, fuzzy
 msgid "Rows"
@@ -1214,6 +1315,11 @@ msgstr "Otsitakse kohalikus võrgus Jellyfini servereid…"
 msgid "Searching will start automatically"
 msgstr "Otsing algab automaatselt"
 
+#, fuzzy
+msgid "Searching..."
+msgstr "Otsin…"
+
+#, fuzzy
 msgid "Searching…"
 msgstr "Otsin…"
 
@@ -1310,6 +1416,9 @@ msgstr "Kuva väliste teenuste ikoonid albumi ja esitaja lehtedel"
 msgid "Show external site links"
 msgstr "Kuva välised veebisaidilingid"
 
+msgid "Show lyrics"
+msgstr "Vaata laulusõnu"
+
 msgid "Show paused status"
 msgstr "Näita peatamise olekut"
 
@@ -1349,6 +1458,12 @@ msgstr "Külgpaani objektid"
 
 msgid "SimpMusic"
 msgstr "SimpMusic"
+
+msgid "Single"
+msgstr ""
+
+msgid "Singles"
+msgstr ""
 
 msgid "Skip count"
 msgstr "Vahelejätmiste arv"
@@ -1404,6 +1519,7 @@ msgstr "Voogedastuse kvaliteet"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
+#, fuzzy
 msgid "Switching library…"
 msgstr "Vahetan muusikakogu…"
 
@@ -1429,6 +1545,9 @@ msgstr ""
 "Puuduta kirjet, et laadida laulusõnad ja salvestada need rakenduse "
 "vahemällu. Kliki nuppu Salvesta”, kui soovid salvestada need ka "
 "muusikafailide kaustas"
+
+msgid "Techno"
+msgstr ""
 
 msgid "Text"
 msgstr "Tekst"
@@ -1540,6 +1659,9 @@ msgstr "Kasutajanimi"
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
 
+msgid "Version History"
+msgstr ""
+
 msgid "View"
 msgstr "Vaade"
 
@@ -1616,11 +1738,23 @@ msgstr "vahemik on"
 msgid "to"
 msgstr "kuni"
 
+msgid "today"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
 msgstr[0] ""
 msgstr[1] ""
+
+#, fuzzy, rust-format
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
+msgstr[0] "Otsi sellest kaustas"
+msgstr[1] "Otsi sellest kaustas"
 
 #, fuzzy, rust-format
 msgid "{count} folder"
@@ -1635,6 +1769,12 @@ msgstr[0] "Kaust on valimata"
 msgstr[1] "Kaust on valimata"
 
 #, rust-format
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
+msgstr[0] ""
+msgstr[1] ""
+
+#, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
 msgstr[0] ""
@@ -1645,6 +1785,18 @@ msgid "{count} track"
 msgid_plural "{count} tracks"
 msgstr[0] ""
 msgstr[1] ""
+
+#, fuzzy, rust-format
+msgid "{count} week ago"
+msgid_plural "{count} weeks ago"
+msgstr[0] "Otsi sellest kaustas"
+msgstr[1] "Otsi sellest kaustas"
+
+#, fuzzy, rust-format
+msgid "{count} year ago"
+msgid_plural "{count} years ago"
+msgstr[0] "Otsi sellest kaustas"
+msgstr[1] "Otsi sellest kaustas"
 
 #, fuzzy, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
@@ -1662,112 +1814,20 @@ msgstr "{track_count} lugu lisatud {playlist_count} esitusloendisse"
 msgid "{track_count} songs added to {playlist_count} playlists"
 msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
-#~ msgid "Saved mapping."
-#~ msgstr "Vastendus on salvestatud."
-
-#~ msgid "Unsaved changes."
-#~ msgstr "Muudatused on salvestamata."
-
-#~ msgid "View all tracks"
-#~ msgstr "Vaata kõiki lugusid"
-
-#~ msgid "albums"
-#~ msgstr "albumit"
-
-#~ msgid "tracks"
-#~ msgstr "lugu"
-
-#~ msgid "folders selected"
-#~ msgstr "valitud kausta"
-
-#~ msgid "results"
-#~ msgstr "tulemused"
-
-#~ msgid "folders"
-#~ msgstr "kaustad"
-
-#~ msgid "Songs"
-#~ msgstr "Lood"
-
-#~ msgid "Settings"
-#~ msgstr "Seadistused"
-
-#~ msgid "Favorite tracks"
-#~ msgstr "Lemmiklood"
-
-#~ msgid "Appears On"
-#~ msgstr "Esineb"
-
-#~ msgid "appears on"
-#~ msgstr "esineb"
-
-#~ msgid "Menu"
-#~ msgstr "Menüü"
-
 #~ msgid "Actions"
 #~ msgstr "Tegevused"
-
-#~ msgid "Sync Status"
-#~ msgstr "Sünkroonimise olek"
-
-#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
-#~ msgstr "Otsingud MusicBrainzi ja Cover Art Archive'i teenustesse"
-
-#~ msgid "Try to fetch artwork from internet when server artwork is missing"
-#~ msgstr ""
-#~ "Kui serveris pole kaanepilte, siis proovi need leida välistest teenustest"
-
-#~ msgid "Clears cached data for the server, login stays saved"
-#~ msgstr ""
-#~ "Eemaldab serverist puhverdatud andmed, kasutajakonto andmed jäävad alles"
-
-#~ msgid "No active server"
-#~ msgstr "Aktiivset serverit pole"
-
-#~ msgid "Configure local folder access"
-#~ msgstr "Seadista ligipääs kohalikele kaustadele"
-
-#~ msgid "Sources"
-#~ msgstr "Allikad"
-
-#~ msgid "Configure saved music servers and local playback mappings"
-#~ msgstr ""
-#~ "Seadista salvestatud muusikaservereid ja kohaliku taasesituse vastendusi"
 
 #~ msgid "Active Source Actions"
 #~ msgstr "Tegevused aktiivse allikaga"
 
-#~ msgid "Map Local"
-#~ msgstr "Vastenda kohalik"
-
-#~ msgid "Edit Mapping"
-#~ msgstr "Muuda vastendust"
-
-#~ msgid "Selected Source"
-#~ msgstr "Valitud allikas"
-
-#~ msgid "Local mapping saved. Sync to preview matches"
-#~ msgstr ""
-#~ "Kohaliku taasesituse vastendus on salvestatud. Eevaade klapitamiseks "
-#~ "sünkrooni"
-
-#~ msgid "Use server streams only"
-#~ msgstr "Kasuta vaid voogedastust serverist"
-
-#~ msgid "Choose Folder"
-#~ msgstr "Vali kaust"
-
 #~ msgid "Add local folder access"
 #~ msgstr "Lisa ligipääs kohalikule kaustale"
 
-#~ msgid "This removes the folder from the Local source"
-#~ msgstr "Järgnevaga eemaldad selle kausta kohalike allikate seast"
+#~ msgid "Add to queue"
+#~ msgstr "Lisa esitusjärjekorda"
 
-#~ msgid "Preparing library…"
-#~ msgstr "Valmistan muusikakogu ette…"
-
-#~ msgid "Choose a provider, pick a server, or enter the address manually"
-#~ msgstr "Vali teenusepakkuja või server, aga võid ka aadressi käsitsi lisada"
+#~ msgid "Choose Folder"
+#~ msgstr "Vali kaust"
 
 #~ msgid ""
 #~ "Choose a folder to scan and play locally from the computer (For flatpak "
@@ -1778,26 +1838,47 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ "esitada (Kui oled flatpaki kasutaja ja see kaust pole ~/Muusika, siis "
 #~ "pead ilmselt Flatsealiga jagama vajalikke õigusi)"
 
-#~ msgid "Resume"
-#~ msgstr "Jätka"
+#~ msgid "Choose a provider, pick a server, or enter the address manually"
+#~ msgstr "Vali teenusepakkuja või server, aga võid ka aadressi käsitsi lisada"
 
-#~ msgid "Pause"
-#~ msgstr "Peata esitus"
+#~ msgid "Choose when the left sidebar uses compact navigation"
+#~ msgstr "Seadista vasaku külgriba kompaktse vaate käivitamise tingimusi"
 
-#~ msgid "Stop"
-#~ msgstr "Lõpeta"
+#~ msgid "Clears cached data for the server, login stays saved"
+#~ msgstr ""
+#~ "Eemaldab serverist puhverdatud andmed, kasutajakonto andmed jäävad alles"
 
-#~ msgid "Hide sidebar"
-#~ msgstr "Peida külgriba"
+#~ msgid "Configure columns"
+#~ msgstr "Seadista veerge"
 
-#~ msgid "Show lyrics"
-#~ msgstr "Vaata laulusõnu"
+#~ msgid "Configure local folder access"
+#~ msgstr "Seadista ligipääs kohalikele kaustadele"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Peida laulusõnad"
+#~ msgid "Configure saved music servers and local playback mappings"
+#~ msgstr ""
+#~ "Seadista salvestatud muusikaservereid ja kohaliku taasesituse vastendusi"
+
+#~ msgid "Connected as"
+#~ msgstr "Ühendatud kui"
+
+#~ msgid "Current server"
+#~ msgstr "Praegune server"
+
+#, fuzzy
+#~ msgid "Current version:"
+#~ msgstr "Praegune versioon:"
 
 #~ msgid "Disable automatic lyric search for this track"
 #~ msgstr "Keela selle loo puhul automaatne laulusõnade otsing"
+
+#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
+#~ msgstr "Otsingud MusicBrainzi ja Cover Art Archive'i teenustesse"
+
+#~ msgid "Edit Mapping"
+#~ msgstr "Muuda vastendust"
+
+#~ msgid "Issues"
+#~ msgstr "Veahaldus"
 
 #~ msgid "Keep the lyrics section visible below the queue"
 #~ msgstr "Hoia laulusõnade plokk nähtaval esitusjärjekorra all"
@@ -1805,102 +1886,151 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgid "Keep the queue sidebar visible in the main window"
 #~ msgstr "Hoia esitusjärjekorra plokk põhiaknas nähtaval"
 
-#~ msgid "Search server lyrics before external providers"
-#~ msgstr ""
-#~ "Enne välisest teenusest otsimist vaata, kas laulusõnad on serveris olemas"
-
-#~ msgid "Use remote lyric providers when server lyrics are unavailable"
-#~ msgstr ""
-#~ "Kui laulusõnu pole serveris olemas, siis otsi neid välisest teenusest"
-
-#~ msgid "Music Server"
-#~ msgstr "Muusikaserver"
-
 #~ msgid "Left sidebar density"
 #~ msgstr "Vasaku külgriba tihedus"
-
-#~ msgid "Choose when the left sidebar uses compact navigation"
-#~ msgstr "Seadista vasaku külgriba kompaktse vaate käivitamise tingimusi"
-
-#~ msgid "Remove from queue"
-#~ msgstr "Eemalda esitusjärjekorrast"
-
-#~ msgid "Seekbar"
-#~ msgstr "Kerimisriba"
-
-#~ msgid "Play now"
-#~ msgstr "Esita kohe"
-
-#~ msgid "Play next"
-#~ msgstr "Esita järgmisena"
-
-#~ msgid "Add to queue"
-#~ msgstr "Lisa esitusjärjekorda"
-
-#~ msgid "No server"
-#~ msgstr "Serverit pole"
-
-#~ msgid "Current server"
-#~ msgstr "Praegune server"
-
-#~ msgid "no account"
-#~ msgstr "kasutajakontot pole"
-
-#~ msgid "No queue items match the search"
-#~ msgstr "Otsingule ei vasta ükski esitusjärjekorra kirje"
 
 #~ msgid "Loading…"
 #~ msgstr "Laadin andmeid…"
 
-#~ msgid "Loading folders…"
-#~ msgstr "Laadin kaustu…"
+#~ msgid "Local mapping saved. Sync to preview matches"
+#~ msgstr ""
+#~ "Kohaliku taasesituse vastendus on salvestatud. Eevaade klapitamiseks "
+#~ "sünkrooni"
+
+#~ msgid "Map Local"
+#~ msgstr "Vastenda kohalik"
+
+#~ msgid "Menu"
+#~ msgstr "Menüü"
+
+#~ msgid "My Library"
+#~ msgstr "Minu muusikakogu"
+
+#~ msgid "No active server"
+#~ msgstr "Aktiivset serverit pole"
+
+#~ msgid "No queue items match the search"
+#~ msgstr "Otsingule ei vasta ükski esitusjärjekorra kirje"
+
+#~ msgid "No server"
+#~ msgstr "Serverit pole"
+
+#~ msgid "No tracks match the search."
+#~ msgstr "Otsingule ei vasta ükski lugu."
+
+#~ msgid "Output"
+#~ msgstr "Väljund"
+
+#~ msgid "Play next"
+#~ msgstr "Esita järgmisena"
+
+#~ msgid "Play now"
+#~ msgstr "Esita kohe"
+
+#~ msgid "Privacy"
+#~ msgstr "Privaatsus"
+
+#, fuzzy
+#~ msgid "Release notes"
+#~ msgstr "Väljalaske teave"
+
+#~ msgid "Remove from queue"
+#~ msgstr "Eemalda esitusjärjekorrast"
+
+#~ msgid "Restore neutral bands and disable equalizer."
+#~ msgstr "Taasta sagedusvahemike olek keskmisena ja lülita ekvalaiser välja."
+
+#~ msgid "Saved mapping."
+#~ msgstr "Vastendus on salvestatud."
+
+#~ msgid "Search server lyrics before external providers"
+#~ msgstr ""
+#~ "Enne välisest teenusest otsimist vaata, kas laulusõnad on serveris olemas"
+
+#~ msgid "Seekbar"
+#~ msgstr "Kerimisriba"
+
+#~ msgid "Selected Source"
+#~ msgstr "Valitud allikas"
+
+#~ msgid "Settings"
+#~ msgstr "Seadistused"
+
+#~ msgid "Songs"
+#~ msgstr "Lood"
+
+#~ msgid "Sort by"
+#~ msgstr "Järjestus"
+
+#~ msgid "Sources"
+#~ msgstr "Allikad"
+
+#~ msgid "Stop"
+#~ msgstr "Lõpeta"
+
+#~ msgid "Streaming"
+#~ msgstr "Voogedastus"
+
+#~ msgid "Sync Status"
+#~ msgstr "Sünkroonimise olek"
+
+#~ msgid "Synchronized"
+#~ msgstr "Sünkroonis"
+
+#~ msgid "Synchronized + Unsynchronized"
+#~ msgstr "Sünkroonitud + sünkroonimata"
+
+#~ msgid "This removes the folder from the Local source"
+#~ msgstr "Järgnevaga eemaldad selle kausta kohalike allikate seast"
+
+#~ msgid "Transitions"
+#~ msgstr "Üleminekud"
+
+#~ msgid "Try to fetch artwork from internet when server artwork is missing"
+#~ msgstr ""
+#~ "Kui serveris pole kaanepilte, siis proovi need leida välistest teenustest"
 
 #~ msgid "Type a query in the sidebar search field to search the local cache"
 #~ msgstr ""
 #~ "Otsimiseks kohalikku seadmesse puhveradatud andmete seast, kirjuta otsing "
 #~ "külgriba otsinguväljale"
 
-#~ msgid "Website"
-#~ msgstr "Veebisait"
-
-#~ msgid "Issues"
-#~ msgstr "Veahaldus"
-
-#~ msgid "My Library"
-#~ msgstr "Minu muusikakogu"
-
-#~ msgid "Restore neutral bands and disable equalizer."
-#~ msgstr "Taasta sagedusvahemike olek keskmisena ja lülita ekvalaiser välja."
-
-#~ msgid "Privacy"
-#~ msgstr "Privaatsus"
-
-#~ msgid "No tracks match the search."
-#~ msgstr "Otsingule ei vasta ükski lugu."
-
-#~ msgid "Configure columns"
-#~ msgstr "Seadista veerge"
-
-#~ msgid "Sort by"
-#~ msgstr "Järjestus"
-
-#~ msgid "Synchronized"
-#~ msgstr "Sünkroonis"
+#~ msgid "Unsaved changes."
+#~ msgstr "Muudatused on salvestamata."
 
 #~ msgid "Unsynchronized"
 #~ msgstr "Sünkroonimata"
 
-#~ msgid "Synchronized + Unsynchronized"
-#~ msgstr "Sünkroonitud + sünkroonimata"
+#~ msgid "Use remote lyric providers when server lyrics are unavailable"
+#~ msgstr ""
+#~ "Kui laulusõnu pole serveris olemas, siis otsi neid välisest teenusest"
 
-#~ msgid "Transitions"
-#~ msgstr "Üleminekud"
+#~ msgid "Use server streams only"
+#~ msgstr "Kasuta vaid voogedastust serverist"
 
-#~ msgid "Streaming"
-#~ msgstr "Voogedastus"
+#~ msgid "View all tracks"
+#~ msgstr "Vaata kõiki lugusid"
 
-#~ msgid "Output"
-#~ msgstr "Väljund"
+#~ msgid "Website"
+#~ msgstr "Veebisait"
 
-#~ msgid "Connected as"
-#~ msgstr "Ühendatud kui"
+#~ msgid "albums"
+#~ msgstr "albumit"
+
+#~ msgid "appears on"
+#~ msgstr "esineb"
+
+#~ msgid "folders"
+#~ msgstr "kaustad"
+
+#~ msgid "folders selected"
+#~ msgstr "valitud kausta"
+
+#~ msgid "no account"
+#~ msgstr "kasutajakontot pole"
+
+#~ msgid "results"
+#~ msgstr "tulemused"
+
+#~ msgid "tracks"
+#~ msgstr "lugu"

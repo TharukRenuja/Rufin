@@ -130,6 +130,9 @@ msgstr "Jebkurš žanrs"
 msgid "App window"
 msgstr "Lietotnes logs"
 
+msgid "Appears On"
+msgstr "Parādās ierakstos"
+
 msgid "Application name"
 msgstr "Lietotnes nosaukums"
 
@@ -181,21 +184,31 @@ msgstr "Kešots"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Kešotie ieraksti parādīsies šeit pēc sinhronizācijas pabeigšanas"
 
+#, fuzzy
+msgid "Cached library data will appear here as sync pages finish."
+msgstr ""
+"Kešotie bibliotēkas dati parādīsies šeit, kad sinhronizācijas lapas tiks "
+"pabeigtas"
+
 msgid "Cached library ready"
 msgstr "Kešotā bibliotēka ir gatava"
 
 msgid "Caching Library"
 msgstr "Kešo bibliotēku"
 
+#, fuzzy
 msgid "Caching library artwork…"
 msgstr "Kešo albumu vāciņus…"
 
+#, fuzzy
 msgid "Caching library… This may take some time."
 msgstr "Kešo bibliotēku… Tas var aizņemt kādu laiku."
 
+#, fuzzy
 msgid "Caching local library…"
 msgstr "Kešo lokālo bibliotēku…"
 
+#, fuzzy
 msgid "Caching local library… This may take some time."
 msgstr "Kešo lokālo bibliotēku… Tas var aizņemt kādu laiku."
 
@@ -219,7 +232,7 @@ msgstr ""
 "konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
 "ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
 
-#, rust-format
+#, fuzzy, rust-format
 msgid "Checking {provider} server…"
 msgstr "Pārbauda {provider} serveri…"
 
@@ -255,6 +268,9 @@ msgstr "Izvēlieties pašreizējās lapas izkārtojumu."
 msgid "Choose the folder to scan and play directly from this computer"
 msgstr "Izvēlieties mapi, ko skenēt un atskaņot tieši no šī datora"
 
+msgid "Classical"
+msgstr "Klasiskais"
+
 msgid "Clear Cache"
 msgstr "Notīrīt kešatmiņu"
 
@@ -275,6 +291,15 @@ msgstr "Aizvērt"
 
 msgid "Close fullscreen player"
 msgstr "Aizvērt pilnekrāna atskaņotāju"
+
+msgid "Club"
+msgstr "Klubs"
+
+msgid "Collection"
+msgstr "Kolekcija"
+
+msgid "Collections"
+msgstr "Kolekcijas"
 
 msgid "Columns"
 msgstr "Kolonnas"
@@ -308,6 +333,7 @@ msgstr "Savienots"
 msgid "Connected as {username}"
 msgstr "Pieslēdzies kā {username}"
 
+#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Savienojas ar mūzikas serveri…"
 
@@ -326,11 +352,14 @@ msgstr "Sajaukšana"
 msgid "Crossfade duration"
 msgstr "Sajaukšanas ilgums"
 
-msgid "Current version:"
-msgstr "Pašreizējā versija:"
+msgid "Custom"
+msgstr "Pielāgots"
 
 msgid "Customize display"
 msgstr "Pielāgot displeju"
+
+msgid "Dance"
+msgstr "Dejas"
 
 msgid "Date added"
 msgstr "Pievienošanas datums"
@@ -379,6 +408,12 @@ msgstr "Pārvelciet, lai mainītu secību"
 
 msgid "Duration"
 msgstr "Ilgums"
+
+msgid "EP"
+msgstr "EP"
+
+msgid "EPs"
+msgstr "EP"
 
 msgid "Edit"
 msgstr "Rediģēt"
@@ -434,6 +469,9 @@ msgstr "Samazināt skaņas skaļumu, kad atskaņošana tiek pauzēta vai atsākt
 msgid "Favorite"
 msgstr "Izlase"
 
+msgid "Favorite tracks"
+msgstr "Iecienītākie celiņi"
+
 msgid "Favorites"
 msgstr "Izlase"
 
@@ -442,6 +480,9 @@ msgstr "Ieteicamie žanri"
 
 msgid "Find your ListenBrainz user token"
 msgstr "Atrodiet savu ListenBrainz lietotāja žetonu"
+
+msgid "Flat"
+msgstr "Plakans"
 
 msgid "Folder"
 msgstr "Mape"
@@ -470,6 +511,12 @@ msgstr[2] "Atrasti {count} Jellyfin serveri"
 
 msgid "Full"
 msgstr "Pilns"
+
+msgid "Full Bass"
+msgstr "Pilns bass"
+
+msgid "Full Treble"
+msgstr "Pilns augšējais"
 
 msgid "Gapless"
 msgstr "Bez pauzēm"
@@ -513,6 +560,12 @@ msgstr "Paslēpts"
 msgid "Hidden server section"
 msgstr "Paslēpta servera sadaļa"
 
+msgid "Hide lyrics"
+msgstr "Paslēpt tekstus"
+
+msgid "Hide sidebar"
+msgstr "Paslēpt sānu paneli"
+
 msgid "Home"
 msgstr "Sākums"
 
@@ -527,6 +580,9 @@ msgstr "Ja jums nav API atslēgu, izveidojiet tās"
 
 msgid "Image"
 msgstr "Attēls"
+
+msgid "Installed"
+msgstr ""
 
 msgid "Interface"
 msgstr "Saskarne"
@@ -545,6 +601,9 @@ msgstr "LRCLIB"
 
 msgid "Language"
 msgstr "Valoda"
+
+msgid "Laptop/Headphones"
+msgstr "Klēpjdators/Austiņas"
 
 msgid "Last played"
 msgstr "Pēdējoreiz atskaņots"
@@ -587,6 +646,10 @@ msgstr "ListenBrainz skroblēšana"
 
 msgid "Loaded in lyrics panel."
 msgstr "Ielādēts tekstu panelī."
+
+#, fuzzy
+msgid "Loading folders…"
+msgstr "Ielādē mapes…"
 
 msgid "Local"
 msgstr "Lokāls"
@@ -676,6 +739,9 @@ msgstr "Mūzikas mape"
 msgid "Music Folders"
 msgstr "Mūzikas mapes"
 
+msgid "Music Server"
+msgstr "Mūzikas serveris"
+
 msgid "MusicBrainz"
 msgstr "MusicBrainz"
 
@@ -737,6 +803,10 @@ msgstr ""
 
 msgid "No Servers Found"
 msgstr "Serveri nav atrasti"
+
+#, fuzzy
+msgid "No cached results found."
+msgstr "Kešoti rezultāti nav atrasti"
 
 msgid "No cached server path yet"
 msgstr "Vēl nav kešota servera ceļa"
@@ -835,12 +905,23 @@ msgstr "Tikai neatskaņotās dziesmas"
 msgid "Open fullscreen player"
 msgstr "Atvērt pilnekrāna atskaņotāju"
 
+msgid "Open on Jellyfin"
+msgstr "Atvērt vietnē Jellyfin"
+
+msgid "Open on Last.fm"
+msgstr "Atvērt vietnē Last.fm"
+
+msgid "Open on MusicBrainz"
+msgstr "Atvērt vietnē MusicBrainz"
+
 msgid "Open release notes"
 msgstr "Atvērt izdevuma piezīmes"
 
+#, fuzzy
 msgid "Opening Last.fm authorization…"
 msgstr "Atver Last.fm autorizāciju…"
 
+#, fuzzy
 msgid "Opening Libre.fm authorization…"
 msgstr "Atver Libre.fm autorizāciju…"
 
@@ -850,8 +931,14 @@ msgstr "Pēc izvēles kartējiet servera dziesmas uz failiem šajā datorā"
 msgid "Original"
 msgstr "Oriģināls"
 
+msgid "Other"
+msgstr "Cits"
+
 msgid "Password"
 msgstr "Parole"
+
+msgid "Pause"
+msgstr "Pauzēt"
 
 msgid "Plain lyrics"
 msgstr "Vienkārši teksti"
@@ -913,6 +1000,9 @@ msgstr "Atskaņošanas saraksti"
 msgid "Plays"
 msgstr "Atskaņošanas reizes"
 
+msgid "Pop"
+msgstr "Popmūzika"
+
 msgid "Position"
 msgstr "Pozīcija"
 
@@ -924,6 +1014,10 @@ msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
 
 msgid "Preferences"
 msgstr "Iestatījumi"
+
+#, fuzzy
+msgid "Preparing library…"
+msgstr "Gatavo bibliotēku…"
 
 msgid "Preset"
 msgstr "Iepriekš iestatīts"
@@ -979,11 +1073,11 @@ msgstr "Atjaunot savienojumu"
 msgid "Refresh section"
 msgstr "Atsvaidzināt sadaļu"
 
+msgid "Release"
+msgstr "Izdevums"
+
 msgid "Release date"
 msgstr "Izdošanas datums"
-
-msgid "Release notes"
-msgstr "Izdevuma piezīmes"
 
 msgid "Release notifications"
 msgstr "Jaunu izdevumu paziņojumi"
@@ -1054,11 +1148,17 @@ msgstr "Atjaunot noklusējuma iestatījumus"
 msgid "Restore selected preset to default bands."
 msgstr "Atjaunot izvēlēto iestatījumu uz noklusējuma joslām."
 
+msgid "Resume"
+msgstr "Turpināt"
+
 msgid "Resync Library"
 msgstr "Pārsinhronizēt bibliotēku"
 
 msgid "Rich presence"
 msgstr "Bagātīga klātbūtne"
+
+msgid "Rock"
+msgstr "Roks"
 
 msgid "Rows"
 msgstr "Rindas"
@@ -1134,12 +1234,18 @@ msgstr "Meklēt rindā"
 msgid "Searching Local Network"
 msgstr "Meklē lokālajā tīklā"
 
+#, fuzzy
 msgid "Searching for Jellyfin servers on the local network…"
 msgstr "Tiek meklēti Jellyfin serveri lokālajā tīklā…"
 
 msgid "Searching will start automatically"
 msgstr "Meklēšana tiks automātiski uzsākta"
 
+#, fuzzy
+msgid "Searching..."
+msgstr "Meklē…"
+
+#, fuzzy
 msgid "Searching…"
 msgstr "Meklē…"
 
@@ -1201,6 +1307,7 @@ msgstr "Servera izvēlētājs"
 msgid "Server settings saved."
 msgstr "Servera iestatījumi saglabāti."
 
+#, fuzzy
 msgid "Server settings saved. Resyncing library…"
 msgstr ""
 "Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
@@ -1225,6 +1332,9 @@ msgstr "Rādīt ārējo pakalpojumu ikonas albumu un izpildītāju lapās"
 
 msgid "Show external site links"
 msgstr "Rādīt ārējās saites"
+
+msgid "Show lyrics"
+msgstr "Rādīt tekstus"
 
 msgid "Show paused status"
 msgstr "Rādīt pauzes statusu"
@@ -1261,6 +1371,12 @@ msgstr "Sānu paneļa vienumi"
 
 msgid "SimpMusic"
 msgstr "SimpMusic"
+
+msgid "Single"
+msgstr "Singls"
+
+msgid "Singles"
+msgstr "Singli"
 
 msgid "Skip count"
 msgstr "Izlaišanas skaits"
@@ -1312,6 +1428,7 @@ msgstr "Straumes kvalitāte"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
+#, fuzzy
 msgid "Switching library…"
 msgstr "Pārslēdz bibliotēku…"
 
@@ -1321,7 +1438,7 @@ msgstr "Sinhronizācija jau notiek."
 msgid "Synced lyrics"
 msgstr "Sinhronizēti teksti"
 
-#, rust-format
+#, fuzzy, rust-format
 msgid "Syncing {provider} library…"
 msgstr "Sinhronizē bibliotēku no {provider}…"
 
@@ -1335,6 +1452,9 @@ msgstr ""
 "Pieskarieties ierakstam, lai ielādētu dziesmas tekstu un saglabātu to "
 "lietotnes kešatmiņā; noklikšķiniet uz «Saglabāt», ja vēlaties to saglabāt "
 "arī savā mūzikas mapē"
+
+msgid "Techno"
+msgstr "Tehno"
 
 msgid "Text"
 msgstr "Teksts"
@@ -1447,6 +1567,9 @@ msgstr "Lietotājvārds"
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
 
+msgid "Version History"
+msgstr ""
+
 msgid "View"
 msgstr "Skats"
 
@@ -1519,9 +1642,22 @@ msgstr "diapazons"
 msgid "to"
 msgstr "uz"
 
+msgid "today"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
+msgstr[0] "{count} albumi"
+msgstr[1] "{count} albums"
+msgstr[2] "{count} albumi"
+
+#, fuzzy, rust-format
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
 msgstr[0] "{count} albumi"
 msgstr[1] "{count} albums"
 msgstr[2] "{count} albumi"
@@ -1540,6 +1676,13 @@ msgstr[0] "izvēlētas {count} mapes"
 msgstr[1] "izvēlētā {count} mape"
 msgstr[2] "izvēlētas {count} mapes"
 
+#, fuzzy, rust-format
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
+msgstr[0] "{count} dziesmas"
+msgstr[1] "{count} dziesma"
+msgstr[2] "{count} dziesmas"
+
 #, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
@@ -1550,6 +1693,20 @@ msgstr[2] "{count} rezultāti"
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
+msgstr[0] "{count} dziesmas"
+msgstr[1] "{count} dziesma"
+msgstr[2] "{count} dziesmas"
+
+#, fuzzy, rust-format
+msgid "{count} week ago"
+msgid_plural "{count} weeks ago"
+msgstr[0] "{count} albumi"
+msgstr[1] "{count} albums"
+msgstr[2] "{count} albumi"
+
+#, fuzzy, rust-format
+msgid "{count} year ago"
+msgid_plural "{count} years ago"
 msgstr[0] "{count} dziesmas"
 msgstr[1] "{count} dziesma"
 msgstr[2] "{count} dziesmas"
@@ -1574,118 +1731,23 @@ msgid "{track_count} songs added to {playlist_count} playlists"
 msgstr ""
 "Pievienotas {track_count} dziesmas {playlist_count} atskaņošanas sarakstiem"
 
-#~ msgid "Saved mapping."
-#~ msgstr "Saglabāta kartēšana."
-
-#~ msgid "Unsaved changes."
-#~ msgstr "Nesaglabātas izmaiņas."
-
-#~ msgid "View all tracks"
-#~ msgstr "Skatīt visas dziesmas"
-
-#~ msgid "albums"
-#~ msgstr "albumi"
-
-#~ msgid "tracks"
-#~ msgstr "dziesmas"
-
-#~ msgid "folders selected"
-#~ msgstr "izvēlētas mapes"
-
-#~ msgid "results"
-#~ msgstr "rezultāti"
-
-#~ msgid "folders"
-#~ msgstr "mapes"
-
-#~ msgid "Settings"
-#~ msgstr "Iestatījumi"
-
-#~ msgid "Favorite tracks"
-#~ msgstr "Iecienītākie celiņi"
-
-#~ msgid "Appears On"
-#~ msgstr "Parādās ierakstos"
-
-#~ msgid "appears on"
-#~ msgstr "parādās ierakstos"
-
-#~ msgid "Menu"
-#~ msgstr "Izvēlne"
-
 #~ msgid "Actions"
 #~ msgstr "Darbības"
-
-#~ msgid "Sync Status"
-#~ msgstr "Sinhronizācijas statuss"
-
-#~ msgid "Open on Last.fm"
-#~ msgstr "Atvērt vietnē Last.fm"
-
-#~ msgid "Open on MusicBrainz"
-#~ msgstr "Atvērt vietnē MusicBrainz"
-
-#~ msgid "Open on Jellyfin"
-#~ msgstr "Atvērt vietnē Jellyfin"
-
-#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
-#~ msgstr "Veic MusicBrainz un Cover Art Archive meklējumus"
-
-#~ msgid "Try to fetch artwork from internet when server artwork is missing"
-#~ msgstr "Mēģina ielādēt attēlus no interneta, ja servera attēli nav pieejami"
-
-#~ msgid "Clears cached data for the server, login stays saved"
-#~ msgstr "Notīra kešotos datus serverim, pieteikšanās paliek saglabāta"
-
-#~ msgid "No active server"
-#~ msgstr "Nav aktīva servera"
-
-#~ msgid "Configure local folder access"
-#~ msgstr "Konfigurēt piekļuvi lokālajām mapēm"
-
-#~ msgid "Sources"
-#~ msgstr "Avoti"
-
-#~ msgid "Configure saved music servers and local playback mappings"
-#~ msgstr ""
-#~ "Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas sarakstus"
 
 #~ msgid "Active Source Actions"
 #~ msgstr "Aktīvā avota darbības"
 
-#~ msgid "Map Local"
-#~ msgstr "Kartēt lokālo"
-
-#~ msgid "Edit Mapping"
-#~ msgstr "Rediģēt kartējumu"
-
-#~ msgid "Selected Source"
-#~ msgstr "Izvēlētais avots"
-
-#~ msgid "Local mapping saved. Sync to preview matches"
-#~ msgstr ""
-#~ "Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības"
-
-#~ msgid "Use server streams only"
-#~ msgstr "Izmantot tikai servera straumes"
-
-#~ msgid "Choose Folder"
-#~ msgstr "Izvēlēties mapi"
-
 #~ msgid "Add local folder access"
 #~ msgstr "Pievienot piekļuvi lokālajai mapei"
 
-#~ msgid "This removes the folder from the Local source"
-#~ msgstr "Tas noņem mapi no lokālā avota"
+#~ msgid "Add to queue"
+#~ msgstr "Pievienot rindai"
 
-#~ msgid "Preparing library…"
-#~ msgstr "Gatavo bibliotēku…"
+#~ msgid "Artist detail will use cached album and track groups"
+#~ msgstr "Mākslinieka detaļas izmantos kešotos albumu un celiņu grupas"
 
-#~ msgid "Choose a provider, pick a server, or enter the address manually"
-#~ msgstr ""
-#~ "Izvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet "
-#~ "adresi manuāliIzvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai "
-#~ "ievadiet adresi manuāli"
+#~ msgid "Choose Folder"
+#~ msgstr "Izvēlēties mapi"
 
 #~ msgid ""
 #~ "Choose a folder to scan and play locally from the computer (For flatpak "
@@ -1698,26 +1760,51 @@ msgstr ""
 #~ "(Flatpak lietotājiem, ja mape nav ~/Music, jums jāpiešķir mapes atļaujas "
 #~ "no Flatseal)"
 
-#~ msgid "Resume"
-#~ msgstr "Turpināt"
+#~ msgid "Choose a provider, pick a server, or enter the address manually"
+#~ msgstr ""
+#~ "Izvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet "
+#~ "adresi manuāliIzvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai "
+#~ "ievadiet adresi manuāli"
 
-#~ msgid "Pause"
-#~ msgstr "Pauzēt"
+#~ msgid "Choose when the left sidebar uses compact navigation"
+#~ msgstr "Izvēlieties, kad kreisais sānu panelis izmanto kompakto navigāciju"
 
-#~ msgid "Stop"
-#~ msgstr "Apturēt"
+#~ msgid "Clears cached data for the server, login stays saved"
+#~ msgstr "Notīra kešotos datus serverim, pieteikšanās paliek saglabāta"
 
-#~ msgid "Hide sidebar"
-#~ msgstr "Paslēpt sānu paneli"
+#~ msgid "Configure columns"
+#~ msgstr "Konfigurēt kolonnas"
 
-#~ msgid "Show lyrics"
-#~ msgstr "Rādīt tekstus"
+#~ msgid "Configure local folder access"
+#~ msgstr "Konfigurēt piekļuvi lokālajām mapēm"
 
-#~ msgid "Hide lyrics"
-#~ msgstr "Paslēpt tekstus"
+#~ msgid "Configure saved music servers and local playback mappings"
+#~ msgstr ""
+#~ "Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas sarakstus"
+
+#~ msgid "Connected as"
+#~ msgstr "Savienots kā"
+
+#~ msgid "Current server"
+#~ msgstr "Pašreizējais serveris"
+
+#~ msgid "Current version:"
+#~ msgstr "Pašreizējā versija:"
 
 #~ msgid "Disable automatic lyric search for this track"
 #~ msgstr "Atslēgt automātisko tekstu meklēšanu šim celiņam"
+
+#~ msgid "Does MusicBrainz and Cover Art Archive lookups"
+#~ msgstr "Veic MusicBrainz un Cover Art Archive meklējumus"
+
+#~ msgid "Edit Mapping"
+#~ msgstr "Rediģēt kartējumu"
+
+#~ msgid "Genre detail keeps albums above tracks"
+#~ msgstr "Žanra detaļas tur albumus virs celiņiem"
+
+#~ msgid "Issues"
+#~ msgstr "Problēmas"
 
 #~ msgid "Keep the lyrics section visible below the queue"
 #~ msgstr "Turēt tekstu sadaļu redzamu zem rindas"
@@ -1725,12 +1812,75 @@ msgstr ""
 #~ msgid "Keep the queue sidebar visible in the main window"
 #~ msgstr "Turēt rindas sānu paneli redzamu galvenajā logā"
 
+#~ msgid "Left sidebar density"
+#~ msgstr "Kreisā sānu paneļa blīvums"
+
+#~ msgid "Loading…"
+#~ msgstr "Ielādē…"
+
+#~ msgid "Local mapping saved. Sync to preview matches"
+#~ msgstr ""
+#~ "Lokālā kartēšana saglabāta. Sinhronizējiet, lai priekšskatītu atbilstības"
+
+#~ msgid "Map Local"
+#~ msgstr "Kartēt lokālo"
+
+#~ msgid "Menu"
+#~ msgstr "Izvēlne"
+
+#~ msgid "No active server"
+#~ msgstr "Nav aktīva servera"
+
+#~ msgid "No queue items match the search"
+#~ msgstr "Neviena rindas vieta neatbilst meklējumam"
+
+#~ msgid "No server"
+#~ msgstr "Nav servera"
+
+#~ msgid "No tracks match the search."
+#~ msgstr "Neviens celiņš neatbilst meklējumam."
+
+#~ msgid "Play next"
+#~ msgstr "Atskaņot nākamo"
+
+#~ msgid "Play now"
+#~ msgstr "Atskaņot tagad"
+
+#~ msgid "Playlist detail will use the track table"
+#~ msgstr "Atskaņošanas saraksta detaļas izmantos celiņu tabulu"
+
+#~ msgid "Release notes"
+#~ msgstr "Izdevuma piezīmes"
+
+#~ msgid "Remove from queue"
+#~ msgstr "Noņemt no rindas"
+
+#~ msgid "Restore neutral bands and disable equalizer."
+#~ msgstr "Atjaunot neitrālās joslas un atslēgt ekvalaizeru."
+
+#~ msgid "Saved mapping."
+#~ msgstr "Saglabāta kartēšana."
+
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr "Meklēt servera tekstus pirms ārējiem pakalpojuma sniedzējiem"
 
-#~ msgid "Use remote lyric providers when server lyrics are unavailable"
-#~ msgstr ""
-#~ "Izmantot attālinātos tekstu pakalpojumus, ja servera teksti nav pieejami"
+#~ msgid "Seekbar"
+#~ msgstr "Pozīcijas josla"
+
+#~ msgid "Selected Source"
+#~ msgstr "Izvēlētais avots"
+
+#~ msgid "Settings"
+#~ msgstr "Iestatījumi"
+
+#~ msgid "Sort by"
+#~ msgstr "Kārtot pēc"
+
+#~ msgid "Sources"
+#~ msgstr "Avoti"
+
+#~ msgid "Stop"
+#~ msgstr "Apturēt"
 
 #~ msgid ""
 #~ "Stop playback reporting, external lyrics, external metadata, "
@@ -1739,71 +1889,8 @@ msgstr ""
 #~ "Pārtraukt atskaņošanas pārskatu, ārējo tekstu, ārējo metadatu, paziņojumu "
 #~ "un Discord IPC darbību"
 
-#~ msgid "Music Server"
-#~ msgstr "Mūzikas serveris"
-
-#~ msgid "Left sidebar density"
-#~ msgstr "Kreisā sānu paneļa blīvums"
-
-#~ msgid "Choose when the left sidebar uses compact navigation"
-#~ msgstr "Izvēlieties, kad kreisais sānu panelis izmanto kompakto navigāciju"
-
-#~ msgid "Remove from queue"
-#~ msgstr "Noņemt no rindas"
-
-#~ msgid "Seekbar"
-#~ msgstr "Pozīcijas josla"
-
-#~ msgid "Play now"
-#~ msgstr "Atskaņot tagad"
-
-#~ msgid "Play next"
-#~ msgstr "Atskaņot nākamo"
-
-#~ msgid "Add to queue"
-#~ msgstr "Pievienot rindai"
-
-#~ msgid "No server"
-#~ msgstr "Nav servera"
-
-#~ msgid "Current server"
-#~ msgstr "Pašreizējais serveris"
-
-#~ msgid "no account"
-#~ msgstr "nav konta"
-
-#~ msgid "No queue items match the search"
-#~ msgstr "Neviena rindas vieta neatbilst meklējumam"
-
-#~ msgid "Artist detail will use cached album and track groups"
-#~ msgstr "Mākslinieka detaļas izmantos kešotos albumu un celiņu grupas"
-
-#~ msgid "Genre detail keeps albums above tracks"
-#~ msgstr "Žanra detaļas tur albumus virs celiņiem"
-
-#~ msgid "Playlist detail will use the track table"
-#~ msgstr "Atskaņošanas saraksta detaļas izmantos celiņu tabulu"
-
-#~ msgid "Loading…"
-#~ msgstr "Ielādē…"
-
-#~ msgid "Loading folders…"
-#~ msgstr "Ielādē mapes…"
-
-#~ msgid "Cached library data will appear here as sync pages finish"
-#~ msgstr ""
-#~ "Kešotie bibliotēkas dati parādīsies šeit, kad sinhronizācijas lapas tiks "
-#~ "pabeigtas"
-
-#~ msgid "The selected cached album was not found"
-#~ msgstr "Izvēlētais kešotais albums netika atrasts"
-
-#~ msgid "No cached results found"
-#~ msgstr "Kešoti rezultāti nav atrasti"
-
-#~ msgid "Type a query in the sidebar search field to search the local cache"
-#~ msgstr ""
-#~ "Ievadiet vaicājumu sānu meklēšanas laukā, lai meklētu lokālo kešatmiņu"
+#~ msgid "Sync Status"
+#~ msgstr "Sinhronizācijas statuss"
 
 #~ msgid ""
 #~ "Thank you for trying out Rufin! This a new app that is still in heavy "
@@ -1814,80 +1901,52 @@ msgstr ""
 #~ "izstrāde vēl turpinās. Ja jums rodas problēmas vai idejas, lūdzu, "
 #~ "atveriet ziņojumu Github."
 
+#~ msgid "The selected cached album was not found"
+#~ msgstr "Izvēlētais kešotais albums netika atrasts"
+
+#~ msgid "This removes the folder from the Local source"
+#~ msgstr "Tas noņem mapi no lokālā avota"
+
+#~ msgid "Try to fetch artwork from internet when server artwork is missing"
+#~ msgstr "Mēģina ielādēt attēlus no interneta, ja servera attēli nav pieejami"
+
+#~ msgid "Type a query in the sidebar search field to search the local cache"
+#~ msgstr ""
+#~ "Ievadiet vaicājumu sānu meklēšanas laukā, lai meklētu lokālo kešatmiņu"
+
+#~ msgid "Unsaved changes."
+#~ msgstr "Nesaglabātas izmaiņas."
+
+#~ msgid "Use remote lyric providers when server lyrics are unavailable"
+#~ msgstr ""
+#~ "Izmantot attālinātos tekstu pakalpojumus, ja servera teksti nav pieejami"
+
+#~ msgid "Use server streams only"
+#~ msgstr "Izmantot tikai servera straumes"
+
+#~ msgid "View all tracks"
+#~ msgstr "Skatīt visas dziesmas"
+
 #~ msgid "Website"
 #~ msgstr "Tīmekļa vietne"
 
-#~ msgid "Issues"
-#~ msgstr "Problēmas"
+#~ msgid "albums"
+#~ msgstr "albumi"
 
-#~ msgid "Flat"
-#~ msgstr "Plakans"
+#~ msgid "appears on"
+#~ msgstr "parādās ierakstos"
 
-#~ msgid "Classical"
-#~ msgstr "Klasiskais"
+#~ msgid "folders"
+#~ msgstr "mapes"
 
-#~ msgid "Club"
-#~ msgstr "Klubs"
+#~ msgid "folders selected"
+#~ msgstr "izvēlētas mapes"
 
-#~ msgid "Dance"
-#~ msgstr "Dejas"
+#~ msgid "no account"
+#~ msgstr "nav konta"
 
-#~ msgid "Full Bass"
-#~ msgstr "Pilns bass"
+#~ msgid "results"
+#~ msgstr "rezultāti"
 
-#~ msgid "Full Treble"
-#~ msgstr "Pilns augšējais"
-
-#~ msgid "Laptop/Headphones"
-#~ msgstr "Klēpjdators/Austiņas"
-
-#~ msgid "Rock"
-#~ msgstr "Roks"
-
-#~ msgid "Pop"
-#~ msgstr "Popmūzika"
-
-#~ msgid "Techno"
-#~ msgstr "Tehno"
-
-#~ msgid "Custom"
-#~ msgstr "Pielāgots"
-
-#~ msgid "Restore neutral bands and disable equalizer."
-#~ msgstr "Atjaunot neitrālās joslas un atslēgt ekvalaizeru."
-
-#~ msgid "No tracks match the search."
-#~ msgstr "Neviens celiņš neatbilst meklējumam."
-
-#~ msgid "Configure columns"
-#~ msgstr "Konfigurēt kolonnas"
-
-#~ msgid "Sort by"
-#~ msgstr "Kārtot pēc"
-
-#~ msgid "EPs"
-#~ msgstr "EP"
-
-#~ msgid "EP"
-#~ msgstr "EP"
-
-#~ msgid "Singles"
-#~ msgstr "Singli"
-
-#~ msgid "Single"
-#~ msgstr "Singls"
-
-#~ msgid "Collections"
-#~ msgstr "Kolekcijas"
-
-#~ msgid "Collection"
-#~ msgstr "Kolekcija"
-
-#~ msgid "Other"
-#~ msgstr "Cits"
-
-#~ msgid "Release"
-#~ msgstr "Izdevums"
-
-#~ msgid "Connected as"
-#~ msgstr "Savienots kā"
+#~ msgid "tracks"
+#~ msgstr "dziesmas"

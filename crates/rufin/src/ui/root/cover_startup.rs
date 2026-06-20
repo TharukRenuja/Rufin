@@ -152,9 +152,10 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
         .and_then(|status| status.strip_suffix(" server…"))
         .filter(|provider| !provider.trim().is_empty())
     {
+        let provider = status_provider_label(provider);
         return Some(tr_with(
             "Checking {provider} server…",
-            &[("provider", provider)],
+            &[("provider", provider.as_str())],
         ));
     }
     match status {
@@ -223,7 +224,11 @@ pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
         .and_then(|status| status.strip_suffix(" library…"))
         .filter(|provider| !provider.trim().is_empty())
     {
-        return tr_with("Syncing {provider} library…", &[("provider", provider)]);
+        let provider = status_provider_label(provider);
+        return tr_with(
+            "Syncing {provider} library…",
+            &[("provider", provider.as_str())],
+        );
     }
     if status.starts_with("Caching library… This may take some time.") {
         return tr("Caching library… This may take some time.");
@@ -241,6 +246,14 @@ pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
         "Cached library ready" => tr("Cached library ready"),
         "Library sync complete" => tr("Library sync complete"),
         _ => status.to_string(),
+    }
+}
+
+fn status_provider_label(provider: &str) -> String {
+    if provider == "Music Server" {
+        tr("Music Server")
+    } else {
+        provider.to_string()
     }
 }
 
@@ -1430,7 +1443,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let first_run_connection_pending =
                         shell.state.first_run_connection_pending.get();
                     let display_status = if sync_complete && first_run_connection_pending {
-                        tr(LIBRARY_PREPARING_STATUS)
+                        library_preparing_status()
                     } else {
                         status
                     };

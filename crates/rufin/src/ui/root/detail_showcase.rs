@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::i18n::msgid;
+
 const DETAIL_HEADER_SPACING: i32 = 18;
 const DETAIL_TRASH_ICON_SIZE: i32 = 18;
 
@@ -421,7 +423,7 @@ pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> O
         row.append(&detail_external_link_button(
             shell,
             "io.github.screwys.Rufin.external.lastfm",
-            "Open on Last.fm",
+            msgid("Open on Last.fm"),
             url,
         ));
     }
@@ -431,7 +433,7 @@ pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> O
         row.append(&detail_external_link_button(
             shell,
             "io.github.screwys.Rufin.external.musicbrainz",
-            "Open on MusicBrainz",
+            msgid("Open on MusicBrainz"),
             url,
         ));
     }
@@ -467,7 +469,7 @@ pub(in crate::ui) fn artist_external_links(
         row.append(&detail_external_link_button(
             shell,
             "io.github.screwys.Rufin.external.lastfm",
-            "Open on Last.fm",
+            msgid("Open on Last.fm"),
             url,
         ));
     }
@@ -477,7 +479,7 @@ pub(in crate::ui) fn artist_external_links(
         row.append(&detail_external_link_button(
             shell,
             "io.github.screwys.Rufin.external.musicbrainz",
-            "Open on MusicBrainz",
+            msgid("Open on MusicBrainz"),
             url,
         ));
     }
@@ -599,7 +601,7 @@ fn server_entity_url(shell: &Shell, entity_id: &str) -> Option<DetailExternalLin
         return None;
     }
     Some(DetailExternalLink {
-        label: "Open on Jellyfin",
+        label: msgid("Open on Jellyfin"),
         icon_name: server_external_icon_name(&server.provider),
         url: format!("{base_url}/web/index.html#!/details?id={item_id}"),
     })

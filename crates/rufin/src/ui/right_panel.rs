@@ -159,11 +159,11 @@ impl Shell {
 
     pub(super) fn update_right_panel_button(&self) {
         let visible = self.state.resolved_right_sidebar.get().is_visible();
-        let label = tr(if visible {
-            "Hide sidebar"
+        let label = if visible {
+            tr("Hide sidebar")
         } else {
-            "Show sidebar"
-        });
+            tr("Show sidebar")
+        };
         self.player_controls.queue_icon_open.set(visible);
         self.player_controls.queue_icon.queue_draw();
         self.player_controls
@@ -201,11 +201,11 @@ impl Shell {
 
     pub(super) fn update_lyrics_panel_button(&self) {
         let visible = self.state.lyrics_panel_visible.get();
-        let label = tr(if visible {
-            "Hide lyrics"
+        let label = if visible {
+            tr("Hide lyrics")
         } else {
-            "Show lyrics"
-        });
+            tr("Show lyrics")
+        };
         self.player_controls.lyrics_icon_open.set(visible);
         self.player_controls.lyrics_icon.queue_draw();
         self.player_controls
