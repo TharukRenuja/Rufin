@@ -1,23 +1,5 @@
 use super::*;
 
-pub(super) fn map_reqwest_error(mut error: reqwest::Error) -> ProviderError {
-    if let Some(url) = error.url_mut() {
-        redact_subsonic_query(url);
-    }
-    let message = error.to_string();
-    if message.to_lowercase().contains("certificate") || message.to_lowercase().contains("tls") {
-        ProviderError::Tls(message)
-    } else if error.is_connect() || error.is_request() || error.is_timeout() {
-        ProviderError::Network(message)
-    } else if let Some(status) = error.status() {
-        ProviderError::Server {
-            status: status.as_u16(),
-            message,
-        }
-    } else {
-        ProviderError::Other(message)
-    }
-}
 pub(super) fn redact_subsonic_query(url: &mut Url) {
     let pairs = url
         .query_pairs()

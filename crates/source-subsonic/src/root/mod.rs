@@ -4,7 +4,7 @@ use domain::{
     HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
     ServerId, ServerIdentity, Track, TrackId, normalize_release_types,
 };
-use reqwest::{Client, StatusCode, Url, header};
+use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
 use source::{

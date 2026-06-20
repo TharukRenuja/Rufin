@@ -2936,8 +2936,12 @@ version = "0.7.7"
 dependencies = [
  "async-trait",
  "domain",
+ "reqwest",
  "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]
