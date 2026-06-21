@@ -292,18 +292,27 @@ impl Shell {
         }
         #[cfg(unix)]
         self.refresh_tray_private_mode();
+        if enabled {
+            self.withdraw_now_playing_notification();
+        }
         self.update_discord_presence(&self.state.player.borrow());
         self.render_lyrics_panel();
     }
 
     pub(super) fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {
-        self.update_app_settings("notification setting", |settings| {
-            if settings.notifications_enabled == enabled {
-                return false;
-            }
-            settings.notifications_enabled = enabled;
-            true
-        });
+        if self
+            .update_app_settings("notification setting", |settings| {
+                if settings.notifications_enabled == enabled {
+                    return false;
+                }
+                settings.notifications_enabled = enabled;
+                true
+            })
+            .is_some()
+            && !enabled
+        {
+            self.withdraw_now_playing_notification();
+        }
     }
 
     pub(super) fn set_control_notifications_enabled(self: &Rc<Self>, enabled: bool) {

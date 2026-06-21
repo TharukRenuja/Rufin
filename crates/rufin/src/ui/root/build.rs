@@ -30,6 +30,13 @@ pub(in crate::ui) fn playback_artwork_cache_keys(
         })
         .collect()
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct PlaybackArtworkLookup {
+    pub(in crate::ui) image_ref: ImageRef,
+    pub(in crate::ui) preferred_size: u32,
+    pub(in crate::ui) candidate_keys: Vec<String>,
+    pub(in crate::ui) memory_path: Option<PathBuf>,
+}
 pub(in crate::ui) fn playback_artwork_path_from_lookup(
     server_id: &ServerId,
     image_ref: &ImageRef,
@@ -39,6 +46,19 @@ pub(in crate::ui) fn playback_artwork_path_from_lookup(
     playback_artwork_cache_keys(server_id, image_ref, preferred_size)
         .into_iter()
         .find_map(|key| lookup(&key).map(|path| PlaybackArtworkPath { key, path }))
+}
+pub(in crate::ui) fn playback_artwork_path_from_lookup_context(
+    lookup: PlaybackArtworkLookup,
+    mut key_lookup: impl FnMut(&str) -> Option<PathBuf>,
+    fallback_lookup: impl FnOnce(&ImageRef, u32) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    lookup.memory_path.or_else(|| {
+        lookup
+            .candidate_keys
+            .iter()
+            .find_map(|key| key_lookup(key))
+            .or_else(|| fallback_lookup(&lookup.image_ref, lookup.preferred_size))
+    })
 }
 pub(in crate::ui) fn playback_artwork_key_matches(
     server_id: &ServerId,

@@ -165,6 +165,40 @@ impl Shell {
             cache.get(key).cloned()
         })
     }
+    pub(in crate::ui) fn current_playback_artwork_lookup(
+        &self,
+        entry: &QueueEntry,
+        preferred_size: u32,
+    ) -> Option<PlaybackArtworkLookup> {
+        let server_id = self.current_playback_server_id()?;
+        let image_ref = entry.image_ref.as_ref()?;
+        if self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .is_some_and(|server| server.provider == "fake")
+        {
+            return None;
+        }
+        if external_metadata::is_external_image_ref(image_ref)
+            && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
+        {
+            return None;
+        }
+        let candidate_keys = playback_artwork_cache_keys(&server_id, image_ref, preferred_size);
+        let cache = self.state.cover_path_cache.borrow();
+        let memory_path = candidate_keys
+            .iter()
+            .find_map(|key| cache.get(key).cloned());
+        Some(PlaybackArtworkLookup {
+            image_ref: image_ref.clone(),
+            preferred_size,
+            candidate_keys,
+            memory_path,
+        })
+    }
 
     pub(in crate::ui) fn current_playback_art_key_matches(
         &self,

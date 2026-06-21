@@ -1,64 +1,6 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn notify_now_playing(self: &Rc<Self>, snapshot: &PlaybackSnapshot) {
-        let settings = self.state.settings.borrow().clone();
-        if !crate::external_activity::notifications(&settings) {
-            return;
-        }
-        if !matches!(
-            snapshot.state,
-            PlaybackState::Playing | PlaybackState::Buffering
-        ) {
-            return;
-        }
-        let Some(entry) = snapshot.current.as_ref() else {
-            return;
-        };
-        let title = entry.title.clone();
-        let body = format!("{} - {}", entry.artist, entry.album);
-        let track_id = entry.track_id.clone();
-        let artwork_path = self
-            .current_playback_cached_artwork_path(entry, THUMB_COVER_SIZE)
-            .map(|artwork| artwork.path);
-        let shell = Rc::clone(self);
-        glib::spawn_future_local(async move {
-            let icon_bytes = match artwork_path {
-                Some(path) => gtk::gio::spawn_blocking(move || notification_icon_path(&path))
-                    .await
-                    .ok()
-                    .flatten(),
-                None => None,
-            };
-            let settings = shell.state.settings.borrow();
-            if !crate::external_activity::notifications(&settings) {
-                return;
-            }
-            drop(settings);
-            let still_current = {
-                let player = shell.state.player.borrow();
-                matches!(
-                    player.state,
-                    PlaybackState::Playing | PlaybackState::Buffering
-                ) && player
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| current.track_id == track_id)
-            };
-            if !still_current {
-                return;
-            }
-            let notification = gio::Notification::new(&title);
-            notification.set_body(Some(&body));
-            if let Some(bytes) = icon_bytes {
-                let bytes = glib::Bytes::from_owned(bytes);
-                notification.set_icon(&gio::BytesIcon::new(&bytes));
-            }
-            shell
-                .application
-                .send_notification(Some("now-playing"), &notification);
-        });
-    }
     pub(in crate::ui) fn update_lyrics_highlight(self: &Rc<Self>) {
         self.cancel_scheduled_lyrics_highlight();
         self.update_lyrics_highlight_at(self.current_position_millis());

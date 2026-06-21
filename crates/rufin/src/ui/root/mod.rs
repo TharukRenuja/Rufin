@@ -31,6 +31,7 @@ mod login;
 mod mpris;
 #[path = "../navigation.rs"]
 mod navigation;
+mod now_playing_notification;
 #[path = "../paging.rs"]
 mod paging;
 #[path = "../player.rs"]
@@ -360,6 +361,7 @@ pub(in crate::ui) struct AppState {
     mpris_position_state: RefCell<Option<mpris::MprisPositionState>>,
     #[cfg(unix)]
     mpris_update_generation: Rc<Cell<u64>>,
+    now_playing_native_notification_id: Cell<u32>,
     #[cfg(unix)]
     tray_handle: RefCell<Option<tray::TrayHandle>>,
     #[cfg(unix)]
@@ -666,6 +668,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         mpris_position_state: RefCell::new(None),
         #[cfg(unix)]
         mpris_update_generation: Rc::new(Cell::new(0)),
+        now_playing_native_notification_id: Cell::new(0),
         #[cfg(unix)]
         tray_handle: RefCell::new(None),
         #[cfg(unix)]
