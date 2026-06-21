@@ -219,13 +219,7 @@ fn server_source_subtitle(
         String::new()
     };
     let cache = if selected {
-        format!(
-            "{}: {}, {}. {}",
-            tr("Cached"),
-            album_count_text(library.cached_album_count as u64),
-            track_count_text(library.cached_track_count as u64),
-            library_sync_status_text(&library.sync_status)
-        )
+        selected_server_cache_line(library)
     } else {
         String::new()
     };
@@ -243,12 +237,25 @@ fn server_source_subtitle(
     .join("\n")
 }
 
-fn library_sync_status_text(status: &str) -> String {
+fn selected_server_cache_line(library: &LibrarySnapshot) -> String {
+    let line = format!(
+        "{}: {}, {}",
+        tr("Cached"),
+        album_count_text(library.cached_album_count as u64),
+        track_count_text(library.cached_track_count as u64)
+    );
+    match library_sync_status_detail(&library.sync_status) {
+        Some(status) => format!("{line}. {status}"),
+        None => line,
+    }
+}
+
+fn library_sync_status_detail(status: &str) -> Option<String> {
     let status = status.trim();
     match status {
-        "Cached library ready" => tr("Cached library ready"),
-        "Library sync complete" => tr("Library sync complete"),
-        _ => status.to_string(),
+        "" | "Cached library ready" => None,
+        "Library sync complete" => Some(tr("Library sync complete")),
+        _ => Some(status.to_string()),
     }
 }
 
