@@ -1,5 +1,6 @@
 use crate::i18n::tr_with;
 
+use super::now_playing_notification::now_playing_notification_should_withdraw;
 use super::*;
 
 const MOUSE_BACK_BUTTON: u32 = 8;
@@ -1303,6 +1304,12 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     );
                     shell.update_bottom_player();
                     shell.sync_auto_dj(auto_dj_enabled);
+                    if now_playing_notification_should_withdraw(
+                        &shell.state.settings.borrow(),
+                        &next_snapshot,
+                    ) {
+                        shell.withdraw_now_playing_notification();
+                    }
                     if shell.state.source_switch_preparing.get() {
                         if previous_track != next_track {
                             *shell.state.lyrics.borrow_mut() = None;

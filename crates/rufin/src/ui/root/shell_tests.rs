@@ -3,6 +3,12 @@ use super::lyrics_playback_state::{
     allow_loaded_lyrics_cache_revisit, clear_matching_lyrics_loading,
     loaded_lyrics_matches_current, lyrics_loading_matches_current,
 };
+use super::now_playing_notification::{
+    NativeNowPlayingNotification, now_playing_notification_artwork_uri,
+    now_playing_notification_can_send, now_playing_notification_hints,
+    now_playing_notification_matches_current, now_playing_notification_parameters,
+    now_playing_notification_should_withdraw,
+};
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_height_for_position,
@@ -109,6 +115,50 @@ pub(in crate::ui) fn shell_use_thumbnail() {
 }
 
 #[test]
+pub(in crate::ui) fn shell_now_playing_artwork_uses_disk_cache_when_memory_is_cold() {
+    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+    let disk_path = PathBuf::from("/tmp/rufin-disk-cover.jpg");
+    let missing_path = PathBuf::from("/tmp/rufin-missing-cover.jpg");
+    let lookup = super::PlaybackArtworkLookup {
+        image_ref: image_ref.clone(),
+        preferred_size: super::THUMB_COVER_SIZE,
+        candidate_keys: vec!["cover-96".to_string(), "cover-256".to_string()],
+        memory_path: None,
+    };
+
+    let path = super::playback_artwork_path_from_lookup_context(
+        lookup,
+        |key| (key == "cover-256").then(|| disk_path.clone()),
+        |_, _| Some(missing_path.clone()),
+    )
+    .expect("disk cover path");
+
+    assert_eq!(path, disk_path);
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_artwork_prefers_memory_cache() {
+    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+    let memory_path = PathBuf::from("/tmp/rufin-memory-cover.jpg");
+    let disk_path = PathBuf::from("/tmp/rufin-disk-cover.jpg");
+    let lookup = super::PlaybackArtworkLookup {
+        image_ref,
+        preferred_size: super::THUMB_COVER_SIZE,
+        candidate_keys: vec!["cover-96".to_string()],
+        memory_path: Some(memory_path.clone()),
+    };
+
+    let path = super::playback_artwork_path_from_lookup_context(
+        lookup,
+        |_| Some(disk_path.clone()),
+        |_, _| None,
+    )
+    .expect("memory cover path");
+
+    assert_eq!(path, memory_path);
+}
+
+#[test]
 pub(in crate::ui) fn shell_accept_size() {
     let server_id = ServerId::new("server:one");
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
@@ -149,6 +199,133 @@ pub(in crate::ui) fn shell_playback_portals() {
 
     assert_eq!(icon.width(), super::THUMB_COVER_SIZE as i32);
     assert_eq!(icon.height(), super::THUMB_COVER_SIZE as i32);
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_notification_gates_send_and_withdraw() {
+    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+    let mut settings = AppSettings {
+        notifications_enabled: true,
+        ..AppSettings::default()
+    };
+    let mut snapshot = super::PlaybackSnapshot {
+        current: Some(test_queue_entry("Current", image_ref)),
+        state: super::PlaybackState::Playing,
+        ..super::PlaybackSnapshot::default()
+    };
+
+    assert!(now_playing_notification_can_send(&settings, &snapshot));
+    assert!(!now_playing_notification_should_withdraw(
+        &settings, &snapshot
+    ));
+
+    snapshot.state = super::PlaybackState::Stopped;
+    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    assert!(now_playing_notification_should_withdraw(
+        &settings, &snapshot
+    ));
+
+    snapshot.state = super::PlaybackState::Paused;
+    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    assert!(!now_playing_notification_should_withdraw(
+        &settings, &snapshot
+    ));
+
+    settings.notifications_enabled = false;
+    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    assert!(now_playing_notification_should_withdraw(
+        &settings, &snapshot
+    ));
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_notification_rejects_stale_completion() {
+    let current_ref = ImageRef::new("jellyfin:album:current", Some("tag-current".to_string()));
+    let mut snapshot = super::PlaybackSnapshot {
+        current: Some(test_queue_entry("Current", current_ref)),
+        state: super::PlaybackState::Playing,
+        ..super::PlaybackSnapshot::default()
+    };
+    let current_track_id = snapshot.current.as_ref().expect("current").track_id.clone();
+
+    assert!(now_playing_notification_matches_current(
+        &snapshot,
+        &current_track_id
+    ));
+
+    let next_ref = ImageRef::new("jellyfin:album:next", Some("tag-next".to_string()));
+    snapshot.current = Some(QueueEntry {
+        track_id: TrackId::fake(9),
+        ..test_queue_entry("Next", next_ref)
+    });
+
+    assert!(!now_playing_notification_matches_current(
+        &snapshot,
+        &current_track_id
+    ));
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_native_notification_uses_image_hint() {
+    let uri = "file:///tmp/rufin-cover.png";
+    let hints = now_playing_notification_hints(Some(uri));
+
+    assert_eq!(
+        hints.lookup::<String>("desktop-entry").expect("lookup"),
+        Some("io.github.screwys.Rufin".to_string())
+    );
+    assert_eq!(
+        hints.lookup::<bool>("transient").expect("lookup"),
+        Some(true)
+    );
+    assert_eq!(
+        hints.lookup::<String>("image-path").expect("lookup"),
+        Some(uri.to_string())
+    );
+    assert_eq!(
+        hints.lookup::<String>("image_path").expect("lookup"),
+        Some(uri.to_string())
+    );
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_native_notification_parameters_replace_previous() {
+    let notification = NativeNowPlayingNotification {
+        title: "Track".to_string(),
+        body: "Artist - Album".to_string(),
+        artwork_uri: Some("file:///tmp/rufin-cover.png".to_string()),
+    };
+    let parameters = now_playing_notification_parameters(&notification, 42);
+
+    assert_eq!(parameters.type_().as_str(), "(susssasa{sv}i)");
+    assert_eq!(
+        parameters.try_child_get::<String>(0).expect("app name"),
+        Some("Rufin".to_string())
+    );
+    assert_eq!(
+        parameters.try_child_get::<u32>(1).expect("replace id"),
+        Some(42)
+    );
+    assert_eq!(
+        parameters.try_child_get::<String>(2).expect("app icon"),
+        Some("io.github.screwys.Rufin".to_string())
+    );
+    assert_eq!(
+        parameters.try_child_get::<String>(3).expect("title"),
+        Some("Track".to_string())
+    );
+    assert_eq!(
+        parameters.try_child_get::<String>(4).expect("body"),
+        Some("Artist - Album".to_string())
+    );
+}
+
+#[test]
+pub(in crate::ui) fn shell_now_playing_artwork_path_becomes_file_uri() {
+    let uri = now_playing_notification_artwork_uri(&PathBuf::from("/tmp/rufin cover.png"))
+        .expect("file uri");
+
+    assert_eq!(uri, "file:///tmp/rufin%20cover.png");
 }
 
 #[test]
