@@ -20,7 +20,7 @@ xgettext \
   --language=Rust \
   --escape \
   --no-location \
-  --sort-output \
+  --sort-by-file \
   --omit-header \
   --package-name=Rufin \
   --msgid-bugs-address=https://github.com/screwys/Rufin/issues \
