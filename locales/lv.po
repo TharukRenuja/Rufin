@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-19 14:43+0000\n"
+"PO-Revision-Date: 2026-06-21 21:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -184,11 +184,10 @@ msgstr "Kešots"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Kešotie ieraksti parādīsies šeit pēc sinhronizācijas pabeigšanas"
 
-#, fuzzy
 msgid "Cached library data will appear here as sync pages finish."
 msgstr ""
 "Kešotie bibliotēkas dati parādīsies šeit, kad sinhronizācijas lapas tiks "
-"pabeigtas"
+"pabeigtas."
 
 msgid "Cached library ready"
 msgstr "Kešotā bibliotēka ir gatava"
@@ -196,19 +195,15 @@ msgstr "Kešotā bibliotēka ir gatava"
 msgid "Caching Library"
 msgstr "Kešo bibliotēku"
 
-#, fuzzy
 msgid "Caching library artwork…"
 msgstr "Kešo albumu vāciņus…"
 
-#, fuzzy
 msgid "Caching library… This may take some time."
 msgstr "Kešo bibliotēku… Tas var aizņemt kādu laiku."
 
-#, fuzzy
 msgid "Caching local library…"
 msgstr "Kešo lokālo bibliotēku…"
 
-#, fuzzy
 msgid "Caching local library… This may take some time."
 msgstr "Kešo lokālo bibliotēku… Tas var aizņemt kādu laiku."
 
@@ -232,7 +227,7 @@ msgstr ""
 "konfigurācijas slepenās atslēgas un jūs tiksiet izrakstīts no visām sesijām, "
 "ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Checking {provider} server…"
 msgstr "Pārbauda {provider} serveri…"
 
@@ -333,7 +328,6 @@ msgstr "Savienots"
 msgid "Connected as {username}"
 msgstr "Pieslēdzies kā {username}"
 
-#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Savienojas ar mūzikas serveri…"
 
@@ -582,7 +576,7 @@ msgid "Image"
 msgstr "Attēls"
 
 msgid "Installed"
-msgstr ""
+msgstr "Uzstādīts"
 
 msgid "Interface"
 msgstr "Saskarne"
@@ -647,7 +641,6 @@ msgstr "ListenBrainz skroblēšana"
 msgid "Loaded in lyrics panel."
 msgstr "Ielādēts tekstu panelī."
 
-#, fuzzy
 msgid "Loading folders…"
 msgstr "Ielādē mapes…"
 
@@ -804,9 +797,8 @@ msgstr ""
 msgid "No Servers Found"
 msgstr "Serveri nav atrasti"
 
-#, fuzzy
 msgid "No cached results found."
-msgstr "Kešoti rezultāti nav atrasti"
+msgstr "Kešoti rezultāti nav atrasti."
 
 msgid "No cached server path yet"
 msgstr "Vēl nav kešota servera ceļa"
@@ -917,11 +909,9 @@ msgstr "Atvērt vietnē MusicBrainz"
 msgid "Open release notes"
 msgstr "Atvērt izdevuma piezīmes"
 
-#, fuzzy
 msgid "Opening Last.fm authorization…"
 msgstr "Atver Last.fm autorizāciju…"
 
-#, fuzzy
 msgid "Opening Libre.fm authorization…"
 msgstr "Atver Libre.fm autorizāciju…"
 
@@ -1015,9 +1005,8 @@ msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
 msgid "Preferences"
 msgstr "Iestatījumi"
 
-#, fuzzy
 msgid "Preparing library…"
-msgstr "Gatavo bibliotēku…"
+msgstr "Sagatavo bibliotēku…"
 
 msgid "Preset"
 msgstr "Iepriekš iestatīts"
@@ -1234,18 +1223,15 @@ msgstr "Meklēt rindā"
 msgid "Searching Local Network"
 msgstr "Meklē lokālajā tīklā"
 
-#, fuzzy
 msgid "Searching for Jellyfin servers on the local network…"
 msgstr "Tiek meklēti Jellyfin serveri lokālajā tīklā…"
 
 msgid "Searching will start automatically"
 msgstr "Meklēšana tiks automātiski uzsākta"
 
-#, fuzzy
 msgid "Searching..."
-msgstr "Meklē…"
+msgstr "Tiek veikta meklēšana..."
 
-#, fuzzy
 msgid "Searching…"
 msgstr "Meklē…"
 
@@ -1307,10 +1293,8 @@ msgstr "Servera izvēlētājs"
 msgid "Server settings saved."
 msgstr "Servera iestatījumi saglabāti."
 
-#, fuzzy
 msgid "Server settings saved. Resyncing library…"
-msgstr ""
-"Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
+msgstr "Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
 
 msgid "Servers"
 msgstr "Serveri"
@@ -1428,7 +1412,6 @@ msgstr "Straumes kvalitāte"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-#, fuzzy
 msgid "Switching library…"
 msgstr "Pārslēdz bibliotēku…"
 
@@ -1438,7 +1421,7 @@ msgstr "Sinhronizācija jau notiek."
 msgid "Synced lyrics"
 msgstr "Sinhronizēti teksti"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Syncing {provider} library…"
 msgstr "Sinhronizē bibliotēku no {provider}…"
 
@@ -1568,7 +1551,7 @@ msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
 
 msgid "Version History"
-msgstr ""
+msgstr "Versiju vēsture"
 
 msgid "View"
 msgstr "Skats"
@@ -1643,10 +1626,10 @@ msgid "to"
 msgstr "uz"
 
 msgid "today"
-msgstr ""
+msgstr "šodien"
 
 msgid "yesterday"
-msgstr ""
+msgstr "vakar"
 
 #, rust-format
 msgid "{count} album"
@@ -1655,12 +1638,12 @@ msgstr[0] "{count} albumi"
 msgstr[1] "{count} albums"
 msgstr[2] "{count} albumi"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
-msgstr[0] "{count} albumi"
+msgstr[0] "pirms {count} dienām"
 msgstr[1] "{count} albums"
-msgstr[2] "{count} albumi"
+msgstr[2] "pirms {count} dienām"
 
 #, rust-format
 msgid "{count} folder"
@@ -1676,12 +1659,12 @@ msgstr[0] "izvēlētas {count} mapes"
 msgstr[1] "izvēlētā {count} mape"
 msgstr[2] "izvēlētas {count} mapes"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
-msgstr[0] "{count} dziesmas"
-msgstr[1] "{count} dziesma"
-msgstr[2] "{count} dziesmas"
+msgstr[0] "pirms {count} menēšiem"
+msgstr[1] "pirms {count} menēša"
+msgstr[2] "pirms {count} menēšiem"
 
 #, rust-format
 msgid "{count} result"
@@ -1697,19 +1680,19 @@ msgstr[0] "{count} dziesmas"
 msgstr[1] "{count} dziesma"
 msgstr[2] "{count} dziesmas"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
-msgstr[0] "{count} albumi"
-msgstr[1] "{count} albums"
-msgstr[2] "{count} albumi"
+msgstr[0] "pirms {count} nedēļām"
+msgstr[1] "pirms {count} nedēļas"
+msgstr[2] "pirms {count} nedēļām"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
-msgstr[0] "{count} dziesmas"
-msgstr[1] "{count} dziesma"
-msgstr[2] "{count} dziesmas"
+msgstr[0] "pirms {count} gadiem"
+msgstr[1] "pirms {count} gada"
+msgstr[2] "pirms {count} gadiem"
 
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"

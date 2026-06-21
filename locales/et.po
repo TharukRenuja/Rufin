@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-20 18:04+0000\n"
+"PO-Revision-Date: 2026-06-21 21:01+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -68,13 +68,11 @@ msgstr "Lisa kasutatav Jellyfini, Subsonicu või OpenSubsonicu server."
 msgid "Add another folder to the Local source"
 msgstr "Lisa veel mõni kaust kohalikuks allikaks"
 
-#, fuzzy
 msgid "Add current"
 msgstr "Lisa praegune"
 
-#, fuzzy
 msgid "Add folders to use the Local source."
-msgstr "Lisage kaustad, et kasutada kohalikku allikat."
+msgstr "Kohaliku andmeallika kasutamiseks lisa kaustad."
 
 msgid "Add music to start a queue."
 msgstr "Esitusjärjekorra koostamiseks lisa muusikat."
@@ -186,44 +184,35 @@ msgstr "Puhverdatud"
 msgid "Cached entries will appear here after sync finishes"
 msgstr "Puhverdatud kirjed on siin nähtavad pärast sünkroonimise lõppu"
 
-#, fuzzy
 msgid "Cached library data will appear here as sync pages finish."
-msgstr "Puhverdatud kirjed ilmuvad siia pärast sünkroonimise lõppu"
+msgstr "Puhverdatud kirjed ilmuvad siia pärast sünkroonimise lõppu."
 
-#, fuzzy
 msgid "Cached library ready"
 msgstr "Puhverdatud meediakogu on valmis"
 
-#, fuzzy
 msgid "Caching Library"
-msgstr "Meediakogu puhverdamine"
+msgstr "Meediakogu on puhverdamisel"
 
-#, fuzzy
 msgid "Caching library artwork…"
-msgstr "Meediakogu piltide puhverdamine…"
+msgstr "Meediakogu pildid on puhverdamisel…"
 
-#, fuzzy
 msgid "Caching library… This may take some time."
-msgstr "Meediakogu puhverdamine... See võib võtta aega."
+msgstr "Muusikakogu on puhverdamisel... Selleks võib kuluda aega."
 
-#, fuzzy
 msgid "Caching local library…"
-msgstr "Puhverdan kokalikku muusikakogu…"
+msgstr "Puhverdan kohalikku muusikakogu…"
 
-#, fuzzy
 msgid "Caching local library… This may take some time."
-msgstr "Puhverdatakse kohalikku meediakogu… See võib võtta aega."
+msgstr "Kohalik muusikakogu on puhverdamisel... Selleks võib kuluda aega."
 
 msgid "Cancel"
 msgstr "Katkesta"
 
-#, fuzzy
 msgid "Change"
 msgstr "Muuda"
 
-#, fuzzy
 msgid "Change Secret Storage"
-msgstr "Muuda salvestuskohta"
+msgstr "Muuda turvalist andmeruumi"
 
 msgid "Change sort order"
 msgstr "Muuda järjestust"
@@ -237,9 +226,9 @@ msgstr ""
 "logib teid välja kõikjal, sealhulgas ka API-saladuste puhul. Rakenduse "
 "vahemälu ei mõjuta see."
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Checking {provider} server…"
-msgstr "Kontrollitakse {provider} serverit…"
+msgstr "Kontrollin teenusepakkuja serverit: {provider}…"
 
 msgid "Choose"
 msgstr "Vali"
@@ -267,7 +256,6 @@ msgstr ""
 "Vali üks või enam, kasuta, mille sisu sellest arvutist tahad skaneerida ja "
 "kuulata"
 
-#, fuzzy
 msgid "Choose the current page layout."
 msgstr "Vali praegune lehe paigutus."
 
@@ -277,7 +265,7 @@ msgstr ""
 "Vali kaust, mida skannida ja millelt muusikat otse selle arvutiga esitada"
 
 msgid "Classical"
-msgstr ""
+msgstr "Klassikaline muusika"
 
 msgid "Clear Cache"
 msgstr "Kustuta vahemälu"
@@ -301,15 +289,13 @@ msgid "Close fullscreen player"
 msgstr "Sulge muusikaesitaja täisekraanivaade"
 
 msgid "Club"
-msgstr ""
+msgstr "Klubimuusika"
 
-#, fuzzy
 msgid "Collection"
-msgstr "Ühendus"
+msgstr "Kogu"
 
-#, fuzzy
 msgid "Collections"
-msgstr "Ühendus"
+msgstr "Kogud"
 
 msgid "Columns"
 msgstr "Veerud"
@@ -326,10 +312,9 @@ msgstr "Kommentaari tekst"
 msgid "Compact"
 msgstr "Kompaktne"
 
-#, fuzzy
 msgid "Configure saved music servers and local playback mappings."
 msgstr ""
-"Konfigureerige salvestatud muusikaserverid ja kohaliku taasesituse seosed."
+"Seadista salvestatud muusikaserverid ja kohaliku taasesituse vastendusi."
 
 msgid "Connect"
 msgstr "Ühenda"
@@ -340,20 +325,18 @@ msgstr "Ühenda muusikaserveriga"
 msgid "Connected"
 msgstr "Ühendatud"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Connected as {username}"
-msgstr "Ühendatud kasutajanimega {username}"
+msgstr "Ühendatud kasutajana {username}"
 
-#, fuzzy
 msgid "Connecting to music server…"
 msgstr "Ühendan muusikaserveriga…"
 
 msgid "Connection"
 msgstr "Ühendus"
 
-#, fuzzy
 msgid "Control notifications"
-msgstr "Teatiste haldamine"
+msgstr "Teavituste haldus"
 
 msgid "Create"
 msgstr "Loo"
@@ -365,15 +348,13 @@ msgid "Crossfade duration"
 msgstr "Risthajumise kestus"
 
 msgid "Custom"
-msgstr ""
+msgstr "Kohandatud"
 
-#, fuzzy
 msgid "Customize display"
-msgstr "Kohanda kuva"
+msgstr "Kohanda ekraanivaadet"
 
-#, fuzzy
 msgid "Dance"
-msgstr "Katkesta"
+msgstr "Tantsumuusika"
 
 msgid "Date added"
 msgstr "Lisamise kuupäev"
@@ -396,7 +377,6 @@ msgstr "Kustuta esitusloend"
 msgid "Descending"
 msgstr "Järjesta kahanevalt"
 
-#, fuzzy
 msgid "Detail"
 msgstr "Üksikasjad"
 
@@ -407,9 +387,8 @@ msgstr "Lugude üksikasjade veerud"
 msgid "Disable private mode"
 msgstr "Lülita privaatne režiim välja"
 
-#, fuzzy
 msgid "Disc"
-msgstr "Ketas"
+msgstr "Plaat"
 
 msgid "Discography"
 msgstr "Diskograafia"
@@ -417,9 +396,8 @@ msgstr "Diskograafia"
 msgid "Discord"
 msgstr "Discord"
 
-#, fuzzy
 msgid "Don't duplicate"
-msgstr "Ära duplikeeri"
+msgstr "Ära tee koopiat"
 
 msgid "Drag to reorder"
 msgstr "Järjekorra muutmiseks lohista"
@@ -428,10 +406,10 @@ msgid "Duration"
 msgstr "Kestus"
 
 msgid "EP"
-msgstr ""
+msgstr "EP"
 
 msgid "EPs"
-msgstr ""
+msgstr "EP-plaadid"
 
 #, fuzzy
 msgid "Edit"
@@ -481,7 +459,6 @@ msgstr "Kaanepiltide otsing välisest teenusest"
 msgid "External lyric lookup"
 msgstr "Laulusõnade otsing välisest teenusest"
 
-#, fuzzy
 msgid "External site links"
 msgstr "Väliste veebisaitide lingid"
 
@@ -498,9 +475,8 @@ msgstr "Lemmiklood"
 msgid "Favorites"
 msgstr "Lemmikud"
 
-#, fuzzy
 msgid "Featured genres"
-msgstr "Esiletoodud žanrid"
+msgstr "Esiletõstetud žanrid"
 
 msgid "Find your ListenBrainz user token"
 msgstr "Vormista ListenBrainz-teenuse kasutaja tunnusluba"
@@ -529,8 +505,8 @@ msgstr "Leitud serverid"
 #, rust-format
 msgid "Found {count} Jellyfin server"
 msgid_plural "Found {count} Jellyfin servers"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Leidus {count} Jellyfini server"
+msgstr[1] "Leidus {count} Jellyfini serverit"
 
 msgid "Full"
 msgstr "Täisvaates"
@@ -558,7 +534,6 @@ msgstr "Genius"
 msgid "Genre"
 msgstr "Žanr"
 
-#, fuzzy
 msgid "Genre tracks"
 msgstr "Žanri lood"
 
@@ -574,13 +549,11 @@ msgstr "Vaata albumit"
 msgid "Go to Artist"
 msgstr "Suundu esitaja juurde"
 
-#, fuzzy
 msgid "Grid"
-msgstr "Võre"
+msgstr "Ruudustikuvaade"
 
-#, fuzzy
 msgid "Grid labels"
-msgstr "Võre sildid"
+msgstr "Ruudustikuvaate sildid"
 
 msgid "Hidden"
 msgstr "Peidetud"
@@ -612,7 +585,7 @@ msgid "Image"
 msgstr "Pilt"
 
 msgid "Installed"
-msgstr ""
+msgstr "Paigaldatud"
 
 msgid "Interface"
 msgstr "Kasutajaliides"
@@ -626,7 +599,6 @@ msgstr "Kui võimalik, siis hoia albumi lugude üleminekud pausideta"
 msgid "Keyboard Shortcuts"
 msgstr "Klaviatuuri kiirklahvid"
 
-#, fuzzy
 msgid "LRCLIB"
 msgstr "LRCLIB"
 
@@ -651,7 +623,6 @@ msgstr "Kraasimine Last.fm-i"
 msgid "Layout"
 msgstr "Paigutus"
 
-#, fuzzy
 msgid "Legacy"
 msgstr "Vanem versioon"
 
@@ -679,7 +650,6 @@ msgstr "Kraasimine ListenBrainzi teenuses"
 msgid "Loaded in lyrics panel."
 msgstr "Laaditud laulusõnade plokis."
 
-#, fuzzy
 msgid "Loading folders…"
 msgstr "Laadin kaustu…"
 
@@ -698,9 +668,8 @@ msgstr "Kohalik meediakogu"
 msgid "Local Playback Access"
 msgstr "Ligipääs kohaliku muusika esitamisele"
 
-#, fuzzy
 msgid "Local Playback Mapping"
-msgstr "Kohaliku taasesituse seosed"
+msgstr "Kohaliku taasesituse vastendused"
 
 msgid "Local Prefix"
 msgstr "Kohalik prefiks"
@@ -711,9 +680,8 @@ msgstr "Kohaliku muusikakogu kaust on salvestatud."
 msgid "Local mapping"
 msgstr "Kohalik vastendus"
 
-#, fuzzy
 msgid "Local mapping saved. Sync to preview matches."
-msgstr "Kohalik vastendus salvestatud. Sünkroonige, et vaadata sobitusi."
+msgstr "Kohalik vastendus salvestatud. Vastete eelvaate nägemiseks sünkrooni."
 
 #, fuzzy
 msgid "Local playback mapping configured"
@@ -731,13 +699,11 @@ msgstr "Halda"
 msgid "Manage Server"
 msgstr "Halda serverit"
 
-#, fuzzy
 msgid "Map server tracks to local files"
-msgstr "Seosta serveri lood kohalike failidega"
+msgstr "Vastenda serveris olevad lood kohalike failidega"
 
-#, fuzzy
 msgid "Mapped Local Path"
-msgstr "Seotud kohaliku kausta tee"
+msgstr "Vastendatud kohalik kaust"
 
 msgid "Match"
 msgstr "Sobita"
@@ -751,15 +717,12 @@ msgstr "Metateave"
 msgid "Minimum year"
 msgstr "Minimaalne aasta"
 
-#, fuzzy
 msgid "More actions"
 msgstr "Veel toiminguid"
 
-#, fuzzy
 msgid "Most Played"
 msgstr "Enimesitatud"
 
-#, fuzzy
 msgid "Most Skipped"
 msgstr "Enim vahele jäetud"
 
@@ -790,7 +753,6 @@ msgstr "MusicBrainz + Last.fm"
 msgid "Mute"
 msgstr "Summuta"
 
-#, fuzzy
 msgid "Muted"
 msgstr "Summutatud"
 
@@ -812,9 +774,8 @@ msgstr "Navidrome"
 msgid "NetEase"
 msgstr "NetEase"
 
-#, fuzzy
 msgid "Never Played"
-msgstr "Kunagi esitamata"
+msgstr "Esitamata"
 
 msgid "New Playlist"
 msgstr "Uus esitusloend"
@@ -837,32 +798,25 @@ msgstr "Järgmine leht"
 msgid "No"
 msgstr "Ei"
 
-#, fuzzy
 msgid "No Jellyfin servers found. Enter the address manually or search again"
 msgstr ""
-"Ühtegi Jellyfini serverit ei leitud. Sisestage aadress käsitsi või otsige "
-"uuesti"
+"Ühtegi Jellyfini serverit ei leidu. Sisesta aadress käsitsi või otsi uuesti"
 
 msgid "No Servers Found"
 msgstr "Ühtegi serverit ei leidu"
 
-#, fuzzy
 msgid "No cached results found."
-msgstr "Kaustasisu ei leidu."
+msgstr "Puhverdatud sisu ei leidu."
 
-#, fuzzy
 msgid "No cached server path yet"
-msgstr "Serveri puhverdatud teed pole veel saadaval"
+msgstr "Serveri puhverdatud asukoht pole veel saadaval"
 
-#, fuzzy
 msgid "No cached tracks yet. Sync the server to preview matches."
 msgstr ""
-"Ühtegi puhverdatud lugu pole veel. Serveri sünkroonimine võimaldab sobivaid "
-"laule eelvaatada."
+"Ühtegi puhverdatud lugu pole veel. Lugude eelvaate jaoks sünkrooni serverist."
 
-#, fuzzy
 msgid "No changes to save."
-msgstr "Muudatusi pole, mida salvestada."
+msgstr "Pole muudatusi, mida salvestada."
 
 msgid "No folder contents found."
 msgstr "Kaustasisu ei leidu."
@@ -907,7 +861,6 @@ msgstr ""
 msgid "No servers configured"
 msgstr "Ühtegi serverit pole seadistatud"
 
-#, fuzzy
 msgid "No songs added"
 msgstr "Ühtegi lugu pole lisatud"
 
@@ -929,7 +882,6 @@ msgstr "Määratlemata"
 msgid "Nothing playing"
 msgstr "Mitte midagi pole esitamisel"
 
-#, fuzzy
 msgid "Notifications"
 msgstr "Teavitused"
 
@@ -954,29 +906,23 @@ msgstr "Vaid esitamata lood"
 msgid "Open fullscreen player"
 msgstr "Ava muusikaesitaja täisekraanivaates"
 
-#, fuzzy
 msgid "Open on Jellyfin"
-msgstr "Jellyfin"
+msgstr "Ava Jellyfinis"
 
-#, fuzzy
 msgid "Open on Last.fm"
-msgstr "Last.fm"
+msgstr "Ava Last.fm-is"
 
-#, fuzzy
 msgid "Open on MusicBrainz"
-msgstr "MusicBrainz"
+msgstr "Ava MusicBrainzis"
 
-#, fuzzy
 msgid "Open release notes"
-msgstr "Ava väljalasketeated"
+msgstr "Vaata versiooniteavet"
 
-#, fuzzy
 msgid "Opening Last.fm authorization…"
-msgstr "Avan Last.fm-i autentimisvaate…"
+msgstr "Avan Last.fm-i autentimisvaadet…"
 
-#, fuzzy
 msgid "Opening Libre.fm authorization…"
-msgstr "Avan Libre.fm-i autentimisvaate…"
+msgstr "Avan Libre.fm-i autentimisvaadet…"
 
 msgid "Optionally map server tracks to files on this computer"
 msgstr ""
@@ -986,7 +932,7 @@ msgid "Original"
 msgstr "Algne"
 
 msgid "Other"
-msgstr ""
+msgstr "Muu"
 
 msgid "Password"
 msgstr "Salasõna"
@@ -1042,11 +988,9 @@ msgstr "Esitusloend"
 msgid "Playlist name"
 msgstr "Esitusloendi nimi"
 
-#, fuzzy
 msgid "Playlist order"
 msgstr "Esitusloendi järjekord"
 
-#, fuzzy
 msgid "Playlist tracks"
 msgstr "Esitusloendi lood"
 
@@ -1057,7 +1001,7 @@ msgid "Plays"
 msgstr "Esitamisi"
 
 msgid "Pop"
-msgstr ""
+msgstr "Poppmuusika"
 
 msgid "Position"
 msgstr "Asukoht"
@@ -1065,18 +1009,15 @@ msgstr "Asukoht"
 msgid "Prefer server lyrics"
 msgstr "Eelista laulusõnu serverist"
 
-#, fuzzy
 msgid "Prefer server playlist covers"
-msgstr "Eelistatakse serveri esitusloendite kaanepilte"
+msgstr "Eelistata serveri esitusloendi kaanepilte"
 
 msgid "Preferences"
 msgstr "Eelistused"
 
-#, fuzzy
 msgid "Preparing library…"
 msgstr "Valmistan muusikakogu ette…"
 
-#, fuzzy
 msgid "Preset"
 msgstr "Eelseadistus"
 
@@ -1089,7 +1030,6 @@ msgstr "Eelmine lugu"
 msgid "Previous page"
 msgstr "Eelmine leht"
 
-#, fuzzy
 msgid "Privacy and Security"
 msgstr "Privaatsus ja turvalisus"
 
@@ -1132,21 +1072,17 @@ msgstr "Ühenda uuesti"
 msgid "Refresh section"
 msgstr "Uuenda ploki andmeid"
 
-#, fuzzy
 msgid "Release"
-msgstr "Väljalaske kuupäev"
+msgstr "Väljalase"
 
-#, fuzzy
 msgid "Release date"
-msgstr "Väljalaske kuupäev"
+msgstr "Väljaandmise kuupäev"
 
-#, fuzzy
 msgid "Release notifications"
 msgstr "Uute versioonide teated"
 
-#, fuzzy
 msgid "Remote lyrics"
-msgstr "Kaugserveri laulusõnad"
+msgstr "Laulusõnad kaugserverist"
 
 msgid "Remove"
 msgstr "Eemalda"
@@ -1169,9 +1105,8 @@ msgstr "Eemalda esitusloendist"
 msgid "Remove rule"
 msgstr "Eemalda reegel"
 
-#, fuzzy
 msgid "Removed from favorites"
-msgstr "Eemaldatud lemmikutest"
+msgstr "Eemaldatud lemmikute seast"
 
 msgid "Rename"
 msgstr "Muuda nime"
@@ -1179,7 +1114,6 @@ msgstr "Muuda nime"
 msgid "Rename Playlist"
 msgstr "Muuda esitusloendi nime"
 
-#, fuzzy
 msgid "Repeat"
 msgstr "Korda"
 
@@ -1225,7 +1159,7 @@ msgid "Rich presence"
 msgstr "Laiendatud teave"
 
 msgid "Rock"
-msgstr ""
+msgstr "Rokkmuusika"
 
 #, fuzzy
 msgid "Rows"
@@ -1246,9 +1180,8 @@ msgstr "Salvesta vastendus"
 msgid "Save Server Settings"
 msgstr "Salvesta serveri seadistused"
 
-#, fuzzy
 msgid "Save to apply this mapping after the next sync."
-msgstr "Salvesta, et see seos järgmise sünkroonimise järel rakenduks."
+msgstr "Rakendumaks peale järgmist sünkroonimist salvesta see vastendus."
 
 msgid "Save to rescan this local library."
 msgstr "Salvesta selle kohaliku muusikakogu uuesti skaneerimiseks."
@@ -1290,51 +1223,41 @@ msgstr "Otsimine ei õnnestunud."
 msgid "Search lyrics"
 msgstr "Otsi laulusõnu"
 
-#, fuzzy
 msgid "Search queue"
 msgstr "Otsi esitusjärjekorrast"
 
 msgid "Searching Local Network"
 msgstr "Otsin kohtvõrgust"
 
-#, fuzzy
 msgid "Searching for Jellyfin servers on the local network…"
-msgstr "Otsitakse kohalikus võrgus Jellyfini servereid…"
+msgstr "Otsin kohalikust võrgust Jellyfini servereid…"
 
-#, fuzzy
 msgid "Searching will start automatically"
 msgstr "Otsing algab automaatselt"
 
-#, fuzzy
 msgid "Searching..."
 msgstr "Otsin…"
 
-#, fuzzy
 msgid "Searching…"
 msgstr "Otsin…"
 
 msgid "Seconds"
 msgstr "Sekundites"
 
-#, fuzzy
 msgid "Secret storage"
 msgstr "Salajane salvestusruum"
 
-#, fuzzy
 msgid "Secure storage"
-msgstr "Turvaline salvestusruum"
+msgstr "Turvaline andmeruum"
 
-#, fuzzy
 msgid "Seek Backward"
 msgstr "Keri tagasi"
 
-#, fuzzy
 msgid "Seek Forward"
 msgstr "Keri edasi"
 
-#, fuzzy
 msgid "Seek playback"
-msgstr "Otsi taasesituses"
+msgstr "Keri taasesituses"
 
 msgid "Select Music Folder"
 msgstr "Vali muusikakaust"
@@ -1357,31 +1280,28 @@ msgstr "Serveri muusikakogu"
 msgid "Server Prefix"
 msgstr "Serveri prefiks"
 
-#, fuzzy
 msgid "Server Sample"
 msgstr "Serveri näidis"
 
 msgid "Server Settings"
 msgstr "Serveri seadistused"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Server discovery failed: {error}"
-msgstr "Serveri leidmine ebaõnnestus: {error}"
+msgstr "Serveri leidmine ei õnnestunud: {error}"
 
-#, fuzzy
 msgid "Server sample does not match the server prefix."
 msgstr "Serveri näidis ei vasta serveri prefiksile."
 
 msgid "Server selector"
 msgstr "Serverivalija"
 
-#, fuzzy
 msgid "Server settings saved."
-msgstr "Serveri seaded salvestatud."
+msgstr "Serveri seadistused on salvestatud."
 
-#, fuzzy
 msgid "Server settings saved. Resyncing library…"
-msgstr "Serveri seaded salvestatud. Meediakogu sünkroonitakse uuesti…"
+msgstr ""
+"Serveri seadistused on salvestatud. Muusikakogu on uuesti sünkroonimisel…"
 
 msgid "Servers"
 msgstr "Serverid"
@@ -1398,11 +1318,9 @@ msgstr "Näita laulusõnade riba"
 msgid "Show Rufin"
 msgstr "Näita Rufinit"
 
-#, fuzzy
 msgid "Show external service icons on album and artist pages"
 msgstr "Kuva väliste teenuste ikoonid albumi ja esitaja lehtedel"
 
-#, fuzzy
 msgid "Show external site links"
 msgstr "Kuva välised veebisaidilingid"
 
@@ -1421,24 +1339,20 @@ msgstr "Näita külgriba"
 msgid "Show tray icon"
 msgstr "Näita süsteemisalve ikooni"
 
-#, fuzzy
 msgid "Show/hide lyrics"
 msgstr "Kuva/peida laulusõnad"
 
-#, fuzzy
 msgid "Show/hide right sidebar"
 msgstr "Kuva/peida parempoolne külgriba"
 
-#, fuzzy
 msgid "Showcase"
 msgstr "Esitle"
 
 msgid "Shuffle"
 msgstr "Sega lood"
 
-#, fuzzy
 msgid "Shuffle off"
-msgstr "Juhuslik järjekord välja"
+msgstr "Lülita lugude segamine välja"
 
 msgid "Shuffle on"
 msgstr "Lugude segamine on kasutusel"
@@ -1450,31 +1364,26 @@ msgid "SimpMusic"
 msgstr "SimpMusic"
 
 msgid "Single"
-msgstr ""
+msgstr "Singel"
 
 msgid "Singles"
-msgstr ""
+msgstr "Singlid"
 
 msgid "Skip count"
 msgstr "Vahelejätmiste arv"
 
-#, fuzzy
 msgid "Skip same-album crossfade"
 msgstr "Jäta vahele ristsulatus sama albumi lugude vahel"
 
-#, fuzzy
 msgid "Smart Playlist"
 msgstr "Nutikas esitusloend"
 
-#, fuzzy
 msgid "Smart Playlists"
 msgstr "Nutikad esitusloendid"
 
-#, fuzzy
 msgid "Smart playlist tracks"
 msgstr "Nutika esitusloendi lood"
 
-#, fuzzy
 msgid "Smart playlists"
 msgstr "Nutikad esitusloendid"
 
@@ -1509,20 +1418,18 @@ msgstr "Voogedastuse kvaliteet"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-#, fuzzy
 msgid "Switching library…"
 msgstr "Vahetan muusikakogu…"
 
-#, fuzzy
 msgid "Sync already running."
 msgstr "Sünkroonimine on juba käimas."
 
 msgid "Synced lyrics"
 msgstr "Sünkroonitud laulusõnad"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "Syncing {provider} library…"
-msgstr "Sünkroonitakse {provider} meediakogu…"
+msgstr "Sünkroonimisel on {provider} teenuse muusikakogu…"
 
 msgid "System default"
 msgstr "Süsteemi vaikeseadistus"
@@ -1537,18 +1444,17 @@ msgstr ""
 "muusikafailide kaustas"
 
 msgid "Techno"
-msgstr ""
+msgstr "Teknomuusika"
 
 msgid "Text"
 msgstr "Tekst"
 
-#, fuzzy
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
 msgstr ""
-"Täname, et proovisite Rufinit! Kui teil on probleeme või soovitusi, palun "
-"esitage need GitHubis."
+"Täname, et oled proovinud Rufinit! Kui märkasid probleeme või sul on "
+"soovitusi, palun koosta vastav teade meie GitHubi veahalduses."
 
 #, fuzzy
 msgid ""
@@ -1569,9 +1475,8 @@ msgstr ""
 msgid "This removes cached library metadata for"
 msgstr "Järgnevaga kustutakse puhverdatud muusikakogu andmed teenusest"
 
-#, fuzzy
 msgid "This removes the folder from the Local source."
-msgstr "See eemaldab kausta kohalikust allikast."
+msgstr "Järgnevaga eemaldad kausta kohalikust allikast."
 
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
@@ -1613,9 +1518,8 @@ msgstr "Otsimiseks siesta midagi"
 msgid "Type to search or create a new playlist"
 msgstr "Sisesta otsimiseks või uue esitusloendi loomiseks"
 
-#, fuzzy
 msgid "Unmuted"
-msgstr "Helitugevus taastatud"
+msgstr "Summutamine on lõpetatud"
 
 #, rust-format
 msgid ""
@@ -1650,7 +1554,7 @@ msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
 
 msgid "Version History"
-msgstr ""
+msgstr "Versioonide ajalugu"
 
 msgid "View"
 msgstr "Vaade"
@@ -1658,19 +1562,15 @@ msgstr "Vaade"
 msgid "Visible"
 msgstr "Nähtav"
 
-#, fuzzy
 msgid "Visualizer"
 msgstr "Visualiseerija"
 
-#, fuzzy
 msgid "Volume Down"
-msgstr "Helitugevus alla"
+msgstr "Heli vaiksemaks"
 
-#, fuzzy
 msgid "Volume Up"
-msgstr "Helitugevus üles"
+msgstr "Heli valjemaks"
 
-#, fuzzy
 msgid "Waveform seekbar"
 msgstr "Helilainega kerimisriba"
 
@@ -1729,64 +1629,64 @@ msgid "to"
 msgstr "kuni"
 
 msgid "today"
-msgstr ""
+msgstr "täna"
 
 msgid "yesterday"
-msgstr ""
+msgstr "eile"
 
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} album"
+msgstr[1] "{count} albumit"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
-msgstr[0] "Otsi sellest kaustas"
-msgstr[1] "Otsi sellest kaustas"
+msgstr[0] "{count} päev tagasi"
+msgstr[1] "{count} päeva tagasi"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} folder"
 msgid_plural "{count} folders"
-msgstr[0] "Otsi sellest kaustas"
-msgstr[1] "Otsi sellest kaustas"
+msgstr[0] "{count} kaust"
+msgstr[1] "{count} kausta"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
-msgstr[0] "Kaust on valimata"
-msgstr[1] "Kaust on valimata"
+msgstr[0] "Oled valinud {count} kausta"
+msgstr[1] "Oled valinud {count} kausta"
 
 #, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} kuu tagasi"
+msgstr[1] "{count} kuud tagasi"
 
 #, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} tulemus"
+msgstr[1] "{count} tulemust"
 
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} lugu"
+msgstr[1] "{count} lugu"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
-msgstr[0] "Otsi sellest kaustas"
-msgstr[1] "Otsi sellest kaustas"
+msgstr[0] "{count} nädal tagasi"
+msgstr[1] "{count} nädalat tagasi"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
-msgstr[0] "Otsi sellest kaustas"
-msgstr[1] "Otsi sellest kaustas"
+msgstr[0] "{count} aasta tagasi"
+msgstr[1] "{count} aastat tagasi"
 
 #, fuzzy, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
