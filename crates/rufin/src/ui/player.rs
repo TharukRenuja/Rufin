@@ -786,7 +786,7 @@ fn build_now_playing_controls() -> NowPlayingControls {
     let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
     cover.area.set_valign(gtk::Align::Center);
     cover.area.set_cursor_from_name(Some("pointer"));
-    let cover_label = crate::i18n::tr("Open fullscreen player");
+    let cover_label = tr("Open fullscreen player");
     cover.area.set_tooltip_text(Some(&cover_label));
     cover
         .area
