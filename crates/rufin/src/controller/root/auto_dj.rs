@@ -1,7 +1,11 @@
 use super::queue_state::defer_queue_snapshot;
 use super::*;
+use crate::controller::generated_radio::saved_server_for_generated_queue;
+use crate::controller::provider_tracks::prepare_provider_tracks;
+use source::{PlayedFilter, RandomTrackRequest};
 
 impl AppController {
+    #[cfg(test)]
     pub(in crate::controller) fn auto_dj_topup(&self) -> bool {
         match self.auto_dj_top_up() {
             Ok(topped_up) => topped_up,
@@ -15,64 +19,60 @@ impl AppController {
             }
         }
     }
-    pub(in crate::controller) fn auto_dj_top_up(&self) -> Result<bool, String> {
-        auto_dj_handles(&self.auto_dj_enabled, &self.queue, &self.store)
-    }
-    pub(in crate::controller) fn auto_dj_top_up_deferred(&self) {
-        if !self
-            .auto_dj_enabled
-            .lock()
-            .map(|enabled| *enabled)
-            .unwrap_or_default()
-        {
-            return;
-        }
 
-        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let queue = Arc::clone(&self.queue);
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let playback = Arc::clone(&self.playback);
-        let next_preload = Arc::clone(&self.next_preload);
-        let queue_persist_generation = Arc::clone(&self.queue_persist_generation);
-        let events = self.events.clone();
-        thread::spawn(
-            move || match auto_dj_handles(&auto_dj_enabled, &queue, &store) {
-                Ok(true) => {
-                    let queue_snapshot = queue
-                        .lock()
-                        .ok()
-                        .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot));
-                    if let Some(snapshot) = queue_snapshot {
-                        defer_queue_snapshot(
-                            store.clone(),
-                            events.clone(),
-                            queue_persist_generation,
-                            snapshot.clone(),
-                        );
-                        let _sent = events.send(ControllerEvent::Queue(Box::new(Some(snapshot))));
-                    }
-                    prepare_next_stream_from_handles(
-                        store,
-                        runtime,
-                        secrets,
-                        playback,
-                        queue,
-                        next_preload,
-                        events,
-                    );
-                }
-                Ok(false) => {}
-                Err(error) if auto_dj_error_is_transient(&error) => {
-                    debug!(%error, "skipped Auto DJ top-up while store is busy");
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                }
-            },
-        );
+    #[cfg(test)]
+    pub(in crate::controller) fn auto_dj_top_up(&self) -> Result<bool, String> {
+        auto_dj_handles(self)
     }
+
+    pub(in crate::controller) fn auto_dj_top_up_deferred(&self) -> bool {
+        self.auto_dj_top_up_deferred_with(AutoDjCompletion::AppendOnly)
+    }
+
+    pub(in crate::controller) fn auto_dj_continue_after_end_deferred(&self) -> bool {
+        self.auto_dj_top_up_deferred_with(AutoDjCompletion::ContinueAfterEnd)
+    }
+
+    fn auto_dj_top_up_deferred_with(&self, completion: AutoDjCompletion) -> bool {
+        if !auto_dj_should_schedule(self) {
+            return false;
+        }
+        let controller = self.clone();
+        thread::spawn(move || match auto_dj_handles(&controller) {
+            Ok(true) => {
+                if completion == AutoDjCompletion::ContinueAfterEnd
+                    && auto_dj_continue_after_end(&controller)
+                {
+                    return;
+                }
+                emit_auto_dj_top_up(&controller);
+            }
+            Ok(false) => {
+                if completion == AutoDjCompletion::ContinueAfterEnd {
+                    controller.stop();
+                }
+            }
+            Err(error) if auto_dj_error_is_transient(&error) => {
+                debug!(%error, "skipped Auto DJ top-up while store is busy");
+                if completion == AutoDjCompletion::ContinueAfterEnd {
+                    controller.stop();
+                }
+            }
+            Err(error) => {
+                let _sent = controller.events.send(ControllerEvent::Error(error));
+                if completion == AutoDjCompletion::ContinueAfterEnd {
+                    controller.stop();
+                }
+            }
+        });
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AutoDjCompletion {
+    AppendOnly,
+    ContinueAfterEnd,
 }
 
 #[derive(Clone, Debug)]
@@ -84,66 +84,235 @@ struct AutoDjQueueState {
     remaining: usize,
 }
 
-fn auto_dj_handles(
-    auto_dj_enabled: &Arc<Mutex<bool>>,
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    store: &StoreHandle,
-) -> Result<bool, String> {
-    if !auto_dj_enabled
+fn auto_dj_should_schedule(controller: &AppController) -> bool {
+    if !controller
+        .auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default()
+    {
+        return false;
+    }
+    let Some(state) = auto_dj_state(&controller.queue) else {
+        return false;
+    };
+    let Ok(Some(saved)) = saved_server_for_generated_queue(controller, &state.server_id) else {
+        return false;
+    };
+    let settings = load_settings_for_saved(&controller.store, &saved);
+    state.remaining < usize::from(settings.auto_dj_refill_threshold)
+}
+
+fn auto_dj_handles(controller: &AppController) -> Result<bool, String> {
+    if !controller
+        .auto_dj_enabled
         .lock()
         .map(|enabled| *enabled)
         .unwrap_or_default()
     {
         return Ok(false);
     }
-    let Some(state) = auto_dj_state(queue) else {
+    let Some(state) = auto_dj_state(&controller.queue) else {
         return Ok(false);
     };
-    let settings = load_settings_for_active_server(store);
+    let Some(saved) = saved_server_for_generated_queue(controller, &state.server_id)? else {
+        return Ok(false);
+    };
+    let settings = load_settings_for_saved(&controller.store, &saved);
     let refill_threshold = usize::from(settings.auto_dj_refill_threshold);
     if state.remaining >= refill_threshold {
         return Ok(false);
     }
-    let mut tracks = store
-        .with_store(|store| store.load_tracks(&state.server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
-        .map(|page| page.items)?;
-    cover_art_policy::bind_tracks(&mut tracks, &settings);
-    let mut candidates = auto_dj_candidates(
-        &tracks,
-        &state.current,
-        &state.queued_track_ids,
-        shuffle_seed(),
-    );
-    auto_dj_refs(store, &state.server_id, &mut candidates)?;
+    let candidates = auto_dj_candidate_tracks(controller, &saved, &settings, &state)?;
     if candidates.is_empty() {
         return Ok(false);
     }
-    if !auto_dj_enabled
+    if !controller
+        .auto_dj_enabled
         .lock()
         .map(|enabled| *enabled)
         .unwrap_or_default()
     {
         return Ok(false);
     }
-    append_auto_dj(queue, &state, refill_threshold, &candidates)
+    append_auto_dj(&controller.queue, &state, refill_threshold, &candidates)
 }
-fn auto_dj_refs(
-    store: &StoreHandle,
-    server_id: &ServerId,
-    candidates: &mut [Track],
-) -> Result<(), String> {
-    let saved = store.with_store(|store| store.saved_server(server_id))?;
-    let saved =
-        saved.or_else(|| (server_id.as_str() == LOCAL_SOURCE_SERVER_ID).then(local_source_saved));
-    let Some(saved) = saved else {
-        return Ok(());
+
+fn emit_auto_dj_top_up(controller: &AppController) {
+    let queue_snapshot = controller
+        .queue
+        .lock()
+        .ok()
+        .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot));
+    if let Some(snapshot) = queue_snapshot {
+        defer_queue_snapshot(
+            controller.store.clone(),
+            controller.events.clone(),
+            Arc::clone(&controller.queue_persist_generation),
+            snapshot.clone(),
+        );
+        let _sent = controller
+            .events
+            .send(ControllerEvent::Queue(Box::new(Some(snapshot))));
+    }
+    prepare_next_stream_from_handles(
+        controller.store.clone(),
+        Arc::clone(&controller.runtime),
+        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.playback),
+        Arc::clone(&controller.queue),
+        Arc::clone(&controller.next_preload),
+        controller.events.clone(),
+    );
+}
+
+fn auto_dj_continue_after_end(controller: &AppController) -> bool {
+    let mut moved = false;
+    let result = controller.with_queue_mut(|queue| {
+        moved = queue.advance_after_end_of_stream().is_some();
+        Ok(())
+    });
+    if let Err(error) = result {
+        let _sent = controller.events.send(ControllerEvent::Error(error));
+        return false;
+    }
+    if !moved {
+        return false;
+    }
+    controller.start_queue_emit();
+    controller.restart_current_track();
+    controller.auto_dj_top_up_deferred();
+    true
+}
+
+fn auto_dj_candidate_tracks(
+    controller: &AppController,
+    saved: &SavedServer,
+    settings: &AppSettings,
+    state: &AutoDjQueueState,
+) -> Result<Vec<Track>, String> {
+    let tracks = controller.generated_tracks_for_saved(
+        saved,
+        GeneratedTrackSeed::Track(state.current.track_id.clone()),
+        AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
+    )?;
+    let mut seen_track_ids = state.queued_track_ids.clone();
+    let mut candidates =
+        collect_auto_dj_candidates(tracks, &mut seen_track_ids, AUTO_DJ_ITEM_COUNT);
+
+    if candidates.len() < AUTO_DJ_ITEM_COUNT {
+        match auto_dj_random_fallback_tracks(controller, saved, settings, state) {
+            Ok(tracks) => {
+                let remaining = AUTO_DJ_ITEM_COUNT - candidates.len();
+                candidates.extend(collect_auto_dj_candidates(
+                    tracks,
+                    &mut seen_track_ids,
+                    remaining,
+                ));
+            }
+            Err(error) => {
+                debug!(%error, "skipped Auto DJ random fallback");
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn collect_auto_dj_candidates(
+    tracks: impl IntoIterator<Item = Track>,
+    seen_track_ids: &mut HashSet<TrackId>,
+    limit: usize,
+) -> Vec<Track> {
+    let mut candidates = Vec::new();
+    for track in tracks {
+        if seen_track_ids.insert(track.id.clone()) {
+            candidates.push(track);
+            if candidates.len() >= limit {
+                break;
+            }
+        }
+    }
+    candidates
+}
+
+fn auto_dj_random_fallback_tracks(
+    controller: &AppController,
+    saved: &SavedServer,
+    settings: &AppSettings,
+    state: &AutoDjQueueState,
+) -> Result<Vec<Track>, String> {
+    let genre_name = auto_dj_current_genre(controller, state)?;
+    let mut tracks = if saved.server.provider == "fake" {
+        auto_dj_random_fallback_tracks_from_cache(
+            controller,
+            &saved.server.id,
+            genre_name.as_deref(),
+        )?
+    } else {
+        let provider = provider_for_saved(
+            &controller.store,
+            &controller.runtime,
+            &controller.secrets,
+            saved,
+        )?;
+        controller
+            .runtime
+            .block_on(
+                provider
+                    .as_music_provider()
+                    .random_tracks(RandomTrackRequest {
+                        limit: AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
+                        min_year: None,
+                        max_year: None,
+                        genre_id: None,
+                        genre_name,
+                        played_filter: PlayedFilter::All,
+                    }),
+            )
+            .map_err(|error| error.to_string())?
     };
-    track_album_refs(store, &saved, candidates, &[])
+    prepare_provider_tracks(controller, saved, settings, &mut tracks)?;
+    Ok(tracks)
+}
+
+fn auto_dj_current_genre(
+    controller: &AppController,
+    state: &AutoDjQueueState,
+) -> Result<Option<String>, String> {
+    let track = controller
+        .store
+        .with_store(|store| store.load_track(&state.server_id, &state.current.track_id))?;
+    Ok(track.and_then(|track| {
+        track
+            .genres
+            .into_iter()
+            .find(|genre| !genre.trim().is_empty())
+    }))
+}
+
+fn auto_dj_random_fallback_tracks_from_cache(
+    controller: &AppController,
+    server_id: &ServerId,
+    genre_name: Option<&str>,
+) -> Result<Vec<Track>, String> {
+    let mut tracks = controller
+        .store
+        .with_store(|store| store.load_tracks(server_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
+        .items;
+    if let Some(genre_name) = genre_name {
+        tracks.retain(|track| track.genres.iter().any(|genre| genre == genre_name));
+    }
+    tracks.sort_by_key(|track| track.id.as_str().to_string());
+    Ok(tracks)
 }
 
 fn auto_dj_state(queue: &Arc<Mutex<Option<QueueEngine>>>) -> Option<AutoDjQueueState> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
+        if queue.repeat_mode() == RepeatMode::One {
+            return None;
+        }
         let current = queue.current()?.clone();
         let queued = queue
             .entries()

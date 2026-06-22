@@ -816,6 +816,98 @@ async fn library_filter_sort() {
     assert_eq!(tracks[0].id.as_str(), "jellyfin:track:track-one");
     assert_eq!(tracks[0].year, 2000);
 }
+
+#[tokio::test]
+async fn generated_track_radio_falls_back_to_instant_mix() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items/track-one/Similar"))
+        .and(query_param("UserId", "user-one"))
+        .and(query_param("Limit", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 0,
+            "Items": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Songs/track-one/InstantMix"))
+        .and(query_param("UserId", "user-one"))
+        .and(query_param("Limit", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{
+                "Id": "track-two",
+                "Name": "Second Motion",
+                "Type": "Audio",
+                "AlbumId": "album-one",
+                "Album": "Blue Rooms",
+                "Artists": ["Astral Kin"],
+                "RunTimeTicks": 1800000000i64
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let tracks = provider
+        .generated_tracks(GeneratedTracksRequest {
+            seed: GeneratedTrackSeed::Track(TrackId::new("jellyfin:track:track-one")),
+            limit: 4,
+            strategy: GeneratedTrackStrategy::SimilarFirst,
+        })
+        .await
+        .expect("generated tracks");
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id.as_str(), "jellyfin:track:track-two");
+}
+
+#[tokio::test]
+async fn generated_track_radio_mix_only_uses_instant_mix() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items/track-one/Similar"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Songs/track-one/InstantMix"))
+        .and(query_param("UserId", "user-one"))
+        .and(query_param("Limit", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{
+                "Id": "track-two",
+                "Name": "Second Motion",
+                "Type": "Audio",
+                "AlbumId": "album-one",
+                "Album": "Blue Rooms",
+                "Artists": ["Astral Kin"],
+                "RunTimeTicks": 1800000000i64
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let tracks = provider
+        .generated_tracks(GeneratedTracksRequest {
+            seed: GeneratedTrackSeed::Track(TrackId::new("jellyfin:track:track-one")),
+            limit: 4,
+            strategy: GeneratedTrackStrategy::MixOnly,
+        })
+        .await
+        .expect("generated tracks");
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id.as_str(), "jellyfin:track:track-two");
+}
+
 #[tokio::test]
 async fn library_track_ordered() {
     let server = MockServer::start().await;

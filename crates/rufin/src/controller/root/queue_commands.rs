@@ -1116,6 +1116,7 @@ mod tests {
             user_id: "user".to_string(),
             username: "demo".to_string(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         };
         let mut repeated_track = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
         repeated_track.title = "Repeated".to_string();
@@ -1469,6 +1470,7 @@ mod tests {
             user_id: "user".to_string(),
             username: "demo".to_string(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         };
         controller
             .store

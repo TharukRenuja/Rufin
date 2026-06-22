@@ -355,6 +355,43 @@ impl MusicProvider for SubsonicProvider {
             .collect())
     }
 
+    async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> ProviderResult<Vec<Track>> {
+        match request.seed {
+            GeneratedTrackSeed::Track(track_id) => {
+                self.similar_songs(raw_item_id(track_id.as_str()), request.limit)
+                    .await
+            }
+            GeneratedTrackSeed::Album(album_id) => {
+                self.similar_songs(raw_item_id(album_id.as_str()), request.limit)
+                    .await
+            }
+            GeneratedTrackSeed::Artist(artist_id) => {
+                self.similar_songs2(raw_item_id(artist_id.as_str()), request.limit)
+                    .await
+            }
+            GeneratedTrackSeed::Genre { id, name } => {
+                self.random_tracks(RandomTrackRequest {
+                    limit: request.limit,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: id,
+                    genre_name: (!name.trim().is_empty()).then_some(name),
+                    played_filter: PlayedFilter::All,
+                })
+                .await
+            }
+            GeneratedTrackSeed::Playlist(playlist_id) => {
+                let detail = self.playlist_detail(&playlist_id).await?;
+                let seed = detail.tracks.first().ok_or(ProviderError::NotFound)?;
+                self.similar_songs(raw_item_id(seed.id.as_str()), request.limit)
+                    .await
+            }
+        }
+    }
+
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
         let artists = self.get_all_artists().await?;
         Ok(page(artists, request))

@@ -358,6 +358,7 @@ impl Store {
                 user_id TEXT NOT NULL,
                 username TEXT NOT NULL,
                 trust_invalid_cert INTEGER NOT NULL DEFAULT 0,
+                use_jellyfin_instant_mix INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -709,6 +710,11 @@ impl Store {
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
         self.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")?;
         self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column(
+            "servers",
+            "use_jellyfin_instant_mix",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         self.ensure_image_origin_columns()?;
         self.create_entity_identity_schema()?;
         self.connection
@@ -1125,7 +1131,7 @@ impl Store {
             .query_row(
                 "
                 SELECT s.server_id, s.provider, s.name, s.base_url, s.user_id,
-                       s.username, s.trust_invalid_cert
+                       s.username, s.trust_invalid_cert, s.use_jellyfin_instant_mix
                 FROM active_server a
                 JOIN servers s ON s.server_id = a.server_id
                 WHERE a.singleton = 1
@@ -1140,7 +1146,8 @@ impl Store {
         self.connection
             .query_row(
                 "
-                SELECT server_id, provider, name, base_url, user_id, username, trust_invalid_cert
+                SELECT server_id, provider, name, base_url, user_id, username,
+                       trust_invalid_cert, use_jellyfin_instant_mix
                 FROM servers
                 WHERE server_id = ?1
                 ",
@@ -1153,7 +1160,8 @@ impl Store {
     pub fn list_servers(&self) -> StoreResult<Vec<SavedServer>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT server_id, provider, name, base_url, user_id, username, trust_invalid_cert
+            SELECT server_id, provider, name, base_url, user_id, username,
+                   trust_invalid_cert, use_jellyfin_instant_mix
             FROM servers
             ORDER BY name
             ",
@@ -1626,9 +1634,9 @@ pub(super) fn save_server_on_connection(
         "
         INSERT INTO servers (
             server_id, provider, name, base_url, user_id, username,
-            trust_invalid_cert, updated_at
+            trust_invalid_cert, use_jellyfin_instant_mix, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
         ON CONFLICT(server_id) DO UPDATE SET
             provider = excluded.provider,
             name = excluded.name,
@@ -1636,6 +1644,7 @@ pub(super) fn save_server_on_connection(
             user_id = excluded.user_id,
             username = excluded.username,
             trust_invalid_cert = excluded.trust_invalid_cert,
+            use_jellyfin_instant_mix = excluded.use_jellyfin_instant_mix,
             updated_at = excluded.updated_at
         ",
         params![
@@ -1646,6 +1655,7 @@ pub(super) fn save_server_on_connection(
             saved.user_id,
             saved.username,
             bool_to_i64(saved.trust_invalid_cert),
+            bool_to_i64(saved.use_jellyfin_instant_mix),
         ],
     )?;
     connection.execute(

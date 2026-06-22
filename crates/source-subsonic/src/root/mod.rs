@@ -8,11 +8,12 @@ use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
 use source::{
-    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
-    ImageRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
-    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
-    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
-    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
+    AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest,
+    GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, LyricLine, Lyrics,
+    LyricsSource, MusicProvider, PagedRequest, PagedResponse, PlaybackReport, PlaybackReportKind,
+    PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities, ProviderError,
+    ProviderIdentity, ProviderResult, ProviderSession, RandomTrackRequest, SavedProviderSession,
+    SearchResults, StreamDescriptor, StreamRequest,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -209,6 +210,44 @@ impl SubsonicProvider {
             }
             offset += count;
         }
+    }
+
+    async fn similar_songs(&self, raw_id: &str, count: usize) -> ProviderResult<Vec<Track>> {
+        let body: SimilarSongsBody = self
+            .get_json(
+                "getSimilarSongs",
+                &[
+                    ("id", raw_id.to_string()),
+                    ("count", count.clamp(1, 500).to_string()),
+                ],
+            )
+            .await?;
+        Ok(body
+            .similar_songs
+            .map(|songs| songs.song)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|song| track_from_dto(self, song))
+            .collect())
+    }
+
+    async fn similar_songs2(&self, raw_id: &str, count: usize) -> ProviderResult<Vec<Track>> {
+        let body: SimilarSongs2Body = self
+            .get_json(
+                "getSimilarSongs2",
+                &[
+                    ("id", raw_id.to_string()),
+                    ("count", count.clamp(1, 500).to_string()),
+                ],
+            )
+            .await?;
+        Ok(body
+            .similar_songs
+            .map(|songs| songs.song)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|song| track_from_dto(self, song))
+            .collect())
     }
 
     async fn replace_playlist_tracks(

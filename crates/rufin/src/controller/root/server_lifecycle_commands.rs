@@ -136,6 +136,7 @@ impl AppController {
             username,
             password,
             trust_invalid_cert,
+            use_jellyfin_instant_mix,
             local_access_root,
             path_replace_from,
         } = request;
@@ -196,6 +197,8 @@ impl AppController {
             let activation_request = LoginActivationRequest {
                 session: &session,
                 trust_invalid_cert,
+                use_jellyfin_instant_mix: provider == StreamingProvider::Jellyfin
+                    && use_jellyfin_instant_mix,
                 local_access_root: local_access_root.as_deref(),
                 path_replace_from: path_replace_from.as_deref(),
             };

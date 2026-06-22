@@ -79,16 +79,7 @@ impl AppController {
         }
         if !moved {
             if had_current {
-                if self.auto_dj_topup() {
-                    let result = self.with_queue_mut(|queue| {
-                        moved = queue.next_track().is_some();
-                        Ok(())
-                    });
-                    if let Err(error) = result {
-                        let _sent = self.events.send(ControllerEvent::Error(error));
-                        return;
-                    }
-                }
+                self.auto_dj_top_up_deferred();
                 if !moved {
                     self.restart_or_seek_current_start();
                     return;

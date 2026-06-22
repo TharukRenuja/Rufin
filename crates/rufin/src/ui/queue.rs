@@ -11,8 +11,8 @@ use crate::i18n::tr;
 
 use super::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, FAVORITE_ADD_ICON,
-    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE,
-    add_dynamic_link_hover, context_menu_action, context_menu_box,
+    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, RADIO_ICON, Shell,
+    THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_action, context_menu_box,
     context_menu_can_add_to_playlist, context_menu_picker_button, favorite_button_is_active,
     favorite_icon_button, install_context_menu_openers, set_favorite_button_active,
     track_from_queue_entry,
@@ -1067,6 +1067,13 @@ fn show_queue_row_context_menu(
     ));
 
     let track = track_from_queue_entry(entry);
+    if track.is_some() {
+        main_menu.append(&context_menu_action(
+            "Play Track Radio",
+            "queue.play-radio",
+            RADIO_ICON,
+        ));
+    }
     if let Some(track) = track.as_ref()
         && context_menu_can_add_to_playlist(shell)
     {
@@ -1140,6 +1147,15 @@ fn show_queue_row_context_menu(
             play_next_controller.move_queue_entry_after_current(entry_id.clone());
         }
     });
+
+    if let Some(track) = track {
+        surface.add_action("play-radio", {
+            let radio_controller = controller.clone();
+            move || {
+                radio_controller.play_track_radio(track.clone());
+            }
+        });
+    }
 
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);

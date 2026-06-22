@@ -15,16 +15,16 @@ use directories::ProjectDirs;
 use domain::ThemePreference;
 use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
-    ExternalLyricsProvider, FolderPathItem, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
-    LibraryField, LibraryListSettings, LibrarySourceSelection, LocalLibraryFolder,
-    LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
-    PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail, PlaylistEntrySortDescriptor,
-    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource,
-    QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode,
-    ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceOrder,
-    StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey,
-    TrackTableSettings,
+    ExternalLyricsProvider, FolderPathItem, GeneratedTrackSeed, Genre, GenreId, HomeSection,
+    HomeSectionKind, ImageRef, LibraryField, LibraryListSettings, LibrarySourceSelection,
+    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId,
+    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
+    PlaylistEntrySortDescriptor, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion,
+    QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
+    SecretStorageMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor,
+    SourceOrder, StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor,
+    TrackSortKey, TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
@@ -131,6 +131,7 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
+pub(crate) use server_local_access_commands::ServerSettingsInput;
 use source_image_policy::{
     image_ref_allowed, is_local_album_id, is_local_artist_id, is_local_provider_image_ref,
     is_local_track_id, scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
@@ -162,8 +163,8 @@ pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 40_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
+const AUTO_DJ_PROVIDER_CANDIDATE_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 4;
 const AUTO_DJ_HISTORY_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 2;
-const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const CONFIG_SECRETS_FILE_NAME: &str = "secrets.json";
@@ -173,7 +174,7 @@ const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
 const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
 const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
 const TMP_CACHE_DIR_NAME: &str = "tmp";
-const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
+pub(in crate::controller) const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
@@ -246,6 +247,7 @@ pub struct ServerLocalAccessSnapshot {
     pub selected_music_folder_name: Option<String>,
     pub username: Option<String>,
     pub trust_invalid_cert: bool,
+    pub use_jellyfin_instant_mix: bool,
     pub sync_status: String,
     pub cached_album_count: usize,
     pub cached_track_count: usize,
@@ -302,7 +304,7 @@ impl Default for PlaybackSnapshot {
             muted: false,
             repeat_mode: RepeatMode::All,
             shuffle_enabled: false,
-            auto_dj_enabled: true,
+            auto_dj_enabled: false,
             buffering_percent: None,
             last_error: None,
             waveform_cache_key: None,
@@ -440,6 +442,7 @@ pub struct LoginRequest {
     pub username: String,
     pub password: String,
     pub trust_invalid_cert: bool,
+    pub use_jellyfin_instant_mix: bool,
     pub local_access_root: Option<PathBuf>,
     pub path_replace_from: Option<String>,
 }

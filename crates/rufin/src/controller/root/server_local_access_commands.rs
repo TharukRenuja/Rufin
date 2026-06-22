@@ -65,15 +65,8 @@ impl AppController {
             }
         });
     }
-    pub fn update_server_settings(
-        &self,
-        server_id: ServerId,
-        name: String,
-        base_url: String,
-        username: String,
-        password: String,
-        trust_invalid_cert: bool,
-    ) {
+    pub fn update_server_settings(&self, input: ServerSettingsInput) {
+        let server_id = input.server_id.clone();
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let runtime = Arc::clone(&sync_context.runtime);
@@ -86,14 +79,6 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
-            let input = ServerSettingsInput {
-                server_id: server_id.clone(),
-                name,
-                base_url,
-                username,
-                password,
-                trust_invalid_cert,
-            };
             let result = update_server_settings_with_login(&store, &secrets, input, |request| {
                 if sync_is_running(&sync_context.sync_in_flight, &server_id) {
                     return Err(
@@ -223,13 +208,14 @@ impl AppController {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ServerSettingsInput {
-    server_id: ServerId,
-    name: String,
-    base_url: String,
-    username: String,
-    password: String,
-    trust_invalid_cert: bool,
+pub(crate) struct ServerSettingsInput {
+    pub(crate) server_id: ServerId,
+    pub(crate) name: String,
+    pub(crate) base_url: String,
+    pub(crate) username: String,
+    pub(crate) password: String,
+    pub(crate) trust_invalid_cert: bool,
+    pub(crate) use_jellyfin_instant_mix: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,6 +234,7 @@ struct PreparedServerSettingsUpdate {
     next_base_url: String,
     next_username: String,
     next_trust_invalid_cert: bool,
+    next_use_jellyfin_instant_mix: bool,
     reauth: Option<ServerSettingsReauthRequest>,
 }
 
@@ -342,6 +329,11 @@ fn prepare_server_settings_update(
     } else {
         saved.trust_invalid_cert
     };
+    let next_use_jellyfin_instant_mix = if saved.server.provider == "jellyfin" {
+        input.use_jellyfin_instant_mix
+    } else {
+        false
+    };
 
     if remote && next_base_url.is_empty() {
         return Err("Enter a server address.".to_string());
@@ -363,6 +355,7 @@ fn prepare_server_settings_update(
         || saved.server.base_url != next_base_url
         || saved.username != next_username
         || saved.trust_invalid_cert != next_trust_invalid_cert
+        || saved.use_jellyfin_instant_mix != next_use_jellyfin_instant_mix
         || password_entered;
     if !changed {
         return Ok(None);
@@ -388,6 +381,7 @@ fn prepare_server_settings_update(
         next_base_url,
         next_username,
         next_trust_invalid_cert,
+        next_use_jellyfin_instant_mix,
         reauth,
     }))
 }
@@ -461,6 +455,7 @@ fn next_saved_server(
         .map(|session| session.user_id.clone())
         .unwrap_or_else(|| saved.user_id.clone());
     saved.trust_invalid_cert = prepared.next_trust_invalid_cert;
+    saved.use_jellyfin_instant_mix = prepared.next_use_jellyfin_instant_mix;
     saved
 }
 
@@ -538,6 +533,7 @@ mod tests {
             user_id: "listener-id".to_string(),
             username: "listener".to_string(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         }
     }
 
@@ -548,6 +544,7 @@ mod tests {
         username: &str,
         password: &str,
         trust_invalid_cert: bool,
+        use_jellyfin_instant_mix: bool,
     ) -> ServerSettingsInput {
         ServerSettingsInput {
             server_id: saved.server.id.clone(),
@@ -556,6 +553,7 @@ mod tests {
             username: username.to_string(),
             password: password.to_string(),
             trust_invalid_cert,
+            use_jellyfin_instant_mix,
         }
     }
 
@@ -641,6 +639,7 @@ mod tests {
                 &saved.username,
                 "",
                 true,
+                false,
             ),
             |_| panic!("name-only edit should not reauthenticate"),
         )
@@ -680,6 +679,7 @@ mod tests {
                 "https://music-lan.example.test",
                 &saved.username,
                 "updated-password",
+                false,
                 false,
             ),
             |request| {
@@ -735,6 +735,7 @@ mod tests {
                 "alternate",
                 "updated-password",
                 false,
+                false,
             ),
             |_request| Err("Authentication failed".to_string()),
         )
@@ -770,6 +771,7 @@ mod tests {
                 &saved.server.base_url,
                 "alternate",
                 "updated-password",
+                false,
                 false,
             ),
             |_request| {

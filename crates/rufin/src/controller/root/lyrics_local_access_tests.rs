@@ -365,6 +365,7 @@ pub(in crate::controller) fn lyrics_emit_current() {
         user_id: "user".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let track = restored_track();
     let mut queue = QueueEngine::new(saved.server.id.clone());
@@ -405,6 +406,7 @@ pub(in crate::controller) fn lyrics_skip_stale_track_request() {
         user_id: "user".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let track = restored_track();
     let mut queue = QueueEngine::new(saved.server.id.clone());
@@ -858,6 +860,7 @@ pub(in crate::controller) fn lyrics_change_source() {
         user_id: "listener".to_string(),
         username: "listener".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let local = local_source_saved();
     store
@@ -967,6 +970,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         user_id: "local".to_string(),
         username: "Local".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let provider =

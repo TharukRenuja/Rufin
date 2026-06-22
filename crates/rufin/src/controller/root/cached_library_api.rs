@@ -105,6 +105,7 @@ impl AppController {
             user_id: String::new(),
             username: String::new(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         };
         let settings = settings_for_server(settings.clone(), &saved.server);
         self.cached_playlist_detail_for_saved(playlist_id, &saved, &settings)

@@ -546,6 +546,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     refill_row.add_suffix(&refill);
     refill_row.set_activatable_widget(Some(&refill));
     transition_group.add(&refill_row);
+
     page.add(&transition_group);
 
     let audio_group = adw::PreferencesGroup::builder().title(tr("Audio")).build();

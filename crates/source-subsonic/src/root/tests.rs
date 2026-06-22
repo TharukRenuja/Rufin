@@ -227,6 +227,157 @@ async fn random_filter_subsonic() {
 
     assert!(matches!(error, ProviderError::Unsupported(_)));
 }
+
+#[tokio::test]
+async fn generated_track_radio_uses_similar_songs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSimilarSongs.view"))
+        .and(query_param("id", "track-one"))
+        .and(query_param("count", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "similarSongs": {
+                    "song": [{
+                        "id": "track-two",
+                        "albumId": "album-one",
+                        "title": "Second Motion",
+                        "artist": "Astral Kin",
+                        "album": "Blue Rooms",
+                        "duration": 180
+                    }]
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let tracks = provider
+        .generated_tracks(GeneratedTracksRequest {
+            seed: GeneratedTrackSeed::Track(TrackId::new("subsonic:track:track-one")),
+            limit: 4,
+            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+        })
+        .await
+        .expect("generated tracks");
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
+}
+
+#[tokio::test]
+async fn generated_artist_radio_uses_similar_songs2() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSimilarSongs2.view"))
+        .and(query_param("id", "artist-one"))
+        .and(query_param("count", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "similarSongs2": {
+                    "song": [{
+                        "id": "track-two",
+                        "albumId": "album-one",
+                        "title": "Second Motion",
+                        "artist": "Astral Kin",
+                        "album": "Blue Rooms",
+                        "duration": 180
+                    }]
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let tracks = provider
+        .generated_tracks(GeneratedTracksRequest {
+            seed: GeneratedTrackSeed::Artist(ArtistId::new("subsonic:artist:artist-one")),
+            limit: 4,
+            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+        })
+        .await
+        .expect("generated tracks");
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
+}
+
+#[tokio::test]
+async fn generated_playlist_radio_uses_first_playlist_track() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getPlaylist.view"))
+        .and(query_param("id", "playlist-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "playlist": {
+                    "id": "playlist-one",
+                    "name": "Late Set",
+                    "songCount": 1,
+                    "entry": [{
+                        "id": "track-one",
+                        "albumId": "album-one",
+                        "title": "First Motion",
+                        "artist": "Astral Kin",
+                        "album": "Blue Rooms",
+                        "duration": 210
+                    }]
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getSimilarSongs.view"))
+        .and(query_param("id", "track-one"))
+        .and(query_param("count", "4"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "similarSongs": {
+                    "song": [{
+                        "id": "track-two",
+                        "albumId": "album-one",
+                        "title": "Second Motion",
+                        "artist": "Astral Kin",
+                        "album": "Blue Rooms",
+                        "duration": 180
+                    }]
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let tracks = provider
+        .generated_tracks(GeneratedTracksRequest {
+            seed: GeneratedTrackSeed::Playlist(domain::PlaylistId::new(
+                "subsonic:playlist:playlist-one",
+            )),
+            limit: 4,
+            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+        })
+        .await
+        .expect("generated tracks");
+
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-two");
+}
+
 #[tokio::test]
 async fn stream_url_redacts_subsonic_credentials() {
     let server = MockServer::start().await;

@@ -490,7 +490,7 @@ pub struct AppSettings {
     pub lastfm_api_key: String,
     #[serde(default)]
     pub scrobbling: ScrobblingSettings,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub auto_dj_enabled: bool,
     #[serde(default = "default_auto_dj_refill_threshold")]
     pub auto_dj_refill_threshold: u8,
@@ -553,7 +553,7 @@ impl Default for AppSettings {
             discord_show_state_icon: true,
             lastfm_api_key: String::new(),
             scrobbling: ScrobblingSettings::default(),
-            auto_dj_enabled: true,
+            auto_dj_enabled: false,
             auto_dj_refill_threshold: DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
             playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),

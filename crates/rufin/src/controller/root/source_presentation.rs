@@ -101,6 +101,7 @@ fn snapshot_server_local_access_summary(
         selected_music_folder_name,
         username: Some(saved.username.clone()),
         trust_invalid_cert: saved.trust_invalid_cert,
+        use_jellyfin_instant_mix: saved.use_jellyfin_instant_mix,
         sync_status,
         cached_album_count,
         cached_track_count,

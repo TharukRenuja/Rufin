@@ -267,6 +267,26 @@ impl MusicProvider for JellyfinProvider {
         Ok(response.items.into_iter().map(track_from_item).collect())
     }
 
+    async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> ProviderResult<Vec<Track>> {
+        match request.strategy {
+            GeneratedTrackStrategy::ProviderDefault | GeneratedTrackStrategy::SimilarFirst => {
+                if let GeneratedTrackSeed::Track(track_id) = &request.seed {
+                    let tracks = self.similar_tracks(track_id, request.limit).await?;
+                    if !tracks.is_empty() {
+                        return Ok(tracks);
+                    }
+                }
+                self.instant_mix_tracks(&request.seed, request.limit).await
+            }
+            GeneratedTrackStrategy::MixOnly => {
+                self.instant_mix_tracks(&request.seed, request.limit).await
+            }
+        }
+    }
+
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
         let response = self.people_page("Artists", request).await?;
         Ok(PagedResponse::new(
@@ -820,6 +840,7 @@ pub(super) fn jellyfin_capabilities() -> ProviderCapabilities {
         playlist_mutations: true,
         playlist_delete: true,
         favorite_mutations: true,
+        auto_dj: true,
         random_tracks: true,
         random_played_filter: true,
         music_folders: true,

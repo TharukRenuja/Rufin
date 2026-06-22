@@ -640,6 +640,19 @@ pub(in crate::ui) fn install_artist_context_menu(
         }),
     );
 }
+pub(in crate::ui) fn install_genre_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    genre: Genre,
+) {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            present_genre_context_menu(target, &shell, genre.clone(), position);
+        }),
+    );
+}
 pub(in crate::ui) fn install_current_track_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,

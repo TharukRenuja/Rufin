@@ -263,6 +263,7 @@ mod tests {
             user_id: "local".to_string(),
             username: "local".to_string(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         };
         let track = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
         controller

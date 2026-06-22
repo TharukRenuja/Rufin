@@ -365,13 +365,17 @@ pub(in crate::ui) fn artist_table(
 }
 pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let fields = shell.library_settings(LibraryListKey::Genres).row_fields;
-    let columns = collection_table_columns(fields, genre_column, |field| {
-        if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-            180
-        } else {
-            column_width(field)
-        }
-    });
+    let columns = collection_table_columns(
+        fields,
+        |field| genre_column(shell, field),
+        |field| {
+            if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+                180
+            } else {
+                column_width(field)
+            }
+        },
+    );
     collection_table::<Genre>(shell, model, columns, false, None)
 }
 pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
@@ -655,7 +659,19 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
         .connect_clicked(move |_| open_shell.navigate(Route::GenreDetail(open_genre_id.clone())));
     overlay.set_child(Some(&genre_button));
 
-    let controls = cards::cover_play_hover_controls(size, "Play genre");
+    let mut controls = cards::cover_play_hover_controls(size, "Play genre");
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_genre = genre.clone();
+    menu.connect_clicked(move |_| {
+        present_genre_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            menu_genre.clone(),
+            cards::cover_context_point(size),
+        );
+    });
     let controller = shell.controller.clone();
     let genre_id = genre.id.clone();
     controls.play.connect_clicked(move |_| {
@@ -703,6 +719,7 @@ pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> 
             ));
         }
     }
+    install_genre_context_menu(&card, shell, genre.clone());
     card.upcast()
 }
 pub(in crate::ui) fn playlist_card(

@@ -243,6 +243,7 @@ fn fake_snapshot(
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store.with_store(|store| {
         store.save_server(&saved)?;
