@@ -87,7 +87,7 @@ fn library_sources_page(
         }
     }
 
-    let add_server = button_row("Add Server", "list-add-symbolic");
+    let add_server = button_row("Add server", "list-add-symbolic");
     let add_shell = Rc::clone(shell);
     let add_dialog = dialog.clone();
     add_server.connect_activated(move |_| {
@@ -132,7 +132,7 @@ fn library_sources_page(
         }
     }
 
-    let add_local = button_row("Add Local Folder", "folder-new-symbolic");
+    let add_local = button_row("Add a music folder", "folder-new-symbolic");
     let add_shell = Rc::clone(shell);
     let add_dialog = dialog.clone();
     add_local.connect_activated(move |_| {

@@ -91,6 +91,11 @@ pub(in crate::controller) fn startup_activate_source() {
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.entries[0].track_id, first.id);
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let mut settings = controller.load_settings();
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: "/tmp/rufin-test-music".to_string(),
+    }];
+    controller.save_settings(&settings).expect("save settings");
     controller.select_source(LibrarySourceSelection::Local);
     let local_queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(local_queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
@@ -372,6 +377,41 @@ pub(in crate::controller) fn startup_load_folders() {
     assert_eq!(active.server.id.as_str(), LOCAL_SOURCE_SERVER_ID);
     let _cleanup = fs::remove_dir_all(root);
 }
+
+#[test]
+pub(in crate::controller) fn startup_ignores_unconfigured_local_source_selection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local = local_source_saved();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("seed servers");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Server(remote.server.id.clone()))
+    );
+    assert_eq!(
+        snapshot.server.as_ref().map(|server| server.id.clone()),
+        Some(remote.server.id.clone())
+    );
+    assert!(snapshot.local_folders.is_empty());
+    let active = store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("active server");
+    assert_eq!(active.server.id, remote.server.id);
+}
+
 #[test]
 pub(in crate::controller) fn startup_load_source() {
     let store = StoreHandle::open_memory().expect("memory store");

@@ -255,22 +255,24 @@ fn server_selection_popover(
         }
     }
 
-    let local_active = matches!(content.selected_source, Some(LibrarySourceSelection::Local));
-    let local = server_action_row(
-        "route-folders-symbolic",
-        &tr("Local"),
-        &local_source_detail(&content.local_folders),
-        local_active,
-    );
-    if !local_active {
-        let row_popover = popover.clone();
-        let controller = shell.controller.clone();
-        local.connect_clicked(move |_| {
-            row_popover.popdown();
-            controller.select_source(LibrarySourceSelection::Local);
-        });
+    if !content.local_folders.is_empty() {
+        let local_active = matches!(content.selected_source, Some(LibrarySourceSelection::Local));
+        let local = server_action_row(
+            "route-folders-symbolic",
+            &tr("Local"),
+            &local_source_detail(&content.local_folders),
+            local_active,
+        );
+        if !local_active {
+            let row_popover = popover.clone();
+            let controller = shell.controller.clone();
+            local.connect_clicked(move |_| {
+                row_popover.popdown();
+                controller.select_source(LibrarySourceSelection::Local);
+            });
+        }
+        wrapper.append(&local);
     }
-    wrapper.append(&local);
 
     if let Some(server) = &content.active_server
         && matches!(
@@ -310,7 +312,7 @@ fn server_selection_popover(
     add.add_css_class("server-add-option");
     let add_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     add_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    let label = gtk::Label::new(Some(&tr("Add Server")));
+    let label = gtk::Label::new(Some(&tr("Add music library")));
     label.set_xalign(0.0);
     add_content.append(&label);
     add.set_child(Some(&add_content));
