@@ -273,6 +273,7 @@ pub(in crate::controller) fn saved_server() -> SavedServer {
         user_id: "user".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     }
 }
 

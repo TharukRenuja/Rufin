@@ -242,6 +242,7 @@ mod tests {
             user_id: "user".to_string(),
             username: "user".to_string(),
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
         }
     }
 }

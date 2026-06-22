@@ -54,14 +54,15 @@ msgstr "Pievienot mapi"
 msgid "Add Last"
 msgstr "Pievienot pēdējo"
 
-msgid "Add Local Folder"
-msgstr "Pievienot lokālo mapi"
-
 msgid "Add Rule"
 msgstr "Pievienot noteikumu"
 
-msgid "Add Server"
-msgstr "Pievienot serveri"
+msgid "Add Your Music Library"
+msgstr ""
+
+#, fuzzy
+msgid "Add a music folder"
+msgstr "Izvēlieties lokālo mūzikas mapi"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
@@ -76,8 +77,15 @@ msgstr "Pievienot pašreizējo"
 msgid "Add folders to use the Local source."
 msgstr "Pievienojiet mapes, lai izmantotu lokālo avotu."
 
+msgid "Add music library"
+msgstr ""
+
 msgid "Add music to start a queue."
 msgstr "Pievienojiet mūziku, lai sāktu rindu."
+
+#, fuzzy
+msgid "Add server"
+msgstr "Pievienot serveri"
 
 msgid "Add to Favorites"
 msgstr "Pievienot izlasei"
@@ -240,12 +248,6 @@ msgstr "Izvēlieties lokālo mūzikas mapi"
 msgid "Choose a local prefix."
 msgstr "Izvēlieties lokālo prefiksu."
 
-msgid ""
-"Choose a provider, pick a discovered server, or enter the address manually"
-msgstr ""
-"Izvēlieties pakalpojumu sniedzēju, atlasiet atrastu serveri vai manuāli "
-"ievadiet adresi"
-
 msgid "Choose an existing local prefix."
 msgstr "Izvēlieties esošu lokālo prefiksu."
 
@@ -317,9 +319,6 @@ msgstr ""
 
 msgid "Connect"
 msgstr "Savienot"
-
-msgid "Connect to Music Server"
-msgstr "Savienoties ar mūzikas serveri"
 
 msgid "Connected"
 msgstr "Savienots"
@@ -495,13 +494,6 @@ msgstr "Pārtīt uz priekšu"
 
 msgid "Found Servers"
 msgstr "Atrasti serveri"
-
-#, rust-format
-msgid "Found {count} Jellyfin server"
-msgid_plural "Found {count} Jellyfin servers"
-msgstr[0] "Atrasts {count} Jellyfin serveris"
-msgstr[1] "Atrasti {count} Jellyfin serveri"
-msgstr[2] "Atrasti {count} Jellyfin serveri"
 
 msgid "Full"
 msgstr "Pilns"
@@ -909,6 +901,10 @@ msgstr "Atvērt vietnē MusicBrainz"
 msgid "Open release notes"
 msgstr "Atvērt izdevuma piezīmes"
 
+#, fuzzy
+msgid "OpenSubsonic"
+msgstr "Subsonic / OpenSubsonic"
+
 msgid "Opening Last.fm authorization…"
 msgstr "Atver Last.fm autorizāciju…"
 
@@ -936,6 +932,22 @@ msgstr "Vienkārši teksti"
 msgid "Play"
 msgstr "Atskaņot"
 
+#, fuzzy
+msgid "Play Album Radio"
+msgstr "Atskaņot albumu"
+
+#, fuzzy
+msgid "Play Artist Radio"
+msgstr "Atskaņot mākslinieku"
+
+#, fuzzy
+msgid "Play Genre Radio"
+msgstr "Atskaņot nejaušā secībā"
+
+#, fuzzy
+msgid "Play Last"
+msgstr "Atskaņot vēlāk"
+
 msgid "Play Later"
 msgstr "Atskaņot vēlāk"
 
@@ -944,6 +956,14 @@ msgstr "Atskaņot nākamo"
 
 msgid "Play Now"
 msgstr "Atskaņot tagad"
+
+#, fuzzy
+msgid "Play Playlist Radio"
+msgstr "Atskaņošanas saraksta nosaukums"
+
+#, fuzzy
+msgid "Play Track Radio"
+msgstr "Atskaņot dziesmu"
 
 msgid "Play album"
 msgstr "Atskaņot albumu"
@@ -1028,9 +1048,6 @@ msgstr "Privātais režīms"
 
 msgid "Private mode is on"
 msgstr "Privātais režīms ir ieslēgts"
-
-msgid "Provider"
-msgstr "Pakalpojuma sniedzējs"
 
 msgid "Queue"
 msgstr "Rinda"
@@ -1294,7 +1311,8 @@ msgid "Server settings saved."
 msgstr "Servera iestatījumi saglabāti."
 
 msgid "Server settings saved. Resyncing library…"
-msgstr "Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
+msgstr ""
+"Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
 
 msgid "Servers"
 msgstr "Serveri"
@@ -1476,6 +1494,11 @@ msgstr ""
 "Tas noņem serveri, kešotos bibliotēkas metadatus, rindas momentuzņēmumu un "
 "saglabāto žetonu priekš"
 
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
+msgstr ""
+
 msgid "Timed out waiting for Last.fm authorization."
 msgstr "Beidzies gaidīšanas laiks, gaidot Last.fm autorizāciju."
 
@@ -1528,6 +1551,9 @@ msgstr[1] ""
 msgstr[2] ""
 "Nesaglabātas izmaiņas. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
 "metadatiem, {unmatched} neatbilst no {total} celiņiem."
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
 
 msgid "Use This Source"
 msgstr "Izmantot šo avotu"
@@ -1720,6 +1746,9 @@ msgstr ""
 #~ msgid "Active Source Actions"
 #~ msgstr "Aktīvā avota darbības"
 
+#~ msgid "Add Local Folder"
+#~ msgstr "Pievienot lokālo mapi"
+
 #~ msgid "Add local folder access"
 #~ msgstr "Pievienot piekļuvi lokālajai mapei"
 
@@ -1743,6 +1772,12 @@ msgstr ""
 #~ "(Flatpak lietotājiem, ja mape nav ~/Music, jums jāpiešķir mapes atļaujas "
 #~ "no Flatseal)"
 
+#~ msgid ""
+#~ "Choose a provider, pick a discovered server, or enter the address manually"
+#~ msgstr ""
+#~ "Izvēlieties pakalpojumu sniedzēju, atlasiet atrastu serveri vai manuāli "
+#~ "ievadiet adresi"
+
 #~ msgid "Choose a provider, pick a server, or enter the address manually"
 #~ msgstr ""
 #~ "Izvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet "
@@ -1765,6 +1800,9 @@ msgstr ""
 #~ msgstr ""
 #~ "Konfigurēt saglabātos mūzikas serverus un lokālos atskaņošanas sarakstus"
 
+#~ msgid "Connect to Music Server"
+#~ msgstr "Savienoties ar mūzikas serveri"
+
 #~ msgid "Connected as"
 #~ msgstr "Savienots kā"
 
@@ -1782,6 +1820,13 @@ msgstr ""
 
 #~ msgid "Edit Mapping"
 #~ msgstr "Rediģēt kartējumu"
+
+#, rust-format
+#~ msgid "Found {count} Jellyfin server"
+#~ msgid_plural "Found {count} Jellyfin servers"
+#~ msgstr[0] "Atrasts {count} Jellyfin serveris"
+#~ msgstr[1] "Atrasti {count} Jellyfin serveri"
+#~ msgstr[2] "Atrasti {count} Jellyfin serveri"
 
 #~ msgid "Genre detail keeps albums above tracks"
 #~ msgstr "Žanra detaļas tur albumus virs celiņiem"
@@ -1831,6 +1876,9 @@ msgstr ""
 
 #~ msgid "Playlist detail will use the track table"
 #~ msgstr "Atskaņošanas saraksta detaļas izmantos celiņu tabulu"
+
+#~ msgid "Provider"
+#~ msgstr "Pakalpojuma sniedzējs"
 
 #~ msgid "Release notes"
 #~ msgstr "Izdevuma piezīmes"

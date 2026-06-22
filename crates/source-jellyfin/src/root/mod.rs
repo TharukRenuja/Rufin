@@ -15,9 +15,10 @@ use domain::{ArtistCredit, ArtistId, ImageRef};
 use reqwest::{Client, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use source::{
-    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
-    ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
-    PagedResponse, PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
+    AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTrackStrategy,
+    GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
+    LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
+    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
     ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
     RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
@@ -309,6 +310,76 @@ impl JellyfinProvider {
             response.items,
             response.total_record_count.unwrap_or(0),
         ))
+    }
+
+    async fn similar_tracks(&self, track_id: &TrackId, limit: usize) -> ProviderResult<Vec<Track>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let mut url = endpoint(&self.base_url, &format!("Items/{raw_track_id}/Similar"))?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Limit", &limit.clamp(1, 500).to_string())
+            .append_pair("Fields", ITEM_FIELDS);
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response
+            .items
+            .into_iter()
+            .filter(is_audio_item)
+            .map(track_from_item)
+            .collect())
+    }
+
+    async fn instant_mix_tracks(
+        &self,
+        seed: &GeneratedTrackSeed,
+        limit: usize,
+    ) -> ProviderResult<Vec<Track>> {
+        let mut url = self.instant_mix_url(seed)?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Limit", &limit.clamp(1, 500).to_string())
+            .append_pair("Fields", ITEM_FIELDS);
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response
+            .items
+            .into_iter()
+            .filter(is_audio_item)
+            .map(track_from_item)
+            .collect())
+    }
+
+    fn instant_mix_url(&self, seed: &GeneratedTrackSeed) -> ProviderResult<Url> {
+        match seed {
+            GeneratedTrackSeed::Track(track_id) => endpoint(
+                &self.base_url,
+                &format!("Songs/{}/InstantMix", raw_item_id(track_id.as_str())),
+            ),
+            GeneratedTrackSeed::Album(album_id) => endpoint(
+                &self.base_url,
+                &format!("Albums/{}/InstantMix", raw_item_id(album_id.as_str())),
+            ),
+            GeneratedTrackSeed::Artist(artist_id) => endpoint(
+                &self.base_url,
+                &format!("Artists/{}/InstantMix", raw_item_id(artist_id.as_str())),
+            ),
+            GeneratedTrackSeed::Playlist(playlist_id) => endpoint(
+                &self.base_url,
+                &format!("Playlists/{}/InstantMix", raw_item_id(playlist_id.as_str())),
+            ),
+            GeneratedTrackSeed::Genre { id: Some(id), .. } => {
+                let mut url = endpoint(&self.base_url, "MusicGenres/InstantMix")?;
+                url.query_pairs_mut()
+                    .append_pair("Id", raw_item_id(id.as_str()));
+                Ok(url)
+            }
+            GeneratedTrackSeed::Genre { id: None, name } => {
+                let mut url = endpoint(&self.base_url, "MusicGenres")?;
+                url.path_segments_mut()
+                    .map_err(|_| ProviderError::Other("invalid Jellyfin base URL".to_string()))?
+                    .push(name)
+                    .push("InstantMix");
+                Ok(url)
+            }
+        }
     }
 
     async fn music_genre_page(

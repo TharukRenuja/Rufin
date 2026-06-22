@@ -457,6 +457,14 @@ msgstr ""
 msgid "Turn off only for a server you control"
 msgstr ""
 
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
+msgstr ""
+
 msgid "Save Server Settings"
 msgstr ""
 
@@ -1091,6 +1099,9 @@ msgstr ""
 msgid "Play Now"
 msgstr ""
 
+msgid "Play Track Radio"
+msgstr ""
+
 msgid "Add to Playlist"
 msgstr ""
 
@@ -1294,6 +1305,21 @@ msgid "Removed from favorites"
 msgstr ""
 
 msgid "Remove from playlist"
+msgstr ""
+
+msgid "Play Album Radio"
+msgstr ""
+
+msgid "Play Artist Radio"
+msgstr ""
+
+msgid "Play Last"
+msgstr ""
+
+msgid "Play Genre Radio"
+msgstr ""
+
+msgid "Play Playlist Radio"
 msgstr ""
 
 msgid "Delete"

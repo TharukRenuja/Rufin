@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Album, AlbumId, Artist, ArtistId, ExternalLyricsProvider, Folder, FolderId, Genre, GenreId,
-    Playlist, ServerIdentity, StreamQuality, Track, TrackId,
+    Playlist, PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -27,6 +27,35 @@ pub struct RandomTrackRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genre_name: Option<String>,
     pub played_filter: PlayedFilter,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum GeneratedTrackStrategy {
+    #[default]
+    ProviderDefault,
+    SimilarFirst,
+    MixOnly,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum GeneratedTrackSeed {
+    Track(TrackId),
+    Album(AlbumId),
+    Artist(ArtistId),
+    Genre {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<GenreId>,
+        name: String,
+    },
+    Playlist(PlaylistId),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GeneratedTracksRequest {
+    pub seed: GeneratedTrackSeed,
+    pub limit: usize,
+    #[serde(default)]
+    pub strategy: GeneratedTrackStrategy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

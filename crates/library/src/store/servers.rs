@@ -59,6 +59,7 @@ pub(super) fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServ
         user_id: row.get(4)?,
         username: row.get(5)?,
         trust_invalid_cert: row.get::<_, i64>(6)? == 1,
+        use_jellyfin_instant_mix: row.get::<_, i64>(7)? == 1,
     })
 }
 pub(super) fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {

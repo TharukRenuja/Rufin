@@ -53,14 +53,15 @@ msgstr "Lisa kaust"
 msgid "Add Last"
 msgstr "Viimatilisatud"
 
-msgid "Add Local Folder"
-msgstr "Lisa kohalik kaust"
-
 msgid "Add Rule"
 msgstr "Lisa reegel"
 
-msgid "Add Server"
-msgstr "Lisa server"
+msgid "Add Your Music Library"
+msgstr ""
+
+#, fuzzy
+msgid "Add a music folder"
+msgstr "Vali kohalik muusikakaust"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr "Lisa kasutatav Jellyfini, Subsonicu või OpenSubsonicu server."
@@ -74,8 +75,15 @@ msgstr "Lisa praegune"
 msgid "Add folders to use the Local source."
 msgstr "Kohaliku andmeallika kasutamiseks lisa kaustad."
 
+msgid "Add music library"
+msgstr ""
+
 msgid "Add music to start a queue."
 msgstr "Esitusjärjekorra koostamiseks lisa muusikat."
+
+#, fuzzy
+msgid "Add server"
+msgstr "Lisa server"
 
 msgid "Add to Favorites"
 msgstr "Lisa lemmikuks"
@@ -239,12 +247,6 @@ msgstr "Vali kohalik muusikakaust"
 msgid "Choose a local prefix."
 msgstr "Vali kohalik prefiks."
 
-msgid ""
-"Choose a provider, pick a discovered server, or enter the address manually"
-msgstr ""
-"Vali teenusepakkuja või tuvastatud server, aga võid ka aadressi käsitsi "
-"lisada"
-
 msgid "Choose an existing local prefix."
 msgstr "Vali olemasolev kohalik prefiks."
 
@@ -318,9 +320,6 @@ msgstr ""
 
 msgid "Connect"
 msgstr "Ühenda"
-
-msgid "Connect to Music Server"
-msgstr "Ühenda muusikaserveriga"
 
 msgid "Connected"
 msgstr "Ühendatud"
@@ -501,12 +500,6 @@ msgstr "Edasi"
 
 msgid "Found Servers"
 msgstr "Leitud serverid"
-
-#, rust-format
-msgid "Found {count} Jellyfin server"
-msgid_plural "Found {count} Jellyfin servers"
-msgstr[0] "Leidus {count} Jellyfini server"
-msgstr[1] "Leidus {count} Jellyfini serverit"
 
 msgid "Full"
 msgstr "Täisvaates"
@@ -918,6 +911,10 @@ msgstr "Ava MusicBrainzis"
 msgid "Open release notes"
 msgstr "Vaata versiooniteavet"
 
+#, fuzzy
+msgid "OpenSubsonic"
+msgstr "Subsonic / OpenSubsonic"
+
 msgid "Opening Last.fm authorization…"
 msgstr "Avan Last.fm-i autentimisvaadet…"
 
@@ -946,6 +943,22 @@ msgstr "Tavalised laulusõnad"
 msgid "Play"
 msgstr "Esita"
 
+#, fuzzy
+msgid "Play Album Radio"
+msgstr "Esita albumit"
+
+#, fuzzy
+msgid "Play Artist Radio"
+msgstr "Esita esitajat"
+
+#, fuzzy
+msgid "Play Genre Radio"
+msgstr "Esita juhuslikult"
+
+#, fuzzy
+msgid "Play Last"
+msgstr "Esita hiljem"
+
 msgid "Play Later"
 msgstr "Esita hiljem"
 
@@ -954,6 +967,14 @@ msgstr "Esita järgmisena"
 
 msgid "Play Now"
 msgstr "Esita kohe"
+
+#, fuzzy
+msgid "Play Playlist Radio"
+msgstr "Esitusloendi nimi"
+
+#, fuzzy
+msgid "Play Track Radio"
+msgstr "Esita lugu"
 
 msgid "Play album"
 msgstr "Esita albumit"
@@ -1038,9 +1059,6 @@ msgstr "Privaatne režiim"
 
 msgid "Private mode is on"
 msgstr "Privaatne režiim on lülitatud sisse"
-
-msgid "Provider"
-msgstr "Teenusepakkuja"
 
 msgid "Queue"
 msgstr "Esitusjärjekord"
@@ -1485,6 +1503,11 @@ msgstr ""
 "Järgnevaga kustutakse serveriteave, puhverdatud muusikakogu andmed, "
 "esitusjärjekorra hetkvaade ja salvestatud tunnusload teenusest"
 
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
+msgstr ""
+
 msgid "Timed out waiting for Last.fm authorization."
 msgstr "Aegumine Last.fm-i autentimise ootamisel."
 
@@ -1530,6 +1553,9 @@ msgid_plural ""
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
 msgstr[1] ""
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
 
 msgid "Use This Source"
 msgstr "Kasuta seda allikat"
@@ -1710,6 +1736,9 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgid "Active Source Actions"
 #~ msgstr "Tegevused aktiivse allikaga"
 
+#~ msgid "Add Local Folder"
+#~ msgstr "Lisa kohalik kaust"
+
 #~ msgid "Add local folder access"
 #~ msgstr "Lisa ligipääs kohalikule kaustale"
 
@@ -1727,6 +1756,12 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ "Vali kaust, mida tahad kohalikus arvutis skaneerida ja sealt muusikat "
 #~ "esitada (Kui oled flatpaki kasutaja ja see kaust pole ~/Muusika, siis "
 #~ "pead ilmselt Flatsealiga jagama vajalikke õigusi)"
+
+#~ msgid ""
+#~ "Choose a provider, pick a discovered server, or enter the address manually"
+#~ msgstr ""
+#~ "Vali teenusepakkuja või tuvastatud server, aga võid ka aadressi käsitsi "
+#~ "lisada"
 
 #~ msgid "Choose a provider, pick a server, or enter the address manually"
 #~ msgstr "Vali teenusepakkuja või server, aga võid ka aadressi käsitsi lisada"
@@ -1748,6 +1783,9 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgstr ""
 #~ "Seadista salvestatud muusikaservereid ja kohaliku taasesituse vastendusi"
 
+#~ msgid "Connect to Music Server"
+#~ msgstr "Ühenda muusikaserveriga"
+
 #~ msgid "Connected as"
 #~ msgstr "Ühendatud kui"
 
@@ -1766,6 +1804,12 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Edit Mapping"
 #~ msgstr "Muuda vastendust"
+
+#, rust-format
+#~ msgid "Found {count} Jellyfin server"
+#~ msgid_plural "Found {count} Jellyfin servers"
+#~ msgstr[0] "Leidus {count} Jellyfini server"
+#~ msgstr[1] "Leidus {count} Jellyfini serverit"
 
 #~ msgid "Issues"
 #~ msgstr "Veahaldus"
@@ -1819,6 +1863,9 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Privacy"
 #~ msgstr "Privaatsus"
+
+#~ msgid "Provider"
+#~ msgstr "Teenusepakkuja"
 
 #, fuzzy
 #~ msgid "Release notes"

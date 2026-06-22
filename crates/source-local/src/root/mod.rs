@@ -14,10 +14,10 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use source::{
-    AlbumDetail, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
-    MusicProvider, PagedRequest, PagedResponse, PlayedFilter, PlaylistDetail, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
-    StreamDescriptor,
+    AlbumDetail, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes,
+    ImageKind, ImageMetadata, ImageRequest, MusicProvider, PagedRequest, PagedResponse,
+    PlayedFilter, PlaylistDetail, ProviderCapabilities, ProviderError, ProviderIdentity,
+    ProviderResult, RandomTrackRequest, SearchResults, StreamDescriptor,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -430,6 +430,78 @@ impl MusicProvider for LocalProvider {
             .collect())
     }
 
+    async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> ProviderResult<Vec<Track>> {
+        let limit = request.limit.clamp(1, 500);
+        match request.seed {
+            GeneratedTrackSeed::Track(track_id) => {
+                let seed = self
+                    .library
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .ok_or(ProviderError::NotFound)?;
+                let mut tracks = self
+                    .random_tracks(RandomTrackRequest {
+                        limit: limit.saturating_add(1),
+                        min_year: None,
+                        max_year: None,
+                        genre_id: None,
+                        genre_name: seed.genres.first().cloned(),
+                        played_filter: PlayedFilter::All,
+                    })
+                    .await?;
+                tracks.retain(|track| track.id != track_id);
+                Ok(tracks.into_iter().take(limit).collect())
+            }
+            GeneratedTrackSeed::Album(album_id) => {
+                let album = self
+                    .library
+                    .albums
+                    .iter()
+                    .find(|album| album.id == album_id)
+                    .ok_or(ProviderError::NotFound)?;
+                let mut tracks = self
+                    .random_tracks(RandomTrackRequest {
+                        limit: limit.saturating_mul(2),
+                        min_year: None,
+                        max_year: None,
+                        genre_id: None,
+                        genre_name: album.genres.first().cloned(),
+                        played_filter: PlayedFilter::All,
+                    })
+                    .await?;
+                tracks.retain(|track| track.album_id != album_id);
+                Ok(tracks.into_iter().take(limit).collect())
+            }
+            GeneratedTrackSeed::Artist(artist_id) => {
+                let mut tracks = self
+                    .library
+                    .tracks
+                    .iter()
+                    .filter(|track| track.artist_id.as_ref() == Some(&artist_id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                tracks.sort_by_key(|track| track.id.as_str().to_string());
+                Ok(tracks.into_iter().take(limit).collect())
+            }
+            GeneratedTrackSeed::Genre { id, name } => {
+                self.random_tracks(RandomTrackRequest {
+                    limit,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: id,
+                    genre_name: (!name.trim().is_empty()).then_some(name),
+                    played_filter: PlayedFilter::All,
+                })
+                .await
+            }
+            GeneratedTrackSeed::Playlist(_) => Err(ProviderError::Unsupported("playlist radio")),
+        }
+    }
+
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
         Ok(page(&self.library.artists, request))
     }
@@ -773,6 +845,7 @@ fn identity_for_roots(roots: &[PathBuf]) -> ServerIdentity {
         base_url: joined,
     }
 }
+
 fn local_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         favorites: false,
@@ -780,7 +853,7 @@ fn local_capabilities() -> ProviderCapabilities {
         playback_reporting: false,
         playlist_mutations: false,
         favorite_mutations: false,
-        auto_dj: false,
+        auto_dj: true,
         playlists: false,
         random_tracks: true,
         folder_browsing: true,

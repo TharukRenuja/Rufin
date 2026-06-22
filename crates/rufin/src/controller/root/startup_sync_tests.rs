@@ -216,6 +216,7 @@ pub(in crate::controller) fn startup_activate_token() {
         LoginActivationRequest {
             session: &session,
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
             local_access_root: None,
             path_replace_from: None,
         },
@@ -273,6 +274,7 @@ pub(in crate::controller) fn startup_persist_server() {
         LoginActivationRequest {
             session: &session,
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
             local_access_root: None,
             path_replace_from: None,
         },
@@ -332,6 +334,7 @@ pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() 
         LoginActivationRequest {
             session: &session,
             trust_invalid_cert: false,
+            use_jellyfin_instant_mix: false,
             local_access_root: None,
             path_replace_from: None,
         },
@@ -1809,6 +1812,7 @@ pub(in crate::controller) fn startup_record_state() {
         user_id: "user".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store
         .with_store(|store| {
@@ -1930,18 +1934,20 @@ pub(in crate::controller) fn startup_persist_field() {
                 user_id: "user-id".to_string(),
                 username: "listener".to_string(),
                 trust_invalid_cert: false,
+                use_jellyfin_instant_mix: false,
             })?;
             store.set_active_server(&server_id)
         })
         .expect("save server");
-    controller.update_server_settings(
-        server_id.clone(),
-        "Edited server".to_string(),
-        "http://old.example.test".to_string(),
-        "listener".to_string(),
-        String::new(),
-        true,
-    );
+    controller.update_server_settings(ServerSettingsInput {
+        server_id: server_id.clone(),
+        name: "Edited server".to_string(),
+        base_url: "http://old.example.test".to_string(),
+        username: "listener".to_string(),
+        password: String::new(),
+        trust_invalid_cert: true,
+        use_jellyfin_instant_mix: false,
+    });
     assert_eq!(wait_for_status(&events), "Server settings saved.");
     let snapshot = wait_for_snapshot(&events);
     let edited = snapshot
@@ -1978,19 +1984,21 @@ pub(in crate::controller) fn startup_emit_status() {
                 user_id: "user-id".to_string(),
                 username: "listener".to_string(),
                 trust_invalid_cert: false,
+                use_jellyfin_instant_mix: false,
             })?;
             store.set_active_server(&server_id)
         })
         .expect("save server");
 
-    controller.update_server_settings(
+    controller.update_server_settings(ServerSettingsInput {
         server_id,
-        "Saved server".to_string(),
-        "http://server.example.test".to_string(),
-        "listener".to_string(),
-        String::new(),
-        false,
-    );
+        name: "Saved server".to_string(),
+        base_url: "http://server.example.test".to_string(),
+        username: "listener".to_string(),
+        password: String::new(),
+        trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
+    });
 
     assert_eq!(wait_for_status(&events), "No changes to save.");
 }
@@ -2162,6 +2170,7 @@ pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
                 user_id: "cancel-user".to_string(),
                 username: "listener".to_string(),
                 trust_invalid_cert: false,
+                use_jellyfin_instant_mix: false,
             })?;
             store.set_active_server(&server_id)
         })
@@ -2203,6 +2212,7 @@ pub(in crate::controller) fn startup_track_page() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store
         .with_store(|store| store.save_server(&saved))
@@ -2231,6 +2241,7 @@ pub(in crate::controller) fn startup_emit_timing() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store
         .with_store(|store| store.save_server(&saved))
@@ -2824,36 +2835,16 @@ pub(in crate::controller) fn stale_track_images() {
 
 #[test]
 pub(in crate::controller) fn auto_dj_candidate() {
-    let (controller, _events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let local = local_source_saved();
-    let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Fauto-dj-album", None);
-    let album = local_album_with_image_ref(album_image_ref.clone());
-    let tracks = (1..=7)
-        .map(|number| {
-            local_track_with_image_ref(
-                number,
-                &album,
-                ImageRef::new(
-                    format!("local:cover:embedded%3A%2Fmusic%2Fauto-dj-{number}.flac"),
-                    None,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-    seed_cached_library(
-        &controller.store,
-        &local,
-        std::slice::from_ref(&album),
-        &tracks,
-        &[],
-    );
-    let mut queue = QueueEngine::new(local.server.id.clone());
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let saved = snapshot.server.expect("server");
+    let tracks = snapshot.tracks;
+    let mut queue = QueueEngine::new(saved.id);
     queue.play_now(&tracks[0]);
     *controller.queue.lock().expect("queue") = Some(queue);
     *controller.auto_dj_enabled.lock().expect("auto dj") = true;
 
-    assert!(controller.refill_auto_dj_queue());
+    assert!(controller.auto_dj_topup());
 
     let queue = controller.queue.lock().expect("queue");
     let queue = queue.as_ref().expect("queue");
@@ -2869,6 +2860,64 @@ pub(in crate::controller) fn auto_dj_candidate() {
             Some(domain::QueueEntryOrigin::AutoDj { .. })
         ));
     }
+}
+
+#[test]
+pub(in crate::controller) fn auto_dj_falls_back_to_random_when_radio_is_empty() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = SavedServer {
+        server: ServerIdentity {
+            id: ServerId::fake(88),
+            provider: "fake".to_string(),
+            name: "Fake Server".to_string(),
+            base_url: "memory://fake".to_string(),
+        },
+        user_id: "fake-user".to_string(),
+        username: "fake".to_string(),
+        trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
+    };
+    let tracks = (1..=7)
+        .map(|number| {
+            library_track(
+                number,
+                Some(ArtistId::fake(number)),
+                AlbumId::fake(number),
+                &format!("Artist {number}"),
+                &[],
+            )
+        })
+        .collect::<Vec<_>>();
+    seed_cached_library(&store, &saved, &[], &tracks, &[]);
+    let (controller, _events) = controller_from_store_for_test(store);
+    let mut queue = QueueEngine::new(saved.server.id.clone());
+    queue.play_now(&tracks[0]);
+    *controller.queue.lock().expect("queue") = Some(queue);
+    *controller.auto_dj_enabled.lock().expect("auto dj") = true;
+
+    assert!(controller.auto_dj_topup());
+
+    let queue = controller.queue.lock().expect("queue");
+    let queue = queue.as_ref().expect("queue");
+    assert_eq!(queue.entries().len(), 1 + super::AUTO_DJ_ITEM_COUNT);
+    let appended = queue
+        .entries()
+        .iter()
+        .skip(1)
+        .map(|entry| entry.track_id.clone())
+        .collect::<HashSet<_>>();
+    assert_eq!(appended.len(), super::AUTO_DJ_ITEM_COUNT);
+    assert!(!appended.contains(&tracks[0].id));
+    let fallback_ids = tracks
+        .iter()
+        .skip(1)
+        .map(|track| track.id.clone())
+        .collect::<HashSet<_>>();
+    assert!(appended.is_subset(&fallback_ids));
+    assert!(queue.entries().iter().skip(1).all(|entry| matches!(
+        entry.origin.as_ref(),
+        Some(domain::QueueEntryOrigin::AutoDj { .. })
+    )));
 }
 
 #[test]
@@ -3627,6 +3676,7 @@ pub(in crate::controller) fn album_artist_grid_bridges_source_duplicate_artist_i
         user_id: "user".to_string(),
         username: "listener".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let fallback_ref = ImageRef::new(
         "remote:album:source-linked-album",
@@ -3705,6 +3755,7 @@ pub(in crate::controller) fn album_projection_binds_track_fallback_art_before_ro
         user_id: "user".to_string(),
         username: "listener".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let fallback_ref = ImageRef::new(
         "remote:track:source-track-cover",
@@ -3754,6 +3805,7 @@ pub(in crate::controller) fn genre_projection_uses_bound_album_track_fallback_ar
         user_id: "user".to_string(),
         username: "listener".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let fallback_ref = ImageRef::new(
         "remote:track:genre-track-cover",
@@ -3817,6 +3869,7 @@ pub(in crate::controller) fn track_projection_binds_album_fallback_art_before_ro
         user_id: "user".to_string(),
         username: "listener".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let album_ref = ImageRef::new(
         "remote:album:source-album-cover",
@@ -4329,6 +4382,7 @@ pub(in crate::controller) fn startup_remote_cache() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store
         .with_store(|store| store.save_server(&saved))
@@ -4349,6 +4403,7 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store
         .with_store(|store| {
@@ -4413,6 +4468,7 @@ pub(in crate::controller) fn home_refresh_replace() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let stale_album = runtime
         .block_on(provider.albums(PagedRequest::new(8, 1)))
@@ -4484,6 +4540,7 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let stale_track = runtime
         .block_on(provider.tracks(PagedRequest::new(0, 1)))
@@ -4565,6 +4622,7 @@ pub(in crate::controller) fn startup_replace_section() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let stale_album = runtime
         .block_on(provider.albums(PagedRequest::new(8, 1)))
@@ -4707,6 +4765,7 @@ pub(in crate::controller) fn startup_home_unchanged() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let stale_album = runtime
         .block_on(provider.albums(PagedRequest::new(8, 1)))
@@ -4772,6 +4831,7 @@ pub(in crate::controller) fn startup_promote_prefetch() {
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     let stale_album = runtime
         .block_on(provider.albums(PagedRequest::new(8, 1)))

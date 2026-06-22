@@ -46,9 +46,9 @@ pub use settings::{
     sanitize_language_preference, sanitized_window_size,
 };
 pub use source::{
-    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
-    ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse,
-    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
-    ProviderSession, RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor,
-    StreamRequest,
+    AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTrackStrategy,
+    GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
+    LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
+    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderSession,
+    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };

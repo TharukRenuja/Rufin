@@ -7,7 +7,7 @@ use domain::{LibrarySourceSelection, ServerId, ServerIdentity};
 use gtk::gio;
 use library::ServerLocalAccess;
 
-use crate::controller::LocalAccessStatus;
+use crate::controller::{LocalAccessStatus, ServerSettingsInput};
 use crate::i18n::{tr, trn_with};
 use crate::providers::StreamingProvider;
 
@@ -364,7 +364,7 @@ fn server_settings_group(
     server: &ServerIdentity,
     remote: bool,
 ) -> adw::PreferencesGroup {
-    let (saved_username, saved_trust_invalid_cert) = {
+    let (saved_username, saved_trust_invalid_cert, saved_use_jellyfin_instant_mix) = {
         let library = shell.state.library.borrow();
         let summary = library
             .server_local_access
@@ -375,6 +375,7 @@ fn server_settings_group(
                 .and_then(|summary| summary.username.clone())
                 .unwrap_or_default(),
             summary.is_some_and(|summary| summary.trust_invalid_cert),
+            summary.is_some_and(|summary| summary.use_jellyfin_instant_mix),
         )
     };
 
@@ -421,6 +422,14 @@ fn server_settings_group(
     cert_verify.set_visible(remote);
     group.add(&cert_verify);
 
+    let instant_mix = adw::SwitchRow::builder()
+        .title(tr("Use Jellyfin Instant Mix for recommendations"))
+        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
+        .active(saved_use_jellyfin_instant_mix)
+        .build();
+    instant_mix.set_visible(server.provider == "jellyfin");
+    group.add(&instant_mix);
+
     let save = button_row("Save Server Settings", "document-save-symbolic");
     save.add_css_class("suggested-action");
     group.add(&save);
@@ -441,14 +450,15 @@ fn server_settings_group(
         } else {
             username.text().trim().to_string()
         };
-        controller.update_server_settings(
-            server_id.clone(),
-            name.text().trim().to_string(),
+        controller.update_server_settings(ServerSettingsInput {
+            server_id: server_id.clone(),
+            name: name.text().trim().to_string(),
             base_url,
             username,
-            password.text().to_string(),
-            !cert_verify.is_active(),
-        );
+            password: password.text().to_string(),
+            trust_invalid_cert: !cert_verify.is_active(),
+            use_jellyfin_instant_mix: provider == "jellyfin" && instant_mix.is_active(),
+        });
     });
 
     group

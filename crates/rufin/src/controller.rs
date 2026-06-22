@@ -2,10 +2,15 @@ mod covers;
 
 mod discovery;
 
+mod generated_radio;
+
+mod provider_tracks;
+
 mod random;
 
 mod root;
 
+pub(crate) use root::ServerSettingsInput;
 pub use root::*;
 pub(in crate::controller) use root::{
     IMAGE_TAG_UNTAGGED, SNAPSHOT_TRACK_LIMIT, StoreHandle, acquire_cover_slot,

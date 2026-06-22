@@ -9,11 +9,11 @@ use thiserror::Error;
 pub mod remote_http;
 
 pub use domain::{
-    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
-    ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse,
-    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
-    ProviderSession, RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor,
-    StreamRequest,
+    AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTrackStrategy,
+    GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
+    LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
+    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderSession,
+    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -135,6 +135,13 @@ pub trait MusicProvider {
     async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
         let _unused = request;
         Err(ProviderError::Unsupported("random tracks"))
+    }
+    async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> ProviderResult<Vec<Track>> {
+        let _unused = request;
+        Err(ProviderError::Unsupported("generated tracks"))
     }
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor>;
     async fn stream_with_request(

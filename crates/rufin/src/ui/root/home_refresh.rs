@@ -12,6 +12,7 @@ pub(in crate::ui) const ALBUM_ICON: &str = "route-albums-symbolic";
 pub(in crate::ui) const ARTIST_ICON: &str = "route-artists-symbolic";
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
+pub(in crate::ui) const RADIO_ICON: &str = "view-refresh-symbolic";
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryContextMenuAction {
@@ -81,6 +82,11 @@ fn present_track_context_menu_inner(
         "Play Later",
         "track.play-last",
         PLAY_LATER_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Track Radio",
+        "track.play-radio",
+        RADIO_ICON,
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -160,6 +166,14 @@ fn present_track_context_menu_inner(
         }
     });
 
+    surface.add_action("play-radio", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_track_radio(action_track.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let track_id = track.id.clone();
@@ -231,6 +245,11 @@ pub(in crate::ui) fn present_album_context_menu(
         "Play Later",
         "album.play-last",
         PLAY_LATER_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Album Radio",
+        "album.play-radio",
+        RADIO_ICON,
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -314,6 +333,14 @@ pub(in crate::ui) fn present_album_context_menu(
         }
     });
 
+    surface.add_action("play-radio", {
+        let controller = shell.controller.clone();
+        let album = album.clone();
+        move || {
+            controller.play_album_radio(album.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let album_id = album.id.clone();
@@ -371,6 +398,11 @@ pub(in crate::ui) fn present_artist_context_menu(
         "Play Later",
         "artist.play-last",
         PLAY_LATER_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Artist Radio",
+        "artist.play-radio",
+        RADIO_ICON,
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -452,6 +484,14 @@ pub(in crate::ui) fn present_artist_context_menu(
         }
     });
 
+    surface.add_action("play-radio", {
+        let controller = shell.controller.clone();
+        let artist = artist.clone();
+        move || {
+            controller.play_artist_radio(artist.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let artist_id = artist.id.clone();
@@ -486,6 +526,103 @@ pub(in crate::ui) fn artist_tracks_for_context(
         .map(|detail| detail.tracks)
         .filter(|tracks| !tracks.is_empty())
 }
+
+pub(in crate::ui) fn present_genre_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    genre: Genre,
+    position: Option<(f64, f64)>,
+) {
+    let main_menu = context_menu_box();
+    main_menu.append(&context_menu_action(
+        "Play Now",
+        "genre.play",
+        "media-playback-start-symbolic",
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Next",
+        "genre.play-next",
+        PLAY_NEXT_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Last",
+        "genre.play-last",
+        PLAY_LATER_ICON,
+    ));
+    main_menu.append(&context_menu_action(
+        "Play Genre Radio",
+        "genre.play-radio",
+        RADIO_ICON,
+    ));
+
+    if context_menu_can_add_to_playlist(shell) {
+        let controller = shell.controller.clone();
+        let genre_id = genre.id.clone();
+        let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new(move || {
+            controller
+                .cached_genre_detail(&genre_id)
+                .ok()
+                .flatten()
+                .map(|detail| detail.tracks)
+                .unwrap_or_default()
+        });
+        main_menu.append(&context_menu_picker_button(
+            "Add to Playlist",
+            ADD_TO_PLAYLIST_ICON,
+            shell,
+            track_source,
+        ));
+    }
+
+    let surface =
+        ContextMenuSurface::new(target, "genre", "genre-context-menu", position, &main_menu);
+
+    surface.add_action("play", {
+        let controller = shell.controller.clone();
+        let genre_id = genre.id.clone();
+        move || {
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                let tracks = detail.tracks;
+                controller.play_genre_tracks_window(genre_id.clone(), tracks.len(), 0, |index| {
+                    tracks.get(index).cloned()
+                });
+            }
+        }
+    });
+
+    surface.add_action("play-radio", {
+        let controller = shell.controller.clone();
+        let genre = genre.clone();
+        move || {
+            controller.play_genre_radio(genre.clone());
+        }
+    });
+
+    surface.add_action("play-next", {
+        let controller = shell.controller.clone();
+        let genre_id = genre.id.clone();
+        move || {
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                for track in detail.tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        }
+    });
+
+    surface.add_action("play-last", {
+        let controller = shell.controller.clone();
+        let genre_id = genre.id.clone();
+        move || {
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                controller.play_last(detail.tracks);
+            }
+        }
+    });
+
+    surface.popup();
+}
+
 pub(in crate::ui) fn present_playlist_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
@@ -497,6 +634,11 @@ pub(in crate::ui) fn present_playlist_context_menu(
         "Play",
         "playlist.play",
         "media-playback-start-symbolic",
+    ));
+    menu.append(&context_menu_action(
+        "Play Playlist Radio",
+        "playlist.play-radio",
+        RADIO_ICON,
     ));
     menu.append(&context_menu_action(
         "Delete",
@@ -512,6 +654,14 @@ pub(in crate::ui) fn present_playlist_context_menu(
         let playlist_id = playlist.id.clone();
         move || {
             controller.play_cached_playlist(playlist_id.clone());
+        }
+    });
+
+    surface.add_action("play-radio", {
+        let controller = shell.controller.clone();
+        let playlist = playlist.clone();
+        move || {
+            controller.play_playlist_radio(playlist.clone());
         }
     });
 

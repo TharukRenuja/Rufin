@@ -33,6 +33,7 @@ struct ServerFormPreset {
     url: String,
     username: String,
     trust_invalid_cert: bool,
+    use_jellyfin_instant_mix: bool,
 }
 
 struct ProviderSelector {
@@ -159,12 +160,22 @@ impl Shell {
                     .is_some_and(|preset| preset.trust_invalid_cert),
             )
             .build();
+        let instant_mix = adw::SwitchRow::builder()
+            .title(tr("Use Jellyfin Instant Mix for recommendations"))
+            .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
+            .active(
+                preset
+                    .as_ref()
+                    .is_some_and(|preset| preset.use_jellyfin_instant_mix),
+            )
+            .build();
 
         let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
         server_group.add(&url);
         server_group.add(&username);
         server_group.add(&password);
         server_group.add(&cert_verify);
+        server_group.add(&instant_mix);
         content.append(&provider_selector.widget);
         content.append(&server_group);
 
@@ -229,6 +240,7 @@ impl Shell {
         let username_input = username.clone();
         let password_input = password.clone();
         let cert_verify_input = cert_verify.clone();
+        let instant_mix_input = instant_mix.clone();
         let provider_input = Rc::clone(&selected_provider);
         let local_folders_input = Rc::clone(&local_folders);
         let status_input = status.clone();
@@ -275,6 +287,8 @@ impl Shell {
                     username: username_input.text().to_string(),
                     password: password_input.text().to_string(),
                     trust_invalid_cert: !cert_verify_input.is_active(),
+                    use_jellyfin_instant_mix: provider == StreamingProvider::Jellyfin
+                        && instant_mix_input.is_active(),
                     local_access_root: None,
                     path_replace_from: None,
                 });
@@ -300,7 +314,13 @@ impl Shell {
             server_group.clone().upcast::<gtk::Widget>(),
             discovered_group.clone().upcast::<gtk::Widget>(),
         ];
-        update_provider_rows(selected_provider.get(), &remote_widgets, &local_group);
+        let jellyfin_widgets = vec![instant_mix.clone().upcast::<gtk::Widget>()];
+        update_provider_rows(
+            selected_provider.get(),
+            &remote_widgets,
+            &jellyfin_widgets,
+            &local_group,
+        );
         update_connect_button(
             selected_provider.get(),
             &local_folders,
@@ -333,11 +353,12 @@ impl Shell {
             let selected_provider = Rc::clone(&selected_provider);
             let provider_buttons = Rc::clone(&provider_selector.buttons);
             let remote_widgets = remote_widgets.clone();
+            let jellyfin_widgets = jellyfin_widgets.clone();
             let local_group = local_group_for_provider.clone();
             let refresh = Rc::clone(&refresh_connect_button);
             button.connect_clicked(move |_| {
                 select_provider(&selected_provider, &provider_buttons, provider);
-                update_provider_rows(provider, &remote_widgets, &local_group);
+                update_provider_rows(provider, &remote_widgets, &jellyfin_widgets, &local_group);
                 refresh();
             });
         }
@@ -438,12 +459,18 @@ impl Shell {
             .iter()
             .find(|status| status.server_id == server.id)
             .is_some_and(|status| status.trust_invalid_cert);
+        let use_jellyfin_instant_mix = library
+            .server_local_access
+            .iter()
+            .find(|status| status.server_id == server.id)
+            .is_some_and(|status| status.use_jellyfin_instant_mix);
         Some(ServerFormPreset {
             server_id: server.id.clone(),
             provider,
             url: server.base_url.clone(),
             username: library.username.clone().unwrap_or_default(),
             trust_invalid_cert,
+            use_jellyfin_instant_mix,
         })
     }
 
@@ -708,11 +735,16 @@ fn provider_choice_icon_name(provider: StreamingProvider) -> &'static str {
 fn update_provider_rows(
     provider: StreamingProvider,
     remote_widgets: &[gtk::Widget],
+    jellyfin_widgets: &[gtk::Widget],
     local_group: &adw::PreferencesGroup,
 ) {
     let local = provider == StreamingProvider::Local;
     for widget in remote_widgets {
         widget.set_visible(!local);
+    }
+    let jellyfin = provider == StreamingProvider::Jellyfin;
+    for widget in jellyfin_widgets {
+        widget.set_visible(!local && jellyfin);
     }
     local_group.set_visible(local);
 }

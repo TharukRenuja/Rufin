@@ -163,6 +163,7 @@ pub(in crate::controller) fn seed_fake_cache(
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     };
     store.with_store(|store| {
         store.save_server(&saved)?;
@@ -316,6 +317,7 @@ pub(in crate::controller) type LoginActivationContext<'a> = QueueActivationConte
 pub(in crate::controller) struct LoginActivationRequest<'a> {
     pub(in crate::controller) session: &'a ProviderSession,
     pub(in crate::controller) trust_invalid_cert: bool,
+    pub(in crate::controller) use_jellyfin_instant_mix: bool,
     pub(in crate::controller) local_access_root: Option<&'a Path>,
     pub(in crate::controller) path_replace_from: Option<&'a str>,
 }
@@ -330,6 +332,7 @@ pub(in crate::controller) fn activate_logged_in_server(
         user_id: session.user_id.clone(),
         username: session.username.clone(),
         trust_invalid_cert: request.trust_invalid_cert,
+        use_jellyfin_instant_mix: request.use_jellyfin_instant_mix,
     };
     context.store.with_store(|store| {
         store.save_server(&saved)?;
@@ -547,6 +550,7 @@ pub(in crate::controller) fn local_source_saved() -> SavedServer {
         user_id: "local".to_string(),
         username: "Local".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     }
 }
 pub(in crate::controller) fn ensure_local_source_server(
@@ -995,79 +999,6 @@ pub(in crate::controller) fn shuffle_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(1)
-}
-pub(in crate::controller) fn auto_dj_candidates(
-    tracks: &[Track],
-    current: &QueueEntry,
-    queued_track_ids: &HashSet<TrackId>,
-    seed: u64,
-) -> Vec<Track> {
-    let current_genres = tracks
-        .iter()
-        .find(|track| track.id == current.track_id)
-        .map(|track| {
-            track
-                .genres
-                .iter()
-                .map(|genre| genre.to_lowercase())
-                .collect::<HashSet<_>>()
-        })
-        .unwrap_or_default();
-
-    let mut candidates = tracks
-        .iter()
-        .filter(|track| !queued_track_ids.contains(&track.id))
-        .cloned()
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|track| {
-        (
-            std::cmp::Reverse(auto_dj_score(track, current, &current_genres)),
-            auto_dj_shuffle_key(seed, track.id.as_str()),
-        )
-    });
-    candidates.truncate(AUTO_DJ_ITEM_COUNT);
-    candidates
-}
-pub(in crate::controller) fn auto_dj_score(
-    track: &Track,
-    current: &QueueEntry,
-    current_genres: &HashSet<String>,
-) -> u8 {
-    let mut score = 0;
-    if !current_genres.is_empty()
-        && track
-            .genres
-            .iter()
-            .any(|genre| current_genres.contains(&genre.to_lowercase()))
-    {
-        score += 80;
-    }
-    if current
-        .artist_id
-        .as_ref()
-        .is_some_and(|artist_id| track.artist_id.as_ref() == Some(artist_id))
-    {
-        score += 60;
-    } else if !current.artist.trim().is_empty()
-        && track.artist.eq_ignore_ascii_case(current.artist.as_str())
-    {
-        score += 50;
-    }
-    if current
-        .album_id
-        .as_ref()
-        .is_some_and(|album_id| track.album_id == *album_id)
-    {
-        score += 25;
-    }
-    score
-}
-pub(in crate::controller) fn auto_dj_shuffle_key(seed: u64, value: &str) -> u64 {
-    value
-        .bytes()
-        .fold(seed ^ 0xa24b_aed4_963e_e407, |hash, byte| {
-            hash.rotate_left(7) ^ u64::from(byte)
-        })
 }
 pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
     if fake {

@@ -31,6 +31,7 @@ pub(super) fn saved_server_with_id(server_id: &str) -> SavedServer {
         user_id: "user".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
     }
 }
 

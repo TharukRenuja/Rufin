@@ -26,6 +26,7 @@ pub(super) fn subsonic_capabilities() -> ProviderCapabilities {
         playlist_mutations: true,
         playlist_delete: true,
         favorite_mutations: true,
+        auto_dj: true,
         random_tracks: true,
         music_folders: true,
         folder_browsing: true,
@@ -482,6 +483,16 @@ pub(super) struct SongBody {
 pub(super) struct RandomSongsBody {
     #[serde(default, rename = "randomSongs")]
     pub(super) random_songs: Option<SongsList>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct SimilarSongsBody {
+    #[serde(default, rename = "similarSongs")]
+    pub(super) similar_songs: Option<SongsList>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct SimilarSongs2Body {
+    #[serde(default, rename = "similarSongs2")]
+    pub(super) similar_songs: Option<SongsList>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SongsByGenreBody {

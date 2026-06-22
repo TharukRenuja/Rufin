@@ -4,9 +4,10 @@ use domain::{
     HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use source::{
-    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
-    PagedRequest, PagedResponse, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
+    AlbumDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind,
+    ImageMetadata, ImageRequest, MusicProvider, PagedRequest, PagedResponse, PlayedFilter,
+    PlaylistDetail, PlaylistEntry, ProviderCapabilities, ProviderError, ProviderIdentity,
+    ProviderResult, RandomTrackRequest, SearchResults,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,6 +67,7 @@ impl FakeProvider {
                 },
             },
             capabilities: ProviderCapabilities {
+                auto_dj: true,
                 random_tracks: true,
                 random_played_filter: true,
                 ..ProviderCapabilities::default()
@@ -261,6 +263,47 @@ impl MusicProvider for FakeProvider {
             })
             .cloned()
             .collect::<Vec<_>>();
+        tracks.sort_by_key(|track| track.id.as_str().to_string());
+        Ok(tracks
+            .into_iter()
+            .take(request.limit.clamp(1, 500))
+            .collect())
+    }
+
+    async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> ProviderResult<Vec<Track>> {
+        let mut tracks = self.library.tracks.clone();
+        match request.seed {
+            GeneratedTrackSeed::Track(track_id) => {
+                let seed = self
+                    .library
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == track_id)
+                    .cloned()
+                    .ok_or(ProviderError::NotFound)?;
+                tracks.retain(|track| {
+                    track.id != seed.id
+                        && (track.artist_id == seed.artist_id
+                            || track.album_id == seed.album_id
+                            || track.genres.iter().any(|genre| {
+                                seed.genres.iter().any(|seed_genre| seed_genre == genre)
+                            }))
+                });
+            }
+            GeneratedTrackSeed::Album(album_id) => {
+                tracks.retain(|track| track.album_id != album_id);
+            }
+            GeneratedTrackSeed::Artist(artist_id) => {
+                tracks.retain(|track| track.artist_id.as_ref() == Some(&artist_id));
+            }
+            GeneratedTrackSeed::Genre { id: _, name } => {
+                tracks.retain(|track| track.genres.iter().any(|genre| genre == &name));
+            }
+            GeneratedTrackSeed::Playlist(_) => {}
+        }
         tracks.sort_by_key(|track| track.id.as_str().to_string());
         Ok(tracks
             .into_iter()

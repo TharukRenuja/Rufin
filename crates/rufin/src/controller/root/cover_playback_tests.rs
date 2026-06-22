@@ -15,6 +15,12 @@ impl SecretStore for DeleteFailingSecretStore {
     }
 }
 
+fn enable_auto_dj_for_test(controller: &AppController, events: &Receiver<ControllerEvent>) {
+    controller.toggle_auto_dj();
+    let playback = wait_for_playback_auto_dj(events, true);
+    assert!(playback.auto_dj_enabled);
+}
+
 #[test]
 pub(in crate::controller) fn cover_use_states() {
     let (controller, events, snapshot, _queue, _player) =
@@ -460,15 +466,8 @@ pub(in crate::controller) fn cover_persist_queue() {
             .len(),
         1
     );
-    let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries.len() == 1 + super::AUTO_DJ_ITEM_COUNT
-    });
-    assert_eq!(queue.entries[0].track_id, track.id);
     let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    assert_eq!(
-        playback.current.expect("current").track_id,
-        queue.entries[0].track_id
-    );
+    assert_eq!(playback.current.expect("current").track_id, track.id);
 }
 #[test]
 pub(in crate::controller) fn cover_start_stream() {
@@ -1143,8 +1142,6 @@ pub(in crate::controller) fn cover_track_first() {
         AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
-    controller.toggle_auto_dj();
-    let _playback = wait_for_playback_auto_dj(&events, false);
     controller.play_tracks_now(vec![first.clone(), second.clone()]);
     let _queue = wait_for_queue(&events).expect("queue");
     controller.next_track();
@@ -1324,11 +1321,11 @@ pub(in crate::controller) fn cover_remove_waveform_tmp() {
 pub(in crate::controller) fn cover_emit_state() {
     let (controller, events, _snapshot, _queue, player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    assert!(player.auto_dj_enabled);
+    assert!(!player.auto_dj_enabled);
     controller.toggle_auto_dj();
-    let playback = wait_for_playback_auto_dj(&events, false);
-    assert!(!playback.auto_dj_enabled);
-    assert!(!controller.load_settings().auto_dj_enabled);
+    let playback = wait_for_playback_auto_dj(&events, true);
+    assert!(playback.auto_dj_enabled);
+    assert!(controller.load_settings().auto_dj_enabled);
 }
 #[test]
 pub(in crate::controller) fn random_play_now() {
@@ -1455,6 +1452,7 @@ pub(in crate::controller) fn play_append_track() {
 pub(in crate::controller) fn cover_auto_library() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
+    enable_auto_dj_for_test(&controller, &events);
     let first = snapshot.tracks[0].clone();
     controller.play_now(first.clone());
     let queue = wait_for_queue(&events).expect("initial queue");
@@ -1483,6 +1481,7 @@ pub(in crate::controller) fn cover_auto_timing() {
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
+    enable_auto_dj_for_test(&controller, &events);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second]);
@@ -1507,6 +1506,7 @@ pub(in crate::controller) fn cover_auto_end() {
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
+    enable_auto_dj_for_test(&controller, &events);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -1545,6 +1545,7 @@ pub(in crate::controller) fn cover_auto_next() {
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
+    enable_auto_dj_for_test(&controller, &events);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -1573,53 +1574,27 @@ pub(in crate::controller) fn cover_auto_next() {
         second.id
     );
 }
+
 #[test]
-pub(in crate::controller) fn cover_track_related() {
-    let current = library_track(
-        1,
-        Some(ArtistId::fake(1)),
-        AlbumId::fake(1),
-        "Artist",
-        &["Rock"],
-    );
-    let related = library_track(
-        2,
-        Some(ArtistId::fake(1)),
-        AlbumId::fake(1),
-        "Artist",
-        &["Rock"],
-    );
-    let genre_only = library_track(
-        3,
-        Some(ArtistId::fake(2)),
-        AlbumId::fake(2),
-        "Other",
-        &["Rock"],
-    );
-    let unrelated = library_track(
-        4,
-        Some(ArtistId::fake(3)),
-        AlbumId::fake(3),
-        "Other",
-        &["Jazz"],
-    );
-    let mut queue = QueueEngine::new(ServerId::fake(1));
-    queue.play_now(&current);
-    let current_entry = queue.current().expect("current").clone();
-    let queued = HashSet::from([current.id.clone()]);
-    let candidates = auto_dj_candidates(
-        &[
-            unrelated.clone(),
-            current.clone(),
-            genre_only,
-            related.clone(),
-        ],
-        &current_entry,
-        &queued,
-        7,
-    );
-    assert_eq!(candidates[0].id, related.id);
-    assert!(candidates.iter().all(|track| track.id != current.id));
+pub(in crate::controller) fn cover_auto_repeat_one_skips_refill() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 2;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
+    enable_auto_dj_for_test(&controller, &events);
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first, second]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    controller.cycle_repeat();
+    let _playback = wait_for_playback_repeat(&events, RepeatMode::One);
+
+    assert!(!controller.auto_dj_topup());
+    let queue = controller.queue_snapshot().expect("queue snapshot");
+    assert_eq!(queue.entries.len(), 2);
 }
 #[test]
 pub(in crate::controller) fn end_stream_repeat() {

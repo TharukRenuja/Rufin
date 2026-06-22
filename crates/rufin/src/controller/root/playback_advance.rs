@@ -15,15 +15,8 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        if !has_next && had_current && self.auto_dj_topup() {
-            let result = self.with_queue_mut(|queue| {
-                has_next = queue.advance_after_end_of_stream().is_some();
-                Ok(())
-            });
-            if let Err(error) = result {
-                let _sent = self.events.send(ControllerEvent::Error(error));
-                return;
-            }
+        if !has_next && had_current && self.auto_dj_continue_after_end_deferred() {
+            return;
         }
         if has_next {
             self.start_queue_emit();

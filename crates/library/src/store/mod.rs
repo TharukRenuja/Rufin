@@ -49,6 +49,7 @@ pub struct SavedServer {
     pub user_id: String,
     pub username: String,
     pub trust_invalid_cert: bool,
+    pub use_jellyfin_instant_mix: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
