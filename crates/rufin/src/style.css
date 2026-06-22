@@ -442,6 +442,26 @@ popover.queue-context-menu > contents {
   margin: 0 8px 4px;
 }
 
+.provider-choice-list {
+  padding: 4px;
+  border-radius: 8px;
+  background: @card_bg_color;
+}
+
+.provider-choice-button {
+  padding: 7px 4px;
+  border-radius: 4px;
+  min-height: 66px;
+}
+
+.provider-choice-button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.provider-choice-button.active {
+  background: color-mix(in srgb, @window_fg_color 10%, transparent);
+}
+
 menubutton.server-selector > button,
 menubutton.server-selector > button:focus,
 menubutton.server-selector > button:checked {

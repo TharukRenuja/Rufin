@@ -20,13 +20,6 @@ pub enum StreamingProvider {
 impl StreamingProvider {
     pub const ALL: [Self; 4] = [Self::Jellyfin, Self::Navidrome, Self::Subsonic, Self::Local];
 
-    pub fn from_index(index: u32) -> Self {
-        Self::ALL
-            .get(index as usize)
-            .copied()
-            .unwrap_or(Self::Jellyfin)
-    }
-
     pub fn from_provider_id(provider: &str) -> Option<Self> {
         match provider {
             "jellyfin" => Some(Self::Jellyfin),

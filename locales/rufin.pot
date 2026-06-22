@@ -536,17 +536,7 @@ msgid_plural ""
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Add Server"
-msgstr ""
-
-msgid "Connect to Music Server"
-msgstr ""
-
-msgid ""
-"Choose a provider, pick a discovered server, or enter the address manually"
-msgstr ""
-
-msgid "Provider"
+msgid "Add Your Music Library"
 msgstr ""
 
 msgid "Server"
@@ -610,13 +600,10 @@ msgid "No Jellyfin servers found. Enter the address manually or search again"
 msgstr ""
 
 #, rust-format
-msgid "Found {count} Jellyfin server"
-msgid_plural "Found {count} Jellyfin servers"
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
 msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "OpenSubsonic"
 msgstr ""
 
 msgid "No folders selected"
@@ -676,6 +663,9 @@ msgstr ""
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
 
+msgid "Add server"
+msgstr ""
+
 msgid "Local Folders"
 msgstr ""
 
@@ -693,7 +683,7 @@ msgstr ""
 msgid "Remove"
 msgstr ""
 
-msgid "Add Local Folder"
+msgid "Add a music folder"
 msgstr ""
 
 msgid "Remove Local Folder"
@@ -1651,4 +1641,7 @@ msgid "Server Library"
 msgstr ""
 
 msgid "Manage"
+msgstr ""
+
+msgid "Add music library"
 msgstr ""

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::controller::{LoginRequest, ServerDiscoveryStatus};
-use crate::i18n::{tr, tr_with, trn_with};
+use crate::i18n::{tr, tr_with};
 use crate::providers::StreamingProvider;
 use adw::prelude::*;
 use domain::ServerId;
@@ -35,6 +35,11 @@ struct ServerFormPreset {
     trust_invalid_cert: bool,
 }
 
+struct ProviderSelector {
+    widget: gtk::Box,
+    buttons: Rc<Vec<(StreamingProvider, gtk::Button)>>,
+}
+
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
         self.present_server_dialog(None);
@@ -50,7 +55,7 @@ impl Shell {
     fn present_server_dialog(self: &Rc<Self>, on_connect_started: Option<Rc<dyn Fn()>>) {
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new(&tr("Add Server"), "");
+        let title = adw::WindowTitle::new(&tr("Add Your Music Library"), "");
         header.set_title_widget(Some(&title));
         toolbar.add_top_bar(&header);
 
@@ -124,41 +129,13 @@ impl Shell {
         content.add_css_class("first-run-content");
         content.set_hexpand(true);
 
-        let intro = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        intro.set_margin_bottom(4);
-        let intro_title = gtk::Label::new(Some(&tr("Connect to Music Server")));
-        intro_title.add_css_class("title-1");
-        intro_title.set_xalign(0.0);
-        intro_title.set_wrap(true);
-        let intro_description = gtk::Label::new(Some(&tr(
-            "Choose a provider, pick a discovered server, or enter the address manually",
-        )));
-        intro_description.add_css_class("muted");
-        intro_description.set_xalign(0.0);
-        intro_description.set_wrap(true);
-        intro.append(&intro_title);
-        intro.append(&intro_description);
-        content.append(&intro);
-
-        let provider_titles = StreamingProvider::ALL
-            .iter()
-            .map(|provider| tr(provider.title()))
-            .collect::<Vec<_>>();
-        let provider_title_refs = provider_titles
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let provider_options = gtk::StringList::new(&provider_title_refs);
-        let provider = adw::ComboRow::builder()
-            .title(tr("Provider"))
-            .model(&provider_options)
-            .selected(
-                preset
-                    .as_ref()
-                    .map(|preset| provider_index(preset.provider))
-                    .unwrap_or(0),
-            )
-            .build();
+        let selected_provider = Rc::new(Cell::new(
+            preset
+                .as_ref()
+                .map(|preset| preset.provider)
+                .unwrap_or(StreamingProvider::Jellyfin),
+        ));
+        let provider_selector = build_provider_selector(selected_provider.get());
         let url = adw::EntryRow::builder().title(tr("Server Address")).build();
         url.set_text(
             preset
@@ -184,11 +161,11 @@ impl Shell {
             .build();
 
         let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
-        server_group.add(&provider);
         server_group.add(&url);
         server_group.add(&username);
         server_group.add(&password);
         server_group.add(&cert_verify);
+        content.append(&provider_selector.widget);
         content.append(&server_group);
 
         let default_local_folder = default_music_folder();
@@ -222,18 +199,15 @@ impl Shell {
         local_group.set_visible(false);
         content.append(&local_group);
 
-        let discovered_group = self.discovered_servers_group(&provider, &url);
+        let discovered_group =
+            self.discovered_servers_group(&selected_provider, &provider_selector.buttons, &url);
         content.append(&discovered_group);
 
-        let status_text = {
-            let library = self.state.library.borrow();
-            connection_progress_status_label(&library.sync_status).unwrap_or_default()
-        };
-        let status = gtk::Label::new(Some(&status_text));
+        let status = gtk::Label::new(None);
         status.add_css_class("muted");
         status.set_wrap(true);
         status.set_xalign(0.0);
-        status.set_visible(!status_text.trim().is_empty());
+        status.set_visible(false);
         if let Some(error) = &self.state.library.borrow().last_error {
             status.set_text(error);
             status.add_css_class("error-text");
@@ -247,13 +221,15 @@ impl Shell {
         connect_entry_row_activation(&url, &login);
         connect_entry_row_activation(&username, &login);
         connect_password_entry_row_activation(&password, &login);
-        provider.add_controller(local_provider_enter_controller(&provider, &login));
+        provider_selector
+            .widget
+            .add_controller(local_provider_enter_controller(&selected_provider, &login));
         let controller = self.controller.clone();
         let url_input = url.clone();
         let username_input = username.clone();
         let password_input = password.clone();
         let cert_verify_input = cert_verify.clone();
-        let provider_input = provider.clone();
+        let provider_input = Rc::clone(&selected_provider);
         let local_folders_input = Rc::clone(&local_folders);
         let status_input = status.clone();
         let shell = Rc::clone(self);
@@ -262,7 +238,7 @@ impl Shell {
         let on_connect_started_for_click = on_connect_started.clone();
         let login_for_click = login.clone();
         login.connect_clicked(move |_| {
-            let provider = StreamingProvider::from_index(provider_input.selected());
+            let provider = provider_input.get();
             let accept_connect_attempt = |message: &str| {
                 connect_attempt_started_for_click.set(true);
                 status_input.remove_css_class("error-text");
@@ -308,7 +284,7 @@ impl Shell {
             shell: self,
             status: &status,
             login: &login,
-            provider: &provider,
+            selected_provider: &selected_provider,
             local_folders: &local_folders,
             url: &url,
             username: &username,
@@ -321,19 +297,12 @@ impl Shell {
         content.append(&status);
 
         let remote_widgets = vec![
-            url.clone().upcast::<gtk::Widget>(),
-            username.clone().upcast::<gtk::Widget>(),
-            password.clone().upcast::<gtk::Widget>(),
-            cert_verify.clone().upcast::<gtk::Widget>(),
+            server_group.clone().upcast::<gtk::Widget>(),
             discovered_group.clone().upcast::<gtk::Widget>(),
         ];
-        update_provider_rows(
-            StreamingProvider::from_index(provider.selected()),
-            &remote_widgets,
-            &local_group,
-        );
+        update_provider_rows(selected_provider.get(), &remote_widgets, &local_group);
         update_connect_button(
-            StreamingProvider::from_index(provider.selected()),
+            selected_provider.get(),
             &local_folders,
             &url,
             &username,
@@ -341,7 +310,7 @@ impl Shell {
             &login,
         );
         let refresh_connect_button: Rc<dyn Fn()> = Rc::new({
-            let provider = provider.clone();
+            let selected_provider = Rc::clone(&selected_provider);
             let local_folders = Rc::clone(&local_folders);
             let url = url.clone();
             let username = username.clone();
@@ -349,7 +318,7 @@ impl Shell {
             let login = login.clone();
             move || {
                 update_connect_button(
-                    StreamingProvider::from_index(provider.selected()),
+                    selected_provider.get(),
                     &local_folders,
                     &url,
                     &username,
@@ -359,12 +328,19 @@ impl Shell {
             }
         });
         let local_group_for_provider = local_group.clone();
-        let refresh_for_provider = Rc::clone(&refresh_connect_button);
-        provider.connect_selected_notify(move |row| {
-            let provider = StreamingProvider::from_index(row.selected());
-            update_provider_rows(provider, &remote_widgets, &local_group_for_provider);
-            refresh_for_provider();
-        });
+        for (provider, button) in provider_selector.buttons.iter() {
+            let provider = *provider;
+            let selected_provider = Rc::clone(&selected_provider);
+            let provider_buttons = Rc::clone(&provider_selector.buttons);
+            let remote_widgets = remote_widgets.clone();
+            let local_group = local_group_for_provider.clone();
+            let refresh = Rc::clone(&refresh_connect_button);
+            button.connect_clicked(move |_| {
+                select_provider(&selected_provider, &provider_buttons, provider);
+                update_provider_rows(provider, &remote_widgets, &local_group);
+                refresh();
+            });
+        }
         for entry in [
             url.clone().upcast::<gtk::Editable>(),
             username.clone().upcast::<gtk::Editable>(),
@@ -383,7 +359,7 @@ impl Shell {
             Rc::new(RefCell::new(default_local_folder)),
             {
                 let login = login.clone();
-                let provider = provider.clone();
+                let selected_provider = Rc::clone(&selected_provider);
                 let local_folders = Rc::clone(&local_folders);
                 let local_folder_row = local_folder_row.clone();
                 let url = url.clone();
@@ -393,7 +369,7 @@ impl Shell {
                     replace_primary_local_folder(&local_folders, path);
                     local_folder_row.set_subtitle(&local_folders_subtitle(&local_folders.borrow()));
                     update_connect_button(
-                        StreamingProvider::from_index(provider.selected()),
+                        selected_provider.get(),
                         &local_folders,
                         &url,
                         &username,
@@ -410,14 +386,14 @@ impl Shell {
             Rc::clone(&local_folders),
             {
                 let login = login.clone();
-                let provider = provider.clone();
+                let selected_provider = Rc::clone(&selected_provider);
                 let local_folders = Rc::clone(&local_folders);
                 let url = url.clone();
                 let username = username.clone();
                 let password = password.clone();
                 move || {
                     update_connect_button(
-                        StreamingProvider::from_index(provider.selected()),
+                        selected_provider.get(),
                         &local_folders,
                         &url,
                         &username,
@@ -551,16 +527,23 @@ impl Shell {
 
     fn discovered_servers_group(
         self: &Rc<Self>,
-        provider: &adw::ComboRow,
+        selected_provider: &Rc<Cell<StreamingProvider>>,
+        provider_buttons: &Rc<Vec<(StreamingProvider, gtk::Button)>>,
         url: &adw::EntryRow,
     ) -> adw::PreferencesGroup {
         let status = self.state.server_discovery_status.borrow().clone();
         let running = self.state.server_discovery_running.get();
         let servers = self.state.discovered_servers.borrow().clone();
-        let group = adw::PreferencesGroup::builder()
-            .title(tr("Found Servers"))
-            .description(discovery_status_label(&status))
-            .build();
+        let group = if servers.is_empty() {
+            adw::PreferencesGroup::builder()
+                .title(tr("Found Servers"))
+                .description(discovery_status_label(&status))
+                .build()
+        } else {
+            adw::PreferencesGroup::builder()
+                .title(tr("Found Servers"))
+                .build()
+        };
 
         if servers.is_empty() {
             let row_title = if running {
@@ -583,13 +566,20 @@ impl Shell {
                     .title(server.name)
                     .subtitle(subtitle)
                     .build();
-                row.add_prefix(&gtk::Image::from_icon_name("network-server-symbolic"));
+                row.add_prefix(&gtk::Image::from_icon_name(
+                    "io.github.screwys.Rufin.provider.jellyfin",
+                ));
                 row.set_activatable(true);
-                let provider = provider.clone();
+                let selected_provider = Rc::clone(selected_provider);
+                let provider_buttons = Rc::clone(provider_buttons);
                 let url = url.clone();
                 let address = server.address;
                 row.connect_activated(move |_| {
-                    provider.set_selected(0);
+                    select_provider(
+                        &selected_provider,
+                        &provider_buttons,
+                        StreamingProvider::Jellyfin,
+                    );
                     url.set_text(&address);
                 });
                 group.add(&row);
@@ -625,26 +615,94 @@ fn discovery_status_label(status: &ServerDiscoveryStatus) -> String {
         ServerDiscoveryStatus::Empty => {
             tr("No Jellyfin servers found. Enter the address manually or search again")
         }
-        ServerDiscoveryStatus::Found(count) => {
-            let count_label = count.to_string();
-            trn_with(
-                "Found {count} Jellyfin server",
-                "Found {count} Jellyfin servers",
-                *count,
-                &[("count", count_label.as_str())],
-            )
-        }
+        ServerDiscoveryStatus::Found(_) => String::new(),
         ServerDiscoveryStatus::Failed(error) => {
             tr_with("Server discovery failed: {error}", &[("error", error)])
         }
     }
 }
 
-fn provider_index(provider: StreamingProvider) -> u32 {
-    StreamingProvider::ALL
-        .iter()
-        .position(|candidate| *candidate == provider)
-        .unwrap_or_default() as u32
+fn build_provider_selector(selected: StreamingProvider) -> ProviderSelector {
+    let wrapper = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    wrapper.add_css_class("provider-choice-list");
+    wrapper.set_homogeneous(true);
+    wrapper.set_hexpand(true);
+
+    let mut buttons = Vec::new();
+    for provider in StreamingProvider::ALL {
+        let button = provider_choice_button(provider, provider == selected);
+        wrapper.append(&button);
+        buttons.push((provider, button));
+    }
+
+    ProviderSelector {
+        widget: wrapper,
+        buttons: Rc::new(buttons),
+    }
+}
+
+fn provider_choice_button(provider: StreamingProvider, active: bool) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("provider-choice-button");
+    set_provider_choice_active(&button, active);
+    button.update_property(&[gtk::accessible::Property::Label(&provider_choice_title(
+        provider,
+    ))]);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    content.set_halign(gtk::Align::Center);
+    content.set_valign(gtk::Align::Center);
+    let icon = gtk::Image::from_icon_name(provider_choice_icon_name(provider));
+    icon.set_pixel_size(34);
+    icon.set_size_request(34, 34);
+    icon.set_halign(gtk::Align::Center);
+    content.append(&icon);
+
+    let label = gtk::Label::new(Some(&provider_choice_title(provider)));
+    label.set_xalign(0.5);
+    label.set_justify(gtk::Justification::Center);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_max_width_chars(14);
+    content.append(&label);
+
+    button.set_child(Some(&content));
+    button
+}
+
+fn select_provider(
+    selected_provider: &Rc<Cell<StreamingProvider>>,
+    buttons: &[(StreamingProvider, gtk::Button)],
+    provider: StreamingProvider,
+) {
+    selected_provider.set(provider);
+    for (candidate, button) in buttons {
+        set_provider_choice_active(button, *candidate == provider);
+    }
+}
+
+fn set_provider_choice_active(button: &gtk::Button, active: bool) {
+    if active {
+        button.add_css_class("active");
+    } else {
+        button.remove_css_class("active");
+    }
+}
+
+fn provider_choice_title(provider: StreamingProvider) -> String {
+    match provider {
+        StreamingProvider::Subsonic => tr("OpenSubsonic"),
+        _ => tr(provider.title()),
+    }
+}
+
+fn provider_choice_icon_name(provider: StreamingProvider) -> &'static str {
+    match provider {
+        StreamingProvider::Jellyfin => "io.github.screwys.Rufin.provider.jellyfin",
+        StreamingProvider::Navidrome => "io.github.screwys.Rufin.provider.navidrome",
+        StreamingProvider::Subsonic => "io.github.screwys.Rufin.provider.opensubsonic",
+        StreamingProvider::Local => "route-folders-symbolic",
+    }
 }
 
 fn update_provider_rows(
@@ -679,7 +737,7 @@ struct AddServerStatusWatcher<'a> {
     shell: &'a Rc<Shell>,
     status: &'a gtk::Label,
     login: &'a gtk::Button,
-    provider: &'a adw::ComboRow,
+    selected_provider: &'a Rc<Cell<StreamingProvider>>,
     local_folders: &'a Rc<RefCell<Vec<PathBuf>>>,
     url: &'a adw::EntryRow,
     username: &'a adw::EntryRow,
@@ -692,7 +750,7 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
         shell,
         status,
         login,
-        provider,
+        selected_provider,
         local_folders,
         url,
         username,
@@ -702,7 +760,7 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
     let shell = Rc::clone(shell);
     let status = status.clone();
     let login = login.clone();
-    let provider = provider.clone();
+    let selected_provider = Rc::clone(selected_provider);
     let local_folders = Rc::clone(local_folders);
     let url = url.clone();
     let username = username.clone();
@@ -733,7 +791,7 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
             status.add_css_class("error-text");
             status.set_visible(true);
             update_connect_button(
-                StreamingProvider::from_index(provider.selected()),
+                selected_provider.get(),
                 &local_folders,
                 &url,
                 &username,
@@ -766,15 +824,15 @@ fn connect_password_entry_row_activation(entry: &adw::PasswordEntryRow, login: &
 }
 
 fn local_provider_enter_controller(
-    provider: &adw::ComboRow,
+    selected_provider: &Rc<Cell<StreamingProvider>>,
     login: &gtk::Button,
 ) -> gtk::EventControllerKey {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let login = login.clone();
-    let provider = provider.clone();
+    let selected_provider = Rc::clone(selected_provider);
     controller.connect_key_pressed(move |_, key, _, _| {
-        let local = StreamingProvider::from_index(provider.selected()) == StreamingProvider::Local;
+        let local = selected_provider.get() == StreamingProvider::Local;
         let enter = key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter;
         if local && enter && activate_connect_if_ready(&login) {
             gtk::glib::Propagation::Stop

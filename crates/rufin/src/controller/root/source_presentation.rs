@@ -110,12 +110,15 @@ fn snapshot_server_local_access_summary(
 fn reconcile_snapshot_source(
     store: &StoreHandle,
     settings: &AppSettings,
+    saved_servers: &[SavedServer],
     remote_saved_servers: &[SavedServer],
 ) -> Result<Option<SnapshotSourceReconciliation>, String> {
+    let local_source_configured = local_source_configured(store, settings, saved_servers);
     let selected_source = resolve_selected_source(
         settings,
         remote_saved_servers,
         store.with_store(|store| store.active_server())?,
+        local_source_configured,
     );
     let Some(selected_source) = selected_source else {
         return Ok(None);
@@ -146,13 +149,39 @@ fn saved_server_for_snapshot_source(
     }
 }
 
+fn local_source_configured(
+    store: &StoreHandle,
+    settings: &AppSettings,
+    saved_servers: &[SavedServer],
+) -> bool {
+    if !settings.sources.local_folders.is_empty() {
+        return true;
+    }
+    let Some(local) = saved_servers
+        .iter()
+        .find(|saved| saved.server.provider == LOCAL_PROVIDER_ID)
+    else {
+        return false;
+    };
+    store
+        .with_store(|store| {
+            let tracks = store.load_tracks(&local.server.id, 0, 1)?.total;
+            let albums = store.load_albums(&local.server.id, 0, 1)?.total;
+            Ok(tracks > 0 || albums > 0)
+        })
+        .unwrap_or(false)
+}
+
 fn resolve_selected_source(
     settings: &AppSettings,
     remote_saved_servers: &[SavedServer],
     active_server: Option<SavedServer>,
+    local_source_configured: bool,
 ) -> Option<LibrarySourceSelection> {
     match &settings.sources.selected {
-        Some(LibrarySourceSelection::Local) => return Some(LibrarySourceSelection::Local),
+        Some(LibrarySourceSelection::Local) if local_source_configured => {
+            return Some(LibrarySourceSelection::Local);
+        }
         Some(LibrarySourceSelection::Server(server_id))
             if remote_saved_servers
                 .iter()
@@ -163,12 +192,16 @@ fn resolve_selected_source(
         _ => {}
     }
 
-    if let Some(saved) = active_server
-        && saved.server.provider != LOCAL_PROVIDER_ID
-    {
-        return Some(LibrarySourceSelection::Server(saved.server.id));
+    if let Some(saved) = active_server {
+        if saved.server.provider == LOCAL_PROVIDER_ID {
+            if local_source_configured {
+                return Some(LibrarySourceSelection::Local);
+            }
+        } else {
+            return Some(LibrarySourceSelection::Server(saved.server.id));
+        }
     }
-    if !settings.sources.local_folders.is_empty() {
+    if local_source_configured {
         return Some(LibrarySourceSelection::Local);
     }
     remote_saved_servers
@@ -182,8 +215,12 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let remote_saved_servers = snapshot_remote_servers(&saved_servers);
     let servers = snapshot_server_identities(&remote_saved_servers);
     let server_local_access = snapshot_server_local_access(store, &remote_saved_servers)?;
-    let Some(reconciled_source) =
-        reconcile_snapshot_source(store, &source_settings, &remote_saved_servers)?
+    let Some(reconciled_source) = reconcile_snapshot_source(
+        store,
+        &source_settings,
+        &saved_servers,
+        &remote_saved_servers,
+    )?
     else {
         let mut snapshot = LibrarySnapshot::first_run();
         snapshot.servers = servers;

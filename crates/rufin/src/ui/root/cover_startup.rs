@@ -1543,11 +1543,24 @@ impl Shell {
         message: &str,
     ) {
         match state {
+            LibrarySyncToastState::Progress if self.library_sync_status_visible_fullscreen() => {
+                self.dismiss_library_sync_toast()
+            }
             LibrarySyncToastState::Progress => self.show_or_update_library_sync_toast(message),
             LibrarySyncToastState::Complete | LibrarySyncToastState::Clear => {
                 self.dismiss_library_sync_toast()
             }
         }
+    }
+
+    fn library_sync_status_visible_fullscreen(&self) -> bool {
+        let route_displays_status = {
+            let library = self.state.library.borrow();
+            route_displays_sync_status(self.state.routes.borrow().current(), library.first_run)
+        };
+        route_displays_status
+            || self.state.first_run_connection_pending.get()
+            || self.state.local_source_preparing.get()
     }
 
     fn show_or_update_library_sync_toast(self: &Rc<Self>, status: &str) {
