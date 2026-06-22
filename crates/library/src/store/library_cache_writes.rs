@@ -5,6 +5,9 @@ use super::identity::{
 use super::servers::*;
 use super::*;
 
+#[cfg(debug_assertions)]
+const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SyncCompleteDelta {
     pub pruned_cover_entries: Vec<CoverCacheEntry>,
@@ -651,6 +654,10 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let local_stress_tracks: Vec<&Track> = tracks
+                .iter()
+                .filter(|track| local_stress_track_base_id(&track.id).is_some())
+                .collect();
             let mut statement = connection.prepare(
                 "
                 INSERT INTO tracks (
@@ -737,6 +744,9 @@ impl Store {
             )?;
 
             for track in tracks {
+                if local_stress_track_base_id(&track.id).is_some() {
+                    continue;
+                }
                 let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
                 let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
                 statement.execute(params![
@@ -820,9 +830,319 @@ impl Store {
                     format!("{} {}", track.artist, track.album),
                 ])?;
             }
+            Self::upsert_local_stress_track_rows_on_connection(
+                connection,
+                server_id,
+                &local_stress_tracks,
+                generation,
+            )?;
             Ok(())
         })
     }
+
+    fn upsert_local_stress_track_rows_on_connection(
+        connection: &Connection,
+        server_id: &ServerId,
+        tracks: &[&Track],
+        generation: i64,
+    ) -> StoreResult<()> {
+        if tracks.is_empty() {
+            return Ok(());
+        }
+        connection.execute_batch(
+            "
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_tracks (
+                track_id TEXT PRIMARY KEY,
+                base_track_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                artist_id TEXT,
+                album TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                release_date TEXT,
+                date_added TEXT,
+                last_played TEXT,
+                play_count INTEGER,
+                user_rating INTEGER,
+                duration_seconds INTEGER NOT NULL,
+                favorite INTEGER NOT NULL,
+                disc_number INTEGER NOT NULL,
+                track_number INTEGER NOT NULL,
+                image_item_id TEXT,
+                image_tag TEXT,
+                image_origin TEXT NOT NULL,
+                local_path TEXT,
+                source_format TEXT,
+                comment TEXT,
+                skip_count INTEGER
+            ) WITHOUT ROWID;
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_genres (
+                track_id TEXT NOT NULL,
+                genre_name TEXT NOT NULL
+            );
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_artists (
+                track_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
+                artist_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL
+            );
+            DELETE FROM temp_local_stress_tracks;
+            DELETE FROM temp_local_stress_track_genres;
+            DELETE FROM temp_local_stress_track_artists;
+            ",
+        )?;
+        {
+            let mut insert = connection.prepare(
+                "
+                INSERT INTO temp_local_stress_tracks (
+                    track_id, base_track_id, album_id, title, artist, artist_id, album,
+                    year, release_date, date_added, last_played, play_count, user_rating,
+                    duration_seconds, favorite, disc_number, track_number, image_item_id,
+                    image_tag, image_origin, local_path, source_format, comment, skip_count
+                )
+                VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                )
+                ",
+            )?;
+            let mut insert_genre = connection.prepare(
+                "
+                INSERT INTO temp_local_stress_track_genres (track_id, genre_name)
+                VALUES (?1, ?2)
+                ",
+            )?;
+            let mut insert_artist = connection.prepare(
+                "
+                INSERT INTO temp_local_stress_track_artists (
+                    track_id, album_id, artist_id, name, position
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+            )?;
+            for track in tracks {
+                let Some(base_track_id) = local_stress_track_base_id(&track.id) else {
+                    continue;
+                };
+                let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
+                let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
+                insert.execute(params![
+                    track.id.as_str(),
+                    base_track_id,
+                    track.album_id.as_str(),
+                    track.title,
+                    track.artist,
+                    track.artist_id.as_ref().map(ArtistId::as_str),
+                    track.album,
+                    i64::from(track.year),
+                    track.release_date.as_deref(),
+                    track.date_added.as_deref(),
+                    track.last_played.as_deref(),
+                    track.play_count.map(i64::from),
+                    track.user_rating.map(i64::from),
+                    i64::from(track.duration_seconds),
+                    bool_to_i64(track.favorite),
+                    i64::from(track.disc_number),
+                    i64::from(track.track_number),
+                    image_item_id,
+                    image_tag,
+                    image_origin,
+                    track.local_path.as_deref(),
+                    track.source_format.as_deref(),
+                    track.comment.as_deref(),
+                    track.skip_count.map(i64::from),
+                ])?;
+                for genre in &track.genres {
+                    let genre = genre.trim();
+                    if !genre.is_empty() {
+                        insert_genre.execute(params![track.id.as_str(), genre])?;
+                    }
+                }
+                for (position, artist) in track_artist_credits(track).iter().enumerate() {
+                    insert_artist.execute(params![
+                        track.id.as_str(),
+                        track.album_id.as_str(),
+                        artist.id.as_str(),
+                        artist.name.trim(),
+                        position as i64,
+                    ])?;
+                }
+            }
+        }
+        for sql in [
+            "DELETE FROM track_music_folders WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM track_genres WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM track_artist_links WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'track' AND item_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM entity_identity_keys WHERE server_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM entity_grouping_keys WHERE server_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM source_objects WHERE server_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+        ] {
+            connection.execute(sql, params![server_id.as_str()])?;
+        }
+        connection.execute(
+            "
+            INSERT INTO tracks (
+                server_id, track_id, album_id, title, artist, artist_id, album,
+                year, release_date, date_added, last_played, play_count, user_rating,
+                duration_seconds, favorite, disc_number, track_number,
+                image_item_id, image_tag, image_origin, local_path, source_format, comment,
+                skip_count, sync_generation
+            )
+            SELECT ?1, track_id, album_id, title, artist, artist_id, album, year, release_date,
+                   date_added, last_played, play_count, user_rating, duration_seconds, favorite,
+                   disc_number, track_number, image_item_id, image_tag, image_origin, local_path,
+                   source_format, comment, skip_count, ?2
+            FROM temp_local_stress_tracks stress
+            WHERE 1
+            ON CONFLICT(server_id, track_id) DO UPDATE SET
+                album_id = excluded.album_id,
+                title = excluded.title,
+                artist = excluded.artist,
+                artist_id = excluded.artist_id,
+                album = excluded.album,
+                year = excluded.year,
+                release_date = excluded.release_date,
+                date_added = excluded.date_added,
+                last_played = excluded.last_played,
+                play_count = excluded.play_count,
+                user_rating = excluded.user_rating,
+                duration_seconds = excluded.duration_seconds,
+                favorite = excluded.favorite,
+                disc_number = excluded.disc_number,
+                track_number = excluded.track_number,
+                image_item_id = excluded.image_item_id,
+                image_tag = excluded.image_tag,
+                image_origin = excluded.image_origin,
+                local_path = excluded.local_path,
+                source_format = excluded.source_format,
+                comment = excluded.comment,
+                skip_count = excluded.skip_count,
+                sync_generation = excluded.sync_generation
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO track_music_folders (server_id, track_id, folder_id, sync_generation)
+            SELECT base.server_id, stress.track_id, base.folder_id, ?2
+            FROM track_music_folders base
+            JOIN temp_local_stress_tracks stress
+              ON stress.base_track_id = base.track_id
+            WHERE base.server_id = ?1
+            ON CONFLICT(server_id, track_id, folder_id) DO UPDATE SET
+                sync_generation = excluded.sync_generation
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO track_genres (server_id, track_id, genre_name, sync_generation)
+            SELECT DISTINCT ?1, track_id, genre_name, ?2
+            FROM temp_local_stress_track_genres
+            WHERE 1
+            ON CONFLICT(server_id, track_id, genre_name) DO UPDATE SET
+                sync_generation = excluded.sync_generation
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO track_artist_links (
+                server_id, track_id, album_id, artist_id, name, position, sync_generation
+            )
+            SELECT ?1, track_id, album_id, artist_id, name, position, ?2
+            FROM temp_local_stress_track_artists
+            WHERE 1
+            ON CONFLICT(server_id, track_id, artist_id) DO UPDATE SET
+                album_id = excluded.album_id,
+                name = excluded.name,
+                position = excluded.position,
+                sync_generation = excluded.sync_generation
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO library_fts (server_id, item_type, item_id, title, subtitle)
+            SELECT ?1, 'track', track_id, title, artist || ' ' || album
+            FROM temp_local_stress_tracks
+            ",
+            params![server_id.as_str()],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id, updated_at
+            )
+            SELECT ?1, 'track', track_id, 'local', NULL, CURRENT_TIMESTAMP
+            FROM temp_local_stress_tracks
+            WHERE 1
+            ON CONFLICT(server_id, entity_kind, entity_id) DO UPDATE SET
+                source = excluded.source,
+                source_object_id = excluded.source_object_id,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str()],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength, updated_at
+            )
+            SELECT ?1, 'track', 'source:track_id', track_id, track_id, 'local', 100,
+                   CURRENT_TIMESTAMP
+            FROM temp_local_stress_tracks
+            WHERE 1
+            ON CONFLICT(server_id, entity_kind, namespace, value) DO UPDATE SET
+                entity_id = excluded.entity_id,
+                source = excluded.source,
+                strength = excluded.strength,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str()],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO source_objects (
+                server_id, source_object_id, entity_kind, entity_id, source_kind, source_path,
+                parent_source_object_id, cue_path, cue_revision, cue_track_index,
+                segment_start_ms, segment_end_ms, metadata_json, sync_generation, updated_at
+            )
+            SELECT base.server_id,
+                   base.source_object_id || char(31) || 'stress:' || stress.track_id,
+                   'track', stress.track_id, base.source_kind, base.source_path,
+                   base.parent_source_object_id, base.cue_path, base.cue_revision,
+                   base.cue_track_index, base.segment_start_ms, base.segment_end_ms,
+                   base.metadata_json, ?2, CURRENT_TIMESTAMP
+            FROM source_objects base
+            JOIN temp_local_stress_tracks stress
+              ON stress.base_track_id = base.entity_id
+            WHERE base.server_id = ?1
+              AND base.entity_kind = 'track'
+              AND base.source_kind = 'cue_track'
+            ON CONFLICT(server_id, source_object_id) DO UPDATE SET
+                entity_kind = excluded.entity_kind,
+                entity_id = excluded.entity_id,
+                source_kind = excluded.source_kind,
+                source_path = excluded.source_path,
+                parent_source_object_id = excluded.parent_source_object_id,
+                cue_path = excluded.cue_path,
+                cue_revision = excluded.cue_revision,
+                cue_track_index = excluded.cue_track_index,
+                segment_start_ms = excluded.segment_start_ms,
+                segment_end_ms = excluded.segment_end_ms,
+                metadata_json = excluded.metadata_json,
+                sync_generation = excluded.sync_generation,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        Ok(())
+    }
+
     pub fn refresh_library_counts(&self, server_id: &ServerId) -> StoreResult<()> {
         self.write_batch(|connection| {
             let generation = connection
@@ -1700,6 +2020,26 @@ fn track_stats_changed(left: &Track, right: &Track) -> bool {
         || left.play_count != right.play_count
         || left.user_rating != right.user_rating
         || left.skip_count != right.skip_count
+}
+
+fn local_stress_track_base_id(track_id: &TrackId) -> Option<&str> {
+    #[cfg(debug_assertions)]
+    {
+        let suffix = track_id
+            .as_str()
+            .strip_prefix(LOCAL_STRESS_TRACK_ID_PREFIX)?;
+        let (_, base_track_id) = suffix.split_once(':')?;
+        if base_track_id.is_empty() {
+            None
+        } else {
+            Some(base_track_id)
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = track_id;
+        None
+    }
 }
 
 fn track_artist_links_changed(left: &Track, right: &Track) -> bool {

@@ -1,6 +1,8 @@
 use super::servers::album_release_types_json;
 use super::*;
 
+const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
+
 pub fn local_file_source_object_id(root_path: &str, relative_path: &str) -> String {
     format!("local:file:{root_path}\u{1f}{relative_path}")
 }
@@ -430,7 +432,9 @@ pub(super) fn upsert_track_entity_data_on_connection(
         track.id.as_str(),
         "musicbrainz:recording",
     )?;
-    if let Some(path) = clean_identity_value(track.local_path.as_deref()) {
+    let stress_track =
+        cfg!(debug_assertions) && track.id.as_str().starts_with(LOCAL_STRESS_TRACK_ID_PREFIX);
+    if !stress_track && let Some(path) = clean_identity_value(track.local_path.as_deref()) {
         upsert_identity_key_on_connection(
             connection,
             server_id,

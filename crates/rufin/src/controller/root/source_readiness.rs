@@ -49,7 +49,7 @@ pub(in crate::controller) fn source_sync_readiness(
         Some(SyncRequiredReason::EmptyCache)
     } else if input.provider == LOCAL_PROVIDER_ID
         && input.local_library_configured
-        && (input.cached_item_count == 0 || stale)
+        && (input.sync_status == Some("running") || input.cached_item_count == 0 || stale)
     {
         Some(SyncRequiredReason::LocalManifestRefresh)
     } else if stale && input.provider != LOCAL_PROVIDER_ID {

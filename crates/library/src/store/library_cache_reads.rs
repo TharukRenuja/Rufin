@@ -711,6 +711,48 @@ impl Store {
         }
         Ok(track)
     }
+    pub fn load_track_ids_with_prefix(
+        &self,
+        server_id: &ServerId,
+        prefix: &str,
+    ) -> StoreResult<Vec<TrackId>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id
+            FROM tracks
+            WHERE server_id = ?1
+              AND track_id LIKE ?2 || '%'
+            ORDER BY track_id
+            ",
+        )?;
+        collect_rows(
+            statement.query_map(params![server_id.as_str(), prefix], |row| {
+                row.get::<_, String>(0).map(TrackId::new)
+            })?,
+        )
+    }
+    pub fn tracks_with_prefix_have_album_prefix_mismatch(
+        &self,
+        server_id: &ServerId,
+        track_prefix: &str,
+        album_prefix: &str,
+    ) -> StoreResult<bool> {
+        self.connection
+            .query_row(
+                "
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM tracks
+                    WHERE server_id = ?1
+                      AND track_id LIKE ?2 || '%'
+                      AND album_id NOT LIKE ?3 || '%'
+                )
+                ",
+                params![server_id.as_str(), track_prefix, album_prefix],
+                |row| row.get(0),
+            )
+            .map_err(StoreError::from)
+    }
     pub fn track_local_path(
         &self,
         server_id: &ServerId,

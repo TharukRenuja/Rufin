@@ -80,6 +80,7 @@ mod controller_settings;
 mod controller_startup;
 mod folder_search_commands;
 mod library_mutations;
+mod local_library_stress;
 mod local_source_commands;
 mod lyrics_commands;
 pub(in crate::controller) mod play_activation;
