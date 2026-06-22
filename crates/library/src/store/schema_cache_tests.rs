@@ -7,7 +7,7 @@ use crate::{
     local_file_source_object_id,
 };
 use domain::{
-    ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
+    AlbumId, ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
     LocalManifestCoverKind, LocalManifestEntry, ServerId, TrackId,
 };
 #[test]
@@ -3111,6 +3111,66 @@ fn local_delta_commit_writes_cue_track_source_objects() {
     assert_eq!(source.source_kind, "cue_track");
     assert_eq!(source.source_object_id, cue_source.source_object_id);
     assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
+    assert_eq!(source.segment_start_ms, Some(12345));
+    assert_eq!(source.segment_end_ms, Some(67890));
+}
+
+#[test]
+fn local_delta_commit_writes_stress_cue_track_source_objects() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let album = album(1);
+    let mut stress_album = album.clone();
+    stress_album.id = AlbumId::new(format!("local:stress-album:1:{}", album.id.as_str()));
+    let mut track = track(1, &album);
+    track.local_path = Some("/music/album.flac".to_string());
+    let mut stress_track = track.clone();
+    stress_track.id = TrackId::new(format!("local:stress-track:1:{}", track.id.as_str()));
+    stress_track.album_id = stress_album.id.clone();
+    let cue_source = LocalCueTrackSource {
+        source_object_id: "local:cue:track:1".to_string(),
+        track_id: track.id.clone(),
+        source_path: "/music/album.flac".to_string(),
+        root_path: "/music".to_string(),
+        relative_path: "album.flac".to_string(),
+        cue_path: "/music/album.cue".to_string(),
+        cue_revision: "cue-revision-one".to_string(),
+        cue_track_index: 1,
+        segment_start_ms: 12345,
+        segment_end_ms: 67890,
+        sync_generation: generation,
+    };
+
+    case.commit_local_library_delta(
+        &case.id,
+        generation,
+        LocalLibraryDelta {
+            changed_tracks: vec![track.clone(), stress_track.clone()],
+            current_track_ids: vec![track.id.clone(), stress_track.id.clone()],
+            current_album_ids: vec![album.id.clone(), stress_album.id.clone()],
+            dirty_albums: vec![album, stress_album],
+            cue_track_sources: vec![cue_source.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit stress cue delta");
+
+    let source = case
+        .load_track_source_object(&case.id, &stress_track.id)
+        .expect("load stress track source object")
+        .expect("stress source object");
+    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(
+        source.source_object_id,
+        format!(
+            "{}\u{1f}stress:{}",
+            cue_source.source_object_id,
+            stress_track.id.as_str()
+        )
+    );
+    assert_eq!(source.entity_id.as_deref(), Some(stress_track.id.as_str()));
+    assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
+    assert_eq!(source.cue_path.as_deref(), Some("/music/album.cue"));
     assert_eq!(source.segment_start_ms, Some(12345));
     assert_eq!(source.segment_end_ms, Some(67890));
 }

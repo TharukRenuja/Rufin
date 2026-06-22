@@ -1,3 +1,4 @@
+use super::local_library_stress::{self, LocalStressDelta, LocalStressSnapshot};
 use super::*;
 use library::AlbumIdentityCandidate;
 use std::future::Future;
@@ -851,16 +852,52 @@ async fn sync_local_provider_store_generation(
     server_id: &ServerId,
     provider: &LocalProvider,
     generation: i64,
+    progress: SyncProgressReporter,
+    cancellation: &CancellationToken,
+) -> Result<SyncJobOutcome, String> {
+    sync_local_provider_store_generation_with_multiplier(
+        store,
+        server_id,
+        provider,
+        generation,
+        progress,
+        cancellation,
+        local_library_stress::local_library_stress_multiplier(),
+    )
+    .await
+}
+
+async fn sync_local_provider_store_generation_with_multiplier(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+    generation: i64,
     mut progress: SyncProgressReporter,
     cancellation: &CancellationToken,
+    stress_multiplier: usize,
 ) -> Result<SyncJobOutcome, String> {
     check_sync_cancelled(cancellation)?;
     let scan = provider.manifest_scan();
-    let snapshot = collect_local_provider_snapshot(provider, &mut progress, cancellation).await?;
+    let mut snapshot =
+        collect_local_provider_snapshot(provider, &mut progress, cancellation).await?;
+    let stress_delta = local_library_stress::apply_local_library_stress_multiplier(
+        LocalStressSnapshot {
+            store,
+            server_id,
+            scan,
+            tracks: &mut snapshot.tracks,
+            albums: &mut snapshot.albums,
+            artists: &mut snapshot.artists,
+            album_artists: &mut snapshot.album_artists,
+            genres: &mut snapshot.genres,
+            home_sections: &mut snapshot.home_sections,
+        },
+        stress_multiplier,
+    )?;
     check_sync_cancelled(cancellation)?;
     let aggregate_dirty = local_aggregate_image_dirty(store, server_id, &snapshot)?;
     check_sync_cancelled(cancellation)?;
-    if !scan.library_changed && aggregate_dirty.is_empty() {
+    if !scan.library_changed && aggregate_dirty.is_empty() && stress_delta.is_empty() {
         check_sync_cancelled(cancellation)?;
         let pruned_cover_entries =
             store.with_store(|store| store.complete_unchanged_local_sync(server_id, generation))?;
@@ -882,8 +919,13 @@ async fn sync_local_provider_store_generation(
     );
     progress.finalizing();
     let finalize_started = Instant::now();
-    let delta = local_library_delta(provider.manifest_scan(), snapshot, aggregate_dirty);
-    let sync_delta = local_store_delta(&delta, scan.library_changed);
+    let delta = local_library_delta(
+        provider.manifest_scan(),
+        snapshot,
+        aggregate_dirty,
+        stress_delta.clone(),
+    );
+    let sync_delta = local_store_delta(&delta, scan.library_changed || !stress_delta.is_empty());
     check_sync_cancelled(cancellation)?;
     let pruned_cover_entries =
         store.with_store(|store| store.commit_local_library_delta(server_id, generation, delta))?;
@@ -1104,46 +1146,61 @@ fn local_library_delta(
     scan: &LocalManifestScan,
     snapshot: LocalProviderSnapshot,
     aggregate_dirty: LocalAggregateDirty,
+    stress_delta: LocalStressDelta,
 ) -> LocalLibraryDelta {
-    let changed_track_ids = scan
+    let mut changed_track_ids = scan
         .changed_track_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let metadata_track_ids = scan
+    changed_track_ids.extend(stress_delta.changed_track_ids);
+    let mut metadata_track_ids = scan
         .metadata_track_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let artwork_track_ids = scan
+    metadata_track_ids.extend(stress_delta.metadata_track_ids);
+    let mut artwork_track_ids = scan
         .artwork_track_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let mut artwork_track_ids = artwork_track_ids;
+    artwork_track_ids.extend(stress_delta.artwork_track_ids);
     artwork_track_ids.extend(aggregate_dirty.track_ids.into_iter().filter(|track_id| {
         !changed_track_ids.contains(track_id) && !metadata_track_ids.contains(track_id)
     }));
     let mut dirty_album_ids = scan.dirty_album_ids.iter().cloned().collect::<HashSet<_>>();
     dirty_album_ids.extend(aggregate_dirty.album_ids);
+    dirty_album_ids.extend(stress_delta.dirty_album_ids);
     let mut dirty_artist_ids = scan
         .dirty_artist_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
     dirty_artist_ids.extend(aggregate_dirty.artist_ids);
+    dirty_artist_ids.extend(stress_delta.dirty_artist_ids);
     let mut dirty_album_artist_ids = scan
         .dirty_album_artist_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
     dirty_album_artist_ids.extend(aggregate_dirty.album_artist_ids);
+    dirty_album_artist_ids.extend(stress_delta.dirty_album_artist_ids);
     let mut dirty_genre_names = scan
         .dirty_genre_names
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
     dirty_genre_names.extend(aggregate_dirty.genre_names);
+    dirty_genre_names.extend(stress_delta.dirty_genre_names);
+    let mut deleted_track_ids = scan
+        .deleted_track_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    deleted_track_ids.extend(stress_delta.deleted_track_ids);
+    let mut deleted_track_ids = deleted_track_ids.into_iter().collect::<Vec<_>>();
+    deleted_track_ids.sort();
     LocalLibraryDelta {
         changed_tracks: snapshot
             .tracks
@@ -1163,7 +1220,7 @@ fn local_library_delta(
             .filter(|track| artwork_track_ids.contains(&track.id))
             .cloned()
             .collect(),
-        deleted_track_ids: scan.deleted_track_ids.clone(),
+        deleted_track_ids,
         current_track_ids: snapshot
             .tracks
             .iter()
@@ -1361,6 +1418,26 @@ pub(in crate::controller) async fn sync_local_provider_outcome(
         generation,
         SyncProgressReporter::silent(provider),
         &cancellation,
+    )
+    .await
+}
+#[cfg(test)]
+pub(in crate::controller) async fn sync_local_provider_outcome_with_stress_multiplier(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+    stress_multiplier: usize,
+) -> Result<SyncJobOutcome, String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    let cancellation = CancellationToken::new();
+    sync_local_provider_store_generation_with_multiplier(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::silent(provider),
+        &cancellation,
+        stress_multiplier,
     )
     .await
 }

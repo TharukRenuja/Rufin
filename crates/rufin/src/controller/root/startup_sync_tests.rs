@@ -6,7 +6,8 @@ use super::{
     StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
     load_runtime_snapshot, load_snapshot, prefetch_home_section, promote_prefetched_home_section,
     refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-    refresh_playlist_pages, sync_local_provider_outcome, sync_local_provider_with_events,
+    refresh_playlist_pages, sync_local_provider_outcome,
+    sync_local_provider_outcome_with_stress_multiplier, sync_local_provider_with_events,
     sync_page_finished, sync_provider, sync_provider_outcome,
     sync_provider_outcome_with_cancellation, sync_provider_with_events,
 };
@@ -940,6 +941,144 @@ pub(in crate::controller) fn startup_track_deleted() {
         .find(|genre| genre.name == "Example")
         .expect("retained genre");
     assert_eq!(genre.track_count, 1);
+    let _cleanup = fs::remove_dir_all(root);
+}
+
+#[test]
+pub(in crate::controller) fn startup_local_stress_multiplier_writes_playable_duplicates() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let root = unique_test_dir("local-stress-multiplier");
+    fs::create_dir_all(root.join("Album")).expect("create album dir");
+    let first = root.join("Album/First.mp3");
+    let second = root.join("Album/Second.mp3");
+    fs::write(&first, []).expect("first audio");
+    fs::write(&second, []).expect("second audio");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("save local server");
+    let provider =
+        LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+            .expect("local provider");
+
+    runtime
+        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+            &store,
+            &local.server.id,
+            &provider,
+            3,
+        ))
+        .expect("stress local sync");
+
+    let page = store
+        .with_store(|store| store.load_tracks(&local.server.id, 0, 20))
+        .expect("tracks");
+    assert_eq!(page.total, 6);
+    assert_eq!(page.items.len(), 6);
+    let stress_tracks = page
+        .items
+        .iter()
+        .filter(|track| track.id.as_str().starts_with("local:stress-track:"))
+        .collect::<Vec<_>>();
+    assert_eq!(stress_tracks.len(), 4);
+    let mut path_counts = HashMap::<String, usize>::new();
+    for track in &page.items {
+        let path = store
+            .with_store(|store| store.track_local_path(&local.server.id, &track.id))
+            .expect("local path")
+            .expect("playable local path");
+        *path_counts.entry(path).or_default() += 1;
+    }
+    assert_eq!(path_counts.len(), 2);
+    assert_eq!(path_counts[first.to_string_lossy().as_ref()], 3);
+    assert_eq!(path_counts[second.to_string_lossy().as_ref()], 3);
+    let albums = store
+        .with_store(|store| store.load_albums(&local.server.id, 0, 10))
+        .expect("albums");
+    assert_eq!(albums.total, 3);
+    assert_eq!(albums.items.len(), 3);
+    assert_eq!(
+        albums
+            .items
+            .iter()
+            .map(|album| usize::from(album.track_count))
+            .sum::<usize>(),
+        6
+    );
+    let stress_album = albums
+        .items
+        .iter()
+        .find(|album| album.id.as_str().starts_with("local:stress-album:"))
+        .expect("stress album");
+    assert_eq!(stress_album.track_count, 2);
+    let (_album, stress_album_tracks) = store
+        .with_store(|store| store.load_album_detail(&local.server.id, &stress_album.id))
+        .expect("stress album detail")
+        .expect("stress album exists");
+    assert_eq!(stress_album_tracks.len(), 2);
+    assert!(stress_album_tracks.iter().all(|track| {
+        track.album_id == stress_album.id && track.id.as_str().starts_with("local:stress-track:")
+    }));
+    for track in &stress_album_tracks {
+        let path = store
+            .with_store(|store| store.track_local_path(&local.server.id, &track.id))
+            .expect("stress album track local path")
+            .expect("stress album track playable local path");
+        assert!(path == first.to_string_lossy() || path == second.to_string_lossy());
+    }
+    let manifest = store
+        .with_store(|store| store.load_local_manifest(&local.server.id))
+        .expect("manifest");
+    assert_eq!(manifest.len(), 2);
+
+    let warm = LocalProvider::from_roots_with_manifest_cache(
+        vec![root.clone()],
+        local.server.clone(),
+        manifest,
+    )
+    .expect("warm local provider");
+    let unchanged = runtime
+        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+            &store,
+            &local.server.id,
+            &warm,
+            3,
+        ))
+        .expect("warm stress local sync");
+    assert!(!unchanged.post_sync_work);
+    let warm_page = store
+        .with_store(|store| store.load_tracks(&local.server.id, 0, 20))
+        .expect("warm tracks");
+    assert_eq!(warm_page.total, 6);
+
+    runtime
+        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+            &store,
+            &local.server.id,
+            &warm,
+            1,
+        ))
+        .expect("unstress local sync");
+
+    let restored = store
+        .with_store(|store| store.load_tracks(&local.server.id, 0, 20))
+        .expect("restored tracks");
+    assert_eq!(restored.total, 2);
+    assert!(
+        restored
+            .items
+            .iter()
+            .all(|track| !track.id.as_str().starts_with("local:stress-track:"))
+    );
+    let restored_albums = store
+        .with_store(|store| store.load_albums(&local.server.id, 0, 10))
+        .expect("restored albums");
+    assert_eq!(restored_albums.total, 1);
+    assert_eq!(restored_albums.items[0].track_count, 2);
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -2424,6 +2563,22 @@ pub(in crate::controller) fn startup_ignore_ready() {
     assert_eq!(local_stale.startup_delay_ms, Some(8_000));
     assert!(local_stale.metadata_fresh);
     assert!(local_stale.artwork_fresh);
+
+    let local_running = source_sync_readiness(SourceSyncReadinessInput {
+        provider: LOCAL_PROVIDER_ID,
+        cached_item_count: 42,
+        sync_status: Some("running"),
+        sync_completed_age_seconds: Some(0),
+        local_library_configured: true,
+        local_artwork_missing: false,
+    });
+    assert_eq!(
+        local_running.sync_required_reason,
+        Some(SyncRequiredReason::LocalManifestRefresh)
+    );
+    assert_eq!(local_running.startup_delay_ms, Some(8_000));
+    assert!(local_running.metadata_fresh);
+    assert!(local_running.artwork_fresh);
 
     let remote_stale = source_sync_readiness(SourceSyncReadinessInput {
         provider: "jellyfin",

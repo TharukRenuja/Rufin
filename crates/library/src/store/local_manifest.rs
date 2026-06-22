@@ -713,6 +713,12 @@ impl Store {
                     },
                 )?;
             }
+            upsert_local_stress_cue_track_source_objects_on_connection(
+                connection,
+                server_id,
+                generation,
+                &delta.cue_track_sources,
+            )?;
             Ok(pruned_cover_entries)
         })
     }
@@ -917,6 +923,158 @@ fn local_artwork_source_facts(path: &Path) -> Option<LocalArtworkSourceFacts> {
         mtime_seconds: duration.as_secs().min(i64::MAX as u64) as i64,
         mtime_nanos: duration.subsec_nanos(),
     })
+}
+
+fn upsert_local_stress_cue_track_source_objects_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    generation: i64,
+    cue_track_sources: &[LocalCueTrackSource],
+) -> StoreResult<()> {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (connection, server_id, generation, cue_track_sources);
+        Ok(())
+    }
+    #[cfg(debug_assertions)]
+    {
+        const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
+        if cue_track_sources.is_empty() {
+            return Ok(());
+        }
+        connection.execute_batch(
+            "
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_cue_sources (
+                base_source_object_id TEXT PRIMARY KEY,
+                base_track_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                parent_source_object_id TEXT NOT NULL,
+                cue_path TEXT NOT NULL,
+                cue_revision TEXT NOT NULL,
+                cue_track_index INTEGER NOT NULL,
+                segment_start_ms INTEGER NOT NULL,
+                segment_end_ms INTEGER NOT NULL
+            ) WITHOUT ROWID;
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_base_ids (
+                track_id TEXT PRIMARY KEY,
+                base_track_id TEXT NOT NULL
+            ) WITHOUT ROWID;
+            DELETE FROM temp_local_stress_cue_sources;
+            DELETE FROM temp_local_stress_track_base_ids;
+            ",
+        )?;
+        {
+            let mut insert = connection.prepare(
+                "
+                INSERT INTO temp_local_stress_cue_sources (
+                    base_source_object_id, base_track_id, source_path, parent_source_object_id,
+                    cue_path, cue_revision, cue_track_index, segment_start_ms, segment_end_ms
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(base_source_object_id) DO UPDATE SET
+                    base_track_id = excluded.base_track_id,
+                    source_path = excluded.source_path,
+                    parent_source_object_id = excluded.parent_source_object_id,
+                    cue_path = excluded.cue_path,
+                    cue_revision = excluded.cue_revision,
+                    cue_track_index = excluded.cue_track_index,
+                    segment_start_ms = excluded.segment_start_ms,
+                    segment_end_ms = excluded.segment_end_ms
+                ",
+            )?;
+            for cue_source in cue_track_sources {
+                insert.execute(params![
+                    cue_source.source_object_id.as_str(),
+                    cue_source.track_id.as_str(),
+                    cue_source.source_path.as_str(),
+                    local_file_source_object_id(&cue_source.root_path, &cue_source.relative_path),
+                    cue_source.cue_path.as_str(),
+                    cue_source.cue_revision.as_str(),
+                    cue_source.cue_track_index,
+                    cue_source.segment_start_ms,
+                    cue_source.segment_end_ms,
+                ])?;
+            }
+        }
+        connection.execute(
+            "
+            INSERT INTO temp_local_stress_track_base_ids (track_id, base_track_id)
+            SELECT track_id, substr(suffix, instr(suffix, ':') + 1)
+            FROM (
+                SELECT track_id, substr(track_id, ?2) AS suffix
+                FROM tracks
+                WHERE server_id = ?1
+                  AND track_id LIKE ?3 || '%'
+            )
+            WHERE instr(suffix, ':') > 0
+              AND substr(suffix, instr(suffix, ':') + 1) != ''
+            ON CONFLICT(track_id) DO UPDATE SET
+                base_track_id = excluded.base_track_id
+            ",
+            params![
+                server_id.as_str(),
+                i64::try_from(LOCAL_STRESS_TRACK_ID_PREFIX.len() + 1).unwrap_or(i64::MAX),
+                LOCAL_STRESS_TRACK_ID_PREFIX,
+            ],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO source_objects (
+                server_id, source_object_id, entity_kind, entity_id, source_kind, source_path,
+                parent_source_object_id, cue_path, cue_revision, cue_track_index,
+                segment_start_ms, segment_end_ms, metadata_json, sync_generation, updated_at
+            )
+            SELECT ?1,
+                   cue.base_source_object_id || char(31) || 'stress:' || stress.track_id,
+                   'track', stress.track_id, 'cue_track', cue.source_path,
+                   cue.parent_source_object_id, cue.cue_path, cue.cue_revision,
+                   cue.cue_track_index, cue.segment_start_ms, cue.segment_end_ms,
+                   '{}', ?2, CURRENT_TIMESTAMP
+            FROM temp_local_stress_cue_sources cue
+            JOIN temp_local_stress_track_base_ids stress
+              ON stress.base_track_id = cue.base_track_id
+            WHERE 1
+            ON CONFLICT(server_id, source_object_id) DO UPDATE SET
+                entity_kind = excluded.entity_kind,
+                entity_id = excluded.entity_id,
+                source_kind = excluded.source_kind,
+                source_path = excluded.source_path,
+                parent_source_object_id = excluded.parent_source_object_id,
+                cue_path = excluded.cue_path,
+                cue_revision = excluded.cue_revision,
+                cue_track_index = excluded.cue_track_index,
+                segment_start_ms = excluded.segment_start_ms,
+                segment_end_ms = excluded.segment_end_ms,
+                metadata_json = excluded.metadata_json,
+                sync_generation = excluded.sync_generation,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id, updated_at
+            )
+            SELECT ?1,
+                   'track',
+                   stress.track_id,
+                   'local',
+                   cue.base_source_object_id || char(31) || 'stress:' || stress.track_id,
+                   CURRENT_TIMESTAMP
+            FROM temp_local_stress_cue_sources cue
+            JOIN temp_local_stress_track_base_ids stress
+              ON stress.base_track_id = cue.base_track_id
+            WHERE 1
+            ON CONFLICT(server_id, entity_kind, entity_id) DO UPDATE SET
+                source = excluded.source,
+                source_object_id = excluded.source_object_id,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str()],
+        )?;
+        Ok(())
+    }
 }
 
 struct LocalArtworkSourceFacts {
