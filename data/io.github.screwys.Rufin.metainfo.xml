@@ -67,6 +67,9 @@
           <li>We have a new button in context menus and our pages, radio, which uses Jellyfin's Instant Mix or Navidrome/Subsonic equivalents. This also means your Jellyfin plugins that affect recommendations now work</li>
         </ul>
         <ul>
+          <li>Add the required notification permission to show track covers in OS notifications</li>
+        </ul>
+        <ul>
           <li>Reworked server adding dialog, and local folder is now hidden from the selection dialog if no local folder is configured</li>
         </ul>
         <ul>
