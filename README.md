@@ -145,27 +145,29 @@ cd Rufin
 cargo run -p rufin
 ```
 
-To build a release binary:
-
-```bash
-cargo build --release -p rufin
-```
-
-`--startup-check` is a flag starts app and exits if a display is available, it is only exists for CIs.
-
 # Troubleshooting
 
-To run the app with debug logging:
+If you are experiencing a problem with the app, please open an issue and include logs. To run the app with extra debug logging:
 
 ```bash
-flatpak run --env=RUST_LOG=rufin=debug,rufin_app=debug,playback=debug io.github.screwys.Rufin
+flatpak run --env=RUST_LOG=FLAG_HERE io.github.screwys.Rufin
 ```
-Or if you are using the native build:
+
+or for native builds:
 
 ```bash
-RUST_LOG=rufin=debug,rufin_app=debug,playback=debug cargo run -p rufin
+RUST_LOG=FLAG_HERE cargo run -p rufin
 ```
 
+Where `RUST_LOG` flags are:
+
+- `rufin=debug` enables app, UI, controller, and sync logs.
+- `playback=debug` enables playback and GStreamer logs.
+- `lofty=debug` enables metadata parser logs.
+
+You can combine multiple `RUST_LOG` flags with `,`, for example `rufin=debug,playback=debug`.
+
+For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_RESIZE_DEBUG=1`.
 
 # Contributing
 
