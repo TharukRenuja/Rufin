@@ -16,7 +16,7 @@ Local build and run steps are in [README.md](README.md#building-locally).
 
 - `--startup-check` starts the app and exits if a display is available; it exists for CI.
 - `--fake-scale <small|large|stress|thirty-k>` uses a fake library when the `dev-tools` feature is enabled.
-- `RUFIN_LOCAL_STRESS_MULTIPLIER=<n>` multiplies local library tracks in debug builds, up to 100.
+- `RUFIN_LOCAL_STRESS_MULTIPLIER=<n>` multiplies local library tracks in debug builds, up to 100. I usually aim for 40k tracks.
 
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
