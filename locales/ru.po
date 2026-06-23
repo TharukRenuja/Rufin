@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-21 21:01+0000\n"
+"PO-Revision-Date: 2026-06-24 07:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -60,11 +60,10 @@ msgid "Add Rule"
 msgstr "Добавить правило"
 
 msgid "Add Your Music Library"
-msgstr ""
+msgstr "Добавить свою музыкальную библиотеку"
 
-#, fuzzy
 msgid "Add a music folder"
-msgstr "Выбрать локальную папку с музыкой"
+msgstr "Добавить папку с музыкой"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr "Добавьте сервер для использования Jellyfin, Subsonic или OpenSubsonic."
@@ -79,14 +78,13 @@ msgid "Add folders to use the Local source."
 msgstr "Добавьте папки, чтобы использовать локальный источник."
 
 msgid "Add music library"
-msgstr ""
+msgstr "Добавить музыкальную библиотеку"
 
 msgid "Add music to start a queue."
 msgstr "Добавьте музыку, чтобы начать создавать очередь воспроизведения."
 
-#, fuzzy
 msgid "Add server"
-msgstr "Добавить Сервер"
+msgstr "Добавить сервер"
 
 msgid "Add to Favorites"
 msgstr "Добавить в избранное"
@@ -113,9 +111,8 @@ msgstr "Исполнитель альбома"
 msgid "Album artists"
 msgstr "Авторы альбома"
 
-#, fuzzy
 msgid "Album radio"
-msgstr "Воспроизвести альбом"
+msgstr "Радио по альбому"
 
 msgid "Album title"
 msgstr "Название альбома"
@@ -162,9 +159,8 @@ msgstr "Альбомы исполнителя"
 msgid "Artist name"
 msgstr "Имя исполнителя"
 
-#, fuzzy
 msgid "Artist radio"
-msgstr "Воспроизвести исполнителя"
+msgstr "Радио по исполнителю"
 
 msgid "Artist tracks"
 msgstr "Треки исполнителя"
@@ -533,9 +529,8 @@ msgstr "Genius"
 msgid "Genre"
 msgstr "Жанр"
 
-#, fuzzy
 msgid "Genre radio"
-msgstr "Воспроизвести в случайном порядке"
+msgstr "Радио по жанру"
 
 msgid "Genre tracks"
 msgstr "Треки по жанрам"
@@ -923,9 +918,8 @@ msgstr "Открыть на MusicBrainz"
 msgid "Open release notes"
 msgstr "Открыть примечания к выпуску"
 
-#, fuzzy
 msgid "OpenSubsonic"
-msgstr "Subsonic / OpenSubsonic"
+msgstr "OpenSubsonic"
 
 msgid "Opening Last.fm authorization…"
 msgstr "Запуск авторизации в Last.fm…"
@@ -973,9 +967,8 @@ msgstr "Количество воспроизведений"
 msgid "Play filter"
 msgstr "Воспроизвести фильтр"
 
-#, fuzzy
 msgid "Play radio"
-msgstr "Воспроизвести в случайном порядке"
+msgstr "Воспроизвести радио"
 
 msgid "Play random"
 msgstr "Воспроизвести в случайном порядке"
@@ -1001,9 +994,8 @@ msgstr "Название плейлиста"
 msgid "Playlist order"
 msgstr "Порядок плейлиста"
 
-#, fuzzy
 msgid "Playlist radio"
-msgstr "Название плейлиста"
+msgstr "Радио по плейлисту"
 
 msgid "Playlist tracks"
 msgstr "Треки плейлиста"
@@ -1507,6 +1499,8 @@ msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work."
 msgstr ""
+"Для работы функции радио используется API Jellyfin, что необходимо для "
+"работы плагинов рекомендаций."
 
 msgid "Timed out waiting for Last.fm authorization."
 msgstr "Время ожидания авторизации в Last.fm истекло."
@@ -1526,9 +1520,8 @@ msgstr "Переключить полноэкранный режим"
 msgid "Track"
 msgstr "Трек"
 
-#, fuzzy
 msgid "Track radio"
-msgstr "Воспроизвести трек"
+msgstr "Радио по треку"
 
 msgid "Tracks"
 msgstr "Треки"
@@ -1566,7 +1559,7 @@ msgstr[2] ""
 "не найдено. Всего несохраненных: {total} треков."
 
 msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
+msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
 
 msgid "Use This Source"
 msgstr "Использовать Этот Источник"
