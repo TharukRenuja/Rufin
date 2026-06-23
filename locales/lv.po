@@ -111,6 +111,10 @@ msgstr "Albuma izpildītājs"
 msgid "Album artists"
 msgstr "Albumu izpildītāji"
 
+#, fuzzy
+msgid "Album radio"
+msgstr "Atskaņot albumu"
+
 msgid "Album title"
 msgstr "Albuma nosaukums"
 
@@ -155,6 +159,10 @@ msgstr "Izpildītāja albumi"
 
 msgid "Artist name"
 msgstr "Izpildītāja nosaukums"
+
+#, fuzzy
+msgid "Artist radio"
+msgstr "Atskaņot mākslinieku"
 
 msgid "Artist tracks"
 msgstr "Izpildītāja dziesmas"
@@ -518,6 +526,10 @@ msgstr "Genius"
 
 msgid "Genre"
 msgstr "Žanrs"
+
+#, fuzzy
+msgid "Genre radio"
+msgstr "Atskaņot nejaušā secībā"
 
 msgid "Genre tracks"
 msgstr "Žanra dziesmas"
@@ -932,38 +944,11 @@ msgstr "Vienkārši teksti"
 msgid "Play"
 msgstr "Atskaņot"
 
-#, fuzzy
-msgid "Play Album Radio"
-msgstr "Atskaņot albumu"
-
-#, fuzzy
-msgid "Play Artist Radio"
-msgstr "Atskaņot mākslinieku"
-
-#, fuzzy
-msgid "Play Genre Radio"
-msgstr "Atskaņot nejaušā secībā"
-
-#, fuzzy
-msgid "Play Last"
-msgstr "Atskaņot vēlāk"
-
 msgid "Play Later"
 msgstr "Atskaņot vēlāk"
 
 msgid "Play Next"
 msgstr "Atskaņot nākamo"
-
-msgid "Play Now"
-msgstr "Atskaņot tagad"
-
-#, fuzzy
-msgid "Play Playlist Radio"
-msgstr "Atskaņošanas saraksta nosaukums"
-
-#, fuzzy
-msgid "Play Track Radio"
-msgstr "Atskaņot dziesmu"
 
 msgid "Play album"
 msgstr "Atskaņot albumu"
@@ -976,6 +961,10 @@ msgstr "Atskaņošanas skaits"
 
 msgid "Play filter"
 msgstr "Atskaņošanas filtrs"
+
+#, fuzzy
+msgid "Play radio"
+msgstr "Atskaņot nejaušā secībā"
 
 msgid "Play random"
 msgstr "Atskaņot nejaušā secībā"
@@ -1000,6 +989,10 @@ msgstr "Atskaņošanas saraksta nosaukums"
 
 msgid "Playlist order"
 msgstr "Atskaņošanas saraksta secība"
+
+#, fuzzy
+msgid "Playlist radio"
+msgstr "Atskaņošanas saraksta nosaukums"
 
 msgid "Playlist tracks"
 msgstr "Atskaņošanas saraksta dziesmas"
@@ -1517,6 +1510,10 @@ msgstr "Pārslēgt pilnekrāna režīmu"
 msgid "Track"
 msgstr "Dziesma"
 
+#, fuzzy
+msgid "Track radio"
+msgstr "Atskaņot dziesmu"
+
 msgid "Tracks"
 msgstr "Dziesmas"
 
@@ -1867,6 +1864,13 @@ msgstr ""
 
 #~ msgid "No tracks match the search."
 #~ msgstr "Neviens celiņš neatbilst meklējumam."
+
+#, fuzzy
+#~ msgid "Play Last"
+#~ msgstr "Atskaņot vēlāk"
+
+#~ msgid "Play Now"
+#~ msgstr "Atskaņot tagad"
 
 #~ msgid "Play next"
 #~ msgstr "Atskaņot nākamo"

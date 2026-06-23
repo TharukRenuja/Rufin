@@ -10,8 +10,8 @@ use library::SavedServer;
 use tracing::info;
 
 use super::{
-    AppController, ControllerEvent, SNAPSHOT_TRACK_LIMIT, load_settings_for_saved,
-    provider_for_saved,
+    AppController, ControllerEvent, RandomPlayAction, SNAPSHOT_TRACK_LIMIT,
+    load_settings_for_saved, provider_for_saved,
     provider_tracks::{generated_track_strategy_for_saved, prepare_provider_tracks},
     root::local_source_saved,
 };
@@ -20,6 +20,7 @@ const GENERATED_RADIO_ITEM_COUNT: usize = 20;
 
 #[derive(Clone, Debug)]
 struct GeneratedRadioRequest {
+    action: RandomPlayAction,
     seed: GeneratedTrackSeed,
     seed_track: Option<Track>,
     limit: usize,
@@ -28,6 +29,25 @@ struct GeneratedRadioRequest {
 impl AppController {
     pub fn play_track_radio(&self, track: Track) {
         self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNow,
+            seed: GeneratedTrackSeed::Track(track.id.clone()),
+            seed_track: Some(track),
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_track_radio_next(&self, track: Track) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNext,
+            seed: GeneratedTrackSeed::Track(track.id.clone()),
+            seed_track: Some(track),
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_track_radio_last(&self, track: Track) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::AddLast,
             seed: GeneratedTrackSeed::Track(track.id.clone()),
             seed_track: Some(track),
             limit: GENERATED_RADIO_ITEM_COUNT,
@@ -36,6 +56,25 @@ impl AppController {
 
     pub fn play_album_radio(&self, album: Album) {
         self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNow,
+            seed: GeneratedTrackSeed::Album(album.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_album_radio_next(&self, album: Album) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNext,
+            seed: GeneratedTrackSeed::Album(album.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_album_radio_last(&self, album: Album) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::AddLast,
             seed: GeneratedTrackSeed::Album(album.id),
             seed_track: None,
             limit: GENERATED_RADIO_ITEM_COUNT,
@@ -44,6 +83,25 @@ impl AppController {
 
     pub fn play_artist_radio(&self, artist: Artist) {
         self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNow,
+            seed: GeneratedTrackSeed::Artist(artist.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_artist_radio_next(&self, artist: Artist) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNext,
+            seed: GeneratedTrackSeed::Artist(artist.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_artist_radio_last(&self, artist: Artist) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::AddLast,
             seed: GeneratedTrackSeed::Artist(artist.id),
             seed_track: None,
             limit: GENERATED_RADIO_ITEM_COUNT,
@@ -52,6 +110,31 @@ impl AppController {
 
     pub fn play_genre_radio(&self, genre: Genre) {
         self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNow,
+            seed: GeneratedTrackSeed::Genre {
+                id: Some(genre.id),
+                name: genre.name,
+            },
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_genre_radio_next(&self, genre: Genre) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNext,
+            seed: GeneratedTrackSeed::Genre {
+                id: Some(genre.id),
+                name: genre.name,
+            },
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_genre_radio_last(&self, genre: Genre) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::AddLast,
             seed: GeneratedTrackSeed::Genre {
                 id: Some(genre.id),
                 name: genre.name,
@@ -63,6 +146,25 @@ impl AppController {
 
     pub fn play_playlist_radio(&self, playlist: Playlist) {
         self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNow,
+            seed: GeneratedTrackSeed::Playlist(playlist.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_playlist_radio_next(&self, playlist: Playlist) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::PlayNext,
+            seed: GeneratedTrackSeed::Playlist(playlist.id),
+            seed_track: None,
+            limit: GENERATED_RADIO_ITEM_COUNT,
+        });
+    }
+
+    pub fn play_playlist_radio_last(&self, playlist: Playlist) {
+        self.play_generated_radio(GeneratedRadioRequest {
+            action: RandomPlayAction::AddLast,
             seed: GeneratedTrackSeed::Playlist(playlist.id),
             seed_track: None,
             limit: GENERATED_RADIO_ITEM_COUNT,
@@ -89,7 +191,7 @@ impl AppController {
                             elapsed_ms = started.elapsed().as_millis() as u64,
                             "loaded generated radio tracks"
                         );
-                        controller.apply_generated_radio(tracks);
+                        controller.apply_generated_radio(request.action, tracks);
                     }
                 }
                 Err(error) => {
@@ -196,12 +298,50 @@ impl AppController {
         Ok(candidates.into_iter().take(limit.clamp(1, 500)).collect())
     }
 
-    fn apply_generated_radio(&self, tracks: Vec<Track>) {
+    fn apply_generated_radio(&self, action: RandomPlayAction, tracks: Vec<Track>) {
         if tracks.is_empty() {
             self.emit_generated_radio_error("No matching radio tracks were found.");
             return;
         }
-        self.play_tracks_now(tracks);
+        match action {
+            RandomPlayAction::PlayNow => self.play_tracks_now(tracks),
+            RandomPlayAction::PlayNext => self.play_generated_radio_next(tracks),
+            RandomPlayAction::AddLast => self.append_generated_radio(tracks),
+        }
+    }
+
+    fn play_generated_radio_next(&self, tracks: Vec<Track>) {
+        let result = self.with_queue_mut(|queue| {
+            if queue.current().is_some() {
+                for track in tracks.iter().rev() {
+                    queue.play_next(track);
+                }
+            } else {
+                for track in &tracks {
+                    queue.append(track);
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            self.emit_generated_radio_error(error);
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    fn append_generated_radio(&self, tracks: Vec<Track>) {
+        let result = self.with_queue_mut(|queue| {
+            for track in &tracks {
+                queue.append(track);
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            self.emit_generated_radio_error(error);
+            return;
+        }
+        self.persist_and_emit_queue();
     }
 
     fn emit_generated_radio_error(&self, error: impl Into<String>) {

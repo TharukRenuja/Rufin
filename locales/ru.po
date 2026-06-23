@@ -113,6 +113,10 @@ msgstr "Исполнитель альбома"
 msgid "Album artists"
 msgstr "Авторы альбома"
 
+#, fuzzy
+msgid "Album radio"
+msgstr "Воспроизвести альбом"
+
 msgid "Album title"
 msgstr "Название альбома"
 
@@ -157,6 +161,10 @@ msgstr "Альбомы исполнителя"
 
 msgid "Artist name"
 msgstr "Имя исполнителя"
+
+#, fuzzy
+msgid "Artist radio"
+msgstr "Воспроизвести исполнителя"
 
 msgid "Artist tracks"
 msgstr "Треки исполнителя"
@@ -524,6 +532,10 @@ msgstr "Genius"
 
 msgid "Genre"
 msgstr "Жанр"
+
+#, fuzzy
+msgid "Genre radio"
+msgstr "Воспроизвести в случайном порядке"
 
 msgid "Genre tracks"
 msgstr "Треки по жанрам"
@@ -943,38 +955,11 @@ msgstr "Обычный текст песен"
 msgid "Play"
 msgstr "Воспроизвести"
 
-#, fuzzy
-msgid "Play Album Radio"
-msgstr "Воспроизвести альбом"
-
-#, fuzzy
-msgid "Play Artist Radio"
-msgstr "Воспроизвести исполнителя"
-
-#, fuzzy
-msgid "Play Genre Radio"
-msgstr "Воспроизвести в случайном порядке"
-
-#, fuzzy
-msgid "Play Last"
-msgstr "Воспроизвести позже"
-
 msgid "Play Later"
 msgstr "Воспроизвести позже"
 
 msgid "Play Next"
 msgstr "Воспроизвести следующим"
-
-msgid "Play Now"
-msgstr "Воспроизвести Сейчас"
-
-#, fuzzy
-msgid "Play Playlist Radio"
-msgstr "Название плейлиста"
-
-#, fuzzy
-msgid "Play Track Radio"
-msgstr "Воспроизвести трек"
 
 msgid "Play album"
 msgstr "Воспроизвести альбом"
@@ -987,6 +972,10 @@ msgstr "Количество воспроизведений"
 
 msgid "Play filter"
 msgstr "Воспроизвести фильтр"
+
+#, fuzzy
+msgid "Play radio"
+msgstr "Воспроизвести в случайном порядке"
 
 msgid "Play random"
 msgstr "Воспроизвести в случайном порядке"
@@ -1011,6 +1000,10 @@ msgstr "Название плейлиста"
 
 msgid "Playlist order"
 msgstr "Порядок плейлиста"
+
+#, fuzzy
+msgid "Playlist radio"
+msgstr "Название плейлиста"
 
 msgid "Playlist tracks"
 msgstr "Треки плейлиста"
@@ -1533,6 +1526,10 @@ msgstr "Переключить полноэкранный режим"
 msgid "Track"
 msgstr "Трек"
 
+#, fuzzy
+msgid "Track radio"
+msgstr "Воспроизвести трек"
+
 msgid "Tracks"
 msgstr "Треки"
 
@@ -1884,6 +1881,13 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "No tracks match the search."
 #~ msgstr "Не найдено треков, соответствующих запросу."
+
+#, fuzzy
+#~ msgid "Play Last"
+#~ msgstr "Воспроизвести позже"
+
+#~ msgid "Play Now"
+#~ msgstr "Воспроизвести Сейчас"
 
 #~ msgid "Play next"
 #~ msgstr "Воспроизвести следующий трек"

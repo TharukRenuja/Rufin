@@ -9,6 +9,7 @@ impl Shell {
         data: GroupedDetailData,
     ) -> gtk::Widget {
         let GroupedDetailData {
+            kind_row,
             title,
             artwork,
             seed,
@@ -40,6 +41,12 @@ impl Shell {
         title_label.set_xalign(0.0);
         title_label.set_wrap(true);
         title_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        let mut metadata = Vec::new();
+        if let Some(kind_row) = kind_row {
+            metadata.push(kind_row);
+        }
+        metadata.push(title_label.upcast());
+        metadata.push(detail_summary_row(&summary_items).upcast());
         let showcase = collection_detail_showcase(
             self,
             CollectionDetailShowcase {
@@ -48,10 +55,7 @@ impl Shell {
                 orientation: gtk::Orientation::Horizontal,
                 spacing: 22,
                 cover,
-                metadata: vec![
-                    title_label.upcast(),
-                    detail_summary_row(&summary_items).upcast(),
-                ],
+                metadata,
             },
         );
         wrapper.append(&showcase);

@@ -48,7 +48,9 @@ impl Shell {
         let mut genre = detail.genre;
         genre.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
+        let kind_row = self.genre_detail_kind_row(&genre);
         self.grouped_detail_view(GroupedDetailData {
+            kind_row: Some(kind_row.upcast()),
             title: genre.name,
             artwork,
             seed,
@@ -60,6 +62,31 @@ impl Shell {
                 selected_music_folder_id: selected_music_folder_id(self),
             }),
         })
+    }
+
+    fn genre_detail_kind_row(self: &Rc<Self>, genre: &Genre) -> gtk::Box {
+        let kind = gtk::Label::new(Some(&tr("Genre")));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.0);
+        kind.set_halign(gtk::Align::Start);
+        kind.set_valign(gtk::Align::Center);
+        kind.set_margin_end(6);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        row.add_css_class("album-detail-kind-row");
+        row.add_css_class("album-detail-genre-row");
+        row.set_valign(gtk::Align::Center);
+        row.set_halign(gtk::Align::Start);
+        row.append(&kind);
+
+        let radio = detail_radio_button();
+        let controller = self.controller.clone();
+        let genre = genre.clone();
+        radio.connect_clicked(move |_| {
+            controller.play_genre_radio(genre.clone());
+        });
+        row.append(&radio);
+        row
     }
 
     fn genre_detail_from_memory(

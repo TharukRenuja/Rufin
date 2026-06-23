@@ -15,8 +15,8 @@ use super::home_layout::{
 use super::{
     DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
     Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
-    album_count_text, configure_fill_width_clip, detail_summary_row, format_duration_units,
-    mark_route_scroll_owner, route_content_width, track_count_text,
+    album_count_text, configure_fill_width_clip, detail_radio_button, detail_summary_row,
+    format_duration_units, mark_route_scroll_owner, route_content_width, track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -165,6 +165,8 @@ impl Shell {
         metadata.set_valign(gtk::Align::Center);
         metadata.set_width_request(1);
 
+        metadata.append(&self.home_showcase_kind_row(&album));
+
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("home-showcase-title");
         if home_showcase_is_compact(width) {
@@ -194,6 +196,32 @@ impl Shell {
         body.append(&metadata);
         section.append(&body);
         Some(section.upcast())
+    }
+
+    fn home_showcase_kind_row(self: &Rc<Self>, album: &Album) -> gtk::Box {
+        let label = gtk::Label::new(Some(&tr("Showcase")));
+        label.add_css_class("eyebrow");
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Start);
+        label.set_valign(gtk::Align::Center);
+        label.set_margin_end(6);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        row.add_css_class("album-detail-kind-row");
+        row.add_css_class("album-detail-genre-row");
+        row.add_css_class("home-showcase-kind-row");
+        row.set_valign(gtk::Align::Center);
+        row.set_halign(gtk::Align::Start);
+        row.append(&label);
+
+        let radio = detail_radio_button();
+        let controller = self.controller.clone();
+        let album = album.clone();
+        radio.connect_clicked(move |_| {
+            controller.play_album_radio(album.clone());
+        });
+        row.append(&radio);
+        row
     }
 
     fn home_genres_block(self: &Rc<Self>, genres: &[Genre]) -> Option<gtk::Widget> {

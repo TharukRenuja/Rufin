@@ -168,6 +168,19 @@ pub(in crate::ui) fn detail_action_button(icon_name: &str, label: &str) -> gtk::
     button
 }
 
+pub(in crate::ui) fn detail_radio_button() -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("detail-kind-radio-button");
+    button.set_halign(gtk::Align::Start);
+    button.set_valign(gtk::Align::Center);
+    button.set_tooltip_text(Some(&tr("Play radio")));
+    let icon = gtk::Image::from_icon_name(RADIO_ICON);
+    icon.set_pixel_size(16);
+    button.set_child(Some(&icon));
+    button
+}
+
 pub(in crate::ui) fn append_track_batch_queue_actions(
     actions: &gtk::Box,
     controller: &AppController,
