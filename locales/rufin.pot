@@ -1096,10 +1096,7 @@ msgstr ""
 msgid "Remove from Queue"
 msgstr ""
 
-msgid "Play Now"
-msgstr ""
-
-msgid "Play Track Radio"
+msgid "Track radio"
 msgstr ""
 
 msgid "Add to Playlist"
@@ -1289,6 +1286,9 @@ msgid ""
 "open an issue in Github."
 msgstr ""
 
+msgid "Play radio"
+msgstr ""
+
 msgid "Open on Last.fm"
 msgstr ""
 
@@ -1307,19 +1307,16 @@ msgstr ""
 msgid "Remove from playlist"
 msgstr ""
 
-msgid "Play Album Radio"
+msgid "Album radio"
 msgstr ""
 
-msgid "Play Artist Radio"
+msgid "Artist radio"
 msgstr ""
 
-msgid "Play Last"
+msgid "Genre radio"
 msgstr ""
 
-msgid "Play Genre Radio"
-msgstr ""
-
-msgid "Play Playlist Radio"
+msgid "Playlist radio"
 msgstr ""
 
 msgid "Delete"

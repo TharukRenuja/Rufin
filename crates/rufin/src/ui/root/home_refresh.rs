@@ -1,10 +1,14 @@
-use crate::i18n::tr_with;
+use std::cell::{Cell, RefCell};
+use std::time::Duration;
+
+use crate::i18n::{msgid, tr_with};
 
 use super::*;
 
 const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
 const CONTEXT_MENU_PLAYLIST_MIN_WIDTH: i32 = 380;
 const CONTEXT_PLAYLIST_ROW_COVER_SIZE: i32 = 48;
+const CONTEXT_SUBMENU_CLOSE_DELAY_MS: u64 = 120;
 const ADD_TO_PLAYLIST_DIALOG_WIDTH: i32 = 700;
 const ADD_TO_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
 pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-symbolic";
@@ -12,7 +16,11 @@ pub(in crate::ui) const ALBUM_ICON: &str = "route-albums-symbolic";
 pub(in crate::ui) const ARTIST_ICON: &str = "route-artists-symbolic";
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
-pub(in crate::ui) const RADIO_ICON: &str = "view-refresh-symbolic";
+pub(in crate::ui) const RADIO_ICON: &str = "audio-radio";
+
+thread_local! {
+    static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryContextMenuAction {
@@ -83,10 +91,11 @@ fn present_track_context_menu_inner(
         "track.play-last",
         PLAY_LATER_ICON,
     ));
-    main_menu.append(&context_menu_action(
-        "Play Track Radio",
+    main_menu.append(&context_menu_submenu_action(
+        msgid("Track radio"),
         "track.play-radio",
         RADIO_ICON,
+        &radio_context_submenu("track"),
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -174,6 +183,22 @@ fn present_track_context_menu_inner(
         }
     });
 
+    surface.add_action("play-radio-next", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_track_radio_next(action_track.clone());
+        }
+    });
+
+    surface.add_action("play-radio-last", {
+        let controller = shell.controller.clone();
+        let action_track = track.clone();
+        move || {
+            controller.play_track_radio_last(action_track.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let track_id = track.id.clone();
@@ -246,10 +271,11 @@ pub(in crate::ui) fn present_album_context_menu(
         "album.play-last",
         PLAY_LATER_ICON,
     ));
-    main_menu.append(&context_menu_action(
-        "Play Album Radio",
+    main_menu.append(&context_menu_submenu_action(
+        msgid("Album radio"),
         "album.play-radio",
         RADIO_ICON,
+        &radio_context_submenu("album"),
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -341,6 +367,22 @@ pub(in crate::ui) fn present_album_context_menu(
         }
     });
 
+    surface.add_action("play-radio-next", {
+        let controller = shell.controller.clone();
+        let album = album.clone();
+        move || {
+            controller.play_album_radio_next(album.clone());
+        }
+    });
+
+    surface.add_action("play-radio-last", {
+        let controller = shell.controller.clone();
+        let album = album.clone();
+        move || {
+            controller.play_album_radio_last(album.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let album_id = album.id.clone();
@@ -399,10 +441,11 @@ pub(in crate::ui) fn present_artist_context_menu(
         "artist.play-last",
         PLAY_LATER_ICON,
     ));
-    main_menu.append(&context_menu_action(
-        "Play Artist Radio",
+    main_menu.append(&context_menu_submenu_action(
+        msgid("Artist radio"),
         "artist.play-radio",
         RADIO_ICON,
+        &radio_context_submenu("artist"),
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -492,6 +535,22 @@ pub(in crate::ui) fn present_artist_context_menu(
         }
     });
 
+    surface.add_action("play-radio-next", {
+        let controller = shell.controller.clone();
+        let artist = artist.clone();
+        move || {
+            controller.play_artist_radio_next(artist.clone());
+        }
+    });
+
+    surface.add_action("play-radio-last", {
+        let controller = shell.controller.clone();
+        let artist = artist.clone();
+        move || {
+            controller.play_artist_radio_last(artist.clone());
+        }
+    });
+
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
         let artist_id = artist.id.clone();
@@ -535,7 +594,7 @@ pub(in crate::ui) fn present_genre_context_menu(
 ) {
     let main_menu = context_menu_box();
     main_menu.append(&context_menu_action(
-        "Play Now",
+        "Play",
         "genre.play",
         "media-playback-start-symbolic",
     ));
@@ -545,14 +604,15 @@ pub(in crate::ui) fn present_genre_context_menu(
         PLAY_NEXT_ICON,
     ));
     main_menu.append(&context_menu_action(
-        "Play Last",
+        "Play Later",
         "genre.play-last",
         PLAY_LATER_ICON,
     ));
-    main_menu.append(&context_menu_action(
-        "Play Genre Radio",
+    main_menu.append(&context_menu_submenu_action(
+        msgid("Genre radio"),
         "genre.play-radio",
         RADIO_ICON,
+        &radio_context_submenu("genre"),
     ));
 
     if context_menu_can_add_to_playlist(shell) {
@@ -598,6 +658,22 @@ pub(in crate::ui) fn present_genre_context_menu(
         }
     });
 
+    surface.add_action("play-radio-next", {
+        let controller = shell.controller.clone();
+        let genre = genre.clone();
+        move || {
+            controller.play_genre_radio_next(genre.clone());
+        }
+    });
+
+    surface.add_action("play-radio-last", {
+        let controller = shell.controller.clone();
+        let genre = genre.clone();
+        move || {
+            controller.play_genre_radio_last(genre.clone());
+        }
+    });
+
     surface.add_action("play-next", {
         let controller = shell.controller.clone();
         let genre_id = genre.id.clone();
@@ -636,9 +712,20 @@ pub(in crate::ui) fn present_playlist_context_menu(
         "media-playback-start-symbolic",
     ));
     menu.append(&context_menu_action(
-        "Play Playlist Radio",
+        "Play Next",
+        "playlist.play-next",
+        PLAY_NEXT_ICON,
+    ));
+    menu.append(&context_menu_action(
+        "Play Later",
+        "playlist.play-last",
+        PLAY_LATER_ICON,
+    ));
+    menu.append(&context_menu_submenu_action(
+        msgid("Playlist radio"),
         "playlist.play-radio",
         RADIO_ICON,
+        &radio_context_submenu("playlist"),
     ));
     menu.append(&context_menu_action(
         "Delete",
@@ -657,11 +744,43 @@ pub(in crate::ui) fn present_playlist_context_menu(
         }
     });
 
+    surface.add_action("play-next", {
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id.clone();
+        move || {
+            controller.play_cached_playlist_next(playlist_id.clone());
+        }
+    });
+
+    surface.add_action("play-last", {
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id.clone();
+        move || {
+            controller.play_cached_playlist_last(playlist_id.clone());
+        }
+    });
+
     surface.add_action("play-radio", {
         let controller = shell.controller.clone();
         let playlist = playlist.clone();
         move || {
             controller.play_playlist_radio(playlist.clone());
+        }
+    });
+
+    surface.add_action("play-radio-next", {
+        let controller = shell.controller.clone();
+        let playlist = playlist.clone();
+        move || {
+            controller.play_playlist_radio_next(playlist.clone());
+        }
+    });
+
+    surface.add_action("play-radio-last", {
+        let controller = shell.controller.clone();
+        let playlist = playlist.clone();
+        move || {
+            controller.play_playlist_radio_last(playlist.clone());
         }
     });
 
@@ -768,6 +887,7 @@ impl ContextMenuSurface {
         let action = gio::SimpleAction::new(name, None);
         let popover = self.popover.downgrade();
         action.connect_activate(move |_, _| {
+            popdown_current_context_submenu();
             if let Some(popover) = popover.upgrade() {
                 popover.popdown();
             }
@@ -782,6 +902,7 @@ impl ContextMenuSurface {
         self.popover.connect_closed(move |popover| {
             let popover = popover.clone();
             glib::idle_add_local_once(move || {
+                popdown_current_context_submenu();
                 popover.unparent();
             });
         });
@@ -1184,6 +1305,89 @@ pub(in crate::ui) fn context_menu_action_with_label(
     button.set_action_name(Some(action));
     button
 }
+pub(in crate::ui) fn context_menu_submenu_action(
+    label: &str,
+    action: &str,
+    icon_name: &str,
+    submenu: &impl IsA<gtk::Widget>,
+) -> gtk::Button {
+    let button = context_menu_disclosure_button(&tr(label), icon_name);
+    button.set_action_name(Some(action));
+
+    let popover = gtk::Popover::new();
+    popover.add_css_class("context-submenu");
+    popover.set_autohide(false);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Right);
+    popover.set_child(Some(submenu));
+    popover.set_parent(&button);
+
+    let button_hovered = Rc::new(Cell::new(false));
+    let submenu_hovered = Rc::new(Cell::new(false));
+
+    let motion = gtk::EventControllerMotion::new();
+    let popover_for_enter = popover.clone();
+    let button_hovered_for_enter = Rc::clone(&button_hovered);
+    motion.connect_enter(move |_, _, _| {
+        button_hovered_for_enter.set(true);
+        popup_context_submenu(&popover_for_enter);
+    });
+    let popover_for_leave = popover.clone();
+    let button_hovered_for_leave = Rc::clone(&button_hovered);
+    let submenu_hovered_for_leave = Rc::clone(&submenu_hovered);
+    motion.connect_leave(move |_| {
+        button_hovered_for_leave.set(false);
+        schedule_context_submenu_popdown(
+            &popover_for_leave,
+            Rc::clone(&button_hovered_for_leave),
+            Rc::clone(&submenu_hovered_for_leave),
+        );
+    });
+    button.add_controller(motion);
+
+    let submenu_motion = gtk::EventControllerMotion::new();
+    let submenu_hovered_for_enter = Rc::clone(&submenu_hovered);
+    submenu_motion.connect_enter(move |_, _, _| {
+        submenu_hovered_for_enter.set(true);
+    });
+    let popover_for_leave = popover.clone();
+    let button_hovered_for_leave = Rc::clone(&button_hovered);
+    let submenu_hovered_for_leave = Rc::clone(&submenu_hovered);
+    submenu_motion.connect_leave(move |_| {
+        submenu_hovered_for_leave.set(false);
+        schedule_context_submenu_popdown(
+            &popover_for_leave,
+            Rc::clone(&button_hovered_for_leave),
+            Rc::clone(&submenu_hovered_for_leave),
+        );
+    });
+    popover.add_controller(submenu_motion);
+
+    button.connect_unrealize(move |_| {
+        forget_context_submenu(&popover);
+        popover.unparent();
+    });
+    button
+}
+pub(in crate::ui) fn radio_context_submenu(group: &str) -> gtk::Box {
+    let menu = context_menu_box();
+    menu.append(&context_menu_action(
+        "Play",
+        &format!("{group}.play-radio"),
+        "media-playback-start-symbolic",
+    ));
+    menu.append(&context_menu_action(
+        "Play Next",
+        &format!("{group}.play-radio-next"),
+        PLAY_NEXT_ICON,
+    ));
+    menu.append(&context_menu_action(
+        "Play Later",
+        &format!("{group}.play-radio-last"),
+        PLAY_LATER_ICON,
+    ));
+    menu
+}
 pub(in crate::ui) fn context_menu_picker_button(
     label: &str,
     icon_name: &str,
@@ -1208,15 +1412,40 @@ pub(in crate::ui) fn context_popover(
     popover.set_autohide(true);
     popover.add_css_class(css_class);
     popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
     popover.set_parent(target);
     popover.set_child(Some(child));
     if let Some((x, y)) = position {
+        popover.add_css_class("context-menu-opening");
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     }
+    let motion = gtk::EventControllerMotion::new();
+    let popover_for_motion = popover.clone();
+    motion.connect_motion(move |_, _, _| {
+        popover_for_motion.remove_css_class("context-menu-opening");
+    });
+    popover.add_controller(motion);
     popover
 }
 fn context_menu_button(label: &str, icon_name: &str) -> gtk::Button {
     let row = context_menu_button_content(label, icon_name);
+    let button = gtk::Button::builder()
+        .child(&row)
+        .tooltip_text(label)
+        .halign(gtk::Align::Fill)
+        .hexpand(true)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("context-menu-button");
+    button
+}
+fn context_menu_disclosure_button(label: &str, icon_name: &str) -> gtk::Button {
+    let row = context_menu_button_content(label, icon_name);
+    let arrow = gtk::Image::from_icon_name("go-next-symbolic");
+    arrow.add_css_class("context-submenu-arrow");
+    arrow.set_pixel_size(14);
+    row.append(&arrow);
+
     let button = gtk::Button::builder()
         .child(&row)
         .tooltip_text(label)
@@ -1257,7 +1486,7 @@ fn context_menu_icon(icon_name: &str) -> gtk::Widget {
             16
         } else if matches!(
             icon_name,
-            PLAY_NEXT_ICON | PLAY_LATER_ICON | ARTIST_ICON | ALBUM_ICON
+            PLAY_NEXT_ICON | PLAY_LATER_ICON | ARTIST_ICON | ALBUM_ICON | RADIO_ICON
         ) {
             20
         } else {
@@ -1271,6 +1500,52 @@ fn context_menu_icon(icon_name: &str) -> gtk::Widget {
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon
+}
+fn popup_context_submenu(popover: &gtk::Popover) {
+    OPEN_CONTEXT_SUBMENU.with(|current| {
+        let previous = current.borrow().clone();
+        if let Some(previous) = previous
+            && previous != *popover
+        {
+            previous.popdown();
+        }
+        *current.borrow_mut() = Some(popover.clone());
+    });
+    popover.popup();
+}
+fn schedule_context_submenu_popdown(
+    popover: &gtk::Popover,
+    button_hovered: Rc<Cell<bool>>,
+    submenu_hovered: Rc<Cell<bool>>,
+) {
+    let popover = popover.clone();
+    glib::timeout_add_local_once(
+        Duration::from_millis(CONTEXT_SUBMENU_CLOSE_DELAY_MS),
+        move || {
+            if !button_hovered.get() && !submenu_hovered.get() {
+                forget_context_submenu(&popover);
+                popover.popdown();
+            }
+        },
+    );
+}
+fn popdown_current_context_submenu() {
+    OPEN_CONTEXT_SUBMENU.with(|current| {
+        if let Some(popover) = current.borrow_mut().take() {
+            popover.popdown();
+        }
+    });
+}
+fn forget_context_submenu(popover: &gtk::Popover) {
+    OPEN_CONTEXT_SUBMENU.with(|current| {
+        let is_current = current
+            .borrow()
+            .as_ref()
+            .is_some_and(|current| current == popover);
+        if is_current {
+            current.borrow_mut().take();
+        }
+    });
 }
 pub(in crate::ui) fn context_menu_can_add_to_playlist(shell: &Rc<Shell>) -> bool {
     shell.state.library.borrow().server.is_some()

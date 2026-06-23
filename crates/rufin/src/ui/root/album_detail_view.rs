@@ -101,6 +101,13 @@ impl Shell {
         kind_row.set_valign(gtk::Align::Center);
         kind_row.set_halign(gtk::Align::Start);
         kind_row.append(&kind);
+        let radio = detail_radio_button();
+        let controller = self.controller.clone();
+        let album_for_radio = album.clone();
+        radio.connect_clicked(move |_| {
+            controller.play_album_radio(album_for_radio.clone());
+        });
+        kind_row.append(&radio);
         for genre_name in album
             .genres
             .iter()

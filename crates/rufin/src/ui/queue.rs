@@ -7,15 +7,15 @@ use domain::{QueueEntry, QueueEntryId, RightSidebarMode, Route, format_duration}
 use gtk::{gio, glib};
 
 use crate::controller::AppController;
-use crate::i18n::tr;
+use crate::i18n::{msgid, tr};
 
 use super::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, FAVORITE_ADD_ICON,
-    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_NEXT_ICON, RADIO_ICON, Shell,
+    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, RADIO_ICON, Shell,
     THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_action, context_menu_box,
-    context_menu_can_add_to_playlist, context_menu_picker_button, favorite_button_is_active,
-    favorite_icon_button, install_context_menu_openers, set_favorite_button_active,
-    track_from_queue_entry,
+    context_menu_can_add_to_playlist, context_menu_picker_button, context_menu_submenu_action,
+    favorite_button_is_active, favorite_icon_button, install_context_menu_openers,
+    radio_context_submenu, set_favorite_button_active, track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -1050,13 +1050,14 @@ fn show_queue_row_context_menu(
     pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
     let main_menu = context_menu_box();
+    let track = track_from_queue_entry(entry);
     main_menu.append(&context_menu_action(
         "Remove from Queue",
         "queue.remove",
         "remove-minus",
     ));
     main_menu.append(&context_menu_action(
-        "Play Now",
+        "Play",
         "queue.play-now",
         "media-playback-start-symbolic",
     ));
@@ -1066,12 +1067,19 @@ fn show_queue_row_context_menu(
         PLAY_NEXT_ICON,
     ));
 
-    let track = track_from_queue_entry(entry);
     if track.is_some() {
         main_menu.append(&context_menu_action(
-            "Play Track Radio",
+            "Play Later",
+            "queue.play-last",
+            PLAY_LATER_ICON,
+        ));
+    }
+    if track.is_some() {
+        main_menu.append(&context_menu_submenu_action(
+            msgid("Track radio"),
             "queue.play-radio",
             RADIO_ICON,
+            &radio_context_submenu("queue"),
         ));
     }
     if let Some(track) = track.as_ref()
@@ -1148,11 +1156,35 @@ fn show_queue_row_context_menu(
         }
     });
 
-    if let Some(track) = track {
+    if let Some(track) = track.clone() {
+        surface.add_action("play-last", {
+            let last_controller = controller.clone();
+            let track = track.clone();
+            move || {
+                last_controller.play_last(vec![track.clone()]);
+            }
+        });
+
         surface.add_action("play-radio", {
             let radio_controller = controller.clone();
+            let track = track.clone();
             move || {
                 radio_controller.play_track_radio(track.clone());
+            }
+        });
+
+        surface.add_action("play-radio-next", {
+            let radio_controller = controller.clone();
+            let track = track.clone();
+            move || {
+                radio_controller.play_track_radio_next(track.clone());
+            }
+        });
+
+        surface.add_action("play-radio-last", {
+            let radio_controller = controller.clone();
+            move || {
+                radio_controller.play_track_radio_last(track.clone());
             }
         });
     }

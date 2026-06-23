@@ -82,7 +82,11 @@ fn playlist_detail_from_loaded_tracks(
 }
 
 impl Shell {
-    fn playlist_detail_kind_row(self: &Rc<Self>, genres: &[String]) -> gtk::Box {
+    fn playlist_detail_kind_row(
+        self: &Rc<Self>,
+        genres: &[String],
+        radio_playlist: Option<Playlist>,
+    ) -> gtk::Box {
         let kind = gtk::Label::new(Some(&tr("Playlist")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -96,6 +100,14 @@ impl Shell {
         row.set_valign(gtk::Align::Center);
         row.set_halign(gtk::Align::Start);
         row.append(&kind);
+        if let Some(playlist) = radio_playlist {
+            let radio = detail_radio_button();
+            let controller = self.controller.clone();
+            radio.connect_clicked(move |_| {
+                controller.play_playlist_radio(playlist.clone());
+            });
+            row.append(&radio);
+        }
 
         for genre_name in genres {
             let button = detail_genre_pill_button(genre_name);
@@ -177,7 +189,7 @@ impl Shell {
         );
         cover.add_css_class("playlist-detail-cover");
         let title = detail_title_label(&smart_playlist_display_name(&detail.smart_playlist));
-        let kind_row = self.playlist_detail_kind_row(&[]);
+        let kind_row = self.playlist_detail_kind_row(&[], None);
         let summary = playlist_detail_summary(
             detail.smart_playlist.track_count,
             detail.smart_playlist.duration_seconds,
@@ -316,7 +328,8 @@ impl Shell {
         );
         cover.add_css_class("playlist-detail-cover");
         let title = detail_title_label(&detail.playlist.name);
-        let kind_row = self.playlist_detail_kind_row(&detail.playlist.top_genres);
+        let kind_row = self
+            .playlist_detail_kind_row(&detail.playlist.top_genres, Some(detail.playlist.clone()));
         let summary = playlist_detail_summary(
             detail.playlist.track_count,
             detail.playlist.duration_seconds,

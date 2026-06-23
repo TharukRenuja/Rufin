@@ -512,6 +512,7 @@ pub(in crate::ui) struct SearchRouteState {
     error: Option<String>,
 }
 pub(in crate::ui) struct GroupedDetailData {
+    kind_row: Option<gtk::Widget>,
     title: String,
     artwork: crate::cover_art_policy::SelectedArtwork,
     seed: u32,

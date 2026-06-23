@@ -109,6 +109,10 @@ msgstr "Albumi esitaja"
 msgid "Album artists"
 msgstr "Albumi esitajad"
 
+#, fuzzy
+msgid "Album radio"
+msgstr "Esita albumit"
+
 msgid "Album title"
 msgstr "Albumi pealkiri"
 
@@ -153,6 +157,10 @@ msgstr "Esitajate albumid"
 
 msgid "Artist name"
 msgstr "Esitaja nimi"
+
+#, fuzzy
+msgid "Artist radio"
+msgstr "Esita esitajat"
 
 msgid "Artist tracks"
 msgstr "Esitaja lood"
@@ -526,6 +534,10 @@ msgstr "Genius"
 
 msgid "Genre"
 msgstr "Žanr"
+
+#, fuzzy
+msgid "Genre radio"
+msgstr "Esita juhuslikult"
 
 msgid "Genre tracks"
 msgstr "Žanri lood"
@@ -943,38 +955,11 @@ msgstr "Tavalised laulusõnad"
 msgid "Play"
 msgstr "Esita"
 
-#, fuzzy
-msgid "Play Album Radio"
-msgstr "Esita albumit"
-
-#, fuzzy
-msgid "Play Artist Radio"
-msgstr "Esita esitajat"
-
-#, fuzzy
-msgid "Play Genre Radio"
-msgstr "Esita juhuslikult"
-
-#, fuzzy
-msgid "Play Last"
-msgstr "Esita hiljem"
-
 msgid "Play Later"
 msgstr "Esita hiljem"
 
 msgid "Play Next"
 msgstr "Esita järgmisena"
-
-msgid "Play Now"
-msgstr "Esita kohe"
-
-#, fuzzy
-msgid "Play Playlist Radio"
-msgstr "Esitusloendi nimi"
-
-#, fuzzy
-msgid "Play Track Radio"
-msgstr "Esita lugu"
 
 msgid "Play album"
 msgstr "Esita albumit"
@@ -987,6 +972,10 @@ msgstr "Esituskordi"
 
 msgid "Play filter"
 msgstr "Esituste filter"
+
+#, fuzzy
+msgid "Play radio"
+msgstr "Esita juhuslikult"
 
 msgid "Play random"
 msgstr "Esita juhuslikult"
@@ -1011,6 +1000,10 @@ msgstr "Esitusloendi nimi"
 
 msgid "Playlist order"
 msgstr "Esitusloendi järjekord"
+
+#, fuzzy
+msgid "Playlist radio"
+msgstr "Esitusloendi nimi"
 
 msgid "Playlist tracks"
 msgstr "Esitusloendi lood"
@@ -1526,6 +1519,10 @@ msgstr "Lülita täisekraanivaade sisse/välja"
 msgid "Track"
 msgstr "Lugu"
 
+#, fuzzy
+msgid "Track radio"
+msgstr "Esita lugu"
+
 msgid "Tracks"
 msgstr "Lood"
 
@@ -1854,6 +1851,13 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Output"
 #~ msgstr "Väljund"
+
+#, fuzzy
+#~ msgid "Play Last"
+#~ msgstr "Esita hiljem"
+
+#~ msgid "Play Now"
+#~ msgstr "Esita kohe"
 
 #~ msgid "Play next"
 #~ msgstr "Esita järgmisena"

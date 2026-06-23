@@ -225,10 +225,7 @@ impl Shell {
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
         text_stack.set_width_request(1);
-        let kind = gtk::Label::new(Some(&tr("Artist")));
-        kind.add_css_class("eyebrow");
-        kind.set_xalign(0.0);
-        kind.set_halign(gtk::Align::Start);
+        let kind_row = self.artist_detail_kind_row(artist);
 
         let title = fitted_detail_title_label(&artist.name);
 
@@ -272,7 +269,7 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        text_stack.append(&kind);
+        text_stack.append(&kind_row);
         text_stack.append(&title);
         text_stack.append(&counts);
         media_detail_showcase(
@@ -289,6 +286,31 @@ impl Shell {
                 actions: actions.upcast(),
             },
         )
+    }
+
+    fn artist_detail_kind_row(self: &Rc<Self>, artist: &Artist) -> gtk::Box {
+        let kind = gtk::Label::new(Some(&tr("Artist")));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.0);
+        kind.set_halign(gtk::Align::Start);
+        kind.set_valign(gtk::Align::Center);
+        kind.set_margin_end(6);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        row.add_css_class("album-detail-kind-row");
+        row.add_css_class("album-detail-genre-row");
+        row.set_valign(gtk::Align::Center);
+        row.set_halign(gtk::Align::Start);
+        row.append(&kind);
+
+        let radio = detail_radio_button();
+        let controller = self.controller.clone();
+        let artist = artist.clone();
+        radio.connect_clicked(move |_| {
+            controller.play_artist_radio(artist.clone());
+        });
+        row.append(&radio);
+        row
     }
 
     fn artist_subroute_header(
