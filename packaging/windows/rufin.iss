@@ -14,7 +14,7 @@
 AppId={{3F541AF6-38BC-4F74-98AF-9EB3C3629BB1}
 AppName=Rufin
 AppVersion={#RUFIN_VERSION}
-AppPublisher=screwys
+AppPublisher=screwy
 AppPublisherURL=https://github.com/screwys/Rufin
 AppSupportURL=https://github.com/screwys/Rufin/issues
 AppUpdatesURL=https://github.com/screwys/Rufin/releases

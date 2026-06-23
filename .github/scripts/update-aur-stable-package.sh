@@ -108,16 +108,87 @@ perl -0pi -e '
   die "missing sha256sums in PKGBUILD\n" unless $sha == 1;
 ' "$pkgbuild"
 
-refresh_srcinfo_with_makepkg() {
+makepkg_config_path() {
+  local makepkg_path makepkg_prefix makepkg_config
+  makepkg_path="$(command -v makepkg)"
+  makepkg_prefix="$(dirname "$(dirname "$makepkg_path")")"
+  makepkg_config="$makepkg_prefix/etc/makepkg.conf"
+
+  if [[ -f "$makepkg_config" ]]; then
+    printf '%s\n' "$makepkg_config"
+  fi
+}
+
+refresh_srcinfo_with_native_makepkg() {
   if command -v makepkg >/dev/null 2>&1; then
     (
       cd "$pkgdir"
-      makepkg --printsrcinfo > .SRCINFO
+      config="$(makepkg_config_path)"
+      if [[ -n "$config" ]]; then
+        makepkg --config "$config" --printsrcinfo > .SRCINFO
+      else
+        makepkg --printsrcinfo > .SRCINFO
+      fi
     )
     return 0
   fi
 
   return 1
+}
+
+refresh_srcinfo_with_nix_makepkg() {
+  if ! command -v nix >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local status timeout_seconds tmp
+  timeout_seconds="${RUFIN_AUR_NIX_MAKEPKG_TIMEOUT_SECONDS:-30}"
+  tmp="$(mktemp)"
+
+  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+    echo "RUFIN_AUR_NIX_MAKEPKG_TIMEOUT_SECONDS must be a positive integer" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+
+  set +e
+  (
+    cd "$repo_root"
+    env -u LD_PRELOAD bash .github/scripts/retry-nix-command.sh \
+      timeout "${timeout_seconds}s" env -u LD_PRELOAD nix --accept-flake-config \
+        --extra-experimental-features "nix-command flakes" \
+        shell nixpkgs#pacman \
+        --command env -u LD_PRELOAD bash -lc '
+          set -euo pipefail
+          unset LD_PRELOAD
+          pkgdir="$1"
+          makepkg_path="$(command -v makepkg)"
+          makepkg_prefix="$(dirname "$(dirname "$makepkg_path")")"
+          makepkg_config="$makepkg_prefix/etc/makepkg.conf"
+          if [[ ! -f "$makepkg_config" ]]; then
+            echo "missing Nix pacman makepkg.conf: $makepkg_config" >&2
+            exit 1
+          fi
+          cd "$pkgdir"
+          makepkg --config "$makepkg_config" --printsrcinfo
+        ' bash "$pkgdir" > "$tmp"
+  )
+  status="$?"
+  set -e
+
+  if [[ "$status" -eq 0 ]] &&
+    [[ "$(sed -n '/[^[:space:]]/ { p; q; }' "$tmp")" == "pkgbase = rufin" ]]; then
+    mv "$tmp" "$srcinfo"
+    return 0
+  fi
+
+  rm -f "$tmp"
+  return 1
+}
+
+refresh_srcinfo_with_makepkg() {
+  refresh_srcinfo_with_native_makepkg ||
+    refresh_srcinfo_with_nix_makepkg
 }
 
 update_srcinfo_fields() {
@@ -140,6 +211,11 @@ update_srcinfo_fields() {
 
 if [[ "$skip_srcinfo" != "1" ]]; then
   if ! refresh_srcinfo_with_makepkg; then
+    if [[ "${RUFIN_AUR_REQUIRE_MAKEPKG:-0}" == "1" ]]; then
+      echo "makepkg unavailable; refusing field-only .SRCINFO update" >&2
+      exit 1
+    fi
+
     update_srcinfo_fields
     echo "makepkg unavailable; updated .SRCINFO release fields without regenerating dependencies" >&2
   fi
