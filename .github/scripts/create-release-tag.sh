@@ -406,7 +406,7 @@ update_nix_cargo_hash() {
   fi
 
   if command -v nix >/dev/null 2>&1; then
-    bash .github/scripts/update-nix-cargo-hash.sh
+    env -u LD_PRELOAD bash .github/scripts/update-nix-cargo-hash.sh
     return
   fi
 
@@ -430,8 +430,8 @@ verify_nix_flake() {
     return
   fi
 
-  bash .github/scripts/retry-nix-command.sh \
-    nix --accept-flake-config \
+  env -u LD_PRELOAD bash .github/scripts/retry-nix-command.sh \
+    env -u LD_PRELOAD nix --accept-flake-config \
       --extra-experimental-features "nix-command flakes" \
       flake check --no-write-lock-file --print-build-logs
 }

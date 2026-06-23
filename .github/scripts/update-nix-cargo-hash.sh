@@ -39,8 +39,10 @@ trap cleanup EXIT
 set +e
 (
   cd "$root"
-  nix --accept-flake-config --extra-experimental-features "nix-command flakes" \
-    build .#rufin --no-link --print-build-logs
+  env -u LD_PRELOAD bash .github/scripts/retry-nix-command.sh \
+    env -u LD_PRELOAD nix --accept-flake-config \
+      --extra-experimental-features "nix-command flakes" \
+      build .#rufin --no-link --print-build-logs
 ) >"$tmp" 2>&1
 status=$?
 set -e
