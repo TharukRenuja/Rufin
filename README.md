@@ -18,7 +18,8 @@
 # Features
 
 - Fast, native and modern GTK/libadwaita client
-- Supports playing from Jellyfin, Subsonic, Navidrome servers and local folders
+- Built for Jellyfin, Subsonic, Navidrome servers and local folders
+- Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
 - Optimized for quick startup and navigation, smooth full library browsing
 - Automatic metadata, artwork and lyrics caching
 - Synchronized lyrics, built-in lyrics searcher that prioritizies synchronized lyrics
