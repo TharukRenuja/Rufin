@@ -30,36 +30,62 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.7/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.8" date="2026-06-23">
+      <description>
+        <p>This release brings support for server owned song APIs! These mean you can now access radios for track/album/artist/playlist and so on from the context menu, and Auto DJ also uses this automatically.</p>
+        <ul>
+          <li>We have a new button in context menus and our pages, radio, which uses Jellyfin's Instant Mix or Navidrome/Subsonic equivalents. This also means your Jellyfin plugins that affect recommendations now work</li>
+        </ul>
+        <ul>
+          <li>Reworked server adding dialog, and local folder is now hidden from the selection dialog if no local folder is configured</li>
+        </ul>
+        <ul>
+          <li>If artist ID is missing from music server, Rufin still tries to merge it from MusicBrainz ID, this is a strict fallback and dropped when the track gets a proper ID</li>
+        </ul>
+        <ul>
+          <li>Fixed a regression with sync progress not changing in toast notification, and removed sliding animation for control buttons</li>
+        </ul>
+        <ul>
+          <li>Fixed several issues with localization</li>
+        </ul>
+        <ul>
+          <li>Fixed an issue where initial local folder scan had UI stuck despite scan finishing</li>
+        </ul>
+        <ul>
+          <li>Added a debug only stress test flag that you can run Rufin with multiplying your local library, for fun and further optimization purposes (details at github)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.7" date="2026-06-19">
       <description>
         <p>Big visual overhaul! The biggest change is that we got rid of the mostly empty topbar, which came with a lot of other changes. I spent great effort in making app behave saner in different window sizes. Additionally, I'm experimenting with newer visual features.</p>

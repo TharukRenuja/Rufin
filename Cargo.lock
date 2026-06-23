@@ -369,9 +369,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.64"
+version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
+checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -615,7 +615,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -1806,7 +1806,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "library"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "domain",
  "rusqlite",
@@ -1874,9 +1874,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.32"
+version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lru-slab"
@@ -2245,7 +2245,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "playback"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "domain",
  "gstreamer",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "rufin"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "clap",
@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "secrets"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "base64",
  "domain",
@@ -2932,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "source"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "domain",
@@ -2946,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "source-jellyfin"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "domain",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "source-local"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "domain",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "source-subsonic"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "domain",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "test-support"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "async-trait",
  "domain",
