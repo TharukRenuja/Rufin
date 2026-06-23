@@ -11,7 +11,14 @@ This is not a requirement, but is just a preference.
 ## Building on Linux
 
 Local build and run steps are in [README.md](README.md#building-locally).
-You can run these commands to test your feature:
+
+## Development flags
+
+- `--startup-check` starts the app and exits if a display is available; it exists for CI.
+- `--fake-scale <small|large|stress|thirty-k>` uses a fake library when the `dev-tools` feature is enabled.
+- `RUFIN_LOCAL_STRESS_MULTIPLIER=<n>` multiplies local library tracks in debug builds, up to 100.
+
+To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
 ## Tests
 
@@ -21,8 +28,11 @@ scripts/lint-rust.sh
 scripts/test-rust.sh
 ```
 
-`scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back
-to `cargo test`.
+To make sure app still compiles:
+
+```bash
+cargo check -p rufin
+```
 
 ## Pull requests
 
