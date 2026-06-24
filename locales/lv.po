@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-21 21:01+0000\n"
+"PO-Revision-Date: 2026-06-24 07:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -58,11 +58,10 @@ msgid "Add Rule"
 msgstr "Pievienot noteikumu"
 
 msgid "Add Your Music Library"
-msgstr ""
+msgstr "Pievienot savu mūzikas bibliotēku"
 
-#, fuzzy
 msgid "Add a music folder"
-msgstr "Izvēlieties lokālo mūzikas mapi"
+msgstr "Pievienot mūzikas mapi"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
@@ -78,12 +77,11 @@ msgid "Add folders to use the Local source."
 msgstr "Pievienojiet mapes, lai izmantotu lokālo avotu."
 
 msgid "Add music library"
-msgstr ""
+msgstr "Pievienot mūzikas bibliotēku"
 
 msgid "Add music to start a queue."
 msgstr "Pievienojiet mūziku, lai sāktu rindu."
 
-#, fuzzy
 msgid "Add server"
 msgstr "Pievienot serveri"
 
@@ -111,9 +109,8 @@ msgstr "Albuma izpildītājs"
 msgid "Album artists"
 msgstr "Albumu izpildītāji"
 
-#, fuzzy
 msgid "Album radio"
-msgstr "Atskaņot albumu"
+msgstr "Albūma radio"
 
 msgid "Album title"
 msgstr "Albuma nosaukums"
@@ -160,9 +157,8 @@ msgstr "Izpildītāja albumi"
 msgid "Artist name"
 msgstr "Izpildītāja nosaukums"
 
-#, fuzzy
 msgid "Artist radio"
-msgstr "Atskaņot mākslinieku"
+msgstr "Izpildītāja radio"
 
 msgid "Artist tracks"
 msgstr "Izpildītāja dziesmas"
@@ -527,9 +523,8 @@ msgstr "Genius"
 msgid "Genre"
 msgstr "Žanrs"
 
-#, fuzzy
 msgid "Genre radio"
-msgstr "Atskaņot nejaušā secībā"
+msgstr "Žanra radio"
 
 msgid "Genre tracks"
 msgstr "Žanra dziesmas"
@@ -913,9 +908,8 @@ msgstr "Atvērt vietnē MusicBrainz"
 msgid "Open release notes"
 msgstr "Atvērt izdevuma piezīmes"
 
-#, fuzzy
 msgid "OpenSubsonic"
-msgstr "Subsonic / OpenSubsonic"
+msgstr "OpenSubsonic"
 
 msgid "Opening Last.fm authorization…"
 msgstr "Atver Last.fm autorizāciju…"
@@ -962,9 +956,8 @@ msgstr "Atskaņošanas skaits"
 msgid "Play filter"
 msgstr "Atskaņošanas filtrs"
 
-#, fuzzy
 msgid "Play radio"
-msgstr "Atskaņot nejaušā secībā"
+msgstr "Atskaņot radio"
 
 msgid "Play random"
 msgstr "Atskaņot nejaušā secībā"
@@ -990,9 +983,8 @@ msgstr "Atskaņošanas saraksta nosaukums"
 msgid "Playlist order"
 msgstr "Atskaņošanas saraksta secība"
 
-#, fuzzy
 msgid "Playlist radio"
-msgstr "Atskaņošanas saraksta nosaukums"
+msgstr "Atskaņošanas saraksta radio"
 
 msgid "Playlist tracks"
 msgstr "Atskaņošanas saraksta dziesmas"
@@ -1491,6 +1483,8 @@ msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work."
 msgstr ""
+"Šī funkcija izmanto Jellyfin API radio atskaņošanai, kas ir nepieciešams "
+"ieteikumu spraudņu darbībai."
 
 msgid "Timed out waiting for Last.fm authorization."
 msgstr "Beidzies gaidīšanas laiks, gaidot Last.fm autorizāciju."
@@ -1510,9 +1504,8 @@ msgstr "Pārslēgt pilnekrāna režīmu"
 msgid "Track"
 msgstr "Dziesma"
 
-#, fuzzy
 msgid "Track radio"
-msgstr "Atskaņot dziesmu"
+msgstr "Dziesmas radio"
 
 msgid "Tracks"
 msgstr "Dziesmas"
@@ -1550,7 +1543,7 @@ msgstr[2] ""
 "metadatiem, {unmatched} neatbilst no {total} celiņiem."
 
 msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
+msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
 msgid "Use This Source"
 msgstr "Izmantot šo avotu"
