@@ -12,10 +12,12 @@ use crate::controller::PlaybackSnapshot;
 use crate::i18n::{msgid, tr};
 
 use super::player_icons::{
-    VolumeIcon, auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
-    random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, shuffle_icon_button,
-    skip_icon_button, volume_icon_button, volume_icon_state,
+    VolumeIcon, audio_output_icon_button, auto_dj_icon_button, lyrics_icon_button,
+    play_icon_button, queue_sidebar_button, random_clover_icon_button, repeat_icon_button,
+    set_repeat_button_icon, shuffle_icon_button, skip_icon_button, volume_icon_button,
+    volume_icon_state,
 };
+use super::preferences::{audio_output_index, playback_output_options};
 use super::{
     ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
     add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
@@ -63,7 +65,7 @@ const BOTTOM_PLAYER_TINY_ROW_SPACING: i32 = 6;
 const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
 const BOTTOM_PLAYER_TINY_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
 const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
-const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
+const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = 636;
 const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
 const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = BOTTOM_PLAYER_SHOW_LYRICS_WIDTH;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
@@ -125,6 +127,7 @@ pub(super) struct PlayerControls {
     pub(super) mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     pub(super) volume: gtk::Scale,
+    pub(super) audio_output_button: gtk::Button,
 }
 
 struct NowPlayingControls {
@@ -171,6 +174,7 @@ struct PlayerActionControls {
     mute_icon: gtk::DrawingArea,
     mute_icon_state: Rc<Cell<VolumeIcon>>,
     volume: gtk::Scale,
+    audio_output_button: gtk::Button,
 }
 
 #[derive(Clone)]
@@ -694,6 +698,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         mute_icon,
         mute_icon_state,
         volume,
+        audio_output_button,
     } = build_player_action_controls();
 
     let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -768,6 +773,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         mute_icon,
         mute_icon_state,
         volume,
+        audio_output_button,
     }
 }
 
@@ -995,6 +1001,10 @@ fn build_player_action_controls() -> PlayerActionControls {
 
     let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
     volume_group.set_valign(gtk::Align::Center);
+    let audio_output_button = audio_output_icon_button("Audio output");
+    audio_output_button.add_css_class("player-audio-output-button");
+    configure_player_action_button(&audio_output_button);
+    volume_group.append(&audio_output_button);
     let (mute_button, mute_icon, mute_icon_state) = volume_icon_button("Mute");
     mute_icon.set_content_width(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
     mute_icon.set_content_height(BOTTOM_PLAYER_VOLUME_ICON_SIZE);
@@ -1023,6 +1033,7 @@ fn build_player_action_controls() -> PlayerActionControls {
         mute_icon,
         mute_icon_state,
         volume,
+        audio_output_button,
     }
 }
 
@@ -1055,9 +1066,10 @@ fn bottom_player_volume_width(player_width: i32) -> i32 {
         BottomPlayerActions::Lyrics => 2,
         BottomPlayerActions::Queue => 3,
     };
-    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * (visible_action_count + 1)
+    let fixed_action_count = visible_action_count + 2;
+    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * fixed_action_count
         + BOTTOM_PLAYER_ACTION_SPACING * visible_action_count
-        + BOTTOM_PLAYER_VOLUME_SPACING
+        + BOTTOM_PLAYER_VOLUME_SPACING * 2
         + BOTTOM_PLAYER_RIGHT_EDGE_GAP
         + BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
     let available_width = right_side_width - action_width_without_volume;
@@ -1257,6 +1269,65 @@ fn repeat_label(repeat_mode: RepeatMode) -> String {
         RepeatMode::One => tr("Repeat one"),
         RepeatMode::All => tr("Repeat all"),
     }
+}
+
+fn present_audio_output_popover(button: &gtk::Button, shell: &Rc<Shell>) {
+    let outputs = playback_output_options();
+    let selected = shell.state.settings.borrow().playback.audio_output.clone();
+    let selected_index = audio_output_index(&outputs, selected.as_deref()) as usize;
+
+    let popover = gtk::Popover::new();
+    popover.add_css_class("audio-output-popover");
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Top);
+    popover.set_parent(button);
+
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    list.set_margin_top(4);
+    list.set_margin_bottom(4);
+    list.set_margin_start(0);
+    list.set_margin_end(0);
+    list.set_width_request(236);
+
+    for (index, (id, title)) in outputs.into_iter().enumerate() {
+        let row = gtk::Button::new();
+        row.add_css_class("flat");
+        row.add_css_class("audio-output-row");
+        row.set_halign(gtk::Align::Fill);
+        row.set_tooltip_text(Some(&title));
+
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        content.set_halign(gtk::Align::Fill);
+        content.set_valign(gtk::Align::Center);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        check.set_pixel_size(16);
+        check.set_size_request(16, 16);
+        check.set_opacity(if index == selected_index { 1.0 } else { 0.0 });
+        content.append(&check);
+        let label = gtk::Label::new(Some(&title));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_max_width_chars(30);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        content.append(&label);
+        row.set_child(Some(&content));
+
+        let row_shell = Rc::clone(shell);
+        let row_popover = popover.clone();
+        row.connect_clicked(move |_| {
+            let selected = id.clone();
+            row_shell.update_playback_settings(|settings| {
+                settings.audio_output = selected;
+            });
+            row_popover.popdown();
+        });
+        list.append(&row);
+    }
+
+    popover.set_child(Some(&list));
+    popover.connect_closed(|popover| popover.unparent());
+    popover.popup();
 }
 
 fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
@@ -1471,6 +1542,11 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .mute_button
         .connect_clicked(move |_| controller.toggle_mute());
+    let output_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .audio_output_button
+        .connect_clicked(move |button| present_audio_output_popover(button, &output_shell));
     let seek_shell = Rc::clone(shell);
     shell
         .player_controls
@@ -1731,6 +1807,14 @@ mod tests {
     fn player_restores_actions_by_priority() {
         assert_eq!(
             super::bottom_player_actions(614),
+            super::BottomPlayerActions::Volume
+        );
+        assert_eq!(
+            super::bottom_player_actions(635),
+            super::BottomPlayerActions::Volume
+        );
+        assert_eq!(
+            super::bottom_player_actions(636),
             super::BottomPlayerActions::Favorite
         );
         assert_eq!(

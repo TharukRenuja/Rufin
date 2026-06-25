@@ -454,6 +454,7 @@ impl Shell {
         self.bind_icon_locale(&self.player_controls.menu_button, "More actions");
         self.bind_icon_locale(&self.player_controls.favorite_button, "Favorite");
         self.bind_icon_locale(&self.player_controls.mute_button, "Mute");
+        self.bind_icon_locale(&self.player_controls.audio_output_button, "Audio output");
 
         self.bind_icon_locale(
             &self.fullscreen_player.close_button,

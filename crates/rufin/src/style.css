@@ -812,6 +812,15 @@ scale.volume-slider trough {
   margin-top: 2px;
 }
 
+popover.audio-output-popover > contents {
+  padding: 0;
+}
+
+.audio-output-popover .audio-output-row {
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
 .player-play-button {
   background: color-mix(in srgb, @window_fg_color 92%, transparent);
   color: @window_bg_color;
