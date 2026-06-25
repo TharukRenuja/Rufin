@@ -752,6 +752,27 @@ impl StoreHandle {
         }
     }
 
+    pub(in crate::controller) fn with_store_session<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> Result<T, String>,
+    ) -> Result<T, String> {
+        match self {
+            Self::Path {
+                cache_database_path,
+                ..
+            } => {
+                let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
+                operation(&store)
+            }
+            Self::Memory { store, .. } => {
+                let store = store
+                    .lock()
+                    .map_err(|_| "store lock was poisoned".to_string())?;
+                operation(&store)
+            }
+        }
+    }
+
     pub(in crate::controller) fn with_store_fast<T>(
         &self,
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,

@@ -3601,6 +3601,67 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
 }
 
 #[test]
+fn remote_track_selected_art_prefers_album_cover() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let album_image = image_ref("provider-album-cover", "album-tag");
+    let mut album = album(1);
+    album.image_ref = Some(album_image.clone());
+    let mut track = track(1, &album);
+    track.image_ref = Some(image_ref("provider-song-cover", "song-tag"));
+
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    case.finish_sync(generation, "complete sync");
+    let tracks = case.load_tracks(&case.id, 0, 25).expect("load tracks");
+    assert_eq!(tracks.items[0].image_ref, Some(album_image));
+    assert_eq!(
+        selected_image_origin(&case, &case.id, "tracks", "track_id", track.id.as_str()),
+        "fallback"
+    );
+    assert_eq!(
+        case.connection
+            .query_row(
+                "
+                SELECT content_key
+                FROM entity_content_refs
+                WHERE server_id = ?1
+                  AND entity_kind = 'track'
+                  AND entity_id = ?2
+                  AND content_kind = 'cover'
+                ",
+                rusqlite::params![case.id.as_str(), track.id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("selected track content key"),
+        "provider-album-cover\u{1f}album-tag"
+    );
+    let cover_path =
+        std::env::temp_dir().join(format!("rufin-provider-cover-{}", std::process::id()));
+    fs::write(&cover_path, [1_u8]).expect("write provider cover");
+    case.save_cover_cache_entry(&CoverCacheEntry {
+        server_id: case.id.clone(),
+        item_id: "provider-album-cover".to_string(),
+        image_tag: "album-tag".to_string(),
+        size: 256,
+        path: cover_path.to_string_lossy().into_owned(),
+    })
+    .expect("save provider cover row");
+    assert!(
+        !case
+            .selected_provider_cover_cache_missing(&case.id)
+            .expect("cover ready")
+    );
+    fs::remove_file(&cover_path).expect("remove provider cover");
+    assert!(
+        case.selected_provider_cover_cache_missing(&case.id)
+            .expect("cover missing")
+    );
+}
+
+#[test]
 fn source_artist_image_seeds_album_before_external_identity() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");

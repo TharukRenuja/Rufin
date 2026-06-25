@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use domain::{ImageRef, ServerId};
-use library::{SavedServer, image_cache_key};
+use library::{SavedServer, Store, image_cache_key};
 use secrets::SecretStore;
 use source::MusicProvider;
 use tokio::runtime::Runtime;
@@ -18,8 +19,8 @@ use crate::controller::{
 use crate::external_metadata;
 
 use super::cache::{
-    cached_cover_path_for_key, cached_cover_path_for_saved, external_lookup_miss_cached,
-    save_external_lookup_miss,
+    cached_cover_path_for_key, cached_cover_path_for_saved, cached_cover_path_for_saved_in_store,
+    external_lookup_miss_cached, save_external_lookup_miss,
 };
 use super::candidates::{
     external_album_refs, provider_artist_refs, push_provider_album_image_refs,
@@ -27,12 +28,16 @@ use super::candidates::{
     push_provider_playlist_image_refs, push_provider_track_image_refs,
 };
 use super::fetch::{
-    fetch_and_cache_cover, fetch_and_cache_provider_cover, is_provider_not_found_error,
+    CoverFetchTiming, fetch_and_cache_cover, fetch_and_cache_provider_cover_timed_with_store,
+    is_provider_not_found_error,
 };
 use super::{
     EXTERNAL_PREFETCH_COVER_SIZE, EXTERNAL_PREFETCH_DELAY, EXTERNAL_PREFETCH_PAGE_SIZE,
     mark_cover_in_flight, unmark_cover_in_flight_generation,
 };
+
+const SLOW_PROVIDER_COVER_STAGE_MS: u64 = 500;
+const SLOW_PROVIDER_COVER_TOTAL_MS: u64 = 1_000;
 
 #[derive(Default)]
 struct SyncedImagePrefetchStats {
@@ -53,17 +58,74 @@ struct SyncedImagePrefetchStats {
 #[derive(Default)]
 struct ProviderCoverPrefetchStats {
     album_rows: usize,
+    album_image_refs: usize,
     track_rows: usize,
+    track_image_refs: usize,
     artist_rows: usize,
+    artist_image_refs: usize,
     album_artist_rows: usize,
+    album_artist_image_refs: usize,
     genre_rows: usize,
+    genre_image_refs: usize,
     playlist_rows: usize,
+    playlist_image_refs: usize,
     image_refs: usize,
     cache_hits: usize,
     skipped: usize,
     fetched: usize,
     misses: usize,
     errors: usize,
+    select_refs_elapsed_ms: u64,
+    cover_loop_elapsed_ms: u64,
+    total_elapsed_ms: u64,
+    fetched_bytes: usize,
+    fetch_elapsed_ms: u64,
+    normalize_elapsed_ms: u64,
+    write_elapsed_ms: u64,
+    store_elapsed_ms: u64,
+    cover_elapsed_ms: u64,
+    error_elapsed_ms: u64,
+    max_fetch_ms: u64,
+    max_normalize_ms: u64,
+    max_write_ms: u64,
+    max_store_ms: u64,
+    max_cover_ms: u64,
+    max_error_ms: u64,
+    slow_fetches: usize,
+    slow_normalizes: usize,
+    slow_writes: usize,
+    slow_store_saves: usize,
+    slow_covers: usize,
+    slow_errors: usize,
+}
+
+impl ProviderCoverPrefetchStats {
+    fn record_timing(&mut self, timing: CoverFetchTiming) {
+        self.fetched_bytes = self.fetched_bytes.saturating_add(timing.bytes);
+        self.fetch_elapsed_ms = self.fetch_elapsed_ms.saturating_add(timing.fetch_ms);
+        self.normalize_elapsed_ms = self
+            .normalize_elapsed_ms
+            .saturating_add(timing.normalize_ms);
+        self.write_elapsed_ms = self.write_elapsed_ms.saturating_add(timing.write_ms);
+        self.store_elapsed_ms = self.store_elapsed_ms.saturating_add(timing.store_ms);
+        self.cover_elapsed_ms = self.cover_elapsed_ms.saturating_add(timing.total_ms);
+        self.max_fetch_ms = self.max_fetch_ms.max(timing.fetch_ms);
+        self.max_normalize_ms = self.max_normalize_ms.max(timing.normalize_ms);
+        self.max_write_ms = self.max_write_ms.max(timing.write_ms);
+        self.max_store_ms = self.max_store_ms.max(timing.store_ms);
+        self.max_cover_ms = self.max_cover_ms.max(timing.total_ms);
+        self.slow_fetches += usize::from(timing.fetch_ms >= SLOW_PROVIDER_COVER_STAGE_MS);
+        self.slow_normalizes += usize::from(timing.normalize_ms >= SLOW_PROVIDER_COVER_STAGE_MS);
+        self.slow_writes += usize::from(timing.write_ms >= SLOW_PROVIDER_COVER_STAGE_MS);
+        self.slow_store_saves += usize::from(timing.store_ms >= SLOW_PROVIDER_COVER_STAGE_MS);
+        self.slow_covers += usize::from(timing.total_ms >= SLOW_PROVIDER_COVER_TOTAL_MS);
+    }
+
+    fn record_error_elapsed(&mut self, elapsed_ms: u64) {
+        self.error_elapsed_ms = self.error_elapsed_ms.saturating_add(elapsed_ms);
+        self.max_error_ms = self.max_error_ms.max(elapsed_ms);
+        self.slow_errors += usize::from(elapsed_ms >= SLOW_PROVIDER_COVER_TOTAL_MS);
+    }
 }
 
 pub(in crate::controller) struct ExternalCoverPrefetchRequest {
@@ -257,6 +319,7 @@ pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
         return Ok(());
     }
 
+    let started = Instant::now();
     let mut provider_stats = ProviderCoverPrefetchStats::default();
     let context = CoverPrefetchContext {
         store: request.store,
@@ -271,21 +334,57 @@ pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
         saved,
         cancellation: request.cancellation,
     };
-    prefetch_synced_provider_covers(&context, request.provider, &mut provider_stats)?;
+    context.store.with_store_session(|cache_store| {
+        prefetch_synced_provider_covers(
+            &context,
+            request.provider,
+            cache_store,
+            &mut provider_stats,
+        )
+    })?;
+    provider_stats.total_elapsed_ms = elapsed_ms(started);
     info!(
         server_id = %saved.server.id,
         album_rows = provider_stats.album_rows,
+        album_image_refs = provider_stats.album_image_refs,
         track_rows = provider_stats.track_rows,
+        track_image_refs = provider_stats.track_image_refs,
         artist_rows = provider_stats.artist_rows,
+        artist_image_refs = provider_stats.artist_image_refs,
         album_artist_rows = provider_stats.album_artist_rows,
+        album_artist_image_refs = provider_stats.album_artist_image_refs,
         genre_rows = provider_stats.genre_rows,
+        genre_image_refs = provider_stats.genre_image_refs,
         playlist_rows = provider_stats.playlist_rows,
+        playlist_image_refs = provider_stats.playlist_image_refs,
         image_refs = provider_stats.image_refs,
         cache_hits = provider_stats.cache_hits,
         skipped = provider_stats.skipped,
         fetched = provider_stats.fetched,
         misses = provider_stats.misses,
         errors = provider_stats.errors,
+        select_refs_elapsed_ms = provider_stats.select_refs_elapsed_ms,
+        cover_loop_elapsed_ms = provider_stats.cover_loop_elapsed_ms,
+        total_elapsed_ms = provider_stats.total_elapsed_ms,
+        fetched_bytes = provider_stats.fetched_bytes,
+        fetch_elapsed_ms = provider_stats.fetch_elapsed_ms,
+        normalize_elapsed_ms = provider_stats.normalize_elapsed_ms,
+        write_elapsed_ms = provider_stats.write_elapsed_ms,
+        store_elapsed_ms = provider_stats.store_elapsed_ms,
+        cover_elapsed_ms = provider_stats.cover_elapsed_ms,
+        error_elapsed_ms = provider_stats.error_elapsed_ms,
+        max_fetch_ms = provider_stats.max_fetch_ms,
+        max_normalize_ms = provider_stats.max_normalize_ms,
+        max_write_ms = provider_stats.max_write_ms,
+        max_store_ms = provider_stats.max_store_ms,
+        max_cover_ms = provider_stats.max_cover_ms,
+        max_error_ms = provider_stats.max_error_ms,
+        slow_fetches = provider_stats.slow_fetches,
+        slow_normalizes = provider_stats.slow_normalizes,
+        slow_writes = provider_stats.slow_writes,
+        slow_store_saves = provider_stats.slow_store_saves,
+        slow_covers = provider_stats.slow_covers,
+        slow_errors = provider_stats.slow_errors,
         "completed initial provider cover cache prefetch"
     );
     Ok(())
@@ -303,35 +402,42 @@ fn prefetch_synced_images(
 fn prefetch_synced_provider_covers(
     context: &CoverPrefetchContext<'_>,
     provider: &dyn MusicProvider,
+    cache_store: &Store,
     stats: &mut ProviderCoverPrefetchStats,
 ) -> Result<(), String> {
     let mut seen = HashSet::new();
     check_prefetch_cancelled(context.cancellation)?;
+    let select_started = Instant::now();
     let image_refs = synced_provider_cover_refs(
-        context.store,
+        cache_store,
         context.saved,
         context.cancellation,
         &mut seen,
         stats,
     )?;
+    stats.select_refs_elapsed_ms = elapsed_ms(select_started);
     stats.image_refs = image_refs.len();
     emit_initial_cover_prefetch_status(context, 0, stats.image_refs);
+    let loop_started = Instant::now();
     for (index, image_ref) in image_refs.into_iter().enumerate() {
         check_prefetch_cancelled(context.cancellation)?;
-        if active_server_changed(context.store, context.saved)? {
+        if active_server_changed_in_store(cache_store, context.saved)? {
+            stats.cover_loop_elapsed_ms = elapsed_ms(loop_started);
             info!(
                 server_id = %context.saved.server.id,
                 "stopped initial provider cover prefetch because active server changed"
             );
             return Ok(());
         }
-        let outcome = prefetch_provider_image_ref(context, provider, image_ref)?;
+        let outcome =
+            prefetch_provider_image_ref(context, provider, cache_store, image_ref, stats)?;
         record_provider_cover_prefetch_outcome(stats, outcome);
         let processed = index + 1;
         if processed == stats.image_refs || processed % 25 == 0 {
             emit_initial_cover_prefetch_status(context, processed, stats.image_refs);
         }
     }
+    stats.cover_loop_elapsed_ms = elapsed_ms(loop_started);
     Ok(())
 }
 
@@ -349,7 +455,7 @@ fn emit_initial_cover_prefetch_status(
 }
 
 fn synced_provider_cover_refs(
-    store: &StoreHandle,
+    store: &Store,
     saved: &SavedServer,
     cancellation: Option<&CancellationToken>,
     seen: &mut HashSet<(String, String)>,
@@ -359,30 +465,34 @@ fn synced_provider_cover_refs(
     let mut offset = 0;
     loop {
         check_prefetch_cancelled(cancellation)?;
-        let page = store.with_store(|store| {
-            store.load_albums(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
-        })?;
+        let page = store
+            .load_albums(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
             break;
         }
         stats.album_rows += item_count;
+        let before = image_refs.len();
         push_provider_album_image_refs(&mut image_refs, seen, page.items);
+        stats.album_image_refs += image_refs.len().saturating_sub(before);
         offset += item_count;
     }
 
     let mut offset = 0;
     loop {
         check_prefetch_cancelled(cancellation)?;
-        let page = store.with_store(|store| {
-            store.load_tracks(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
-        })?;
+        let page = store
+            .load_tracks(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
             break;
         }
         stats.track_rows += item_count;
+        let before = image_refs.len();
         push_provider_track_image_refs(&mut image_refs, seen, page.items);
+        stats.track_image_refs += image_refs.len().saturating_sub(before);
         offset += item_count;
     }
 
@@ -390,14 +500,14 @@ fn synced_provider_cover_refs(
         let mut offset = 0;
         loop {
             check_prefetch_cancelled(cancellation)?;
-            let page = store.with_store(|store| {
-                store.load_artists(
+            let page = store
+                .load_artists(
                     &saved.server.id,
                     album_artist,
                     offset,
                     EXTERNAL_PREFETCH_PAGE_SIZE,
                 )
-            })?;
+                .map_err(|error| error.to_string())?;
             let item_count = page.items.len();
             if item_count == 0 {
                 break;
@@ -407,7 +517,13 @@ fn synced_provider_cover_refs(
             } else {
                 stats.artist_rows += item_count;
             }
+            let before = image_refs.len();
             push_provider_artist_image_refs(&mut image_refs, seen, page.items);
+            if album_artist {
+                stats.album_artist_image_refs += image_refs.len().saturating_sub(before);
+            } else {
+                stats.artist_image_refs += image_refs.len().saturating_sub(before);
+            }
             offset += item_count;
         }
     }
@@ -415,30 +531,34 @@ fn synced_provider_cover_refs(
     let mut offset = 0;
     loop {
         check_prefetch_cancelled(cancellation)?;
-        let page = store.with_store(|store| {
-            store.load_genres(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
-        })?;
+        let page = store
+            .load_genres(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
             break;
         }
         stats.genre_rows += item_count;
+        let before = image_refs.len();
         push_provider_genre_image_refs(&mut image_refs, seen, page.items);
+        stats.genre_image_refs += image_refs.len().saturating_sub(before);
         offset += item_count;
     }
 
     let mut offset = 0;
     loop {
         check_prefetch_cancelled(cancellation)?;
-        let page = store.with_store(|store| {
-            store.load_playlists(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
-        })?;
+        let page = store
+            .load_playlists(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
             break;
         }
         stats.playlist_rows += item_count;
+        let before = image_refs.len();
         push_provider_playlist_image_refs(&mut image_refs, seen, page.items);
+        stats.playlist_image_refs += image_refs.len().saturating_sub(before);
         offset += item_count;
     }
 
@@ -448,7 +568,9 @@ fn synced_provider_cover_refs(
 fn prefetch_provider_image_ref(
     context: &CoverPrefetchContext<'_>,
     provider: &dyn MusicProvider,
+    cache_store: &Store,
     image_ref: ImageRef,
+    stats: &mut ProviderCoverPrefetchStats,
 ) -> Result<SyncedImagePrefetchOutcome, String> {
     check_prefetch_cancelled(context.cancellation)?;
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
@@ -458,15 +580,19 @@ fn prefetch_provider_image_ref(
         tag,
         EXTERNAL_PREFETCH_COVER_SIZE,
     );
-    if cached_cover_path_for_key(&key).is_some()
-        || cached_cover_path_for_saved(
-            context.store,
+    let cache_hit = if cached_cover_path_for_key(&key).is_some() {
+        true
+    } else {
+        cached_cover_path_for_saved_in_store(
+            cache_store,
             context.saved,
             &image_ref,
             EXTERNAL_PREFETCH_COVER_SIZE,
-        )?
+        )
+        .map_err(|error| error.to_string())?
         .is_some()
-    {
+    };
+    if cache_hit {
         return Ok(SyncedImagePrefetchOutcome::CacheHit);
     }
     if !mark_cover_in_flight(context.cover_in_flight, &key, context.retry_generation) {
@@ -483,8 +609,9 @@ fn prefetch_provider_image_ref(
         unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
         return Err(error);
     }
-    let result = fetch_and_cache_provider_cover(
-        context.store,
+    let request_started = Instant::now();
+    let result = fetch_and_cache_provider_cover_timed_with_store(
+        cache_store,
         context.runtime,
         context.saved,
         provider,
@@ -495,22 +622,82 @@ fn prefetch_provider_image_ref(
     unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
 
     match result {
-        Ok(path) => {
-            let _sent = context
-                .events
-                .send(ControllerEvent::CoverReady { key, path });
+        Ok(result) => {
+            stats.record_timing(result.timing);
+            log_provider_cover_timing(context.saved, &image_ref, result.timing);
+            let _sent = context.events.send(ControllerEvent::CoverReady {
+                key,
+                path: result.path,
+            });
             Ok(SyncedImagePrefetchOutcome::Fetched)
         }
         Err(error) => {
+            let elapsed_ms = elapsed_ms(request_started);
+            stats.record_error_elapsed(elapsed_ms);
             if is_provider_not_found_error(&error) {
-                debug!(%error, "initial provider image was not available");
+                debug!(
+                    server_id = %context.saved.server.id,
+                    item_id = %image_ref.item_id,
+                    image_tag = tag,
+                    elapsed_ms,
+                    %error,
+                    "initial provider image was not available"
+                );
                 Ok(SyncedImagePrefetchOutcome::Miss)
             } else {
-                warn!(%error, "failed to prefetch initial provider image");
+                warn!(
+                    server_id = %context.saved.server.id,
+                    item_id = %image_ref.item_id,
+                    image_tag = tag,
+                    elapsed_ms,
+                    %error,
+                    "failed to prefetch initial provider image"
+                );
                 Ok(SyncedImagePrefetchOutcome::Error)
             }
         }
     }
+}
+
+fn log_provider_cover_timing(saved: &SavedServer, image_ref: &ImageRef, timing: CoverFetchTiming) {
+    let image_tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    debug!(
+        server_id = %saved.server.id,
+        provider = %saved.server.provider,
+        item_id = %image_ref.item_id,
+        image_tag,
+        bytes = timing.bytes,
+        fetch_ms = timing.fetch_ms,
+        normalize_ms = timing.normalize_ms,
+        write_ms = timing.write_ms,
+        store_ms = timing.store_ms,
+        total_ms = timing.total_ms,
+        "prefetched initial provider cover"
+    );
+    if timing.fetch_ms >= SLOW_PROVIDER_COVER_STAGE_MS
+        || timing.normalize_ms >= SLOW_PROVIDER_COVER_STAGE_MS
+        || timing.write_ms >= SLOW_PROVIDER_COVER_STAGE_MS
+        || timing.store_ms >= SLOW_PROVIDER_COVER_STAGE_MS
+        || timing.total_ms >= SLOW_PROVIDER_COVER_TOTAL_MS
+    {
+        warn!(
+            server_id = %saved.server.id,
+            provider = %saved.server.provider,
+            item_id = %image_ref.item_id,
+            image_tag,
+            bytes = timing.bytes,
+            fetch_ms = timing.fetch_ms,
+            normalize_ms = timing.normalize_ms,
+            write_ms = timing.write_ms,
+            store_ms = timing.store_ms,
+            total_ms = timing.total_ms,
+            "slow initial provider cover prefetch"
+        );
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn prefetch_synced_album_covers(
@@ -739,6 +926,13 @@ fn record_provider_cover_prefetch_outcome(
 fn active_server_changed(store: &StoreHandle, saved: &SavedServer) -> Result<bool, String> {
     Ok(store
         .with_store(|store| store.active_server())?
+        .is_none_or(|active| active.server.id != saved.server.id))
+}
+
+fn active_server_changed_in_store(store: &Store, saved: &SavedServer) -> Result<bool, String> {
+    Ok(store
+        .active_server()
+        .map_err(|error| error.to_string())?
         .is_none_or(|active| active.server.id != saved.server.id))
 }
 

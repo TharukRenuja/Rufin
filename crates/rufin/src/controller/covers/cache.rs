@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use domain::ImageRef;
-use library::{SavedServer, image_cache_key};
+use library::{SavedServer, Store, StoreResult, image_cache_key};
 
 use crate::controller::{IMAGE_TAG_UNTAGGED, StoreHandle, cover_cache_path_for_key};
 use crate::external_metadata;
@@ -14,6 +14,15 @@ pub(super) fn cached_cover_path_for_saved(
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<Option<PathBuf>, String> {
+    store.with_store(|store| cached_cover_path_for_saved_in_store(store, saved, image_ref, size))
+}
+
+pub(super) fn cached_cover_path_for_saved_in_store(
+    store: &Store,
+    saved: &SavedServer,
+    image_ref: &ImageRef,
+    size: u32,
+) -> StoreResult<Option<PathBuf>> {
     if let Some(path) = saved_cover_path(store, saved, image_ref, size)? {
         return Ok(Some(path));
     }
@@ -29,30 +38,25 @@ pub(super) fn cached_cover_path_for_saved(
 }
 
 fn saved_cover_path(
-    store: &StoreHandle,
+    store: &Store,
     saved: &SavedServer,
     image_ref: &ImageRef,
     size: u32,
-) -> Result<Option<PathBuf>, String> {
+) -> StoreResult<Option<PathBuf>> {
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
     if external_metadata::is_external_image_ref(image_ref)
-        && let Some(path) = store.with_store(|store| {
-            store.load_external_cover_content_path(&image_ref.item_id, tag, size)
-        })?
+        && let Some(path) = store.load_external_cover_content_path(&image_ref.item_id, tag, size)?
     {
         let path = PathBuf::from(path);
         if path.exists() {
             return Ok(Some(path));
         }
     }
-    let mut entry = store.with_store(|store| {
-        store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-    })?;
+    let mut entry =
+        store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)?;
     if entry.is_none() && external_metadata::is_external_image_ref(image_ref) {
-        entry = store.with_store(|store| {
-            store.load_external_cover_cache_entry_by_content(&image_ref.item_id, tag, size)
-        })?;
+        entry = store.load_external_cover_cache_entry_by_content(&image_ref.item_id, tag, size)?;
     }
     let Some(entry) = entry else {
         return Ok(cached_cover_path_for_key(&key));

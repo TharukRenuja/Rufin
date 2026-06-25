@@ -2,10 +2,11 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use domain::ImageRef;
 use gdk_pixbuf::{InterpType, Pixbuf};
-use library::{CoverCacheEntry, SavedServer, image_cache_key};
+use library::{CoverCacheEntry, SavedServer, Store, StoreResult, image_cache_key};
 use secrets::SecretStore;
 use source::{ImageKind, ImageRequest, MusicProvider};
 use source_local::{LOCAL_PROVIDER_ID, LocalProvider};
@@ -18,6 +19,21 @@ use crate::controller::{
 use crate::external_metadata;
 
 use super::cover_error_is_transient;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct CoverFetchTiming {
+    pub(super) bytes: usize,
+    pub(super) fetch_ms: u64,
+    pub(super) normalize_ms: u64,
+    pub(super) write_ms: u64,
+    pub(super) store_ms: u64,
+    pub(super) total_ms: u64,
+}
+
+pub(super) struct CoverFetchResult {
+    pub(super) path: PathBuf,
+    pub(super) timing: CoverFetchTiming,
+}
 
 pub(super) fn fetch_and_cache_cover(
     store: &StoreHandle,
@@ -65,18 +81,73 @@ pub(super) fn fetch_and_cache_provider_cover(
     image_ref: ImageRef,
     size: u32,
 ) -> Result<PathBuf, String> {
+    fetch_and_cache_provider_cover_timed(store, runtime, saved, provider, image_ref, size)
+        .map(|result| result.path)
+}
+
+pub(super) fn fetch_and_cache_provider_cover_timed(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    saved: &SavedServer,
+    provider: &dyn MusicProvider,
+    image_ref: ImageRef,
+    size: u32,
+) -> Result<CoverFetchResult, String> {
+    let total_started = Instant::now();
+    let (image_bytes, mut timing) =
+        fetch_provider_cover_image(runtime, provider, &image_ref, size)?;
+    let path = save_cover_bytes_timed(store, saved, image_ref, size, image_bytes, &mut timing)?;
+    timing.total_ms = elapsed_ms(total_started);
+    Ok(CoverFetchResult { path, timing })
+}
+
+pub(super) fn fetch_and_cache_provider_cover_timed_with_store(
+    cache_store: &Store,
+    runtime: &Runtime,
+    saved: &SavedServer,
+    provider: &dyn MusicProvider,
+    image_ref: ImageRef,
+    size: u32,
+) -> Result<CoverFetchResult, String> {
+    let total_started = Instant::now();
+    let (image_bytes, mut timing) =
+        fetch_provider_cover_image(runtime, provider, &image_ref, size)?;
+    let path = save_cover_bytes_timed_with_store(
+        cache_store,
+        saved,
+        image_ref,
+        size,
+        image_bytes,
+        &mut timing,
+    )?;
+    timing.total_ms = elapsed_ms(total_started);
+    Ok(CoverFetchResult { path, timing })
+}
+
+fn fetch_provider_cover_image(
+    runtime: &Runtime,
+    provider: &dyn MusicProvider,
+    image_ref: &ImageRef,
+    size: u32,
+) -> Result<(Vec<u8>, CoverFetchTiming), String> {
+    let fetch_started = Instant::now();
     let image = runtime
         .block_on(provider.image_bytes(ImageRequest {
             item_id: image_ref.item_id.clone(),
-            kind: provider_image_kind(&image_ref),
+            kind: provider_image_kind(image_ref),
             tag: image_ref.tag.clone(),
             size,
         }))
         .map_err(|error| error.to_string())?;
+    let timing = CoverFetchTiming {
+        bytes: image.bytes.len(),
+        fetch_ms: elapsed_ms(fetch_started),
+        ..CoverFetchTiming::default()
+    };
     if image.bytes.is_empty() {
         return Err("cover response was empty".to_string());
     }
-    save_cover_bytes(store, saved, image_ref, size, image.bytes)
+    Ok((image.bytes, timing))
 }
 
 fn save_cover_bytes(
@@ -86,6 +157,69 @@ fn save_cover_bytes(
     size: u32,
     bytes: Vec<u8>,
 ) -> Result<PathBuf, String> {
+    save_cover_bytes_timed(
+        store,
+        saved,
+        image_ref,
+        size,
+        bytes,
+        &mut CoverFetchTiming::default(),
+    )
+}
+
+fn save_cover_bytes_timed(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    image_ref: ImageRef,
+    size: u32,
+    bytes: Vec<u8>,
+    timing: &mut CoverFetchTiming,
+) -> Result<PathBuf, String> {
+    let (path, entry) = write_cover_cache_file(saved, image_ref.clone(), size, bytes, timing)?;
+    let store_started = Instant::now();
+    let saved_entry =
+        store.with_store(|store| save_cover_cache_entry_to_store(store, &entry, &image_ref));
+    timing.store_ms = elapsed_ms(store_started);
+    if let Err(error) = saved_entry {
+        if cover_error_is_transient(&error) {
+            return Ok(path);
+        }
+        return Err(error);
+    }
+
+    Ok(path)
+}
+
+fn save_cover_bytes_timed_with_store(
+    cache_store: &Store,
+    saved: &SavedServer,
+    image_ref: ImageRef,
+    size: u32,
+    bytes: Vec<u8>,
+    timing: &mut CoverFetchTiming,
+) -> Result<PathBuf, String> {
+    let (path, entry) = write_cover_cache_file(saved, image_ref.clone(), size, bytes, timing)?;
+    let store_started = Instant::now();
+    let saved_entry = save_cover_cache_entry_to_store(cache_store, &entry, &image_ref);
+    timing.store_ms = elapsed_ms(store_started);
+    if let Err(error) = saved_entry {
+        let error = error.to_string();
+        if cover_error_is_transient(&error) {
+            return Ok(path);
+        }
+        return Err(error);
+    }
+
+    Ok(path)
+}
+
+fn write_cover_cache_file(
+    saved: &SavedServer,
+    image_ref: ImageRef,
+    size: u32,
+    bytes: Vec<u8>,
+    timing: &mut CoverFetchTiming,
+) -> Result<(PathBuf, CoverCacheEntry), String> {
     let tag = image_ref
         .tag
         .clone()
@@ -97,32 +231,47 @@ fn save_cover_bytes(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let temp_path = path.with_extension("tmp");
-    fs::write(&temp_path, normalize_cover_bytes(bytes, size)).map_err(|error| error.to_string())?;
+    let normalize_started = Instant::now();
+    let bytes = normalize_cover_bytes(bytes, size);
+    timing.normalize_ms = elapsed_ms(normalize_started);
+    let write_started = Instant::now();
+    fs::write(&temp_path, bytes).map_err(|error| error.to_string())?;
     fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+    timing.write_ms = elapsed_ms(write_started);
     let item_id = image_ref.item_id.clone();
     let path_string = path.to_string_lossy().to_string();
 
-    let saved_entry = store.with_store(|store| {
-        store.save_cover_cache_entry(&CoverCacheEntry {
+    Ok((
+        path,
+        CoverCacheEntry {
             server_id: saved.server.id.clone(),
-            item_id: item_id.clone(),
-            image_tag: tag.clone(),
+            item_id,
+            image_tag: tag,
             size,
-            path: path_string.clone(),
-        })?;
-        if external_metadata::is_external_image_ref(&image_ref) {
-            store.save_external_cover_content_path(&item_id, &tag, size, &path_string)?;
-        }
-        Ok(())
-    });
-    if let Err(error) = saved_entry {
-        if cover_error_is_transient(&error) {
-            return Ok(path);
-        }
-        return Err(error);
-    }
+            path: path_string,
+        },
+    ))
+}
 
-    Ok(path)
+fn save_cover_cache_entry_to_store(
+    store: &Store,
+    entry: &CoverCacheEntry,
+    image_ref: &ImageRef,
+) -> StoreResult<()> {
+    store.save_cover_cache_entry(entry)?;
+    if external_metadata::is_external_image_ref(image_ref) {
+        store.save_external_cover_content_path(
+            &entry.item_id,
+            &entry.image_tag,
+            entry.size,
+            &entry.path,
+        )?;
+    }
+    Ok(())
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn normalize_cover_bytes(bytes: Vec<u8>, size: u32) -> Vec<u8> {

@@ -717,13 +717,12 @@ pub(in crate::controller) fn initial_cover_cache_required(
     if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
         return local_initial_cover_cache_required(store, server_id);
     }
+    provider_initial_cover_cache_required(store, server_id)
+}
 
+fn provider_initial_cover_cache_required(store: &StoreHandle, server_id: &ServerId) -> bool {
     store
-        .with_store(|store| {
-            let albums = store.load_albums(server_id, 0, 1)?;
-            let tracks = store.load_tracks(server_id, 0, 1)?;
-            Ok(albums.total == 0 && tracks.total == 0)
-        })
+        .with_store(|store| store.selected_provider_cover_cache_missing(server_id))
         .unwrap_or(true)
 }
 
