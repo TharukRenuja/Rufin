@@ -912,6 +912,10 @@ msgstr "Открыть на Last.fm"
 msgid "Open on MusicBrainz"
 msgstr "Открыть на MusicBrainz"
 
+#, fuzzy
+msgid "Open on Navidrome"
+msgstr "Navidrome"
+
 msgid "Open release notes"
 msgstr "Открыть примечания к выпуску"
 

@@ -915,6 +915,10 @@ msgstr "Ava Last.fm-is"
 msgid "Open on MusicBrainz"
 msgstr "Ava MusicBrainzis"
 
+#, fuzzy
+msgid "Open on Navidrome"
+msgstr "Navidrome"
+
 msgid "Open release notes"
 msgstr "Vaata versiooniteavet"
 

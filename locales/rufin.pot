@@ -1274,6 +1274,12 @@ msgid ""
 "open an issue in Github."
 msgstr ""
 
+msgid "Open on Jellyfin"
+msgstr ""
+
+msgid "Open on Navidrome"
+msgstr ""
+
 msgid "Play radio"
 msgstr ""
 
@@ -1281,9 +1287,6 @@ msgid "Open on Last.fm"
 msgstr ""
 
 msgid "Open on MusicBrainz"
-msgstr ""
-
-msgid "Open on Jellyfin"
 msgstr ""
 
 msgid "Added to favorites"

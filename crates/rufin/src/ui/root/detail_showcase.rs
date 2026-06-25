@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::i18n::msgid;
+use crate::ui::root::detail_links::{DetailEntityKind, DetailExternalLink, server_entity_link};
 
 const DETAIL_HEADER_SPACING: i32 = 18;
 
@@ -408,7 +409,7 @@ pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> O
         ));
     }
     if link_settings.server
-        && let Some(link) = server_entity_url(shell, album.id.as_str())
+        && let Some(link) = server_entity_url(shell, DetailEntityKind::Album, album.id.as_str())
     {
         row.append(&detail_external_link_button(
             shell,
@@ -454,7 +455,7 @@ pub(in crate::ui) fn artist_external_links(
         ));
     }
     if link_settings.server
-        && let Some(link) = server_entity_url(shell, artist.id.as_str())
+        && let Some(link) = server_entity_url(shell, DetailEntityKind::Artist, artist.id.as_str())
     {
         row.append(&detail_external_link_button(
             shell,
@@ -551,39 +552,14 @@ fn musicbrainz_artist_url(artist: &Artist, tracks: &[Track]) -> Option<String> {
     Some(format!("https://musicbrainz.org/artist/{artist_id}"))
 }
 
-struct DetailExternalLink {
-    label: &'static str,
-    icon_name: &'static str,
-    url: String,
-}
-
-fn server_entity_url(shell: &Shell, entity_id: &str) -> Option<DetailExternalLink> {
+fn server_entity_url(
+    shell: &Shell,
+    kind: DetailEntityKind,
+    entity_id: &str,
+) -> Option<DetailExternalLink> {
     let library = shell.state.library.borrow();
     let server = library.server.as_ref()?;
-    if server.provider != "jellyfin" {
-        return None;
-    }
-    let item_id = entity_id
-        .strip_prefix("jellyfin:album:")
-        .or_else(|| entity_id.strip_prefix("jellyfin:artist:"))?;
-    let base_url = server.base_url.trim().trim_end_matches('/');
-    if base_url.is_empty() || item_id.trim().is_empty() {
-        return None;
-    }
-    Some(DetailExternalLink {
-        label: msgid("Open on Jellyfin"),
-        icon_name: server_external_icon_name(&server.provider),
-        url: format!("{base_url}/web/index.html#!/details?id={item_id}"),
-    })
-}
-
-fn server_external_icon_name(provider: &str) -> &'static str {
-    match provider {
-        "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
-        "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
-        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
-        _ => "network-server-symbolic",
-    }
+    server_entity_link(server, kind, entity_id)
 }
 
 fn clean_url_label(value: &str) -> Option<&str> {
