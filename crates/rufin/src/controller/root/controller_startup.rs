@@ -1732,12 +1732,11 @@ impl SyncProgressReporter {
     }
 
     pub(in crate::controller) fn page_written(&mut self, progress: SyncPageProgress) {
-        let fetched = progress_count_label(progress.fetched, progress.total);
         let page = page_label(progress.page_number, progress.total);
         self.emit_status(
             progress.finished,
             format!(
-                "Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
+                "Cached {} {page} for {}, {} cached ({})",
                 progress.collection.label(),
                 self.source_label(),
                 formatted_count(progress.written),

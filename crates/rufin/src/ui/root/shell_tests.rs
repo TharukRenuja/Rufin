@@ -29,7 +29,8 @@ use super::{
     lyrics_search_response_matches_query, lyrics_search_result_has_content, playlist_cover_size,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
     playlist_route_margin, playlist_sort_width, preferences_login_status_toast_message,
-    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
+    preferences_login_status_toast_message_for_surface, queue_source_waits_for_snapshot,
+    seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
     LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, SearchRequestKey,
@@ -1427,6 +1428,14 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some("Checking Jellyfin server…".to_string())
     );
     assert_eq!(
+        preferences_login_status_toast_message_for_surface("Checking Jellyfin server…", false),
+        Some("Checking Jellyfin server…".to_string())
+    );
+    assert_eq!(
+        preferences_login_status_toast_message_for_surface("Checking Jellyfin server…", true),
+        None
+    );
+    assert_eq!(
         preferences_login_status_toast_message("Server settings saved."),
         Some("Server settings saved.".to_string())
     );
@@ -1465,9 +1474,7 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
-        library_sync_toast_state(
-            "Cached albums page 2 for Test (Jellyfin), 500/2500 fetched, 500 cached (3s)"
-        ),
+        library_sync_toast_state("Cached albums page 2 for Test (Jellyfin), 500 cached (3s)"),
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
@@ -1493,9 +1500,9 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(
         library_sync_toast_message(
-            "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+            "Cached tracks page 4/6 for Test (Jellyfin), 2,000 cached (24s)"
         ),
-        "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+        "Cached tracks page 4/6 for Test (Jellyfin), 2,000 cached (24s)"
     );
     assert_eq!(
         library_sync_toast_message(
