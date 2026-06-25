@@ -15,6 +15,7 @@ const PLAYER_TRANSPORT_MARGIN: &str = "0";
 const PLAYER_PROGRESS_MIN_WIDTH: &str = "220px";
 const SIDEBAR_ENTRY_FONT_SIZE: &str = "10px";
 const SIDEBAR_ENTRY_FONT_WEIGHT: &str = "600";
+const SEEDED_GRADIENT_SHOWCASE_SHADOW: &str = "inset 0 0 0 1px color-mix(in srgb, @window_fg_color 10%, transparent), 0 18px 42px rgba(0, 0, 0, 0.2)";
 const MIN_BODY_TEXT_CONTRAST: f64 = 4.5;
 
 #[derive(Clone, Copy)]
@@ -115,11 +116,24 @@ fn selector_property(css: &str, selector: &str, property: &str) -> Option<String
             .map(str::trim)
             .any(|candidate| candidate == selector)
         {
-            return block
-                .lines()
-                .map(str::trim)
-                .find_map(|line| line.strip_prefix(&format!("{property}:")))
-                .map(|value| value.trim().trim_end_matches(';').to_string());
+            let lines: Vec<_> = block.lines().map(str::trim).collect();
+            for (index, line) in lines.iter().enumerate() {
+                let Some(value) = line.strip_prefix(&format!("{property}:")) else {
+                    continue;
+                };
+                let mut property_value = value.trim().to_string();
+                if property_value.ends_with(';') {
+                    return Some(property_value.trim_end_matches(';').to_string());
+                }
+                for continuation in lines.iter().skip(index + 1) {
+                    property_value.push(' ');
+                    property_value.push_str(continuation.trim_end_matches(';'));
+                    if continuation.ends_with(';') {
+                        return Some(property_value.trim().to_string());
+                    }
+                }
+                return Some(property_value.trim().to_string());
+            }
         }
         remaining = after_block_start.get(block_end + 1..).unwrap_or_default();
     }
@@ -134,8 +148,7 @@ mod tests {
     fn style_secondary_themes() {
         for selector in [
             ".muted",
-            ".home-showcase .muted",
-            ".album-detail-showcase .muted",
+            ".seeded-gradient-showcase .muted",
             ".server-section-label",
         ] {
             assert_eq!(
@@ -153,6 +166,30 @@ mod tests {
                 palette.name
             );
         }
+    }
+
+    #[test]
+    fn style_seeded_gradient_showcase_owns_shared_surface() {
+        assert_eq!(
+            selector_color(APP_STYLE, ".seeded-gradient-showcase"),
+            Some("@window_fg_color".to_string()),
+            "seeded gradient showcases should own the foreground color"
+        );
+        assert_eq!(
+            selector_color(APP_STYLE, ".seeded-gradient-showcase .eyebrow"),
+            Some(METADATA_LINK_HOVER_COLOR.to_string()),
+            "seeded gradient showcase eyebrows should use the readable accent mix"
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".seeded-gradient-showcase", "border-radius"),
+            Some("8px".to_string()),
+            "seeded gradient showcases should own the shared radius"
+        );
+        assert_eq!(
+            selector_property(APP_STYLE, ".seeded-gradient-showcase", "box-shadow"),
+            Some(SEEDED_GRADIENT_SHOWCASE_SHADOW.to_string()),
+            "seeded gradient showcases should own the shared edge shadow"
+        );
     }
 
     #[test]

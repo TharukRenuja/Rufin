@@ -557,13 +557,24 @@ menubutton.server-selector > button:hover {
   padding-bottom: 4px;
 }
 
-.home-showcase {
-  padding: 18px;
+.seeded-gradient-showcase {
   border-radius: 8px;
   color: @window_fg_color;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 10%, transparent),
     0 18px 42px rgba(0, 0, 0, 0.2);
+}
+
+.seeded-gradient-showcase .muted {
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
+}
+
+.seeded-gradient-showcase .eyebrow {
+  color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
+}
+
+.home-showcase {
+  padding: 18px;
 }
 
 .home-showcase-title {
@@ -574,10 +585,6 @@ menubutton.server-selector > button:hover {
 
 .home-showcase-title-compact {
   font-size: 28px;
-}
-
-.home-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
 }
 
 .home-showcase-kind-row {
@@ -1008,11 +1015,6 @@ scale.volume-slider trough {
 .detail-showcase,
 .playlist-detail-showcase {
   padding: 25px;
-  border-radius: 8px;
-  color: @window_fg_color;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 10%, transparent),
-    0 6px 16px rgba(0, 0, 0, 0.18);
 }
 
 .playlist-detail-showcase {
@@ -1056,18 +1058,6 @@ scale.volume-slider trough {
 
 .playlist-detail-showcase .detail-title {
   font-size: 34px;
-}
-
-.detail-showcase .muted,
-.album-detail-showcase .muted,
-.playlist-detail-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
-}
-
-.detail-showcase .eyebrow,
-.album-detail-showcase .eyebrow,
-.playlist-detail-showcase .eyebrow {
-  color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
 .album-detail-showcase .eyebrow {

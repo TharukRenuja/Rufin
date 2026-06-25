@@ -297,6 +297,7 @@ pub(in crate::ui) fn next_home_showcase_seed() -> u64 {
 }
 pub(in crate::ui) fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
     let class_name = format!("album-seed-gradient-{:08x}", seed);
+    widget.add_css_class("seeded-gradient-showcase");
     widget.add_css_class(&class_name);
 
     let Some(display) = gtk::gdk::Display::default() else {
