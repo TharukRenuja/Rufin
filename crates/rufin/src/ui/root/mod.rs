@@ -188,6 +188,7 @@ mod album_detail_view;
 mod build;
 mod cover;
 mod cover_startup;
+mod detail_links;
 mod detail_showcase;
 mod empty_states;
 mod favorite_controls;

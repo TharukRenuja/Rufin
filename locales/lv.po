@@ -904,6 +904,10 @@ msgstr "Atvērt vietnē Last.fm"
 msgid "Open on MusicBrainz"
 msgstr "Atvērt vietnē MusicBrainz"
 
+#, fuzzy
+msgid "Open on Navidrome"
+msgstr "Navidrome"
+
 msgid "Open release notes"
 msgstr "Atvērt izdevuma piezīmes"
 
