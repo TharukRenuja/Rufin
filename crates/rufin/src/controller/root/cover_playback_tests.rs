@@ -1580,7 +1580,7 @@ pub(in crate::controller) fn cover_auto_repeat_one_skips_refill() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let mut settings = controller.load_settings();
-    settings.auto_dj_refill_threshold = 2;
+    settings.auto_dj_refill_threshold = 0;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
@@ -1588,10 +1588,16 @@ pub(in crate::controller) fn cover_auto_repeat_one_skips_refill() {
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second]);
-    let _queue = wait_for_queue(&events).expect("queue");
+    let queue = wait_for_queue(&events).expect("queue");
+    assert_eq!(queue.entries.len(), 2);
     controller.cycle_repeat();
     let _playback = wait_for_playback_repeat(&events, RepeatMode::One);
 
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 2;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
     assert!(!controller.auto_dj_topup());
     let queue = controller.queue_snapshot().expect("queue snapshot");
     assert_eq!(queue.entries.len(), 2);
