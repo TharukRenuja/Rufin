@@ -170,6 +170,16 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     }
 }
 
+pub(in crate::ui) fn preferences_login_status_toast_message_for_surface(
+    status: &str,
+    status_visible_on_page: bool,
+) -> Option<String> {
+    if status_visible_on_page {
+        return None;
+    }
+    preferences_login_status_toast_message(status)
+}
+
 pub(in crate::ui) fn controller_error_is_user_visible(error: &str) -> bool {
     !error.contains("Element failed to change its state")
 }
@@ -1080,10 +1090,6 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let delta_empty = status.delta.is_empty();
                     let last_error = status.last_error.clone();
                     let sync_toast_state = library_sync_toast_state(&status.sync_status);
-                    let toast_message = sync_toast_state
-                        .is_none()
-                        .then(|| preferences_login_status_toast_message(&status.sync_status))
-                        .flatten();
                     let delta = status.delta.clone();
                     let tracks_changed = delta.reset.is_some() || !delta.tracks.is_empty();
                     let apply_started = Instant::now();
@@ -1111,7 +1117,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.show_preferences_toast(&error);
                     } else if let Some(sync_toast_state) = sync_toast_state {
                         shell.update_library_sync_toast(sync_toast_state, &sync_status);
-                    } else if let Some(message) = toast_message {
+                    } else if let Some(message) = preferences_login_status_toast_message_for_surface(
+                        &sync_status,
+                        shell.library_sync_status_visible_fullscreen(),
+                    ) {
                         shell.show_preferences_toast(&message);
                     }
                     let mut delta_ms = 0_u64;
@@ -1437,7 +1446,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 ControllerEvent::LoginStatus(status) => {
                     if let Some(sync_toast_state) = library_sync_toast_state(&status) {
                         shell.update_library_sync_toast(sync_toast_state, &status);
-                    } else if let Some(message) = preferences_login_status_toast_message(&status) {
+                    } else if let Some(message) = preferences_login_status_toast_message_for_surface(
+                        &status,
+                        shell.library_sync_status_visible_fullscreen(),
+                    ) {
                         shell.show_preferences_toast(&message);
                     }
                     let sync_complete = login_status_marks_sync_complete(&status);
