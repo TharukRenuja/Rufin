@@ -3,7 +3,6 @@ use super::*;
 use crate::i18n::msgid;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
-const DETAIL_TRASH_ICON_SIZE: i32 = 18;
 
 pub(in crate::ui) struct MediaDetailShowcase {
     pub(in crate::ui) route_class: &'static str,
@@ -249,50 +248,8 @@ pub(in crate::ui) fn detail_delete_button(label: &str) -> gtk::Button {
     button.add_css_class("detail-showcase-action-button");
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
-    button.set_child(Some(&detail_trash_icon()));
+    button.set_child(Some(&gtk::Image::from_icon_name("window-close-symbolic")));
     button
-}
-
-fn detail_trash_icon() -> gtk::DrawingArea {
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(DETAIL_TRASH_ICON_SIZE);
-    icon.set_content_height(DETAIL_TRASH_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_draw_func(|area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
-        context.set_line_width((f64::from(width.min(height)) * 0.095).clamp(1.5, 1.9));
-        context.set_line_cap(gtk::cairo::LineCap::Round);
-        context.set_line_join(gtk::cairo::LineJoin::Round);
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let left = width * 0.29;
-        let right = width * 0.71;
-        let top = height * 0.36;
-        let bottom = height * 0.78;
-        context.rectangle(left, top, right - left, bottom - top);
-        let _ = context.stroke();
-
-        let lid_y = height * 0.28;
-        context.move_to(width * 0.23, lid_y);
-        context.line_to(width * 0.77, lid_y);
-        let _ = context.stroke();
-
-        context.move_to(width * 0.42, height * 0.20);
-        context.line_to(width * 0.58, height * 0.20);
-        context.line_to(width * 0.62, lid_y);
-        context.move_to(width * 0.42, height * 0.20);
-        context.line_to(width * 0.38, lid_y);
-        let _ = context.stroke();
-    });
-    icon
 }
 
 pub(in crate::ui) fn detail_action_row() -> gtk::Box {

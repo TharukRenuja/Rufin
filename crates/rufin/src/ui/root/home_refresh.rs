@@ -730,7 +730,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
     menu.append(&context_menu_action(
         "Delete",
         "playlist.delete",
-        "user-trash-symbolic",
+        "window-close-symbolic",
     ));
 
     let surface =
@@ -825,7 +825,7 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
     menu.append(&context_menu_action(
         "Delete",
         "smart-playlist.delete",
-        "user-trash-symbolic",
+        "window-close-symbolic",
     ));
 
     let surface = ContextMenuSurface::new(

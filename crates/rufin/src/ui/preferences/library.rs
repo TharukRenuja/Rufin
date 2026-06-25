@@ -5,11 +5,13 @@ use adw::prelude::*;
 use domain::{LibrarySourceSelection, ServerIdentity};
 use gtk::gio;
 
-use crate::controller::{LibrarySnapshot, ServerLocalAccessSnapshot};
+use crate::controller::ServerLocalAccessSnapshot;
 use crate::i18n::tr;
 
 use super::super::{album_count_text, track_count_text};
 use super::{Shell, button_row};
+
+const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
 
 pub(super) fn library_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> gtk::Widget {
     let navigation = adw::NavigationView::new();
@@ -59,12 +61,14 @@ fn library_sources_page(
                 .find(|summary| summary.server_id == server.id);
             let row = adw::ActionRow::builder()
                 .title(server_display_name(server))
-                .subtitle(server_source_subtitle(&library, server, summary, selected))
+                .subtitle(server_source_subtitle(server, summary))
                 .subtitle_lines(4)
                 .build();
-            row.add_prefix(&gtk::Image::from_icon_name(provider_icon_name(
-                &server.provider,
-            )));
+            let icon = gtk::Image::from_icon_name(provider_icon_name(&server.provider));
+            icon.set_pixel_size(SERVER_PROVIDER_ICON_SIZE);
+            icon.set_size_request(SERVER_PROVIDER_ICON_SIZE, SERVER_PROVIDER_ICON_SIZE);
+            icon.set_valign(gtk::Align::Center);
+            row.add_prefix(&icon);
             if selected {
                 row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
             }
@@ -115,7 +119,7 @@ fn library_sources_page(
                 .subtitle(folder.path.clone())
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name("route-folders-symbolic"));
-            let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+            let remove = gtk::Button::from_icon_name("window-close-symbolic");
             remove.set_tooltip_text(Some(&tr("Remove")));
             remove.add_css_class("flat");
             remove.add_css_class("destructive-action");
@@ -132,10 +136,12 @@ fn library_sources_page(
         }
     }
 
-    let add_local = button_row("Add a music folder", "folder-new-symbolic");
+    let local_actions = adw::PreferencesRow::new();
+    let action_buttons = action_button_box();
+    let add_local = row_action_button("Add a music folder", "folder-new-symbolic");
     let add_shell = Rc::clone(shell);
     let add_dialog = dialog.clone();
-    add_local.connect_activated(move |_| {
+    add_local.connect_clicked(move |_| {
         let shell = Rc::clone(&add_shell);
         let dialog = add_dialog.clone();
         gtk::glib::spawn_future_local(async move {
@@ -152,10 +158,57 @@ fn library_sources_page(
             dialog.close();
         });
     });
-    local_group.add(&add_local);
+    action_buttons.append(&add_local);
+    let resync_local = row_action_button("Resync Library", "view-refresh-symbolic");
+    resync_local.set_sensitive(!library.local_folders.is_empty());
+    let resync_controller = shell.controller.clone();
+    let resync_dialog = dialog.clone();
+    resync_local.connect_clicked(move |_| {
+        resync_controller.resync_local_library();
+        resync_dialog.close();
+    });
+    action_buttons.append(&resync_local);
+    local_actions.set_child(Some(&action_buttons));
+    local_actions.set_activatable(false);
+    local_actions.set_selectable(false);
+    local_group.add(&local_actions);
     page.add(&local_group);
 
     page
+}
+
+fn action_button_box() -> gtk::Box {
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    actions.set_homogeneous(true);
+    actions.set_halign(gtk::Align::Fill);
+    actions.set_hexpand(true);
+    actions.set_margin_top(6);
+    actions.set_margin_bottom(6);
+    actions.set_margin_start(8);
+    actions.set_margin_end(8);
+    actions
+}
+
+fn row_action_button(title: &str, icon_name: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.set_halign(gtk::Align::Fill);
+    button.set_hexpand(true);
+    button.set_tooltip_text(Some(&tr(title)));
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_halign(gtk::Align::Center);
+    content.set_valign(gtk::Align::Center);
+    content.append(&gtk::Image::from_icon_name(icon_name));
+    let label = gtk::Label::new(Some(&tr(title)));
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(0);
+    label.set_max_width_chars(18);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_lines(2);
+    content.append(&label);
+    button.set_child(Some(&content));
+    button
 }
 
 fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::ActionRow) {
@@ -187,76 +240,55 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
 }
 
 fn server_source_subtitle(
-    library: &LibrarySnapshot,
     server: &ServerIdentity,
     summary: Option<&ServerLocalAccessSnapshot>,
-    selected: bool,
 ) -> String {
     let provider = provider_display_name(&server.provider);
     let address = if server.base_url.trim().is_empty() {
-        provider.clone()
+        String::new()
     } else {
         server.base_url.clone()
     };
     let folder = summary
         .and_then(|summary| summary.selected_music_folder_name.as_deref())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| {
-            if selected {
-                tr("All Music")
-            } else {
-                tr("Saved per server")
-            }
-        });
+        .unwrap_or_else(|| tr("All Music"));
     let mapping = local_mapping_status(summary);
-    let account = if selected {
-        library
-            .username
-            .as_deref()
-            .map(|username| format!("{}: {}", tr("User"), username))
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let cache = if selected {
-        selected_server_cache_line(library)
-    } else {
-        String::new()
-    };
-    [
-        provider,
-        address,
-        account,
-        format!("{}: {}", tr("Music Folder"), folder),
-        mapping,
-        cache,
-    ]
-    .into_iter()
-    .filter(|line| !line.trim().is_empty())
-    .collect::<Vec<_>>()
-    .join("\n")
+    let account = summary
+        .and_then(|summary| {
+            summary
+                .username
+                .as_deref()
+                .filter(|username| !username.trim().is_empty())
+        })
+        .map(|username| format!("{}: {}", tr("User"), username))
+        .unwrap_or_default();
+    let cache = summary.map(server_cache_line).unwrap_or_default();
+    let provider_line = metadata_line([provider, address]);
+    let folder_line = metadata_line([account, format!("{}: {}", tr("Music Folder"), folder)]);
+    let cache_line = metadata_line([cache, mapping]);
+    [provider_line, folder_line, cache_line]
+        .into_iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn selected_server_cache_line(library: &LibrarySnapshot) -> String {
-    let line = format!(
+fn metadata_line(parts: impl IntoIterator<Item = String>) -> String {
+    parts
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" - ")
+}
+
+fn server_cache_line(summary: &ServerLocalAccessSnapshot) -> String {
+    format!(
         "{}: {}, {}",
         tr("Cached"),
-        album_count_text(library.cached_album_count as u64),
-        track_count_text(library.cached_track_count as u64)
-    );
-    match library_sync_status_detail(&library.sync_status) {
-        Some(status) => format!("{line}. {status}"),
-        None => line,
-    }
-}
-
-fn library_sync_status_detail(status: &str) -> Option<String> {
-    let status = status.trim();
-    match status {
-        "" | "Cached library ready" => None,
-        "Library sync complete" => Some(tr("Library sync complete")),
-        _ => Some(status.to_string()),
-    }
+        album_count_text(summary.cached_album_count as u64),
+        track_count_text(summary.cached_track_count as u64)
+    )
 }
 
 fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {

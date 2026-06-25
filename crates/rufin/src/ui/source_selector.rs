@@ -5,18 +5,13 @@ use domain::{
     LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, ServerIdentity,
 };
 
-use super::{
-    Shell, folder_count_text,
-    layout::{COMPACT_RAIL_WIDTH, NORMAL_SIDEBAR_WIDTH},
-};
+use super::{Shell, folder_count_text, layout::NORMAL_SIDEBAR_WIDTH};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
 const NORMAL_SELECTOR_ICON_SIZE: i32 = 16;
-const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
-const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
-const COMPACT_SELECTOR_BUTTON_WIDTH: i32 = COMPACT_RAIL_WIDTH - 2;
+const COMPACT_SELECTOR_BUTTON_SIZE: i32 = 40;
 const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 18;
 const NORMAL_SELECTOR_BUTTON_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - 16;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 304;
@@ -28,7 +23,6 @@ pub(super) struct ServerSelector {
     pub normal_subtitle: gtk::Label,
     pub compact_button: gtk::MenuButton,
     pub compact_icon: gtk::Image,
-    pub compact_label: gtk::Label,
 }
 
 struct ServerSelectorContent {
@@ -73,23 +67,24 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_button.set_child(Some(&normal_content));
 
     let compact_button = gtk::MenuButton::new();
-    compact_button.add_css_class("nav-button");
     compact_button.add_css_class("flat");
-    compact_button.add_css_class("rail-button");
+    compact_button.add_css_class("rail-source-button");
     compact_button.add_css_class("server-selector");
     compact_button.set_always_show_arrow(false);
     compact_button.set_can_shrink(true);
     compact_button.set_direction(gtk::ArrowType::Up);
-    compact_button.set_size_request(COMPACT_SELECTOR_BUTTON_WIDTH, -1);
-    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    compact_button.set_halign(gtk::Align::Center);
+    compact_button.set_valign(gtk::Align::Center);
+    compact_button.set_size_request(COMPACT_SELECTOR_BUTTON_SIZE, COMPACT_SELECTOR_BUTTON_SIZE);
+    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     compact_content.set_halign(gtk::Align::Center);
-    compact_content.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
+    compact_content.set_valign(gtk::Align::Center);
     let compact_icon = gtk::Image::from_icon_name("network-server-symbolic");
     compact_icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
+    compact_icon.set_size_request(COMPACT_RAIL_ICON_SIZE, COMPACT_RAIL_ICON_SIZE);
+    compact_icon.set_halign(gtk::Align::Center);
+    compact_icon.set_valign(gtk::Align::Center);
     compact_content.append(&compact_icon);
-    let compact_label = gtk::Label::new(None);
-    configure_rail_label(&compact_label);
-    compact_content.append(&compact_label);
     compact_button.set_child(Some(&compact_content));
 
     ServerSelector {
@@ -99,7 +94,6 @@ pub(super) fn build_server_selector() -> ServerSelector {
         normal_subtitle,
         compact_button,
         compact_icon,
-        compact_label,
     }
 }
 
@@ -124,14 +118,11 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
 
     selector.compact_icon.set_icon_name(Some(icon_name));
     selector
-        .compact_label
-        .set_text(&compact_sidebar_label_text(&content.name));
-    selector
         .compact_button
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     update_selector_popover(
         &selector.compact_button,
-        server_selection_popover(shell, &content, COMPACT_SELECTOR_BUTTON_WIDTH),
+        server_selection_popover(shell, &content, COMPACT_SELECTOR_BUTTON_SIZE),
     );
 }
 
@@ -162,8 +153,10 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
 }
 
 fn update_selector_popover(button: &gtk::MenuButton, popover: gtk::Popover) {
-    if button.popover().is_some_and(|current| current.is_visible()) {
-        return;
+    if let Some(current) = button.popover()
+        && current.is_visible()
+    {
+        current.popdown();
     }
     button.set_popover(Some(&popover));
 }
@@ -463,20 +456,6 @@ fn server_detail(server: &ServerIdentity) -> String {
     }
 }
 
-fn compact_sidebar_label_text(label: &str) -> String {
-    let trimmed = label.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    let mut parts = trimmed.split_whitespace();
-    let first = parts.next().unwrap_or(trimmed);
-    if parts.next().is_some() {
-        first.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 fn configure_normal_selector_label(label: &gtk::Label) {
     label.add_css_class("sidebar-entry-label");
     label.set_hexpand(true);
@@ -487,17 +466,6 @@ fn configure_normal_selector_label(label: &gtk::Label) {
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_request(1);
     label.set_max_width_chars(NORMAL_SELECTOR_LABEL_WIDTH_CHARS);
-}
-
-fn configure_rail_label(label: &gtk::Label) {
-    label.add_css_class("sidebar-entry-label");
-    label.set_xalign(0.5);
-    label.set_justify(gtk::Justification::Center);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_width_request(COMPACT_RAIL_LABEL_WIDTH);
-    label.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
-    label.set_lines(1);
-    label.set_max_width_chars(COMPACT_RAIL_LABEL_WIDTH_CHARS);
 }
 
 fn selector_popover_x_offset(anchor_width: i32, popover_width: i32) -> i32 {

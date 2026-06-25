@@ -62,9 +62,6 @@ msgstr "Добавить правило"
 msgid "Add Your Music Library"
 msgstr "Добавить свою музыкальную библиотеку"
 
-msgid "Add a music folder"
-msgstr "Добавить папку с музыкой"
-
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr "Добавьте сервер для использования Jellyfin, Subsonic или OpenSubsonic."
 
@@ -267,11 +264,6 @@ msgstr ""
 
 msgid "Choose the current page layout."
 msgstr "Выберите текущий макет страницы."
-
-msgid "Choose the folder to scan and play directly from this computer"
-msgstr ""
-"Выберите папку для сканирования и воспроизведения файлов непосредственно с "
-"этого компьютера"
 
 msgid "Classical"
 msgstr "Классическая"
@@ -591,6 +583,10 @@ msgstr "Интерфейс"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
+#, fuzzy
+msgid "Jellyfin Instant Mix recommendations"
+msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
+
 msgid "Keep album transitions gapless when possible"
 msgstr "По возможности обеспечивать плавный переход между треками альбома"
 
@@ -876,9 +872,6 @@ msgstr "Нет"
 msgid "Not connected"
 msgstr "Не подключено"
 
-msgid "Not set"
-msgstr "Не задано"
-
 msgid "Nothing playing"
 msgstr "Не играет"
 
@@ -896,6 +889,10 @@ msgstr "Количество песен"
 
 msgid "Off"
 msgstr "Выкл."
+
+#, fuzzy
+msgid "Off only for a server you control"
+msgstr "Отключайте только для сервера, которым вы управляете"
 
 msgid "Only played tracks"
 msgstr "Только проигранные треки"
@@ -926,10 +923,6 @@ msgstr "Запуск авторизации в Last.fm…"
 
 msgid "Opening Libre.fm authorization…"
 msgstr "Открытие окна авторизации Libre.fm…"
-
-msgid "Optionally map server tracks to files on this computer"
-msgstr ""
-"При желании можно сопоставить треки на сервере с файлами на этом компьютере"
 
 msgid "Original"
 msgstr "Оригинал"
@@ -1155,9 +1148,6 @@ msgstr ""
 msgid "Resume"
 msgstr "Возобновить"
 
-msgid "Resync Library"
-msgstr "Синхронизировать библиотеку"
-
 msgid "Rich presence"
 msgstr "Расширенная информация о текущем воспроизведении"
 
@@ -1206,9 +1196,6 @@ msgstr[1] ""
 msgstr[2] ""
 "{direct} прямое, {prefix} по префиксу, {metadata} по метаданным, {unmatched} "
 "не найдено. Всего: {total} треков."
-
-msgid "Saved per server"
-msgstr "Сохранено для каждого сервера"
 
 msgid "Saved to"
 msgstr "Сохранено в"
@@ -1561,9 +1548,6 @@ msgstr[2] ""
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
 
-msgid "Use This Source"
-msgstr "Использовать Этот Источник"
-
 msgid "Use different layout below a threshold width"
 msgstr ""
 "Использовать другую схему расположения элементов, если ширина экрана меньше "
@@ -1580,6 +1564,10 @@ msgstr "Токен пользователя"
 
 msgid "Username"
 msgstr "Имя пользователя"
+
+#, fuzzy
+msgid "Uses Jellyfin play-radio recommendations"
+msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
 
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
@@ -1753,6 +1741,9 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ msgid "Add Local Folder"
 #~ msgstr "Добавить Локальную Папку"
 
+#~ msgid "Add a music folder"
+#~ msgstr "Добавить папку с музыкой"
+
 #~ msgid "Add local folder access"
 #~ msgstr "Предоставить доступ к локальной папке"
 
@@ -1784,6 +1775,11 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "Choose a provider, pick a server, or enter the address manually"
 #~ msgstr "Выберите провайдера, выберите сервер или введите адрес вручную"
+
+#~ msgid "Choose the folder to scan and play directly from this computer"
+#~ msgstr ""
+#~ "Выберите папку для сканирования и воспроизведения файлов непосредственно "
+#~ "с этого компьютера"
 
 #~ msgid "Choose when the left sidebar uses compact navigation"
 #~ msgstr ""
@@ -1875,6 +1871,14 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ msgid "No tracks match the search."
 #~ msgstr "Не найдено треков, соответствующих запросу."
 
+#~ msgid "Not set"
+#~ msgstr "Не задано"
+
+#~ msgid "Optionally map server tracks to files on this computer"
+#~ msgstr ""
+#~ "При желании можно сопоставить треки на сервере с файлами на этом "
+#~ "компьютере"
+
 #, fuzzy
 #~ msgid "Play Last"
 #~ msgstr "Воспроизвести позже"
@@ -1904,8 +1908,14 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 #~ msgid "Restore neutral bands and disable equalizer."
 #~ msgstr "Восстановить нейтральные полосы и отключить эквалайзер."
 
+#~ msgid "Resync Library"
+#~ msgstr "Синхронизировать библиотеку"
+
 #~ msgid "Saved mapping."
 #~ msgstr "Сохраненные сопоставления."
+
+#~ msgid "Saved per server"
+#~ msgstr "Сохранено для каждого сервера"
 
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr ""
@@ -1967,6 +1977,9 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "Unsaved changes."
 #~ msgstr "Несохраненные изменения."
+
+#~ msgid "Use This Source"
+#~ msgstr "Использовать Этот Источник"
 
 #~ msgid "Use remote lyric providers when server lyrics are unavailable"
 #~ msgstr ""

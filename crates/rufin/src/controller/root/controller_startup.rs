@@ -33,6 +33,15 @@ fn sync_result_was_cancelled(
         || matches!(result, Err(error) if error.as_str() == SYNC_CANCELLED_ERROR)
 }
 
+fn sync_source_label(server: &ServerIdentity) -> String {
+    let name = server.name.trim();
+    if name.is_empty() {
+        provider_display_name(&server.provider).to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 fn mark_sync_cancelled(store: &StoreHandle, server_id: &ServerId, generation: i64) {
     if let Err(error) = store.with_store(|store| store.cancel_sync(server_id, generation)) {
         warn!(%error, server_id = %server_id.as_str(), generation, "failed to mark sync cancelled");
@@ -167,7 +176,7 @@ fn start_sync_thread_inner(
 
     thread::spawn(move || {
         let _permit = permit;
-        let provider_name = provider_display_name(&saved.server.provider);
+        let provider_name = sync_source_label(&saved.server);
         if emit_progress {
             let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
                 "Syncing {provider_name} library…"
@@ -1779,10 +1788,11 @@ impl SyncProgressReporter {
     }
 
     fn source_label(&self) -> String {
-        if self.source_name.trim().is_empty() || self.source_name == self.provider_kind {
+        let source_name = self.source_name.trim();
+        if source_name.is_empty() {
             return self.provider_kind.clone();
         }
-        format!("{} ({})", self.source_name, self.provider_kind)
+        source_name.to_string()
     }
 
     fn emit_status(&mut self, force: bool, status: String) {

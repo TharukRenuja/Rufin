@@ -790,15 +790,11 @@ pub(in crate::ui) fn shell_split_status_detail() {
 #[test]
 pub(in crate::ui) fn shell_connection_progress_detail() {
     assert_eq!(
-        connection_progress_status_label(
-            "Fetching music folders for Desktop (Jellyfin) (20s elapsed)"
-        ),
-        Some("Fetching music folders for Desktop (Jellyfin) (20s elapsed)".to_string())
+        connection_progress_status_label("Fetching music folders for Desktop (20s elapsed)"),
+        Some("Fetching music folders for Desktop (20s elapsed)".to_string())
     );
     assert_eq!(
-        connection_progress_status_label(
-            "Library cache ready for Desktop (Jellyfin) in 44s elapsed"
-        ),
+        connection_progress_status_label("Library cache ready for Desktop in 44s elapsed"),
         Some("Preparing library…".to_string())
     );
 }
@@ -1474,7 +1470,7 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
-        library_sync_toast_state("Cached albums page 2 for Test (Jellyfin), 500 cached (3s)"),
+        library_sync_toast_state("Cached albums page 2 for Test, 500 cached (3s)"),
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
@@ -1490,7 +1486,7 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some(LibrarySyncToastState::Clear)
     );
     assert_eq!(
-        library_sync_toast_state("Library cache ready for Test (Jellyfin) in 44s elapsed"),
+        library_sync_toast_state("Library cache ready for Test in 44s elapsed"),
         Some(LibrarySyncToastState::Clear)
     );
     assert_eq!(library_sync_toast_state("Cached library cleared."), None);
@@ -1499,10 +1495,8 @@ pub(in crate::ui) fn shell_use_statuses() {
         "Caching library… This may take some time."
     );
     assert_eq!(
-        library_sync_toast_message(
-            "Cached tracks page 4/6 for Test (Jellyfin), 2,000 cached (24s)"
-        ),
-        "Cached tracks page 4/6 for Test (Jellyfin), 2,000 cached (24s)"
+        library_sync_toast_message("Cached tracks page 4/6 for Test, 2,000 cached (24s)"),
+        "Cached tracks page 4/6 for Test, 2,000 cached (24s)"
     );
     assert_eq!(
         library_sync_toast_message(

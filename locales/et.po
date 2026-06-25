@@ -59,10 +59,6 @@ msgstr "Lisa reegel"
 msgid "Add Your Music Library"
 msgstr ""
 
-#, fuzzy
-msgid "Add a music folder"
-msgstr "Vali kohalik muusikakaust"
-
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr "Lisa kasutatav Jellyfini, Subsonicu või OpenSubsonicu server."
 
@@ -268,11 +264,6 @@ msgstr ""
 
 msgid "Choose the current page layout."
 msgstr "Vali praegune lehe paigutus."
-
-#, fuzzy
-msgid "Choose the folder to scan and play directly from this computer"
-msgstr ""
-"Vali kaust, mida skannida ja millelt muusikat otse selle arvutiga esitada"
 
 msgid "Classical"
 msgstr "Klassikaline muusika"
@@ -598,6 +589,9 @@ msgstr "Kasutajaliides"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
+msgid "Jellyfin Instant Mix recommendations"
+msgstr ""
+
 msgid "Keep album transitions gapless when possible"
 msgstr "Kui võimalik, siis hoia albumi lugude üleminekud pausideta"
 
@@ -881,9 +875,6 @@ msgstr "Määramata"
 msgid "Not connected"
 msgstr "Pole ühendatud"
 
-msgid "Not set"
-msgstr "Määratlemata"
-
 msgid "Nothing playing"
 msgstr "Mitte midagi pole esitamisel"
 
@@ -901,6 +892,10 @@ msgstr "Lugude arv"
 
 msgid "Off"
 msgstr "Väljas"
+
+#, fuzzy
+msgid "Off only for a server you control"
+msgstr "Lülita välja vaid enda kontrollitava serveri jaoks"
 
 msgid "Only played tracks"
 msgstr "Vaid esitatud lood"
@@ -932,10 +927,6 @@ msgstr "Avan Last.fm-i autentimisvaadet…"
 
 msgid "Opening Libre.fm authorization…"
 msgstr "Avan Libre.fm-i autentimisvaadet…"
-
-msgid "Optionally map server tracks to files on this computer"
-msgstr ""
-"Soovi korral saad serveris olevad lood vastendada failidega selles arvutis"
 
 msgid "Original"
 msgstr "Algne"
@@ -1162,9 +1153,6 @@ msgstr "Taasta valitud eelseadistus vaikeväärtustega."
 msgid "Resume"
 msgstr "Jätka"
 
-msgid "Resync Library"
-msgstr "Sünkrooni muusikakogu uuesti"
-
 #, fuzzy
 msgid "Rich presence"
 msgstr "Laiendatud teave"
@@ -1206,9 +1194,6 @@ msgid_plural ""
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
 msgstr[1] ""
-
-msgid "Saved per server"
-msgstr "Salvestatud serverikohaselt"
 
 msgid "Saved to"
 msgstr "Salvestatud asukohta"
@@ -1554,9 +1539,6 @@ msgstr[1] ""
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
-msgid "Use This Source"
-msgstr "Kasuta seda allikat"
-
 msgid "Use different layout below a threshold width"
 msgstr ""
 "Kui ekraani laius jääb alla etteantud piiri, siis näita kitsast paigutust"
@@ -1572,6 +1554,9 @@ msgstr "Kasutaja tunnusluba"
 
 msgid "Username"
 msgstr "Kasutajanimi"
+
+msgid "Uses Jellyfin play-radio recommendations"
+msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"
@@ -1736,6 +1721,10 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgid "Add Local Folder"
 #~ msgstr "Lisa kohalik kaust"
 
+#, fuzzy
+#~ msgid "Add a music folder"
+#~ msgstr "Vali kohalik muusikakaust"
+
 #~ msgid "Add local folder access"
 #~ msgstr "Lisa ligipääs kohalikule kaustale"
 
@@ -1762,6 +1751,11 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Choose a provider, pick a server, or enter the address manually"
 #~ msgstr "Vali teenusepakkuja või server, aga võid ka aadressi käsitsi lisada"
+
+#, fuzzy
+#~ msgid "Choose the folder to scan and play directly from this computer"
+#~ msgstr ""
+#~ "Vali kaust, mida skannida ja millelt muusikat otse selle arvutiga esitada"
 
 #~ msgid "Choose when the left sidebar uses compact navigation"
 #~ msgstr "Seadista vasaku külgriba kompaktse vaate käivitamise tingimusi"
@@ -1849,6 +1843,13 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgid "No tracks match the search."
 #~ msgstr "Otsingule ei vasta ükski lugu."
 
+#~ msgid "Not set"
+#~ msgstr "Määratlemata"
+
+#~ msgid "Optionally map server tracks to files on this computer"
+#~ msgstr ""
+#~ "Soovi korral saad serveris olevad lood vastendada failidega selles arvutis"
+
 #~ msgid "Output"
 #~ msgstr "Väljund"
 
@@ -1881,8 +1882,14 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 #~ msgid "Restore neutral bands and disable equalizer."
 #~ msgstr "Taasta sagedusvahemike olek keskmisena ja lülita ekvalaiser välja."
 
+#~ msgid "Resync Library"
+#~ msgstr "Sünkrooni muusikakogu uuesti"
+
 #~ msgid "Saved mapping."
 #~ msgstr "Vastendus on salvestatud."
+
+#~ msgid "Saved per server"
+#~ msgstr "Salvestatud serverikohaselt"
 
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr ""
@@ -1941,6 +1948,9 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Unsynchronized"
 #~ msgstr "Sünkroonimata"
+
+#~ msgid "Use This Source"
+#~ msgstr "Kasuta seda allikat"
 
 #~ msgid "Use remote lyric providers when server lyrics are unavailable"
 #~ msgstr ""

@@ -412,12 +412,6 @@ msgstr ""
 msgid "Local Library"
 msgstr ""
 
-msgid "Optionally map server tracks to files on this computer"
-msgstr ""
-
-msgid "Choose the folder to scan and play directly from this computer"
-msgstr ""
-
 msgid "Local playback mapping configured"
 msgstr ""
 
@@ -442,9 +436,6 @@ msgstr ""
 msgid "Server Settings"
 msgstr ""
 
-msgid "Server Address"
-msgstr ""
-
 msgid "Username"
 msgstr ""
 
@@ -454,36 +445,25 @@ msgstr ""
 msgid "Verify server certificate"
 msgstr ""
 
-msgid "Turn off only for a server you control"
+msgid "Off only for a server you control"
 msgstr ""
 
-msgid "Use Jellyfin Instant Mix for recommendations"
+msgid "Jellyfin Instant Mix recommendations"
 msgstr ""
 
-msgid ""
-"This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work."
+msgid "Uses Jellyfin play-radio recommendations"
 msgstr ""
 
 msgid "Save Server Settings"
 msgstr ""
 
+msgid "Server Address"
+msgstr ""
+
 msgid "Server Actions"
 msgstr ""
 
-msgid "Use This Source"
-msgstr ""
-
-msgid "Resync Library"
-msgstr ""
-
 msgid "Clear Cached Library"
-msgstr ""
-
-msgid "Forget Server"
-msgstr ""
-
-msgid "Not set"
 msgstr ""
 
 msgid "This removes cached library metadata for"
@@ -493,6 +473,9 @@ msgid "Cancel"
 msgstr ""
 
 msgid "Clear Cache"
+msgstr ""
+
+msgid "Forget Server"
 msgstr ""
 
 msgid ""
@@ -545,6 +528,17 @@ msgstr[0] ""
 msgstr[1] ""
 
 msgid "Add Your Music Library"
+msgstr ""
+
+msgid "Turn off only for a server you control"
+msgstr ""
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
 msgstr ""
 
 msgid "Server"
@@ -691,9 +685,6 @@ msgstr ""
 msgid "Remove"
 msgstr ""
 
-msgid "Add a music folder"
-msgstr ""
-
 msgid "Remove Local Folder"
 msgstr ""
 
@@ -703,9 +694,6 @@ msgstr ""
 msgid "All Music"
 msgstr ""
 
-msgid "Saved per server"
-msgstr ""
-
 msgid "User"
 msgstr ""
 
@@ -713,9 +701,6 @@ msgid "Music Folder"
 msgstr ""
 
 msgid "Cached"
-msgstr ""
-
-msgid "Library sync complete"
 msgstr ""
 
 msgid "No local playback mapping"
@@ -1216,6 +1201,9 @@ msgid "Caching library artwork\342\200\246"
 msgstr ""
 
 msgid "Cached library ready"
+msgstr ""
+
+msgid "Library sync complete"
 msgstr ""
 
 msgid "Music Server"

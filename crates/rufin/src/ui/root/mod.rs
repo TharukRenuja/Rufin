@@ -327,6 +327,7 @@ pub struct AppOptions {
 pub(in crate::ui) struct AddServerDialogHandle {
     toolbar: adw::ToolbarView,
     on_connect_started: Option<Rc<dyn Fn()>>,
+    draft: Rc<RefCell<login::AddServerDraft>>,
 }
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
