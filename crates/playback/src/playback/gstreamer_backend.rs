@@ -352,6 +352,7 @@ pub(super) struct PlayerPipeline {
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
     audio_sink_config: Option<AudioSinkConfig>,
+    audio_output: Option<gst::Element>,
     equalizer: Option<gst::Element>,
     visualizer_pad: Option<gst::Pad>,
     visualizer_probe: Option<gst::PadProbeId>,
@@ -371,6 +372,7 @@ impl AudioSinkConfig {
 }
 struct AudioSink {
     root: gst::Element,
+    output: gst::Element,
     equalizer: Option<gst::Element>,
     visualizer_pad: Option<gst::Pad>,
 }
@@ -404,6 +406,7 @@ impl PlayerPipeline {
             bus,
             _about_to_finish_id: about_to_finish_id,
             audio_sink_config: None,
+            audio_output: None,
             equalizer: None,
             visualizer_pad: None,
             visualizer_probe: None,
@@ -416,14 +419,66 @@ impl PlayerPipeline {
             self.apply_equalizer(&settings.equalizer);
             return Ok(());
         }
+        if self.audio_chain_matches(&config)
+            && self.update_audio_output(settings.audio_output.as_deref())
+        {
+            self.audio_sink_config = Some(config);
+            self.apply_equalizer(&settings.equalizer);
+            return Ok(());
+        }
         self.clear_visualizer_tap();
         let sink = build_audio_sink(settings)?;
         self.pipeline.set_property("audio-sink", &sink.root);
+        self.audio_output = Some(sink.output);
         self.equalizer = sink.equalizer;
         self.visualizer_pad = sink.visualizer_pad;
         self.audio_sink_config = Some(config);
         self.apply_equalizer(&settings.equalizer);
         Ok(())
+    }
+
+    fn audio_chain_matches(&self, config: &AudioSinkConfig) -> bool {
+        self.audio_sink_config
+            .as_ref()
+            .is_some_and(|current| current.replay_gain == config.replay_gain)
+            && self.audio_output.is_some()
+    }
+
+    fn update_audio_output(&self, selected: Option<&str>) -> bool {
+        let Some(output) = self.audio_output.as_ref() else {
+            return false;
+        };
+        let target = match selected {
+            Some(selected) => match audio_output_device_target(selected) {
+                Some(target) => target.to_string(),
+                None => return false,
+            },
+            None => match default_audio_output_device_target() {
+                Some(target) => target,
+                None => return false,
+            },
+        };
+        if output.find_property("device").is_some() {
+            output.set_property("device", &target);
+            return true;
+        }
+        if output.find_property("target-object").is_some() {
+            output.set_property("target-object", &target);
+            return true;
+        }
+        if let Some(proxy) = output.dynamic_cast_ref::<gst::ChildProxy>()
+            && let Some(child) = proxy.child_by_index(0)
+        {
+            if child.find_property("device").is_some() {
+                child.set_property("device", &target);
+                return true;
+            }
+            if child.find_property("target-object").is_some() {
+                child.set_property("target-object", &target);
+                return true;
+            }
+        }
+        false
     }
 
     fn apply_equalizer(&self, settings: &EqualizerSettings) {
@@ -1987,6 +2042,7 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<AudioSink, String> {
         .map_err(|error| error.to_string())?;
     Ok(AudioSink {
         root: bin.upcast(),
+        output: sink,
         equalizer,
         visualizer_pad,
     })
@@ -2250,6 +2306,19 @@ fn configure_equalizer(equalizer: &gst::Element, settings: &EqualizerSettings) {
     }
 }
 fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
+    if let Some(target) = selected.and_then(audio_output_device_target) {
+        if gst::ElementFactory::find("pulsesink").is_some() {
+            let sink = make_element("pulsesink", "rufin-audio-output")?;
+            sink.set_property("device", target);
+            return Ok(sink);
+        }
+        if gst::ElementFactory::find("pipewiresink").is_some() {
+            let sink = make_element("pipewiresink", "rufin-audio-output")?;
+            sink.set_property("target-object", target);
+            return Ok(sink);
+        }
+    }
+
     if let Some(selected) = selected
         && gst::ElementFactory::find(selected).is_some()
     {
@@ -2354,6 +2423,75 @@ mod tests {
         next.equalizer.bands = vec![4.0; EQUALIZER_BAND_COUNT];
 
         assert_eq!(AudioSinkConfig::new(&previous), AudioSinkConfig::new(&next));
+    }
+
+    #[test]
+    fn audio_output_device_id_targets_available_device_sink() {
+        gst::init().expect("initialize GStreamer");
+        if gst::ElementFactory::find("pulsesink").is_none() {
+            return;
+        }
+
+        let sink = make_audio_output(Some(&audio_output_device_id("alsa_output.test")))
+            .expect("device output sink");
+
+        assert_eq!(
+            sink.factory().map(|factory| factory.name().to_string()),
+            Some("pulsesink".to_string())
+        );
+        assert_eq!(sink.property::<String>("device"), "alsa_output.test");
+    }
+
+    #[test]
+    fn audio_output_device_update_reuses_existing_sink() {
+        gst::init().expect("initialize GStreamer");
+        if gst::ElementFactory::find("pulsesink").is_none() {
+            return;
+        }
+
+        let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
+        let mut pipeline =
+            PlayerPipeline::new("test-audio-output-player", shared).expect("player pipeline");
+        let settings = PlaybackSettings {
+            audio_output: Some(audio_output_device_id("alsa_output.initial")),
+            ..PlaybackSettings::default()
+        };
+        pipeline.configure_audio(&settings).expect("device audio");
+
+        let selected = audio_output_device_id("alsa_output.test");
+        assert!(pipeline.update_audio_output(Some(&selected)));
+        let output = pipeline.audio_output.as_ref().expect("audio output");
+        assert_eq!(output.property::<String>("device"), "alsa_output.test");
+    }
+
+    #[test]
+    fn audio_output_device_update_can_restore_default_sink() {
+        gst::init().expect("initialize GStreamer");
+        if gst::ElementFactory::find("pulsesink").is_none() {
+            return;
+        }
+
+        let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
+        let mut pipeline = PlayerPipeline::new("test-audio-output-default-player", shared)
+            .expect("player pipeline");
+        let settings = PlaybackSettings {
+            audio_output: Some(audio_output_device_id("alsa_output.test")),
+            ..PlaybackSettings::default()
+        };
+        pipeline.configure_audio(&settings).expect("device audio");
+
+        let default_target = default_audio_output_device_target();
+        assert_eq!(pipeline.update_audio_output(None), default_target.is_some());
+        if let Some(default_target) = default_target {
+            assert_eq!(
+                pipeline
+                    .audio_output
+                    .as_ref()
+                    .expect("audio output")
+                    .property::<String>("device"),
+                default_target
+            );
+        }
     }
 
     #[test]

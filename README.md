@@ -27,13 +27,17 @@
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
 - Gapless playback, crossfade, ReplayGain, equalizer presets and fullscreen player with visualizer
-- Best-effort path matching with your music server and local folders, you can play from your local files while keeping server reporting
+- Ability to change audio devices with a simple button
+- Fully usable in all window sizes, adjustable sidebar sizes that also support saving 2 different presets based on window sizes
+- A different layout for smaller window sizes up to 450 x 400
+- Expanding keyboard shortcuts catalog
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
 - System tray integration
 - Secure storage for all server credentials and API secrets
 - Simple private mode for pausing external activity
-- Expanding keyboard shortcuts catalog
+
+- Best-effort path matching with your music server and local folders, you can play from your local files while keeping server reporting
 
 # Library behavior
 

@@ -27,6 +27,7 @@ mod general;
 mod layout;
 
 use general::*;
+pub(in crate::ui) use general::{audio_output_index, playback_output_options};
 pub(in crate::ui) use layout::button_row;
 use layout::*;
 

@@ -5,7 +5,7 @@ use domain::{
 use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::f64::consts::FRAC_PI_2;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -119,8 +119,45 @@ pub struct AudioOutput {
     pub id: String,
     pub name: String,
 }
+const AUDIO_OUTPUT_DEVICE_PREFIX: &str = "gst-device:";
+
+pub(crate) fn audio_output_device_id(node_name: &str) -> String {
+    format!("{AUDIO_OUTPUT_DEVICE_PREFIX}{node_name}")
+}
+
+pub(crate) fn audio_output_device_target(id: &str) -> Option<&str> {
+    id.strip_prefix(AUDIO_OUTPUT_DEVICE_PREFIX)
+        .filter(|target| !target.is_empty())
+}
+
+pub(crate) fn default_audio_output_device_target() -> Option<String> {
+    let monitor = gst::DeviceMonitor::new();
+    let _filter_id = monitor.add_filter(Some("Audio/Sink"), None);
+    if monitor.start().is_err() {
+        return None;
+    }
+
+    let target = monitor.devices().into_iter().find_map(|device| {
+        let properties = device.properties()?;
+        properties
+            .get::<bool>("is-default")
+            .ok()
+            .filter(|is_default| *is_default)?;
+        audio_output_device_node_name(&properties)
+    });
+    monitor.stop();
+    target
+}
+
 pub fn available_audio_outputs() -> Vec<AudioOutput> {
-    let _ = gst::init();
+    if gst::init().is_err() {
+        return Vec::new();
+    }
+    let devices = available_audio_output_devices();
+    if !devices.is_empty() {
+        return devices;
+    }
+
     let candidates = [
         ("autoaudiosink", "System default"),
         ("pipewiresink", "PipeWire"),
@@ -139,6 +176,46 @@ pub fn available_audio_outputs() -> Vec<AudioOutput> {
             name: name.to_string(),
         })
         .collect()
+}
+
+fn available_audio_output_devices() -> Vec<AudioOutput> {
+    let monitor = gst::DeviceMonitor::new();
+    let _filter_id = monitor.add_filter(Some("Audio/Sink"), None);
+    if monitor.start().is_err() {
+        return Vec::new();
+    }
+
+    let mut seen = HashSet::new();
+    let mut outputs = monitor
+        .devices()
+        .into_iter()
+        .filter_map(|device| {
+            let properties = device.properties()?;
+            let node_name = audio_output_device_node_name(&properties)?;
+            if node_name.trim().is_empty() || !seen.insert(node_name.clone()) {
+                return None;
+            }
+            let name = properties
+                .get::<String>("node.description")
+                .ok()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| device.display_name().to_string());
+            Some(AudioOutput {
+                id: audio_output_device_id(&node_name),
+                name,
+            })
+        })
+        .collect::<Vec<_>>();
+    monitor.stop();
+    outputs.sort_by_key(|output| output.name.to_lowercase());
+    outputs
+}
+
+fn audio_output_device_node_name(properties: &gst::StructureRef) -> Option<String> {
+    ["node.name", "device"]
+        .into_iter()
+        .find_map(|name| properties.get::<String>(name).ok())
+        .filter(|name| !name.trim().is_empty())
 }
 #[derive(Debug, Error)]
 pub enum PlaybackError {
