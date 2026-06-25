@@ -50,6 +50,9 @@ impl AppController {
             ));
         }
     }
+    pub fn resync_local_library(&self) {
+        self.resync_server(ServerId::new(LOCAL_SOURCE_SERVER_ID));
+    }
     pub fn refresh_home_section_for_active(&self, kind: HomeSectionKind) {
         let active = self
             .store

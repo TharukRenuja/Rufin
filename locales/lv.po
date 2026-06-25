@@ -60,9 +60,6 @@ msgstr "Pievienot noteikumu"
 msgid "Add Your Music Library"
 msgstr "Pievienot savu mūzikas bibliotēku"
 
-msgid "Add a music folder"
-msgstr "Pievienot mūzikas mapi"
-
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr ""
 "Pievienojiet serveri, lai izmantotu Jellyfin, Subsonic vai OpenSubsonic."
@@ -265,9 +262,6 @@ msgstr ""
 
 msgid "Choose the current page layout."
 msgstr "Izvēlieties pašreizējās lapas izkārtojumu."
-
-msgid "Choose the folder to scan and play directly from this computer"
-msgstr "Izvēlieties mapi, ko skenēt un atskaņot tieši no šī datora"
 
 msgid "Classical"
 msgstr "Klasiskais"
@@ -583,6 +577,10 @@ msgstr "Saskarne"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
+#, fuzzy
+msgid "Jellyfin Instant Mix recommendations"
+msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
+
 msgid "Keep album transitions gapless when possible"
 msgstr "Turēt albumu pārejas bez pauzēm, ja iespējams"
 
@@ -866,9 +864,6 @@ msgstr "Nav"
 msgid "Not connected"
 msgstr "Nav savienots"
 
-msgid "Not set"
-msgstr "Nav iestatīts"
-
 msgid "Nothing playing"
 msgstr "Nekas netiek atskaņots"
 
@@ -886,6 +881,10 @@ msgstr "Dziesmu skaits"
 
 msgid "Off"
 msgstr "Izslēgts"
+
+#, fuzzy
+msgid "Off only for a server you control"
+msgstr "Izslēdziet tikai serverim, ko pārvaldāt"
 
 msgid "Only played tracks"
 msgstr "Tikai atskaņotās dziesmas"
@@ -916,9 +915,6 @@ msgstr "Atver Last.fm autorizāciju…"
 
 msgid "Opening Libre.fm authorization…"
 msgstr "Atver Libre.fm autorizāciju…"
-
-msgid "Optionally map server tracks to files on this computer"
-msgstr "Pēc izvēles kartējiet servera dziesmas uz failiem šajā datorā"
 
 msgid "Original"
 msgstr "Oriģināls"
@@ -1142,9 +1138,6 @@ msgstr "Atjaunot izvēlēto iestatījumu uz noklusējuma joslām."
 msgid "Resume"
 msgstr "Turpināt"
 
-msgid "Resync Library"
-msgstr "Pārsinhronizēt bibliotēku"
-
 msgid "Rich presence"
 msgstr "Bagātīga klātbūtne"
 
@@ -1191,9 +1184,6 @@ msgstr[1] ""
 msgstr[2] ""
 "Saglabāta sasaiste. {direct} tieša, {prefix} pēc prefiksa, {metadata} pēc "
 "metadatiem, {unmatched} neatbilst no {total} celiņiem."
-
-msgid "Saved per server"
-msgstr "Saglabāts katram serverim"
 
 msgid "Saved to"
 msgstr "Saglabāts:"
@@ -1545,9 +1535,6 @@ msgstr[2] ""
 msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
-msgid "Use This Source"
-msgstr "Izmantot šo avotu"
-
 msgid "Use different layout below a threshold width"
 msgstr "Izmantot citu izkārtojumu zem sliekšņa platuma"
 
@@ -1562,6 +1549,10 @@ msgstr "Lietotāja žetons"
 
 msgid "Username"
 msgstr "Lietotājvārds"
+
+#, fuzzy
+msgid "Uses Jellyfin play-radio recommendations"
+msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
@@ -1739,6 +1730,9 @@ msgstr ""
 #~ msgid "Add Local Folder"
 #~ msgstr "Pievienot lokālo mapi"
 
+#~ msgid "Add a music folder"
+#~ msgstr "Pievienot mūzikas mapi"
+
 #~ msgid "Add local folder access"
 #~ msgstr "Pievienot piekļuvi lokālajai mapei"
 
@@ -1773,6 +1767,9 @@ msgstr ""
 #~ "Izvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai ievadiet "
 #~ "adresi manuāliIzvēlieties pakalpojuma sniedzēju, izvēlieties serveri vai "
 #~ "ievadiet adresi manuāli"
+
+#~ msgid "Choose the folder to scan and play directly from this computer"
+#~ msgstr "Izvēlieties mapi, ko skenēt un atskaņot tieši no šī datora"
 
 #~ msgid "Choose when the left sidebar uses compact navigation"
 #~ msgstr "Izvēlieties, kad kreisais sānu panelis izmanto kompakto navigāciju"
@@ -1858,6 +1855,12 @@ msgstr ""
 #~ msgid "No tracks match the search."
 #~ msgstr "Neviens celiņš neatbilst meklējumam."
 
+#~ msgid "Not set"
+#~ msgstr "Nav iestatīts"
+
+#~ msgid "Optionally map server tracks to files on this computer"
+#~ msgstr "Pēc izvēles kartējiet servera dziesmas uz failiem šajā datorā"
+
 #, fuzzy
 #~ msgid "Play Last"
 #~ msgstr "Atskaņot vēlāk"
@@ -1886,8 +1889,14 @@ msgstr ""
 #~ msgid "Restore neutral bands and disable equalizer."
 #~ msgstr "Atjaunot neitrālās joslas un atslēgt ekvalaizeru."
 
+#~ msgid "Resync Library"
+#~ msgstr "Pārsinhronizēt bibliotēku"
+
 #~ msgid "Saved mapping."
 #~ msgstr "Saglabāta kartēšana."
+
+#~ msgid "Saved per server"
+#~ msgstr "Saglabāts katram serverim"
 
 #~ msgid "Search server lyrics before external providers"
 #~ msgstr "Meklēt servera tekstus pirms ārējiem pakalpojuma sniedzējiem"
@@ -1944,6 +1953,9 @@ msgstr ""
 
 #~ msgid "Unsaved changes."
 #~ msgstr "Nesaglabātas izmaiņas."
+
+#~ msgid "Use This Source"
+#~ msgstr "Izmantot šo avotu"
 
 #~ msgid "Use remote lyric providers when server lyrics are unavailable"
 #~ msgstr ""

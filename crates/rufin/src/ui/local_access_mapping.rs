@@ -14,6 +14,7 @@ use crate::providers::StreamingProvider;
 use super::{Shell, login::connect_folder_button, text_button};
 
 type ManageServerExitSlot = adw::NavigationView;
+const MANAGE_SERVER_FIELD_ROW_STACK_WIDTH: i32 = 560;
 
 pub(in crate::ui) fn manage_server_navigation_page(
     shell: &Rc<Shell>,
@@ -69,7 +70,7 @@ fn manage_server_toolbar(
     let remote = server.provider != "local";
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    let title = adw::WindowTitle::new(&tr("Manage Server"), &server_display_name(&server));
+    let title = adw::WindowTitle::new(&tr("Manage Server"), &manage_server_subtitle(&server));
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     header.set_show_back_button(true);
@@ -80,11 +81,12 @@ fn manage_server_toolbar(
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    content.set_margin_top(18);
-    content.set_margin_bottom(18);
-    content.set_margin_start(18);
-    content.set_margin_end(18);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.add_css_class("manage-server-content");
+    content.set_margin_top(12);
+    content.set_margin_bottom(12);
+    content.set_margin_start(14);
+    content.set_margin_end(14);
     scroller.set_child(Some(&content));
     content.append(&server_settings_group(shell, &server, remote));
 
@@ -181,15 +183,7 @@ fn manage_server_toolbar(
     } else {
         tr("Local Library")
     };
-    let group_description = if remote {
-        tr("Optionally map server tracks to files on this computer")
-    } else {
-        tr("Choose the folder to scan and play directly from this computer")
-    };
-    let group = adw::PreferencesGroup::builder()
-        .title(group_title)
-        .description(group_description)
-        .build();
+    let group = adw::PreferencesGroup::builder().title(group_title).build();
     let mapping_expander = if remote {
         let subtitle = if access.is_some() {
             tr("Local playback mapping configured")
@@ -219,6 +213,7 @@ fn manage_server_toolbar(
 
     let status = gtk::Label::new(None);
     status.add_css_class("muted");
+    status.add_css_class("manage-server-status");
     status.set_wrap(true);
     status.set_xalign(0.0);
     content.append(&status);
@@ -359,11 +354,7 @@ fn close_manage_server(exit: &ManageServerExitSlot) {
     exit.pop();
 }
 
-fn server_settings_group(
-    shell: &Rc<Shell>,
-    server: &ServerIdentity,
-    remote: bool,
-) -> adw::PreferencesGroup {
+fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: bool) -> gtk::Box {
     let (saved_username, saved_trust_invalid_cert, saved_use_jellyfin_instant_mix) = {
         let library = shell.state.library.borrow();
         let summary = library
@@ -379,60 +370,55 @@ fn server_settings_group(
         )
     };
 
-    let group = adw::PreferencesGroup::builder()
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
+
+    let fields_group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
+        .description(provider_display_name(&server.provider))
         .build();
 
-    group.add(&info_row(
-        "Provider",
-        &provider_display_name(&server.provider),
-    ));
+    let (name_address_row, name, address) =
+        server_name_address_row(&server.name, &server.base_url, remote);
+    fields_group.add(&name_address_row);
+    section.append(&fields_group);
 
-    let name = adw::EntryRow::builder()
-        .title(tr("Name"))
-        .text(&server.name)
-        .build();
-    group.add(&name);
-
-    let address = adw::EntryRow::builder()
-        .title(tr("Server Address"))
-        .text(&server.base_url)
-        .build();
-    address.set_visible(remote);
-    group.add(&address);
+    let rows_group = adw::PreferencesGroup::new();
 
     let username = adw::EntryRow::builder()
         .title(tr("Username"))
         .text(&saved_username)
         .build();
+    username.add_css_class("manage-server-compact-field-row");
     username.set_visible(remote);
-    group.add(&username);
+    rows_group.add(&username);
 
     let password = adw::PasswordEntryRow::builder()
         .title(tr("Password"))
         .build();
+    password.add_css_class("manage-server-compact-field-row");
     password.set_visible(remote);
-    group.add(&password);
+    rows_group.add(&password);
 
     let cert_verify = adw::SwitchRow::builder()
         .title(tr("Verify server certificate"))
-        .subtitle(tr("Turn off only for a server you control"))
+        .subtitle(tr("Off only for a server you control"))
         .active(!saved_trust_invalid_cert)
         .build();
     cert_verify.set_visible(remote);
-    group.add(&cert_verify);
+    rows_group.add(&cert_verify);
 
     let instant_mix = adw::SwitchRow::builder()
-        .title(tr("Use Jellyfin Instant Mix for recommendations"))
-        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
+        .title(tr("Jellyfin Instant Mix recommendations"))
+        .subtitle(tr("Uses Jellyfin play-radio recommendations"))
         .active(saved_use_jellyfin_instant_mix)
         .build();
     instant_mix.set_visible(server.provider == "jellyfin");
-    group.add(&instant_mix);
+    rows_group.add(&instant_mix);
 
     let save = button_row("Save Server Settings", "document-save-symbolic");
     save.add_css_class("suggested-action");
-    group.add(&save);
+    rows_group.add(&save);
+    section.append(&rows_group);
 
     let controller = shell.controller.clone();
     let server_id = server.id.clone();
@@ -461,7 +447,73 @@ fn server_settings_group(
         });
     });
 
+    section
+}
+
+fn server_name_address_row(
+    name_text: &str,
+    address_text: &str,
+    show_address: bool,
+) -> (gtk::Box, adw::EntryRow, adw::EntryRow) {
+    let fields = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    fields.set_homogeneous(true);
+    fields.set_halign(gtk::Align::Fill);
+    fields.set_hexpand(true);
+    fields.set_margin_top(0);
+    fields.set_margin_bottom(0);
+
+    let name = adw::EntryRow::builder()
+        .title(tr("Name"))
+        .text(name_text)
+        .build();
+    name.add_css_class("manage-server-compact-field-row");
+    let name_group = server_settings_field_group(&name);
+    fields.append(&name_group);
+
+    let address = adw::EntryRow::builder()
+        .title(tr("Server Address"))
+        .text(address_text)
+        .build();
+    address.add_css_class("manage-server-compact-field-row");
+    let address_group = server_settings_field_group(&address);
+    address_group.set_visible(show_address);
+    fields.append(&address_group);
+
+    install_field_row_responsiveness(&fields);
+
+    (fields, name, address)
+}
+
+fn server_settings_field_group(row: &adw::EntryRow) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::new();
+    group.set_hexpand(true);
+    group.add(row);
     group
+}
+
+fn install_field_row_responsiveness(fields: &gtk::Box) {
+    fields.connect_notify_local(Some("width"), |fields, _| {
+        apply_field_row_layout(fields);
+    });
+    fields.add_tick_callback(|fields, _| {
+        if fields.width() <= 1 {
+            gtk::glib::ControlFlow::Continue
+        } else {
+            apply_field_row_layout(fields);
+            gtk::glib::ControlFlow::Break
+        }
+    });
+}
+
+fn apply_field_row_layout(fields: &gtk::Box) {
+    let stack = fields.width() < MANAGE_SERVER_FIELD_ROW_STACK_WIDTH;
+    fields.set_orientation(if stack {
+        gtk::Orientation::Vertical
+    } else {
+        gtk::Orientation::Horizontal
+    });
+    fields.set_homogeneous(!stack);
+    fields.set_spacing(if stack { 8 } else { 12 });
 }
 
 fn server_actions_group(
@@ -474,48 +526,50 @@ fn server_actions_group(
     let group = adw::PreferencesGroup::builder()
         .title(tr("Server Actions"))
         .build();
+    let row = adw::PreferencesRow::new();
+    let actions = action_button_box();
 
     if !selected {
-        let select = button_row("Use This Source", "object-select-symbolic");
+        let select = row_action_button("Use This Source", "object-select-symbolic");
         let controller = shell.controller.clone();
         let server_id = server.id.clone();
         let exit = exit.clone();
         let preferences_dialog = preferences_dialog.clone();
-        select.connect_activated(move |_| {
+        select.connect_clicked(move |_| {
             controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
             close_manage_server(&exit);
             preferences_dialog.close();
         });
-        group.add(&select);
+        actions.append(&select);
     }
 
-    let resync = button_row("Resync Library", "view-refresh-symbolic");
+    let resync = row_action_button("Resync Library", "view-refresh-symbolic");
     let controller = shell.controller.clone();
     let server_id = server.id.clone();
     let preferences_dialog_for_resync = preferences_dialog.clone();
-    resync.connect_activated(move |_| {
+    resync.connect_clicked(move |_| {
         controller.resync_server(server_id.clone());
         preferences_dialog_for_resync.close();
     });
-    group.add(&resync);
+    actions.append(&resync);
 
-    let clear_cache = button_row("Clear Cached Library", "edit-clear-symbolic");
+    let clear_cache = row_action_button("Clear Cached Library", "edit-clear-symbolic");
     let clear_shell = Rc::clone(shell);
     let server_id = server.id.clone();
     let server_name = server_display_name(server);
-    clear_cache.connect_activated(move |_| {
+    clear_cache.connect_clicked(move |_| {
         confirm_clear_server_cache(&clear_shell, server_id.clone(), &server_name);
     });
-    group.add(&clear_cache);
+    actions.append(&clear_cache);
 
-    let forget = button_row("Forget Server", "user-trash-symbolic");
+    let forget = row_action_button("Forget Server", "window-close-symbolic");
     forget.add_css_class("destructive-action");
     let forget_shell = Rc::clone(shell);
     let server_id = server.id.clone();
     let server_name = server_display_name(server);
     let exit = exit.clone();
     let preferences_dialog = preferences_dialog.clone();
-    forget.connect_activated(move |_| {
+    forget.connect_clicked(move |_| {
         confirm_forget_server(
             &forget_shell,
             server_id.clone(),
@@ -524,28 +578,67 @@ fn server_actions_group(
             preferences_dialog.clone(),
         );
     });
-    group.add(&forget);
+    actions.append(&forget);
+    row.set_child(Some(&actions));
+    row.set_activatable(false);
+    row.set_selectable(false);
+    group.add(&row);
 
     group
 }
 
-fn info_row(title: &str, value: &str) -> adw::ActionRow {
-    adw::ActionRow::builder()
-        .title(tr(title))
-        .subtitle(if value.trim().is_empty() {
-            tr("Not set")
-        } else {
-            value.to_string()
-        })
-        .build()
+fn action_button_box() -> gtk::Box {
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    actions.set_homogeneous(true);
+    actions.set_halign(gtk::Align::Fill);
+    actions.set_hexpand(true);
+    actions.set_margin_top(6);
+    actions.set_margin_bottom(6);
+    actions.set_margin_start(8);
+    actions.set_margin_end(8);
+    actions
+}
+
+fn row_action_button(title: &str, icon_name: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.set_halign(gtk::Align::Fill);
+    button.set_hexpand(true);
+    button.set_tooltip_text(Some(&tr(title)));
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_halign(gtk::Align::Center);
+    content.set_valign(gtk::Align::Center);
+    content.append(&gtk::Image::from_icon_name(icon_name));
+    let label = gtk::Label::new(Some(&tr(title)));
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(0);
+    label.set_max_width_chars(18);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_lines(2);
+    content.append(&label);
+    button.set_child(Some(&content));
+    button
 }
 
 fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
-    adw::ButtonRow::builder()
+    let row = adw::ButtonRow::builder()
         .title(tr(title))
         .start_icon_name(icon_name)
         .end_icon_name("go-next-symbolic")
-        .build()
+        .build();
+    row.add_css_class("manage-server-action-row");
+    row
+}
+
+fn manage_server_subtitle(server: &ServerIdentity) -> String {
+    let name = server_display_name(server);
+    let provider = provider_display_name(&server.provider);
+    if name.trim().eq_ignore_ascii_case(provider.trim()) {
+        name
+    } else {
+        format!("{name} - {provider}")
+    }
 }
 
 fn confirm_clear_server_cache(shell: &Rc<Shell>, server_id: ServerId, server_name: &str) {

@@ -41,6 +41,17 @@ struct ProviderSelector {
     buttons: Rc<Vec<(StreamingProvider, gtk::Button)>>,
 }
 
+#[derive(Clone)]
+pub(in crate::ui) struct AddServerDraft {
+    provider: StreamingProvider,
+    url: String,
+    username: String,
+    password: String,
+    cert_verify: bool,
+    use_jellyfin_instant_mix: bool,
+    local_folders: Vec<PathBuf>,
+}
+
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
         self.present_server_dialog(None);
@@ -75,12 +86,15 @@ impl Shell {
                 on_connect_started();
             }
         });
-        let child = self.server_view_handler(Some(Rc::clone(&connect_callback)));
+        let draft = Rc::new(RefCell::new(self.default_add_server_draft()));
+        let child =
+            self.server_view_handler(Some(Rc::clone(&connect_callback)), Some(Rc::clone(&draft)));
         toolbar.set_content(Some(&child));
         dialog.set_child(Some(&toolbar));
         *self.state.add_server_dialog.borrow_mut() = Some(AddServerDialogHandle {
             toolbar: toolbar.clone(),
             on_connect_started: Some(connect_callback),
+            draft,
         });
         let shell = Rc::clone(self);
         dialog.connect_closed(move |_| {
@@ -90,27 +104,29 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        self.server_view_handler(None)
+        self.server_view_handler(None, None)
     }
 
     pub(super) fn refresh_add_server_dialog(self: &Rc<Self>) {
         let Some(handle) = self.state.add_server_dialog.borrow().clone() else {
             return;
         };
-        let child = self.server_view_handler(handle.on_connect_started);
+        let child = self.server_view_handler(handle.on_connect_started, Some(handle.draft));
         handle.toolbar.set_content(Some(&child));
     }
 
     fn server_view_handler(
         self: &Rc<Self>,
         on_connect_started: Option<Rc<dyn Fn()>>,
+        draft: Option<Rc<RefCell<AddServerDraft>>>,
     ) -> gtk::Widget {
         let embedded = on_connect_started.is_none();
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
         }
 
-        let preset = self.saved_server_form_preset();
+        let draft = draft.unwrap_or_else(|| Rc::new(RefCell::new(self.default_add_server_draft())));
+        let draft_snapshot = draft.borrow().clone();
         self.start_server_discovery_once();
 
         let scroller = gtk::ScrolledWindow::new();
@@ -130,44 +146,25 @@ impl Shell {
         content.add_css_class("first-run-content");
         content.set_hexpand(true);
 
-        let selected_provider = Rc::new(Cell::new(
-            preset
-                .as_ref()
-                .map(|preset| preset.provider)
-                .unwrap_or(StreamingProvider::Jellyfin),
-        ));
+        let selected_provider = Rc::new(Cell::new(draft_snapshot.provider));
         let provider_selector = build_provider_selector(selected_provider.get());
         let url = adw::EntryRow::builder().title(tr("Server Address")).build();
-        url.set_text(
-            preset
-                .as_ref()
-                .map(|preset| preset.url.as_str())
-                .unwrap_or("http://"),
-        );
+        url.set_text(&draft_snapshot.url);
         let username = adw::EntryRow::builder().title(tr("Username")).build();
-        if let Some(preset) = preset.as_ref() {
-            username.set_text(&preset.username);
-        }
+        username.set_text(&draft_snapshot.username);
         let password = adw::PasswordEntryRow::builder()
             .title(tr("Password"))
             .build();
+        password.set_text(&draft_snapshot.password);
         let cert_verify = adw::SwitchRow::builder()
             .title(tr("Verify server certificate"))
             .subtitle(tr("Turn off only for a server you control"))
-            .active(
-                !preset
-                    .as_ref()
-                    .is_some_and(|preset| preset.trust_invalid_cert),
-            )
+            .active(draft_snapshot.cert_verify)
             .build();
         let instant_mix = adw::SwitchRow::builder()
             .title(tr("Use Jellyfin Instant Mix for recommendations"))
             .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
-            .active(
-                preset
-                    .as_ref()
-                    .is_some_and(|preset| preset.use_jellyfin_instant_mix),
-            )
+            .active(draft_snapshot.use_jellyfin_instant_mix)
             .build();
 
         let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
@@ -179,10 +176,7 @@ impl Shell {
         content.append(&provider_selector.widget);
         content.append(&server_group);
 
-        let default_local_folder = default_music_folder();
-        let local_folders = Rc::new(RefCell::new(
-            default_local_folder.clone().into_iter().collect::<Vec<_>>(),
-        ));
+        let local_folders = Rc::new(RefCell::new(draft_snapshot.local_folders.clone()));
         let local_group = adw::PreferencesGroup::builder()
             .title(tr("Local Library"))
             .description(tr(
@@ -210,8 +204,12 @@ impl Shell {
         local_group.set_visible(false);
         content.append(&local_group);
 
-        let discovered_group =
-            self.discovered_servers_group(&selected_provider, &provider_selector.buttons, &url);
+        let discovered_group = self.discovered_servers_group(
+            &selected_provider,
+            &provider_selector.buttons,
+            &url,
+            &draft,
+        );
         content.append(&discovered_group);
 
         let status = gtk::Label::new(None);
@@ -356,20 +354,48 @@ impl Shell {
             let jellyfin_widgets = jellyfin_widgets.clone();
             let local_group = local_group_for_provider.clone();
             let refresh = Rc::clone(&refresh_connect_button);
+            let draft = Rc::clone(&draft);
             button.connect_clicked(move |_| {
                 select_provider(&selected_provider, &provider_buttons, provider);
+                draft.borrow_mut().provider = provider;
                 update_provider_rows(provider, &remote_widgets, &jellyfin_widgets, &local_group);
                 refresh();
             });
         }
-        for entry in [
-            url.clone().upcast::<gtk::Editable>(),
-            username.clone().upcast::<gtk::Editable>(),
-            password.clone().upcast::<gtk::Editable>(),
-        ] {
+        {
             let refresh = Rc::clone(&refresh_connect_button);
-            entry.connect_text_notify(move |_| {
+            let draft = Rc::clone(&draft);
+            url.connect_text_notify(move |entry| {
+                draft.borrow_mut().url = entry.text().to_string();
                 refresh();
+            });
+        }
+        {
+            let refresh = Rc::clone(&refresh_connect_button);
+            let draft = Rc::clone(&draft);
+            username.connect_text_notify(move |entry| {
+                draft.borrow_mut().username = entry.text().to_string();
+                refresh();
+            });
+        }
+        {
+            let refresh = Rc::clone(&refresh_connect_button);
+            let draft = Rc::clone(&draft);
+            password.connect_text_notify(move |entry| {
+                draft.borrow_mut().password = entry.text().to_string();
+                refresh();
+            });
+        }
+        {
+            let draft = Rc::clone(&draft);
+            cert_verify.connect_active_notify(move |row| {
+                draft.borrow_mut().cert_verify = row.is_active();
+            });
+        }
+        {
+            let draft = Rc::clone(&draft);
+            instant_mix.connect_active_notify(move |row| {
+                draft.borrow_mut().use_jellyfin_instant_mix = row.is_active();
             });
         }
 
@@ -377,7 +403,7 @@ impl Shell {
             &self.window,
             &local_folder_button,
             &local_folder_row,
-            Rc::new(RefCell::new(default_local_folder)),
+            Rc::new(RefCell::new(local_folders.borrow().first().cloned())),
             {
                 let login = login.clone();
                 let selected_provider = Rc::clone(&selected_provider);
@@ -386,8 +412,10 @@ impl Shell {
                 let url = url.clone();
                 let username = username.clone();
                 let password = password.clone();
+                let draft = Rc::clone(&draft);
                 move |path| {
                     replace_primary_local_folder(&local_folders, path);
+                    draft.borrow_mut().local_folders = local_folders.borrow().clone();
                     local_folder_row.set_subtitle(&local_folders_subtitle(&local_folders.borrow()));
                     update_connect_button(
                         selected_provider.get(),
@@ -412,7 +440,9 @@ impl Shell {
                 let url = url.clone();
                 let username = username.clone();
                 let password = password.clone();
+                let draft = Rc::clone(&draft);
                 move || {
+                    draft.borrow_mut().local_folders = local_folders.borrow().clone();
                     update_connect_button(
                         selected_provider.get(),
                         &local_folders,
@@ -472,6 +502,29 @@ impl Shell {
             trust_invalid_cert,
             use_jellyfin_instant_mix,
         })
+    }
+
+    fn default_add_server_draft(&self) -> AddServerDraft {
+        if let Some(preset) = self.saved_server_form_preset() {
+            return AddServerDraft {
+                provider: preset.provider,
+                url: preset.url,
+                username: preset.username,
+                password: String::new(),
+                cert_verify: !preset.trust_invalid_cert,
+                use_jellyfin_instant_mix: preset.use_jellyfin_instant_mix,
+                local_folders: default_music_folder().into_iter().collect(),
+            };
+        }
+        AddServerDraft {
+            provider: StreamingProvider::Jellyfin,
+            url: "http://".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cert_verify: true,
+            use_jellyfin_instant_mix: false,
+            local_folders: default_music_folder().into_iter().collect(),
+        }
     }
 
     fn begin_first_run_connection(self: &Rc<Self>, status: &str) {
@@ -557,6 +610,7 @@ impl Shell {
         selected_provider: &Rc<Cell<StreamingProvider>>,
         provider_buttons: &Rc<Vec<(StreamingProvider, gtk::Button)>>,
         url: &adw::EntryRow,
+        draft: &Rc<RefCell<AddServerDraft>>,
     ) -> adw::PreferencesGroup {
         let status = self.state.server_discovery_status.borrow().clone();
         let running = self.state.server_discovery_running.get();
@@ -601,12 +655,18 @@ impl Shell {
                 let provider_buttons = Rc::clone(provider_buttons);
                 let url = url.clone();
                 let address = server.address;
+                let draft = Rc::clone(draft);
                 row.connect_activated(move |_| {
                     select_provider(
                         &selected_provider,
                         &provider_buttons,
                         StreamingProvider::Jellyfin,
                     );
+                    {
+                        let mut draft = draft.borrow_mut();
+                        draft.provider = StreamingProvider::Jellyfin;
+                        draft.url = address.clone();
+                    }
                     url.set_text(&address);
                 });
                 group.add(&row);

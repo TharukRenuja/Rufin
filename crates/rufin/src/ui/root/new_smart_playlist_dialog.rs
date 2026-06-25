@@ -381,7 +381,7 @@ fn append_rule_row(
     append_value_editor(&value_box, Rc::clone(&rules), index, &rule);
     row.append(&value_box);
 
-    let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+    let remove = gtk::Button::from_icon_name("window-close-symbolic");
     remove.add_css_class("flat");
     remove.set_tooltip_text(Some(&tr("Remove rule")));
     {
