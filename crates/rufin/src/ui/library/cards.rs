@@ -184,7 +184,7 @@ pub(in crate::ui) fn album_field(album: &Album, field: LibraryField) -> String {
         LibraryField::UserRating => option_rating(album.user_rating),
         LibraryField::Genre => album.genres.join(", "),
         LibraryField::SongCount => track_count_text(album.track_count.into()),
-        LibraryField::Duration => format_duration_units(album.duration_seconds),
+        LibraryField::Duration => domain::format_duration(album.duration_seconds),
         LibraryField::Favorite => favorite_text(album.favorite),
         _ => String::new(),
     }
@@ -213,7 +213,7 @@ pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) ->
     match field {
         LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
         LibraryField::SongCount => track_count_text(playlist.track_count.into()),
-        LibraryField::Duration => format_duration_units(playlist.duration_seconds),
+        LibraryField::Duration => domain::format_duration(playlist.duration_seconds),
         _ => String::new(),
     }
 }
@@ -224,7 +224,7 @@ pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: Libra
             track_count_text(playlist.track_count.into())
         }
         LibraryField::Duration if playlist.duration_seconds > 0 => {
-            format_duration_units(playlist.duration_seconds)
+            domain::format_duration(playlist.duration_seconds)
         }
         _ => String::new(),
     }
@@ -244,7 +244,7 @@ pub(in crate::ui) fn track_field(track: &Track, field: LibraryField) -> String {
         LibraryField::Genre => track.genres.join(", "),
         LibraryField::DiscNumber => track.disc_number.to_string(),
         LibraryField::TrackNumber => format!("{}-{:02}", track.disc_number, track.track_number),
-        LibraryField::Duration => format_duration_units(track.duration_seconds),
+        LibraryField::Duration => domain::format_duration(track.duration_seconds),
         LibraryField::Favorite => favorite_text(track.favorite),
         _ => String::new(),
     }
@@ -1004,7 +1004,7 @@ mod tests {
         );
         assert_eq!(
             smart_playlist_field(&resolved, LibraryField::Duration),
-            "2m 0s"
+            "2:00"
         );
     }
 

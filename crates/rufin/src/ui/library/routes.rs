@@ -114,20 +114,19 @@ impl Shell {
                         .collect::<Vec<_>>();
                     let count = values.len();
                     *albums.borrow_mut() = values;
-                    *album_tracks.borrow_mut() = shell.album_tracks_for_layout(
-                        &albums.borrow(),
-                        &shell.library_settings(LibraryListKey::Albums),
-                    );
+                    let settings = shell.library_settings(LibraryListKey::Albums);
+                    *album_tracks.borrow_mut() =
+                        shell.album_tracks_for_layout(&albums.borrow(), &settings);
                     warm_album_covers_for_settings(
                         &shell,
                         &albums.borrow(),
                         LibraryListKey::Albums,
-                        &shell.library_settings(LibraryListKey::Albums),
+                        &settings,
                     );
                     populate_album_collection_model(
                         &model,
                         &albums.borrow(),
-                        &shell.library_settings(LibraryListKey::Albums),
+                        &settings,
                         &album_tracks.borrow(),
                     );
                     cursor.offset.set(count);
@@ -275,15 +274,19 @@ impl Shell {
             let settings = settings.clone();
             let detail_virtual = detail_virtual.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_album_viewport_cover_warm(&shell, scroller, &model, &settings);
-                if let Some(list) = &detail_virtual {
-                    connect_album_detail_virtual_list(
-                        &shell,
-                        scroller,
-                        &model,
-                        LibraryListKey::Albums,
-                        list,
-                    );
+                if settings.layout != LibraryLayout::Detail {
+                    connect_album_viewport_cover_warm(&shell, scroller, &model, &settings);
+                } else {
+                    if let Some(list) = &detail_virtual {
+                        connect_album_detail_virtual_list(
+                            &shell,
+                            scroller,
+                            &model,
+                            LibraryListKey::Albums,
+                            list,
+                        );
+                    }
+                    connect_album_detail_scroll_probe(scroller, &model);
                 }
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
