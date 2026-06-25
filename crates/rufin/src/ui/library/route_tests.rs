@@ -637,23 +637,6 @@ fn album_detail_cover_refs_use_lead_rows() {
     assert_eq!(refs, vec![ImageRef::new("cover-one".to_string(), None)]);
 }
 #[test]
-fn route_keep_visible() {
-    let rows = vec![
-        test_virtual_row(0, 100),
-        test_virtual_row(100, 100),
-        test_virtual_row(200, 100),
-    ];
-
-    assert_eq!(
-        super::album_detail_virtual_range(&rows, 50.0, 150.0),
-        (0, 2)
-    );
-    assert_eq!(
-        super::album_detail_virtual_range(&rows, 101.0, 250.0),
-        (1, 3)
-    );
-}
-#[test]
 fn route_expand_total() {
     let page = source::PagedResponse::new(vec![1, 2], 5);
     let page = super::complete_cached_page(
@@ -678,6 +661,29 @@ fn route_cache_page() {
 
     assert_eq!(page.items, vec![1, 2]);
     assert_eq!(page.total, 5);
+}
+#[test]
+fn route_duration_fields_use_compact_clock_text() {
+    let mut album = test_album(1, "Album");
+    let mut playlist = test_playlist_with_refs(1, "Playlist", Vec::new(), None);
+    let mut smart_playlist = test_smart_playlist_with_refs(1, "Smart Playlist", Vec::new(), None);
+    let mut track = test_track(1, "Track", 1, 1);
+
+    album.duration_seconds = 308;
+    playlist.duration_seconds = 308;
+    smart_playlist.duration_seconds = 308;
+    track.duration_seconds = 308;
+
+    assert_eq!(super::album_field(&album, LibraryField::Duration), "5:08");
+    assert_eq!(
+        super::playlist_field(&playlist, LibraryField::Duration),
+        "5:08"
+    );
+    assert_eq!(
+        super::smart_playlist_field(&smart_playlist, LibraryField::Duration),
+        "5:08"
+    );
+    assert_eq!(super::track_field(&track, LibraryField::Duration), "5:08");
 }
 fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Track {
     Track {
@@ -713,17 +719,6 @@ fn test_track_with_image(id: u32, title: &str, image_id: &str) -> Track {
     Track {
         image_ref: Some(ImageRef::new(image_id.to_string(), None)),
         ..test_track(id, title, 1, id as u16)
-    }
-}
-fn test_virtual_row(top: i32, height: i32) -> super::AlbumDetailVirtualRow {
-    super::AlbumDetailVirtualRow {
-        item: super::AlbumDetailItem::Track {
-            track: test_track(top as u32, "Track", 1, 1),
-            index: 0,
-            last_in_album: false,
-        },
-        top,
-        height,
     }
 }
 fn test_album(id: u32, title: &str) -> Album {

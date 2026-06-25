@@ -6,6 +6,8 @@ const ALBUM_DETAIL_MAX_COVER: i32 = 168;
 const ALBUM_DETAIL_MIN_COVER: i32 = 102;
 const ALBUM_DETAIL_NARROW_WIDTH: i32 = 360;
 const ALBUM_DETAIL_SEPARATOR_WIDTH: i32 = 1;
+const ALBUM_DETAIL_SCROLL_PROBE_INTERVAL: Duration = Duration::from_millis(500);
+const ALBUM_DETAIL_SCROLL_JUMP: f64 = 160.0;
 
 pub(in crate::ui) fn populate_album_collection_model(
     model: &gio::ListStore,
@@ -75,35 +77,30 @@ pub(in crate::ui) fn album_detail_list(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
-) -> gtk::ListView {
+) -> gtk::ListBox {
     let track_selection = AlbumDetailTrackSelection::default();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    let shell_for_factory = Rc::clone(shell);
-    let selection_for_factory = track_selection.clone();
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(row) = item_at_from_item::<AlbumDetailItem>(item) else {
-            return;
-        };
-        let content = album_detail_item_row(&shell_for_factory, row, key, &selection_for_factory);
-        content.set_hexpand(true);
-        content.set_halign(gtk::Align::Fill);
-        item.set_child(Some(&content));
-    });
-    factory.connect_unbind(clear_list_item_child);
-
-    let list = gtk::ListView::new(Some(selection), Some(factory));
+    let list = gtk::ListBox::new();
     list.add_css_class("track-table");
     list.add_css_class("album-detail-list");
-    list.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
+    list.set_selection_mode(gtk::SelectionMode::None);
     list.set_hexpand(true);
     list.set_halign(gtk::Align::Fill);
     list.set_vexpand(true);
+
+    populate_album_detail_list(shell, &list, &model, key, &track_selection);
+
+    {
+        let shell = Rc::clone(shell);
+        let list = list.clone();
+        let track_selection = track_selection.clone();
+        model.connect_items_changed(move |model, _, _, _| {
+            populate_album_detail_list(&shell, &list, model, key, &track_selection);
+        });
+    }
+
     let controller = shell.controller.clone();
-    list.connect_activate(move |_, position| {
+    list.connect_row_activated(move |_, row| {
+        let position = row.index().max(0) as u32;
         let Some(AlbumDetailItem::Track { track, .. }) =
             item_at::<AlbumDetailItem>(&model, position)
         else {
@@ -113,25 +110,51 @@ pub(in crate::ui) fn album_detail_list(
     });
     list
 }
+
+fn populate_album_detail_list(
+    shell: &Rc<Shell>,
+    list: &gtk::ListBox,
+    model: &gio::ListStore,
+    key: LibraryListKey,
+    selection: &AlbumDetailTrackSelection,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
+    for position in 0..model.n_items() {
+        let Some(row) = item_at::<AlbumDetailItem>(model, position) else {
+            continue;
+        };
+        let content = album_detail_item_row(shell, row, key, selection);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        list.append(&content);
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::ui) struct AlbumDetailVirtualList {
     pub(in crate::ui) widget: gtk::Box,
-    pub(in crate::ui) top_spacer: gtk::Box,
-    pub(in crate::ui) rows: gtk::Box,
-    pub(in crate::ui) bottom_spacer: gtk::Box,
-    pub(in crate::ui) selection: AlbumDetailTrackSelection,
+    top_spacer: gtk::Box,
+    rows: gtk::Box,
+    bottom_spacer: gtk::Box,
+    selection: AlbumDetailTrackSelection,
 }
+
 #[derive(Clone)]
 pub(in crate::ui) struct AlbumDetailVirtualRow {
-    pub(in crate::ui) item: AlbumDetailItem,
-    pub(in crate::ui) top: i32,
-    pub(in crate::ui) height: i32,
+    item: AlbumDetailItem,
+    top: i32,
+    height: i32,
 }
+
 impl AlbumDetailVirtualRow {
-    pub(in crate::ui) fn bottom(&self) -> i32 {
+    fn bottom(&self) -> i32 {
         self.top.saturating_add(self.height)
     }
 }
+
 pub(in crate::ui) fn album_detail_virtual_list() -> AlbumDetailVirtualList {
     let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
     widget.add_css_class("track-table");
@@ -157,6 +180,7 @@ pub(in crate::ui) fn album_detail_virtual_list() -> AlbumDetailVirtualList {
         selection: AlbumDetailTrackSelection::default(),
     }
 }
+
 pub(in crate::ui) fn connect_album_detail_virtual_list(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
@@ -166,9 +190,11 @@ pub(in crate::ui) fn connect_album_detail_virtual_list(
 ) {
     let rows = Rc::new(RefCell::new(album_detail_virtual_rows(shell, key, model)));
     let rendered = Rc::new(RefCell::new(None::<(usize, usize)>));
+    let scheduled = Rc::new(Cell::new(false));
     let adjustment = scroller.vadjustment();
+    apply_album_detail_virtual_extent(list, &rows.borrow());
 
-    let render = {
+    let render: Rc<dyn Fn(&gtk::Adjustment)> = {
         let shell = Rc::clone(shell);
         let list = list.clone();
         let rows = Rc::clone(&rows);
@@ -179,50 +205,46 @@ pub(in crate::ui) fn connect_album_detail_virtual_list(
     };
 
     render(&adjustment);
-    {
-        let adjustment = adjustment.clone();
-        let render = Rc::clone(&render);
-        glib::idle_add_local_once(move || render(&adjustment));
-    }
+    queue_album_detail_virtual_render(&adjustment, &render, &scheduled);
 
     {
         let shell = Rc::clone(shell);
+        let list = list.clone();
         let rows = Rc::clone(&rows);
         let rendered = Rc::clone(&rendered);
         let adjustment = adjustment.clone();
         let render = Rc::clone(&render);
+        let scheduled = Rc::clone(&scheduled);
         model.connect_items_changed(move |model, _, _, _| {
             *rows.borrow_mut() = album_detail_virtual_rows(&shell, key, model);
             *rendered.borrow_mut() = None;
-            render(&adjustment);
+            apply_album_detail_virtual_extent(&list, &rows.borrow());
+            queue_album_detail_virtual_render(&adjustment, &render, &scheduled);
         });
     }
 
-    let render_serial = Rc::new(Cell::new(0_u64));
-    let last_scroll_value = Rc::new(Cell::new(adjustment.value()));
     adjustment.connect_value_changed(move |adjustment| {
-        let previous_value = last_scroll_value.replace(adjustment.value());
-        let delta = (adjustment.value() - previous_value).abs();
-        let serial = render_serial.get().saturating_add(1);
-        render_serial.set(serial);
-        let adjustment = adjustment.clone();
-        let render = Rc::clone(&render);
-        let render_serial_for_callback = Rc::clone(&render_serial);
-        if delta >= f64::from(fast_scroll_delta()) {
-            glib::timeout_add_local_once(Duration::from_millis(FAST_SCROLL_DELAY), move || {
-                if render_serial_for_callback.get() == serial {
-                    render(&adjustment);
-                }
-            });
-        } else {
-            glib::idle_add_local_once(move || {
-                if render_serial_for_callback.get() == serial {
-                    render(&adjustment);
-                }
-            });
-        }
+        queue_album_detail_virtual_render(adjustment, &render, &scheduled);
     });
 }
+
+fn queue_album_detail_virtual_render(
+    adjustment: &gtk::Adjustment,
+    render: &Rc<dyn Fn(&gtk::Adjustment)>,
+    scheduled: &Rc<Cell<bool>>,
+) {
+    if scheduled.replace(true) {
+        return;
+    }
+    let adjustment = adjustment.clone();
+    let render = Rc::clone(render);
+    let scheduled = Rc::clone(scheduled);
+    glib::idle_add_local_once(move || {
+        scheduled.set(false);
+        render(&adjustment);
+    });
+}
+
 pub(in crate::ui) fn album_detail_virtual_rows(
     shell: &Shell,
     key: LibraryListKey,
@@ -241,6 +263,22 @@ pub(in crate::ui) fn album_detail_virtual_rows(
     }
     rows
 }
+
+fn apply_album_detail_virtual_extent(
+    list: &AlbumDetailVirtualList,
+    rows: &[AlbumDetailVirtualRow],
+) {
+    list.widget
+        .set_height_request(album_detail_virtual_total_height(rows));
+}
+
+fn album_detail_virtual_total_height(rows: &[AlbumDetailVirtualRow]) -> i32 {
+    rows.last()
+        .map(AlbumDetailVirtualRow::bottom)
+        .unwrap_or(1)
+        .max(1)
+}
+
 pub(in crate::ui) fn render_album_detail_virtual_rows(
     shell: &Rc<Shell>,
     key: LibraryListKey,
@@ -250,18 +288,14 @@ pub(in crate::ui) fn render_album_detail_virtual_rows(
     adjustment: &gtk::Adjustment,
 ) {
     let rows_ref = rows.borrow();
-    let total_height = rows_ref
-        .last()
-        .map(AlbumDetailVirtualRow::bottom)
-        .unwrap_or(1)
-        .max(1);
-    list.widget.set_height_request(total_height);
-
-    let overscan = f64::from(album_detail_virtual_overscan_height());
-    let visible_top = (adjustment.value() - overscan).max(0.0);
-    let visible_bottom = (adjustment.value() + adjustment.page_size() + overscan)
-        .min(f64::from(total_height))
-        .max(visible_top);
+    let total_height = album_detail_virtual_total_height(&rows_ref);
+    let visible_top =
+        (adjustment.value() - f64::from(album_detail_virtual_overscan_height())).max(0.0);
+    let visible_bottom = (adjustment.value()
+        + adjustment.page_size()
+        + f64::from(album_detail_virtual_overscan_height()))
+    .min(f64::from(total_height))
+    .max(visible_top);
     let (start, end) = album_detail_virtual_range(&rows_ref, visible_top, visible_bottom);
     if rendered.borrow().as_ref() == Some(&(start, end)) {
         return;
@@ -291,28 +325,98 @@ pub(in crate::ui) fn render_album_detail_virtual_rows(
         ));
     }
 }
+
 pub(in crate::ui) fn album_detail_virtual_range(
     rows: &[AlbumDetailVirtualRow],
     visible_top: f64,
     visible_bottom: f64,
 ) -> (usize, usize) {
-    let start = rows
-        .iter()
-        .position(|row| f64::from(row.bottom()) >= visible_top)
-        .unwrap_or(rows.len());
+    let start = rows.partition_point(|row| f64::from(row.bottom()) < visible_top);
     let end = rows
-        .iter()
-        .position(|row| f64::from(row.top) > visible_bottom)
-        .unwrap_or(rows.len())
+        .partition_point(|row| f64::from(row.top) <= visible_bottom)
         .max(start);
     (start, end)
 }
+
 pub(in crate::ui) fn album_detail_virtual_overscan_height() -> i32 {
     ALBUM_DETAIL_TRACK_ROW_HEIGHT * 8
 }
-pub(in crate::ui) const FAST_SCROLL_DELAY: u64 = 90;
-pub(in crate::ui) fn fast_scroll_delta() -> i32 {
-    album_detail_virtual_overscan_height() / 2
+
+pub(in crate::ui) fn connect_album_detail_scroll_probe(
+    scroller: &gtk::ScrolledWindow,
+    model: &gio::ListStore,
+) {
+    if !album_detail_probe_enabled() {
+        return;
+    }
+
+    let adjustment = scroller.vadjustment();
+    let model = model.clone();
+    let last_log = Rc::new(Cell::new(Instant::now()));
+    let last_value = Rc::new(Cell::new(adjustment.value()));
+    let last_upper = Rc::new(Cell::new(adjustment.upper()));
+    let last_page_size = Rc::new(Cell::new(adjustment.page_size()));
+    info!(
+        model_items = model.n_items(),
+        value = adjustment.value(),
+        upper = adjustment.upper(),
+        page_size = adjustment.page_size(),
+        "album detail scroll probe attached"
+    );
+
+    {
+        let adjustment = adjustment.clone();
+        let model = model.clone();
+        glib::idle_add_local_once(move || {
+            if album_detail_probe_enabled() {
+                info!(
+                    model_items = model.n_items(),
+                    value = adjustment.value(),
+                    upper = adjustment.upper(),
+                    page_size = adjustment.page_size(),
+                    "album detail scroll probe after idle"
+                );
+            }
+        });
+    }
+
+    adjustment.connect_value_changed(move |adjustment| {
+        if !album_detail_probe_enabled() {
+            return;
+        }
+
+        let value = adjustment.value();
+        let upper = adjustment.upper();
+        let page_size = adjustment.page_size();
+        let value_delta = value - last_value.replace(value);
+        let upper_delta = upper - last_upper.replace(upper);
+        let page_delta = page_size - last_page_size.replace(page_size);
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(last_log.get());
+        if value_delta.abs() < ALBUM_DETAIL_SCROLL_JUMP
+            && upper_delta.abs() < 1.0
+            && page_delta.abs() < 1.0
+            && elapsed < ALBUM_DETAIL_SCROLL_PROBE_INTERVAL
+        {
+            return;
+        }
+
+        last_log.set(now);
+        info!(
+            model_items = model.n_items(),
+            value,
+            value_delta,
+            upper,
+            upper_delta,
+            page_size,
+            page_delta,
+            "album detail scroll probe"
+        );
+    });
+}
+
+fn album_detail_probe_enabled() -> bool {
+    std::env::var_os("RUFIN_DEBUG_LAYOUT").is_some()
 }
 #[derive(Clone, Default)]
 pub(in crate::ui) struct AlbumDetailTrackSelection {
@@ -760,21 +864,17 @@ pub(in crate::ui) fn album_detail_fixed_cell_height(
 ) -> gtk::Widget {
     let width = width.max(1);
     let height = height.max(1);
-    let clip = gtk::ScrolledWindow::new();
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    let clip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     clip.set_overflow(gtk::Overflow::Hidden);
-    clip.set_min_content_width(width);
-    clip.set_max_content_width(width);
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(false);
     clip.set_width_request(width);
     clip.set_size_request(width, height);
     clip.set_height_request(height);
-    clip.set_min_content_height(height);
-    clip.set_max_content_height(height);
     clip.set_hexpand(false);
     clip.set_halign(gtk::Align::Fill);
-    clip.set_child(Some(&child));
+    clip.set_valign(gtk::Align::Fill);
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+    clip.append(&child);
     clip.upcast()
 }
 pub(in crate::ui) fn album_detail_track_label(
