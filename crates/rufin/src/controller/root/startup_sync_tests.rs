@@ -4392,8 +4392,9 @@ pub(in crate::controller) fn startup_remote_cache() {
         .block_on(sync_provider(&store, &saved.server.id, &provider))
         .expect("sync remote cache");
 
-    assert!(!initial_cover_cache_required(&store, &saved.server.id));
+    assert!(initial_cover_cache_required(&store, &saved.server.id));
 }
+
 #[test]
 pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
     let runtime = Runtime::new().expect("runtime");

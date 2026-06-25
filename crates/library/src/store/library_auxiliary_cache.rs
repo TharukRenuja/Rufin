@@ -729,6 +729,58 @@ impl Store {
             .optional()
             .map_err(StoreError::from)
     }
+    pub fn selected_provider_cover_cache_missing(&self, server_id: &ServerId) -> StoreResult<bool> {
+        let library_rows = self.connection.query_row(
+            "
+            SELECT (SELECT COUNT(*) FROM albums WHERE server_id = ?1)
+                 + (SELECT COUNT(*) FROM tracks WHERE server_id = ?1)
+            ",
+            params![server_id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if library_rows == 0 {
+            return Ok(true);
+        }
+
+        let mut statement = self.connection.prepare(
+            "
+            WITH selected_refs AS (
+                SELECT image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                FROM albums
+                WHERE server_id = ?1 AND image_item_id IS NOT NULL
+                  AND image_item_id NOT LIKE 'external:%'
+                UNION
+                SELECT image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                FROM tracks
+                WHERE server_id = ?1 AND image_item_id IS NOT NULL
+                  AND image_item_id NOT LIKE 'external:%'
+            )
+            SELECT refs.item_id, refs.image_tag, cache.path
+            FROM selected_refs refs
+            LEFT JOIN cover_cache cache
+              ON cache.server_id = ?1
+             AND cache.item_id = refs.item_id
+             AND cache.image_tag = refs.image_tag
+             AND cache.size IN (256, 512)
+            ",
+        )?;
+        let mut refs = HashMap::<(String, String), bool>::new();
+        let rows = statement.query_map(params![server_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                optional_string_column(row, 2)?,
+            ))
+        })?;
+        for row in rows {
+            let (item_id, image_tag, path) = row?;
+            let file_exists = path.as_deref().is_some_and(|path| Path::new(path).exists());
+            refs.entry((item_id, image_tag))
+                .and_modify(|exists| *exists |= file_exists)
+                .or_insert(file_exists);
+        }
+        Ok(refs.values().any(|exists| !exists))
+    }
     pub fn load_external_cover_cache_entry_by_content(
         &self,
         item_id: &str,

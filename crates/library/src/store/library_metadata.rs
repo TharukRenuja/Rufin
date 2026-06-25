@@ -902,7 +902,6 @@ impl Store {
                     ),
                     image_origin = 'fallback'
                 WHERE server_id = ?1
-                  AND image_item_id IS NULL
                   AND EXISTS (
                       SELECT 1
                       FROM albums a
@@ -910,10 +909,70 @@ impl Store {
                         AND a.album_id = tracks.album_id
                         AND a.image_item_id IS NOT NULL
                   )
+                  AND (
+                      image_item_id IS NULL
+                      OR (
+                          EXISTS (
+                              SELECT 1
+                              FROM servers s
+                              WHERE s.server_id = tracks.server_id
+                                AND s.provider != 'local'
+                          )
+                          AND (
+                              image_item_id IS NOT (
+                                  SELECT a.image_item_id
+                                  FROM albums a
+                                  WHERE a.server_id = tracks.server_id
+                                    AND a.album_id = tracks.album_id
+                                    AND a.image_item_id IS NOT NULL
+                              )
+                              OR image_tag IS NOT (
+                                  SELECT a.image_tag
+                                  FROM albums a
+                                  WHERE a.server_id = tracks.server_id
+                                    AND a.album_id = tracks.album_id
+                                    AND a.image_item_id IS NOT NULL
+                              )
+                          )
+                      )
+                  )
                 ",
                 params![server_id.as_str()],
             )
             .map_err(Into::into)
+    }
+
+    pub(super) fn refresh_selected_cover_content_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            DELETE FROM entity_content_refs WHERE server_id = ?1 AND content_kind = 'cover'
+              AND entity_kind IN ('album', 'track')
+              AND server_id IN (SELECT server_id FROM servers WHERE provider != 'local')
+            ",
+            params![server_id.as_str()],
+        )?;
+        self.connection.execute(
+            "
+            INSERT INTO entity_content_refs
+                (server_id, entity_kind, entity_id, content_kind, content_key, source, updated_at)
+            SELECT server_id, 'album', album_id, 'cover',
+                   image_item_id || char(31) || COALESCE(image_tag, ''), image_origin,
+                   CURRENT_TIMESTAMP
+            FROM albums WHERE server_id = ?1 AND image_item_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM servers s WHERE s.server_id = albums.server_id AND s.provider != 'local')
+            UNION ALL
+            SELECT server_id, 'track', track_id, 'cover',
+                   image_item_id || char(31) || COALESCE(image_tag, ''), image_origin,
+                   CURRENT_TIMESTAMP
+            FROM tracks WHERE server_id = ?1 AND image_item_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM servers s WHERE s.server_id = tracks.server_id AND s.provider != 'local')
+            ",
+            params![server_id.as_str()],
+        )?;
+        Ok(())
     }
 
     pub(super) fn attach_artist_fallback_image_refs(

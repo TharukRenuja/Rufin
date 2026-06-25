@@ -282,6 +282,7 @@ impl Store {
             self.bind_track_album_fallback_image_refs(server_id)?;
             self.bind_artist_fallback_image_refs(server_id, false)?;
             self.bind_artist_fallback_image_refs(server_id, true)?;
+            self.refresh_selected_cover_content_refs(server_id)?;
             self.refresh_collection_cover_refs(server_id)?;
             self.refresh_smart_playlist_cover_refs(server_id)?;
             let pruned_cover_entries = self.prune_stale_image_cache_entries(server_id)?;
@@ -383,6 +384,7 @@ impl Store {
             changed += self.bind_track_album_fallback_image_refs(server_id)?;
             changed += self.bind_artist_fallback_image_refs(server_id, false)?;
             changed += self.bind_artist_fallback_image_refs(server_id, true)?;
+            self.refresh_selected_cover_content_refs(server_id)?;
             if changed > 0 {
                 self.refresh_collection_cover_refs(server_id)?;
                 self.refresh_smart_playlist_cover_refs(server_id)?;
@@ -1161,6 +1163,7 @@ impl Store {
             self.bind_track_album_fallback_image_refs(server_id)?;
             self.bind_artist_fallback_image_refs(server_id, false)?;
             self.bind_artist_fallback_image_refs(server_id, true)?;
+            self.refresh_selected_cover_content_refs(server_id)?;
             connection.execute(
                 "
                 UPDATE albums
