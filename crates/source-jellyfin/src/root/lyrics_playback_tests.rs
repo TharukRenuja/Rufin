@@ -246,29 +246,39 @@ async fn lyrics_redact_token() {
     assert!(
         stream
             .uri()
-            .starts_with(&format!("{}/Audio/track-one/stream?", server.uri()))
+            .starts_with(&format!("{}/Items/track-one/Download?", server.uri()))
     );
     assert!(stream.uri().contains("api_key=secret-token"));
-    assert!(stream.uri().contains("DeviceId=rufin-install-one"));
+    assert!(!stream.uri().contains("Static="));
+    assert!(!stream.uri().contains("DeviceId="));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 
 #[test]
-fn direct_stream_from_saved_session() {
-    let session = SavedProviderSession {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:test"),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://library.example.test".to_string(),
-        },
-        user_id: "user-one".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-        access_token: "secret-token".to_string(),
-        device_id: Some("rufin-install-one".to_string()),
-    };
+fn original_stream_from_saved_session_uses_download() {
+    let session = saved_session();
+
+    let stream = JellyfinProvider::stream_descriptor_from_saved_session(
+        &session,
+        &source::StreamRequest::original(TrackId::new("jellyfin:track:track-one")),
+    )
+    .expect("stream");
+
+    assert!(
+        stream
+            .uri()
+            .starts_with("https://library.example.test/Items/track-one/Download?")
+    );
+    assert!(stream.uri().contains("api_key=secret-token"));
+    assert!(!stream.uri().contains("Static="));
+    assert!(!stream.uri().contains("MaxStreamingBitrate="));
+    assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+}
+
+#[test]
+fn capped_stream_from_saved_session_uses_audio_endpoint() {
+    let session = saved_session();
 
     let stream = JellyfinProvider::stream_descriptor_from_saved_session(
         &session,
@@ -286,6 +296,73 @@ fn direct_stream_from_saved_session() {
     );
     assert!(stream.uri().contains("api_key=secret-token"));
     assert!(stream.uri().contains("MaxStreamingBitrate=192000"));
+    assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+}
+
+fn saved_session() -> SavedProviderSession {
+    SavedProviderSession {
+        server: ServerIdentity {
+            id: ServerId::new("jellyfin:server:test"),
+            provider: "jellyfin".to_string(),
+            name: "Test".to_string(),
+            base_url: "https://library.example.test".to_string(),
+        },
+        user_id: "user-one".to_string(),
+        username: "demo".to_string(),
+        trust_invalid_cert: false,
+        access_token: "secret-token".to_string(),
+        device_id: Some("rufin-install-one".to_string()),
+    }
+}
+
+#[test]
+fn original_stream_uses_download_endpoint() {
+    let base_url = normalize_base_url("https://library.example.test").expect("base url");
+    let stream = stream_descriptor(
+        &base_url,
+        "user-one",
+        "rufin-install-one",
+        "secret-token",
+        &source::StreamRequest::original(TrackId::new("jellyfin:track:track-one")),
+    )
+    .expect("stream");
+
+    assert!(
+        stream
+            .uri()
+            .starts_with("https://library.example.test/Items/track-one/Download?")
+    );
+    assert!(stream.uri().contains("api_key=secret-token"));
+    assert!(!stream.uri().contains("Static="));
+    assert!(!stream.uri().contains("MaxStreamingBitrate="));
+    assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+    assert!(!format!("{stream:?}").contains("secret-token"));
+}
+
+#[test]
+fn capped_stream_uses_audio_endpoint() {
+    let base_url = normalize_base_url("https://library.example.test").expect("base url");
+    let stream = stream_descriptor(
+        &base_url,
+        "user-one",
+        "rufin-install-one",
+        "secret-token",
+        &source::StreamRequest::new(
+            TrackId::new("jellyfin:track:track-one"),
+            domain::StreamQuality::MaxBitrateKbps(192),
+        ),
+    )
+    .expect("stream");
+
+    assert!(
+        stream
+            .uri()
+            .starts_with("https://library.example.test/Audio/track-one/stream?")
+    );
+    assert!(stream.uri().contains("Static=false"));
+    assert!(stream.uri().contains("MaxStreamingBitrate=192000"));
+    assert!(stream.uri().contains("TranscodingContainer=mp3"));
+    assert!(stream.uri().contains("AudioCodec=mp3"));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
 }
 
