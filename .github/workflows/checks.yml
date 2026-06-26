@@ -117,19 +117,19 @@ jobs:
           cache-bin: "false"
           prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
+          cmd-format: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
 
       - name: Check Flatpak cargo sources
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- flatpak update-cargo-sources --check
+        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
 
       - name: Check Rust formatting
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
+        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
       - name: Check Rust lints
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command just lint
+        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command just _lint
 
       - name: Run Rust tests
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command just test
+        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command just test
 
   cargo-deny:
     name: cargo-deny

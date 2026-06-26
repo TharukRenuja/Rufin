@@ -20,18 +20,27 @@ Local build and run steps are in [README.md](README.md#building-locally).
 
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
-## Tests
+## Development commands
 
 ```bash
-just fmt-check
-just lint
+just build
+just debug
+just fmt
 just test
 ```
 
-To make sure app still compiles:
+To run the full local gate:
 
 ```bash
 just check
+```
+
+Outside `nix develop`, this also needs rustfmt, clippy, cargo-deny, and gettext. cargo-nextest is used when available.
+
+For release or package metadata changes:
+
+```bash
+just release-check
 ```
 
 ## Pull requests

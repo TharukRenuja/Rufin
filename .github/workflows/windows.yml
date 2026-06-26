@@ -94,7 +94,7 @@ jobs:
         shell: msys2 {0}
         env:
           RELEASE_TAG: ${{ inputs.upload_release_tag }}
-        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
         if: inputs.upload_release_tag != ''
@@ -130,7 +130,7 @@ jobs:
 
       - name: Verify staged package layout
         shell: msys2 {0}
-        run: bash .github/scripts/verify-package-layout.sh dist/windows/Rufin /
+        run: cargo run --locked -p xtask -- verify package-layout dist/windows/Rufin /
 
       - name: Install Inno Setup
         shell: pwsh

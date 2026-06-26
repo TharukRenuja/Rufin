@@ -8,14 +8,16 @@ use std::{
 fn i18n_template_matches_generated_output() {
     let root = repo_root();
     let output = env::temp_dir().join(format!("rufin-template-{}.pot", process::id()));
-    let output_run = Command::new(root.join(".github/scripts/update-i18n-template.sh"))
+    let output_run = Command::new("cargo")
+        .args(["run", "--locked", "-p", "xtask", "--"])
+        .args(["generate", "i18n-template", "--output"])
         .arg(&output)
         .current_dir(&root)
         .output()
-        .expect("run i18n template update script");
+        .expect("run i18n template generator");
     assert!(
         output_run.status.success(),
-        "i18n template update script failed\nstdout:\n{}\nstderr:\n{}",
+        "i18n template generator failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output_run.stdout),
         String::from_utf8_lossy(&output_run.stderr)
     );
@@ -28,7 +30,7 @@ fn i18n_template_matches_generated_output() {
 
     assert_eq!(
         checked_in, generated,
-        "locales/rufin.pot is stale; run .github/scripts/update-i18n-template.sh"
+        "locales/rufin.pot is stale; run cargo xtask generate i18n-template"
     );
 }
 

@@ -7,6 +7,6 @@ module.exports = {
     "renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
   ],
   allowedCommands: [
-    "^cargo run --locked -p xtask -- flatpak update-cargo-sources$",
+    "^cargo run --locked -p xtask -- generate flatpak-sources$",
   ],
 };

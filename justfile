@@ -10,24 +10,29 @@ build: _tmp
     TMPDIR="$PWD/target/tmp" cargo build --locked
 
 check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo check --workspace --locked
+    just _flatpak-sources-check
+    just _fmt-check
+    just _lint
+    just test
+    just _deps
 
 debug *args: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p rufin -- {{args}}
+    set -- {{args}}; \
+    if [[ "${1:-}" == "flatpak" ]]; then \
+        shift; \
+        flatpak run --env=RUST_LOG="${RUST_LOG:-rufin=debug,warn}" io.github.screwys.Rufin "$@" 2>&1; \
+    else \
+        TMPDIR="$PWD/target/tmp" cargo run --locked -p rufin -- "$@"; \
+    fi
 
 fmt: _tmp
     TMPDIR="$PWD/target/tmp" cargo fmt --all
 
-fmt-check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo fmt --all -- --check
-
-lint: _tmp
-    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --lib --bins --locked -- -D warnings -D clippy::expect_used -D clippy::panic
-    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
-    TMPDIR="$PWD/target/tmp" cargo clippy -p domain --lib --all-features --locked -- -D clippy::indexing_slicing
+release-check *args: _tmp
+    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- verify local {{args}}
 
 test: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- flatpak check-icon-assertions
+    just _icon-check
     if command -v cargo-nextest >/dev/null 2>&1; then \
         nextest_jobs="${NEXTEST_JOBS:-4}"; \
         if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then \
@@ -40,23 +45,25 @@ test: _tmp
         TMPDIR="$PWD/target/tmp" cargo test --workspace --locked --lib --bins --tests --benches --examples; \
     fi
 
-deps: _tmp
+_check: _tmp
+    TMPDIR="$PWD/target/tmp" cargo check --workspace --locked
+
+_fmt-check: _tmp
+    TMPDIR="$PWD/target/tmp" cargo fmt --all -- --check
+
+_lint: _tmp
+    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --lib --bins --locked -- -D warnings -D clippy::expect_used -D clippy::panic
+    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
+    TMPDIR="$PWD/target/tmp" cargo clippy -p domain --lib --all-features --locked -- -D clippy::indexing_slicing
+
+_deps: _tmp
     TMPDIR="$PWD/target/tmp" cargo deny --locked check -D unmatched-skip
 
-release-check *args: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- check release-local {{args}}
+_flatpak-sources: _tmp
+    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- generate flatpak-sources
 
-flatpak-sources: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- flatpak update-cargo-sources
+_flatpak-sources-check: _tmp
+    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- generate flatpak-sources --check
 
-flatpak-sources-check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- flatpak update-cargo-sources --check
-
-icon-check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- flatpak check-icon-assertions
-
-release-prepare version +summary: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- release prepare "{{version}}" "{{summary}}"
-
-flathub-manifest tag: _tmp
-    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- release update-flathub-manifest "{{tag}}"
+_icon-check: _tmp
+    TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- verify icons
