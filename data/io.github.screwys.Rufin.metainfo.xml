@@ -30,36 +30,71 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.8/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.9" date="2026-06-26">
+      <description>
+        <p>This release is mostly fixing the rough edges for Navidrome/Subsonic servers.</p>
+        <ul>
+          <li>Made the onboarding/adding new server experience better, cover arts are cached much faster</li>
+        </ul>
+        <ul>
+          <li>Radio icon is now symbolic, therefore it will be theme-aware</li>
+        </ul>
+        <ul>
+          <li>Audio output names now use actual device names. You can also change your audio device directly with a button on the bottom, without needing to navigate to preferences</li>
+        </ul>
+        <ul>
+          <li>Adressed an issue with Jellyfin servers where rarely on cold launches there could be 4-6s delay to play the first song</li>
+        </ul>
+        <ul>
+          <li>Album/artist pages can now show navidrome server links as well</li>
+        </ul>
+        <ul>
+          <li>Server management screen becomes more compact</li>
+        </ul>
+        <ul>
+          <li>Added a button to force resync folders</li>
+        </ul>
+        <ul>
+          <li>Fixed a Navidrome/Subsonic issue about initial cover art caching. Normally for Jellyfin, Rufin only caches cover arts per album, and reuses it, but this didn't work as intended in other servers, especially since Subsonic can serve different cover arts for same album tracks</li>
+        </ul>
+        <ul>
+          <li>Fixed an issue where Auto DJ could do more work than it needed, causing small freezes in UI if songs are skipped rapidly</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug about where in-progress sync could prevent server switching</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.8" date="2026-06-23">
       <description>
         <p>This release brings support for server owned song APIs! These mean you can now access radios for track/album/artist/playlist and so on from the context menu, and Auto DJ also uses this automatically.</p>
