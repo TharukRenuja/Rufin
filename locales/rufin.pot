@@ -448,10 +448,12 @@ msgstr ""
 msgid "Off only for a server you control"
 msgstr ""
 
-msgid "Jellyfin Instant Mix recommendations"
+msgid "Use Jellyfin Instant Mix for recommendations"
 msgstr ""
 
-msgid "Uses Jellyfin play-radio recommendations"
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
 msgstr ""
 
 msgid "Save Server Settings"
@@ -531,14 +533,6 @@ msgid "Add Your Music Library"
 msgstr ""
 
 msgid "Turn off only for a server you control"
-msgstr ""
-
-msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
-
-msgid ""
-"This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work."
 msgstr ""
 
 msgid "Server"

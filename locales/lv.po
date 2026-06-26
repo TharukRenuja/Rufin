@@ -577,10 +577,6 @@ msgstr "Saskarne"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
-#, fuzzy
-msgid "Jellyfin Instant Mix recommendations"
-msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
-
 msgid "Keep album transitions gapless when possible"
 msgstr "Turēt albumu pārejas bez pauzēm, ja iespējams"
 
@@ -1553,10 +1549,6 @@ msgstr "Lietotāja žetons"
 
 msgid "Username"
 msgstr "Lietotājvārds"
-
-#, fuzzy
-msgid "Uses Jellyfin play-radio recommendations"
-msgstr "Izmantot Jellyfin Instant Mix ieteikumiem"
 
 msgid "Verify server certificate"
 msgstr "Pārbaudīt servera sertifikātu"
