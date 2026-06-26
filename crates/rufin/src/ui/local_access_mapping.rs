@@ -408,8 +408,8 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
     rows_group.add(&cert_verify);
 
     let instant_mix = adw::SwitchRow::builder()
-        .title(tr("Jellyfin Instant Mix recommendations"))
-        .subtitle(tr("Uses Jellyfin play-radio recommendations"))
+        .title(tr("Use Jellyfin Instant Mix for recommendations"))
+        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
         .active(saved_use_jellyfin_instant_mix)
         .build();
     instant_mix.set_visible(server.provider == "jellyfin");

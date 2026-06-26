@@ -589,9 +589,6 @@ msgstr "Kasutajaliides"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
-msgid "Jellyfin Instant Mix recommendations"
-msgstr ""
-
 msgid "Keep album transitions gapless when possible"
 msgstr "Kui võimalik, siis hoia albumi lugude üleminekud pausideta"
 
@@ -1558,9 +1555,6 @@ msgstr "Kasutaja tunnusluba"
 
 msgid "Username"
 msgstr "Kasutajanimi"
-
-msgid "Uses Jellyfin play-radio recommendations"
-msgstr ""
 
 msgid "Verify server certificate"
 msgstr "Kontrolli serveri sertifikaati"

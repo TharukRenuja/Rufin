@@ -583,10 +583,6 @@ msgstr "Интерфейс"
 msgid "Jellyfin"
 msgstr "Jellyfin"
 
-#, fuzzy
-msgid "Jellyfin Instant Mix recommendations"
-msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
-
 msgid "Keep album transitions gapless when possible"
 msgstr "По возможности обеспечивать плавный переход между треками альбома"
 
@@ -1568,10 +1564,6 @@ msgstr "Токен пользователя"
 
 msgid "Username"
 msgstr "Имя пользователя"
-
-#, fuzzy
-msgid "Uses Jellyfin play-radio recommendations"
-msgstr "Использовать Мгновенный Микс Jellyfin для рекомендаций"
 
 msgid "Verify server certificate"
 msgstr "Проверить сертификат сервера"
