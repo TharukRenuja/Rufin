@@ -16,7 +16,7 @@ pub(in crate::ui) const ALBUM_ICON: &str = "route-albums-symbolic";
 pub(in crate::ui) const ARTIST_ICON: &str = "route-artists-symbolic";
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
-pub(in crate::ui) const RADIO_ICON: &str = "audio-radio";
+pub(in crate::ui) const RADIO_ICON: &str = "audio-radio-symbolic";
 
 thread_local! {
     static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };
