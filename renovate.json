@@ -26,7 +26,7 @@
       "description": "Regenerate Flatpak cargo sources after Rust dependency updates.",
       "matchManagers": ["cargo"],
       "postUpgradeTasks": {
-        "commands": ["bash packaging/flatpak/update-cargo-sources.sh"],
+        "commands": ["cargo run --locked -p xtask -- generate flatpak-sources"],
         "fileFilters": ["packaging/flatpak/cargo-sources.json"],
         "executionMode": "branch"
       }

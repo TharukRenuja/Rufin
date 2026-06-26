@@ -36,7 +36,6 @@
 - System tray integration
 - Secure storage for all server credentials and API secrets
 - Simple private mode for pausing external activity
-
 - Best-effort path matching with your music server and local folders, you can play from your local files while keeping server reporting
 
 # Library behavior
@@ -93,7 +92,7 @@ To run the current `main` branch:
 nix run github:screwys/Rufin/main
 ```
 
-Release tags and `main` builds are cached. You can also add either ref to your profile:
+You can also add either ref to your profile:
 
 ```bash
 nix profile install github:screwys/Rufin/v0.7.9
@@ -104,23 +103,36 @@ nix profile install github:screwys/Rufin/v0.7.9
 Install the usual desktop app build dependencies. Package names vary by distro,
 but you need:
 
-- Rust 1.95 or newer, with Cargo, rustfmt, and clippy
+- Rust 1.95 or newer, with Cargo
+- just
 - pkg-config or pkgconf
 - gettext
-- jq
 - GTK 4.20 or newer
 - libadwaita 1.8 or newer
 - gdk-pixbuf
 - GStreamer with the base, good, bad, ugly, and libav plugin sets
 
-On Arch Linux:
+Arch Linux:
 
 ```bash
 sudo pacman -S --needed \
-  rust cargo rust-analyzer pkgconf gettext jq gtk4 libadwaita gdk-pixbuf2 \
+  rust cargo just pkgconf gettext gtk4 libadwaita gdk-pixbuf2 \
   gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
   gst-plugins-ugly gst-libav
 ```
+
+Fedora:
+
+```bash
+sudo dnf install \
+  rust cargo just pkgconf-pkg-config gettext gtk4-devel libadwaita-devel \
+  gdk-pixbuf2-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+  gstreamer1-plugins-bad-free-devel gstreamer1-plugins-base \
+  gstreamer1-plugins-good gstreamer1-plugins-bad-free
+```
+
+For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
+and `gstreamer1-plugin-libav`.
 
 Distrobox or Toolbx is a good option if you want to keep these packages out of
 your host system (Especially if you are on a Fedora Silverblue image like me). Create a normal development container, install the same
@@ -130,24 +142,36 @@ container can work too, but it can be tricky.
 If you already use Nix, the dev shell is an easy alternative:
 
 ```bash
-nix --accept-flake-config develop
+nix develop
 ```
 
-For one-off commands:
+For a one-off source run:
 
 ```bash
-nix --accept-flake-config develop --command cargo run -p rufin
-nix --accept-flake-config develop --command scripts/test-rust.sh
+nix develop --command just debug
 ```
 
-The `--accept-flake-config` flag lets Nix use Rufin's configured binary cache.
+Rufin publishes release tag and `main` build results to Cachix. This is
+optional, but can speed up Nix builds and runs:
 
-To run Rufin from source:
+```bash
+nix-shell -p cachix --run "cachix use screwys-rufin"
+```
+
+The dev shell works without this cache.
+
+To build Rufin from source:
 
 ```bash
 git clone https://github.com/screwys/Rufin.git
 cd Rufin
-cargo run -p rufin
+just build
+```
+
+To run the source build:
+
+```bash
+just debug
 ```
 
 # Troubleshooting
@@ -155,13 +179,13 @@ cargo run -p rufin
 If you are experiencing a problem with the app, please open an issue and include logs. To run the app with extra debug logging:
 
 ```bash
-flatpak run --env=RUST_LOG=FLAG_HERE io.github.screwys.Rufin
+flatpak run --env=RUST_LOG=FLAG_HERE io.github.screwys.Rufin 2>&1
 ```
 
 or for native builds:
 
 ```bash
-RUST_LOG=FLAG_HERE cargo run -p rufin
+RUST_LOG=FLAG_HERE just debug
 ```
 
 Where `RUST_LOG` flags are:

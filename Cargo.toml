@@ -10,7 +10,7 @@ members = [
     "crates/secrets",
     "crates/library",
     "crates/test-support",
-    "xtask",
+    "crates/xtask",
 ]
 resolver = "2"
 

@@ -11,11 +11,10 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**/Cargo.toml
+      - crates/xtask/**
       - flake.nix
       - packaging/flatpak/cargo-sources.json
-      - packaging/flatpak/update-cargo-sources.sh
-      - xtask/**
-      - .github/scripts/update-nix-cargo-hash.sh
+      - scripts/retry-nix-command.sh
       - .github/workflows/dependency-artifacts.yml
 
 permissions:
@@ -50,7 +49,7 @@ jobs:
             stalled-download-timeout = 90
 
       - name: Check Nix cargo hash
-        run: bash .github/scripts/update-nix-cargo-hash.sh --check
+        run: cargo run --locked -p xtask -- generate nix-cargo-hash --check
 
   refresh:
     name: Refresh dependency artifacts
@@ -81,10 +80,10 @@ jobs:
             stalled-download-timeout = 90
 
       - name: Refresh Flatpak cargo sources
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop . --command bash packaging/flatpak/update-cargo-sources.sh
+        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop . --command cargo run --locked -p xtask -- generate flatpak-sources
 
       - name: Refresh Nix cargo hash
-        run: bash .github/scripts/update-nix-cargo-hash.sh
+        run: cargo run --locked -p xtask -- generate nix-cargo-hash
 
       - name: Detect artifact changes
         id: artifacts

@@ -72,7 +72,7 @@ jobs:
         if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
-        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
         if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
@@ -119,8 +119,8 @@ jobs:
           set -euo pipefail
           flatpak install --user --noninteractive --bundle "dist/$BUNDLE_NAME"
           flatpak info --user "$APP_ID"
-          flatpak run --filesystem="$PWD":ro --command=bash "$APP_ID" \
-            "$PWD/.github/scripts/verify-package-layout.sh" / /app
+          install_root="$(flatpak info --user --show-location "$APP_ID")/files"
+          cargo run --locked -p xtask -- verify package-layout "$install_root" /
           timeout 30s xvfb-run -a dbus-run-session -- flatpak run "$APP_ID" --startup-check
 
       - name: Upload workflow artifact

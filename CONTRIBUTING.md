@@ -20,18 +20,27 @@ Local build and run steps are in [README.md](README.md#building-locally).
 
 To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
-## Tests
+## Development commands
 
 ```bash
-cargo fmt --check
-scripts/lint-rust.sh
-scripts/test-rust.sh
+just build
+just debug
+just fmt
+just test
 ```
 
-To make sure app still compiles:
+To run the full local gate:
 
 ```bash
-cargo check -p rufin
+just check
+```
+
+Outside `nix develop`, this also needs rustfmt, clippy, cargo-deny, and gettext. cargo-nextest is used when available.
+
+For release or package metadata changes:
+
+```bash
+just release-check
 ```
 
 ## Pull requests

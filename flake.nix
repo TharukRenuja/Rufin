@@ -1,13 +1,6 @@
 {
   description = "Native GTK4 Jellyfin music client";
 
-  nixConfig = {
-    extra-substituters = [ "https://screwys-rufin.cachix.org" ];
-    extra-trusted-public-keys = [
-      "screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA="
-    ];
-  };
-
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
@@ -156,10 +149,12 @@
               with pkgs;
               [
                 cargo
+                cargo-deny
                 cargo-nextest
                 clippy
                 desktop-file-utils
                 gettext
+                just
                 jq
                 pkg-config
                 rust-analyzer

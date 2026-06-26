@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/retry-nix-command.sh COMMAND [ARG...]
+Usage: scripts/retry-nix-command.sh COMMAND [ARG...]
 
 Retries Nix commands only when their output matches known transient
 network or binary-cache failures.

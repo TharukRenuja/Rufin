@@ -64,7 +64,7 @@ jobs:
         if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
-        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
         if: github.event_name == 'release' || github.event_name == 'push'
@@ -104,13 +104,13 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Check flake
-        run: bash .github/scripts/retry-nix-command.sh nix flake check --print-build-logs
+        run: bash scripts/retry-nix-command.sh nix flake check --print-build-logs
 
       - name: Build app
-        run: bash .github/scripts/retry-nix-command.sh nix build .#rufin --print-build-logs
+        run: bash scripts/retry-nix-command.sh nix build .#rufin --print-build-logs
 
       - name: Verify package layout
-        run: bash .github/scripts/verify-package-layout.sh result /
+        run: cargo run --locked -p xtask -- verify package-layout result /
 
       - name: Verify wrapped app
-        run: timeout 30s xvfb-run -a dbus-run-session -- bash .github/scripts/retry-nix-command.sh nix run .# -- --startup-check
+        run: timeout 30s xvfb-run -a dbus-run-session -- bash scripts/retry-nix-command.sh nix run .# -- --startup-check

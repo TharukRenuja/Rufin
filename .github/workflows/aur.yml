@@ -76,7 +76,7 @@ jobs:
         if: github.event_name == 'release' || github.event_name == 'push'
         env:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
-        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+        run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release tag
         if: github.event_name == 'release' || github.event_name == 'push'
@@ -112,7 +112,7 @@ jobs:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
-          bash .github/scripts/update-aur-stable-package.sh --skip-srcinfo "$RELEASE_TAG"
+          cargo run --locked -p xtask -- generate aur-stable --skip-srcinfo "$RELEASE_TAG"
 
       - name: Build packages
         env:
@@ -174,7 +174,7 @@ jobs:
 
             pkgroot="$(mktemp -d)"
             bsdtar -xf "$pkgfile" -C "$pkgroot"
-            bash .github/scripts/verify-package-layout.sh "$pkgroot" /usr
+            cargo run --locked -p xtask -- verify package-layout "$pkgroot" /usr
             rm -rf "$pkgroot"
 
             pacman -U --noconfirm "$pkgfile"
@@ -270,7 +270,7 @@ jobs:
 
           tag_commit="$(git rev-list -n1 "refs/tags/$tag")"
           git merge-base --is-ancestor "$tag_commit" origin/main
-          bash .github/scripts/update-aur-stable-package.sh --check "$tag"
+          cargo run --locked -p xtask -- generate aur-stable --check "$tag"
 
       - name: Download package metadata
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
