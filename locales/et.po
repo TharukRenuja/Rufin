@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-21 21:01+0000\n"
+"PO-Revision-Date: 2026-06-26 10:03+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -57,7 +57,7 @@ msgid "Add Rule"
 msgstr "Lisa reegel"
 
 msgid "Add Your Music Library"
-msgstr ""
+msgstr "Lisa oma muusikakogu"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
 msgstr "Lisa kasutatav Jellyfini, Subsonicu või OpenSubsonicu server."
@@ -72,12 +72,11 @@ msgid "Add folders to use the Local source."
 msgstr "Kohaliku andmeallika kasutamiseks lisa kaustad."
 
 msgid "Add music library"
-msgstr ""
+msgstr "Lisa muusikakogu"
 
 msgid "Add music to start a queue."
 msgstr "Esitusjärjekorra koostamiseks lisa muusikat."
 
-#, fuzzy
 msgid "Add server"
 msgstr "Lisa server"
 
@@ -105,9 +104,8 @@ msgstr "Albumi esitaja"
 msgid "Album artists"
 msgstr "Albumi esitajad"
 
-#, fuzzy
 msgid "Album radio"
-msgstr "Esita albumit"
+msgstr "Albumi raadio"
 
 msgid "Album title"
 msgstr "Albumi pealkiri"
@@ -154,9 +152,8 @@ msgstr "Esitajate albumid"
 msgid "Artist name"
 msgstr "Esitaja nimi"
 
-#, fuzzy
 msgid "Artist radio"
-msgstr "Esita esitajat"
+msgstr "Esitaja raadio"
 
 msgid "Artist tracks"
 msgstr "Esitaja lood"
@@ -409,9 +406,8 @@ msgstr "EP"
 msgid "EPs"
 msgstr "EP-plaadid"
 
-#, fuzzy
 msgid "Edit"
-msgstr "Redigeeri"
+msgstr "Muuda"
 
 msgid "Edit Smart Playlist"
 msgstr "Muuda nutikat esitusloendit"
@@ -428,10 +424,8 @@ msgstr "Esmalt sisesta API tuvastusandmed"
 msgid "Enter a local prefix."
 msgstr "Sisesta kohalik prefiks."
 
-#, fuzzy
 msgid "Enter a matching server prefix to map this path."
-msgstr ""
-"Sisestage sobiv serveri prefiks, et määrata sellele teele vastav server."
+msgstr "Vastendamaks asukohaga sisesta sobiv serveri prefiks."
 
 msgid "Enter a new playlist name."
 msgstr "Sisesta uus esitusloendi nimi."
@@ -460,9 +454,8 @@ msgstr "Laulusõnade otsing välisest teenusest"
 msgid "External site links"
 msgstr "Väliste veebisaitide lingid"
 
-#, fuzzy
 msgid "Fade audio when playback is paused or resumed"
-msgstr "Sujuv helitugevuse muutmine taasesituse peatamisel või jätkamisel"
+msgstr "Sujuv helivaljuse muutmine taasesituse peatamisel või jätkamisel"
 
 msgid "Favorite"
 msgstr "Lemmik"
@@ -480,7 +473,7 @@ msgid "Find your ListenBrainz user token"
 msgstr "Vormista ListenBrainz-teenuse kasutaja tunnusluba"
 
 msgid "Flat"
-msgstr ""
+msgstr "Ühetasane"
 
 msgid "Folder"
 msgstr "Kaust"
@@ -503,12 +496,11 @@ msgstr "Leitud serverid"
 msgid "Full"
 msgstr "Täisvaates"
 
-#, fuzzy
 msgid "Full Bass"
-msgstr "Täisvaates"
+msgstr "Täisbass"
 
 msgid "Full Treble"
-msgstr ""
+msgstr "Täiskõrged"
 
 msgid "Gapless"
 msgstr "Vahepausideta"
@@ -516,7 +508,6 @@ msgstr "Vahepausideta"
 msgid "General"
 msgstr "Üldised"
 
-#, fuzzy
 msgid "Generate and cache waveforms for the current track"
 msgstr "Loob ja salvestab praeguse loo lainekujud"
 
@@ -526,9 +517,8 @@ msgstr "Genius"
 msgid "Genre"
 msgstr "Žanr"
 
-#, fuzzy
 msgid "Genre radio"
-msgstr "Esita juhuslikult"
+msgstr "Žanripõhine raadio"
 
 msgid "Genre tracks"
 msgstr "Žanri lood"
@@ -679,9 +669,8 @@ msgstr "Kohalik vastendus"
 msgid "Local mapping saved. Sync to preview matches."
 msgstr "Kohalik vastendus salvestatud. Vastete eelvaate nägemiseks sünkrooni."
 
-#, fuzzy
 msgid "Local playback mapping configured"
-msgstr "Kohaliku taasesituse seadete konfigureerimine on lõpetatud"
+msgstr "Kohaliku taasesituse vastenduse seadistamine on lõpetatud"
 
 msgid "Lyrics"
 msgstr "Laulusõnad"
@@ -890,7 +879,6 @@ msgstr "Lugude arv"
 msgid "Off"
 msgstr "Väljas"
 
-#, fuzzy
 msgid "Off only for a server you control"
 msgstr "Lülita välja vaid enda kontrollitava serveri jaoks"
 
@@ -912,16 +900,14 @@ msgstr "Ava Last.fm-is"
 msgid "Open on MusicBrainz"
 msgstr "Ava MusicBrainzis"
 
-#, fuzzy
 msgid "Open on Navidrome"
-msgstr "Navidrome"
+msgstr "Ava Navidrome'is"
 
 msgid "Open release notes"
 msgstr "Vaata versiooniteavet"
 
-#, fuzzy
 msgid "OpenSubsonic"
-msgstr "Subsonic / OpenSubsonic"
+msgstr "OpenSubsonic"
 
 msgid "Opening Last.fm authorization…"
 msgstr "Avan Last.fm-i autentimisvaadet…"
@@ -965,9 +951,8 @@ msgstr "Esituskordi"
 msgid "Play filter"
 msgstr "Esituste filter"
 
-#, fuzzy
 msgid "Play radio"
-msgstr "Esita juhuslikult"
+msgstr "Esita raadiorežiimis"
 
 msgid "Play random"
 msgstr "Esita juhuslikult"
@@ -993,9 +978,8 @@ msgstr "Esitusloendi nimi"
 msgid "Playlist order"
 msgstr "Esitusloendi järjekord"
 
-#, fuzzy
 msgid "Playlist radio"
-msgstr "Esitusloendi nimi"
+msgstr "Esitusloendipõhine raadio"
 
 msgid "Playlist tracks"
 msgstr "Esitusloendi lood"
@@ -1161,7 +1145,6 @@ msgstr "Laiendatud teave"
 msgid "Rock"
 msgstr "Rokkmuusika"
 
-#, fuzzy
 msgid "Rows"
 msgstr "Read"
 
