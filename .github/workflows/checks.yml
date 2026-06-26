@@ -100,9 +100,6 @@ jobs:
             echo "target=." >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check Flatpak cargo sources
-        run: bash packaging/flatpak/update-cargo-sources.sh --check
-
       - name: Install Nix
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
@@ -121,6 +118,9 @@ jobs:
           prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           cmd-format: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
+
+      - name: Check Flatpak cargo sources
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash packaging/flatpak/update-cargo-sources.sh --check
 
       - name: Check Rust formatting
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check

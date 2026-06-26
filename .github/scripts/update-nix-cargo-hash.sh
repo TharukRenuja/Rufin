@@ -26,15 +26,16 @@ if [[ -z "$current_hash" ]]; then
   exit 1
 fi
 
-perl -0pi -e \
-  's/cargoHash = "sha256-[^"]+";/cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";/' \
-  "$flake_file"
-
 tmp="$(mktemp)"
 cleanup() {
+  perl -0pi -e "s|cargoHash = \"\Q$fake_hash\E\";|cargoHash = \"$current_hash\";|" "$flake_file" 2>/dev/null || true
   rm -f "$tmp"
 }
 trap cleanup EXIT
+
+perl -0pi -e \
+  's/cargoHash = "sha256-[^"]+";/cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";/' \
+  "$flake_file"
 
 set +e
 (

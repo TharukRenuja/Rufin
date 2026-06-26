@@ -14,6 +14,7 @@ on:
       - flake.nix
       - packaging/flatpak/cargo-sources.json
       - packaging/flatpak/update-cargo-sources.sh
+      - xtask/**
       - .github/scripts/update-nix-cargo-hash.sh
       - .github/workflows/dependency-artifacts.yml
 
@@ -67,9 +68,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
-      - name: Refresh Flatpak cargo sources
-        run: bash packaging/flatpak/update-cargo-sources.sh
-
       - name: Install Nix
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
@@ -81,6 +79,9 @@ jobs:
             extra-trusted-public-keys = screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA=
             max-substitution-jobs = 4
             stalled-download-timeout = 90
+
+      - name: Refresh Flatpak cargo sources
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop . --command bash packaging/flatpak/update-cargo-sources.sh
 
       - name: Refresh Nix cargo hash
         run: bash .github/scripts/update-nix-cargo-hash.sh

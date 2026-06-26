@@ -286,6 +286,9 @@ write_changelog() {
       "release: publish stable packages for v"*)
         continue
         ;;
+      "release: sync stable package metadata for v"*)
+        continue
+        ;;
       "Merge pull request #"*)
         continue
         ;;
