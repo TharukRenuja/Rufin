@@ -160,7 +160,7 @@ fn record_local_play_now(
         )
     });
     match result {
-        Ok(true) => emit_activity_delta(&events, activity.track_id),
+        Ok(true) => emit_play_activity_delta(&events, activity.track_id),
         Ok(false) => {}
         Err(error) if playback_activity_error_is_transient(&error) => {
             debug!(%error, "skipped playback activity update while store is busy");
@@ -185,7 +185,7 @@ fn record_local_skip_now(
     match store.with_store(|store| {
         store.increment_track_skip_count(&activity.server_id, &activity.track_id)
     }) {
-        Ok(()) => emit_activity_delta(&events, activity.track_id),
+        Ok(()) => emit_skip_activity_delta(&events, activity.track_id),
         Err(error) if playback_activity_error_is_transient(&error) => {
             debug!(%error, "skipped playback activity update while store is busy");
         }
@@ -200,9 +200,15 @@ fn record_local_skip_now(
     }
 }
 
-fn emit_activity_delta(events: &Sender<ControllerEvent>, track_id: TrackId) {
+fn emit_play_activity_delta(events: &Sender<ControllerEvent>, track_id: TrackId) {
     let mut delta = LibraryDelta::default();
     delta.tracks.stats.push(track_id);
+    let _sent = events.send(ControllerEvent::LibraryDelta(Box::new(delta)));
+}
+
+fn emit_skip_activity_delta(events: &Sender<ControllerEvent>, track_id: TrackId) {
+    let mut delta = LibraryDelta::default();
+    delta.tracks.skip_stats.push(track_id);
     let _sent = events.send(ControllerEvent::LibraryDelta(Box::new(delta)));
 }
 
@@ -303,7 +309,7 @@ mod tests {
 
         controller.next_track();
         let delta = wait_for_activity_delta(&events);
-        assert_eq!(delta.tracks.stats, vec![first.id.clone()]);
+        assert_eq!(delta.tracks.skip_stats, vec![first.id.clone()]);
         let _queue = wait_for_queue(&events).expect("next queue");
 
         let detail = smart_detail_named(&controller, &server_id, "Most Skipped");

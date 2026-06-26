@@ -513,7 +513,6 @@ impl Shell {
         controls.title.set_text(&title);
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
-        self.apply_bottom_player_width(self.window.width());
         controls.title.set_sensitive(player.current.is_some());
         controls.menu_button.set_sensitive(player.current.is_some());
         controls.artist.set_sensitive(

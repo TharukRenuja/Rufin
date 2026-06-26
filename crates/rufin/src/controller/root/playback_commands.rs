@@ -93,7 +93,6 @@ impl AppController {
         self.start_queue_emit();
         self.silence_backend_for_manual_transition();
         self.restart_current_track();
-        self.auto_dj_top_up_deferred();
     }
     pub fn previous_track(&self) {
         self.invalidate_play_activation_requests();
@@ -122,7 +121,6 @@ impl AppController {
         self.start_queue_emit();
         self.silence_backend_for_manual_transition();
         self.restart_current_track();
-        self.auto_dj_top_up_deferred();
     }
     fn silence_backend_for_manual_transition(&self) {
         if let Err(error) = self.send_playback_command(PlaybackCommand::Silence) {

@@ -1498,7 +1498,7 @@ pub(in crate::controller) fn cover_auto_timing() {
     assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
 }
 #[test]
-pub(in crate::controller) fn cover_auto_end() {
+pub(in crate::controller) fn manual_skip_does_not_refill_auto_dj() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let mut settings = controller.load_settings();
@@ -1526,10 +1526,9 @@ pub(in crate::controller) fn cover_auto_end() {
         .expect("save Auto DJ settings");
     controller.next_track();
     let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries.len() == 2 + super::AUTO_DJ_ITEM_COUNT
-            && queue.entries[queue.current_index.expect("current")].track_id != second.id
+        queue.entries[queue.current_index.expect("current")].track_id != second.id
     });
-    assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
+    assert_eq!(queue.entries.len(), 2);
     assert_ne!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
