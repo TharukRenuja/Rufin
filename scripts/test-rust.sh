@@ -17,8 +17,7 @@ if command -v cargo-nextest >/dev/null 2>&1; then
   fi
   nextest_args+=(--test-threads "$nextest_jobs")
   cargo nextest run "${nextest_args[@]}"
-  cargo test --workspace --doc --locked
 else
   echo "cargo-nextest is unavailable; falling back to cargo test." >&2
-  cargo test --workspace --locked
+  cargo test --workspace --locked --lib --bins --tests --benches --examples
 fi

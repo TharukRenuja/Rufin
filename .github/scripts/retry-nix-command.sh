@@ -41,9 +41,10 @@ attempt=1
 while (( attempt <= attempts )); do
   : > "$log_file"
   set +e
-  "$@" > >(tee -a "$log_file") 2> >(tee -a "$log_file" >&2)
+  "$@" >"$log_file" 2>&1
   status="$?"
   set -e
+  cat "$log_file"
 
   if [[ "$status" -eq 0 ]]; then
     exit 0
