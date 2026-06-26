@@ -421,11 +421,7 @@ MSG
 }
 
 update_flatpak_cargo_sources() {
-  local sources_script="packaging/flatpak/update-cargo-sources.sh"
-
-  if [[ -f "$sources_script" ]]; then
-    bash "$sources_script"
-  fi
+  cargo run --locked -p xtask -- flatpak update-cargo-sources
 }
 
 verify_nix_flake() {
@@ -453,7 +449,7 @@ if [[ "$dry_run" == "1" ]]; then
   exit 0
 fi
 
-bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
+cargo run --locked -p xtask -- release prepare "$plain_version" "$summary"
 update_flatpak_cargo_sources
 update_nix_cargo_hash
 verify_nix_flake
@@ -482,7 +478,7 @@ git show "$version" --no-patch
 
 flathub_manifest="packaging/flatpak/io.github.screwys.Rufin.flathub.json"
 if [[ "$skip_flathub" != "1" && -f "$flathub_manifest" ]]; then
-  bash .github/scripts/update-flathub-manifest.sh --manifest "$flathub_manifest" "$version"
+  cargo run --locked -p xtask -- release update-flathub-manifest --manifest "$flathub_manifest" "$version"
   if ! git diff --quiet -- "$flathub_manifest"; then
     git add "$flathub_manifest"
     git commit -m "chore(flatpak): update Flathub manifest for $version"

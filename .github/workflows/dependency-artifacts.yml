@@ -13,7 +13,6 @@ on:
       - crates/**/Cargo.toml
       - flake.nix
       - packaging/flatpak/cargo-sources.json
-      - packaging/flatpak/update-cargo-sources.sh
       - xtask/**
       - .github/scripts/update-nix-cargo-hash.sh
       - .github/workflows/dependency-artifacts.yml
@@ -81,7 +80,7 @@ jobs:
             stalled-download-timeout = 90
 
       - name: Refresh Flatpak cargo sources
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop . --command bash packaging/flatpak/update-cargo-sources.sh
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop . --command cargo run --locked -p xtask -- flatpak update-cargo-sources
 
       - name: Refresh Nix cargo hash
         run: bash .github/scripts/update-nix-cargo-hash.sh

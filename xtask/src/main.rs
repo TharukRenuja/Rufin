@@ -399,6 +399,7 @@ fn check_release_local(mut args: Vec<String>) -> Result<()> {
 
     ensure_command("cargo")?;
     ensure_command("cargo-deny")?;
+    ensure_command("just")?;
 
     let root = repo_root()?;
     env::set_current_dir(&root)?;
@@ -416,10 +417,10 @@ fn check_release_local(mut args: Vec<String>) -> Result<()> {
     if needs_nix_hash_check {
         run_bash_without_ld_preload(&[".github/scripts/update-nix-cargo-hash.sh", "--check"])?;
     }
-    run_command("cargo", ["fmt", "--all", "--", "--check"])?;
-    run_command("bash", ["scripts/lint-rust.sh"])?;
-    run_command("bash", ["scripts/test-rust.sh"])?;
-    run_command("bash", ["scripts/check-deps.sh"])?;
+    run_command("just", ["fmt-check"])?;
+    run_command("just", ["lint"])?;
+    run_command("just", ["test"])?;
+    run_command("just", ["deps"])?;
 
     Ok(())
 }

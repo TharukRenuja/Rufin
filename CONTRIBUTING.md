@@ -23,15 +23,15 @@ To enable the debug logging, refer to [README.md#troubleshooting](README.md#trou
 ## Tests
 
 ```bash
-cargo fmt --check
-scripts/lint-rust.sh
-scripts/test-rust.sh
+just fmt-check
+just lint
+just test
 ```
 
 To make sure app still compiles:
 
 ```bash
-cargo check -p rufin
+just check
 ```
 
 ## Pull requests

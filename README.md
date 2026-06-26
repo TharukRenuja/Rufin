@@ -93,7 +93,7 @@ To run the current `main` branch:
 nix run github:screwys/Rufin/main
 ```
 
-Release tags and `main` builds are cached. You can also add either ref to your profile:
+You can also add either ref to your profile:
 
 ```bash
 nix profile install github:screwys/Rufin/v0.7.9
@@ -130,24 +130,31 @@ container can work too, but it can be tricky.
 If you already use Nix, the dev shell is an easy alternative:
 
 ```bash
-nix --accept-flake-config develop
+nix develop
 ```
 
 For one-off commands:
 
 ```bash
-nix --accept-flake-config develop --command cargo run -p rufin
-nix --accept-flake-config develop --command scripts/test-rust.sh
+nix develop --command just debug
+nix develop --command just test
 ```
 
-The `--accept-flake-config` flag lets Nix use Rufin's configured binary cache.
+Rufin publishes release tag and `main` build results to Cachix. This is
+optional, but can speed up Nix builds and runs:
+
+```bash
+nix-shell -p cachix --run "cachix use screwys-rufin"
+```
+
+The dev shell works without this cache.
 
 To run Rufin from source:
 
 ```bash
 git clone https://github.com/screwys/Rufin.git
 cd Rufin
-cargo run -p rufin
+just debug
 ```
 
 # Troubleshooting
