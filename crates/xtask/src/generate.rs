@@ -245,7 +245,6 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
             "--escape",
             "--no-location",
             "--sort-by-file",
-            "--omit-header",
             "--package-name=Rufin",
             "--msgid-bugs-address=https://github.com/screwys/Rufin/issues",
             "--keyword=tr:1",
@@ -273,11 +272,18 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
         .arg(format!("--files-from={}", sources.display()))
         .arg(format!("--output={}", entries.display()))
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-    if !status.success() {
-        return Err(format!("xgettext failed with status {status}").into());
+        .output()?;
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    if !status.status.success() {
+        return Err(format!(
+            "xgettext failed with status {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            status.status
+        )
+        .into());
+    }
+    if !stderr.trim().is_empty() {
+        return Err(format!("xgettext emitted warnings:\n{stderr}").into());
     }
 
     let mut template = String::from(
@@ -285,9 +291,15 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
     );
     if entries.metadata()?.len() > 0 {
         template.push('\n');
-        template.push_str(&read_to_string(entries)?);
+        template.push_str(strip_xgettext_header(&read_to_string(entries)?));
     }
     write_string(output, &template)
+}
+
+fn strip_xgettext_header(input: &str) -> &str {
+    input
+        .split_once("\n\n")
+        .map_or(input, |(_, entries)| entries)
 }
 
 fn nix_cargo_hash_command(args: Vec<String>) -> Result<()> {

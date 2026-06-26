@@ -31,7 +31,7 @@ fmt: _tmp
 release-check *args: _tmp
     TMPDIR="$PWD/target/tmp" cargo run --locked -p xtask -- verify local {{args}}
 
-test: _tmp
+test *args: _tmp
     just _icon-check
     if command -v cargo-nextest >/dev/null 2>&1; then \
         nextest_jobs="${NEXTEST_JOBS:-4}"; \
@@ -39,10 +39,14 @@ test: _tmp
             echo "NEXTEST_JOBS must be a positive integer." >&2; \
             exit 1; \
         fi; \
-        TMPDIR="$PWD/target/tmp" cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; \
+        TMPDIR="$PWD/target/tmp" cargo nextest run --workspace --locked --test-threads "$nextest_jobs" {{args}}; \
     else \
+        cargo_args=(--workspace --locked); \
+        if [[ -z "{{args}}" ]]; then \
+            cargo_args+=(--lib --bins --tests --benches --examples); \
+        fi; \
         echo "cargo-nextest is unavailable; falling back to cargo test." >&2; \
-        TMPDIR="$PWD/target/tmp" cargo test --workspace --locked --lib --bins --tests --benches --examples; \
+        TMPDIR="$PWD/target/tmp" cargo test "${cargo_args[@]}" {{args}}; \
     fi
 
 _check: _tmp
