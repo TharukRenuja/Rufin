@@ -204,16 +204,16 @@ msgstr "Kešotā bibliotēka ir gatava"
 msgid "Caching Library"
 msgstr "Kešo bibliotēku"
 
-msgid "Caching library artwork…"
+msgid "Caching library artwork..."
 msgstr "Kešo albumu vāciņus…"
 
-msgid "Caching library… This may take some time."
+msgid "Caching library... This may take some time."
 msgstr "Kešo bibliotēku… Tas var aizņemt kādu laiku."
 
-msgid "Caching local library…"
+msgid "Caching local library..."
 msgstr "Kešo lokālo bibliotēku…"
 
-msgid "Caching local library… This may take some time."
+msgid "Caching local library... This may take some time."
 msgstr "Kešo lokālo bibliotēku… Tas var aizņemt kādu laiku."
 
 msgid "Cancel"
@@ -237,7 +237,7 @@ msgstr ""
 "ieskaitot API atslēgas. Lietojumprogrammas kešatmiņa netiks skarta."
 
 #, rust-format
-msgid "Checking {provider} server…"
+msgid "Checking {provider} server..."
 msgstr "Pārbauda {provider} serveri…"
 
 msgid "Choose"
@@ -325,7 +325,7 @@ msgstr "Savienots"
 msgid "Connected as {username}"
 msgstr "Pieslēdzies kā {username}"
 
-msgid "Connecting to music server…"
+msgid "Connecting to music server..."
 msgstr "Savienojas ar mūzikas serveri…"
 
 msgid "Connection"
@@ -634,7 +634,7 @@ msgstr "ListenBrainz skroblēšana"
 msgid "Loaded in lyrics panel."
 msgstr "Ielādēts tekstu panelī."
 
-msgid "Loading folders…"
+msgid "Loading folders..."
 msgstr "Ielādē mapes…"
 
 msgid "Local"
@@ -908,10 +908,10 @@ msgstr "Atvērt izdevuma piezīmes"
 msgid "OpenSubsonic"
 msgstr "OpenSubsonic"
 
-msgid "Opening Last.fm authorization…"
+msgid "Opening Last.fm authorization..."
 msgstr "Atver Last.fm autorizāciju…"
 
-msgid "Opening Libre.fm authorization…"
+msgid "Opening Libre.fm authorization..."
 msgstr "Atver Libre.fm autorizāciju…"
 
 msgid "Original"
@@ -1004,7 +1004,7 @@ msgstr "Dot priekšroku servera atskaņošanas sarakstu vākiem"
 msgid "Preferences"
 msgstr "Iestatījumi"
 
-msgid "Preparing library…"
+msgid "Preparing library..."
 msgstr "Sagatavo bibliotēku…"
 
 msgid "Preset"
@@ -1213,7 +1213,7 @@ msgstr "Meklēt rindā"
 msgid "Searching Local Network"
 msgstr "Meklē lokālajā tīklā"
 
-msgid "Searching for Jellyfin servers on the local network…"
+msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Tiek meklēti Jellyfin serveri lokālajā tīklā…"
 
 msgid "Searching will start automatically"
@@ -1221,9 +1221,6 @@ msgstr "Meklēšana tiks automātiski uzsākta"
 
 msgid "Searching..."
 msgstr "Tiek veikta meklēšana..."
-
-msgid "Searching…"
-msgstr "Meklē…"
 
 msgid "Seconds"
 msgstr "Sekundes"
@@ -1283,7 +1280,7 @@ msgstr "Servera izvēlētājs"
 msgid "Server settings saved."
 msgstr "Servera iestatījumi saglabāti."
 
-msgid "Server settings saved. Resyncing library…"
+msgid "Server settings saved. Resyncing library..."
 msgstr ""
 "Servera iestatījumi saglabāti. Bibliotēkas sinhronizācija tiek atsākta…"
 
@@ -1403,7 +1400,7 @@ msgstr "Straumes kvalitāte"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-msgid "Switching library…"
+msgid "Switching library..."
 msgstr "Pārslēdz bibliotēku…"
 
 msgid "Sync already running."
@@ -1413,7 +1410,7 @@ msgid "Synced lyrics"
 msgstr "Sinhronizēti teksti"
 
 #, rust-format
-msgid "Syncing {provider} library…"
+msgid "Syncing {provider} library..."
 msgstr "Sinhronizē bibliotēku no {provider}…"
 
 msgid "System default"

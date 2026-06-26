@@ -266,7 +266,7 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                let message = tr("Caching local library…");
+                let message = tr("Caching local library...");
                 accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.add_local_server_folders(roots);
@@ -276,7 +276,7 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                let message = tr("Connecting to music server…");
+                let message = tr("Connecting to music server...");
                 accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.login(LoginRequest {
@@ -674,7 +674,7 @@ impl Shell {
         }
 
         let search_title = if running {
-            tr("Searching…")
+            tr("Searching...")
         } else {
             tr("Search Again")
         };
@@ -697,7 +697,7 @@ fn discovery_status_label(status: &ServerDiscoveryStatus) -> String {
     match status {
         ServerDiscoveryStatus::Idle => tr("Searching will start automatically"),
         ServerDiscoveryStatus::Searching => {
-            tr("Searching for Jellyfin servers on the local network…")
+            tr("Searching for Jellyfin servers on the local network...")
         }
         ServerDiscoveryStatus::Empty => {
             tr("No Jellyfin servers found. Enter the address manually or search again")

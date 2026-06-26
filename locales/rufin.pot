@@ -256,7 +256,7 @@ msgstr ""
 msgid "Techno"
 msgstr ""
 
-msgid "Loading folders\342\200\246"
+msgid "Loading folders..."
 msgstr ""
 
 msgid "No folder contents found."
@@ -559,13 +559,13 @@ msgstr ""
 msgid "Choose at least one local music folder"
 msgstr ""
 
-msgid "Caching local library\342\200\246"
+msgid "Caching local library..."
 msgstr ""
 
 msgid "Enter a server address, username, and password"
 msgstr ""
 
-msgid "Connecting to music server\342\200\246"
+msgid "Connecting to music server..."
 msgstr ""
 
 msgid "Caching Library"
@@ -580,7 +580,7 @@ msgstr ""
 msgid "No Servers Found"
 msgstr ""
 
-msgid "Searching\342\200\246"
+msgid "Searching..."
 msgstr ""
 
 msgid "Search Again"
@@ -589,7 +589,7 @@ msgstr ""
 msgid "Searching will start automatically"
 msgstr ""
 
-msgid "Searching for Jellyfin servers on the local network\342\200\246"
+msgid "Searching for Jellyfin servers on the local network..."
 msgstr ""
 
 msgid "No Jellyfin servers found. Enter the address manually or search again"
@@ -754,7 +754,7 @@ msgstr ""
 msgid "Enter API credentials first"
 msgstr ""
 
-msgid "Opening Last.fm authorization\342\200\246"
+msgid "Opening Last.fm authorization..."
 msgstr ""
 
 msgid "Now playing updates"
@@ -769,7 +769,7 @@ msgstr ""
 msgid "Libre.fm scrobbling"
 msgstr ""
 
-msgid "Opening Libre.fm authorization\342\200\246"
+msgid "Opening Libre.fm authorization..."
 msgstr ""
 
 msgid "ListenBrainz"
@@ -1166,13 +1166,13 @@ msgid "Enter an artist or song."
 msgstr ""
 
 #, rust-format
-msgid "Checking {provider} server\342\200\246"
+msgid "Checking {provider} server..."
 msgstr ""
 
 msgid "Server settings saved."
 msgstr ""
 
-msgid "Server settings saved. Resyncing library\342\200\246"
+msgid "Server settings saved. Resyncing library..."
 msgstr ""
 
 msgid "No changes to save."
@@ -1182,16 +1182,16 @@ msgid "Sync already running."
 msgstr ""
 
 #, rust-format
-msgid "Syncing {provider} library\342\200\246"
+msgid "Syncing {provider} library..."
 msgstr ""
 
-msgid "Caching library\342\200\246 This may take some time."
+msgid "Caching library... This may take some time."
 msgstr ""
 
-msgid "Caching local library\342\200\246 This may take some time."
+msgid "Caching local library... This may take some time."
 msgstr ""
 
-msgid "Caching library artwork\342\200\246"
+msgid "Caching library artwork..."
 msgstr ""
 
 msgid "Cached library ready"
@@ -1430,7 +1430,7 @@ msgid_plural "{count} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Preparing library\342\200\246"
+msgid "Preparing library..."
 msgstr ""
 
 msgid "New Playlist"
@@ -1606,13 +1606,10 @@ msgstr ""
 msgid "Installed"
 msgstr ""
 
-msgid "Searching..."
-msgstr ""
-
 msgid "No cached results found."
 msgstr ""
 
-msgid "Switching library\342\200\246"
+msgid "Switching library..."
 msgstr ""
 
 msgid "Show Rufin"

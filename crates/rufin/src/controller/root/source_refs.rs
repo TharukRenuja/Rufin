@@ -204,7 +204,7 @@ pub(in crate::controller) fn push_unique_cover_ref(
 
 pub(in crate::controller) fn sync_status_text(state: &SyncState) -> String {
     match state.status.as_str() {
-        "running" => "Syncing library…".to_string(),
+        "running" => "Syncing library...".to_string(),
         "error" => "Sync needs attention".to_string(),
         _ => "Cached library ready".to_string(),
     }

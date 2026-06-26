@@ -88,7 +88,7 @@ impl AppController {
                 }
                 let provider_name = request.provider.title();
                 let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                    "Checking {provider_name} server…"
+                    "Checking {provider_name} server..."
                 )));
                 let device_id = if request.provider == StreamingProvider::Jellyfin {
                     Some(ensure_jellyfin_device_id(&store)?)
@@ -268,7 +268,7 @@ fn server_settings_status_for_outcome(
 fn server_settings_status_message(status: ServerSettingsStatus) -> &'static str {
     match status {
         ServerSettingsStatus::Saved => "Server settings saved.",
-        ServerSettingsStatus::Resyncing => "Server settings saved. Resyncing library…",
+        ServerSettingsStatus::Resyncing => "Server settings saved. Resyncing library...",
         ServerSettingsStatus::Unchanged => "No changes to save.",
     }
 }

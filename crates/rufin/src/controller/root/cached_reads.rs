@@ -354,7 +354,7 @@ pub(in crate::controller) fn activate_logged_in_server(
 
     activate_saved_queue(context, &saved)?;
     let _sent = context.events.send(ControllerEvent::LoginStatus(
-        "Connected. Loading cached library…".to_string(),
+        "Connected. Loading cached library...".to_string(),
     ));
     emit_snapshot(context.store, context.events);
     Ok(saved)

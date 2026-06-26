@@ -110,7 +110,7 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
         return;
     }
     clear_list_box(&dialog.list);
-    dialog.status.set_text(&tr("Searching…"));
+    dialog.status.set_text(&tr("Searching..."));
     debug!(
         artist_name = %artist_name,
         track_name = %track_name,
@@ -150,19 +150,19 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     let status = status.trim();
     if let Some(provider) = status
         .strip_prefix("Checking ")
-        .and_then(|status| status.strip_suffix(" server…"))
+        .and_then(|status| status.strip_suffix(" server..."))
         .filter(|provider| !provider.trim().is_empty())
     {
         let provider = status_provider_label(provider);
         return Some(tr_with(
-            "Checking {provider} server…",
+            "Checking {provider} server...",
             &[("provider", provider.as_str())],
         ));
     }
     match status {
         "Server settings saved." => Some(tr("Server settings saved.")),
-        "Server settings saved. Resyncing library…" => {
-            Some(tr("Server settings saved. Resyncing library…"))
+        "Server settings saved. Resyncing library..." => {
+            Some(tr("Server settings saved. Resyncing library..."))
         }
         "No changes to save." => Some(tr("No changes to save.")),
         "Sync already running." => Some(tr("Sync already running.")),
@@ -199,12 +199,12 @@ pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyn
     if status == "Cached library ready" || status.starts_with("Library cache ready for ") {
         return Some(LibrarySyncToastState::Clear);
     }
-    if status.starts_with("Syncing ") && status.ends_with(" library…") {
+    if status.starts_with("Syncing ") && status.ends_with(" library...") {
         return Some(LibrarySyncToastState::Progress);
     }
-    if status.starts_with("Caching library…")
-        || status.starts_with("Caching local library…")
-        || status.starts_with("Caching library artwork…")
+    if status.starts_with("Caching library...")
+        || status.starts_with("Caching local library...")
+        || status.starts_with("Caching library artwork...")
         || library_sync_progress_detail(status)
     {
         return Some(LibrarySyncToastState::Progress);
@@ -232,23 +232,23 @@ pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
     let status = status.trim();
     if let Some(provider) = status
         .strip_prefix("Syncing ")
-        .and_then(|status| status.strip_suffix(" library…"))
+        .and_then(|status| status.strip_suffix(" library..."))
         .filter(|provider| !provider.trim().is_empty())
     {
         let provider = status_provider_label(provider);
         return tr_with(
-            "Syncing {provider} library…",
+            "Syncing {provider} library...",
             &[("provider", provider.as_str())],
         );
     }
-    if status.starts_with("Caching library… This may take some time.") {
-        return tr("Caching library… This may take some time.");
+    if status.starts_with("Caching library... This may take some time.") {
+        return tr("Caching library... This may take some time.");
     }
-    if status.starts_with("Caching local library… This may take some time.") {
-        return tr("Caching local library… This may take some time.");
+    if status.starts_with("Caching local library... This may take some time.") {
+        return tr("Caching local library... This may take some time.");
     }
-    if status.starts_with("Caching library artwork…") {
-        return tr("Caching library artwork…");
+    if status.starts_with("Caching library artwork...") {
+        return tr("Caching library artwork...");
     }
     if library_sync_progress_detail(status) {
         return status.to_string();
@@ -355,7 +355,7 @@ pub(in crate::ui) fn library_source_is_local(
     matches!(source, Some(domain::LibrarySourceSelection::Local))
 }
 pub(in crate::ui) fn local_source_snapshot_is_syncing(sync_status: &str) -> bool {
-    sync_status == "Syncing library…"
+    sync_status == "Syncing library..."
 }
 pub(in crate::ui) fn queue_source_waits_for_snapshot(
     queue: Option<&QueueSnapshot>,

@@ -45,7 +45,7 @@ impl Shell {
         wrapper.append(&folder_breadcrumbs(self, &path));
 
         if state.loading {
-            wrapper.append(&self.route_empty_view(msgid("Loading folders…")));
+            wrapper.append(&self.route_empty_view(msgid("Loading folders...")));
             return wrapper.upcast();
         }
 

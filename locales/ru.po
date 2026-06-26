@@ -206,16 +206,16 @@ msgstr "Кэшированная библиотека готова"
 msgid "Caching Library"
 msgstr "Кэшированная библиотека"
 
-msgid "Caching library artwork…"
+msgid "Caching library artwork..."
 msgstr "Кэширование обложек альбомов…"
 
-msgid "Caching library… This may take some time."
+msgid "Caching library... This may take some time."
 msgstr "Кэширование библиотеки… Это может занять некоторое время."
 
-msgid "Caching local library…"
+msgid "Caching local library..."
 msgstr "Кэширование локальной библиотеки…"
 
-msgid "Caching local library… This may take some time."
+msgid "Caching local library... This may take some time."
 msgstr "Кэширование локальной библиотеки… Это может занять некоторое время."
 
 msgid "Cancel"
@@ -239,7 +239,7 @@ msgstr ""
 "приложения не затрагивается."
 
 #, rust-format
-msgid "Checking {provider} server…"
+msgid "Checking {provider} server..."
 msgstr "Проверка сервера {provider}…"
 
 msgid "Choose"
@@ -328,7 +328,7 @@ msgstr "Подключено"
 msgid "Connected as {username}"
 msgstr "Вы вошли как {username}"
 
-msgid "Connecting to music server…"
+msgid "Connecting to music server..."
 msgstr "Подключение к музыкальному серверу…"
 
 msgid "Connection"
@@ -640,7 +640,7 @@ msgstr "Отправка данных о прослушивании в ListenBra
 msgid "Loaded in lyrics panel."
 msgstr "Загружено в панель с текстами песен."
 
-msgid "Loading folders…"
+msgid "Loading folders..."
 msgstr "Загрузка папок…"
 
 msgid "Local"
@@ -916,10 +916,10 @@ msgstr "Открыть примечания к выпуску"
 msgid "OpenSubsonic"
 msgstr "OpenSubsonic"
 
-msgid "Opening Last.fm authorization…"
+msgid "Opening Last.fm authorization..."
 msgstr "Запуск авторизации в Last.fm…"
 
-msgid "Opening Libre.fm authorization…"
+msgid "Opening Libre.fm authorization..."
 msgstr "Открытие окна авторизации Libre.fm…"
 
 msgid "Original"
@@ -1012,7 +1012,7 @@ msgstr "Предпочитать обложки плейлистов, храня
 msgid "Preferences"
 msgstr "Настройки"
 
-msgid "Preparing library…"
+msgid "Preparing library..."
 msgstr "Подготовка библиотеки…"
 
 msgid "Preset"
@@ -1225,7 +1225,7 @@ msgstr "Поиск в очереди воспроизведения"
 msgid "Searching Local Network"
 msgstr "Поиск в локальной сети"
 
-msgid "Searching for Jellyfin servers on the local network…"
+msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Поиск серверов Jellyfin в локальной сети…"
 
 msgid "Searching will start automatically"
@@ -1233,9 +1233,6 @@ msgstr "Поиск начнётся автоматически"
 
 msgid "Searching..."
 msgstr "Выполняется поиск..."
-
-msgid "Searching…"
-msgstr "Поиск…"
 
 msgid "Seconds"
 msgstr "Секунды"
@@ -1295,7 +1292,7 @@ msgstr "Выбор сервера"
 msgid "Server settings saved."
 msgstr "Настройки сервера сохранены."
 
-msgid "Server settings saved. Resyncing library…"
+msgid "Server settings saved. Resyncing library..."
 msgstr ""
 "Настройки сервера сохранены. Выполняется повторная синхронизация библиотеки…"
 
@@ -1416,7 +1413,7 @@ msgstr "Качество потока"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-msgid "Switching library…"
+msgid "Switching library..."
 msgstr "Переключение библиотеки…"
 
 msgid "Sync already running."
@@ -1426,7 +1423,7 @@ msgid "Synced lyrics"
 msgstr "Синхронизированные тексты песен"
 
 #, rust-format
-msgid "Syncing {provider} library…"
+msgid "Syncing {provider} library..."
 msgstr "Синхронизация библиотеки {provider}…"
 
 msgid "System default"

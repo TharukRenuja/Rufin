@@ -202,16 +202,16 @@ msgstr "Puhverdatud meediakogu on valmis"
 msgid "Caching Library"
 msgstr "Meediakogu on puhverdamisel"
 
-msgid "Caching library artwork…"
+msgid "Caching library artwork..."
 msgstr "Meediakogu pildid on puhverdamisel…"
 
-msgid "Caching library… This may take some time."
+msgid "Caching library... This may take some time."
 msgstr "Muusikakogu on puhverdamisel... Selleks võib kuluda aega."
 
-msgid "Caching local library…"
+msgid "Caching local library..."
 msgstr "Puhverdan kohalikku muusikakogu…"
 
-msgid "Caching local library… This may take some time."
+msgid "Caching local library... This may take some time."
 msgstr "Kohalik muusikakogu on puhverdamisel... Selleks võib kuluda aega."
 
 msgid "Cancel"
@@ -236,7 +236,7 @@ msgstr ""
 "vahemälu ei mõjuta see."
 
 #, rust-format
-msgid "Checking {provider} server…"
+msgid "Checking {provider} server..."
 msgstr "Kontrollin teenusepakkuja serverit: {provider}…"
 
 msgid "Choose"
@@ -324,7 +324,7 @@ msgstr "Ühendatud"
 msgid "Connected as {username}"
 msgstr "Ühendatud kasutajana {username}"
 
-msgid "Connecting to music server…"
+msgid "Connecting to music server..."
 msgstr "Ühendan muusikaserveriga…"
 
 msgid "Connection"
@@ -636,7 +636,7 @@ msgstr "Kraasimine ListenBrainzi teenuses"
 msgid "Loaded in lyrics panel."
 msgstr "Laaditud laulusõnade plokis."
 
-msgid "Loading folders…"
+msgid "Loading folders..."
 msgstr "Laadin kaustu…"
 
 msgid "Local"
@@ -909,10 +909,10 @@ msgstr "Vaata versiooniteavet"
 msgid "OpenSubsonic"
 msgstr "OpenSubsonic"
 
-msgid "Opening Last.fm authorization…"
+msgid "Opening Last.fm authorization..."
 msgstr "Avan Last.fm-i autentimisvaadet…"
 
-msgid "Opening Libre.fm authorization…"
+msgid "Opening Libre.fm authorization..."
 msgstr "Avan Libre.fm-i autentimisvaadet…"
 
 msgid "Original"
@@ -1005,7 +1005,7 @@ msgstr "Eelistata serveri esitusloendi kaanepilte"
 msgid "Preferences"
 msgstr "Eelistused"
 
-msgid "Preparing library…"
+msgid "Preparing library..."
 msgstr "Valmistan muusikakogu ette…"
 
 msgid "Preset"
@@ -1209,16 +1209,13 @@ msgstr "Otsi esitusjärjekorrast"
 msgid "Searching Local Network"
 msgstr "Otsin kohtvõrgust"
 
-msgid "Searching for Jellyfin servers on the local network…"
+msgid "Searching for Jellyfin servers on the local network..."
 msgstr "Otsin kohalikust võrgust Jellyfini servereid…"
 
 msgid "Searching will start automatically"
 msgstr "Otsing algab automaatselt"
 
 msgid "Searching..."
-msgstr "Otsin…"
-
-msgid "Searching…"
 msgstr "Otsin…"
 
 msgid "Seconds"
@@ -1279,7 +1276,7 @@ msgstr "Serverivalija"
 msgid "Server settings saved."
 msgstr "Serveri seadistused on salvestatud."
 
-msgid "Server settings saved. Resyncing library…"
+msgid "Server settings saved. Resyncing library..."
 msgstr ""
 "Serveri seadistused on salvestatud. Muusikakogu on uuesti sünkroonimisel…"
 
@@ -1398,7 +1395,7 @@ msgstr "Voogedastuse kvaliteet"
 msgid "Subsonic / OpenSubsonic"
 msgstr "Subsonic / OpenSubsonic"
 
-msgid "Switching library…"
+msgid "Switching library..."
 msgstr "Vahetan muusikakogu…"
 
 msgid "Sync already running."
@@ -1408,7 +1405,7 @@ msgid "Synced lyrics"
 msgstr "Sünkroonitud laulusõnad"
 
 #, rust-format
-msgid "Syncing {provider} library…"
+msgid "Syncing {provider} library..."
 msgstr "Sünkroonimisel on {provider} teenuse muusikakogu…"
 
 msgid "System default"
