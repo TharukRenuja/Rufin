@@ -200,6 +200,7 @@ pub struct TrackDelta {
     pub deleted: Vec<TrackId>,
     pub fields: Vec<TrackId>,
     pub stats: Vec<TrackId>,
+    pub skip_stats: Vec<TrackId>,
     pub favorite: Vec<TrackId>,
     pub cover_refs: Vec<TrackId>,
 }
@@ -210,6 +211,7 @@ impl TrackDelta {
         merge_ids(&mut self.deleted, other.deleted);
         merge_ids(&mut self.fields, other.fields);
         merge_ids(&mut self.stats, other.stats);
+        merge_ids(&mut self.skip_stats, other.skip_stats);
         merge_ids(&mut self.favorite, other.favorite);
         merge_ids(&mut self.cover_refs, other.cover_refs);
     }
@@ -219,6 +221,7 @@ impl TrackDelta {
             && self.deleted.is_empty()
             && self.fields.is_empty()
             && self.stats.is_empty()
+            && self.skip_stats.is_empty()
             && self.favorite.is_empty()
             && self.cover_refs.is_empty()
     }

@@ -502,9 +502,12 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || delta.playlists.fields.contains(playlist_id)
                 || delta.playlists.entries.contains(playlist_id)
                 || delta.playlists.cover_refs.contains(playlist_id)
-                || !delta.tracks.is_empty()
+                || playlist_detail_track_delta_affects(delta)
         }
-        Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => !delta.tracks.is_empty(),
+        Route::SmartPlaylists => smart_playlist_track_delta_affects(None, delta),
+        Route::SmartPlaylistDetail(smart_playlist_id) => {
+            smart_playlist_track_delta_affects(Some(smart_playlist_id), delta)
+        }
         Route::Search { .. } => {
             track_table_delta_affects(delta)
                 || !delta.albums.is_empty()
@@ -522,6 +525,32 @@ fn track_table_delta_affects(delta: &LibraryDelta) -> bool {
         || !delta.tracks.fields.is_empty()
         || !delta.tracks.favorite.is_empty()
         || !delta.tracks.cover_refs.is_empty()
+}
+
+fn playlist_detail_track_delta_affects(delta: &LibraryDelta) -> bool {
+    track_table_delta_affects(delta) || !delta.tracks.stats.is_empty()
+}
+
+fn smart_playlist_track_delta_affects(
+    smart_playlist_id: Option<&SmartPlaylistId>,
+    delta: &LibraryDelta,
+) -> bool {
+    if track_table_delta_affects(delta) || !delta.tracks.stats.is_empty() {
+        return true;
+    }
+    if delta.tracks.skip_stats.is_empty() {
+        return false;
+    }
+    match smart_playlist_id.and_then(smart_playlist_builtin_from_id) {
+        Some(SmartPlaylistBuiltin::MostPlayed | SmartPlaylistBuiltin::NeverPlayed) => false,
+        Some(SmartPlaylistBuiltin::MostSkipped) | None => true,
+    }
+}
+
+fn smart_playlist_builtin_from_id(id: &SmartPlaylistId) -> Option<SmartPlaylistBuiltin> {
+    id.as_str()
+        .strip_prefix("builtin:")
+        .and_then(SmartPlaylistBuiltin::from_key)
 }
 
 fn merge_pending_sync_route_delta(pending: &mut Option<LibraryDelta>, delta: LibraryDelta) {
@@ -631,6 +660,36 @@ mod tests {
         ));
         assert!(route_delta_affects(
             &Route::PlaylistDetail(PlaylistId::fake(1)),
+            &delta
+        ));
+    }
+
+    #[test]
+    fn skip_only_track_delta_skips_most_played_refresh() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.skip_stats.push(TrackId::fake(1));
+
+        assert!(!route_delta_affects(&Route::Tracks, &delta));
+        assert!(!route_delta_affects(&Route::Favorites, &delta));
+        assert!(!route_delta_affects(
+            &Route::PlaylistDetail(PlaylistId::fake(1)),
+            &delta
+        ));
+        assert!(route_delta_affects(&Route::SmartPlaylists, &delta));
+        assert!(!route_delta_affects(
+            &Route::SmartPlaylistDetail(SmartPlaylistId::new("builtin:most_played")),
+            &delta
+        ));
+        assert!(!route_delta_affects(
+            &Route::SmartPlaylistDetail(SmartPlaylistId::new("builtin:never_played")),
+            &delta
+        ));
+        assert!(route_delta_affects(
+            &Route::SmartPlaylistDetail(SmartPlaylistId::new("builtin:most_skipped")),
+            &delta
+        ));
+        assert!(route_delta_affects(
+            &Route::SmartPlaylistDetail(SmartPlaylistId::new("custom:skip-count")),
             &delta
         ));
     }
