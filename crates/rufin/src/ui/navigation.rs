@@ -1,9 +1,13 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use adw::prelude::*;
 use domain::{Route, SidebarRouteItem};
+use gtk::glib;
 
-use super::{Shell, layout::COMPACT_RAIL_WIDTH};
+use super::{
+    Shell, chrome,
+    layout::{COMPACT_RAIL_WIDTH, ResolvedLeftSidebarMode},
+};
 use crate::i18n::tr;
 
 const NORMAL_NAV_ICON_SIZE: i32 = 16;
@@ -12,6 +16,7 @@ const COMPACT_NAV_ICON_SIZE: i32 = 20;
 const ROUTE_ICON_PREFIX: &str = "route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
+const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
@@ -23,8 +28,68 @@ const NAV_ROUTE_GENRES_CLASS: &str = "nav-route-genres";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
+const NAV_ROUTE_ICONS: [(&str, &str, &str); 10] = [
+    (
+        NAV_ROUTE_HOME_CLASS,
+        "route-home-symbolic",
+        "route-home-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_FAVORITES_CLASS,
+        "route-favorites-symbolic",
+        "route-favorites-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_ALBUMS_CLASS,
+        "route-albums-symbolic",
+        "route-albums-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_TRACKS_CLASS,
+        "route-tracks-symbolic",
+        "route-tracks-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_ARTISTS_CLASS,
+        "route-artists-symbolic",
+        "route-artists-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_ALBUM_ARTISTS_CLASS,
+        "route-album-artists-symbolic",
+        "route-album-artists-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_GENRES_CLASS,
+        "route-genres-symbolic",
+        "route-genres-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_FOLDERS_CLASS,
+        "route-folders-symbolic",
+        "route-folders-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_PLAYLISTS_CLASS,
+        "route-playlists-symbolic",
+        "route-playlists-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_SMART_PLAYLISTS_CLASS,
+        "route-smart-playlists-symbolic",
+        "route-smart-playlists-selected-symbolic",
+    ),
+];
 
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
+    shell.normal_nav.append(&primary_menu_button(
+        &shell.normal_main_menu,
+        &shell.server_selector.normal_button,
+        &shell.normal_main_menu_popover,
+        &shell.normal_main_menu_click_handler,
+        shell,
+        false,
+    ));
     for item in nav_items(shell) {
         shell.normal_nav.append(&nav_button(
             shell,
@@ -38,15 +103,17 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     shell.normal_nav.append(&spacer);
-
-    if shell.state.settings.borrow().sidebar.server_visible {
-        shell
-            .normal_nav
-            .append(&shell.server_selector.normal_button);
-    }
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
+    shell.compact_nav.append(&primary_menu_button(
+        &shell.compact_main_menu,
+        &shell.server_selector.compact_button,
+        &shell.compact_main_menu_popover,
+        &shell.compact_main_menu_click_handler,
+        shell,
+        true,
+    ));
     for item in nav_items(shell) {
         shell.compact_nav.append(&rail_button(
             shell,
@@ -58,11 +125,6 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     shell.compact_nav.append(&spacer);
-    if shell.state.settings.borrow().sidebar.server_visible {
-        shell
-            .compact_nav
-            .append(&shell.server_selector.compact_button);
-    }
 }
 
 pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
@@ -78,6 +140,24 @@ pub(super) fn update_navigation_selection(shell: &Shell) {
     let active_route_class = nav_route_class(shell.state.routes.borrow().current());
     update_navigation_selection_in(&shell.normal_nav, active_route_class);
     update_navigation_selection_in(&shell.compact_nav, active_route_class);
+}
+
+pub(super) fn relocalize_primary_menu_button(
+    button: &gtk::Button,
+    source_button: &gtk::Button,
+    popover_slot: &RefCell<Option<gtk::Popover>>,
+    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    shell: &Rc<Shell>,
+    compact: bool,
+) {
+    chrome::configure_primary_menu_button(button);
+    button.set_child(Some(&sidebar_menu_content(compact)));
+    update_primary_menu_popover(
+        button,
+        popover_slot,
+        handler_slot,
+        primary_menu_popover(source_button, shell),
+    );
 }
 
 fn clear_box(container: &gtk::Box) {
@@ -103,7 +183,279 @@ fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Opti
         } else {
             widget.remove_css_class(NAV_SELECTED_CLASS);
         }
+        if let (Some((normal_icon_name, selected_icon_name)), Some(icon)) =
+            (nav_route_icon_names(&widget), nav_button_icon(&widget))
+        {
+            icon.set_icon_name(Some(if selected {
+                selected_icon_name
+            } else {
+                normal_icon_name
+            }));
+        }
     }
+}
+
+fn nav_button_icon(widget: &gtk::Widget) -> Option<gtk::Image> {
+    widget
+        .first_child()
+        .and_then(|child| child.downcast::<gtk::Box>().ok())
+        .and_then(|content| content.first_child())
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+}
+
+fn nav_route_icon_names(widget: &gtk::Widget) -> Option<(&'static str, &'static str)> {
+    NAV_ROUTE_ICONS
+        .into_iter()
+        .find_map(|(route_class, normal_icon_name, selected_icon_name)| {
+            widget
+                .has_css_class(route_class)
+                .then_some((normal_icon_name, selected_icon_name))
+        })
+}
+
+fn primary_menu_button(
+    button: &gtk::Button,
+    source_button: &gtk::Button,
+    popover_slot: &RefCell<Option<gtk::Popover>>,
+    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    shell: &Rc<Shell>,
+    compact: bool,
+) -> gtk::Button {
+    button.add_css_class("nav-button");
+    button.add_css_class("primary-menu-button");
+    button.add_css_class("flat");
+    if compact {
+        button.add_css_class("rail-button");
+    }
+    relocalize_primary_menu_button(
+        button,
+        source_button,
+        popover_slot,
+        handler_slot,
+        shell,
+        compact,
+    );
+    button.clone()
+}
+
+fn update_primary_menu_popover(
+    button: &gtk::Button,
+    popover_slot: &RefCell<Option<gtk::Popover>>,
+    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    popover: gtk::Popover,
+) {
+    if let Some(handler) = handler_slot.borrow_mut().take() {
+        button.disconnect(handler);
+    }
+    if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
+        if current.is_visible() {
+            current.popdown();
+        }
+        current.unparent();
+    }
+    popover.set_parent(button);
+    let row_popover = popover.clone();
+    let handler = button.connect_clicked(move |_| row_popover.popup());
+    *handler_slot.borrow_mut() = Some(handler);
+}
+
+pub(super) fn popup_primary_menu(popover_slot: &RefCell<Option<gtk::Popover>>) {
+    if let Some(popover) = popover_slot.borrow().as_ref() {
+        popover.popup();
+    }
+}
+
+fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.set_autohide(true);
+    popover.set_position(gtk::PositionType::Right);
+
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    wrapper.add_css_class("primary-menu-popover");
+    wrapper.set_width_request(PRIMARY_MENU_POPOVER_WIDTH);
+    detach_from_parent(source_button);
+    wrapper.append(source_button);
+    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
+        &tr("Preferences"),
+        "win.preferences",
+        "preferences-system-symbolic",
+    ));
+    let (private_mode_row, private_mode_label, _) = primary_menu_labeled_action_row(
+        &popover,
+        &primary_menu_private_mode_label(shell.as_ref()),
+        "win.toggle-private-mode",
+        "system-lock-screen-symbolic",
+    );
+    let private_mode_shell = Rc::clone(shell);
+    let private_mode_label_for_notify = private_mode_label.clone();
+    popover.connect_visible_notify(move |popover| {
+        if popover.is_visible() {
+            private_mode_label_for_notify.set_text(&primary_menu_private_mode_label(
+                private_mode_shell.as_ref(),
+            ));
+        }
+    });
+    wrapper.append(&private_mode_row);
+    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
+        &tr("Keyboard Shortcuts"),
+        "win.show-shortcuts",
+        "preferences-desktop-keyboard-shortcuts-symbolic",
+    ));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
+        &tr("Toggle Fullscreen"),
+        "win.toggle-fullscreen",
+        "view-fullscreen-symbolic",
+    ));
+    let (sidebar_toggle_row, sidebar_toggle_label, sidebar_toggle_icon) =
+        primary_menu_labeled_action_row(
+            &popover,
+            &primary_menu_sidebar_toggle_label(shell.as_ref()),
+            "win.toggle-left-sidebar",
+            primary_menu_sidebar_toggle_icon(shell.as_ref()),
+        );
+    let label_shell = Rc::clone(shell);
+    let sidebar_toggle_label_for_notify = sidebar_toggle_label.clone();
+    let sidebar_toggle_icon_for_notify = sidebar_toggle_icon.clone();
+    popover.connect_visible_notify(move |popover| {
+        if popover.is_visible() {
+            sidebar_toggle_label_for_notify
+                .set_text(&primary_menu_sidebar_toggle_label(label_shell.as_ref()));
+            sidebar_toggle_icon_for_notify
+                .set_icon_name(Some(primary_menu_sidebar_toggle_icon(label_shell.as_ref())));
+        }
+    });
+    wrapper.append(&sidebar_toggle_row);
+    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
+        &tr("Version History"),
+        "win.show-release-notes",
+        "view-list-symbolic",
+    ));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
+        &tr("About Rufin"),
+        "win.about",
+        "help-about-symbolic",
+    ));
+    popover.set_child(Some(&wrapper));
+    popover
+}
+
+fn detach_from_parent(widget: &impl IsA<gtk::Widget>) {
+    let widget = widget.as_ref();
+    if let Some(parent) = widget.parent() {
+        if let Ok(parent_box) = parent.downcast::<gtk::Box>() {
+            parent_box.remove(widget);
+        } else {
+            widget.unparent();
+        }
+    }
+}
+
+fn primary_menu_action_row(
+    popover: &gtk::Popover,
+    label: &str,
+    action_name: &'static str,
+    icon_name: &str,
+) -> gtk::Button {
+    primary_menu_labeled_action_row(popover, label, action_name, icon_name).0
+}
+
+fn primary_menu_labeled_action_row(
+    popover: &gtk::Popover,
+    label: &str,
+    action_name: &'static str,
+    icon_name: &str,
+) -> (gtk::Button, gtk::Label, gtk::Image) {
+    let row = gtk::Button::new();
+    row.add_css_class("flat");
+    row.add_css_class("primary-menu-row");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    content.set_halign(gtk::Align::Fill);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    content.append(&icon);
+    let text = gtk::Label::new(Some(label));
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    content.append(&text);
+    row.set_child(Some(&content));
+
+    let row_popover = popover.clone();
+    row.connect_clicked(move |button| {
+        row_popover.popdown();
+        let _ = button.activate_action(action_name, None);
+    });
+    (row, text, icon)
+}
+
+fn primary_menu_sidebar_toggle_label(shell: &Shell) -> String {
+    if shell.state.resolved_left_sidebar.get() == ResolvedLeftSidebarMode::Full {
+        tr("Collapse sidebar")
+    } else {
+        tr("Expand sidebar")
+    }
+}
+
+fn primary_menu_sidebar_toggle_icon(shell: &Shell) -> &'static str {
+    if shell.state.resolved_left_sidebar.get() == ResolvedLeftSidebarMode::Full {
+        "sidebar-hide-symbolic"
+    } else {
+        "sidebar-show-symbolic"
+    }
+}
+
+fn primary_menu_private_mode_label(shell: &Shell) -> String {
+    if shell.state.settings.borrow().private_mode {
+        tr("Turn off private mode")
+    } else {
+        tr("Turn on private mode")
+    }
+}
+
+fn sidebar_menu_content(compact: bool) -> gtk::Box {
+    let content = gtk::Box::new(
+        if compact {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        },
+        8,
+    );
+    content.set_halign(if compact {
+        gtk::Align::Center
+    } else {
+        gtk::Align::Start
+    });
+
+    let icon_size = if compact {
+        COMPACT_NAV_ICON_SIZE
+    } else {
+        NORMAL_NAV_ICON_SIZE
+    };
+    let icon = gtk::Image::from_icon_name("open-menu-symbolic");
+    icon.set_pixel_size(icon_size);
+    icon.set_size_request(icon_size, icon_size);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    content.append(&icon);
+
+    if compact {
+        let text = gtk::Label::new(Some(&compact_sidebar_label_text("Menu")));
+        configure_rail_label(&text);
+        content.append(&text);
+    } else {
+        let text = gtk::Label::new(Some(&tr("Menu")));
+        configure_sidebar_entry_label(&text);
+        content.append(&text);
+    }
+
+    content
 }
 
 #[derive(Clone)]
@@ -219,6 +571,7 @@ fn nav_button(
         NORMAL_NAV_ICON_SIZE
     };
     let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("nav-icon");
     icon.set_pixel_size(icon_size);
     icon.set_size_request(icon_size, icon_size);
     icon.set_halign(gtk::Align::Center);
@@ -344,6 +697,15 @@ mod tests {
                 "{} should be bundled at {}",
                 nav.icon_name,
                 path.display()
+            );
+        }
+        for (_, _, selected_icon_name) in NAV_ROUTE_ICONS {
+            let selected_path = bundled_sidebar_icon_path(selected_icon_name);
+            assert!(
+                selected_path.is_file(),
+                "{} should be bundled at {}",
+                selected_icon_name,
+                selected_path.display()
             );
         }
     }

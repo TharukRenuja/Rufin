@@ -8,12 +8,15 @@ use crate::lyrics::LyricsPane;
 
 use super::{
     Shell, icon_button,
-    layout::{MIN_RESTORED_WINDOW_HEIGHT, ROUTE_TOP_MARGIN},
+    layout::{MIN_RESTORED_WINDOW_HEIGHT, ROUTE_TOP_MARGIN, WINDOW_CHROME_MARGIN_END},
     player::BOTTOM_PLAYER_HEIGHT,
 };
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
-const QUEUE_HEADER_END_MARGIN: i32 = 88;
+const QUEUE_HEADER_BUTTON_SIZE: i32 = 34;
+const QUEUE_HEADER_BUTTON_SPACING: i32 = 6;
+const QUEUE_HEADER_END_MARGIN: i32 =
+    WINDOW_CHROME_MARGIN_END + QUEUE_HEADER_BUTTON_SIZE + QUEUE_HEADER_BUTTON_SPACING;
 
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,

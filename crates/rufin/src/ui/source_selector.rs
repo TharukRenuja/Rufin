@@ -1,28 +1,36 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use adw::prelude::*;
 use domain::{
     LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, ServerIdentity,
 };
+use gtk::glib;
 
-use super::{Shell, folder_count_text, layout::NORMAL_SIDEBAR_WIDTH};
+use super::{Shell, folder_count_text};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
-const COMPACT_RAIL_ICON_SIZE: i32 = 22;
-const NORMAL_SELECTOR_ICON_SIZE: i32 = 16;
-const COMPACT_SELECTOR_BUTTON_SIZE: i32 = 40;
+const NORMAL_SELECTOR_ICON_SIZE: i32 = 22;
 const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 18;
-const NORMAL_SELECTOR_BUTTON_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - 16;
-const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 304;
+const SERVER_OPTION_ICON_TEXT_SPACING: i32 = 10;
+const SERVER_OPTION_ICON_SIZE: i32 = 14;
+const SERVER_OPTION_CHECK_SIZE: i32 = 13;
+const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 236;
+const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 112;
 
 pub(super) struct ServerSelector {
-    pub normal_button: gtk::MenuButton,
+    pub normal_button: gtk::Button,
     pub normal_icon: gtk::Image,
     pub normal_name: gtk::Label,
     pub normal_subtitle: gtk::Label,
-    pub compact_button: gtk::MenuButton,
+    normal_popover: RefCell<Option<gtk::Popover>>,
+    normal_click_handler: RefCell<Option<glib::SignalHandlerId>>,
+    pub compact_button: gtk::Button,
     pub compact_icon: gtk::Image,
+    pub compact_name: gtk::Label,
+    pub compact_subtitle: gtk::Label,
+    compact_popover: RefCell<Option<gtk::Popover>>,
+    compact_click_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 struct ServerSelectorContent {
@@ -36,16 +44,15 @@ struct ServerSelectorContent {
 }
 
 pub(super) fn build_server_selector() -> ServerSelector {
-    let normal_button = gtk::MenuButton::new();
+    let normal_button = gtk::Button::new();
     normal_button.add_css_class("server-selector");
+    normal_button.add_css_class("menu-source-button");
     normal_button.add_css_class("flat");
-    normal_button.set_always_show_arrow(false);
     normal_button.set_can_shrink(true);
-    normal_button.set_direction(gtk::ArrowType::Up);
-    normal_button.set_margin_bottom(4);
-    normal_button.set_size_request(NORMAL_SELECTOR_BUTTON_WIDTH, -1);
+    normal_button.set_hexpand(true);
+    normal_button.set_halign(gtk::Align::Fill);
 
-    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 7);
     normal_content.set_hexpand(true);
     normal_content.set_halign(gtk::Align::Fill);
     normal_content.set_valign(gtk::Align::Center);
@@ -59,32 +66,58 @@ pub(super) fn build_server_selector() -> ServerSelector {
 
     let normal_name = gtk::Label::new(None);
     configure_normal_selector_label(&normal_name);
+    normal_name.add_css_class("source-selector-name");
     let normal_subtitle = gtk::Label::new(None);
     normal_subtitle.add_css_class("muted");
     configure_normal_selector_label(&normal_subtitle);
-    normal_content.append(&normal_name);
+    normal_subtitle.add_css_class("source-selector-detail");
+    let normal_labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    normal_labels.set_hexpand(true);
+    normal_labels.append(&normal_name);
+    normal_labels.append(&normal_subtitle);
+    normal_content.append(&normal_labels);
+
+    let normal_arrow = gtk::Image::from_icon_name("go-next-symbolic");
+    normal_arrow.set_pixel_size(12);
+    normal_arrow.add_css_class("muted");
+    normal_content.append(&normal_arrow);
 
     normal_button.set_child(Some(&normal_content));
 
-    let compact_button = gtk::MenuButton::new();
+    let compact_button = gtk::Button::new();
     compact_button.add_css_class("flat");
-    compact_button.add_css_class("rail-source-button");
     compact_button.add_css_class("server-selector");
-    compact_button.set_always_show_arrow(false);
+    compact_button.add_css_class("menu-source-button");
     compact_button.set_can_shrink(true);
-    compact_button.set_direction(gtk::ArrowType::Up);
-    compact_button.set_halign(gtk::Align::Center);
+    compact_button.set_hexpand(true);
+    compact_button.set_halign(gtk::Align::Fill);
     compact_button.set_valign(gtk::Align::Center);
-    compact_button.set_size_request(COMPACT_SELECTOR_BUTTON_SIZE, COMPACT_SELECTOR_BUTTON_SIZE);
-    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    compact_content.set_halign(gtk::Align::Center);
+    let compact_content = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+    compact_content.set_hexpand(true);
+    compact_content.set_halign(gtk::Align::Fill);
     compact_content.set_valign(gtk::Align::Center);
     let compact_icon = gtk::Image::from_icon_name("network-server-symbolic");
-    compact_icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
-    compact_icon.set_size_request(COMPACT_RAIL_ICON_SIZE, COMPACT_RAIL_ICON_SIZE);
+    compact_icon.set_pixel_size(NORMAL_SELECTOR_ICON_SIZE);
+    compact_icon.set_size_request(NORMAL_SELECTOR_ICON_SIZE, NORMAL_SELECTOR_ICON_SIZE);
     compact_icon.set_halign(gtk::Align::Center);
     compact_icon.set_valign(gtk::Align::Center);
     compact_content.append(&compact_icon);
+    let compact_name = gtk::Label::new(None);
+    configure_normal_selector_label(&compact_name);
+    compact_name.add_css_class("source-selector-name");
+    let compact_subtitle = gtk::Label::new(None);
+    compact_subtitle.add_css_class("muted");
+    configure_normal_selector_label(&compact_subtitle);
+    compact_subtitle.add_css_class("source-selector-detail");
+    let compact_labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    compact_labels.set_hexpand(true);
+    compact_labels.append(&compact_name);
+    compact_labels.append(&compact_subtitle);
+    compact_content.append(&compact_labels);
+    let compact_arrow = gtk::Image::from_icon_name("go-next-symbolic");
+    compact_arrow.set_pixel_size(12);
+    compact_arrow.add_css_class("muted");
+    compact_content.append(&compact_arrow);
     compact_button.set_child(Some(&compact_content));
 
     ServerSelector {
@@ -92,8 +125,14 @@ pub(super) fn build_server_selector() -> ServerSelector {
         normal_icon,
         normal_name,
         normal_subtitle,
+        normal_popover: RefCell::new(None),
+        normal_click_handler: RefCell::new(None),
         compact_button,
         compact_icon,
+        compact_name,
+        compact_subtitle,
+        compact_popover: RefCell::new(None),
+        compact_click_handler: RefCell::new(None),
     }
 }
 
@@ -103,26 +142,34 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     let content = server_selector_content(library);
     let accessible_label = format!("{}: {}", tr("Source"), content.name);
     let icon_name = source_icon_name(&content);
+    let subtitle = source_summary_detail(&content);
 
     selector.normal_icon.set_icon_name(Some(icon_name));
     selector.normal_name.set_text(&content.name);
-    selector.normal_subtitle.set_text("");
-    selector.normal_subtitle.set_visible(false);
+    selector.normal_subtitle.set_text(&subtitle);
+    selector.normal_subtitle.set_visible(!subtitle.is_empty());
     selector
         .normal_button
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     update_selector_popover(
         &selector.normal_button,
-        server_selection_popover(shell, &content, NORMAL_SELECTOR_BUTTON_WIDTH),
+        &selector.normal_popover,
+        &selector.normal_click_handler,
+        server_selection_popover(shell, &content),
     );
 
     selector.compact_icon.set_icon_name(Some(icon_name));
+    selector.compact_name.set_text(&content.name);
+    selector.compact_subtitle.set_text(&subtitle);
+    selector.compact_subtitle.set_visible(!subtitle.is_empty());
     selector
         .compact_button
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     update_selector_popover(
         &selector.compact_button,
-        server_selection_popover(shell, &content, COMPACT_SELECTOR_BUTTON_SIZE),
+        &selector.compact_popover,
+        &selector.compact_click_handler,
+        server_selection_popover(shell, &content),
     );
 }
 
@@ -152,13 +199,33 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     }
 }
 
-fn update_selector_popover(button: &gtk::MenuButton, popover: gtk::Popover) {
-    if let Some(current) = button.popover()
-        && current.is_visible()
-    {
-        current.popdown();
+fn update_selector_popover(
+    button: &gtk::Button,
+    popover_slot: &RefCell<Option<gtk::Popover>>,
+    handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    popover: gtk::Popover,
+) {
+    if let Some(handler) = handler_slot.borrow_mut().take() {
+        button.disconnect(handler);
     }
-    button.set_popover(Some(&popover));
+    if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
+        if current.is_visible() {
+            current.popdown();
+        }
+        current.unparent();
+    }
+    popover.set_parent(button);
+    let row_popover = popover.clone();
+    let handler = button.connect_clicked(move |button| {
+        row_popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            button.width(),
+            SERVER_SELECTOR_POPOVER_ANCHOR_Y,
+            1,
+            1,
+        )));
+        row_popover.popup();
+    });
+    *handler_slot.borrow_mut() = Some(handler);
 }
 
 fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
@@ -206,20 +273,13 @@ fn provider_icon_name(provider: &str) -> &'static str {
     }
 }
 
-fn server_selection_popover(
-    shell: &Rc<Shell>,
-    content: &ServerSelectorContent,
-    anchor_width: i32,
-) -> gtk::Popover {
+fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.set_autohide(true);
-    popover.set_position(gtk::PositionType::Top);
-    popover.set_offset(
-        selector_popover_x_offset(anchor_width, SERVER_SELECTOR_POPOVER_WIDTH),
-        0,
-    );
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    popover.set_position(gtk::PositionType::Right);
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
     wrapper.add_css_class("server-selector-popover");
+    wrapper.set_width_request(SERVER_SELECTOR_POPOVER_WIDTH);
 
     wrapper.append(&server_section_label(&tr("Select Source")));
     if content.servers.is_empty() {
@@ -233,8 +293,7 @@ fn server_selection_popover(
                 Some(LibrarySourceSelection::Server(server_id)) if *server_id == server.id
             );
             let title = server_display_name(server);
-            let detail = server_detail(server);
-            let row = server_option_row(Some(server), &title, &detail, active);
+            let row = server_option_row(Some(server), &title, "", active);
             if !active {
                 let row_popover = popover.clone();
                 let controller = shell.controller.clone();
@@ -253,7 +312,7 @@ fn server_selection_popover(
         let local = server_action_row(
             "route-folders-symbolic",
             &tr("Local"),
-            &local_source_detail(&content.local_folders),
+            &local_source_popup_detail(&content.local_folders),
             local_active,
         );
         if !local_active {
@@ -267,6 +326,25 @@ fn server_selection_popover(
         wrapper.append(&local);
     }
 
+    let manage = server_action_row("document-edit-symbolic", &tr("Manage"), "", false);
+    let row_popover = popover.clone();
+    let manage_shell = Rc::clone(shell);
+    manage.connect_clicked(move |_| {
+        row_popover.popdown();
+        manage_shell.present_library_preferences_dialog();
+    });
+    wrapper.append(&manage);
+
+    let add_library = server_action_row("list-add-symbolic", &tr("Add music library"), "", false);
+    add_library.add_css_class("server-add-option");
+    let row_popover = popover.clone();
+    let add_library_shell = Rc::clone(shell);
+    add_library.connect_clicked(move |_| {
+        row_popover.popdown();
+        add_library_shell.present_library_preferences_dialog();
+    });
+    wrapper.append(&add_library);
+
     if let Some(server) = &content.active_server
         && matches!(
             content.selected_source,
@@ -279,46 +357,26 @@ fn server_selection_popover(
         append_server_music_folder_rows(shell, &popover, &wrapper, server, content);
     }
 
-    let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
-    wrapper.append(&separator);
-
-    let manage = gtk::Button::new();
-    manage.add_css_class("flat");
-    manage.add_css_class("server-option");
-    let manage_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    manage_content.append(&gtk::Image::from_icon_name("document-edit-symbolic"));
-    let label = gtk::Label::new(Some(&tr("Manage")));
-    label.set_xalign(0.0);
-    manage_content.append(&label);
-    manage.set_child(Some(&manage_content));
-    let row_popover = popover.clone();
-    let manage_shell = Rc::clone(shell);
-    manage.connect_clicked(move |_| {
-        row_popover.popdown();
-        manage_shell.present_library_preferences_dialog();
-    });
-    wrapper.append(&manage);
-
-    let add = gtk::Button::new();
-    add.add_css_class("flat");
-    add.add_css_class("server-option");
-    add.add_css_class("server-add-option");
-    let add_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    add_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    let label = gtk::Label::new(Some(&tr("Add music library")));
-    label.set_xalign(0.0);
-    add_content.append(&label);
-    add.set_child(Some(&add_content));
-    let row_popover = popover.clone();
-    let add_shell = Rc::clone(shell);
-    add.connect_clicked(move |_| {
-        row_popover.popdown();
-        add_shell.present_add_server_dialog();
-    });
-    wrapper.append(&add);
-
     popover.set_child(Some(&wrapper));
     popover
+}
+
+fn source_summary_detail(content: &ServerSelectorContent) -> String {
+    match &content.selected_source {
+        Some(LibrarySourceSelection::Local) => local_source_detail(&content.local_folders),
+        Some(LibrarySourceSelection::Server(_)) => content
+            .selected_music_folder_id
+            .as_ref()
+            .and_then(|selected| {
+                content
+                    .music_folders
+                    .iter()
+                    .find(|folder| folder.id == *selected)
+            })
+            .map(|folder| folder.name.clone())
+            .unwrap_or_else(|| tr("All Music")),
+        None => String::new(),
+    }
 }
 
 fn local_source_detail(folders: &[LocalLibraryFolder]) -> String {
@@ -327,6 +385,10 @@ fn local_source_detail(folders: &[LocalLibraryFolder]) -> String {
         1 => folders[0].path.clone(),
         count => folder_count_text(count as u64),
     }
+}
+
+fn local_source_popup_detail(folders: &[LocalLibraryFolder]) -> String {
+    folder_count_text(folders.len() as u64)
 }
 
 fn append_server_music_folder_rows(
@@ -378,31 +440,21 @@ fn server_option_row(
     let row = gtk::Button::new();
     row.add_css_class("flat");
     row.add_css_class("server-option");
-    if active {
-        row.add_css_class("active");
-    }
 
-    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let row_content = gtk::Box::new(
+        gtk::Orientation::Horizontal,
+        SERVER_OPTION_ICON_TEXT_SPACING,
+    );
     row_content.set_halign(gtk::Align::Fill);
     let icon_name = server
         .map(server_icon_name)
         .unwrap_or("network-server-symbolic");
-    row_content.append(&gtk::Image::from_icon_name(icon_name));
+    row_content.append(&server_row_icon(icon_name));
 
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    let name = gtk::Label::new(Some(title));
-    name.set_xalign(0.0);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let detail = gtk::Label::new(Some(detail));
-    detail.add_css_class("muted");
-    detail.set_xalign(0.0);
-    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    labels.append(&name);
-    labels.append(&detail);
-    row_content.append(&labels);
+    let name = server_row_label(title, detail);
+    row_content.append(&name);
     if active {
-        row_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+        row_content.append(&server_row_check_icon());
     }
     row.set_child(Some(&row_content));
     row
@@ -412,48 +464,60 @@ fn server_action_row(icon_name: &str, title: &str, detail: &str, active: bool) -
     let row = gtk::Button::new();
     row.add_css_class("flat");
     row.add_css_class("server-option");
-    if active {
-        row.add_css_class("active");
-    }
 
-    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let row_content = gtk::Box::new(
+        gtk::Orientation::Horizontal,
+        SERVER_OPTION_ICON_TEXT_SPACING,
+    );
     row_content.set_halign(gtk::Align::Fill);
-    row_content.append(&gtk::Image::from_icon_name(icon_name));
+    row_content.append(&server_row_icon(icon_name));
 
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    let name = gtk::Label::new(Some(title));
-    name.set_xalign(0.0);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let detail = gtk::Label::new(Some(detail));
-    detail.add_css_class("muted");
-    detail.set_xalign(0.0);
-    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    labels.append(&name);
-    labels.append(&detail);
-    row_content.append(&labels);
+    let name = server_row_label(title, detail);
+    row_content.append(&name);
     if active {
-        row_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+        row_content.append(&server_row_check_icon());
     }
     row.set_child(Some(&row_content));
     row
+}
+
+fn server_row_label(title: &str, detail: &str) -> gtk::Label {
+    let text = if detail.is_empty() {
+        title.to_string()
+    } else {
+        format!("{title} · {detail}")
+    };
+    let name = gtk::Label::new(Some(&text));
+    name.set_hexpand(true);
+    name.set_xalign(0.0);
+    name.set_yalign(0.5);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    name
 }
 
 fn server_section_label(label: &str) -> gtk::Label {
     let section = gtk::Label::new(Some(label));
     section.add_css_class("server-section-label");
     section.set_xalign(0.0);
-    section.set_margin_top(2);
-    section.set_margin_start(4);
+    section.set_margin_top(1);
+    section.set_margin_start(3);
     section
 }
 
-fn server_detail(server: &ServerIdentity) -> String {
-    if server.base_url.trim().is_empty() {
-        provider_display_name(&server.provider)
-    } else {
-        server.base_url.clone()
-    }
+fn server_row_icon(icon_name: &str) -> gtk::Image {
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(SERVER_OPTION_ICON_SIZE);
+    icon.set_size_request(SERVER_OPTION_ICON_SIZE, SERVER_OPTION_ICON_SIZE);
+    icon.set_valign(gtk::Align::Center);
+    icon
+}
+
+fn server_row_check_icon() -> gtk::Image {
+    let icon = gtk::Image::from_icon_name("object-select-symbolic");
+    icon.set_pixel_size(SERVER_OPTION_CHECK_SIZE);
+    icon.set_size_request(SERVER_OPTION_CHECK_SIZE, SERVER_OPTION_CHECK_SIZE);
+    icon.set_valign(gtk::Align::Center);
+    icon
 }
 
 fn configure_normal_selector_label(label: &gtk::Label) {
@@ -466,27 +530,4 @@ fn configure_normal_selector_label(label: &gtk::Label) {
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_request(1);
     label.set_max_width_chars(NORMAL_SELECTOR_LABEL_WIDTH_CHARS);
-}
-
-fn selector_popover_x_offset(anchor_width: i32, popover_width: i32) -> i32 {
-    ((popover_width - anchor_width) / 2).max(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_align_anchor() {
-        let offset = selector_popover_x_offset(160, 304);
-
-        assert_eq!(80 + offset - 152, 0);
-    }
-
-    #[test]
-    fn source_handle_anchor() {
-        let offset = selector_popover_x_offset(62, 304);
-
-        assert_eq!(31 + offset - 152, 0);
-    }
 }

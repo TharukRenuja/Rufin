@@ -674,8 +674,8 @@ msgstr "Lokālais atskaņošanas kartējums konfigurēts"
 msgid "Lyrics"
 msgstr "Teksti"
 
-msgid "Main Menu"
-msgstr "Galvenā izvēlne"
+msgid "Menu"
+msgstr "Izvēlne"
 
 msgid "Manage"
 msgstr "Pārvaldīt"
@@ -1830,9 +1830,6 @@ msgstr ""
 
 #~ msgid "Map Local"
 #~ msgstr "Kartēt lokālo"
-
-#~ msgid "Menu"
-#~ msgstr "Izvēlne"
 
 #~ msgid "No active server"
 #~ msgstr "Nav aktīva servera"

@@ -33,10 +33,14 @@ pub(in crate::ui) fn fullscreen_playback_refresh(
     }
 }
 
-pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
+pub(in crate::ui) fn connect_shell_actions(
+    shell: &Rc<Shell>,
+    normal_main_menu: gtk::Button,
+    compact_main_menu: gtk::Button,
+) {
     install_window_actions(shell);
     install_mouse_history_buttons(shell);
-    install_main_menu_shortcut(shell, main_menu);
+    install_main_menu_shortcut(shell, normal_main_menu, compact_main_menu);
     connect_layout_resize(shell);
 }
 
@@ -533,6 +537,21 @@ pub(in crate::ui) fn install_window_actions(shell: &Rc<Shell>) {
     preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
     shell.window.add_action(&preferences);
 
+    let toggle_left_sidebar = gio::SimpleAction::new("toggle-left-sidebar", None);
+    let toggle_left_sidebar_shell = Rc::clone(shell);
+    toggle_left_sidebar.connect_activate(move |_, _| {
+        toggle_left_sidebar_shell.toggle_active_left_sidebar_size();
+    });
+    shell.window.add_action(&toggle_left_sidebar);
+
+    let toggle_private_mode = gio::SimpleAction::new("toggle-private-mode", None);
+    let private_mode_shell = Rc::clone(shell);
+    toggle_private_mode.connect_activate(move |_, _| {
+        let enabled = !private_mode_shell.state.settings.borrow().private_mode;
+        private_mode_shell.set_private_mode(enabled);
+    });
+    shell.window.add_action(&toggle_private_mode);
+
     let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
     let shortcuts_shell = Rc::clone(shell);
     shortcuts.connect_activate(move |_, _| show_shortcuts_dialog(&shortcuts_shell));
@@ -720,11 +739,25 @@ fn toggle_favorite_shortcut(shell: &Rc<Shell>) {
         Some(&shell.player_controls.favorite_button),
     );
 }
-pub(in crate::ui) fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
+pub(in crate::ui) fn install_main_menu_shortcut(
+    shell: &Rc<Shell>,
+    normal_main_menu: gtk::Button,
+    compact_main_menu: gtk::Button,
+) {
     let key_controller = gtk::EventControllerKey::new();
+    let shortcut_shell = Rc::clone(shell);
     key_controller.connect_key_pressed(move |_, key, _, state| {
         if key == gtk::gdk::Key::F10 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
-            main_menu.popup();
+            match shortcut_shell.state.resolved_left_sidebar.get() {
+                ResolvedLeftSidebarMode::Compact => {
+                    navigation::popup_primary_menu(&shortcut_shell.compact_main_menu_popover);
+                    compact_main_menu.grab_focus();
+                }
+                _ => {
+                    navigation::popup_primary_menu(&shortcut_shell.normal_main_menu_popover);
+                    normal_main_menu.grab_focus();
+                }
+            }
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed
@@ -742,7 +775,7 @@ pub(in crate::ui) fn show_shortcuts_dialog(shell: &Shell) {
         &tr("Forward"),
         "Forward <Alt>Right",
     ));
-    section.add(adw::ShortcutsItem::new(&tr("Main Menu"), "F10"));
+    section.add(adw::ShortcutsItem::new(&tr("Menu"), "F10"));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Preferences"),
         "win.preferences",

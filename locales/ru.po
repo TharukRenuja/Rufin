@@ -681,8 +681,8 @@ msgstr "Настройка сопоставления для локальног�
 msgid "Lyrics"
 msgstr "Текст песни"
 
-msgid "Main Menu"
-msgstr "Главное Меню"
+msgid "Menu"
+msgstr "Меню"
 
 msgid "Manage"
 msgstr "Управление"
@@ -1846,9 +1846,6 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "Map Local"
 #~ msgstr "Сопоставить локальные данные"
-
-#~ msgid "Menu"
-#~ msgstr "Меню"
 
 #~ msgid "No active server"
 #~ msgstr "Активный сервер не найден"
