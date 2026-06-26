@@ -111,6 +111,8 @@ mod sync_requests;
 #[cfg(test)]
 mod cover_playback_tests;
 #[cfg(test)]
+mod local_radio_tests;
+#[cfg(test)]
 mod lyrics_local_access_tests;
 #[cfg(test)]
 mod startup_sync_tests;

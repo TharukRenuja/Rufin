@@ -1,3 +1,5 @@
+mod local_cache;
+
 use std::collections::HashSet;
 use std::thread;
 use std::time::Instant;
@@ -7,14 +9,19 @@ use domain::{
     TrackId,
 };
 use library::SavedServer;
+use source_local::LOCAL_PROVIDER_ID;
 use tracing::info;
 
 use super::{
     AppController, ControllerEvent, RandomPlayAction, SNAPSHOT_TRACK_LIMIT,
     load_settings_for_saved, provider_for_saved,
-    provider_tracks::{generated_track_strategy_for_saved, prepare_provider_tracks},
+    provider_tracks::{
+        generated_track_strategy_for_saved, prepare_cached_tracks, prepare_provider_tracks,
+    },
     root::local_source_saved,
 };
+
+pub(in crate::controller) use local_cache::spread_radio_tracks;
 
 const GENERATED_RADIO_ITEM_COUNT: usize = 20;
 
@@ -233,6 +240,12 @@ impl AppController {
         let settings = load_settings_for_saved(&self.store, saved);
         let mut tracks = if saved.server.provider == "fake" {
             self.generated_tracks_from_cache(&saved.server.id, seed, limit)?
+        } else if saved.server.provider == LOCAL_PROVIDER_ID {
+            let mut tracks =
+                self.local_generated_tracks_from_cache(&saved.server.id, seed, limit)?;
+            dedupe_tracks(&mut tracks);
+            prepare_cached_tracks(self, saved, &settings, &mut tracks)?;
+            return Ok(tracks);
         } else {
             let provider = provider_for_saved(&self.store, &self.runtime, &self.secrets, saved)?;
             self.runtime
