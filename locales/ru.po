@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-24 07:01+0000\n"
+"PO-Revision-Date: 2026-06-26 10:03+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -886,7 +886,6 @@ msgstr "Количество песен"
 msgid "Off"
 msgstr "Выкл."
 
-#, fuzzy
 msgid "Off only for a server you control"
 msgstr "Отключайте только для сервера, которым вы управляете"
 
@@ -908,9 +907,8 @@ msgstr "Открыть на Last.fm"
 msgid "Open on MusicBrainz"
 msgstr "Открыть на MusicBrainz"
 
-#, fuzzy
 msgid "Open on Navidrome"
-msgstr "Navidrome"
+msgstr "Открыть в Navidrome"
 
 msgid "Open release notes"
 msgstr "Открыть примечания к выпуску"
