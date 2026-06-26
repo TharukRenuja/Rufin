@@ -8,11 +8,12 @@ use crate::lyrics::LyricsPane;
 
 use super::{
     Shell, icon_button,
-    layout::{MIN_RESTORED_WINDOW_HEIGHT, ROUTE_TOP_MARGIN, WINDOW_CHROME_MARGIN_END},
+    layout::{MIN_RESTORED_WINDOW_HEIGHT, WINDOW_CHROME_MARGIN_END},
     player::BOTTOM_PLAYER_HEIGHT,
 };
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
+const QUEUE_HEADER_TOP_MARGIN: i32 = 10;
 const QUEUE_HEADER_BUTTON_SIZE: i32 = 34;
 const QUEUE_HEADER_BUTTON_SPACING: i32 = 6;
 const QUEUE_HEADER_END_MARGIN: i32 =
@@ -37,7 +38,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_header.add_css_class("sidebar-header");
     queue_header.add_css_class("queue-toolbar");
     queue_header.set_valign(gtk::Align::Center);
-    queue_header.set_margin_top(ROUTE_TOP_MARGIN);
+    queue_header.set_margin_top(QUEUE_HEADER_TOP_MARGIN);
     queue_header.set_margin_bottom(0);
     queue_header.set_margin_start(12);
     queue_header.set_margin_end(QUEUE_HEADER_END_MARGIN);

@@ -35,12 +35,20 @@ pub(super) fn build_content_chrome(
     main_area: &adw::ToolbarView,
     right_panel: &gtk::Box,
 ) -> ContentChromeParts {
-    let main_well = gtk::ScrolledWindow::new();
-    configure_fill_width_clip(&main_well, gtk::PolicyType::Never);
-    main_well.set_propagate_natural_height(false);
+    let main_well = gtk::Overlay::new();
+    main_well.set_overflow(gtk::Overflow::Hidden);
+    main_well.set_width_request(1);
     main_well.set_hexpand(true);
     main_well.set_vexpand(true);
-    main_well.set_child(Some(main_area));
+    let main_measure_floor = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    main_measure_floor.set_width_request(1);
+    main_measure_floor.set_hexpand(true);
+    main_measure_floor.set_vexpand(true);
+    main_well.set_child(Some(&main_measure_floor));
+    main_area.set_halign(gtk::Align::Fill);
+    main_area.set_valign(gtk::Align::Fill);
+    main_well.add_overlay(main_area);
+    main_well.set_measure_overlay(main_area, false);
 
     let right_panel_slot = gtk::ScrolledWindow::new();
     configure_fill_width_clip(&right_panel_slot, gtk::PolicyType::Never);
