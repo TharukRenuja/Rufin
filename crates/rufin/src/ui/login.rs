@@ -53,10 +53,6 @@ pub(in crate::ui) struct AddServerDraft {
 }
 
 impl Shell {
-    pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
-        self.present_server_dialog(None);
-    }
-
     pub(super) fn present_add_server_dialog_closing(self: &Rc<Self>, extra_dialog: &adw::Dialog) {
         let extra_dialog = extra_dialog.clone();
         self.present_server_dialog(Some(Rc::new(move || {

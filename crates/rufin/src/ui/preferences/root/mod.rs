@@ -774,39 +774,6 @@ fn populate_sidebar_item_rows(
         group.add(&row);
         rows.borrow_mut().push(row);
     }
-
-    let server_row = adw::ActionRow::builder()
-        .title(tr("Server selector"))
-        .subtitle(if shell.state.settings.borrow().sidebar.server_visible {
-            tr("Visible")
-        } else {
-            tr("Hidden")
-        })
-        .build();
-    let server_switch = gtk::Switch::new();
-    server_switch.set_active(shell.state.settings.borrow().sidebar.server_visible);
-    server_switch.set_valign(gtk::Align::Center);
-    server_row.add_suffix(&server_switch);
-    server_row.set_activatable_widget(Some(&server_switch));
-    {
-        let shell = Rc::clone(shell);
-        let group = group.clone();
-        let rows = Rc::clone(rows);
-        server_switch.connect_active_notify(move |switch| {
-            let visible = switch.is_active();
-            shell.update_app_settings("sidebar setting", |settings| {
-                if settings.sidebar.server_visible == visible {
-                    return false;
-                }
-                settings.sidebar.server_visible = visible;
-                true
-            });
-            shell.rebuild_sidebar_navigation();
-            populate_sidebar_item_rows(&shell, &group, &rows);
-        });
-    }
-    group.add(&server_row);
-    rows.borrow_mut().push(server_row);
 }
 fn sidebar_item_row(
     shell: &Rc<Shell>,

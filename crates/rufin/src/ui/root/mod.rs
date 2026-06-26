@@ -545,7 +545,12 @@ pub(in crate::ui) struct Shell {
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
     route_host: gtk::Box,
-    main_menu: gtk::MenuButton,
+    normal_main_menu: gtk::Button,
+    normal_main_menu_popover: RefCell<Option<gtk::Popover>>,
+    normal_main_menu_click_handler: RefCell<Option<glib::SignalHandlerId>>,
+    compact_main_menu: gtk::Button,
+    compact_main_menu_popover: RefCell<Option<gtk::Popover>>,
+    compact_main_menu_click_handler: RefCell<Option<glib::SignalHandlerId>>,
     right_panel_slot: gtk::ScrolledWindow,
     right_panel: gtk::Box,
     queue_panel: gtk::Box,
@@ -813,6 +818,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     compact_nav_slot.add_css_class("sidebar-pane");
     compact_nav_slot.add_css_class("compact-rail-slot");
     let server_selector = build_server_selector();
+    let normal_main_menu = gtk::Button::new();
+    let compact_main_menu = gtk::Button::new();
 
     let main_area_parts = build_main_area();
     let main_area = main_area_parts.root;
@@ -828,7 +835,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
     content_chrome.root.set_margin_start(8);
-    let main_menu = content_chrome.main_menu;
     let right_panel_slot = content_chrome.right_panel_slot;
     let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
     tiny_nav_button.add_css_class("icon-button");
@@ -921,7 +927,12 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         compact_nav,
         server_selector,
         route_host,
-        main_menu: main_menu.clone(),
+        normal_main_menu: normal_main_menu.clone(),
+        normal_main_menu_popover: RefCell::new(None),
+        normal_main_menu_click_handler: RefCell::new(None),
+        compact_main_menu: compact_main_menu.clone(),
+        compact_main_menu_popover: RefCell::new(None),
+        compact_main_menu_click_handler: RefCell::new(None),
         right_panel_slot,
         right_panel,
         queue_panel,
@@ -943,7 +954,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
             .tiny_nav_button
             .connect_clicked(move |_| split_view.set_show_sidebar(true));
     }
-    connect_shell_actions(&shell, main_menu);
+    connect_shell_actions(&shell, normal_main_menu, compact_main_menu);
     install_window_state_persistence(&shell);
     #[cfg(unix)]
     tray::install_tray(&shell);

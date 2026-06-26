@@ -675,8 +675,8 @@ msgstr "Kohaliku taasesituse vastenduse seadistamine on lõpetatud"
 msgid "Lyrics"
 msgstr "Laulusõnad"
 
-msgid "Main Menu"
-msgstr "Põhimenüü"
+msgid "Menu"
+msgstr "Menüü"
 
 msgid "Manage"
 msgstr "Halda"
@@ -1802,9 +1802,6 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Map Local"
 #~ msgstr "Vastenda kohalik"
-
-#~ msgid "Menu"
-#~ msgstr "Menüü"
 
 #~ msgid "My Library"
 #~ msgstr "Minu muusikakogu"

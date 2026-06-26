@@ -4,12 +4,12 @@ use crate::i18n::{self, tr};
 use adw::prelude::*;
 use domain::{
     AppSettings, DiscordDisplayType, DiscordLinkType, ExternalLyricsProvider, HomeBlockKind,
-    LibraryListKey, LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings,
-    SecretStorageMode, sanitized_window_size,
+    LeftSidebarMode, LibraryListKey, LibraryListSettings, PlaybackSettings, Route,
+    ScrobblingSettings, SecretStorageMode, sanitized_window_size,
 };
 use tracing::warn;
 
-use super::{Shell, chrome, current_playback_track_id};
+use super::{Shell, current_playback_track_id, navigation};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AppControllerSettingsMode {
@@ -372,6 +372,55 @@ impl Shell {
         });
     }
 
+    pub(super) fn toggle_active_left_sidebar_size(self: &Rc<Self>) {
+        let active_profile = super::layout::resolve_layout(
+            &self.state.settings.borrow().layout,
+            self.layout_width(),
+        )
+        .profile;
+        let next_mode = if self.state.resolved_left_sidebar.get()
+            == super::layout::ResolvedLeftSidebarMode::Full
+        {
+            LeftSidebarMode::Compact
+        } else {
+            LeftSidebarMode::Full
+        };
+        if self
+            .update_app_settings("left sidebar setting", |settings| {
+                let mut changed = false;
+                match active_profile {
+                    super::layout::ActiveLayoutProfile::Default => {
+                        if settings.layout.default_profile.left_sidebar != next_mode {
+                            settings.layout.default_profile.left_sidebar = next_mode;
+                            changed = true;
+                        }
+                    }
+                    super::layout::ActiveLayoutProfile::Narrow => {
+                        if settings.layout.narrow_profile.left_sidebar != next_mode {
+                            settings.layout.narrow_profile.left_sidebar = next_mode;
+                            changed = true;
+                        }
+                    }
+                }
+                if next_mode == LeftSidebarMode::Full
+                    && settings.layout.default_profile.left_sidebar == LeftSidebarMode::Hidden
+                {
+                    settings.layout.default_profile.left_sidebar = LeftSidebarMode::Full;
+                    changed = true;
+                }
+                if changed {
+                    settings.layout.sanitize();
+                }
+                changed
+            })
+            .is_none()
+        {
+            return;
+        }
+        self.update_layout();
+        self.queue_post_layout_route_render();
+    }
+
     pub(super) fn set_seekbar_waveform_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("seekbar waveform setting", |settings| {
@@ -429,14 +478,35 @@ impl Shell {
         self.update_mpris_player();
     }
 
-    pub(in crate::ui) fn install_locale_bindings(&self) {
+    pub(in crate::ui) fn install_locale_bindings(self: &Rc<Self>) {
         if !self.state.locale_bindings.borrow().is_empty() {
             return;
         }
 
         self.bind_locale({
-            let button = self.main_menu.clone();
-            move || chrome::relocalize_primary_menu_button(&button)
+            let normal_button = self.normal_main_menu.clone();
+            let normal_source_button = self.server_selector.normal_button.clone();
+            let compact_button = self.compact_main_menu.clone();
+            let compact_source_button = self.server_selector.compact_button.clone();
+            let shell = Rc::clone(self);
+            move || {
+                navigation::relocalize_primary_menu_button(
+                    &normal_button,
+                    &normal_source_button,
+                    &shell.normal_main_menu_popover,
+                    &shell.normal_main_menu_click_handler,
+                    &shell,
+                    false,
+                );
+                navigation::relocalize_primary_menu_button(
+                    &compact_button,
+                    &compact_source_button,
+                    &shell.compact_main_menu_popover,
+                    &shell.compact_main_menu_click_handler,
+                    &shell,
+                    true,
+                );
+            }
         });
 
         self.bind_locale({

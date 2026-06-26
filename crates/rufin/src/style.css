@@ -350,10 +350,6 @@ row:focus {
   border-radius: 9px;
 }
 
-.nav-button.selected {
-  background: color-mix(in srgb, currentColor 13%, transparent);
-}
-
 .rail-button {
   margin: 0 2px;
   padding: 3px 1px;
@@ -366,13 +362,18 @@ row:focus {
   font-weight: 600;
 }
 
-.nav-button:not(.server-selector):hover,
-.album-button:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
+.nav-button:not(.rail-button) .sidebar-entry-label {
+  font-size: 12px;
+  margin-bottom: 1px;
 }
 
-.nav-button.selected:not(.server-selector):hover {
-  background: color-mix(in srgb, currentColor 16%, transparent);
+.nav-button.selected image.nav-icon {
+  color: @accent_color;
+}
+
+.nav-button:not(.server-selector):not(.selected):hover,
+.album-button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 button:disabled,
@@ -473,6 +474,62 @@ popover.context-submenu > contents {
   margin: 0 8px 4px;
 }
 
+.primary-menu-popover {
+  padding: 3px;
+  font-weight: 400;
+}
+
+.primary-menu-row {
+  padding: 3px 7px;
+  border-radius: 6px;
+  min-height: 26px;
+}
+
+.primary-menu-row image {
+  -gtk-icon-size: 14px;
+}
+
+.primary-menu-row label {
+  font-weight: 400;
+}
+
+.primary-menu-row:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.primary-menu-popover .server-selector {
+  margin: 0;
+}
+
+.primary-menu-popover button.server-selector.menu-source-button {
+  min-height: 40px;
+  padding: 6px 7px;
+  min-width: 0;
+}
+
+button.server-selector.menu-source-button,
+button.server-selector.menu-source-button:focus,
+button.server-selector.menu-source-button:checked {
+  border-radius: 9px;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+button.server-selector.menu-source-button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+button.server-selector.menu-source-button .source-selector-name {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+button.server-selector.menu-source-button .source-selector-detail {
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .provider-choice-list {
   padding: 4px;
   border-radius: 8px;
@@ -531,8 +588,8 @@ menubutton.server-selector > button:hover {
 }
 
 .server-selector-popover {
-  padding: 6px;
-  min-width: 280px;
+  padding: 3px;
+  min-width: 236px;
 }
 
 .server-section-label {
@@ -541,16 +598,17 @@ menubutton.server-selector > button:hover {
 }
 
 .server-option {
-  padding: 8px;
-  border-radius: 8px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  min-height: 26px;
 }
 
-.server-option.active {
-  background: color-mix(in srgb, @accent_bg_color 18%, transparent);
+.server-selector-popover .server-option label {
+  font-weight: 400;
 }
 
 .server-add-option {
-  color: @accent_color;
+  color: @destructive_color;
 }
 
 .album-strip {

@@ -205,22 +205,7 @@ msgstr ""
 msgid "Play Later"
 msgstr ""
 
-msgid "Main Menu"
-msgstr ""
-
-msgid "Toggle Fullscreen"
-msgstr ""
-
-msgid "Preferences"
-msgstr ""
-
-msgid "Keyboard Shortcuts"
-msgstr ""
-
-msgid "Version History"
-msgstr ""
-
-msgid "About Rufin"
+msgid "Menu"
 msgstr ""
 
 msgid "Custom"
@@ -606,6 +591,33 @@ msgid "No folders selected"
 msgstr ""
 
 msgid "Select Music Folder"
+msgstr ""
+
+msgid "Preferences"
+msgstr ""
+
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+msgid "Toggle Fullscreen"
+msgstr ""
+
+msgid "Version History"
+msgstr ""
+
+msgid "About Rufin"
+msgstr ""
+
+msgid "Collapse sidebar"
+msgstr ""
+
+msgid "Expand sidebar"
+msgstr ""
+
+msgid "Turn off private mode"
+msgstr ""
+
+msgid "Turn on private mode"
 msgstr ""
 
 msgid "Seek playback"
@@ -1061,9 +1073,6 @@ msgid "Narrow right sidebar"
 msgstr ""
 
 msgid "Sidebar Items"
-msgstr ""
-
-msgid "Server selector"
 msgstr ""
 
 msgid "No queue items match the search."
@@ -1642,11 +1651,11 @@ msgstr ""
 msgid "Select Source"
 msgstr ""
 
-msgid "Server Library"
-msgstr ""
-
 msgid "Manage"
 msgstr ""
 
 msgid "Add music library"
+msgstr ""
+
+msgid "Server Library"
 msgstr ""

@@ -1,5 +1,4 @@
 use adw::prelude::*;
-use gtk::gio;
 
 use crate::i18n::tr;
 
@@ -14,7 +13,6 @@ pub(super) struct MainAreaParts {
 
 pub(super) struct ContentChromeParts {
     pub(super) root: gtk::Overlay,
-    pub(super) main_menu: gtk::MenuButton,
     pub(super) right_panel_slot: gtk::ScrolledWindow,
 }
 
@@ -69,17 +67,14 @@ pub(super) fn build_content_chrome(
     window_controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
     window_controls.set_margin_end(WINDOW_CHROME_MARGIN_END);
 
-    let main_menu = primary_menu_button();
     let close_button = gtk::WindowControls::new(gtk::PackType::End);
     close_button.set_decoration_layout(Some(":close"));
-    window_controls.append(&main_menu);
     window_controls.append(&close_button);
     root.add_overlay(&window_controls);
     root.set_measure_overlay(&window_controls, false);
 
     ContentChromeParts {
         root,
-        main_menu,
         right_panel_slot,
     }
 }
@@ -98,44 +93,8 @@ pub(super) fn window_close_controls() -> gtk::Box {
     controls
 }
 
-fn primary_menu_button() -> gtk::MenuButton {
-    let button = gtk::MenuButton::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_icon_name("open-menu-symbolic");
-    button.set_primary(true);
-    let label = tr("Main Menu");
+pub(super) fn configure_primary_menu_button(button: &gtk::Button) {
+    let label = tr("Menu");
     button.set_tooltip_text(Some(&label));
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
-    button.set_menu_model(Some(&primary_menu_model()));
-    button
-}
-
-pub(super) fn relocalize_primary_menu_button(button: &gtk::MenuButton) {
-    let label = tr("Main Menu");
-    button.set_tooltip_text(Some(&label));
-    button.update_property(&[gtk::accessible::Property::Label(&label)]);
-    button.set_menu_model(Some(&primary_menu_model()));
-}
-
-fn primary_menu_model() -> gio::Menu {
-    let menu = gio::Menu::new();
-    let view = gio::Menu::new();
-    view.append(
-        Some(&tr("Toggle Fullscreen")),
-        Some("win.toggle-fullscreen"),
-    );
-    menu.append_section(None, &view);
-
-    let preferences = gio::Menu::new();
-    preferences.append(Some(&tr("Preferences")), Some("win.preferences"));
-    preferences.append(Some(&tr("Keyboard Shortcuts")), Some("win.show-shortcuts"));
-    menu.append_section(None, &preferences);
-
-    let about = gio::Menu::new();
-    about.append(Some(&tr("Version History")), Some("win.show-release-notes"));
-    about.append(Some(&tr("About Rufin")), Some("win.about"));
-    menu.append_section(None, &about);
-    menu
 }
