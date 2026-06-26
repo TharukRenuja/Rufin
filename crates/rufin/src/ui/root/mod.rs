@@ -287,7 +287,7 @@ pub(in crate::ui) const FAVORITE_FILLED_GLYPH: &str = "♥";
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
 
 pub(in crate::ui) fn library_preparing_status() -> String {
-    tr("Preparing library…")
+    tr("Preparing library...")
 }
 pub(in crate::ui) const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
 pub(in crate::ui) const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;

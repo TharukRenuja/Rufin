@@ -640,12 +640,12 @@ pub(in crate::ui) fn shell_map_states() {
         ),
         (
             "uncached local sync waits behind gate",
-            LocalCacheGateInput::uncached(false, false, "Syncing library…"),
+            LocalCacheGateInput::uncached(false, false, "Syncing library..."),
             LocalSourceCacheGateAction::Enter,
         ),
         (
             "cached sync stays visible",
-            LocalCacheGateInput::cached(false, false, "Syncing library…"),
+            LocalCacheGateInput::cached(false, false, "Syncing library..."),
             LocalSourceCacheGateAction::None,
         ),
         (
@@ -655,7 +655,7 @@ pub(in crate::ui) fn shell_map_states() {
         ),
         (
             "preparing waits while snapshot is syncing",
-            LocalCacheGateInput::uncached(true, true, "Syncing library…"),
+            LocalCacheGateInput::uncached(true, true, "Syncing library..."),
             LocalSourceCacheGateAction::Wait,
         ),
         (
@@ -665,7 +665,7 @@ pub(in crate::ui) fn shell_map_states() {
         ),
     ];
 
-    assert!(local_source_snapshot_is_syncing("Syncing library…"));
+    assert!(local_source_snapshot_is_syncing("Syncing library..."));
     for (name, input, expected) in cases {
         assert_eq!(local_cache_gate_action(input), expected, "{name}");
     }
@@ -771,18 +771,18 @@ pub(in crate::ui) fn shell_hide_status() {
     assert_eq!(startup_loading_status_label(""), None);
     assert_eq!(startup_loading_status_label("Cached library ready"), None);
     assert_eq!(
-        startup_loading_status_label("Syncing Local library…"),
-        Some("Syncing Local library…".to_string())
+        startup_loading_status_label("Syncing Local library..."),
+        Some("Syncing Local library...".to_string())
     );
 }
 #[test]
 pub(in crate::ui) fn shell_split_status_detail() {
     assert_eq!(
         startup_loading_status_parts(
-            "Caching local library… This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+            "Caching local library... This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
         ),
         (
-            "Caching local library… This may take some time.".to_string(),
+            "Caching local library... This may take some time.".to_string(),
             Some("Reading track metadata for Local, 25/2,567 tracks processed (12s)".to_string())
         )
     );
@@ -795,7 +795,7 @@ pub(in crate::ui) fn shell_connection_progress_detail() {
     );
     assert_eq!(
         connection_progress_status_label("Library cache ready for Desktop in 44s elapsed"),
-        Some("Preparing library…".to_string())
+        Some("Preparing library...".to_string())
     );
 }
 #[test]
@@ -1420,15 +1420,15 @@ pub(in crate::ui) fn shell_reject_stale_lyrics() {
 #[test]
 pub(in crate::ui) fn shell_use_statuses() {
     assert_eq!(
-        preferences_login_status_toast_message("Checking Jellyfin server…"),
-        Some("Checking Jellyfin server…".to_string())
+        preferences_login_status_toast_message("Checking Jellyfin server..."),
+        Some("Checking Jellyfin server...".to_string())
     );
     assert_eq!(
-        preferences_login_status_toast_message_for_surface("Checking Jellyfin server…", false),
-        Some("Checking Jellyfin server…".to_string())
+        preferences_login_status_toast_message_for_surface("Checking Jellyfin server...", false),
+        Some("Checking Jellyfin server...".to_string())
     );
     assert_eq!(
-        preferences_login_status_toast_message_for_surface("Checking Jellyfin server…", true),
+        preferences_login_status_toast_message_for_surface("Checking Jellyfin server...", true),
         None
     );
     assert_eq!(
@@ -1436,11 +1436,11 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some("Server settings saved.".to_string())
     );
     assert_eq!(
-        preferences_login_status_toast_message("Server settings saved. Resyncing library…"),
-        Some("Server settings saved. Resyncing library…".to_string())
+        preferences_login_status_toast_message("Server settings saved. Resyncing library..."),
+        Some("Server settings saved. Resyncing library...".to_string())
     );
     assert_eq!(
-        preferences_login_status_toast_message("Syncing Jellyfin library…"),
+        preferences_login_status_toast_message("Syncing Jellyfin library..."),
         None
     );
     assert_eq!(
@@ -1466,7 +1466,7 @@ pub(in crate::ui) fn shell_use_statuses() {
         "No saved token found for the active server."
     ));
     assert_eq!(
-        library_sync_toast_state("Syncing Jellyfin library…"),
+        library_sync_toast_state("Syncing Jellyfin library..."),
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
@@ -1474,7 +1474,7 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
-        library_sync_toast_state("Caching library artwork…"),
+        library_sync_toast_state("Caching library artwork..."),
         Some(LibrarySyncToastState::Progress)
     );
     assert_eq!(
@@ -1491,8 +1491,8 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(library_sync_toast_state("Cached library cleared."), None);
     assert_eq!(
-        library_sync_toast_message("Caching library… This may take some time."),
-        "Caching library… This may take some time."
+        library_sync_toast_message("Caching library... This may take some time."),
+        "Caching library... This may take some time."
     );
     assert_eq!(
         library_sync_toast_message("Cached tracks page 4/6 for Test, 2,000 cached (24s)"),

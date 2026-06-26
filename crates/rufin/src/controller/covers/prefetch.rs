@@ -450,7 +450,7 @@ fn emit_initial_cover_prefetch_status(
         return;
     }
     let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
-        "Caching library artwork… {processed}/{total} covers checked"
+        "Caching library artwork... {processed}/{total} covers checked"
     )));
 }
 

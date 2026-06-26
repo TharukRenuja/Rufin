@@ -248,7 +248,7 @@ impl Shell {
                     );
                     if let Some(dialog) = preview_shell.state.lyrics_search_dialog.borrow().as_ref()
                     {
-                        dialog.status.set_text(&tr("Searching…"));
+                        dialog.status.set_text(&tr("Searching..."));
                     }
                 });
             }
@@ -271,7 +271,7 @@ impl Shell {
                         return;
                     };
                     if let Some(dialog) = shell.state.lyrics_search_dialog.borrow().as_ref() {
-                        dialog.status.set_text(&tr("Searching…"));
+                        dialog.status.set_text(&tr("Searching..."));
                     }
                     shell
                         .controller

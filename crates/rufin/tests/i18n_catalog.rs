@@ -51,6 +51,18 @@ fn i18n_files_omit_source_references() {
 }
 
 #[test]
+fn i18n_source_msgids_use_ascii_ellipsis() {
+    let root = repo_root();
+    let mut files = po_files(&root.join("locales"));
+    files.push(root.join("locales/rufin.pot"));
+    for file in files {
+        let content = fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("read {}: {error}", file.display()));
+        assert_active_msgids_use_ascii_ellipsis(&file, &content);
+    }
+}
+
+#[test]
 fn i18n_catalogs_pass_msgfmt_check() {
     let root = repo_root();
     let catalogs = po_files(&root.join("locales"));
@@ -75,6 +87,31 @@ fn i18n_catalogs_pass_msgfmt_check() {
             "msgfmt --check failed for {}",
             catalog.display()
         );
+    }
+}
+
+fn assert_active_msgids_use_ascii_ellipsis(file: &Path, content: &str) {
+    let mut current = String::new();
+    let mut collecting = false;
+
+    for line in content.lines().chain(std::iter::once("")) {
+        if collecting && !line.starts_with('"') {
+            assert!(
+                !current.contains('…'),
+                "{} contains a non-ASCII ellipsis in active source msgid: {}",
+                file.display(),
+                current
+            );
+            current.clear();
+            collecting = false;
+        }
+
+        if line.starts_with("msgid ") || line.starts_with("msgid_plural ") {
+            current.push_str(line);
+            collecting = true;
+        } else if collecting && line.starts_with('"') {
+            current.push_str(line);
+        }
     }
 }
 

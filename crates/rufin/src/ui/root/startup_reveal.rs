@@ -128,7 +128,7 @@ impl Shell {
         spinner.start();
         wrapper.append(&spinner);
         let status = if self.state.source_switch_preparing.get() {
-            Some(tr("Switching library…"))
+            Some(tr("Switching library..."))
         } else {
             startup_loading_status_label(self.state.library.borrow().sync_status.as_str())
         };
@@ -490,7 +490,7 @@ pub(in crate::ui) fn connection_progress_status_label(sync_status: &str) -> Opti
 }
 
 fn connection_progress_status_is_cache_headline(status: &str) -> bool {
-    status == "Caching library…"
-        || status == "Caching local library…"
-        || status == tr("Caching local library…")
+    status == "Caching library..."
+        || status == "Caching local library..."
+        || status == tr("Caching local library...")
 }

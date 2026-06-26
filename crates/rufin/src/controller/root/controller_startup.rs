@@ -179,7 +179,7 @@ fn start_sync_thread_inner(
         let provider_name = sync_source_label(&saved.server);
         if emit_progress {
             let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
-                "Syncing {provider_name} library…"
+                "Syncing {provider_name} library..."
             )));
         }
         let sync_result = if cancellation.cancelled() {
@@ -773,7 +773,7 @@ pub(in crate::controller) fn run_sync_job(
         check_sync_cancelled(cancellation)?;
         if emit_progress {
             let _sent = context.events.send(ControllerEvent::LoginStatus(
-                "Caching library artwork…".to_string(),
+                "Caching library artwork...".to_string(),
             ));
         }
         covers::prefetch_initial_provider_cover_cache(covers::ProviderCoverPrefetchRequest {
@@ -1663,7 +1663,7 @@ impl SyncProgressReporter {
             self.cache_headline_sent = true;
             self.emit_status(
                 true,
-                "Caching library… This may take some time.".to_string(),
+                "Caching library... This may take some time.".to_string(),
             );
             return;
         }
@@ -1702,7 +1702,7 @@ impl SyncProgressReporter {
             self.cache_headline_sent = true;
             self.emit_status(
                 true,
-                "Caching local library… This may take some time.".to_string(),
+                "Caching local library... This may take some time.".to_string(),
             );
             return;
         }

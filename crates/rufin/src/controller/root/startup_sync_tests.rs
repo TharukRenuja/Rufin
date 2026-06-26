@@ -628,7 +628,7 @@ pub(in crate::controller) fn startup_add_syncs() {
         .expect("active server")
         .expect("active server");
     assert_eq!(active.server.id.as_str(), LOCAL_SOURCE_SERVER_ID);
-    assert_eq!(wait_for_status(&events), "Syncing Local library…");
+    assert_eq!(wait_for_status(&events), "Syncing Local library...");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -665,8 +665,8 @@ pub(in crate::controller) fn startup_start_refresh() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Local)
     );
-    assert_eq!(snapshot.sync_status, "Syncing library…");
-    assert_eq!(wait_for_status(&events), "Syncing Local library…");
+    assert_eq!(snapshot.sync_status, "Syncing library...");
+    assert_eq!(wait_for_status(&events), "Syncing Local library...");
     let completed_snapshot = wait_for_snapshot(&events);
     assert_eq!(
         completed_snapshot.selected_source,
@@ -1768,7 +1768,7 @@ pub(in crate::controller) fn startup_removing_cache() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Server(remote.server.id.clone()))
     );
-    assert_eq!(wait_for_status(&events), "Syncing Local library…");
+    assert_eq!(wait_for_status(&events), "Syncing Local library...");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let total = controller

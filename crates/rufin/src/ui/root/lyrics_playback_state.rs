@@ -39,7 +39,7 @@ impl Shell {
         self.apply_loaded_lyrics(lyrics);
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref()
             && dialog.track_id == track_id
-            && dialog.status.text().as_str() == tr("Searching…")
+            && dialog.status.text().as_str() == tr("Searching...")
         {
             let status = if has_lyrics {
                 tr("Loaded in lyrics panel.")
