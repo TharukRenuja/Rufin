@@ -1,8 +1,9 @@
 use super::queue_state::defer_queue_snapshot;
 use super::*;
-use crate::controller::generated_radio::saved_server_for_generated_queue;
-use crate::controller::provider_tracks::prepare_provider_tracks;
+use crate::controller::generated_radio::{saved_server_for_generated_queue, spread_radio_tracks};
+use crate::controller::provider_tracks::{prepare_cached_tracks, prepare_provider_tracks};
 use source::{PlayedFilter, RandomTrackRequest};
+use source_local::LOCAL_PROVIDER_ID;
 
 impl AppController {
     #[cfg(test)]
@@ -243,7 +244,9 @@ fn auto_dj_random_fallback_tracks(
     state: &AutoDjQueueState,
 ) -> Result<Vec<Track>, String> {
     let genre_name = auto_dj_current_genre(controller, state)?;
-    let mut tracks = if saved.server.provider == "fake" {
+    let should_spread_cached_tracks =
+        saved.server.provider == "fake" || saved.server.provider == LOCAL_PROVIDER_ID;
+    let mut tracks = if should_spread_cached_tracks {
         auto_dj_random_fallback_tracks_from_cache(
             controller,
             &saved.server.id,
@@ -272,7 +275,17 @@ fn auto_dj_random_fallback_tracks(
             )
             .map_err(|error| error.to_string())?
     };
-    prepare_provider_tracks(controller, saved, settings, &mut tracks)?;
+    if saved.server.provider == LOCAL_PROVIDER_ID {
+        prepare_cached_tracks(controller, saved, settings, &mut tracks)?;
+    } else {
+        prepare_provider_tracks(controller, saved, settings, &mut tracks)?;
+    }
+    if should_spread_cached_tracks {
+        tracks = spread_radio_tracks(
+            &format!("auto-dj:{}", state.current.track_id.as_str()),
+            tracks,
+        );
+    }
     Ok(tracks)
 }
 
@@ -296,14 +309,16 @@ fn auto_dj_random_fallback_tracks_from_cache(
     server_id: &ServerId,
     genre_name: Option<&str>,
 ) -> Result<Vec<Track>, String> {
-    let mut tracks = controller
-        .store
-        .with_store(|store| store.load_tracks(server_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
-        .items;
-    if let Some(genre_name) = genre_name {
-        tracks.retain(|track| track.genres.iter().any(|genre| genre == genre_name));
-    }
-    tracks.sort_by_key(|track| track.id.as_str().to_string());
+    let tracks = if let Some(genre_name) = genre_name {
+        controller.store.with_store(|store| {
+            store.load_tracks_by_genre_name(server_id, genre_name, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT)
+        })?
+    } else {
+        controller
+            .store
+            .with_store(|store| store.load_tracks(server_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
+            .items
+    };
     Ok(tracks)
 }
 

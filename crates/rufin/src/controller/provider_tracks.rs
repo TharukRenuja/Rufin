@@ -8,7 +8,7 @@ use super::{
     root::{scrub_selected_track_image_refs, track_album_refs_with_settings},
 };
 
-pub(in crate::controller) fn prepare_provider_tracks(
+pub(in crate::controller) fn prepare_cached_tracks(
     controller: &AppController,
     saved: &SavedServer,
     settings: &AppSettings,
@@ -16,7 +16,16 @@ pub(in crate::controller) fn prepare_provider_tracks(
 ) -> Result<(), String> {
     scrub_selected_track_image_refs(saved, settings, tracks);
     cover_art_policy::bind_tracks(tracks, settings);
-    track_album_refs_with_settings(&controller.store, saved, settings, tracks, &[])?;
+    track_album_refs_with_settings(&controller.store, saved, settings, tracks, &[])
+}
+
+pub(in crate::controller) fn prepare_provider_tracks(
+    controller: &AppController,
+    saved: &SavedServer,
+    settings: &AppSettings,
+    tracks: &mut [Track],
+) -> Result<(), String> {
+    prepare_cached_tracks(controller, saved, settings, tracks)?;
     if !tracks.is_empty() {
         controller
             .store

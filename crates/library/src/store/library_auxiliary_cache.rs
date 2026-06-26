@@ -79,6 +79,35 @@ impl Store {
         self.attach_genre_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
+    pub fn load_tracks_by_genre_name(
+        &self,
+        server_id: &ServerId,
+        genre_name: &str,
+        limit: usize,
+    ) -> StoreResult<Vec<Track>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                   t.album, t.year, t.release_date, t.date_added, t.last_played,
+                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag,
+                   t.local_path, t.source_format
+            FROM track_genres tg
+            JOIN tracks t
+                ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+            WHERE tg.server_id = ?1 AND tg.genre_name = ?2
+            ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                     t.title COLLATE NOCASE
+            LIMIT ?3
+            ",
+        )?;
+        let mut tracks = collect_rows(statement.query_map(
+            params![server_id.as_str(), genre_name, limit as i64],
+            track_from_row,
+        )?)?;
+        self.attach_track_metadata(server_id, &mut tracks)?;
+        Ok(tracks)
+    }
     pub(super) fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
         self.connection
             .query_row(

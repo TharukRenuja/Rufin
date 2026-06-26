@@ -28,7 +28,7 @@ use source::{
     ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SearchResults,
     StreamDescriptor,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
