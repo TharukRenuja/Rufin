@@ -144,7 +144,7 @@ toastoverlay toast label {
 }
 
 .app-root {
-  background: transparent;
+  background: @window_bg_color;
 }
 
 .wide-sidebar-slot,
@@ -161,15 +161,18 @@ toastoverlay toast label {
 }
 
 .wide-sidebar {
-  padding-top: 10px;
+  padding-top: 18px;
 }
 
 .compact-rail {
-  padding: 10px 0 4px;
+  padding: 18px 0 4px;
 }
 
 .main-area,
-.route-content,
+.route-content {
+  background: @window_bg_color;
+}
+
 .track-table {
   background: transparent;
 }
@@ -1420,7 +1423,7 @@ listview.queue-list row {
 }
 
 .app-content-stack {
-  background: transparent;
+  background: @window_bg_color;
 }
 
 .fullscreen-player {
