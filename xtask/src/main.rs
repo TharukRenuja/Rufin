@@ -7,6 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod release;
+
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const CARGO_REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
@@ -28,6 +30,7 @@ fn run() -> Result<()> {
     match args.remove(0).as_str() {
         "check" => run_check(args),
         "flatpak" => run_flatpak(args),
+        "release" => release::run(args),
         "-h" | "--help" => {
             print_usage();
             Ok(())
@@ -41,7 +44,9 @@ fn print_usage() {
         "Usage:
   cargo xtask check release-local [--base-ref REF]
   cargo xtask flatpak update-cargo-sources [--check]
-  cargo xtask flatpak check-icon-assertions"
+  cargo xtask flatpak check-icon-assertions
+  cargo xtask release prepare VERSION SUMMARY
+  cargo xtask release update-flathub-manifest [--manifest PATH] TAG"
     );
 }
 
@@ -115,7 +120,7 @@ fn print_help_if_requested(args: &[String], usage: &str) -> Result<bool> {
     }
 }
 
-fn repo_root() -> Result<PathBuf> {
+pub(crate) fn repo_root() -> Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()?;
@@ -126,7 +131,7 @@ fn repo_root() -> Result<PathBuf> {
     Ok(PathBuf::from(root.trim()))
 }
 
-fn command_stdout<I, S>(program: &str, args: I) -> Result<String>
+pub(crate) fn command_stdout<I, S>(program: &str, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -138,7 +143,7 @@ where
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn run_command<I, S>(program: &str, args: I) -> Result<()>
+pub(crate) fn run_command<I, S>(program: &str, args: I) -> Result<()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -488,12 +493,12 @@ fn path_to_slash(path: &Path) -> String {
         .join("/")
 }
 
-fn read_to_string(path: &Path) -> Result<String> {
+pub(crate) fn read_to_string(path: &Path) -> Result<String> {
     fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()).into())
 }
 
-fn write_string(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_string(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents)
         .map_err(|err| format!("failed to write {}: {err}", path.display()).into())
 }
