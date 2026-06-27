@@ -52,12 +52,14 @@
 
 # Screenshots
 
-![Tracks page](data/tracks.png)
-![Albums page](data/albums.png)
-![Artists page](data/artists.png)
-![Fullscreen player](data/fullscreen_player.png)
+![Album page](data/album_page.png)
+![Artist page](data/artist_page.png)
+![Fullscreen player](data/player_visualizer.png)
 ![Smart playlists](data/smart_playlists.png)
-![Play random](data/play_random.png)
+![Library settings](data/library_settings.png)
+![Scrobbling settings](data/scrobbling_settings.png)
+![Layout settings](data/layout_settings.png)
+![Lyrics search](data/lyrics_search.png)
 
 
 # Installation

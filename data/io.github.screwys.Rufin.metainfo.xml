@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.screwys.Rufin</id>
   <name>Rufin</name>
-  <summary>Native music client</summary>
+  <summary>Reimagine your music library</summary>
   <developer id="io.github.screwys">
     <name>screwy</name>
   </developer>
@@ -17,7 +17,7 @@
     <color type="primary" scheme_preference="dark">#28596b</color>
   </branding>
   <description>
-    <p>Native music client for your music servers and local music folders, with built-in Discord and Last.fm integration</p>
+    <p>Bring music from your servers and local folders into one library, with built-in Discord and Last.fm integration</p>
     <ul>
       <li>Can connect to multiple Jellyfin, Subsonic, Navidrome servers as well as multiple local folders, and can seamlessly switch between them</li>
       <li>Built-in Last.fm, Libre.fm, and ListenBrainz scrobbling</li>
@@ -30,31 +30,39 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/Rufin.png</image>
     </screenshot>
     <screenshot>
-      <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/tracks.png</image>
+      <caption>View album details</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/album_page.png</image>
     </screenshot>
     <screenshot>
-      <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/albums.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/artists.png</image>
+      <caption>View artist details</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/artist_page.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/fullscreen_player.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/player_visualizer.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
-      <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.9/data/play_random.png</image>
+      <caption>Manage music libraries</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/library_settings.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Configure scrobbling</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/scrobbling_settings.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Customize the layout</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/layout_settings.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Search lyrics</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/lyrics_search.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>

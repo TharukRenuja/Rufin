@@ -28,7 +28,10 @@ const APP_ID: &str = "io.github.screwys.Rufin";
 const APP_ICON_NAME: &str = APP_ID;
 
 #[derive(Clone, Debug, Parser)]
-#[command(name = "rufin", about = "Native GTK music client shell")]
+#[command(
+    name = "rufin",
+    about = "Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust"
+)]
 struct Cli {
     #[cfg(feature = "dev-tools")]
     #[arg(long, value_enum)]
