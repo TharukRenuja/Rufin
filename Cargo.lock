@@ -615,7 +615,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "serde",
  "serde_json",
@@ -1806,7 +1806,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "library"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "domain",
  "rusqlite",
@@ -2245,7 +2245,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "playback"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "domain",
  "gstreamer",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "rufin"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "clap",
@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "secrets"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "base64",
  "domain",
@@ -2932,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "source"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "domain",
@@ -2946,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "source-jellyfin"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "domain",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "source-local"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "domain",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "source-subsonic"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "domain",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "test-support"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "async-trait",
  "domain",
@@ -3869,7 +3869,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "serde_json",
 ]
