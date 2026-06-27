@@ -19,7 +19,7 @@ use crate::ui::{
 };
 
 use super::{
-    ArtworkTile, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, cover_artwork_id_for_key,
+    ArtworkTile, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, chrome, cover_artwork_id_for_key,
     cover_request_id_for_key, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
     player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
 };
@@ -59,10 +59,11 @@ const FULLSCREEN_EQUALIZER_MIN_FIT_INSET: i32 = 16;
 const FULLSCREEN_EQUALIZER_MAX_FIT_INSET: i32 = 24;
 
 pub(super) struct FullscreenPlayerParts {
-    pub(super) root: gtk::Box,
+    pub(super) root: gtk::Overlay,
     pub(super) animation_tick: RefCell<Option<gtk::TickCallbackId>>,
     pub(super) close_button: gtk::Button,
     pub(super) inline_close_button: gtk::Button,
+    pub(super) hero_handle: gtk::WindowHandle,
     pub(super) hero: gtk::Box,
     pub(super) cover: ArtworkTile,
     pub(super) cover_key: RefCell<Option<String>>,
@@ -114,7 +115,7 @@ struct EqualizerPanel {
 }
 
 pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let root = gtk::Overlay::new();
     root.add_css_class("fullscreen-player");
     root.set_hexpand(true);
     root.set_vexpand(true);
@@ -166,7 +167,8 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     details.append(&album);
     details.append(&meta);
     hero.append(&details);
-    body.append(&hero);
+    let hero_handle = chrome::window_drag_handle_with_child("fullscreen-player-drag-handle", &hero);
+    body.append(&hero_handle);
 
     let stack = adw::ViewStack::builder()
         .hhomogeneous(false)
@@ -214,13 +216,14 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     switcher_bar.set_center_widget(Some(&switcher));
     body.append(&switcher_bar);
     body.append(&stack);
-    root.append(&body);
+    root.set_child(Some(&body));
 
     FullscreenPlayerParts {
         root,
         animation_tick: RefCell::new(None),
         close_button,
         inline_close_button,
+        hero_handle,
         hero,
         cover,
         cover_key: RefCell::new(None),
@@ -1235,6 +1238,7 @@ impl Shell {
         self.fullscreen_player
             .inline_close_button
             .set_visible(!show_hero);
+        self.fullscreen_player.hero_handle.set_visible(show_hero);
         self.fullscreen_player.hero.set_visible(show_hero);
         self.fullscreen_player.equalizer_band_row.set_vexpand(true);
         self.fullscreen_player
