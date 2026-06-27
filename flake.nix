@@ -1,5 +1,5 @@
 {
-  description = "Native GTK4 Jellyfin music client";
+  description = "Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -114,7 +114,7 @@
             '';
 
             meta = {
-              description = "Native GTK music client for Jellyfin";
+              description = "Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust";
               homepage = "https://github.com/screwys/Rufin";
               license = lib.licenses.gpl3Plus;
               mainProgram = "rufin";
