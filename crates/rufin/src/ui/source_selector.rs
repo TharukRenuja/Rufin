@@ -352,6 +352,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
         )
     {
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+        separator.add_css_class("server-library-separator");
         wrapper.append(&separator);
         wrapper.append(&server_section_label(&tr("Server Library")));
         append_server_music_folder_rows(shell, &popover, &wrapper, server, content);
