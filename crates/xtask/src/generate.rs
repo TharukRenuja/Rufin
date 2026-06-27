@@ -649,11 +649,9 @@ if [[ ! -f "$makepkg_config" ]]; then
   exit 1
 fi
 cd "$pkgdir"
-makepkg --config "$makepkg_config" --printsrcinfo
+timeout "$2" makepkg --config "$makepkg_config" --printsrcinfo
 "#;
     let mut args = vec![
-        OsString::from("timeout"),
-        OsString::from(format!("{timeout_seconds}s")),
         OsString::from("env"),
         OsString::from("-u"),
         OsString::from("LD_PRELOAD"),
@@ -673,9 +671,14 @@ makepkg --config "$makepkg_config" --printsrcinfo
         OsString::from("bash"),
     ];
     args.push(pkgdir.as_os_str().to_owned());
+    args.push(OsString::from(format!("{timeout_seconds}s")));
 
     let output = capture_retry_without_ld_preload(args)?;
     if !output.status.success() {
+        if env::var("RUFIN_AUR_REQUIRE_MAKEPKG").unwrap_or_default() == "1" {
+            eprint!("{}", output.stdout);
+            eprint!("{}", output.stderr);
+        }
         return Ok(false);
     }
     let stdout = output.stdout;
