@@ -2,9 +2,14 @@ use adw::prelude::*;
 
 use crate::i18n::tr;
 
-use super::{configure_fill_width_clip, layout::WINDOW_CHROME_MARGIN_END};
+use super::{
+    configure_fill_width_clip,
+    layout::{ROUTE_TOP_MARGIN, WINDOW_CHROME_MARGIN_END},
+};
 
 const WINDOW_CONTROLS_MARGIN_TOP: i32 = 10;
+const WINDOW_DRAG_HANDLE_HEIGHT: i32 = ROUTE_TOP_MARGIN;
+const WINDOW_DRAG_HANDLE_MARGIN_START: i32 = 56;
 
 pub(super) struct MainAreaParts {
     pub(super) root: adw::ToolbarView,
@@ -49,6 +54,14 @@ pub(super) fn build_content_chrome(
     main_area.set_valign(gtk::Align::Fill);
     main_well.add_overlay(main_area);
     main_well.set_measure_overlay(main_area, false);
+    let drag_handle = window_drag_handle_with_margins(
+        "window-drag-handle",
+        WINDOW_DRAG_HANDLE_HEIGHT,
+        WINDOW_DRAG_HANDLE_MARGIN_START,
+        0,
+    );
+    main_well.add_overlay(&drag_handle);
+    main_well.set_measure_overlay(&drag_handle, false);
 
     let right_panel_slot = gtk::ScrolledWindow::new();
     configure_fill_width_clip(&right_panel_slot, gtk::PolicyType::Never);
@@ -105,4 +118,37 @@ pub(super) fn configure_primary_menu_button(button: &gtk::Button) {
     let label = tr("Menu");
     button.set_tooltip_text(Some(&label));
     button.update_property(&[gtk::accessible::Property::Label(&label)]);
+}
+
+pub(in crate::ui) fn window_drag_handle_with_child(
+    css_class: &str,
+    child: &impl IsA<gtk::Widget>,
+) -> gtk::WindowHandle {
+    let handle = gtk::WindowHandle::new();
+    handle.add_css_class(css_class);
+    handle.set_halign(gtk::Align::Fill);
+    handle.set_valign(gtk::Align::Start);
+    handle.set_hexpand(true);
+    handle.set_vexpand(false);
+    handle.set_child(Some(child));
+    handle
+}
+
+fn window_drag_handle_with_margins(
+    css_class: &str,
+    height: i32,
+    margin_start: i32,
+    margin_end: i32,
+) -> gtk::WindowHandle {
+    let handle =
+        window_drag_handle_with_child(css_class, &gtk::Box::new(gtk::Orientation::Horizontal, 0));
+    handle.set_margin_start(margin_start);
+    handle.set_margin_end(margin_end);
+    handle.set_height_request(height);
+
+    if let Some(area) = handle.child() {
+        area.set_hexpand(true);
+        area.set_height_request(height);
+    }
+    handle
 }
