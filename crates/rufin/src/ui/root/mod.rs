@@ -72,7 +72,7 @@ use ::library::{CachedGenreDetail, LibraryDelta, image_cache_key};
 #[cfg(feature = "dev-tools")]
 use ::test_support::FakeScale;
 use adw::prelude::*;
-use chrome::{build_content_chrome, build_main_area};
+use chrome::{build_content_chrome, build_main_area, window_drag_handle_with_child};
 use discord::DiscordPresence;
 use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
@@ -583,7 +583,7 @@ impl Shell {
     }
 }
 
-fn sidebar_scroll_slot(width: i32, child: &gtk::Box) -> gtk::ScrolledWindow {
+fn sidebar_scroll_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     let slot = gtk::ScrolledWindow::new();
     slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
     slot.set_width_request(width);
@@ -805,16 +805,24 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 4);
     normal_nav.add_css_class("wide-sidebar");
     normal_nav.set_hexpand(false);
+    normal_nav.set_vexpand(true);
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
-    let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav);
+    let normal_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &normal_nav);
+    normal_nav_handle.set_vexpand(true);
+    normal_nav_handle.set_valign(gtk::Align::Fill);
+    let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav_handle);
     normal_nav_slot.add_css_class("sidebar-pane");
     normal_nav_slot.add_css_class("wide-sidebar-slot");
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 1);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_hexpand(false);
+    compact_nav.set_vexpand(true);
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
-    let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav);
+    let compact_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &compact_nav);
+    compact_nav_handle.set_vexpand(true);
+    compact_nav_handle.set_valign(gtk::Align::Fill);
+    let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav_handle);
     compact_nav_slot.add_css_class("sidebar-pane");
     compact_nav_slot.add_css_class("compact-rail-slot");
     let server_selector = build_server_selector();
@@ -880,7 +888,9 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     app_content_overlay.set_measure_overlay(&fullscreen_player.root, false);
 
     app_root.append(&app_content_overlay);
-    app_root.append(&player_controls.root);
+    let bottom_player_handle =
+        window_drag_handle_with_child("bottom-player-drag-handle", &player_controls.root);
+    app_root.append(&bottom_player_handle);
 
     root_stack.add_named(&login_host, Some("login"));
     root_stack.add_named(&startup_loading_host, Some("startup-loading"));

@@ -100,9 +100,7 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
         ));
     }
 
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    shell.normal_nav.append(&spacer);
+    shell.normal_nav.append(&sidebar_spacer());
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
@@ -122,9 +120,7 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
             item.route.clone(),
         ));
     }
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    shell.compact_nav.append(&spacer);
+    shell.compact_nav.append(&sidebar_spacer());
 }
 
 pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
@@ -164,6 +160,12 @@ fn clear_box(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
     }
+}
+
+fn sidebar_spacer() -> gtk::Box {
+    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    spacer.set_vexpand(true);
+    spacer
 }
 
 fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Option<&str>) {
