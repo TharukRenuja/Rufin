@@ -149,12 +149,6 @@ jobs:
           name: ${{ env.BUNDLE_NAME }}
           path: dist
 
-      - name: Generate checksum
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum "$BUNDLE_NAME" > "$BUNDLE_NAME.sha256"
-
       - name: Attest Flatpak bundle
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
@@ -168,6 +162,5 @@ jobs:
           gh release upload \
             "$RELEASE_TAG" \
             "dist/$BUNDLE_NAME" \
-            "dist/$BUNDLE_NAME.sha256" \
             --clobber \
             --repo "$GITHUB_REPOSITORY"
