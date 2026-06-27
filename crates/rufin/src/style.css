@@ -600,6 +600,10 @@ menubutton.server-selector > button:hover {
   font-size: 0.9em;
 }
 
+.server-library-separator {
+  margin-bottom: 5px;
+}
+
 .server-option {
   padding: 3px 7px;
   border-radius: 6px;
