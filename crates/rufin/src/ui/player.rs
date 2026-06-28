@@ -11,7 +11,7 @@ use tracing::info;
 use crate::controller::PlaybackSnapshot;
 use crate::i18n::{msgid, tr};
 
-use super::playback_outputs::{audio_output_index, playback_output_options};
+use super::playback_outputs::present_audio_output_popover;
 use super::player_icons::{
     VolumeIcon, audio_output_icon_button, auto_dj_icon_button, lyrics_icon_button,
     play_icon_button, queue_sidebar_button, random_clover_icon_button, repeat_icon_button,
@@ -1301,65 +1301,6 @@ fn repeat_label(repeat_mode: RepeatMode) -> String {
     }
 }
 
-fn present_audio_output_popover(button: &gtk::Button, shell: &Rc<Shell>) {
-    let outputs = playback_output_options();
-    let selected = shell.state.settings.borrow().playback.audio_output.clone();
-    let selected_index = audio_output_index(&outputs, selected.as_deref()) as usize;
-
-    let popover = gtk::Popover::new();
-    popover.add_css_class("audio-output-popover");
-    popover.set_autohide(true);
-    popover.set_has_arrow(false);
-    popover.set_position(gtk::PositionType::Top);
-    popover.set_parent(button);
-
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    list.set_margin_top(4);
-    list.set_margin_bottom(4);
-    list.set_margin_start(0);
-    list.set_margin_end(0);
-    list.set_width_request(236);
-
-    for (index, (id, title)) in outputs.into_iter().enumerate() {
-        let row = gtk::Button::new();
-        row.add_css_class("flat");
-        row.add_css_class("audio-output-row");
-        row.set_halign(gtk::Align::Fill);
-        row.set_tooltip_text(Some(&title));
-
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.set_halign(gtk::Align::Fill);
-        content.set_valign(gtk::Align::Center);
-        let check = gtk::Image::from_icon_name("object-select-symbolic");
-        check.set_pixel_size(16);
-        check.set_size_request(16, 16);
-        check.set_opacity(if index == selected_index { 1.0 } else { 0.0 });
-        content.append(&check);
-        let label = gtk::Label::new(Some(&title));
-        label.set_xalign(0.0);
-        label.set_hexpand(true);
-        label.set_max_width_chars(30);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        content.append(&label);
-        row.set_child(Some(&content));
-
-        let row_shell = Rc::clone(shell);
-        let row_popover = popover.clone();
-        row.connect_clicked(move |_| {
-            let selected = id.clone();
-            row_shell.update_playback_settings(|settings| {
-                settings.audio_output = selected;
-            });
-            row_popover.popdown();
-        });
-        list.append(&row);
-    }
-
-    popover.set_child(Some(&list));
-    popover.connect_closed(|popover| popover.unparent());
-    popover.popup();
-}
-
 fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
     shell.state.seek_preview_seconds.set(Some(seconds));
     shell.player_controls.progress.set_value(f64::from(seconds));
@@ -1576,7 +1517,9 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     shell
         .player_controls
         .audio_output_button
-        .connect_clicked(move |button| present_audio_output_popover(button, &output_shell));
+        .connect_clicked(move |button| {
+            present_audio_output_popover(button, &output_shell, gtk::PositionType::Top, None);
+        });
     let seek_shell = Rc::clone(shell);
     shell
         .player_controls

@@ -620,6 +620,36 @@ msgstr ""
 msgid "Turn on private mode"
 msgstr ""
 
+msgid "Selected device"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "No audio outputs found"
+msgstr ""
+
+msgid "PipeWire"
+msgstr ""
+
+msgid "PulseAudio"
+msgstr ""
+
+msgid "ALSA"
+msgstr ""
+
+msgid "JACK"
+msgstr ""
+
+msgid "macOS"
+msgstr ""
+
+msgid "WASAPI"
+msgstr ""
+
+msgid "DirectSound"
+msgstr ""
+
 msgid "Seek playback"
 msgstr ""
 
@@ -893,6 +923,9 @@ msgstr ""
 msgid "Audio output"
 msgstr ""
 
+msgid "Change"
+msgstr ""
+
 msgid "Reset equalizer"
 msgstr ""
 
@@ -1043,9 +1076,6 @@ msgstr ""
 msgid ""
 "Changing secret backend removes legacy config secrets and signs you out "
 "everywhere, including API secrets. App cache is not affected."
-msgstr ""
-
-msgid "Change"
 msgstr ""
 
 msgid "Interface"

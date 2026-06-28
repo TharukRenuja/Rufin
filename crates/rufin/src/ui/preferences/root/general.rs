@@ -605,29 +605,30 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     audio_group.add(&waveform_row);
 
-    let outputs = playback_output_options();
-    let output_titles = outputs
-        .iter()
-        .map(|(_, title)| title.as_str())
-        .collect::<Vec<_>>();
-    let output_options = gtk::StringList::new(&output_titles);
-    let output_row = adw::ComboRow::builder()
+    let output_row = adw::ActionRow::builder()
         .title(tr("Audio output"))
-        .model(&output_options)
-        .selected(audio_output_index(
-            &outputs,
+        .subtitle(selected_audio_output_title(
             settings.audio_output.as_deref(),
         ))
         .build();
     let output_shell = Rc::clone(shell);
-    output_row.connect_selected_notify(move |row| {
-        let selected = outputs
-            .get(row.selected() as usize)
-            .and_then(|(id, _)| id.clone());
-        output_shell.update_playback_settings(|settings| {
-            settings.audio_output = selected;
+    let output_button = gtk::Button::with_label(&tr("Change"));
+    output_button.set_valign(gtk::Align::Center);
+    let output_row_for_button = output_row.clone();
+    output_button.connect_clicked(move |button| {
+        let output_row = output_row_for_button.clone();
+        let on_selected = Rc::new(move |_: Option<String>, title: String| {
+            output_row.set_subtitle(&title);
         });
+        present_audio_output_popover(
+            button,
+            &output_shell,
+            gtk::PositionType::Bottom,
+            Some(on_selected),
+        );
     });
+    output_row.add_suffix(&output_button);
+    output_row.set_activatable_widget(Some(&output_button));
     audio_group.add(&output_row);
     page.add(&audio_group);
 

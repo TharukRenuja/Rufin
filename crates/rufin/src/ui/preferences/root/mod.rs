@@ -1,7 +1,7 @@
 use super::super::{
     Shell,
     layout::{large_popup_content_height, large_popup_content_width},
-    playback_outputs::{audio_output_index, playback_output_options},
+    playback_outputs::{present_audio_output_popover, selected_audio_output_title},
     present_light_dismiss_dialog,
 };
 use super::library;
