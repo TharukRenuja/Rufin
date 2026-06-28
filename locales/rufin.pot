@@ -623,12 +623,6 @@ msgstr ""
 msgid "Selected device"
 msgstr ""
 
-msgid "Loading..."
-msgstr ""
-
-msgid "No audio outputs found"
-msgstr ""
-
 msgid "PipeWire"
 msgstr ""
 

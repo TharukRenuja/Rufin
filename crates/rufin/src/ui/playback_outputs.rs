@@ -3,13 +3,35 @@ use playback::{AudioOutput, available_audio_outputs};
 use std::rc::Rc;
 use std::sync::mpsc::TryRecvError;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+type AudioOutputOptions = Vec<(Option<String>, String)>;
 type AudioOutputSelected = Rc<dyn Fn(Option<String>, String)>;
+const AUDIO_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
-pub(in crate::ui) fn selected_audio_output_title(selected: Option<&str>) -> String {
+pub(in crate::ui) fn default_audio_output_options() -> AudioOutputOptions {
+    vec![(None, tr("System default"))]
+}
+
+pub(in crate::ui) fn warm_audio_output_cache(shell: &Rc<Shell>) {
+    request_audio_output_refresh(shell);
+}
+
+pub(in crate::ui) fn selected_audio_output_title(
+    shell: &Rc<Shell>,
+    selected: Option<&str>,
+) -> String {
     selected
-        .and_then(static_audio_output_title)
+        .and_then(|selected| {
+            shell
+                .state
+                .audio_output_options
+                .borrow()
+                .iter()
+                .find(|(id, _)| id.as_deref() == Some(selected))
+                .map(|(_, title)| title.clone())
+        })
+        .or_else(|| selected.and_then(static_audio_output_title))
         .unwrap_or_else(|| {
             if selected.is_some() {
                 tr("Selected device")
@@ -26,6 +48,9 @@ pub(in crate::ui) fn present_audio_output_popover(
     on_selected: Option<AudioOutputSelected>,
 ) {
     let selected = shell.state.settings.borrow().playback.audio_output.clone();
+    let options = shell.state.audio_output_options.borrow().clone();
+    let shown_options = Rc::new(RefCell::new(options.clone()));
+
     let popover = gtk::Popover::new();
     popover.add_css_class("audio-output-popover");
     popover.set_autohide(true);
@@ -39,49 +64,125 @@ pub(in crate::ui) fn present_audio_output_popover(
     list.set_margin_start(0);
     list.set_margin_end(0);
     list.set_width_request(236);
-    list.append(&audio_output_status_row(&tr("Loading...")));
+    populate_audio_output_rows(
+        &list,
+        &popover,
+        shell,
+        selected.as_deref(),
+        options,
+        on_selected.as_ref(),
+    );
     popover.set_child(Some(&list));
     popover.connect_closed(|popover| popover.unparent());
     popover.popup();
+
+    let seen_generation = shell.state.audio_output_refresh_generation.get();
+    request_audio_output_refresh(shell);
+    watch_audio_output_refresh(
+        shell,
+        &popover,
+        &list,
+        selected,
+        seen_generation,
+        shown_options,
+        on_selected,
+    );
+}
+
+fn request_audio_output_refresh(shell: &Rc<Shell>) {
+    if shell.state.audio_output_refresh_running.get() {
+        return;
+    }
+    if shell
+        .state
+        .audio_output_refreshed_at
+        .get()
+        .is_some_and(|refreshed_at| refreshed_at.elapsed() < AUDIO_OUTPUT_REFRESH_INTERVAL)
+    {
+        return;
+    }
+    shell.state.audio_output_refresh_running.set(true);
 
     let (sender, receiver) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let _sent = sender.send(available_audio_outputs());
     });
 
-    let popover_for_result = popover.clone();
-    let list_for_result = list.clone();
-    let shell_for_result = Rc::clone(shell);
+    let shell = Rc::clone(shell);
     gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
-        if !popover_for_result.is_visible() {
-            return gtk::glib::ControlFlow::Break;
-        }
         match receiver.try_recv() {
             Ok(outputs) => {
-                populate_audio_output_rows(
-                    &list_for_result,
-                    &popover_for_result,
-                    &shell_for_result,
-                    selected.as_deref(),
-                    playback_output_options(outputs),
-                    on_selected.as_ref(),
-                );
+                let options = playback_output_options(outputs);
+                let mut cached = shell.state.audio_output_options.borrow_mut();
+                if *cached != options {
+                    *cached = options;
+                    shell
+                        .state
+                        .audio_output_refresh_generation
+                        .set(shell.state.audio_output_refresh_generation.get() + 1);
+                }
+                shell.state.audio_output_refresh_running.set(false);
+                shell
+                    .state
+                    .audio_output_refreshed_at
+                    .set(Some(Instant::now()));
                 gtk::glib::ControlFlow::Break
             }
             Err(TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
             Err(TryRecvError::Disconnected) => {
-                replace_audio_output_rows(
-                    &list_for_result,
-                    [audio_output_status_row(&tr("No audio outputs found"))],
-                );
+                shell.state.audio_output_refresh_running.set(false);
+                shell
+                    .state
+                    .audio_output_refreshed_at
+                    .set(Some(Instant::now()));
                 gtk::glib::ControlFlow::Break
             }
         }
     });
 }
 
-fn playback_output_options(discovered: Vec<AudioOutput>) -> Vec<(Option<String>, String)> {
-    let mut outputs = vec![(None, tr("System default"))];
+fn watch_audio_output_refresh(
+    shell: &Rc<Shell>,
+    popover: &gtk::Popover,
+    list: &gtk::Box,
+    selected: Option<String>,
+    seen_generation: u64,
+    shown_options: Rc<RefCell<AudioOutputOptions>>,
+    on_selected: Option<AudioOutputSelected>,
+) {
+    let popover = popover.clone();
+    let list = list.clone();
+    let shell = Rc::clone(shell);
+    gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
+        if !popover.is_visible() {
+            return gtk::glib::ControlFlow::Break;
+        }
+        let current_generation = shell.state.audio_output_refresh_generation.get();
+        if current_generation != seen_generation {
+            let options = shell.state.audio_output_options.borrow().clone();
+            if *shown_options.borrow() != options {
+                populate_audio_output_rows(
+                    &list,
+                    &popover,
+                    &shell,
+                    selected.as_deref(),
+                    options.clone(),
+                    on_selected.as_ref(),
+                );
+                *shown_options.borrow_mut() = options;
+            }
+            return gtk::glib::ControlFlow::Break;
+        }
+        if shell.state.audio_output_refresh_running.get() {
+            gtk::glib::ControlFlow::Continue
+        } else {
+            gtk::glib::ControlFlow::Break
+        }
+    });
+}
+
+fn playback_output_options(discovered: Vec<AudioOutput>) -> AudioOutputOptions {
+    let mut outputs = default_audio_output_options();
     outputs.extend(
         discovered
             .into_iter()
@@ -91,11 +192,11 @@ fn playback_output_options(discovered: Vec<AudioOutput>) -> Vec<(Option<String>,
     outputs
 }
 
-fn audio_output_index(outputs: &[(Option<String>, String)], selected: Option<&str>) -> u32 {
+fn audio_output_index(outputs: &[(Option<String>, String)], selected: Option<&str>) -> usize {
     outputs
         .iter()
         .position(|(id, _)| id.as_deref() == selected)
-        .unwrap_or_default() as u32
+        .unwrap_or_default()
 }
 
 fn static_audio_output_title(id: &str) -> Option<String> {
@@ -117,55 +218,23 @@ fn populate_audio_output_rows(
     popover: &gtk::Popover,
     shell: &Rc<Shell>,
     selected: Option<&str>,
-    outputs: Vec<(Option<String>, String)>,
+    options: AudioOutputOptions,
     on_selected: Option<&AudioOutputSelected>,
 ) {
-    let selected_index = audio_output_index(&outputs, selected) as usize;
-    let rows = outputs
-        .into_iter()
-        .enumerate()
-        .map(|(index, (id, title))| {
-            audio_output_row(
-                popover,
-                shell,
-                index == selected_index,
-                id,
-                title,
-                on_selected,
-            )
-        })
-        .collect::<Vec<_>>();
-    replace_audio_output_rows(list, rows);
-}
-
-fn replace_audio_output_rows(
-    list: &gtk::Box,
-    rows: impl IntoIterator<Item = impl IsA<gtk::Widget>>,
-) {
+    let selected_index = audio_output_index(&options, selected);
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
-    for row in rows {
-        list.append(row.as_ref());
+    for (index, (id, title)) in options.into_iter().enumerate() {
+        list.append(&audio_output_row(
+            popover,
+            shell,
+            index == selected_index,
+            id,
+            title,
+            on_selected,
+        ));
     }
-}
-
-fn audio_output_status_row(label: &str) -> gtk::Button {
-    let row = gtk::Button::new();
-    row.add_css_class("flat");
-    row.add_css_class("audio-output-row");
-    row.set_sensitive(false);
-    row.set_halign(gtk::Align::Fill);
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.set_halign(gtk::Align::Fill);
-    content.set_valign(gtk::Align::Center);
-    let label = gtk::Label::new(Some(label));
-    label.set_xalign(0.0);
-    label.set_hexpand(true);
-    content.append(&label);
-    row.set_child(Some(&content));
-    row
 }
 
 fn audio_output_row(
