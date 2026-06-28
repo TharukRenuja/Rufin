@@ -316,6 +316,7 @@ pub(in crate::controller) type LoginActivationContext<'a> = QueueActivationConte
 #[derive(Clone, Copy)]
 pub(in crate::controller) struct LoginActivationRequest<'a> {
     pub(in crate::controller) session: &'a ProviderSession,
+    pub(in crate::controller) server_name: Option<&'a str>,
     pub(in crate::controller) trust_invalid_cert: bool,
     pub(in crate::controller) use_jellyfin_instant_mix: bool,
     pub(in crate::controller) local_access_root: Option<&'a Path>,
@@ -327,8 +328,12 @@ pub(in crate::controller) fn activate_logged_in_server(
     request: LoginActivationRequest<'_>,
 ) -> Result<SavedServer, String> {
     let session = request.session;
+    let mut server = session.server.clone();
+    if let Some(name) = trimmed_optional(request.server_name) {
+        server.name = name;
+    }
     let saved = SavedServer {
-        server: session.server.clone(),
+        server,
         user_id: session.user_id.clone(),
         username: session.username.clone(),
         trust_invalid_cert: request.trust_invalid_cert,

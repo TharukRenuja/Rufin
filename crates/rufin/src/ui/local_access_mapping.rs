@@ -11,28 +11,50 @@ use crate::controller::{LocalAccessStatus, ServerSettingsInput};
 use crate::i18n::{tr, trn_with};
 use crate::providers::StreamingProvider;
 
-use super::{Shell, login::connect_folder_button, text_button};
+use super::{
+    Shell,
+    layout::{
+        compact_field_row_group, install_compact_field_row_responsiveness,
+        large_popup_content_width, style_compact_field_row,
+    },
+    login::connect_folder_button,
+    text_button,
+};
 
-type ManageServerExitSlot = adw::NavigationView;
-const MANAGE_SERVER_FIELD_ROW_STACK_WIDTH: i32 = 560;
+const MANAGE_SERVER_CLAMP_WIDTH: i32 = 560;
+
+#[derive(Clone)]
+struct ManageServerExitSlot {
+    navigation: adw::NavigationView,
+    on_close: Rc<dyn Fn()>,
+}
 
 pub(in crate::ui) fn manage_server_navigation_page(
     shell: &Rc<Shell>,
     server: ServerIdentity,
     navigation: &adw::NavigationView,
     preferences_dialog: &adw::Dialog,
+    on_close: Rc<dyn Fn()>,
 ) -> adw::NavigationPage {
     let title = server_display_name(&server);
-    let toolbar = manage_server_toolbar(shell, server, navigation.clone(), preferences_dialog);
-    adw::NavigationPage::new(&toolbar, &title)
+    let content = manage_server_content(
+        shell,
+        server,
+        ManageServerExitSlot {
+            navigation: navigation.clone(),
+            on_close,
+        },
+        preferences_dialog,
+    );
+    adw::NavigationPage::new(&content, &title)
 }
 
-fn manage_server_toolbar(
+fn manage_server_content(
     shell: &Rc<Shell>,
     server: ServerIdentity,
     exit: ManageServerExitSlot,
     preferences_dialog: &adw::Dialog,
-) -> adw::ToolbarView {
+) -> gtk::Widget {
     let (access, access_status, selected) = {
         let library = shell.state.library.borrow();
         let summary = library
@@ -68,26 +90,24 @@ fn manage_server_toolbar(
         (access, status, selected)
     };
     let remote = server.provider != "local";
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    let title = adw::WindowTitle::new(&tr("Manage Server"), &manage_server_subtitle(&server));
-    header.set_show_start_title_buttons(false);
-    header.set_show_end_title_buttons(false);
-    header.set_show_back_button(true);
-    header.set_title_widget(Some(&title));
-    toolbar.add_top_bar(&header);
-
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
 
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(large_popup_content_width(MANAGE_SERVER_CLAMP_WIDTH));
+    clamp.set_tightening_threshold(360);
+    clamp.set_margin_top(8);
+    clamp.set_margin_bottom(20);
+    clamp.set_margin_start(24);
+    clamp.set_margin_end(24);
+    clamp.set_valign(gtk::Align::Start);
+    scroller.set_child(Some(&clamp));
+
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     content.add_css_class("manage-server-content");
-    content.set_margin_top(12);
-    content.set_margin_bottom(12);
-    content.set_margin_start(14);
-    content.set_margin_end(14);
-    scroller.set_child(Some(&content));
+    content.set_hexpand(true);
+    clamp.set_child(Some(&content));
     content.append(&server_settings_group(shell, &server, remote));
 
     let folder = Rc::new(RefCell::new(
@@ -248,8 +268,6 @@ fn manage_server_toolbar(
         &exit,
         preferences_dialog,
     ));
-    toolbar.set_content(Some(&scroller));
-
     let update_state = Rc::new({
         let folder = Rc::clone(&folder);
         let server_prefix = server_prefix.clone();
@@ -347,11 +365,12 @@ fn manage_server_toolbar(
     });
 
     update_state();
-    toolbar
+    scroller.upcast()
 }
 
 fn close_manage_server(exit: &ManageServerExitSlot) {
-    exit.pop();
+    exit.navigation.pop();
+    (exit.on_close)();
 }
 
 fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: bool) -> gtk::Box {
@@ -388,14 +407,14 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
         .title(tr("Username"))
         .text(&saved_username)
         .build();
-    username.add_css_class("manage-server-compact-field-row");
+    style_compact_field_row(&username);
     username.set_visible(remote);
     rows_group.add(&username);
 
     let password = adw::PasswordEntryRow::builder()
         .title(tr("Password"))
         .build();
-    password.add_css_class("manage-server-compact-field-row");
+    style_compact_field_row(&password);
     password.set_visible(remote);
     rows_group.add(&password);
 
@@ -466,54 +485,22 @@ fn server_name_address_row(
         .title(tr("Name"))
         .text(name_text)
         .build();
-    name.add_css_class("manage-server-compact-field-row");
-    let name_group = server_settings_field_group(&name);
+    style_compact_field_row(&name);
+    let name_group = compact_field_row_group(&name);
     fields.append(&name_group);
 
     let address = adw::EntryRow::builder()
         .title(tr("Server Address"))
         .text(address_text)
         .build();
-    address.add_css_class("manage-server-compact-field-row");
-    let address_group = server_settings_field_group(&address);
+    style_compact_field_row(&address);
+    let address_group = compact_field_row_group(&address);
     address_group.set_visible(show_address);
     fields.append(&address_group);
 
-    install_field_row_responsiveness(&fields);
+    install_compact_field_row_responsiveness(&fields);
 
     (fields, name, address)
-}
-
-fn server_settings_field_group(row: &adw::EntryRow) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::new();
-    group.set_hexpand(true);
-    group.add(row);
-    group
-}
-
-fn install_field_row_responsiveness(fields: &gtk::Box) {
-    fields.connect_notify_local(Some("width"), |fields, _| {
-        apply_field_row_layout(fields);
-    });
-    fields.add_tick_callback(|fields, _| {
-        if fields.width() <= 1 {
-            gtk::glib::ControlFlow::Continue
-        } else {
-            apply_field_row_layout(fields);
-            gtk::glib::ControlFlow::Break
-        }
-    });
-}
-
-fn apply_field_row_layout(fields: &gtk::Box) {
-    let stack = fields.width() < MANAGE_SERVER_FIELD_ROW_STACK_WIDTH;
-    fields.set_orientation(if stack {
-        gtk::Orientation::Vertical
-    } else {
-        gtk::Orientation::Horizontal
-    });
-    fields.set_homogeneous(!stack);
-    fields.set_spacing(if stack { 8 } else { 12 });
 }
 
 fn server_actions_group(
@@ -629,16 +616,6 @@ fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
         .build();
     row.add_css_class("manage-server-action-row");
     row
-}
-
-fn manage_server_subtitle(server: &ServerIdentity) -> String {
-    let name = server_display_name(server);
-    let provider = provider_display_name(&server.provider);
-    if name.trim().eq_ignore_ascii_case(provider.trim()) {
-        name
-    } else {
-        format!("{name} - {provider}")
-    }
 }
 
 fn confirm_clear_server_cache(shell: &Rc<Shell>, server_id: ServerId, server_name: &str) {

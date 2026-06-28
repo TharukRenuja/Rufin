@@ -15,14 +15,14 @@ use super::{
     AddServerDialogHandle, Shell,
     chrome::window_close_controls,
     folder_selected_text,
-    layout::{large_popup_content_height, large_popup_content_width},
-    present_light_dismiss_dialog,
+    layout::{
+        compact_field_row_group, install_compact_field_row_responsiveness,
+        large_popup_content_width, style_compact_field_row,
+    },
     startup_reveal::connection_progress_status_label,
     text_button,
 };
 
-const ADD_SERVER_DIALOG_WIDTH: i32 = 620;
-const ADD_SERVER_DIALOG_HEIGHT: i32 = 680;
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
 const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.";
 
@@ -30,6 +30,7 @@ const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.
 struct ServerFormPreset {
     server_id: ServerId,
     provider: StreamingProvider,
+    name: String,
     url: String,
     username: String,
     trust_invalid_cert: bool,
@@ -44,6 +45,7 @@ struct ProviderSelector {
 #[derive(Clone)]
 pub(in crate::ui) struct AddServerDraft {
     provider: StreamingProvider,
+    name: String,
     url: String,
     username: String,
     password: String,
@@ -53,50 +55,29 @@ pub(in crate::ui) struct AddServerDraft {
 }
 
 impl Shell {
-    pub(super) fn present_add_server_dialog_closing(self: &Rc<Self>, extra_dialog: &adw::Dialog) {
-        let extra_dialog = extra_dialog.clone();
-        self.present_server_dialog(Some(Rc::new(move || {
-            extra_dialog.close();
-        })));
-    }
-
-    fn present_server_dialog(self: &Rc<Self>, on_connect_started: Option<Rc<dyn Fn()>>) {
-        let toolbar = adw::ToolbarView::new();
-        let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new(&tr("Add Your Music Library"), "");
-        header.set_title_widget(Some(&title));
-        toolbar.add_top_bar(&header);
-
-        let dialog = adw::Dialog::builder()
-            .content_width(large_popup_content_width(ADD_SERVER_DIALOG_WIDTH))
-            .content_height(large_popup_content_height(
-                self.window.height(),
-                ADD_SERVER_DIALOG_HEIGHT,
-            ))
-            .build();
-        let dialog_for_connect = dialog.clone();
-        let on_connect_started = on_connect_started.clone();
+    pub(in crate::ui) fn add_server_navigation_page(
+        self: &Rc<Self>,
+        _navigation: &adw::NavigationView,
+        preferences_dialog: &adw::Dialog,
+    ) -> adw::NavigationPage {
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.set_hexpand(true);
+        content.set_vexpand(true);
+        let preferences_dialog_for_connect = preferences_dialog.clone();
         let connect_callback: Rc<dyn Fn()> = Rc::new(move || {
-            dialog_for_connect.close();
-            if let Some(on_connect_started) = on_connect_started.as_ref() {
-                on_connect_started();
-            }
+            preferences_dialog_for_connect.close();
         });
         let draft = Rc::new(RefCell::new(self.default_add_server_draft()));
-        let child =
-            self.server_view_handler(Some(Rc::clone(&connect_callback)), Some(Rc::clone(&draft)));
-        toolbar.set_content(Some(&child));
-        dialog.set_child(Some(&toolbar));
+        replace_add_server_content(
+            &content,
+            self.server_view_handler(Some(Rc::clone(&connect_callback)), Some(Rc::clone(&draft))),
+        );
         *self.state.add_server_dialog.borrow_mut() = Some(AddServerDialogHandle {
-            toolbar: toolbar.clone(),
+            content: content.clone(),
             on_connect_started: Some(connect_callback),
             draft,
         });
-        let shell = Rc::clone(self);
-        dialog.connect_closed(move |_| {
-            shell.state.add_server_dialog.borrow_mut().take();
-        });
-        present_light_dismiss_dialog(&dialog, &self.window);
+        adw::NavigationPage::new(&content, &tr("Add server"))
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
@@ -107,8 +88,14 @@ impl Shell {
         let Some(handle) = self.state.add_server_dialog.borrow().clone() else {
             return;
         };
-        let child = self.server_view_handler(handle.on_connect_started, Some(handle.draft));
-        handle.toolbar.set_content(Some(&child));
+        if handle.content.root().is_none() {
+            self.state.add_server_dialog.borrow_mut().take();
+            return;
+        }
+        replace_add_server_content(
+            &handle.content,
+            self.server_view_handler(handle.on_connect_started, Some(handle.draft)),
+        );
     }
 
     fn server_view_handler(
@@ -116,7 +103,8 @@ impl Shell {
         on_connect_started: Option<Rc<dyn Fn()>>,
         draft: Option<Rc<RefCell<AddServerDraft>>>,
     ) -> gtk::Widget {
-        let embedded = on_connect_started.is_none();
+        let preferences_compact = on_connect_started.is_some();
+        let embedded = !preferences_compact;
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
         }
@@ -132,26 +120,54 @@ impl Shell {
         let clamp = adw::Clamp::new();
         clamp.set_maximum_size(large_popup_content_width(ADD_SERVER_CLAMP_WIDTH));
         clamp.set_tightening_threshold(360);
-        clamp.set_margin_top(36);
-        clamp.set_margin_bottom(36);
+        clamp.set_margin_top(if preferences_compact { 8 } else { 36 });
+        clamp.set_margin_bottom(if preferences_compact { 20 } else { 36 });
         clamp.set_margin_start(24);
         clamp.set_margin_end(24);
         clamp.set_valign(gtk::Align::Start);
 
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        let content = gtk::Box::new(
+            gtk::Orientation::Vertical,
+            if preferences_compact { 10 } else { 18 },
+        );
         content.add_css_class("first-run-content");
+        if preferences_compact {
+            content.add_css_class("add-server-compact-content");
+        }
         content.set_hexpand(true);
 
         let selected_provider = Rc::new(Cell::new(draft_snapshot.provider));
-        let provider_selector = build_provider_selector(selected_provider.get());
-        let url = adw::EntryRow::builder().title(tr("Server Address")).build();
-        url.set_text(&draft_snapshot.url);
-        let username = adw::EntryRow::builder().title(tr("Username")).build();
-        username.set_text(&draft_snapshot.username);
+        let provider_selector =
+            build_provider_selector(selected_provider.get(), preferences_compact);
+        let name = adw::EntryRow::builder()
+            .title(tr("Name"))
+            .text(&draft_snapshot.name)
+            .build();
+        style_compact_field_row(&name);
+        let name_group = compact_field_row_group(&name);
+        let url = adw::EntryRow::builder()
+            .title(tr("Server Address"))
+            .text(&draft_snapshot.url)
+            .build();
+        style_compact_field_row(&url);
+        let url_group = compact_field_row_group(&url);
+        let server_fields = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        server_fields.set_homogeneous(true);
+        server_fields.set_halign(gtk::Align::Fill);
+        server_fields.set_hexpand(true);
+        server_fields.append(&name_group);
+        server_fields.append(&url_group);
+        install_compact_field_row_responsiveness(&server_fields);
+        let username = adw::EntryRow::builder()
+            .title(tr("Username"))
+            .text(&draft_snapshot.username)
+            .build();
+        style_compact_field_row(&username);
         let password = adw::PasswordEntryRow::builder()
             .title(tr("Password"))
             .build();
         password.set_text(&draft_snapshot.password);
+        style_compact_field_row(&password);
         let cert_verify = adw::SwitchRow::builder()
             .title(tr("Verify server certificate"))
             .subtitle(tr("Turn off only for a server you control"))
@@ -163,14 +179,20 @@ impl Shell {
             .active(draft_snapshot.use_jellyfin_instant_mix)
             .build();
 
-        let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
-        server_group.add(&url);
-        server_group.add(&username);
-        server_group.add(&password);
-        server_group.add(&cert_verify);
-        server_group.add(&instant_mix);
+        let server_fields_group = if preferences_compact {
+            adw::PreferencesGroup::new()
+        } else {
+            adw::PreferencesGroup::builder().title(tr("Server")).build()
+        };
+        server_fields_group.add(&server_fields);
+        let server_rows_group = adw::PreferencesGroup::new();
+        server_rows_group.add(&username);
+        server_rows_group.add(&password);
+        server_rows_group.add(&cert_verify);
+        server_rows_group.add(&instant_mix);
         content.append(&provider_selector.widget);
-        content.append(&server_group);
+        content.append(&server_fields_group);
+        content.append(&server_rows_group);
 
         if embedded {
             let private_mode = adw::SwitchRow::builder()
@@ -190,35 +212,28 @@ impl Shell {
 
         let local_folders = Rc::new(RefCell::new(draft_snapshot.local_folders.clone()));
         let local_group = adw::PreferencesGroup::builder()
-            .title(tr("Local Library"))
+            .title(tr("Local library"))
             .description(tr(
                 "Choose one or more folders to scan and play directly from this computer",
             ))
             .build();
         let local_folder_row = adw::ActionRow::builder()
-            .title(tr("Music Folders"))
+            .title(tr("Folders"))
             .subtitle(local_folders_subtitle(&local_folders.borrow()))
             .build();
-        let local_folder_button = gtk::Button::with_label(&tr("Choose"));
+        let local_folder_button = gtk::Button::with_label(&tr("Add folder"));
         local_folder_button.set_valign(gtk::Align::Center);
         local_folder_row.add_suffix(&local_folder_button);
         local_folder_row.set_activatable_widget(Some(&local_folder_button));
         local_group.add(&local_folder_row);
-        let add_local_folder_row = adw::ActionRow::builder()
-            .title(tr("Add Folder"))
-            .subtitle(tr("Add another folder to the Local source"))
-            .build();
-        let add_local_folder_button = gtk::Button::with_label(&tr("Add"));
-        add_local_folder_button.set_valign(gtk::Align::Center);
-        add_local_folder_row.add_suffix(&add_local_folder_button);
-        add_local_folder_row.set_activatable_widget(Some(&add_local_folder_button));
-        local_group.add(&add_local_folder_row);
+        let local_folder_rows = Rc::new(RefCell::new(Vec::new()));
         local_group.set_visible(false);
         content.append(&local_group);
 
         let discovered_group = self.discovered_servers_group(
             &selected_provider,
             &provider_selector.buttons,
+            &name,
             &url,
             &draft,
         );
@@ -239,6 +254,7 @@ impl Shell {
         actions.set_halign(gtk::Align::End);
         let login = text_button("network-server-symbolic", "Connect");
         login.add_css_class("suggested-action");
+        connect_entry_row_activation(&name, &login);
         connect_entry_row_activation(&url, &login);
         connect_entry_row_activation(&username, &login);
         connect_password_entry_row_activation(&password, &login);
@@ -246,6 +262,7 @@ impl Shell {
             .widget
             .add_controller(local_provider_enter_controller(&selected_provider, &login));
         let controller = self.controller.clone();
+        let name_input = name.clone();
         let url_input = url.clone();
         let username_input = username.clone();
         let password_input = password.clone();
@@ -293,6 +310,7 @@ impl Shell {
                 shell.begin_first_run_connection(&message);
                 controller.login(LoginRequest {
                     provider,
+                    server_name: trimmed_optional_text(&name_input),
                     server_url: url_input.text().to_string(),
                     username: username_input.text().to_string(),
                     password: password_input.text().to_string(),
@@ -321,10 +339,13 @@ impl Shell {
         content.append(&status);
 
         let remote_widgets = vec![
-            server_group.clone().upcast::<gtk::Widget>(),
+            server_fields_group.clone().upcast::<gtk::Widget>(),
+            server_rows_group.clone().upcast::<gtk::Widget>(),
+        ];
+        let jellyfin_widgets = vec![
+            instant_mix.clone().upcast::<gtk::Widget>(),
             discovered_group.clone().upcast::<gtk::Widget>(),
         ];
-        let jellyfin_widgets = vec![instant_mix.clone().upcast::<gtk::Widget>()];
         update_provider_rows(
             selected_provider.get(),
             &remote_widgets,
@@ -375,6 +396,12 @@ impl Shell {
             });
         }
         {
+            let draft = Rc::clone(&draft);
+            name.connect_text_notify(move |entry| {
+                draft.borrow_mut().name = entry.text().to_string();
+            });
+        }
+        {
             let refresh = Rc::clone(&refresh_connect_button);
             let draft = Rc::clone(&draft);
             url.connect_text_notify(move |entry| {
@@ -411,58 +438,27 @@ impl Shell {
             });
         }
 
-        connect_folder_button(
-            &self.window,
-            &local_folder_button,
-            &local_folder_row,
-            Rc::new(RefCell::new(local_folders.borrow().first().cloned())),
-            {
-                let login = login.clone();
-                let selected_provider = Rc::clone(&selected_provider);
-                let local_folders = Rc::clone(&local_folders);
-                let local_folder_row = local_folder_row.clone();
-                let url = url.clone();
-                let username = username.clone();
-                let password = password.clone();
-                let draft = Rc::clone(&draft);
-                move |path| {
-                    replace_primary_local_folder(&local_folders, path);
-                    draft.borrow_mut().local_folders = local_folders.borrow().clone();
-                    local_folder_row.set_subtitle(&local_folders_subtitle(&local_folders.borrow()));
-                    update_connect_button(
-                        selected_provider.get(),
-                        &local_folders,
-                        &url,
-                        &username,
-                        &password,
-                        &login,
-                    );
-                }
-            },
-        );
+        let local_folder_selection = LocalFolderSelectionRows {
+            group: local_group,
+            summary_row: local_folder_row,
+            rows: local_folder_rows,
+            folders: Rc::clone(&local_folders),
+            selected_provider: Rc::clone(&selected_provider),
+            url: url.clone(),
+            username: username.clone(),
+            password: password.clone(),
+            login: login.clone(),
+            draft: Rc::clone(&draft),
+        };
+        refresh_local_folder_selection_rows(&local_folder_selection);
         connect_add_local_folder_button(
             &self.window,
-            &add_local_folder_button,
-            &local_folder_row,
+            &local_folder_button,
             Rc::clone(&local_folders),
             {
-                let login = login.clone();
-                let selected_provider = Rc::clone(&selected_provider);
-                let local_folders = Rc::clone(&local_folders);
-                let url = url.clone();
-                let username = username.clone();
-                let password = password.clone();
-                let draft = Rc::clone(&draft);
+                let local_folder_selection = local_folder_selection.clone();
                 move || {
-                    draft.borrow_mut().local_folders = local_folders.borrow().clone();
-                    update_connect_button(
-                        selected_provider.get(),
-                        &local_folders,
-                        &url,
-                        &username,
-                        &password,
-                        &login,
-                    );
+                    refresh_local_folder_selection_rows(&local_folder_selection);
                 }
             },
         );
@@ -509,6 +505,7 @@ impl Shell {
         Some(ServerFormPreset {
             server_id: server.id.clone(),
             provider,
+            name: server.name.clone(),
             url: server.base_url.clone(),
             username: library.username.clone().unwrap_or_default(),
             trust_invalid_cert,
@@ -520,22 +517,24 @@ impl Shell {
         if let Some(preset) = self.saved_server_form_preset() {
             return AddServerDraft {
                 provider: preset.provider,
+                name: preset.name,
                 url: preset.url,
                 username: preset.username,
                 password: String::new(),
                 cert_verify: !preset.trust_invalid_cert,
                 use_jellyfin_instant_mix: preset.use_jellyfin_instant_mix,
-                local_folders: default_music_folder().into_iter().collect(),
+                local_folders: Vec::new(),
             };
         }
         AddServerDraft {
             provider: StreamingProvider::Jellyfin,
+            name: String::new(),
             url: "http://".to_string(),
             username: String::new(),
             password: String::new(),
             cert_verify: true,
             use_jellyfin_instant_mix: false,
-            local_folders: default_music_folder().into_iter().collect(),
+            local_folders: Vec::new(),
         }
     }
 
@@ -621,6 +620,7 @@ impl Shell {
         self: &Rc<Self>,
         selected_provider: &Rc<Cell<StreamingProvider>>,
         provider_buttons: &Rc<Vec<(StreamingProvider, gtk::Button)>>,
+        name: &adw::EntryRow,
         url: &adw::EntryRow,
         draft: &Rc<RefCell<AddServerDraft>>,
     ) -> adw::PreferencesGroup {
@@ -654,9 +654,10 @@ impl Shell {
             group.add(&row);
         } else {
             for server in servers {
+                let server_name = server.name;
                 let subtitle = format!("{} - {}", server.provider, server.address);
                 let row = adw::ActionRow::builder()
-                    .title(server.name)
+                    .title(server_name.clone())
                     .subtitle(subtitle)
                     .build();
                 row.add_prefix(&gtk::Image::from_icon_name(
@@ -665,6 +666,7 @@ impl Shell {
                 row.set_activatable(true);
                 let selected_provider = Rc::clone(selected_provider);
                 let provider_buttons = Rc::clone(provider_buttons);
+                let name = name.clone();
                 let url = url.clone();
                 let address = server.address;
                 let draft = Rc::clone(draft);
@@ -677,8 +679,10 @@ impl Shell {
                     {
                         let mut draft = draft.borrow_mut();
                         draft.provider = StreamingProvider::Jellyfin;
+                        draft.name = server_name.clone();
                         draft.url = address.clone();
                     }
+                    name.set_text(&server_name);
                     url.set_text(&address);
                 });
                 group.add(&row);
@@ -721,15 +725,18 @@ fn discovery_status_label(status: &ServerDiscoveryStatus) -> String {
     }
 }
 
-fn build_provider_selector(selected: StreamingProvider) -> ProviderSelector {
-    let wrapper = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+fn build_provider_selector(selected: StreamingProvider, compact: bool) -> ProviderSelector {
+    let wrapper = gtk::Box::new(gtk::Orientation::Horizontal, if compact { 4 } else { 8 });
     wrapper.add_css_class("provider-choice-list");
+    if compact {
+        wrapper.add_css_class("compact-provider-choice-list");
+    }
     wrapper.set_homogeneous(true);
     wrapper.set_hexpand(true);
 
     let mut buttons = Vec::new();
     for provider in StreamingProvider::ALL {
-        let button = provider_choice_button(provider, provider == selected);
+        let button = provider_choice_button(provider, provider == selected, compact);
         wrapper.append(&button);
         buttons.push((provider, button));
     }
@@ -740,21 +747,25 @@ fn build_provider_selector(selected: StreamingProvider) -> ProviderSelector {
     }
 }
 
-fn provider_choice_button(provider: StreamingProvider, active: bool) -> gtk::Button {
+fn provider_choice_button(provider: StreamingProvider, active: bool, compact: bool) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
     button.add_css_class("provider-choice-button");
+    if compact {
+        button.add_css_class("compact-provider-choice-button");
+    }
     set_provider_choice_active(&button, active);
     button.update_property(&[gtk::accessible::Property::Label(&provider_choice_title(
         provider,
     ))]);
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, if compact { 2 } else { 4 });
     content.set_halign(gtk::Align::Center);
     content.set_valign(gtk::Align::Center);
     let icon = gtk::Image::from_icon_name(provider_choice_icon_name(provider));
-    icon.set_pixel_size(34);
-    icon.set_size_request(34, 34);
+    let icon_size = if compact { 24 } else { 34 };
+    icon.set_pixel_size(icon_size);
+    icon.set_size_request(icon_size, icon_size);
     icon.set_halign(gtk::Align::Center);
     content.append(&icon);
 
@@ -955,6 +966,12 @@ fn activate_connect_if_ready(login: &gtk::Button) -> bool {
     true
 }
 
+fn trimmed_optional_text(row: &adw::EntryRow) -> Option<String> {
+    let text = row.text();
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 fn remote_login_ready(
     url: &adw::EntryRow,
     username: &adw::EntryRow,
@@ -993,27 +1010,80 @@ fn local_folders_subtitle(folders: &[PathBuf]) -> String {
     }
 }
 
-fn replace_primary_local_folder(folders: &Rc<RefCell<Vec<PathBuf>>>, path: PathBuf) {
-    let mut folders = folders.borrow_mut();
-    if let Some(index) = folders.iter().position(|folder| folder == &path) {
-        if index != 0 {
-            folders.remove(index);
-            folders.insert(0, path);
-        }
-        return;
-    }
-    if folders.is_empty() {
-        folders.push(path);
-    } else {
-        folders[0] = path;
-    }
-}
-
 fn append_local_folder(folders: &Rc<RefCell<Vec<PathBuf>>>, path: PathBuf) {
     let mut folders = folders.borrow_mut();
     if !folders.iter().any(|folder| folder == &path) {
         folders.push(path);
     }
+}
+
+#[derive(Clone)]
+struct LocalFolderSelectionRows {
+    group: adw::PreferencesGroup,
+    summary_row: adw::ActionRow,
+    rows: Rc<RefCell<Vec<adw::ActionRow>>>,
+    folders: Rc<RefCell<Vec<PathBuf>>>,
+    selected_provider: Rc<Cell<StreamingProvider>>,
+    url: adw::EntryRow,
+    username: adw::EntryRow,
+    password: adw::PasswordEntryRow,
+    login: gtk::Button,
+    draft: Rc<RefCell<AddServerDraft>>,
+}
+
+fn refresh_local_folder_selection_rows(selection: &LocalFolderSelectionRows) {
+    let folders = selection.folders.borrow().clone();
+    selection
+        .summary_row
+        .set_subtitle(&local_folders_subtitle(&folders));
+    selection.draft.borrow_mut().local_folders = folders.clone();
+    update_connect_button(
+        selection.selected_provider.get(),
+        &selection.folders,
+        &selection.url,
+        &selection.username,
+        &selection.password,
+        &selection.login,
+    );
+
+    for row in selection.rows.borrow_mut().drain(..) {
+        selection.group.remove(&row);
+    }
+
+    for folder in folders {
+        let row = adw::ActionRow::builder()
+            .title(local_folder_title(&folder))
+            .subtitle(path_subtitle(&folder))
+            .subtitle_lines(2)
+            .build();
+        row.add_prefix(&gtk::Image::from_icon_name("route-folders-symbolic"));
+        let remove = gtk::Button::from_icon_name("window-close-symbolic");
+        remove.set_tooltip_text(Some(&tr("Remove folder")));
+        remove.add_css_class("flat");
+        remove.add_css_class("destructive-action");
+        remove.set_valign(gtk::Align::Center);
+        row.add_suffix(&remove);
+        row.set_activatable(false);
+        let selection_for_remove = selection.clone();
+        let folder = folder.clone();
+        remove.connect_clicked(move |_| {
+            selection_for_remove
+                .folders
+                .borrow_mut()
+                .retain(|candidate| candidate != &folder);
+            refresh_local_folder_selection_rows(&selection_for_remove);
+        });
+        selection.group.add(&row);
+        selection.rows.borrow_mut().push(row);
+    }
+}
+
+fn local_folder_title(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| path_subtitle(path))
 }
 
 pub(super) fn connect_folder_button(
@@ -1057,20 +1127,22 @@ pub(super) fn connect_folder_button(
 fn connect_add_local_folder_button(
     window: &adw::ApplicationWindow,
     button: &gtk::Button,
-    row: &adw::ActionRow,
     folders: Rc<RefCell<Vec<PathBuf>>>,
     on_changed: impl Fn() + 'static,
 ) {
     let window = window.clone();
-    let row = row.clone();
     let on_changed: Rc<dyn Fn()> = Rc::new(on_changed);
     button.connect_clicked(move |_| {
         let window = window.clone();
-        let row = row.clone();
         let folders = Rc::clone(&folders);
         let on_changed = Rc::clone(&on_changed);
         gtk::glib::spawn_future_local(async move {
-            let selected_folder = folders.borrow().last().map(gtk::gio::File::for_path);
+            let selected_folder = folders
+                .borrow()
+                .last()
+                .cloned()
+                .or_else(default_music_folder)
+                .map(gtk::gio::File::for_path);
             let dialog = gtk::FileDialog::builder()
                 .title(tr("Select Music Folder"))
                 .build();
@@ -1084,10 +1156,16 @@ fn connect_add_local_folder_button(
                 return;
             };
             append_local_folder(&folders, path);
-            row.set_subtitle(&local_folders_subtitle(&folders.borrow()));
             on_changed();
         });
     });
+}
+
+fn replace_add_server_content(content: &gtk::Box, child: gtk::Widget) {
+    while let Some(current) = content.first_child() {
+        content.remove(&current);
+    }
+    content.append(&child);
 }
 
 fn connect_view_with_close_controls(view: gtk::Widget) -> gtk::Widget {

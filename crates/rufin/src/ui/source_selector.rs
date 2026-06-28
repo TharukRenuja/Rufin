@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use adw::prelude::*;
 use domain::{
@@ -25,12 +29,14 @@ pub(super) struct ServerSelector {
     pub normal_subtitle: gtk::Label,
     normal_popover: RefCell<Option<gtk::Popover>>,
     normal_click_handler: RefCell<Option<glib::SignalHandlerId>>,
+    normal_hover_controller: RefCell<Option<gtk::EventControllerMotion>>,
     pub compact_button: gtk::Button,
     pub compact_icon: gtk::Image,
     pub compact_name: gtk::Label,
     pub compact_subtitle: gtk::Label,
     compact_popover: RefCell<Option<gtk::Popover>>,
     compact_click_handler: RefCell<Option<glib::SignalHandlerId>>,
+    compact_hover_controller: RefCell<Option<gtk::EventControllerMotion>>,
 }
 
 struct ServerSelectorContent {
@@ -127,12 +133,14 @@ pub(super) fn build_server_selector() -> ServerSelector {
         normal_subtitle,
         normal_popover: RefCell::new(None),
         normal_click_handler: RefCell::new(None),
+        normal_hover_controller: RefCell::new(None),
         compact_button,
         compact_icon,
         compact_name,
         compact_subtitle,
         compact_popover: RefCell::new(None),
         compact_click_handler: RefCell::new(None),
+        compact_hover_controller: RefCell::new(None),
     }
 }
 
@@ -155,6 +163,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.normal_button,
         &selector.normal_popover,
         &selector.normal_click_handler,
+        &selector.normal_hover_controller,
         server_selection_popover(shell, &content),
     );
 
@@ -169,6 +178,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.compact_button,
         &selector.compact_popover,
         &selector.compact_click_handler,
+        &selector.compact_hover_controller,
         server_selection_popover(shell, &content),
     );
 }
@@ -203,10 +213,14 @@ fn update_selector_popover(
     button: &gtk::Button,
     popover_slot: &RefCell<Option<gtk::Popover>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
+    hover_controller_slot: &RefCell<Option<gtk::EventControllerMotion>>,
     popover: gtk::Popover,
 ) {
     if let Some(handler) = handler_slot.borrow_mut().take() {
         button.disconnect(handler);
+    }
+    if let Some(controller) = hover_controller_slot.borrow_mut().take() {
+        button.remove_controller(&controller);
     }
     if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
         if current.is_visible() {
@@ -215,17 +229,80 @@ fn update_selector_popover(
         current.unparent();
     }
     popover.set_parent(button);
+    let button_hovered = Rc::new(Cell::new(false));
+    let popover_hovered = Rc::new(Cell::new(false));
     let row_popover = popover.clone();
+    let click_button_hovered = Rc::clone(&button_hovered);
     let handler = button.connect_clicked(move |button| {
-        row_popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-            button.width(),
-            SERVER_SELECTOR_POPOVER_ANCHOR_Y,
-            1,
-            1,
-        )));
-        row_popover.popup();
+        click_button_hovered.set(true);
+        popup_server_selection(button, &row_popover);
     });
+
+    let popover_motion = gtk::EventControllerMotion::new();
+    {
+        let popover_hovered = Rc::clone(&popover_hovered);
+        popover_motion.connect_enter(move |_, _, _| {
+            popover_hovered.set(true);
+        });
+    }
+    {
+        let hover_popover = popover.clone();
+        let button_hovered = Rc::clone(&button_hovered);
+        let popover_hovered = Rc::clone(&popover_hovered);
+        popover_motion.connect_leave(move |_| {
+            popover_hovered.set(false);
+            schedule_server_selection_popdown(&hover_popover, &button_hovered, &popover_hovered);
+        });
+    }
+    popover.add_controller(popover_motion);
+
+    let hover_popover = popover.clone();
+    let hover_button = button.clone();
+    let enter_button_hovered = Rc::clone(&button_hovered);
+    let hover = gtk::EventControllerMotion::new();
+    hover.connect_enter(move |_, _, _| {
+        enter_button_hovered.set(true);
+        popup_server_selection(&hover_button, &hover_popover);
+    });
+    let leave_popover = popover.clone();
+    let leave_button_hovered = Rc::clone(&button_hovered);
+    let leave_popover_hovered = Rc::clone(&popover_hovered);
+    hover.connect_leave(move |_| {
+        leave_button_hovered.set(false);
+        schedule_server_selection_popdown(
+            &leave_popover,
+            &leave_button_hovered,
+            &leave_popover_hovered,
+        );
+    });
+    button.add_controller(hover.clone());
     *handler_slot.borrow_mut() = Some(handler);
+    *hover_controller_slot.borrow_mut() = Some(hover);
+}
+
+fn popup_server_selection(button: &gtk::Button, popover: &gtk::Popover) {
+    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+        button.width(),
+        SERVER_SELECTOR_POPOVER_ANCHOR_Y,
+        1,
+        1,
+    )));
+    popover.popup();
+}
+
+fn schedule_server_selection_popdown(
+    popover: &gtk::Popover,
+    button_hovered: &Rc<Cell<bool>>,
+    popover_hovered: &Rc<Cell<bool>>,
+) {
+    let popover = popover.clone();
+    let button_hovered = Rc::clone(button_hovered);
+    let popover_hovered = Rc::clone(popover_hovered);
+    glib::timeout_add_local_once(Duration::from_millis(120), move || {
+        if !button_hovered.get() && !popover_hovered.get() {
+            popover.popdown();
+        }
+    });
 }
 
 fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
@@ -341,7 +418,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     let add_library_shell = Rc::clone(shell);
     add_library.connect_clicked(move |_| {
         popdown_server_selection_stack(&row_popover);
-        add_library_shell.present_library_preferences_dialog();
+        add_library_shell.present_add_server_preferences_dialog();
     });
     wrapper.append(&add_library);
 

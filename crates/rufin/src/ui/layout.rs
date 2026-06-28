@@ -44,6 +44,7 @@ pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = MIN_APP_WINDOW_HEIGHT;
 const LARGE_POPUP_HEIGHT_PERCENT: i32 = 85;
 const LARGE_POPUP_WIDTH_NUMERATOR: i32 = 11;
 const LARGE_POPUP_WIDTH_DENOMINATOR: i32 = 10;
+const COMPACT_FIELD_ROW_STACK_WIDTH: i32 = 560;
 
 pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
     let width = width.max(1);
@@ -344,6 +345,42 @@ pub(super) fn large_popup_content_height(app_height: i32, fallback_height: i32) 
 pub(super) fn large_popup_content_width(base_width: i32) -> i32 {
     (base_width * LARGE_POPUP_WIDTH_NUMERATOR + LARGE_POPUP_WIDTH_DENOMINATOR / 2)
         / LARGE_POPUP_WIDTH_DENOMINATOR
+}
+
+pub(super) fn style_compact_field_row(row: &impl IsA<gtk::Widget>) {
+    row.add_css_class("compact-field-row");
+}
+
+pub(super) fn compact_field_row_group(row: &impl IsA<gtk::Widget>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::new();
+    group.set_hexpand(true);
+    group.add(row);
+    group
+}
+
+pub(super) fn install_compact_field_row_responsiveness(fields: &gtk::Box) {
+    fields.connect_notify_local(Some("width"), |fields, _| {
+        apply_compact_field_row_layout(fields);
+    });
+    fields.add_tick_callback(|fields, _| {
+        if fields.width() <= 1 {
+            gtk::glib::ControlFlow::Continue
+        } else {
+            apply_compact_field_row_layout(fields);
+            gtk::glib::ControlFlow::Break
+        }
+    });
+}
+
+fn apply_compact_field_row_layout(fields: &gtk::Box) {
+    let stack = fields.width() < COMPACT_FIELD_ROW_STACK_WIDTH;
+    fields.set_orientation(if stack {
+        gtk::Orientation::Vertical
+    } else {
+        gtk::Orientation::Horizontal
+    });
+    fields.set_homogeneous(!stack);
+    fields.set_spacing(if stack { 8 } else { 12 });
 }
 
 pub(super) fn configure_fill_width_clip(

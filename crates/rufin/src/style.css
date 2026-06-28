@@ -477,8 +477,8 @@ popover.context-submenu > contents {
   min-height: 42px;
 }
 
-.manage-server-compact-field-row:focus,
-.manage-server-compact-field-row:focus-within {
+.compact-field-row:focus,
+.compact-field-row:focus-within {
   outline: none;
   box-shadow: none;
 }
@@ -493,6 +493,13 @@ popover.context-submenu > contents {
 
 .preferences-tab-bar {
   padding: 6px 12px 8px;
+}
+
+.preferences-nested-back {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 999px;
 }
 
 .server-selector {
@@ -561,10 +568,19 @@ button.server-selector.menu-source-button .source-selector-detail {
   background: @card_bg_color;
 }
 
+.compact-provider-choice-list {
+  padding: 3px;
+}
+
 .provider-choice-button {
   padding: 7px 4px;
   border-radius: 4px;
   min-height: 66px;
+}
+
+.compact-provider-choice-button {
+  padding: 3px 4px;
+  min-height: 46px;
 }
 
 .provider-choice-button:hover {
