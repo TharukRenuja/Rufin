@@ -66,6 +66,7 @@ impl Shell {
         let scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&scroller);
         configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
+        scroller.set_overlay_scrolling(false);
         scroller.set_vexpand(true);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
