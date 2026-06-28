@@ -1477,7 +1477,7 @@ listview.queue-list row {
 }
 
 .full-artwork-window {
-  background: black;
+  background: @window_bg_color;
 }
 
 .full-artwork-cover {
