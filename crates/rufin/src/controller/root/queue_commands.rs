@@ -213,11 +213,19 @@ impl AppController {
 
     fn replace_queue_from_activation(&self, replacement: QueueReplacement, shuffle_start: bool) {
         let result = self.with_queue_mut(|queue| {
+            let previous_track_id = queue.current().map(|entry| entry.track_id.clone());
             queue
                 .replace_all(replacement)
                 .map_err(|_| "The selected source could not be queued.".to_string())?;
             if shuffle_start {
-                queue.start_first_shuffled();
+                if queue.shuffle().enabled {
+                    queue.start_first_shuffled_with_seed_avoiding(
+                        shuffle_seed(),
+                        previous_track_id.as_ref(),
+                    );
+                } else {
+                    queue.start_first_shuffled();
+                }
             }
             Ok(())
         });
@@ -1313,6 +1321,7 @@ mod tests {
         let tracks = snapshot.tracks[0..8].to_vec();
         controller
             .with_queue_mut(|queue| {
+                queue.play_now(&tracks[0]);
                 queue.set_shuffle(true, 19);
                 Ok(())
             })
@@ -1356,7 +1365,15 @@ mod tests {
         let queue = wait_for_queue(&events).expect("source queue");
         let identity_order = (0..queue.entries.len()).collect::<Vec<_>>();
         assert_eq!(queue.current_index, queue.shuffle_order.first().copied());
+        assert_ne!(
+            queue
+                .current_index
+                .and_then(|index| queue.entries.get(index))
+                .map(|entry| &entry.track_id),
+            Some(&tracks[0].id)
+        );
         assert_ne!(queue.shuffle_order, identity_order);
+        assert_ne!(queue.shuffle.seed, 19);
     }
 
     #[test]
