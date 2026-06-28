@@ -523,6 +523,12 @@ msgstr ""
 msgid "Server"
 msgstr ""
 
+msgid "Private mode"
+msgstr ""
+
+msgid "Privacy and Security"
+msgstr ""
+
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 
@@ -1047,12 +1053,6 @@ msgid "Show playback icon"
 msgstr ""
 
 msgid "Last.fm API key"
-msgstr ""
-
-msgid "Privacy and Security"
-msgstr ""
-
-msgid "Private mode"
 msgstr ""
 
 msgid "Legacy"
