@@ -1,5 +1,7 @@
 use super::*;
 
+type TrackPlayHandler = Rc<dyn Fn(&Track)>;
+
 pub(in crate::ui) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
@@ -105,47 +107,65 @@ pub(in crate::ui) fn track_column_for_key(
     shell: &Rc<Shell>,
     key: LibraryListKey,
     field: LibraryField,
+    selection: Option<TrackTableSelection>,
 ) -> gtk::ColumnViewColumn {
     let width = track_column_width(key, field);
     match field {
         LibraryField::RowIndex => row_index_column_with_width(width),
-        LibraryField::Image => track_image_column(shell, "Image", width),
+        LibraryField::Image => track_image_column(shell, "Image", width, selection),
         LibraryField::TitleMerged => track_merged_column(
             shell,
             "Title",
             width,
-            |track| track.title.clone(),
-            |track| track.artist.clone(),
-            |track| track.image_ref.clone(),
-            |track| stable_seed(track.id.as_str()),
+            selection,
+            TrackMergedColumnValues {
+                title: |track: &Track| track.title.clone(),
+                subtitle: |track: &Track| track.artist.clone(),
+                image_ref: |track: &Track| track.image_ref.clone(),
+                seed: |track: &Track| stable_seed(track.id.as_str()),
+            },
         ),
-        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
-            track.title.clone()
-        }),
-        LibraryField::Favorite => track_favorite_column(shell),
-        LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
+        LibraryField::Title => {
+            track_text_column(shell, "Title", width, true, 0.0, selection, |track| {
+                track.title.clone()
+            })
+        }
+        LibraryField::Favorite => track_favorite_column(shell, selection),
+        LibraryField::Artist => track_link_column(shell, "Artist", width, selection, |track| {
             (track.artist.clone(), track_artist_route(track))
         }),
-        LibraryField::AlbumArtist => {
-            track_link_column(shell, LibraryField::AlbumArtist.title(), width, |track| {
+        LibraryField::AlbumArtist => track_link_column(
+            shell,
+            LibraryField::AlbumArtist.title(),
+            width,
+            selection,
+            |track| {
                 (
                     track_field(track, LibraryField::AlbumArtist),
                     track_album_artist_route(track),
                 )
-            })
-        }
-        LibraryField::Album => track_link_column(shell, "Album", width, |track| {
+            },
+        ),
+        LibraryField::Album => track_link_column(shell, "Album", width, selection, |track| {
             (
                 track.album.clone(),
                 Some(Route::AlbumDetail(track.album_id.clone())),
             )
         }),
-        LibraryField::Duration => track_text_column(shell, "◷", width, false, 0.0, |track| {
-            track_field(track, LibraryField::Duration)
-        }),
-        _ => track_text_column(shell, field.title(), width, false, 0.0, move |track| {
-            track_field(track, field)
-        }),
+        LibraryField::Duration => {
+            track_text_column(shell, "◷", width, false, 0.0, selection, |track| {
+                track_field(track, LibraryField::Duration)
+            })
+        }
+        _ => track_text_column(
+            shell,
+            field.title(),
+            width,
+            false,
+            0.0,
+            selection,
+            move |track| track_field(track, field),
+        ),
     }
 }
 pub(in crate::ui) fn track_column_fit_width(key: LibraryListKey, field: LibraryField) -> i32 {
@@ -761,12 +781,14 @@ where
 pub(in crate::ui) struct LibraryTrackImageCell {
     pub(in crate::ui) cover: ArtworkTile,
     pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
+    pub(in crate::ui) current_position: Rc<Cell<u32>>,
 }
 
 #[derive(Clone)]
 pub(in crate::ui) struct LibraryTrackTextCell {
     pub(in crate::ui) label: gtk::Label,
     pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
+    pub(in crate::ui) current_position: Rc<Cell<u32>>,
 }
 
 #[derive(Clone)]
@@ -776,12 +798,14 @@ pub(in crate::ui) struct LibraryTrackMergedCell {
     pub(in crate::ui) subtitle: gtk::Label,
     pub(in crate::ui) subtitle_route: Rc<RefCell<Option<Route>>>,
     pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
+    pub(in crate::ui) current_position: Rc<Cell<u32>>,
 }
 
 #[derive(Clone)]
 pub(in crate::ui) struct LibraryTrackFavoriteCell {
     pub(in crate::ui) button: gtk::Button,
     pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
+    pub(in crate::ui) current_position: Rc<Cell<u32>>,
 }
 
 thread_local! {
@@ -815,10 +839,44 @@ pub(in crate::ui) fn track_favorite_cell(item: &gtk::ListItem) -> Option<Library
     LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
+fn install_track_cell_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    current_track: Rc<RefCell<Option<Track>>>,
+    current_position: Rc<Cell<u32>>,
+    selection: Option<TrackTableSelection>,
+) {
+    if let Some(select_track) = track_selection_play_handler(selection, current_position) {
+        install_dynamic_track_context_menu_with_play_handler(
+            target,
+            shell,
+            current_track,
+            select_track,
+        );
+    } else {
+        install_dynamic_track_context_menu(target, shell, current_track);
+    }
+}
+
+fn track_selection_play_handler(
+    selection: Option<TrackTableSelection>,
+    current_position: Rc<Cell<u32>>,
+) -> Option<TrackPlayHandler> {
+    selection.map(|selection| {
+        Rc::new(move |_track: &Track| {
+            let position = current_position.get();
+            if position != gtk::INVALID_LIST_POSITION {
+                selection.select(position);
+            }
+        }) as TrackPlayHandler
+    })
+}
+
 pub(in crate::ui) fn track_image_column(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    selection: Option<TrackTableSelection>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -829,9 +887,16 @@ pub(in crate::ui) fn track_image_column(
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
         let cover = ArtworkTile::new(48, 0);
         let widget = cover.widget();
-        install_dynamic_track_context_menu(&widget, &setup_shell, Rc::clone(&current_track));
+        install_track_cell_context_menu(
+            &widget,
+            &setup_shell,
+            Rc::clone(&current_track),
+            Rc::clone(&current_position),
+            selection.clone(),
+        );
         item.set_child(Some(&widget));
         let key = library_list_item_storage_key(item);
         LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
@@ -840,6 +905,7 @@ pub(in crate::ui) fn track_image_column(
                 LibraryTrackImageCell {
                     cover,
                     current_track,
+                    current_position,
                 },
             );
         });
@@ -863,6 +929,7 @@ pub(in crate::ui) fn track_image_column(
             THUMB_COVER_SIZE,
         );
         *cell.current_track.borrow_mut() = Some(track);
+        cell.current_position.set(item.position());
     });
 
     factory.connect_unbind(|_, item| {
@@ -870,6 +937,7 @@ pub(in crate::ui) fn track_image_column(
             && let Some(cell) = track_image_cell(item)
         {
             *cell.current_track.borrow_mut() = None;
+            cell.current_position.set(gtk::INVALID_LIST_POSITION);
             cell.cover.bind_image(0, None);
         }
     });
@@ -893,6 +961,7 @@ pub(in crate::ui) fn track_text_column<F>(
     width: i32,
     expand: bool,
     xalign: f32,
+    selection: Option<TrackTableSelection>,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -908,14 +977,24 @@ where
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
         let label = gtk::Label::new(None);
+        if title == "Title" {
+            label.add_css_class("track-list-title");
+        }
         label.set_xalign(xalign);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         label.set_wrap(false);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
-        install_dynamic_track_context_menu(&label, &setup_shell, Rc::clone(&current_track));
+        install_track_cell_context_menu(
+            &label,
+            &setup_shell,
+            Rc::clone(&current_track),
+            Rc::clone(&current_position),
+            selection.clone(),
+        );
         item.set_child(Some(&label));
         let key = library_list_item_storage_key(item);
         LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
@@ -924,6 +1003,7 @@ where
                 LibraryTrackTextCell {
                     label,
                     current_track,
+                    current_position,
                 },
             );
         });
@@ -941,6 +1021,7 @@ where
         };
         cell.label.set_text(&(value)(&track));
         *cell.current_track.borrow_mut() = Some(track);
+        cell.current_position.set(item.position());
     });
 
     factory.connect_unbind(|_, item| {
@@ -949,6 +1030,7 @@ where
         {
             cell.label.set_text("");
             *cell.current_track.borrow_mut() = None;
+            cell.current_position.set(gtk::INVALID_LIST_POSITION);
         }
     });
 
@@ -968,14 +1050,19 @@ where
     column
 }
 
+pub(in crate::ui) struct TrackMergedColumnValues<Title, Subtitle, Image, Seed> {
+    pub(in crate::ui) title: Title,
+    pub(in crate::ui) subtitle: Subtitle,
+    pub(in crate::ui) image_ref: Image,
+    pub(in crate::ui) seed: Seed,
+}
+
 pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
-    title_value: Title,
-    subtitle_value: Subtitle,
-    image_ref: Image,
-    seed: Seed,
+    selection: Option<TrackTableSelection>,
+    values: TrackMergedColumnValues<Title, Subtitle, Image, Seed>,
 ) -> gtk::ColumnViewColumn
 where
     Title: Fn(&Track) -> String + 'static,
@@ -985,6 +1072,12 @@ where
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
+    let TrackMergedColumnValues {
+        title: title_value,
+        subtitle: subtitle_value,
+        image_ref,
+        seed,
+    } = values;
     let title_value = Rc::new(title_value);
     let subtitle_value = Rc::new(subtitle_value);
     let image_ref = Rc::new(image_ref);
@@ -996,6 +1089,7 @@ where
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
         let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
@@ -1005,6 +1099,7 @@ where
 
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let title = gtk::Label::new(None);
+        title.add_css_class("track-list-title");
         title.set_xalign(0.0);
         title.set_wrap(false);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1037,7 +1132,13 @@ where
         });
 
         row.append(&labels);
-        install_dynamic_track_context_menu(&row, &setup_shell, Rc::clone(&current_track));
+        install_track_cell_context_menu(
+            &row,
+            &setup_shell,
+            Rc::clone(&current_track),
+            Rc::clone(&current_position),
+            selection.clone(),
+        );
         item.set_child(Some(&row));
         let key = library_list_item_storage_key(item);
         LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
@@ -1049,6 +1150,7 @@ where
                     subtitle,
                     subtitle_route,
                     current_track,
+                    current_position,
                 },
             );
         });
@@ -1075,6 +1177,7 @@ where
         let subtitle = subtitle_value(&track);
         let subtitle_route = track_artist_route(&track);
         *cell.current_track.borrow_mut() = Some(track);
+        cell.current_position.set(item.position());
         if subtitle.trim().is_empty() {
             *cell.subtitle_route.borrow_mut() = None;
             cell.subtitle.set_visible(false);
@@ -1099,6 +1202,7 @@ where
             *cell.subtitle_route.borrow_mut() = None;
             cell.cover.bind_image(0, None);
             *cell.current_track.borrow_mut() = None;
+            cell.current_position.set(gtk::INVALID_LIST_POSITION);
         }
     });
 
@@ -1175,7 +1279,10 @@ pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnVie
     column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
-pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_favorite_column(
+    shell: &Rc<Shell>,
+    selection: Option<TrackTableSelection>,
+) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -1185,8 +1292,15 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
         let button = favorite_icon_button("Favorite track");
-        install_dynamic_track_context_menu(&button, &setup_shell, Rc::clone(&current_track));
+        install_track_cell_context_menu(
+            &button,
+            &setup_shell,
+            Rc::clone(&current_track),
+            Rc::clone(&current_position),
+            selection.clone(),
+        );
         let favorite_shell = Rc::clone(&setup_shell);
         let click_track = Rc::clone(&current_track);
         button.connect_clicked(move |button| {
@@ -1208,6 +1322,7 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
                 LibraryTrackFavoriteCell {
                     button,
                     current_track,
+                    current_position,
                 },
             );
         });
@@ -1225,6 +1340,7 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         };
         set_favorite_button_active(&cell.button, track.favorite);
         *cell.current_track.borrow_mut() = Some(track);
+        cell.current_position.set(item.position());
     });
 
     factory.connect_unbind(|_, item| {
@@ -1232,6 +1348,7 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
             && let Some(cell) = track_favorite_cell(item)
         {
             *cell.current_track.borrow_mut() = None;
+            cell.current_position.set(gtk::INVALID_LIST_POSITION);
         }
     });
 

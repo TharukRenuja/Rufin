@@ -256,6 +256,7 @@ impl Shell {
                 Some(play_context),
                 0,
                 ColumnViewWidthMode::RouteScroller,
+                None,
             ),
             load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(track_viewport_warm),

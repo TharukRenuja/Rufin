@@ -9,8 +9,9 @@ use super::{
     connect_paged_grid_loader, context_artist, favorite_button_is_active, favorite_icon_button,
     finish_grid_page, format_duration_units, icon_button, install_album_context_menu,
     install_artist_context_menu, install_dynamic_album_context_menu,
-    install_dynamic_track_context_menu, install_genre_context_menu, install_playlist_context_menu,
-    install_smart_playlist_context_menu, install_track_context_menu,
+    install_dynamic_track_context_menu, install_dynamic_track_context_menu_with_play_handler,
+    install_genre_context_menu, install_playlist_context_menu, install_smart_playlist_context_menu,
+    install_track_context_menu,
     layout::{
         configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
         route_content_width,
@@ -86,6 +87,52 @@ const GRID_INTERACTION_BEHIND: usize = 8;
 const GRID_WARM_AHEAD: usize = 6;
 const GRID_WARM_BEHIND: usize = 2;
 const GRID_WARM_DELAY: u64 = 64;
+#[derive(Clone)]
+pub(in crate::ui) struct TrackTableSelection {
+    model: gio::ListStore,
+    selection: gtk::SingleSelection,
+    selected_position: Rc<Cell<u32>>,
+}
+pub(in crate::ui) type TrackTableSelectionHandle = Rc<RefCell<Option<TrackTableSelection>>>;
+
+impl TrackTableSelection {
+    pub(in crate::ui) fn new(model: &gio::ListStore, selection: &gtk::SingleSelection) -> Self {
+        selection.set_selected(gtk::INVALID_LIST_POSITION);
+        Self {
+            model: model.clone(),
+            selection: selection.clone(),
+            selected_position: Rc::new(Cell::new(gtk::INVALID_LIST_POSITION)),
+        }
+    }
+
+    pub(in crate::ui) fn install_guard(&self) {
+        let selected_position = Rc::clone(&self.selected_position);
+        self.selection
+            .connect_selection_changed(move |selection, _, _| {
+                let selected = selected_position.get();
+                if selection.selected() != selected {
+                    selection.set_selected(selected);
+                }
+            });
+    }
+
+    pub(in crate::ui) fn select(&self, position: u32) {
+        self.selected_position.set(position);
+        self.selection.set_selected(position);
+    }
+
+    pub(in crate::ui) fn select_track_id(&self, track_id: &TrackId) {
+        if let Some(position) = (0..self.model.n_items()).find(|position| {
+            self.model
+                .item(*position)
+                .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+                .is_some_and(|boxed| boxed.borrow::<Track>().id == *track_id)
+        }) {
+            self.select(position);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TrackViewportCoverRanges {
     visible_start: usize,

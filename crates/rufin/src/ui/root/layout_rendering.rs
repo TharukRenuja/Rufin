@@ -8,6 +8,7 @@ use crate::i18n::msgid;
 const PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH: i32 = 30;
 const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
 const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
+pub(in crate::ui) type PlaylistEntrySelectionHandle = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
 
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
@@ -109,6 +110,43 @@ pub(in crate::ui) struct PlaylistEntryTableRow {
     pub(in crate::ui) original_index: usize,
     pub(in crate::ui) display_index: usize,
 }
+fn playlist_entry_id_at(
+    entries: &[PlaylistEntry],
+    model: &gio::ListStore,
+    position: u32,
+) -> Option<String> {
+    let row = item_at::<PlaylistEntryTableRow>(model, position)?;
+    entries
+        .get(row.original_index)
+        .map(|entry| entry.entry_id.clone())
+}
+
+fn playlist_entry_selection_position(
+    entries: &[PlaylistEntry],
+    model: &gio::ListStore,
+    selected_entry_id: &RefCell<Option<String>>,
+) -> u32 {
+    let Some(entry_id) = selected_entry_id.borrow().clone() else {
+        return gtk::INVALID_LIST_POSITION;
+    };
+    (0..model.n_items())
+        .find(|position| {
+            playlist_entry_id_at(entries, model, *position).as_deref() == Some(&entry_id)
+        })
+        .unwrap_or(gtk::INVALID_LIST_POSITION)
+}
+
+fn sync_playlist_entry_selection(
+    selection: &gtk::SingleSelection,
+    entries: &[PlaylistEntry],
+    model: &gio::ListStore,
+    selected_entry_id: &RefCell<Option<String>>,
+) {
+    let selected = playlist_entry_selection_position(entries, model, selected_entry_id);
+    if selection.selected() != selected {
+        selection.set_selected(selected);
+    }
+}
 #[derive(Clone)]
 struct PlaylistEntryCellState {
     menu: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
@@ -130,11 +168,29 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     state: Rc<RefCell<PlaylistEntryListState>>,
     playlist_id: PlaylistId,
     content_inset: i32,
+    selection_handle: Option<PlaylistEntrySelectionHandle>,
 ) -> (gtk::Widget, gio::ListStore) {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    selection.set_autoselect(false);
+    selection.set_can_unselect(true);
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
+    let selected_entry_id = Rc::new(RefCell::new(None::<String>));
+    let select_entry_id: Rc<dyn Fn(&str)> = Rc::new({
+        let entries = Rc::clone(&entries);
+        let model = model.clone();
+        let selection = selection.clone();
+        let selected_entry_id = Rc::clone(&selected_entry_id);
+        move |entry_id| {
+            *selected_entry_id.borrow_mut() = Some(entry_id.to_string());
+            sync_playlist_entry_selection(&selection, entries.as_ref(), &model, &selected_entry_id);
+        }
+    });
+    if let Some(selection_handle) = selection_handle.as_ref() {
+        *selection_handle.borrow_mut() = Some(Rc::clone(&select_entry_id));
+    }
 
-    let table = gtk::ColumnView::new(Some(selection));
+    let table = gtk::ColumnView::new(Some(selection.clone()));
     table.add_css_class("track-table");
     table.add_css_class("playlist-entry-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
@@ -144,23 +200,48 @@ pub(in crate::ui) fn playlist_entries_table_panel(
 
     let columns = vec![
         (
-            playlist_entry_reorder_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            playlist_entry_reorder_column(
+                shell,
+                Rc::clone(&entries),
+                playlist_id.clone(),
+                Rc::clone(&select_entry_id),
+            ),
             PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH,
         ),
         (
-            playlist_entry_number_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            playlist_entry_number_column(
+                shell,
+                Rc::clone(&entries),
+                playlist_id.clone(),
+                Rc::clone(&select_entry_id),
+            ),
             PLAYLIST_ENTRY_NUMBER_WIDTH,
         ),
         (
-            playlist_entry_title_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            playlist_entry_title_column(
+                shell,
+                Rc::clone(&entries),
+                playlist_id.clone(),
+                Rc::clone(&select_entry_id),
+            ),
             PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH,
         ),
         (
-            playlist_entry_album_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            playlist_entry_album_column(
+                shell,
+                Rc::clone(&entries),
+                playlist_id.clone(),
+                Rc::clone(&select_entry_id),
+            ),
             PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
         ),
         (
-            playlist_entry_play_count_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            playlist_entry_play_count_column(
+                shell,
+                Rc::clone(&entries),
+                playlist_id.clone(),
+                Rc::clone(&select_entry_id),
+            ),
             play_count_column_width(),
         ),
     ];
@@ -179,6 +260,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     let entries_for_activate = Rc::clone(&entries);
     let state_for_activate = Rc::clone(&state);
     let model_for_activate = model.clone();
+    let select_entry_for_activate = Rc::clone(&select_entry_id);
     table.connect_activate(move |_, position| {
         let Some(row) = item_at::<PlaylistEntryTableRow>(&model_for_activate, position) else {
             return;
@@ -186,6 +268,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
         let Some(entry) = entries_for_activate.get(row.original_index) else {
             return;
         };
+        select_entry_for_activate(&entry.entry_id);
         let state = state_for_activate.borrow();
         controller.play_playlist_entry(
             playlist_id_for_activate.clone(),
@@ -201,6 +284,22 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
     scroller.set_child(Some(&table));
+    {
+        let entries = Rc::clone(&entries);
+        let model = model.clone();
+        let selected_entry_id = Rc::clone(&selected_entry_id);
+        selection.connect_selection_changed(move |selection, _, _| {
+            sync_playlist_entry_selection(selection, entries.as_ref(), &model, &selected_entry_id);
+        });
+    }
+    {
+        let entries = Rc::clone(&entries);
+        let selection = selection.clone();
+        let selected_entry_id = Rc::clone(&selected_entry_id);
+        model.connect_items_changed(move |model, _, _, _| {
+            sync_playlist_entry_selection(&selection, entries.as_ref(), model, &selected_entry_id);
+        });
+    }
     (scroller.upcast(), model)
 }
 pub(in crate::ui) fn rebuild_playlist_entries_model(
@@ -301,8 +400,16 @@ fn setup_playlist_entry_cell_actions(
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
     state: &PlaylistEntryCellState,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) {
-    install_dynamic_playlist_entry_context_menu(target, shell, Rc::clone(&state.menu));
+    let select_entry: Rc<dyn Fn(&PlaylistEntryContextMenuState)> =
+        Rc::new(move |state| select_entry_id(&state.remove_action.entry_id));
+    install_dynamic_playlist_entry_context_menu_with_play_handler(
+        target,
+        shell,
+        Rc::clone(&state.menu),
+        select_entry,
+    );
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     let controller = shell.controller.clone();
@@ -329,11 +436,13 @@ fn playlist_entry_reorder_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
     let setup_entries = Rc::clone(&entries);
     let setup_playlist_id = playlist_id.clone();
+    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -346,6 +455,7 @@ fn playlist_entry_reorder_column(
             Rc::clone(&setup_entries),
             setup_playlist_id.clone(),
             &state,
+            Rc::clone(&setup_select_entry_id),
         );
         item.set_child(Some(&drag));
         store_playlist_entry_cell_state(item, state);
@@ -386,11 +496,13 @@ fn playlist_entry_number_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
     let setup_entries = Rc::clone(&entries);
     let setup_playlist_id = playlist_id.clone();
+    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -407,6 +519,7 @@ fn playlist_entry_number_column(
             Rc::clone(&setup_entries),
             setup_playlist_id.clone(),
             &state,
+            Rc::clone(&setup_select_entry_id),
         );
         item.set_child(Some(&label));
         store_playlist_entry_cell_state(item, state);
@@ -461,6 +574,7 @@ fn playlist_entry_album_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) -> gtk::ColumnViewColumn {
     playlist_entry_text_column(
         shell,
@@ -468,6 +582,7 @@ fn playlist_entry_album_column(
         PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
         entries,
         playlist_id,
+        select_entry_id,
         |entry| entry.track.album.clone(),
     )
 }
@@ -475,6 +590,7 @@ fn playlist_entry_play_count_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) -> gtk::ColumnViewColumn {
     playlist_entry_text_column(
         shell,
@@ -482,6 +598,7 @@ fn playlist_entry_play_count_column(
         play_count_column_width(),
         entries,
         playlist_id,
+        select_entry_id,
         |entry| playlist_entry_play_count_text(entry.track.play_count),
     )
 }
@@ -491,6 +608,7 @@ fn playlist_entry_text_column<F>(
     width: i32,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -501,6 +619,7 @@ where
     let setup_shell = Rc::clone(shell);
     let setup_entries = Rc::clone(&entries);
     let setup_playlist_id = playlist_id.clone();
+    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -528,6 +647,7 @@ where
             Rc::clone(&setup_entries),
             setup_playlist_id.clone(),
             &state,
+            Rc::clone(&setup_select_entry_id),
         );
         item.set_child(Some(&root));
         store_playlist_entry_cell_state(item, state);
@@ -586,11 +706,13 @@ fn playlist_entry_title_column(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
+    select_entry_id: Rc<dyn Fn(&str)>,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
     let setup_entries = Rc::clone(&entries);
     let setup_playlist_id = playlist_id.clone();
+    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -602,6 +724,7 @@ fn playlist_entry_title_column(
         labels.set_halign(gtk::Align::Fill);
         labels.set_width_request(1);
         let title = playlist_entry_text_label("", "", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
+        title.add_css_class("playlist-entry-title");
         let artist = playlist_entry_text_label("", "muted", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
         labels.append(&title);
         labels.append(&artist);
@@ -612,6 +735,7 @@ fn playlist_entry_title_column(
             Rc::clone(&setup_entries),
             setup_playlist_id.clone(),
             &state,
+            Rc::clone(&setup_select_entry_id),
         );
         item.set_child(Some(&cell));
         store_playlist_entry_cell_state(item, state);

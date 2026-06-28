@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use ::library::CachedArtistDetail;
@@ -49,6 +50,7 @@ impl Shell {
         let tracks = detail.tracks;
         let favorite_tracks = favorite_artist_tracks(&tracks);
         let has_favorite_tracks = !favorite_tracks.is_empty();
+        let favorite_track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
 
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -69,6 +71,7 @@ impl Shell {
             albums.len(),
             appears_on.len(),
             track_count,
+            has_favorite_tracks.then(|| Rc::clone(&favorite_track_selection)),
         ));
 
         if has_favorite_tracks {
@@ -87,6 +90,7 @@ impl Shell {
                 favorite_tracks,
                 "artist-favorites",
                 Some(source_descriptor),
+                Some(Rc::clone(&favorite_track_selection)),
             ));
         }
 
@@ -204,6 +208,7 @@ impl Shell {
         album_count: usize,
         appears_on_count: usize,
         track_count: u32,
+        favorite_track_selection: Option<TrackTableSelectionHandle>,
     ) -> gtk::Widget {
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = detail_showcase_cover_size(content_width);
@@ -238,9 +243,22 @@ impl Shell {
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&action_tracks);
         let artist_id = artist.id.clone();
+        let play_selection = favorite_track_selection.clone();
         play.connect_clicked(move |_| {
+            if let Some(play_selection) = play_selection.as_ref() {
+                let play_selection = Rc::clone(play_selection);
+                shell.arm_now_playing_selection(Rc::new(move |queue| {
+                    let Some(entry) = queue_current_entry(queue) else {
+                        return;
+                    };
+                    if let Some(selection) = play_selection.borrow().as_ref() {
+                        selection.select_track_id(&entry.track_id);
+                    }
+                }));
+            }
             controller.play_artist_tracks_window(
                 artist_id.clone(),
                 ArtistTrackScope::AllCredits,

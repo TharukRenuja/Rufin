@@ -15,6 +15,7 @@ impl Shell {
             seed,
             summary_items,
             actions,
+            selection_handle,
             tracks,
             table_context,
             source_descriptor,
@@ -76,12 +77,13 @@ impl Shell {
             } else {
                 LibraryListKey::Tracks
             };
-            wrapper.append(&self.library_tracks_scrolling_panel(
+            wrapper.append(&self.library_tracks_scrolling_panel_with_selection(
                 tracks,
                 key,
                 table_context,
                 route_margin,
                 source_descriptor,
+                selection_handle,
             ));
         }
         wrapper.upcast()
