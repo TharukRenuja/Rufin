@@ -34,6 +34,8 @@ mod navigation;
 mod now_playing_notification;
 #[path = "../paging.rs"]
 mod paging;
+#[path = "../playback_outputs.rs"]
+mod playback_outputs;
 #[path = "../player.rs"]
 mod player;
 #[path = "../player_icons.rs"]

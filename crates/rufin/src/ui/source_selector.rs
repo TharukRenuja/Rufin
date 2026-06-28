@@ -16,7 +16,7 @@ const SERVER_OPTION_ICON_TEXT_SPACING: i32 = 10;
 const SERVER_OPTION_ICON_SIZE: i32 = 14;
 const SERVER_OPTION_CHECK_SIZE: i32 = 13;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 236;
-const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 112;
+const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 148;
 
 pub(super) struct ServerSelector {
     pub normal_button: gtk::Button,
@@ -299,7 +299,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
                 let controller = shell.controller.clone();
                 let server_id = server.id.clone();
                 row.connect_clicked(move |_| {
-                    row_popover.popdown();
+                    popdown_server_selection_stack(&row_popover);
                     controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
                 });
             }
@@ -319,7 +319,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
             let row_popover = popover.clone();
             let controller = shell.controller.clone();
             local.connect_clicked(move |_| {
-                row_popover.popdown();
+                popdown_server_selection_stack(&row_popover);
                 controller.select_source(LibrarySourceSelection::Local);
             });
         }
@@ -330,7 +330,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     let row_popover = popover.clone();
     let manage_shell = Rc::clone(shell);
     manage.connect_clicked(move |_| {
-        row_popover.popdown();
+        popdown_server_selection_stack(&row_popover);
         manage_shell.present_library_preferences_dialog();
     });
     wrapper.append(&manage);
@@ -340,7 +340,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     let row_popover = popover.clone();
     let add_library_shell = Rc::clone(shell);
     add_library.connect_clicked(move |_| {
-        row_popover.popdown();
+        popdown_server_selection_stack(&row_popover);
         add_library_shell.present_library_preferences_dialog();
     });
     wrapper.append(&add_library);
@@ -406,7 +406,7 @@ fn append_server_music_folder_rows(
         let controller = shell.controller.clone();
         let server_id = server.id.clone();
         all.connect_clicked(move |_| {
-            row_popover.popdown();
+            popdown_server_selection_stack(&row_popover);
             controller.set_selected_music_folder(server_id.clone(), None);
         });
     }
@@ -424,11 +424,22 @@ fn append_server_music_folder_rows(
             let server_id = server.id.clone();
             let folder_id = folder.id.clone();
             row.connect_clicked(move |_| {
-                row_popover.popdown();
+                popdown_server_selection_stack(&row_popover);
                 controller.set_selected_music_folder(server_id.clone(), Some(folder_id.clone()));
             });
         }
         wrapper.append(&row);
+    }
+}
+
+fn popdown_server_selection_stack(popover: &gtk::Popover) {
+    popover.popdown();
+    let mut ancestor = popover.parent();
+    while let Some(widget) = ancestor {
+        ancestor = widget.parent();
+        if let Ok(parent_popover) = widget.downcast::<gtk::Popover>() {
+            parent_popover.popdown();
+        }
     }
 }
 

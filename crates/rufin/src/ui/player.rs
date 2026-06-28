@@ -11,13 +11,13 @@ use tracing::info;
 use crate::controller::PlaybackSnapshot;
 use crate::i18n::{msgid, tr};
 
+use super::playback_outputs::{audio_output_index, playback_output_options};
 use super::player_icons::{
     VolumeIcon, audio_output_icon_button, auto_dj_icon_button, lyrics_icon_button,
     play_icon_button, queue_sidebar_button, random_clover_icon_button, repeat_icon_button,
     set_repeat_button_icon, shuffle_icon_button, skip_icon_button, volume_icon_button,
     volume_icon_state,
 };
-use super::preferences::{audio_output_index, playback_output_options};
 use super::{
     ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
     add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
