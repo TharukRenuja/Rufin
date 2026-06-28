@@ -17,8 +17,9 @@ use super::{
     GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE,
     add_card_label_link, album_artist_route, favorite_button_is_active, favorite_icon_button,
     icon_button, install_album_context_menu, install_track_context_menu,
-    present_album_context_menu, present_playlist_context_menu, present_smart_playlist_context_menu,
-    present_track_context_menu, set_favorite_button_active, stable_seed, track_artist_route,
+    nudge_transport_action_icon, present_album_context_menu, present_playlist_context_menu,
+    present_smart_playlist_context_menu, present_track_context_menu, set_favorite_button_active,
+    stable_seed, track_artist_route, wrap_button_child_in_face,
 };
 use crate::controller::AppController;
 
@@ -580,7 +581,9 @@ impl CoverHoverControls {
     pub(super) fn add_context_button(&mut self) -> gtk::Button {
         let menu = icon_button("view-more-symbolic", "More actions");
         menu.add_css_class("cover-hover-button");
+        menu.add_css_class("cover-hover-animated");
         menu.add_css_class("cover-menu-button");
+        wrap_button_child_in_face(&menu, "cover-hover-face");
         menu.set_halign(gtk::Align::Start);
         menu.set_valign(gtk::Align::End);
         menu.set_margin_start(6);
@@ -666,21 +669,29 @@ pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHov
 
     let play_next = icon_button(PLAY_NEXT_ICON, "Play Next");
     play_next.add_css_class("cover-hover-button");
+    play_next.add_css_class("cover-hover-animated");
     play_next.add_css_class("cover-side-button");
     pin_cover_hover_button(&play_next, SIDE_BUTTON_SIZE);
+    nudge_transport_action_icon(&play_next, PLAY_NEXT_ICON);
+    wrap_button_child_in_face(&play_next, "cover-hover-face");
     play_next.set_visible(true);
 
     let play = icon_button("media-playback-start-symbolic", play_label);
     play.add_css_class("cover-hover-button");
+    play.add_css_class("cover-hover-animated");
     play.add_css_class("cover-play-button");
     pin_cover_hover_button(&play, PLAY_BUTTON_SIZE);
-    nudge_cover_play_icon(&play);
+    nudge_transport_action_icon(&play, "media-playback-start-symbolic");
+    wrap_button_child_in_face(&play, "cover-hover-face");
     play.set_visible(true);
 
     let play_last = icon_button(PLAY_LATER_ICON, "Play Later");
     play_last.add_css_class("cover-hover-button");
+    play_last.add_css_class("cover-hover-animated");
     play_last.add_css_class("cover-side-button");
     pin_cover_hover_button(&play_last, SIDE_BUTTON_SIZE);
+    nudge_transport_action_icon(&play_last, PLAY_LATER_ICON);
+    wrap_button_child_in_face(&play_last, "cover-hover-face");
     play_last.set_visible(true);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -713,15 +724,6 @@ fn pin_cover_hover_button(button: &gtk::Button, size: i32) {
     button.set_valign(gtk::Align::Center);
     button.set_hexpand(false);
     button.set_vexpand(false);
-}
-
-fn nudge_cover_play_icon(button: &gtk::Button) {
-    let Some(child) = button.child() else {
-        return;
-    };
-    if let Ok(image) = child.downcast::<gtk::Image>() {
-        image.set_margin_start(2);
-    }
 }
 
 pub(super) fn constrain_cover_widget(widget: &impl IsA<gtk::Widget>, size: i32) {
