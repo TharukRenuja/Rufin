@@ -845,6 +845,32 @@ impl QueueEngine {
         self.sync_shuffle_position();
     }
 
+    pub fn start_first_shuffled_with_seed_avoiding(
+        &mut self,
+        seed: u64,
+        avoid_track_id: Option<&TrackId>,
+    ) {
+        if !self.shuffle.enabled || self.entries.is_empty() {
+            return;
+        }
+        self.shuffle.seed = seed;
+        self.rebuild_shuffle_order_unpinned();
+        let selected_position = self
+            .shuffle_order
+            .iter()
+            .position(|index| {
+                self.entries
+                    .get(*index)
+                    .is_some_and(|entry| Some(&entry.track_id) != avoid_track_id)
+            })
+            .unwrap_or(0);
+        let selected_index = self.shuffle_order.remove(selected_position);
+        self.shuffle_order.insert(0, selected_index);
+        self.current_index = Some(selected_index);
+        self.progress_seconds = 0;
+        self.sync_shuffle_position();
+    }
+
     fn entry_from_track(&mut self, track: &Track) -> QueueEntry {
         let id = QueueEntryId::new(format!("queue-{}", self.next_entry_number));
         self.next_entry_number += 1;
@@ -1884,6 +1910,25 @@ mod tests {
 
         assert_eq!(queue.shuffle_order.first().copied(), Some(1));
         assert_eq!(queue.shuffle_position, Some(0));
+    }
+
+    #[test]
+    fn shuffled_start_can_avoid_previous_track() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let first = track(1);
+        let second = track(2);
+        queue.append(&first);
+        queue.append(&second);
+        queue.set_shuffle(true, 1);
+
+        queue.start_first_shuffled_with_seed_avoiding(17, Some(&first.id));
+
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&second.id)
+        );
+        assert_eq!(queue.shuffle_position, Some(0));
+        assert_eq!(queue.shuffle.seed, 17);
     }
 
     #[test]
