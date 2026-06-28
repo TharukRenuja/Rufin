@@ -265,7 +265,7 @@ pub(in crate::ui) fn detail_route_scroller(shell: &Rc<Shell>, content: gtk::Widg
     mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_overlay_scrolling(true);
+    scroller.set_overlay_scrolling(false);
     scroller.set_child(Some(&content));
     scroller.upcast()
 }
