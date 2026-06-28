@@ -16,7 +16,7 @@
     </radialGradient>
     <mask id="record-cutout" maskUnits="userSpaceOnUse">
       <rect width="512" height="512" fill="#fff"/>
-      <g transform="translate(-18 2) translate(234 252) scale(1.188) translate(-234 -252)">
+      <g transform="translate(-8 2) translate(234 252) scale(1.069) translate(-234 -252)">
         <path d="M361.5 132v110l-43 70" fill="none" stroke="#000" stroke-width="16" stroke-linecap="butt" stroke-linejoin="bevel"/>
         <g transform="translate(318 312) rotate(32)">
           <rect x="-15" y="-8" width="30" height="38" fill="#000"/>
@@ -29,7 +29,7 @@
   <rect x="50" y="50" width="412" height="412" rx="68" fill="url(#tile)"/>
   <path d="M50 336c70 22 132 30 206 30s136-8 206-30v58c0 38-30 68-68 68H118c-38 0-68-30-68-68z" fill="url(#tile-front)"/>
 
-  <g transform="translate(22 2) translate(234 252) scale(1.188) translate(-234 -252)" mask="url(#record-cutout)">
+  <g transform="translate(22 2) translate(234 252) scale(1.069) translate(-234 -252)" mask="url(#record-cutout)">
     <circle cx="234" cy="252" r="160" fill="url(#record)"/>
     <circle cx="234" cy="252" r="72" fill="#fb7137"/>
     <circle cx="234" cy="252" r="22" fill="#4b1e39"/>
