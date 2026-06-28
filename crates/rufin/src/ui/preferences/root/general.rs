@@ -608,6 +608,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let output_row = adw::ActionRow::builder()
         .title(tr("Audio output"))
         .subtitle(selected_audio_output_title(
+            shell,
             settings.audio_output.as_deref(),
         ))
         .build();

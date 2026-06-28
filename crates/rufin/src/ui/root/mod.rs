@@ -383,6 +383,10 @@ pub(in crate::ui) struct AppState {
     queue_render_queued: Cell<bool>,
     queue_sidebar_render_state: RefCell<Option<queue::QueuePanelModelState>>,
     queue_fullscreen_render_state: RefCell<Option<queue::QueuePanelModelState>>,
+    audio_output_options: RefCell<Vec<(Option<String>, String)>>,
+    audio_output_refresh_running: Cell<bool>,
+    audio_output_refresh_generation: Cell<u64>,
+    audio_output_refreshed_at: Cell<Option<Instant>>,
     lyrics_panel_visible: Cell<bool>,
     fullscreen_player_visible: Cell<bool>,
     responsive_render_queued: Cell<bool>,
@@ -722,6 +726,10 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         queue_render_queued: Cell::new(false),
         queue_sidebar_render_state: RefCell::new(None),
         queue_fullscreen_render_state: RefCell::new(None),
+        audio_output_options: RefCell::new(playback_outputs::default_audio_output_options()),
+        audio_output_refresh_running: Cell::new(false),
+        audio_output_refresh_generation: Cell::new(0),
+        audio_output_refreshed_at: Cell::new(None),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         fullscreen_player_visible: Cell::new(false),
         responsive_render_queued: Cell::new(false),
@@ -1007,6 +1015,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);
+    playback_outputs::warm_audio_output_cache(&shell);
     #[cfg(unix)]
     install_mpris(&shell);
     shell.update_layout();
