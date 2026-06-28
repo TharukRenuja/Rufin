@@ -132,6 +132,7 @@ impl AppController {
     pub fn login(&self, request: LoginRequest) {
         let LoginRequest {
             provider,
+            server_name,
             server_url,
             username,
             password,
@@ -196,6 +197,7 @@ impl AppController {
             };
             let activation_request = LoginActivationRequest {
                 session: &session,
+                server_name: server_name.as_deref(),
                 trust_invalid_cert,
                 use_jellyfin_instant_mix: provider == StreamingProvider::Jellyfin
                     && use_jellyfin_instant_mix,

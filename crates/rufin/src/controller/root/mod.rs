@@ -440,6 +440,7 @@ pub enum ControllerEvent {
 #[derive(Clone, Debug)]
 pub struct LoginRequest {
     pub provider: StreamingProvider,
+    pub server_name: Option<String>,
     pub server_url: String,
     pub username: String,
     pub password: String,

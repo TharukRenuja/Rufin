@@ -7,6 +7,9 @@ impl Shell {
     pub(in crate::ui) fn present_library_preferences_dialog(self: &Rc<Self>) {
         present_library_preferences_dialog(self);
     }
+    pub(in crate::ui) fn present_add_server_preferences_dialog(self: &Rc<Self>) {
+        present_add_server_preferences_dialog(self);
+    }
     pub(in crate::ui) fn rebuild_sidebar_navigation(self: &Rc<Self>) {
         rebuild_navigation(self);
         self.update_layout();

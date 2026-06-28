@@ -39,10 +39,13 @@ const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
 pub(in crate::ui) fn present_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::General);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false);
 }
 pub(in crate::ui) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false);
+}
+pub(in crate::ui) fn present_add_server_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true);
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreferencesPageKind {
@@ -95,9 +98,69 @@ impl PreferencesPageKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 }
-fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesPageKind) {
+
+#[derive(Clone)]
+pub(in crate::ui) struct PreferencesNavigationControls {
+    back: gtk::Button,
+    navigation: Rc<RefCell<Option<adw::NavigationView>>>,
+    page_allows_back: Rc<Cell<bool>>,
+    nested_page_visible: Rc<Cell<bool>>,
+}
+
+impl PreferencesNavigationControls {
+    fn new() -> Self {
+        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.add_css_class("flat");
+        back.add_css_class("preferences-nested-back");
+        back.update_property(&[gtk::accessible::Property::Label(&tr("Back"))]);
+        back.set_visible(false);
+
+        let controls = Self {
+            back,
+            navigation: Rc::new(RefCell::new(None)),
+            page_allows_back: Rc::new(Cell::new(false)),
+            nested_page_visible: Rc::new(Cell::new(false)),
+        };
+        let navigation = Rc::clone(&controls.navigation);
+        let page_allows_back = Rc::clone(&controls.page_allows_back);
+        let nested_page_visible = Rc::clone(&controls.nested_page_visible);
+        controls.back.connect_clicked(move |button| {
+            if let Some(navigation) = navigation.borrow().as_ref() {
+                navigation.pop();
+            }
+            nested_page_visible.set(false);
+            button.set_visible(page_allows_back.get() && nested_page_visible.get());
+        });
+        controls
+    }
+
+    fn set_page_allows_back(&self, allowed: bool) {
+        self.page_allows_back.set(allowed);
+        self.update_visibility();
+    }
+
+    pub(in crate::ui) fn set_navigation(&self, navigation: &adw::NavigationView) {
+        *self.navigation.borrow_mut() = Some(navigation.clone());
+    }
+
+    pub(in crate::ui) fn set_nested_page_visible(&self, visible: bool) {
+        self.nested_page_visible.set(visible);
+        self.update_visibility();
+    }
+
+    fn update_visibility(&self) {
+        self.back
+            .set_visible(self.page_allows_back.get() && self.nested_page_visible.get());
+    }
+}
+
+fn present_preferences_dialog_with_page(
+    shell: &Rc<Shell>,
+    initial_page: PreferencesPageKind,
+    open_add_server: bool,
+) {
     if let Some(dialog) = shell.state.preferences_dialog.borrow().as_ref().cloned() {
-        rebuild_preferences_dialog(shell, &dialog, initial_page);
+        rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
         present_light_dismiss_dialog(&dialog, &shell.window);
         return;
     }
@@ -112,7 +175,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         .build();
     dialog.add_css_class("preferences");
     *shell.state.preferences_dialog.borrow_mut() = Some(dialog.clone());
-    rebuild_preferences_dialog(shell, &dialog, initial_page);
+    rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
 
     let shell_for_close = Rc::clone(shell);
     let dialog_for_close = dialog.clone();
@@ -130,6 +193,7 @@ fn rebuild_preferences_dialog(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
     initial_page: PreferencesPageKind,
+    open_add_server: bool,
 ) {
     dialog.set_title(&tr("Preferences"));
 
@@ -146,10 +210,12 @@ fn rebuild_preferences_dialog(
         .policy(adw::ViewSwitcherPolicy::Wide)
         .stack(&stack)
         .build();
-    let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let navigation_controls = PreferencesNavigationControls::new();
+    let switcher_bar = gtk::CenterBox::new();
     switcher_bar.add_css_class("preferences-tab-bar");
-    switcher_bar.set_halign(gtk::Align::Center);
-    switcher_bar.append(&switcher);
+    switcher_bar.set_hexpand(true);
+    switcher_bar.set_start_widget(Some(&navigation_controls.back));
+    switcher_bar.set_center_widget(Some(&switcher));
     toolbar.add_top_bar(&switcher_bar);
     toolbar.set_content(Some(&stack));
 
@@ -166,11 +232,20 @@ fn rebuild_preferences_dialog(
             })
             .collect::<Vec<_>>(),
     );
-    ensure_preferences_page(shell, dialog, &page_slots, initial_page);
+    navigation_controls.set_page_allows_back(initial_page == PreferencesPageKind::Library);
+    ensure_preferences_page(
+        shell,
+        dialog,
+        &page_slots,
+        &navigation_controls,
+        initial_page,
+        open_add_server,
+    );
     stack.set_visible_child_name(initial_page.name());
     let page_shell = Rc::clone(shell);
     let page_dialog = dialog.clone();
     let page_slots_for_switch = Rc::clone(&page_slots);
+    let navigation_controls_for_switch = navigation_controls.clone();
     stack.connect_visible_child_name_notify(move |stack| {
         let Some(name) = stack.visible_child_name() else {
             return;
@@ -178,7 +253,15 @@ fn rebuild_preferences_dialog(
         let Some(kind) = PreferencesPageKind::from_name(name.as_str()) else {
             return;
         };
-        ensure_preferences_page(&page_shell, &page_dialog, &page_slots_for_switch, kind);
+        navigation_controls_for_switch.set_page_allows_back(kind == PreferencesPageKind::Library);
+        ensure_preferences_page(
+            &page_shell,
+            &page_dialog,
+            &page_slots_for_switch,
+            &navigation_controls_for_switch,
+            kind,
+            false,
+        );
     });
 
     dialog.set_child(Some(&toolbar));
@@ -187,7 +270,9 @@ fn ensure_preferences_page(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
     page_slots: &[(PreferencesPageKind, gtk::Box)],
+    navigation_controls: &PreferencesNavigationControls,
     kind: PreferencesPageKind,
+    open_add_server: bool,
 ) {
     let Some((_, slot)) = page_slots.iter().find(|(slot_kind, _)| *slot_kind == kind) else {
         return;
@@ -195,19 +280,29 @@ fn ensure_preferences_page(
     if slot.first_child().is_some() {
         return;
     }
-    slot.append(&build_preferences_page(kind, shell, dialog));
+    slot.append(&build_preferences_page(
+        kind,
+        shell,
+        dialog,
+        navigation_controls,
+        open_add_server,
+    ));
 }
 fn build_preferences_page(
     kind: PreferencesPageKind,
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
+    navigation_controls: &PreferencesNavigationControls,
+    open_add_server: bool,
 ) -> gtk::Widget {
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
         PreferencesPageKind::Layout => layout_page(shell).upcast(),
         PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
-        PreferencesPageKind::Library => library::library_page(shell, dialog),
+        PreferencesPageKind::Library => {
+            library::library_page(shell, dialog, navigation_controls, open_add_server)
+        }
     }
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
@@ -248,6 +343,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
                 &language_shell,
                 &dialog_for_language,
                 PreferencesPageKind::General,
+                false,
             );
         }
     });

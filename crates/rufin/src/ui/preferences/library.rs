@@ -9,15 +9,27 @@ use crate::controller::ServerLocalAccessSnapshot;
 use crate::i18n::tr;
 
 use super::super::{album_count_text, track_count_text};
-use super::{Shell, button_row};
+use super::{PreferencesNavigationControls, Shell, button_row};
 
 const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
 
-pub(super) fn library_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> gtk::Widget {
+pub(super) fn library_page(
+    shell: &Rc<Shell>,
+    dialog: &adw::Dialog,
+    navigation_controls: &PreferencesNavigationControls,
+    open_add_server: bool,
+) -> gtk::Widget {
     let navigation = adw::NavigationView::new();
-    let page = library_sources_page(shell, dialog, &navigation);
+    navigation_controls.set_navigation(&navigation);
+    navigation_controls.set_nested_page_visible(false);
+    let page = library_sources_page(shell, dialog, &navigation, navigation_controls);
     let root = adw::NavigationPage::new(&page, &tr("Library"));
     navigation.push(&root);
+    if open_add_server {
+        let page = shell.add_server_navigation_page(&navigation, dialog);
+        navigation.push(&page);
+        navigation_controls.set_nested_page_visible(true);
+    }
     navigation.upcast::<gtk::Widget>()
 }
 
@@ -25,6 +37,7 @@ fn library_sources_page(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
     navigation: &adw::NavigationView,
+    navigation_controls: &PreferencesNavigationControls,
 ) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Library"))
@@ -76,16 +89,23 @@ fn library_sources_page(
             row.set_activatable(true);
             let settings_shell = Rc::clone(shell);
             let navigation = navigation.clone();
+            let navigation_controls = navigation_controls.clone();
             let dialog = dialog.clone();
             let server = server.clone();
             row.connect_activated(move |_| {
+                let navigation_controls_for_close = navigation_controls.clone();
+                let on_close: Rc<dyn Fn()> = Rc::new(move || {
+                    navigation_controls_for_close.set_nested_page_visible(false);
+                });
                 let page = super::super::local_access_mapping::manage_server_navigation_page(
                     &settings_shell,
                     server.clone(),
                     &navigation,
                     &dialog,
+                    on_close,
                 );
                 navigation.push(&page);
+                navigation_controls.set_nested_page_visible(true);
             });
             servers_group.add(&row);
         }
@@ -93,9 +113,13 @@ fn library_sources_page(
 
     let add_server = button_row("Add server", "list-add-symbolic");
     let add_shell = Rc::clone(shell);
-    let add_dialog = dialog.clone();
+    let navigation = navigation.clone();
+    let navigation_controls = navigation_controls.clone();
+    let add_server_dialog = dialog.clone();
     add_server.connect_activated(move |_| {
-        add_shell.present_add_server_dialog_closing(&add_dialog);
+        let page = add_shell.add_server_navigation_page(&navigation, &add_server_dialog);
+        navigation.push(&page);
+        navigation_controls.set_nested_page_visible(true);
     });
     servers_group.add(&add_server);
     page.add(&servers_group);

@@ -121,7 +121,10 @@ use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use playback::PlaybackState;
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use popup::present_light_dismiss_dialog;
-use preferences::{present_library_preferences_dialog, present_preferences_dialog};
+use preferences::{
+    present_add_server_preferences_dialog, present_library_preferences_dialog,
+    present_preferences_dialog,
+};
 use queue::connect_queue_panel_controls;
 use release_kind::album_release_kind_label;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
@@ -332,7 +335,7 @@ pub struct AppOptions {
 }
 #[derive(Clone)]
 pub(in crate::ui) struct AddServerDialogHandle {
-    toolbar: adw::ToolbarView,
+    content: gtk::Box,
     on_connect_started: Option<Rc<dyn Fn()>>,
     draft: Rc<RefCell<login::AddServerDraft>>,
 }

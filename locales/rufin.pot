@@ -364,9 +364,6 @@ msgstr ""
 msgid "Smart playlists will appear here after the default set is seeded."
 msgstr ""
 
-msgid "Manage Server"
-msgstr ""
-
 msgid "Local Folder"
 msgstr ""
 
@@ -514,7 +511,7 @@ msgid_plural ""
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "Add Your Music Library"
+msgid "Add server"
 msgstr ""
 
 msgid "Turn off only for a server you control"
@@ -529,19 +526,13 @@ msgstr ""
 msgid "Privacy and Security"
 msgstr ""
 
+msgid "Local library"
+msgstr ""
+
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
 
-msgid "Music Folders"
-msgstr ""
-
-msgid "Add Folder"
-msgstr ""
-
-msgid "Add another folder to the Local source"
-msgstr ""
-
-msgid "Add"
+msgid "Add folder"
 msgstr ""
 
 msgid "Connect"
@@ -594,6 +585,9 @@ msgid "OpenSubsonic"
 msgstr ""
 
 msgid "No folders selected"
+msgstr ""
+
+msgid "Remove folder"
 msgstr ""
 
 msgid "Select Music Folder"
@@ -699,9 +693,6 @@ msgid "No servers configured"
 msgstr ""
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
-msgstr ""
-
-msgid "Add server"
 msgstr ""
 
 msgid "Local Folders"
@@ -954,6 +945,9 @@ msgid "Spacious"
 msgstr ""
 
 msgid "General"
+msgstr ""
+
+msgid "Back"
 msgstr ""
 
 msgid "Language"
@@ -1254,9 +1248,6 @@ msgstr ""
 msgid "Unmuted"
 msgstr ""
 
-msgid "Back"
-msgstr ""
-
 msgid "Forward"
 msgstr ""
 
@@ -1344,6 +1335,9 @@ msgid "Delete Playlist"
 msgstr ""
 
 msgid "Type to search or create a new playlist"
+msgstr ""
+
+msgid "Add"
 msgstr ""
 
 msgid "Don't duplicate"

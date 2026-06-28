@@ -215,6 +215,7 @@ pub(in crate::controller) fn startup_activate_token() {
         },
         LoginActivationRequest {
             session: &session,
+            server_name: None,
             trust_invalid_cert: false,
             use_jellyfin_instant_mix: false,
             local_access_root: None,
@@ -273,6 +274,7 @@ pub(in crate::controller) fn startup_persist_server() {
         &secrets,
         LoginActivationRequest {
             session: &session,
+            server_name: None,
             trust_invalid_cert: false,
             use_jellyfin_instant_mix: false,
             local_access_root: None,
@@ -333,6 +335,7 @@ pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() 
         &controller.secrets,
         LoginActivationRequest {
             session: &session,
+            server_name: Some("Living Room"),
             trust_invalid_cert: false,
             use_jellyfin_instant_mix: false,
             local_access_root: None,
@@ -348,6 +351,12 @@ pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() 
             .expect("load token"),
         Some("token".to_string())
     );
+    let active = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("active server");
+    assert_eq!(active.server.name, "Living Room");
     let queue = wait_for_queue(&events).expect("server queue");
     assert_eq!(queue.server_id, server_id);
 }
