@@ -264,22 +264,26 @@ row:focus {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
+.track-table.track-list .track-list-title,
+.track-table.track-list .table-link,
+.track-table.track-list .table-link-label,
+.track-table.playlist-entry-table .playlist-entry-title {
+  font-weight: 400;
+}
+
 .track-table.track-list row:selected,
-.track-table.track-list row:selected:hover {
-  background: color-mix(in srgb, currentColor 6%, transparent);
-}
-
-.track-table.track-list row:selected .track-list-title {
-  color: color-mix(in srgb, @destructive_color 86%, @window_fg_color);
-}
-
+.track-table.track-list row:selected:hover,
 .track-table.playlist-entry-table row:selected,
 .track-table.playlist-entry-table row:selected:hover {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
+.track-table.track-list row:selected .track-list-title,
 .track-table.playlist-entry-table row:selected .playlist-entry-title {
-  color: color-mix(in srgb, @destructive_color 86%, @window_fg_color);
+  color: @accent_color;
+  text-shadow:
+    0.35px 0 0 @accent_color,
+    -0.35px 0 0 @accent_color;
 }
 
 .track-table row:selected,
@@ -1391,7 +1395,7 @@ popover.audio-output-popover > contents {
 }
 
 .queue-row-current {
-  background: color-mix(in srgb, @destructive_bg_color 10%, transparent);
+  background: color-mix(in srgb, @accent_bg_color 10%, transparent);
 }
 
 .queue-link {
@@ -1409,8 +1413,10 @@ popover.audio-output-popover > contents {
 }
 
 .queue-row-current .queue-title {
-  color: color-mix(in srgb, @destructive_color 86%, @window_fg_color);
-  font-weight: 700;
+  color: @accent_color;
+  text-shadow:
+    0.35px 0 0 @accent_color,
+    -0.35px 0 0 @accent_color;
 }
 
 .queue-header {
