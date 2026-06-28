@@ -600,6 +600,9 @@ fn refresh_srcinfo(pkgdir: &Path, srcinfo: &Path) -> Result<bool> {
     if refresh_srcinfo_with_native_makepkg(pkgdir, srcinfo)? {
         return Ok(true);
     }
+    if refresh_srcinfo_with_profile_makepkg(pkgdir, srcinfo)? {
+        return Ok(true);
+    }
     refresh_srcinfo_with_nix_makepkg(pkgdir, srcinfo)
 }
 
@@ -629,8 +632,56 @@ fn refresh_srcinfo_with_native_makepkg(pkgdir: &Path, srcinfo: &Path) -> Result<
     if !output.status.success() {
         return Ok(false);
     }
-    fs::write(srcinfo, output.stdout)?;
-    Ok(true)
+    write_srcinfo_from_stdout(srcinfo, &String::from_utf8_lossy(&output.stdout))
+}
+
+fn refresh_srcinfo_with_profile_makepkg(pkgdir: &Path, srcinfo: &Path) -> Result<bool> {
+    if !find_on_path("nix-profile-exec") || !find_on_path("nix") {
+        return Ok(false);
+    }
+    let Some(config) = profile_makepkg_config()? else {
+        return Ok(false);
+    };
+
+    let output = Command::new("nix-profile-exec")
+        .arg("makepkg")
+        .arg("--config")
+        .arg(&config)
+        .arg("--printsrcinfo")
+        .current_dir(pkgdir)
+        .env_remove("LD_PRELOAD")
+        .output()?;
+
+    if output.status.success()
+        && write_srcinfo_from_stdout(srcinfo, &String::from_utf8_lossy(&output.stdout))?
+    {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn profile_makepkg_config() -> Result<Option<PathBuf>> {
+    let output = Command::new("env")
+        .args(["-u", "LD_PRELOAD", "nix", "profile", "list", "--json"])
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let Some(store_path) = value
+        .get("elements")
+        .and_then(|elements| elements.get("pacman"))
+        .and_then(|pacman| pacman.get("storePaths"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|paths| paths.first())
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(PathBuf::from(store_path).join("etc/makepkg.conf")))
 }
 
 fn refresh_srcinfo_with_nix_makepkg(pkgdir: &Path, srcinfo: &Path) -> Result<bool> {
@@ -693,8 +744,7 @@ timeout "$2" makepkg --config "$makepkg_config" --printsrcinfo
         }
         return Ok(false);
     }
-    if let Some(srcinfo_output) = extract_srcinfo_output(&output.stdout) {
-        write_string(srcinfo, &srcinfo_output)?;
+    if write_srcinfo_from_stdout(srcinfo, &output.stdout)? {
         Ok(true)
     } else {
         if env::var("RUFIN_AUR_REQUIRE_MAKEPKG").unwrap_or_default() == "1" {
@@ -703,6 +753,14 @@ timeout "$2" makepkg --config "$makepkg_config" --printsrcinfo
         }
         Ok(false)
     }
+}
+
+fn write_srcinfo_from_stdout(srcinfo: &Path, stdout: &str) -> Result<bool> {
+    let Some(srcinfo_output) = extract_srcinfo_output(stdout) else {
+        return Ok(false);
+    };
+    write_string(srcinfo, &srcinfo_output)?;
+    Ok(true)
 }
 
 fn extract_srcinfo_output(stdout: &str) -> Option<String> {
