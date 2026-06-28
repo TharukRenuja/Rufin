@@ -48,6 +48,9 @@ const BOTTOM_PLAYER_LYRICS_ICON_SIZE: i32 = 24;
 const BOTTOM_PLAYER_VOLUME_ICON_SIZE: i32 = 22;
 const BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE: i32 = 18;
 const BOTTOM_PLAYER_TITLE_MENU_GAP: i32 = 0;
+const BOTTOM_PLAYER_IDENTITY_HEIGHT: i32 = 58;
+const BOTTOM_PLAYER_TITLE_ROW_HEIGHT: i32 = 20;
+const BOTTOM_PLAYER_META_ROW_HEIGHT: i32 = 18;
 const BOTTOM_PLAYER_META_CHAR_WIDTH: i32 = 9;
 const BOTTOM_PLAYER_META_MIN_CHARS: i32 = 4;
 const BOTTOM_PLAYER_ACTION_SPACING: i32 = 0;
@@ -817,13 +820,17 @@ fn build_now_playing_controls() -> NowPlayingControls {
     title_row.add_css_class("player-title-row");
     title_row.set_halign(gtk::Align::Start);
     title_row.set_valign(gtk::Align::Center);
+    title_row.set_height_request(BOTTOM_PLAYER_TITLE_ROW_HEIGHT);
     let (title_chars, meta_chars) = bottom_player_metadata_chars(BOTTOM_PLAYER_COMPACT_MIN_WIDTH);
+    title.set_height_request(BOTTOM_PLAYER_TITLE_ROW_HEIGHT);
     title.set_max_width_chars(title_chars);
     title_row.append(&title);
     title_row.append(&menu_button);
     let artist = player_link("player-primary");
     let album = player_link("player-primary");
+    artist.set_height_request(BOTTOM_PLAYER_META_ROW_HEIGHT);
     artist.set_max_width_chars(meta_chars);
+    album.set_height_request(BOTTOM_PLAYER_META_ROW_HEIGHT);
     album.set_max_width_chars(meta_chars);
     artist.set_hexpand(true);
     artist.set_width_request(1);
@@ -832,7 +839,8 @@ fn build_now_playing_controls() -> NowPlayingControls {
     identity.append(&title_row);
     identity.append(&artist);
     identity.append(&album);
-    root.append(&identity);
+    let identity_slot = bottom_player_identity_slot(&identity);
+    root.append(&identity_slot);
 
     NowPlayingControls {
         root,
@@ -844,6 +852,25 @@ fn build_now_playing_controls() -> NowPlayingControls {
         artist,
         album,
     }
+}
+
+fn bottom_player_identity_slot(identity: &gtk::Box) -> gtk::ScrolledWindow {
+    let slot = gtk::ScrolledWindow::new();
+    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    slot.set_overflow(gtk::Overflow::Hidden);
+    slot.set_width_request(1);
+    slot.set_height_request(BOTTOM_PLAYER_IDENTITY_HEIGHT);
+    slot.set_min_content_width(0);
+    slot.set_max_content_width(1);
+    slot.set_min_content_height(BOTTOM_PLAYER_IDENTITY_HEIGHT);
+    slot.set_max_content_height(BOTTOM_PLAYER_IDENTITY_HEIGHT);
+    slot.set_propagate_natural_width(false);
+    slot.set_propagate_natural_height(false);
+    slot.set_hexpand(true);
+    slot.set_halign(gtk::Align::Fill);
+    slot.set_valign(gtk::Align::Center);
+    slot.set_child(Some(identity));
+    slot
 }
 
 fn build_transport_controls() -> TransportControls {
@@ -1245,9 +1272,13 @@ fn player_link(css_class: &str) -> gtk::Label {
     label.add_css_class(css_class);
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_single_line_mode(true);
+    label.set_lines(1);
     label.set_width_chars(1);
     label.set_halign(gtk::Align::Fill);
+    label.set_valign(gtk::Align::Center);
     label.set_hexpand(false);
+    label.set_yalign(0.5);
     label.set_cursor_from_name(Some("pointer"));
     add_dynamic_link_hover(label.upcast_ref(), &label);
     label
