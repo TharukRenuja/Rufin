@@ -510,21 +510,33 @@ fn aur_stable_inner(skip_srcinfo: bool, version: &str) -> Result<()> {
         return Err(format!("missing stable AUR PKGBUILD: {}", pkgbuild.display()).into());
     }
 
-    let repo = env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "screwys/Rufin".to_owned());
-    let archive_url = format!("https://github.com/{repo}/archive/refs/tags/v{version}.tar.gz");
-    let checksum = archive_checksum(&archive_url)?;
+    let original_pkgbuild = read_to_string(&pkgbuild)?;
+    let original_srcinfo = read_to_string(&srcinfo).ok();
+    let result = (|| {
+        let repo = env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "screwys/Rufin".to_owned());
+        let archive_url = format!("https://github.com/{repo}/archive/refs/tags/v{version}.tar.gz");
+        let checksum = archive_checksum(&archive_url)?;
 
-    update_pkgbuild(&pkgbuild, &version, &checksum)?;
-    if !skip_srcinfo && !refresh_srcinfo(&pkgdir, &srcinfo)? {
-        if env::var("RUFIN_AUR_REQUIRE_MAKEPKG").unwrap_or_default() == "1" {
-            return Err("makepkg unavailable; refusing field-only .SRCINFO update".into());
+        update_pkgbuild(&pkgbuild, &version, &checksum)?;
+        if !skip_srcinfo && !refresh_srcinfo(&pkgdir, &srcinfo)? {
+            if env::var("RUFIN_AUR_REQUIRE_MAKEPKG").unwrap_or_default() == "1" {
+                return Err("makepkg unavailable; refusing field-only .SRCINFO update".into());
+            }
+            update_srcinfo_fields(&srcinfo, &version, &checksum)?;
+            eprintln!(
+                "makepkg unavailable; updated .SRCINFO release fields without regenerating dependencies"
+            );
         }
-        update_srcinfo_fields(&srcinfo, &version, &checksum)?;
-        eprintln!(
-            "makepkg unavailable; updated .SRCINFO release fields without regenerating dependencies"
-        );
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = write_string(&pkgbuild, &original_pkgbuild);
+        if let Some(original_srcinfo) = original_srcinfo {
+            let _ = write_string(&srcinfo, &original_srcinfo);
+        }
     }
-    Ok(())
+    result
 }
 
 fn archive_checksum(url: &str) -> Result<String> {
@@ -681,14 +693,31 @@ timeout "$2" makepkg --config "$makepkg_config" --printsrcinfo
         }
         return Ok(false);
     }
-    let stdout = output.stdout;
-    let first_content_line = stdout.lines().find(|line| !line.trim().is_empty());
-    if first_content_line == Some("pkgbase = rufin") {
-        write_string(srcinfo, &stdout)?;
+    if let Some(srcinfo_output) = extract_srcinfo_output(&output.stdout) {
+        write_string(srcinfo, &srcinfo_output)?;
         Ok(true)
     } else {
+        if env::var("RUFIN_AUR_REQUIRE_MAKEPKG").unwrap_or_default() == "1" {
+            eprint!("{}", output.stdout);
+            eprint!("{}", output.stderr);
+        }
         Ok(false)
     }
+}
+
+fn extract_srcinfo_output(stdout: &str) -> Option<String> {
+    let mut lines = stdout
+        .lines()
+        .skip_while(|line| line.trim() != "pkgbase = rufin");
+    let first = lines.next()?;
+    let mut output = String::new();
+    output.push_str(first);
+    output.push('\n');
+    for line in lines {
+        output.push_str(line);
+        output.push('\n');
+    }
+    Some(output)
 }
 
 fn update_srcinfo_fields(path: &Path, version: &str, checksum: &str) -> Result<()> {
@@ -756,4 +785,25 @@ fn print_diff(current_label: &str, current: &str, expected_label: &str, expected
     }
     let _ = fs::remove_file(current_file);
     let _ = fs::remove_file(expected_file);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_srcinfo_output;
+
+    #[test]
+    fn srcinfo_output_ignores_leading_nix_noise() {
+        let output = extract_srcinfo_output(
+            "copying path '/nix/store/example-pacman'\n\
+             pkgbase = rufin\n\
+             \tpkgver = 0.7.12\n\
+             pkgname = rufin\n",
+        )
+        .expect("expected .SRCINFO output");
+
+        assert_eq!(
+            output,
+            "pkgbase = rufin\n\tpkgver = 0.7.12\npkgname = rufin\n"
+        );
+    }
 }
