@@ -172,6 +172,22 @@ impl Shell {
         content.append(&provider_selector.widget);
         content.append(&server_group);
 
+        if embedded {
+            let private_mode = adw::SwitchRow::builder()
+                .title(tr("Private mode"))
+                .active(self.state.settings.borrow().private_mode)
+                .build();
+            let private_shell = Rc::clone(self);
+            private_mode.connect_active_notify(move |row| {
+                private_shell.set_private_mode(row.is_active());
+            });
+            let privacy_group = adw::PreferencesGroup::builder()
+                .title(tr("Privacy and Security"))
+                .build();
+            privacy_group.add(&private_mode);
+            content.append(&privacy_group);
+        }
+
         let local_folders = Rc::new(RefCell::new(draft_snapshot.local_folders.clone()));
         let local_group = adw::PreferencesGroup::builder()
             .title(tr("Local Library"))
