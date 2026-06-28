@@ -7,507 +7,517 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-06-28 11:01+0000\n"
+"Last-Translator: Sebastian <sebastian.dold@gmail.com>\n"
+"Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 2026.7.dev0\n"
 
 msgid "Most Played"
-msgstr ""
+msgstr "Häufig gespielt"
 
 msgid "Never Played"
-msgstr ""
+msgstr "Nie gespielt"
 
 msgid "Most Skipped"
-msgstr ""
+msgstr "Häufig übersprungen"
 
 msgid "Explore"
-msgstr ""
+msgstr "Entdecken"
 
 msgid "Most played"
-msgstr ""
+msgstr "Am häufigsten gespielt"
 
 msgid "Newly added"
-msgstr ""
+msgstr "Zuletzt hinzugefügt"
 
 msgid "Recently played"
-msgstr ""
+msgstr "Zuletzt gespielt"
 
 msgid "Recently released"
-msgstr ""
+msgstr "Zuletzt veröffentlicht"
 
 msgid "Showcase"
-msgstr ""
+msgstr "Vorgestellt"
 
 msgid "Featured genres"
-msgstr ""
+msgstr "Empfohlene Genres"
 
 msgid "Home"
-msgstr ""
+msgstr "Übersicht"
 
 msgid "Favorites"
-msgstr ""
+msgstr "Favoriten"
 
 msgid "Albums"
-msgstr ""
+msgstr "Alben"
 
 msgid "Album"
-msgstr ""
+msgstr "Album"
 
 msgid "Tracks"
-msgstr ""
+msgstr "Titel"
 
 msgid "Artists"
-msgstr ""
+msgstr "Künstler"
 
 msgid "Artist"
-msgstr ""
+msgstr "Künstler"
 
 msgid "Discography"
-msgstr ""
+msgstr "Diskografie"
 
 msgid "Album Artists"
-msgstr ""
+msgstr "Album Künstler"
 
 msgid "Genres"
-msgstr ""
+msgstr "Genres"
 
 msgid "Genre"
-msgstr ""
+msgstr "Genre"
 
 msgid "Folders"
-msgstr ""
+msgstr "Ordner"
 
 msgid "Playlists"
-msgstr ""
+msgstr "Playlists"
 
 msgid "Playlist"
-msgstr ""
+msgstr "Playlist"
 
 msgid "Smart Playlists"
-msgstr ""
+msgstr "intelligente Playlists"
 
 msgid "Smart Playlist"
-msgstr ""
+msgstr "intelligente Playlist"
 
 msgid "Search"
-msgstr ""
+msgstr "Suche"
 
 msgid "Album artists"
-msgstr ""
+msgstr "Album Künstler"
 
 msgid "Smart playlists"
-msgstr ""
+msgstr "intelligente Playlisten"
 
 msgid "Album tracks"
-msgstr ""
+msgstr "Album-Titel"
 
 msgid "Artist albums"
-msgstr ""
+msgstr "Künstler-Alben"
 
 msgid "Artist tracks"
-msgstr ""
+msgstr "Künstler-Titel"
 
 msgid "Genre tracks"
-msgstr ""
+msgstr "Gentre-Titel"
 
 msgid "Playlist tracks"
-msgstr ""
+msgstr "Playlist-Titel"
 
 msgid "Smart playlist tracks"
-msgstr ""
+msgstr "intelligente Playlist-Titel"
 
 msgid "Image"
-msgstr ""
+msgstr "Bild"
 
 msgid "Title"
-msgstr ""
+msgstr "Titel"
 
 msgid "Title (merged)"
-msgstr ""
+msgstr "Titel (zusammengefasst)"
 
 msgid "Album artist"
-msgstr ""
+msgstr "Album-Künstler"
 
 msgid "Year"
-msgstr ""
+msgstr "Jahr"
 
 msgid "Release date"
-msgstr ""
+msgstr "Veröffentlichungsdatum"
 
 msgid "Date added"
-msgstr ""
+msgstr "hinzugefügt am"
 
 msgid "Last played"
-msgstr ""
+msgstr "zuletzt gespielt"
 
 msgid "Plays"
-msgstr ""
+msgstr "Wiedergaben"
 
 msgid "Rating"
-msgstr ""
+msgstr "Bewertung"
 
 msgid "Track"
-msgstr ""
+msgstr "Titel"
 
 msgid "Disc"
-msgstr ""
+msgstr "CD"
 
 msgid "Number of songs"
-msgstr ""
+msgstr "Titelanzahl"
 
 msgid "Duration"
-msgstr ""
+msgstr "Dauer"
 
 msgid "Favorite"
-msgstr ""
+msgstr "Favoriten"
 
 msgid "LRCLIB"
-msgstr ""
+msgstr "LRCLIB"
 
 msgid "NetEase"
-msgstr ""
+msgstr "NetEase"
 
 msgid "Genius"
-msgstr ""
+msgstr "Genius"
 
 msgid "SimpMusic"
-msgstr ""
+msgstr "SimpMusic"
 
 msgid "System default"
-msgstr ""
+msgstr "Standardeinstellungen"
 
 msgid "Favorite tracks"
-msgstr ""
+msgstr "Lieblingstitel"
 
 msgid "Appears On"
-msgstr ""
+msgstr "Erscheint auf"
 
 msgid "Play"
-msgstr ""
+msgstr "abspielen"
 
 msgid "Play album"
-msgstr ""
+msgstr "Album abspielen"
 
 msgid "Play track"
-msgstr ""
+msgstr "Titel abspielen"
 
 msgid "More actions"
-msgstr ""
+msgstr "weitere Aktionen"
 
 msgid "Play Next"
-msgstr ""
+msgstr "als nächstes abspielen"
 
 msgid "Play Later"
-msgstr ""
+msgstr "später abspielen"
 
 msgid "Main Menu"
 msgstr ""
 
 msgid "Toggle Fullscreen"
-msgstr ""
+msgstr "Vollbildmodus"
 
 msgid "Preferences"
-msgstr ""
+msgstr "Einstellungen"
 
 msgid "Keyboard Shortcuts"
-msgstr ""
+msgstr "Tastenkürzel"
 
 msgid "Version History"
-msgstr ""
+msgstr "Versionsverlauf"
 
 msgid "About Rufin"
-msgstr ""
+msgstr "Über Rufin"
 
 msgid "Custom"
-msgstr ""
+msgstr "Benutzerdefiniert"
 
 msgid "Flat"
-msgstr ""
+msgstr "neutral"
 
 msgid "Classical"
-msgstr ""
+msgstr "klassisch"
 
 msgid "Club"
-msgstr ""
+msgstr "Klub"
 
 msgid "Dance"
-msgstr ""
+msgstr "Dance"
 
 msgid "Full Bass"
-msgstr ""
+msgstr "Bass-Anhebung"
 
 msgid "Full Treble"
-msgstr ""
+msgstr "Höhen-Anhebung"
 
 msgid "Laptop/Headphones"
-msgstr ""
+msgstr "Laptop/Kopfhöhrer"
 
 msgid "Rock"
-msgstr ""
+msgstr "Rock"
 
 msgid "Pop"
-msgstr ""
+msgstr "Pop"
 
 msgid "Techno"
-msgstr ""
+msgstr "Techno"
 
 msgid "Loading folders..."
-msgstr ""
+msgstr "lade Ordner..."
 
 msgid "No folder contents found."
-msgstr ""
+msgstr "keine Ordnerinhalte gefunden."
 
 msgid "Search current folder"
-msgstr ""
+msgstr "aktuellen Ordner durchsuchen"
 
 msgid "Artist / Album"
-msgstr ""
+msgstr "Künstler/ Album"
 
 msgid "Name"
-msgstr ""
+msgstr "Name"
 
 msgid "Folder"
-msgstr ""
+msgstr "Ordner"
 
 msgid "Folder browsing failed"
-msgstr ""
+msgstr "Fehler beim Laden des Ordners"
 
 msgid "Close fullscreen player"
-msgstr ""
+msgstr "Vollbildmodus beenden"
 
 msgid "Queue"
-msgstr ""
+msgstr "Warteschlange"
 
 msgid "Lyrics"
-msgstr ""
+msgstr "Songtexte"
 
 msgid "Visualizer"
-msgstr ""
+msgstr "Visualisierung"
 
 msgid "Equalizer"
-msgstr ""
+msgstr "Equalizer"
 
 msgid "Enable equalizer"
-msgstr ""
+msgstr "Equalizer einschalten"
 
 msgid "Preset"
-msgstr ""
+msgstr "Voreinstellung"
 
 msgid "Reset"
-msgstr ""
+msgstr "zurücksetzen"
 
 msgid "Nothing playing"
-msgstr ""
+msgstr "keine Wiedergabe"
 
 msgid "Queue a track to begin"
-msgstr ""
+msgstr "Titel einreihen zum Starten"
 
 msgid "Cached library data will appear here as sync pages finish."
 msgstr ""
+"Zwischengespeicherte Daten erscheinen hier, sobald die Synchronisierung "
+"abgeschlossen ist."
 
 msgid "Previous page"
-msgstr ""
+msgstr "vorherige Seite"
 
 msgid "Next page"
-msgstr ""
+msgstr "nächste Seite"
 
 msgid "Refresh section"
-msgstr ""
+msgstr "Bereich aktualisieren"
 
 msgid "Hidden"
-msgstr ""
+msgstr "versteckt"
 
 msgid "Visible"
-msgstr ""
+msgstr "sichtbar"
 
 msgid "Drag to reorder"
-msgstr ""
+msgstr "zum Sortieren ziehen"
 
 msgid "Move up"
-msgstr ""
+msgstr "nach oben verschieben"
 
 msgid "Move down"
-msgstr ""
+msgstr "nach unten verschieben"
 
 msgid "Columns"
-msgstr ""
+msgstr "Spalten"
 
 msgid "Grid labels"
-msgstr ""
+msgstr "Rasterbeschriftung"
 
 msgid "Detail track columns"
-msgstr ""
+msgstr "Spalten der Detailansicht"
 
 msgid "Grid"
-msgstr ""
+msgstr "Raster"
 
 msgid "Rows"
-msgstr ""
+msgstr "Reihen"
 
 msgid "Detail"
-msgstr ""
+msgstr "Detail"
 
 msgid "Play artist"
-msgstr ""
+msgstr "Künstler abspielen"
 
 msgid "Cached entries will appear here after sync finishes"
-msgstr ""
+msgstr "Zwischengespeicherte Einträge erscheinen hier nach der Synchronisierung"
 
 msgid "Change sort order"
-msgstr ""
+msgstr "Sortierreihenfolge ändern"
 
 msgid "Layout"
-msgstr ""
+msgstr "Layout"
 
 msgid "Customize display"
-msgstr ""
+msgstr "Ansicht anpassen"
 
 msgid "Reset display"
-msgstr ""
+msgstr "Ansicht zurücksetzen"
 
 msgid "Choose the current page layout."
-msgstr ""
+msgstr "aktuelles Seitenlayout wählen."
 
 msgid "View"
-msgstr ""
+msgstr "Ansicht"
 
 msgid "Smart playlists will appear here after the default set is seeded."
-msgstr ""
+msgstr "Intelligente Playlisten erscheinen nach Erstellung der Standardlisten."
 
 msgid "Manage Server"
-msgstr ""
+msgstr "Server verwalten"
 
 msgid "Local Folder"
-msgstr ""
+msgstr "lokaler Ordner"
 
 msgid "No folder selected"
-msgstr ""
+msgstr "kein Ordner ausgewählt"
 
 msgid "Choose"
-msgstr ""
+msgstr "wähle"
 
 msgid "Server Prefix"
-msgstr ""
+msgstr "Server-Präfix"
 
 msgid "Local Prefix"
-msgstr ""
+msgstr "lokales Präfix"
 
 msgid "No cached server path yet"
-msgstr ""
+msgstr "kein Server-Pfad zwischengespeichert"
 
 msgid "Server Sample"
-msgstr ""
+msgstr "Server-Beispiel"
 
 msgid "Mapped Local Path"
-msgstr ""
+msgstr "verknüpfter lokaler Pfad"
 
 msgid "Local Playback Access"
-msgstr ""
+msgstr "Zugriff auf lokale Wiedergabe"
 
 msgid "Local Library"
-msgstr ""
+msgstr "lokale Mediathek"
 
 msgid "Local playback mapping configured"
-msgstr ""
+msgstr "lokale Wiedergabezuordnung eingerichtet"
 
 msgid "Map server tracks to local files"
-msgstr ""
+msgstr "Server-Titel lokalen Dateien zuordnen"
 
 msgid "Local Playback Mapping"
-msgstr ""
+msgstr "lokale Wiedergabezuordnung"
 
 msgid "Clear Mapping"
-msgstr ""
+msgstr "Zuordnung aufheben"
 
 msgid "Save Mapping"
-msgstr ""
+msgstr "Zuordnung speichern"
 
 msgid "Choose a local music folder"
-msgstr ""
+msgstr "lokalen Musikordner auswählen"
 
 msgid "Enter a local prefix."
-msgstr ""
+msgstr "lokales Präfix eingeben."
 
 msgid "Server Settings"
-msgstr ""
+msgstr "Servereinstellungen"
 
 msgid "Username"
-msgstr ""
+msgstr "Benutzername"
 
 msgid "Password"
-msgstr ""
+msgstr "Passwort"
 
 msgid "Verify server certificate"
-msgstr ""
+msgstr "Serverzertifikat überprüfen"
 
 msgid "Off only for a server you control"
-msgstr ""
+msgstr "nur bei einem selbst kontrollierten Server deaktivieren"
 
 msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
+msgstr "Jellyfin Instant Mix für Empfehlungen verwenden"
 
 msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work."
 msgstr ""
+"nutzt die Jellyfin-API zur Radio-Wiedergabe; notwendig, damit Empfehlungs-"
+"Plugins funktionieren."
 
 msgid "Save Server Settings"
-msgstr ""
+msgstr "Servereinstellungen speichern"
 
 msgid "Server Address"
-msgstr ""
+msgstr "Server-Adresse"
 
 msgid "Server Actions"
-msgstr ""
+msgstr "Server-Aktionen"
 
 msgid "Clear Cached Library"
-msgstr ""
+msgstr "Mediathek-Cache leeren"
 
 msgid "This removes cached library metadata for"
-msgstr ""
+msgstr "löscht zwischengespeicherte Mediathek-Metadaten für"
 
 msgid "Cancel"
-msgstr ""
+msgstr "abbrechen"
 
 msgid "Clear Cache"
-msgstr ""
+msgstr "Cache leeren"
 
 msgid "Forget Server"
-msgstr ""
+msgstr "Server entfernen"
 
 msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
+"löscht Server, zwischengespeicherte Mediathek-Metadaten, Warteschlangen-"
+"Schnappschuss und gespeichertes Token für"
 
 msgid "Choose a local prefix."
-msgstr ""
+msgstr "lokales Präfix wählen."
 
 msgid "Server sample does not match the server prefix."
-msgstr ""
+msgstr "Server-Beispiel passt nicht zum Server-Präfix."
 
 msgid "Enter a matching server prefix to map this path."
-msgstr ""
+msgstr "passendes Server-Präfix eingeben, um diesen Pfad zuzuordnen."
 
 msgid "Save to rescan this local library."
-msgstr ""
+msgstr "speichern, um diese lokale Mediathek neu einzulesen."
 
 msgid "Local library folder is saved."
-msgstr ""
+msgstr "Lokaler Mediathek-Ordner gespeichert."
 
 msgid "Choose an existing local prefix."
-msgstr ""
+msgstr "Wählen Sie ein vorhandenes lokales Präfix."
 
 msgid "Save to apply this mapping after the next sync."
 msgstr ""
+"Speichern, um diese Zuordnung nach der nächsten Synchronisierung anzuwenden."
 
 msgid "No cached tracks yet. Sync the server to preview matches."
 msgstr ""
+"Keine zwischengespeicherten Titel vorhanden. Server synchronisieren, um "
+"Übereinstimmungen anzuzeigen."
 
 #, rust-format
 msgid ""
@@ -517,7 +527,11 @@ msgid_plural ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"Ungespeicherte Änderungen. {direct} direkt, {prefix} Präfix, {metadata} "
+"Metadaten, {unmatched} nicht zugeordnet von insgesamt {total} Titel."
 msgstr[1] ""
+"Ungespeicherte Änderungen. {direct} direkt, {prefix} Präfix, {metadata} "
+"Metadaten, {unmatched} nicht zugeordnet von insgesamt {total} Titeln."
 
 #, rust-format
 msgid ""
@@ -527,1096 +541,1127 @@ msgid_plural ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"Zuordnung gespeichert. {direct} direkt, {prefix} Präfix, {metadata} "
+"Metadaten, {unmatched} nicht zugeordnet von insgesamt {total} Titel."
 msgstr[1] ""
+"Zuordnung gespeichert. {direct} direkt, {prefix} Präfix, {metadata} "
+"Metadaten, {unmatched} nicht zugeordnet von insgesamt {total} Titeln."
 
 msgid "Add Your Music Library"
-msgstr ""
+msgstr "Eigene Musik-Mediathek hinzufügen"
 
 msgid "Turn off only for a server you control"
-msgstr ""
+msgstr "Nur bei einem selbst kontrollierten Server ausschalten"
 
 msgid "Server"
-msgstr ""
+msgstr "Server"
 
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
+"Einen oder mehrere Ordner auswählen, um Musik direkt von diesem Computer "
+"einzulesen und abzuspielen"
 
 msgid "Music Folders"
-msgstr ""
+msgstr "Musikverzeichnisse"
 
 msgid "Add Folder"
-msgstr ""
+msgstr "Verzeichnis hinzufügen"
 
 msgid "Add another folder to the Local source"
-msgstr ""
+msgstr "Weitere Ordner zur lokalen Quelle hinzufügen"
 
 msgid "Add"
-msgstr ""
+msgstr "Hinzufügen"
 
 msgid "Connect"
-msgstr ""
+msgstr "Verbinden"
 
 msgid "Choose at least one local music folder"
-msgstr ""
+msgstr "Mindestens einen lokalen Musikordner auswählen"
 
 msgid "Caching local library..."
-msgstr ""
+msgstr "Lokale Mediathek zwischenspeichern..."
 
 msgid "Enter a server address, username, and password"
-msgstr ""
+msgstr "Serveradresse, Benutzername und Passwort eingeben"
 
 msgid "Connecting to music server..."
-msgstr ""
+msgstr "Mit Musikserver verbinden..."
 
 msgid "Caching Library"
-msgstr ""
+msgstr "Mediathek wird zwischengespeichert"
 
 msgid "Found Servers"
-msgstr ""
+msgstr "Entdeckte Server"
 
 msgid "Searching Local Network"
-msgstr ""
+msgstr "Lokales Netzwerk durchsuchen"
 
 msgid "No Servers Found"
-msgstr ""
+msgstr "Keine Server entdeckt"
 
 msgid "Searching..."
-msgstr ""
+msgstr "Suche..."
 
 msgid "Search Again"
-msgstr ""
+msgstr "Erneut suchen"
 
 msgid "Searching will start automatically"
-msgstr ""
+msgstr "Die Suche startet automatisch"
 
 msgid "Searching for Jellyfin servers on the local network..."
-msgstr ""
+msgstr "Im lokalen Netzwerk wird nach Jellyfin-Servern gesucht..."
 
 msgid "No Jellyfin servers found. Enter the address manually or search again"
 msgstr ""
+"Keine Jellyfin-Server gefunden. Adresse manuell eingeben oder erneut suchen"
 
 #, rust-format
 msgid "Server discovery failed: {error}"
-msgstr ""
+msgstr "Server-Erkennung fehlgeschlagen: {error}"
 
 msgid "OpenSubsonic"
-msgstr ""
+msgstr "OpenSubsonic"
 
 msgid "No folders selected"
-msgstr ""
+msgstr "Keine Verzeichnisse ausgewählt"
 
 msgid "Select Music Folder"
-msgstr ""
+msgstr "Musikordner auswählen"
 
 msgid "Seek playback"
-msgstr ""
+msgstr "Spulen"
 
 msgid "Auto DJ on"
-msgstr ""
+msgstr "Auto-DJ aktiviert"
 
 msgid "Auto DJ"
-msgstr ""
+msgstr "Auto DJ"
 
 msgid "Open fullscreen player"
-msgstr ""
+msgstr "Vollbildmodus aktivieren"
 
 msgid "Resume"
-msgstr ""
+msgstr "Fortsetzen"
 
 msgid "Pause"
-msgstr ""
+msgstr "Pause"
 
 msgid "Repeat off"
-msgstr ""
+msgstr "Wiederholung aus"
 
 msgid "Repeat one"
-msgstr ""
+msgstr "Titel wiederholen"
 
 msgid "Repeat all"
-msgstr ""
+msgstr "Alle wiederholen"
 
 msgid "Shuffle on"
-msgstr ""
+msgstr "Zufallswiedergabe an"
 
 msgid "Shuffle off"
-msgstr ""
+msgstr "Zufallswiedergabe aus"
 
 msgid "Auto DJ off"
-msgstr ""
+msgstr "Auto-DJ aus"
 
 msgid "Library"
-msgstr ""
+msgstr "Bibliothek"
 
 msgid "Servers"
-msgstr ""
+msgstr "Server"
 
 msgid "Configure saved music servers and local playback mappings."
 msgstr ""
+"Gespeicherte Musikserver und lokale Wiedergabezuordnungen konfigurieren."
 
 msgid "No servers configured"
-msgstr ""
+msgstr "Keine Server eingerichtet"
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
-msgstr ""
+msgstr "Server hinzufügen, um Jellyfin, Subsonic oder OpenSubsonic zu nutzen."
 
 msgid "Add server"
-msgstr ""
+msgstr "Server hinzufügen"
 
 msgid "Local Folders"
-msgstr ""
+msgstr "Lokale Verzeichnisse"
 
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing."
 msgstr ""
+"Diese Ordner werden in der lokalen Quelle kombiniert und über die "
+"Ordnersuche bereitgestellt."
 
 msgid "No local folders configured"
-msgstr ""
+msgstr "Keine lokalen Ordner konfiguriert"
 
 msgid "Add folders to use the Local source."
-msgstr ""
+msgstr "Ordner hinzufügen, um die lokale Quelle zu nutzen."
 
 msgid "Remove"
-msgstr ""
+msgstr "Entfernen"
 
 msgid "Remove Local Folder"
-msgstr ""
+msgstr "Lokalen Ordner entfernen"
 
 msgid "This removes the folder from the Local source."
-msgstr ""
+msgstr "Löscht den Ordner aus der lokalen Quelle."
 
 msgid "All Music"
-msgstr ""
+msgstr "Gesamte Musik"
 
 msgid "User"
-msgstr ""
+msgstr "Benutzer"
 
 msgid "Music Folder"
-msgstr ""
+msgstr "Musikordner"
 
 msgid "Cached"
-msgstr ""
+msgstr "Zwischengespeichert"
 
 msgid "No local playback mapping"
-msgstr ""
+msgstr "Keine lokale Wiedergabezuordnung"
 
 msgid "Local mapping saved. Sync to preview matches."
 msgstr ""
+"Lokale Zuordnung gespeichert. Synchronisieren, um Übereinstimmungen "
+"anzuzeigen."
 
 msgid "Local mapping"
-msgstr ""
+msgstr "Lokale Zuordnung"
 
 msgid "Jellyfin"
-msgstr ""
+msgstr "Jellyfin"
 
 msgid "Navidrome"
-msgstr ""
+msgstr "Navidrome"
 
 msgid "Subsonic / OpenSubsonic"
-msgstr ""
+msgstr "Subsonic / OpenSubsonic"
 
 msgid "Local"
-msgstr ""
+msgstr "Lokal"
 
 msgid "Scrobbling"
-msgstr ""
+msgstr "Scrobbling"
 
 msgid "Last.fm"
-msgstr ""
+msgstr "Last.fm"
 
 msgid "Last.fm scrobbling"
-msgstr ""
+msgstr "Last.fm scrobbling"
 
 msgid "API keys"
-msgstr ""
+msgstr "API-Schlüssel"
 
 msgid "If you do not have API keys, create them"
-msgstr ""
+msgstr "Wenn Sie keine API-Schlüssel haben, erstellen Sie diese"
 
 msgid "here"
-msgstr ""
+msgstr "hier"
 
 msgid ". You only need to fill email and an application name parts"
 msgstr ""
+". Sie müssen nur die Felder für die E-Mail-Adresse und den Anwendungsnamen "
+"ausfüllen"
 
 msgid "API key"
-msgstr ""
+msgstr "API Schlüssel"
 
 msgid "Shared secret"
-msgstr ""
+msgstr "Shared Secret"
 
 msgid "Connection"
-msgstr ""
+msgstr "Verbindung"
 
 msgid "Reconnect"
-msgstr ""
+msgstr "Erneut verbinden"
 
 msgid "Enter API credentials first"
-msgstr ""
+msgstr "Geben Sie zuerst die API-Zugangsdaten ein"
 
 msgid "Opening Last.fm authorization..."
-msgstr ""
+msgstr "Last.fm-Autorisierung wird geöffnet..."
 
 msgid "Now playing updates"
-msgstr ""
+msgstr "„Aktueller Titel“-Updates"
 
 msgid "Libre.fm"
-msgstr ""
+msgstr "Libre.fm"
 
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
 msgstr ""
+"Wenn die Seite nicht lädt, blockiert Libre.fm Ihren IP-Bereich oder Ihr VPN"
 
 msgid "Libre.fm scrobbling"
-msgstr ""
+msgstr "Libre.fm scrobbling"
 
 msgid "Opening Libre.fm authorization..."
-msgstr ""
+msgstr "Libre.fm-Autorisierung wird geöffnet..."
 
 msgid "ListenBrainz"
-msgstr ""
+msgstr "ListenBrainz"
 
 msgid "ListenBrainz scrobbling"
-msgstr ""
+msgstr "ListenBrainz scrobbling"
 
 msgid "Get token"
-msgstr ""
+msgstr "Token abrufen"
 
 msgid "Find your ListenBrainz user token"
-msgstr ""
+msgstr "Finden Sie Ihr ListenBrainz-Benutzer-Token"
 
 msgid "User token"
-msgstr ""
+msgstr "Benutzer-Token"
 
 msgid "Not connected"
-msgstr ""
+msgstr "Nicht verbunden"
 
 msgid "Connected"
-msgstr ""
+msgstr "Verbunden"
 
 #, rust-format
 msgid "Connected as {username}"
-msgstr ""
+msgstr "Angemeldet als {username}"
 
 msgid "Timed out waiting for Last.fm authorization."
-msgstr ""
+msgstr "Zeitüberschreitung beim Warten auf die Last.fm-Autorisierung."
 
 msgid "Timed out waiting for Libre.fm authorization"
-msgstr ""
+msgstr "Zeitüberschreitung beim Warten auf die Libre.fm-Autorisierung"
 
 msgid "Playback"
-msgstr ""
+msgstr "Wiedergabe"
 
 msgid "Queue and transitions"
-msgstr ""
+msgstr "Warteschlange und Übergänge"
 
 msgid "Crossfade"
-msgstr ""
+msgstr "Überblendung"
 
 msgid "Default"
-msgstr ""
+msgstr "Standard"
 
 msgid "Gapless"
-msgstr ""
+msgstr "Lückenlose Wiedergabe"
 
 msgid "Transition mode"
-msgstr ""
+msgstr "Übergangsmodus"
 
 msgid "Crossfade duration"
-msgstr ""
+msgstr "Überblendungsdauer"
 
 msgid "Seconds"
-msgstr ""
+msgstr "Sekunden"
 
 msgid "Skip same-album crossfade"
-msgstr ""
+msgstr "Überblendung bei gleichem Album überspringen"
 
 msgid "Keep album transitions gapless when possible"
-msgstr ""
+msgstr "Album-Übergänge nach Möglichkeit lückenlos halten"
 
 msgid "Audio fade on play/pause"
-msgstr ""
+msgstr "Sanftes Ein-/Ausblenden bei Play/Pause"
 
 msgid "Fade audio when playback is paused or resumed"
 msgstr ""
+"Audio beim Pausieren oder Fortsetzen der Wiedergabe sanft ein- und ausblenden"
 
 msgid "Auto DJ refill threshold"
-msgstr ""
+msgstr "Auto-DJ-Schwellenwert"
 
 msgid "Add tracks when fewer than this many remain"
-msgstr ""
+msgstr "Neue Titel hinzufügen, wenn Warteschlange kleiner als dieser Wert ist"
 
 msgid "Audio"
-msgstr ""
+msgstr "Audio"
 
 msgid "Off"
-msgstr ""
+msgstr "Aus"
 
 msgid "ReplayGain"
-msgstr ""
+msgstr "ReplayGain"
 
 msgid "Original"
-msgstr ""
+msgstr "Original"
 
 msgid "320 kbps"
-msgstr ""
+msgstr "320 kbps"
 
 msgid "256 kbps"
-msgstr ""
+msgstr "256 kbps"
 
 msgid "192 kbps"
-msgstr ""
+msgstr "192 kbps"
 
 msgid "128 kbps"
-msgstr ""
+msgstr "128 kbps"
 
 msgid "Stream quality"
-msgstr ""
+msgstr "Streaming-Qualität"
 
 msgid "Waveform seekbar"
-msgstr ""
+msgstr "Wellenform-Fortschrittsbalken"
 
 msgid "Generate and cache waveforms for the current track"
-msgstr ""
+msgstr "Wellenformen für den aktuellen Titel generieren und zwischenspeichern"
 
 msgid "Audio output"
-msgstr ""
+msgstr "Audioausgabe"
 
 msgid "Reset equalizer"
-msgstr ""
+msgstr "Equalizer zurücksetzen"
 
 msgid "Restore selected preset to default bands."
-msgstr ""
+msgstr "Ausgewählte Voreinstellung auf Standardbänder zurücksetzen."
 
 msgid "Home Blocks"
-msgstr ""
+msgstr "Startseiten-Bereiche"
 
 msgid "Position"
-msgstr ""
+msgstr "Position"
 
 msgid "Hidden server section"
-msgstr ""
+msgstr "Ausgeblendeter Server-Bereich"
 
 msgid "Compact"
-msgstr ""
+msgstr "Kompakt"
 
 msgid "Full"
-msgstr ""
+msgstr "Vollständig"
 
 msgid "Comfortable"
-msgstr ""
+msgstr "Gemütlich"
 
 msgid "Spacious"
-msgstr ""
+msgstr "Großzügig"
 
 msgid "General"
-msgstr ""
+msgstr "Allgemein"
 
 msgid "Language"
-msgstr ""
+msgstr "Sprache"
 
 msgid "App window"
-msgstr ""
+msgstr "Anwendungsfenster"
 
 msgid "Show tray icon"
-msgstr ""
+msgstr "Symbol im Infobereich anzeigen"
 
 msgid "Exit to tray"
-msgstr ""
+msgstr "In den Infobereich minimieren"
 
 msgid "Start minimized"
-msgstr ""
+msgstr "Minimiert starten"
 
 msgid "Type to search"
-msgstr ""
+msgstr "Tippen zum Suchen"
 
 msgid "Notifications"
-msgstr ""
+msgstr "Benachrichtigungen"
 
 msgid "Control notifications"
-msgstr ""
+msgstr "Benachrichtigungen steuern"
 
 msgid "Now playing notifications"
-msgstr ""
+msgstr "Wiedergabe-Benachrichtigungen"
 
 msgid "Release notifications"
-msgstr ""
+msgstr "Benachrichtigungen zu Neuerscheinungen"
 
 msgid "Metadata"
-msgstr ""
+msgstr "Metadaten"
 
 msgid "Prefer server playlist covers"
-msgstr ""
+msgstr "Wiedergabelisten-Cover vom Server bevorzugen"
 
 msgid "Prefer server lyrics"
-msgstr ""
+msgstr "Server-Songtexte bevorzugen"
 
 msgid "External cover lookup"
-msgstr ""
+msgstr "Externe Cover-Suche"
 
 msgid "External lyric lookup"
-msgstr ""
+msgstr "Externe Songtext-Suche"
 
 msgid "External site links"
-msgstr ""
+msgstr "Links zu externen Webseiten"
 
 msgid "Show external site links"
-msgstr ""
+msgstr "Externe Website-Links anzeigen"
 
 msgid "Show external service icons on album and artist pages"
-msgstr ""
+msgstr "Symbole externer Dienste auf Album- und Künstlerseiten anzeigen"
 
 msgid "MusicBrainz"
-msgstr ""
+msgstr "MusicBrainz"
 
 msgid "Discord"
-msgstr ""
+msgstr "Discord"
 
 msgid "Rich presence"
-msgstr ""
+msgstr "Symbole externer Dienste auf Album- und Künstlerseiten anzeigen"
 
 msgid "Application name"
-msgstr ""
+msgstr "Anwendungsname"
 
 msgid "Artist name"
-msgstr ""
+msgstr "Künstlername"
 
 msgid "Song title"
-msgstr ""
+msgstr "Songtitel"
 
 msgid "Status display"
-msgstr ""
+msgstr "Statusanzeige"
 
 msgid "None"
-msgstr ""
+msgstr "Keines"
 
 msgid "MusicBrainz + Last.fm"
-msgstr ""
+msgstr "MusicBrainz + Last.fm"
 
 msgid "Activity links and MusicBrainz covers"
-msgstr ""
+msgstr "Aktivitäts-Links und MusicBrainz-Cover"
 
 msgid "Show paused status"
-msgstr ""
+msgstr "Pausierten Status anzeigen"
 
 msgid "Use listening activity"
-msgstr ""
+msgstr "Höraktivität nutzen"
 
 msgid "Set the Discord activity type to Listening"
-msgstr ""
+msgstr "Discord-Aktivitätstyp auf „Hört gerade“ festlegen"
 
 msgid "Show playback icon"
-msgstr ""
+msgstr "Wiedergabesymbol anzeigen"
 
 msgid "Last.fm API key"
-msgstr ""
+msgstr "Last.fm API Schlüssel"
 
 msgid "Privacy and Security"
-msgstr ""
+msgstr "Datenschutz und Sicherheit"
 
 msgid "Private mode"
-msgstr ""
+msgstr "Privater Modus"
 
 msgid "Legacy"
-msgstr ""
+msgstr "Legacy"
 
 msgid "Secure storage"
-msgstr ""
+msgstr "Sicherer Speicher"
 
 msgid "Secret storage"
-msgstr ""
+msgstr "Geheimnis-Speicher"
 
 msgid "Change Secret Storage"
-msgstr ""
+msgstr "Geheimnis-Speicher ändern"
 
 msgid ""
 "Changing secret backend removes legacy config secrets and signs you out "
 "everywhere, including API secrets. App cache is not affected."
 msgstr ""
+"Das Ändern des Secret-Backends entfernt Legacy-Konfigurationsgeheimnisse und "
+"meldet Sie überall ab, inklusive der API-Zugangsdaten. Der App-Cache wird "
+"nicht beeinflusst."
 
 msgid "Change"
-msgstr ""
+msgstr "Ändern"
 
 msgid "Interface"
-msgstr ""
+msgstr "Benutzeroberfläche"
 
 msgid "Default left sidebar"
-msgstr ""
+msgstr "Standard-Seitenleiste links"
 
 msgid "Default right sidebar"
-msgstr ""
+msgstr "Standard-Seitenleiste rechts"
 
 msgid "Show Lyrics Panel"
-msgstr ""
+msgstr "Songtext-Bereich anzeigen"
 
 msgid "Use different layout below a threshold width"
-msgstr ""
+msgstr "Anderes Layout unterhalb einer Mindestbreite verwenden"
 
 msgid "Narrow layout threshold"
-msgstr ""
+msgstr "Grenzwert für schmale Ansicht"
 
 msgid "Narrow left sidebar"
-msgstr ""
+msgstr "Schmale Seitenleiste links"
 
 msgid "Narrow right sidebar"
-msgstr ""
+msgstr "Schmale Seitenleiste rechts"
 
 msgid "Sidebar Items"
-msgstr ""
+msgstr "Seitenleisten-Einträge"
 
 msgid "Server selector"
 msgstr ""
 
 msgid "No queue items match the search."
-msgstr ""
+msgstr "Keine Einträge in der Warteschlange entsprechen der Suche."
 
 msgid "Add music to start a queue."
-msgstr ""
+msgstr "Musik hinzufügen, um eine Warteschlange zu starten."
 
 msgid "Remove from Queue"
-msgstr ""
+msgstr "Aus Warteschlange entfernen"
 
 msgid "Track radio"
-msgstr ""
+msgstr "Titel-Radio"
 
 msgid "Add to Playlist"
-msgstr ""
+msgstr "Zur Playlist hinzufügen"
 
 msgid "Remove from Favorites"
-msgstr ""
+msgstr "Aus Favoriten entfernen"
 
 msgid "Add to Favorites"
-msgstr ""
+msgstr "Zu Favoriten hinzufügen"
 
 msgid "Go to Artist"
-msgstr ""
+msgstr "Zum Künstler gehen"
 
 msgid "Go to Album"
-msgstr ""
+msgstr "Zum Album gehen"
 
 msgid "Play random"
-msgstr ""
+msgstr "Zufällig abspielen"
 
 msgid "Minimum year"
-msgstr ""
+msgstr "Mindestjahr"
 
 msgid "Maximum year"
-msgstr ""
+msgstr "Maximaljahr"
 
 msgid "Play filter"
-msgstr ""
+msgstr "Gefilterte Titel abspielen"
 
 msgid "Add Last"
-msgstr ""
+msgstr "Am Ende hinzufügen"
 
 msgid "Any genre"
-msgstr ""
+msgstr "Beliebiges Genre"
 
 msgid "All tracks"
-msgstr ""
+msgstr "Alle Titel"
 
 msgid "Only unplayed tracks"
-msgstr ""
+msgstr "Nur ungespielte Titel"
 
 msgid "Only played tracks"
-msgstr ""
+msgstr "Nur gespielte Titel"
 
 msgid "EPs"
-msgstr ""
+msgstr "EPs"
 
 msgid "Singles"
-msgstr ""
+msgstr "Singles"
 
 msgid "Collections"
-msgstr ""
+msgstr "Sammlungen"
 
 msgid "Other"
-msgstr ""
+msgstr "Sonstige"
 
 msgid "EP"
-msgstr ""
+msgstr "EP"
 
 msgid "Single"
-msgstr ""
+msgstr "Single"
 
 msgid "Collection"
-msgstr ""
+msgstr "Sammlung"
 
 msgid "Release"
-msgstr ""
+msgstr "Veröffentlichung"
 
 msgid "Search queue"
-msgstr ""
+msgstr "Warteschlange durchsuchen"
 
 msgid "Clear queue"
-msgstr ""
+msgstr "Warteschlange leeren"
 
 msgid "Hide sidebar"
-msgstr ""
+msgstr "Seitenleiste ausblenden"
 
 msgid "Show sidebar"
-msgstr ""
+msgstr "Seitenleiste einblenden"
 
 msgid "Hide lyrics"
-msgstr ""
+msgstr "Songtexte ausblenden"
 
 msgid "Show lyrics"
-msgstr ""
+msgstr "Songtexte einblenden"
 
 msgid "Enter an artist or song."
-msgstr ""
+msgstr "Künstler oder Titel eingeben."
 
 #, rust-format
 msgid "Checking {provider} server..."
-msgstr ""
+msgstr "{provider}-Server wird überprüft..."
 
 msgid "Server settings saved."
-msgstr ""
+msgstr "Server-Einstellungen gespeichert."
 
 msgid "Server settings saved. Resyncing library..."
-msgstr ""
+msgstr "Server-Einstellungen gespeichert. Bibliothek wird neu synchronisiert..."
 
 msgid "No changes to save."
-msgstr ""
+msgstr "Keine Änderungen zum Speichern."
 
 msgid "Sync already running."
-msgstr ""
+msgstr "Synchronisierung läuft bereits."
 
 #, rust-format
 msgid "Syncing {provider} library..."
-msgstr ""
+msgstr "{provider}-Bibliothek wird synchronisiert..."
 
 msgid "Caching library... This may take some time."
-msgstr ""
+msgstr "Bibliothek wird zwischengespeichert... Dies kann einige Zeit dauern."
 
 msgid "Caching local library... This may take some time."
 msgstr ""
+"Lokale Bibliothek wird zwischengespeichert... Dies kann einige Zeit dauern."
 
 msgid "Caching library artwork..."
-msgstr ""
+msgstr "Bibliotheks-Cover werden zwischengespeichert..."
 
 msgid "Cached library ready"
-msgstr ""
+msgstr "Zwischengespeicherte Bibliothek bereit"
 
 msgid "Library sync complete"
-msgstr ""
+msgstr "Bibliothekssynchronisierung abgeschlossen"
 
 msgid "Music Server"
-msgstr ""
+msgstr "Musikserver"
 
 msgid "Synced lyrics"
-msgstr ""
+msgstr "Synchronisierte Songtexte"
 
 msgid "Plain lyrics"
-msgstr ""
+msgstr "Einfache Songtexte"
 
 msgid "Remote lyrics"
-msgstr ""
+msgstr "Externe Songtexte"
 
 msgid "No lyrics"
-msgstr ""
+msgstr "Keine Songtexte"
 
 msgid "Muted"
-msgstr ""
+msgstr "Stummgeschaltet"
 
 msgid "Unmuted"
-msgstr ""
+msgstr "Stummschaltung aufgehoben"
 
 msgid "Back"
-msgstr ""
+msgstr "Zurück"
 
 msgid "Forward"
-msgstr ""
+msgstr "Vorwärts"
 
 msgid "Play/Pause"
-msgstr ""
+msgstr "Wiedergabe/Pause"
 
 msgid "Previous"
-msgstr ""
+msgstr "Vorheriger Titel"
 
 msgid "Next"
-msgstr ""
+msgstr "Nächster Titel"
 
 msgid "Seek Backward"
-msgstr ""
+msgstr "Zurückspulen"
 
 msgid "Seek Forward"
-msgstr ""
+msgstr "Vorspulen"
 
 msgid "Shuffle"
-msgstr ""
+msgstr "Zufallswiedergabe"
 
 msgid "Repeat"
-msgstr ""
+msgstr "Wiederholen"
 
 msgid "Mute"
-msgstr ""
+msgstr "Stummschalten"
 
 msgid "Volume Up"
-msgstr ""
+msgstr "Lautstärke erhöhen"
 
 msgid "Volume Down"
-msgstr ""
+msgstr "Lautstärke verringern"
 
 msgid "Show/hide right sidebar"
-msgstr ""
+msgstr "Rechte Seitenleiste anzeigen/ausblenden"
 
 msgid "Show/hide lyrics"
-msgstr ""
+msgstr "Songtexte anzeigen/ausblenden"
 
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
 msgstr ""
+"Vielen Dank, dass du Rufin ausprobierst! Wenn du Probleme oder Vorschläge "
+"hast, öffne bitte ein Issue auf GitHub."
 
 msgid "Open on Jellyfin"
-msgstr ""
+msgstr "In Jellyfin öffnen"
 
 msgid "Open on Navidrome"
-msgstr ""
+msgstr "In Navidrome öffnen"
 
 msgid "Play radio"
-msgstr ""
+msgstr "Radio abspielen"
 
 msgid "Open on Last.fm"
-msgstr ""
+msgstr "In Last.fm öffnen"
 
 msgid "Open on MusicBrainz"
-msgstr ""
+msgstr "In MusicBrainz öffnen"
 
 msgid "Added to favorites"
-msgstr ""
+msgstr "Zu Favoriten hinzugefügt"
 
 msgid "Removed from favorites"
-msgstr ""
+msgstr "Aus Favoriten entfernt"
 
 msgid "Remove from playlist"
-msgstr ""
+msgstr "Aus Playlist entfernen"
 
 msgid "Album radio"
-msgstr ""
+msgstr "Album-Radio"
 
 msgid "Artist radio"
-msgstr ""
+msgstr "Künstler-Radio"
 
 msgid "Genre radio"
-msgstr ""
+msgstr "Genre-Radio"
 
 msgid "Playlist radio"
-msgstr ""
+msgstr "Playlist-Radio"
 
 msgid "Delete"
-msgstr ""
+msgstr "Löschen"
 
 msgid "Delete Playlist"
-msgstr ""
+msgstr "Playlist löschen"
 
 msgid "Type to search or create a new playlist"
-msgstr ""
+msgstr "Tippen, um zu suchen oder eine neue Playlist zu erstellen"
 
 msgid "Don't duplicate"
-msgstr ""
+msgstr "Duplikate vermeiden"
 
 msgid "Create"
-msgstr ""
+msgstr "Erstellen"
 
 msgid "No songs added"
-msgstr ""
+msgstr "Keine Titel hinzugefügt"
 
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
-msgstr ""
+msgstr "{track_count} Titel zu {playlist_count} Playlist hinzugefügt"
 
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlists"
-msgstr ""
+msgstr "{track_count} Titel zu {playlist_count} Playlists hinzugefügt"
 
 #, rust-format
 msgid "{track_count} songs added to {playlist_count} playlist"
-msgstr ""
+msgstr "{track_count} Titel zu {playlist_count} Playlists hinzugefügt"
 
 #, rust-format
 msgid "{track_count} songs added to {playlist_count} playlists"
-msgstr ""
+msgstr "{track_count} Titel zu {playlist_count} Playlists hinzugefügt"
 
 msgid "Playlist order"
-msgstr ""
+msgstr "Playlist-Reihenfolge"
 
 msgid "Remove from Playlist"
-msgstr ""
+msgstr "Aus Playlist entfernen"
 
 msgid "Private mode is on"
-msgstr ""
+msgstr "Privater Modus ist eingeschaltet"
 
 msgid "Search lyrics"
-msgstr ""
+msgstr "Songtexte durchsuchen"
 
 msgid "No track playing"
-msgstr ""
+msgstr "Kein Titel wird abgespielt"
 
 msgid "Clear fetched lyrics for this track"
-msgstr ""
+msgstr "Abgerufene Songtexte für diesen Titel löschen"
 
 msgid "Search Lyrics"
-msgstr ""
+msgstr "Songtext-Suche"
 
 msgid "Close"
-msgstr ""
+msgstr "Schließen"
 
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
 "only if you also want to save it in your music folder"
 msgstr ""
+"Tippe auf den Eintrag, um die Songtexte zu laden und im App-Cache zu "
+"speichern. Klicke nur dann auf Speichern, wenn du sie auch in deinem "
+"Musikordner speichern möchtest"
 
 msgid "Song"
-msgstr ""
+msgstr "Song"
 
 msgid "Ready"
-msgstr ""
+msgstr "Bereit"
 
 msgid "No lyrics found."
-msgstr ""
+msgstr "Keine Songtexte gefunden."
 
 msgid "Save"
-msgstr ""
+msgstr "Speichern"
 
 msgid "Save Lyrics"
-msgstr ""
+msgstr "Songtexte speichern"
 
 msgid "Search failed."
-msgstr ""
+msgstr "Suche fehlgeschlagen."
 
 msgid "Saved to"
-msgstr ""
+msgstr "Gespeichert unter"
 
 msgid "Loaded in lyrics panel."
-msgstr ""
+msgstr "Im Songtext-Bereich geladen."
 
 msgid "No server lyrics for the current track. Private mode is on."
 msgstr ""
+"Keine Server-Songtexte für den aktuellen Titel. Der private Modus ist "
+"eingeschaltet."
 
 msgid "No server lyrics for the current track. External lyric lookup is off."
 msgstr ""
+"Keine Server-Songtexte für den aktuellen Titel. Die externe Songtext-Suche "
+"ist ausgeschaltet."
 
 msgid "No lyrics for the current track."
-msgstr ""
+msgstr "Keine Songtexte für den aktuellen Titel."
 
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Album"
+msgstr[1] "{count} Alben"
 
 #, rust-format
 msgid "{count} folder"
 msgid_plural "{count} folders"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Ordner"
+msgstr[1] "{count} Ordner"
 
 #, rust-format
 msgid "{count} folder selected"
 msgid_plural "{count} folders selected"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Ordner ausgewählt"
+msgstr[1] "{count} Ordner ausgewählt"
 
 #, rust-format
 msgid "{count} result"
 msgid_plural "{count} results"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Ergebnis"
+msgstr[1] "{count} Ergebnisse"
 
 #, rust-format
 msgid "{count} track"
 msgid_plural "{count} tracks"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} Titel"
+msgstr[1] "{count} Titel"
 
 msgid "Preparing library..."
-msgstr ""
+msgstr "Bibliothek wird vorbereitet..."
 
 msgid "New Playlist"
-msgstr ""
+msgstr "Neue Playlist"
 
 msgid "Playlist name"
-msgstr ""
+msgstr "Playlist-Name"
 
 msgid "Restore Default"
-msgstr ""
+msgstr "Standardeinstellungen wiederherstellen"
 
 msgid "New Smart Playlist"
-msgstr ""
+msgstr "Neue intelligente Playlist"
 
 msgid "Edit Smart Playlist"
-msgstr ""
+msgstr "Intelligente Playlist bearbeiten"
 
 msgid "Descending"
-msgstr ""
+msgstr "Absteigend"
 
 msgid "No limit"
-msgstr ""
+msgstr "Unbegrenzt"
 
 msgid "Restore"
-msgstr ""
+msgstr "Wiederherstellen"
 
 msgid "Match"
-msgstr ""
+msgstr "Übereinstimmung"
 
 msgid "Sort"
-msgstr ""
+msgstr "Sortieren"
 
 msgid "Limit"
-msgstr ""
+msgstr "Begrenzung"
 
 msgid "Add Rule"
-msgstr ""
+msgstr "Regel hinzufügen"
 
 msgid ""
 "This playlist uses nested rule groups. Rule editing is unavailable in this "
 "editor."
 msgstr ""
+"Diese Playlist verwendet verschachtelte Regelgruppen. Das Bearbeiten von "
+"Regeln ist in diesem Editor nicht verfügbar."
 
 msgid "Remove rule"
-msgstr ""
+msgstr "Regel entfernen"
 
 msgid "to"
-msgstr ""
+msgstr "bis"
 
 msgid "No"
-msgstr ""
+msgstr "Nein"
 
 msgid "Yes"
-msgstr ""
+msgstr "Ja"
 
 msgid "All"
-msgstr ""
+msgstr "Alle"
 
 msgid "Any"
-msgstr ""
+msgstr "Beliebige"
 
 msgid "Comment"
-msgstr ""
+msgstr "Kommentar"
 
 msgid "Played"
-msgstr ""
+msgstr "Abgespielt"
 
 msgid "Play count"
-msgstr ""
+msgstr "Wiedergabezähler"
 
 msgid "Skip count"
-msgstr ""
+msgstr "Überspringungszähler"
 
 msgid "excludes"
-msgstr ""
+msgstr "Schließt aus"
 
 msgid "is not"
-msgstr ""
+msgstr "Ist nicht"
 
 msgid "contains"
-msgstr ""
+msgstr "Enthält"
 
 msgid "does not contain"
-msgstr ""
+msgstr "Enthält nicht"
 
 msgid "equals"
-msgstr ""
+msgstr "Ist gleich"
 
 msgid "does not equal"
-msgstr ""
+msgstr "Ist nicht gleich"
 
 msgid "above"
-msgstr ""
+msgstr "Größer als"
 
 msgid "below"
-msgstr ""
+msgstr "Kleiner als"
 
 msgid "range"
-msgstr ""
+msgstr "Bereich"
 
 msgid "is"
-msgstr ""
+msgstr "Ist"
 
 msgid "before"
-msgstr ""
+msgstr "Vor"
 
 msgid "after"
-msgstr ""
+msgstr "Nach"
 
 msgid "is empty"
-msgstr ""
+msgstr "Ist leer"
 
 msgid "is not empty"
-msgstr ""
+msgstr "Ist nicht leer"
 
 msgid "Comment text"
-msgstr ""
+msgstr "Kommentartext"
 
 msgid "Album title"
-msgstr ""
+msgstr "Albumtitel"
 
 msgid "Text"
-msgstr ""
+msgstr "Text"
 
 msgid "Edit"
-msgstr ""
+msgstr "Bearbeiten"
 
 msgid "Rename"
-msgstr ""
+msgstr "Umbenennen"
 
 msgid "Add current"
-msgstr ""
+msgstr "Aktuellen Titel hinzufügen"
 
 msgid "Rename Playlist"
-msgstr ""
+msgstr "Playlist umbenennen"
 
 msgid "Enter a new playlist name."
-msgstr ""
+msgstr "Gib einen neuen Playlist-Namen ein."
 
 msgid "today"
-msgstr ""
+msgstr "Heute"
 
 msgid "yesterday"
-msgstr ""
+msgstr "Gestern"
 
 #, rust-format
 msgid "{count} day ago"
 msgid_plural "{count} days ago"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Vor {count} Tag"
+msgstr[1] "Vor {count} Tagen"
 
 #, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Vor {count} Woche"
+msgstr[1] "Vor {count} Wochen"
 
 #, rust-format
 msgid "{count} month ago"
 msgid_plural "{count} months ago"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Vor {count} Monat"
+msgstr[1] "Vor {count} Monaten"
 
 #, rust-format
 msgid "{count} year ago"
 msgid_plural "{count} years ago"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Vor {count} Jahr"
+msgstr[1] "Vor {count} Jahren"
 
 msgid "Open release notes"
-msgstr ""
+msgstr "Versionshinweise öffnen"
 
 msgid "Installed"
-msgstr ""
+msgstr "Installiert"
 
 msgid "No cached results found."
-msgstr ""
+msgstr "Keine zwischengespeicherten Ergebnisse gefunden."
 
 msgid "Switching library..."
-msgstr ""
+msgstr "Bibliothek wird gewechselt..."
 
 msgid "Show Rufin"
-msgstr ""
+msgstr "Rufin anzeigen"
 
 msgid "Previous Track"
-msgstr ""
+msgstr "Vorheriger Titel"
 
 msgid "Next Track"
 msgstr ""
