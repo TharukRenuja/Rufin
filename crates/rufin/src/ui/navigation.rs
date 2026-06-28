@@ -17,6 +17,7 @@ const ROUTE_ICON_PREFIX: &str = "route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
+const PRIMARY_MENU_POPOVER_ANCHOR_Y: i32 = 148;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
@@ -257,14 +258,31 @@ fn update_primary_menu_popover(
     }
     popover.set_parent(button);
     let row_popover = popover.clone();
-    let handler = button.connect_clicked(move |_| row_popover.popup());
+    let handler = button.connect_clicked(move |button| {
+        set_primary_menu_pointing_to(&row_popover, button.width());
+        row_popover.popup();
+    });
     *handler_slot.borrow_mut() = Some(handler);
 }
 
 pub(super) fn popup_primary_menu(popover_slot: &RefCell<Option<gtk::Popover>>) {
     if let Some(popover) = popover_slot.borrow().as_ref() {
+        let anchor_width = popover
+            .parent()
+            .map(|parent| parent.width())
+            .unwrap_or_default();
+        set_primary_menu_pointing_to(popover, anchor_width);
         popover.popup();
     }
+}
+
+fn set_primary_menu_pointing_to(popover: &gtk::Popover, anchor_width: i32) {
+    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+        anchor_width,
+        PRIMARY_MENU_POPOVER_ANCHOR_Y,
+        1,
+        1,
+    )));
 }
 
 fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::Popover {

@@ -1,6 +1,7 @@
 use super::super::{
     Shell,
     layout::{large_popup_content_height, large_popup_content_width},
+    playback_outputs::{audio_output_index, playback_output_options},
     present_light_dismiss_dialog,
 };
 use super::library;
@@ -17,7 +18,6 @@ use domain::{
     MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
     SecretStorageMode, SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
 };
-use playback::available_audio_outputs;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -27,7 +27,6 @@ mod general;
 mod layout;
 
 use general::*;
-pub(in crate::ui) use general::{audio_output_index, playback_output_options};
 pub(in crate::ui) use layout::button_row;
 use layout::*;
 
@@ -40,17 +39,63 @@ const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
 pub(in crate::ui) fn present_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesInitialPage::General);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::General);
 }
 pub(in crate::ui) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesInitialPage::Library);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library);
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PreferencesInitialPage {
+enum PreferencesPageKind {
     General,
+    Layout,
+    Scrobbling,
+    Playback,
     Library,
 }
-fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesInitialPage) {
+impl PreferencesPageKind {
+    const ALL: [Self; 5] = [
+        Self::General,
+        Self::Layout,
+        Self::Scrobbling,
+        Self::Playback,
+        Self::Library,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Layout => "layout",
+            Self::Scrobbling => "scrobbling",
+            Self::Playback => "playback",
+            Self::Library => "library",
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            Self::General => tr("General"),
+            Self::Layout => tr("Layout"),
+            Self::Scrobbling => tr("Scrobbling"),
+            Self::Playback => tr("Playback"),
+            Self::Library => tr("Library"),
+        }
+    }
+
+    fn icon_name(self) -> &'static str {
+        match self {
+            Self::General => "preferences-system-symbolic",
+            Self::Layout => "preferences-desktop-display-symbolic",
+            Self::Scrobbling => SCROBBLING_ICON_NAME,
+            Self::Playback => "media-playback-start-symbolic",
+            Self::Library => "route-tracks-symbolic",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.name() == name)
+    }
+}
+fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesPageKind) {
     if let Some(dialog) = shell.state.preferences_dialog.borrow().as_ref().cloned() {
         rebuild_preferences_dialog(shell, &dialog, initial_page);
         present_light_dismiss_dialog(&dialog, &shell.window);
@@ -84,7 +129,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
 fn rebuild_preferences_dialog(
     shell: &Rc<Shell>,
     dialog: &adw::Dialog,
-    initial_page: PreferencesInitialPage,
+    initial_page: PreferencesPageKind,
 ) {
     dialog.set_title(&tr("Preferences"));
 
@@ -108,46 +153,62 @@ fn rebuild_preferences_dialog(
     toolbar.add_top_bar(&switcher_bar);
     toolbar.set_content(Some(&stack));
 
-    let general_page = general_page(shell, dialog);
-    let layout_page = layout_page(shell);
-    let scrobbling_page = scrobbling_page(shell);
-    let playback_page = playback_page(shell);
-    let library_page = library::library_page(shell, dialog);
-    stack.add_titled_with_icon(
-        &general_page,
-        Some("general"),
-        &tr("General"),
-        "preferences-system-symbolic",
+    let page_slots = Rc::new(
+        PreferencesPageKind::ALL
+            .into_iter()
+            .map(|kind| {
+                let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                slot.set_hexpand(true);
+                slot.set_vexpand(true);
+                let title = kind.title();
+                stack.add_titled_with_icon(&slot, Some(kind.name()), &title, kind.icon_name());
+                (kind, slot)
+            })
+            .collect::<Vec<_>>(),
     );
-    stack.add_titled_with_icon(
-        &layout_page,
-        Some("layout"),
-        &tr("Layout"),
-        "preferences-desktop-display-symbolic",
-    );
-    stack.add_titled_with_icon(
-        &scrobbling_page,
-        Some("scrobbling"),
-        &tr("Scrobbling"),
-        SCROBBLING_ICON_NAME,
-    );
-    stack.add_titled_with_icon(
-        &playback_page,
-        Some("playback"),
-        &tr("Playback"),
-        "media-playback-start-symbolic",
-    );
-    stack.add_titled_with_icon(
-        &library_page,
-        Some("library"),
-        &tr("Library"),
-        "route-tracks-symbolic",
-    );
-    if matches!(initial_page, PreferencesInitialPage::Library) {
-        stack.set_visible_child_name("library");
-    }
+    ensure_preferences_page(shell, dialog, &page_slots, initial_page);
+    stack.set_visible_child_name(initial_page.name());
+    let page_shell = Rc::clone(shell);
+    let page_dialog = dialog.clone();
+    let page_slots_for_switch = Rc::clone(&page_slots);
+    stack.connect_visible_child_name_notify(move |stack| {
+        let Some(name) = stack.visible_child_name() else {
+            return;
+        };
+        let Some(kind) = PreferencesPageKind::from_name(name.as_str()) else {
+            return;
+        };
+        ensure_preferences_page(&page_shell, &page_dialog, &page_slots_for_switch, kind);
+    });
 
     dialog.set_child(Some(&toolbar));
+}
+fn ensure_preferences_page(
+    shell: &Rc<Shell>,
+    dialog: &adw::Dialog,
+    page_slots: &[(PreferencesPageKind, gtk::Box)],
+    kind: PreferencesPageKind,
+) {
+    let Some((_, slot)) = page_slots.iter().find(|(slot_kind, _)| *slot_kind == kind) else {
+        return;
+    };
+    if slot.first_child().is_some() {
+        return;
+    }
+    slot.append(&build_preferences_page(kind, shell, dialog));
+}
+fn build_preferences_page(
+    kind: PreferencesPageKind,
+    shell: &Rc<Shell>,
+    dialog: &adw::Dialog,
+) -> gtk::Widget {
+    match kind {
+        PreferencesPageKind::General => general_page(shell, dialog).upcast(),
+        PreferencesPageKind::Layout => layout_page(shell).upcast(),
+        PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
+        PreferencesPageKind::Playback => playback_page(shell).upcast(),
+        PreferencesPageKind::Library => library::library_page(shell, dialog),
+    }
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
@@ -186,7 +247,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             rebuild_preferences_dialog(
                 &language_shell,
                 &dialog_for_language,
-                PreferencesInitialPage::General,
+                PreferencesPageKind::General,
             );
         }
     });
