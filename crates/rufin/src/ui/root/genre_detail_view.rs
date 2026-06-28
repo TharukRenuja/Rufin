@@ -49,12 +49,15 @@ impl Shell {
         genre.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
         let kind_row = self.genre_detail_kind_row(&genre);
+        let action_tracks = Rc::new(detail.tracks.clone());
+        let actions = self.genre_detail_actions(genre_id.clone(), Rc::clone(&action_tracks));
         self.grouped_detail_view(GroupedDetailData {
             kind_row: Some(kind_row.upcast()),
             title: genre.name,
             artwork,
             seed,
             summary_items,
+            actions: Some(actions.upcast()),
             tracks: detail.tracks,
             table_context: "genre-detail",
             source_descriptor: Some(PlaySourceDescriptor::GenreTracks {
@@ -87,6 +90,30 @@ impl Shell {
         });
         row.append(&radio);
         row
+    }
+
+    fn genre_detail_actions(
+        self: &Rc<Self>,
+        genre_id: domain::GenreId,
+        tracks: Rc<Vec<Track>>,
+    ) -> gtk::Box {
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+
+        let play = detail_action_button("media-playback-start-symbolic", "Play");
+        play.add_css_class("detail-showcase-play-button");
+        let controller = self.controller.clone();
+        let play_tracks = Rc::clone(&tracks);
+        play.connect_clicked(move |_| {
+            controller.play_genre_tracks_window(genre_id.clone(), play_tracks.len(), 0, |index| {
+                play_tracks.as_ref().get(index).cloned()
+            });
+        });
+        actions.append(&play);
+
+        append_track_batch_queue_actions(&actions, &self.controller, tracks);
+
+        actions
     }
 
     fn genre_detail_from_memory(

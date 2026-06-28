@@ -292,6 +292,10 @@ msgstr "Закрыть полноэкранный плеер"
 msgid "Club"
 msgstr "Клубная"
 
+#, fuzzy
+msgid "Collapse sidebar"
+msgstr "Скрыть боковую панель"
+
 msgid "Collection"
 msgstr "Коллекция"
 
@@ -444,6 +448,10 @@ msgstr "Эквалайзер"
 
 msgid "Exit to tray"
 msgstr "Свернуть в трей"
+
+#, fuzzy
+msgid "Expand sidebar"
+msgstr "Скрыть боковую панель"
 
 msgid "Explore"
 msgstr "Изучить"
@@ -681,9 +689,6 @@ msgstr "Настройка сопоставления для локальног�
 msgid "Lyrics"
 msgstr "Текст песни"
 
-msgid "Menu"
-msgstr "Меню"
-
 msgid "Manage"
 msgstr "Управление"
 
@@ -701,6 +706,9 @@ msgstr "Соответствие"
 
 msgid "Maximum year"
 msgstr "Максимальный год"
+
+msgid "Menu"
+msgstr "Меню"
 
 msgid "Metadata"
 msgstr "Метаданные"
@@ -1286,9 +1294,6 @@ msgstr "Не удалось выполнить поиск сервера: {error
 msgid "Server sample does not match the server prefix."
 msgstr "Пример сервера не соответствует префиксу сервера."
 
-msgid "Server selector"
-msgstr "Выбор сервера"
-
 msgid "Server settings saved."
 msgstr "Настройки сервера сохранены."
 
@@ -1513,6 +1518,14 @@ msgstr "Режим перехода"
 
 msgid "Turn off only for a server you control"
 msgstr "Отключайте только для сервера, которым вы управляете"
+
+#, fuzzy
+msgid "Turn off private mode"
+msgstr "Включить приватный режим"
+
+#, fuzzy
+msgid "Turn on private mode"
+msgstr "Включить приватный режим"
 
 msgid "Type to search"
 msgstr "Введите текст для поиска"
@@ -1915,6 +1928,9 @@ msgstr "Добавлено {track_count} треков в {playlist_count} пле
 
 #~ msgid "Selected Source"
 #~ msgstr "Выбранный Источник"
+
+#~ msgid "Server selector"
+#~ msgstr "Выбор сервера"
 
 #~ msgid "Settings"
 #~ msgstr "Настройки"
