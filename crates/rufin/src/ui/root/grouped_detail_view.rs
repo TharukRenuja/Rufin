@@ -14,6 +14,7 @@ impl Shell {
             artwork,
             seed,
             summary_items,
+            actions,
             tracks,
             table_context,
             source_descriptor,
@@ -47,6 +48,9 @@ impl Shell {
         }
         metadata.push(title_label.upcast());
         metadata.push(detail_summary_row(&summary_items).upcast());
+        if let Some(actions) = actions {
+            metadata.push(actions);
+        }
         let showcase = collection_detail_showcase(
             self,
             CollectionDetailShowcase {

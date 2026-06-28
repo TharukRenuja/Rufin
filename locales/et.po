@@ -289,6 +289,10 @@ msgstr "Sulge muusikaesitaja täisekraanivaade"
 msgid "Club"
 msgstr "Klubimuusika"
 
+#, fuzzy
+msgid "Collapse sidebar"
+msgstr "Peida külgriba"
+
 msgid "Collection"
 msgstr "Kogu"
 
@@ -441,6 +445,10 @@ msgstr "Ekvalaiser"
 
 msgid "Exit to tray"
 msgstr "Väljumisel jäta rakendus süsteemisalve"
+
+#, fuzzy
+msgid "Expand sidebar"
+msgstr "Peida külgriba"
 
 msgid "Explore"
 msgstr "Uuri ja avasta"
@@ -675,9 +683,6 @@ msgstr "Kohaliku taasesituse vastenduse seadistamine on lõpetatud"
 msgid "Lyrics"
 msgstr "Laulusõnad"
 
-msgid "Menu"
-msgstr "Menüü"
-
 msgid "Manage"
 msgstr "Halda"
 
@@ -695,6 +700,9 @@ msgstr "Sobita"
 
 msgid "Maximum year"
 msgstr "Maksimaalne aasta"
+
+msgid "Menu"
+msgstr "Menüü"
 
 msgid "Metadata"
 msgstr "Metateave"
@@ -1270,9 +1278,6 @@ msgstr "Serveri leidmine ei õnnestunud: {error}"
 msgid "Server sample does not match the server prefix."
 msgstr "Serveri näidis ei vasta serveri prefiksile."
 
-msgid "Server selector"
-msgstr "Serverivalija"
-
 msgid "Server settings saved."
 msgstr "Serveri seadistused on salvestatud."
 
@@ -1497,6 +1502,14 @@ msgstr "Lugudevahetuse viis"
 
 msgid "Turn off only for a server you control"
 msgstr "Lülita välja vaid enda kontrollitava serveri jaoks"
+
+#, fuzzy
+msgid "Turn off private mode"
+msgstr "Lülita privaatne režiim sisse"
+
+#, fuzzy
+msgid "Turn on private mode"
+msgstr "Lülita privaatne režiim sisse"
 
 msgid "Type to search"
 msgstr "Otsimiseks siesta midagi"
@@ -1875,6 +1888,9 @@ msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
 
 #~ msgid "Selected Source"
 #~ msgstr "Valitud allikas"
+
+#~ msgid "Server selector"
+#~ msgstr "Serverivalija"
 
 #~ msgid "Settings"
 #~ msgstr "Seadistused"

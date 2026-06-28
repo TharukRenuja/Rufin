@@ -290,6 +290,10 @@ msgstr "Aizvērt pilnekrāna atskaņotāju"
 msgid "Club"
 msgstr "Klubs"
 
+#, fuzzy
+msgid "Collapse sidebar"
+msgstr "Paslēpt sānu paneli"
+
 msgid "Collection"
 msgstr "Kolekcija"
 
@@ -441,6 +445,10 @@ msgstr "Ekvalaizers"
 
 msgid "Exit to tray"
 msgstr "Iziet uz sistēmas joslu"
+
+#, fuzzy
+msgid "Expand sidebar"
+msgstr "Paslēpt sānu paneli"
 
 msgid "Explore"
 msgstr "Izpētīt"
@@ -674,9 +682,6 @@ msgstr "Lokālais atskaņošanas kartējums konfigurēts"
 msgid "Lyrics"
 msgstr "Teksti"
 
-msgid "Menu"
-msgstr "Izvēlne"
-
 msgid "Manage"
 msgstr "Pārvaldīt"
 
@@ -694,6 +699,9 @@ msgstr "Atbilstība"
 
 msgid "Maximum year"
 msgstr "Maksimālais gads"
+
+msgid "Menu"
+msgstr "Izvēlne"
 
 msgid "Metadata"
 msgstr "Metadati"
@@ -1274,9 +1282,6 @@ msgstr "Servera meklēšana neizdevās: {error}"
 msgid "Server sample does not match the server prefix."
 msgstr "Servera paraugs neatbilst servera prefiksam."
 
-msgid "Server selector"
-msgstr "Servera izvēlētājs"
-
 msgid "Server settings saved."
 msgstr "Servera iestatījumi saglabāti."
 
@@ -1500,6 +1505,14 @@ msgstr "Pārejas režīms"
 
 msgid "Turn off only for a server you control"
 msgstr "Izslēdziet tikai serverim, ko pārvaldāt"
+
+#, fuzzy
+msgid "Turn off private mode"
+msgstr "Ieslēgt privāto režīmu"
+
+#, fuzzy
+msgid "Turn on private mode"
+msgstr "Ieslēgt privāto režīmu"
 
 msgid "Type to search"
 msgstr "Ierakstiet, lai meklētu"
@@ -1894,6 +1907,9 @@ msgstr ""
 
 #~ msgid "Selected Source"
 #~ msgstr "Izvēlētais avots"
+
+#~ msgid "Server selector"
+#~ msgstr "Servera izvēlētājs"
 
 #~ msgid "Settings"
 #~ msgstr "Iestatījumi"

@@ -519,6 +519,7 @@ pub(in crate::ui) struct GroupedDetailData {
     artwork: crate::cover_art_policy::SelectedArtwork,
     seed: u32,
     summary_items: Vec<(&'static str, String)>,
+    actions: Option<gtk::Widget>,
     tracks: Vec<Track>,
     table_context: &'static str,
     source_descriptor: Option<PlaySourceDescriptor>,
