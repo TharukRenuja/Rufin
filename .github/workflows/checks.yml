@@ -19,6 +19,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
+      aur_metadata_required: ${{ steps.classify.outputs.aur_metadata_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
 
     steps:
@@ -39,8 +40,9 @@ jobs:
           set -euo pipefail
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "aur_metadata_required=true" >> "$GITHUB_OUTPUT"
             echo "rust_required=true" >> "$GITHUB_OUTPUT"
-            echo "Manual runs execute the full Rust checks."
+            echo "Manual runs execute the full check set."
             exit 0
           fi
 
@@ -57,6 +59,7 @@ jobs:
 
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
 
+          aur_metadata_required=false
           rust_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             rust_required=true
@@ -64,6 +67,9 @@ jobs:
 
           for path in "${changed_paths[@]}"; do
             case "$path" in
+              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
+                aur_metadata_required=true
+                ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp|po/POTFILES.in)
                 ;;
               *)
@@ -74,7 +80,48 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
+          echo "aur_metadata_required=$aur_metadata_required" >> "$GITHUB_OUTPUT"
           echo "rust_required=$rust_required" >> "$GITHUB_OUTPUT"
+
+  aur-metadata:
+    name: AUR metadata
+    needs: changes
+    if: needs.changes.outputs.aur_metadata_required == 'true'
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel \
+            diffutils \
+            git
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Prepare builder user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check .SRCINFO files
+        run: |
+          set -euo pipefail
+
+          for aur_package in rufin rufin-git; do
+            runuser -u builder -- bash -lc "
+              set -euo pipefail
+              export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+              cd '$GITHUB_WORKSPACE/packaging/aur/$aur_package'
+              makepkg --printsrcinfo > .SRCINFO.generated
+              diff -u .SRCINFO .SRCINFO.generated
+            "
+          done
 
   workspace:
     name: Workspace
@@ -163,6 +210,7 @@ jobs:
   required:
     name: Required
     needs:
+      - aur-metadata
       - changes
       - workspace
       - cargo-deny
@@ -172,6 +220,8 @@ jobs:
     steps:
       - name: Enforce check policy
         env:
+          AUR_METADATA_REQUIRED: ${{ needs.changes.outputs.aur_metadata_required }}
+          AUR_METADATA_RESULT: ${{ needs.aur-metadata.result }}
           CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
@@ -184,19 +234,21 @@ jobs:
             exit 1
           fi
 
-          if [[ "$RUST_REQUIRED" != "true" ]]; then
-            echo "Docs-only change; Rust checks are not required."
-            exit 0
-          fi
-
-          if [[ "$WORKSPACE_RESULT" != "success" ]]; then
-            echo "Workspace check did not pass: $WORKSPACE_RESULT" >&2
+          if [[ "$AUR_METADATA_REQUIRED" == "true" && "$AUR_METADATA_RESULT" != "success" ]]; then
+            echo "AUR metadata check did not pass: $AUR_METADATA_RESULT" >&2
             exit 1
           fi
 
-          if [[ "$CARGO_DENY_RESULT" != "success" ]]; then
-            echo "cargo-deny check did not pass: $CARGO_DENY_RESULT" >&2
-            exit 1
+          if [[ "$RUST_REQUIRED" == "true" ]]; then
+            if [[ "$WORKSPACE_RESULT" != "success" ]]; then
+              echo "Workspace check did not pass: $WORKSPACE_RESULT" >&2
+              exit 1
+            fi
+
+            if [[ "$CARGO_DENY_RESULT" != "success" ]]; then
+              echo "cargo-deny check did not pass: $CARGO_DENY_RESULT" >&2
+              exit 1
+            fi
           fi
 
-          echo "Required Rust checks passed."
+          echo "Required checks passed."
