@@ -264,6 +264,24 @@ row:focus {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
+.track-table.track-list row:selected,
+.track-table.track-list row:selected:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.track-table.track-list row:selected .track-list-title {
+  color: color-mix(in srgb, @destructive_color 86%, @window_fg_color);
+}
+
+.track-table.playlist-entry-table row:selected,
+.track-table.playlist-entry-table row:selected:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.track-table.playlist-entry-table row:selected .playlist-entry-title {
+  color: color-mix(in srgb, @destructive_color 86%, @window_fg_color);
+}
+
 .track-table row:selected,
 .track-table row:selected:hover,
 .album-grid > child:selected,

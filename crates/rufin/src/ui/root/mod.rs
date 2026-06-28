@@ -236,6 +236,10 @@ pub(in crate::ui) use equalizer::{
 };
 pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
+pub(in crate::ui) use library::{TrackTableSelection, TrackTableSelectionHandle};
+
+type NowPlayingSelection = Rc<dyn Fn(&QueueSnapshot)>;
+
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
     playlist_cover_size, playlist_detail_compact_for_width, playlist_route_margin,
@@ -340,6 +344,7 @@ pub(in crate::ui) struct AppState {
     library: RefCell<LibrarySnapshot>,
     track_index: RefCell<HashMap<TrackId, usize>>,
     queue: RefCell<Option<QueueSnapshot>>,
+    pending_now_playing_selection: RefCell<Option<NowPlayingSelection>>,
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<domain::TrackId>>,
@@ -520,6 +525,7 @@ pub(in crate::ui) struct GroupedDetailData {
     seed: u32,
     summary_items: Vec<(&'static str, String)>,
     actions: Option<gtk::Widget>,
+    selection_handle: Option<TrackTableSelectionHandle>,
     tracks: Vec<Track>,
     table_context: &'static str,
     source_descriptor: Option<PlaySourceDescriptor>,
@@ -571,7 +577,30 @@ pub(in crate::ui) fn track_index_for(tracks: &[Track]) -> HashMap<TrackId, usize
     index
 }
 
+pub(in crate::ui) fn queue_current_entry(queue: &QueueSnapshot) -> Option<&QueueEntry> {
+    queue
+        .current_index
+        .and_then(|index| queue.entries.get(index))
+}
+
 impl Shell {
+    pub(in crate::ui) fn arm_now_playing_selection(&self, select: NowPlayingSelection) {
+        *self.state.pending_now_playing_selection.borrow_mut() = Some(select);
+    }
+
+    pub(in crate::ui) fn apply_pending_now_playing_selection(&self, queue: Option<&QueueSnapshot>) {
+        let Some(select) = self.state.pending_now_playing_selection.borrow_mut().take() else {
+            return;
+        };
+        if let Some(queue) = queue {
+            select(queue);
+        }
+    }
+
+    pub(in crate::ui) fn clear_pending_now_playing_selection(&self) {
+        self.state.pending_now_playing_selection.borrow_mut().take();
+    }
+
     pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
         let track_index = track_index_for(&snapshot.tracks);
         *self.state.library.borrow_mut() = snapshot;
@@ -654,6 +683,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         library: RefCell::new(library),
         track_index: RefCell::new(track_index),
         queue: RefCell::new(queue),
+        pending_now_playing_selection: RefCell::new(None),
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),

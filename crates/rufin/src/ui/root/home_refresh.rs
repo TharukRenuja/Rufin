@@ -41,7 +41,16 @@ pub(in crate::ui) fn present_track_context_menu(
     track: Track,
     position: Option<(f64, f64)>,
 ) {
-    present_track_context_menu_inner(target, shell, track, position, None, None);
+    present_track_context_menu_inner(target, shell, track, position, None, None, None);
+}
+pub(in crate::ui) fn present_track_context_menu_with_play_handler(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    position: Option<(f64, f64)>,
+    on_play: Rc<dyn Fn()>,
+) {
+    present_track_context_menu_inner(target, shell, track, position, None, None, Some(on_play));
 }
 pub(in crate::ui) fn present_track_context_menu_above(
     target: &gtk::Widget,
@@ -56,16 +65,36 @@ pub(in crate::ui) fn present_track_context_menu_above(
         position,
         None,
         Some(gtk::PositionType::Top),
+        None,
     );
 }
-pub(in crate::ui) fn present_track_menu(
+pub(in crate::ui) fn present_track_menu_with_play_handler(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     track: Track,
     remove_action: PlaylistEntryContextMenuAction,
     position: Option<(f64, f64)>,
+    on_play: Rc<dyn Fn()>,
 ) {
-    present_track_context_menu_inner(target, shell, track, position, Some(remove_action), None);
+    present_track_menu_inner(target, shell, track, remove_action, position, Some(on_play));
+}
+fn present_track_menu_inner(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    remove_action: PlaylistEntryContextMenuAction,
+    position: Option<(f64, f64)>,
+    on_play: Option<Rc<dyn Fn()>>,
+) {
+    present_track_context_menu_inner(
+        target,
+        shell,
+        track,
+        position,
+        Some(remove_action),
+        None,
+        on_play,
+    );
 }
 fn present_track_context_menu_inner(
     target: &gtk::Widget,
@@ -74,6 +103,7 @@ fn present_track_context_menu_inner(
     position: Option<(f64, f64)>,
     remove_action: Option<PlaylistEntryContextMenuAction>,
     popover_position: Option<gtk::PositionType>,
+    on_play: Option<Rc<dyn Fn()>>,
 ) {
     let main_menu = context_menu_box();
     main_menu.append(&context_menu_action(
@@ -155,6 +185,9 @@ fn present_track_context_menu_inner(
         let controller = shell.controller.clone();
         let action_track = track.clone();
         move || {
+            if let Some(on_play) = on_play.as_ref() {
+                on_play();
+            }
             controller.play_now(action_track.clone());
         }
     });

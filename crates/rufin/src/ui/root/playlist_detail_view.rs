@@ -180,6 +180,7 @@ impl Shell {
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
+        let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
 
         let cover = self.cover_group_tile_for_artwork(
             &artwork,
@@ -199,8 +200,21 @@ impl Shell {
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let detail_for_play = detail.clone();
+        let play_selection = Rc::clone(&track_selection);
         play.connect_clicked(move |_| {
+            if !detail_for_play.tracks.is_empty() {
+                let play_selection = Rc::clone(&play_selection);
+                shell.arm_now_playing_selection(Rc::new(move |queue| {
+                    let Some(entry) = queue_current_entry(queue) else {
+                        return;
+                    };
+                    if let Some(selection) = play_selection.borrow().as_ref() {
+                        selection.select_track_id(&entry.track_id);
+                    }
+                }));
+            }
             controller.play_smart_playlist_detail(detail_for_play.clone());
         });
         actions.append(&play);
@@ -235,7 +249,7 @@ impl Shell {
             empty.set_margin_end(route_margin);
             wrapper.append(&empty);
         } else {
-            wrapper.append(&self.library_tracks_scrolling_panel(
+            wrapper.append(&self.library_tracks_scrolling_panel_with_selection(
                 detail.tracks,
                 LibraryListKey::SmartPlaylistTracks,
                 "smart-playlist-detail",
@@ -247,6 +261,7 @@ impl Shell {
                     ),
                     selected_music_folder_id: selected_music_folder_id(self),
                 }),
+                Some(track_selection),
             ));
         }
         let route = detail_route_wrapper(0);
@@ -319,6 +334,7 @@ impl Shell {
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(36);
+        let entry_selection: PlaylistEntrySelectionHandle = Rc::new(RefCell::new(None));
 
         let cover = self.cover_group_tile_for_artwork(
             &artwork,
@@ -339,10 +355,32 @@ impl Shell {
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
+        let shell = Rc::clone(self);
         let playlist_id_for_play = detail.playlist.id.clone();
         let entry_for_play = detail.entries.first().cloned();
+        let entries_for_selection = Rc::new(detail.entries.clone());
+        let play_selection = Rc::clone(&entry_selection);
         play.connect_clicked(move |_| {
             if let Some(entry) = entry_for_play.clone() {
+                let entries_for_selection = Rc::clone(&entries_for_selection);
+                let play_selection = Rc::clone(&play_selection);
+                shell.arm_now_playing_selection(Rc::new(move |queue| {
+                    let Some(current_index) = queue.current_index else {
+                        return;
+                    };
+                    let Some(queue_entry) = queue.entries.get(current_index) else {
+                        return;
+                    };
+                    let Some(entry) = entries_for_selection.get(current_index) else {
+                        return;
+                    };
+                    if entry.track.id != queue_entry.track_id {
+                        return;
+                    }
+                    if let Some(select_entry) = play_selection.borrow().as_ref() {
+                        select_entry(&entry.entry_id);
+                    }
+                }));
                 controller.play_playlist_entry(
                     playlist_id_for_play.clone(),
                     entry,
@@ -430,7 +468,7 @@ impl Shell {
             placeholder.set_margin_end(route_margin);
             wrapper.append(&placeholder);
         } else {
-            let entries = self.playlist_entries_view(&detail);
+            let entries = self.playlist_entries_view(&detail, Some(entry_selection));
             entries.set_margin_start(route_margin);
             entries.set_margin_end(route_margin);
             wrapper.append(&entries);
@@ -464,6 +502,7 @@ impl Shell {
     pub(in crate::ui) fn playlist_entries_view(
         self: &Rc<Self>,
         detail: &source::PlaylistDetail,
+        selection_handle: Option<PlaylistEntrySelectionHandle>,
     ) -> gtk::Widget {
         let entries = Rc::new(detail.entries.clone());
         let state = Rc::new(RefCell::new(PlaylistEntryListState::default()));
@@ -510,6 +549,7 @@ impl Shell {
             Rc::clone(&state),
             detail.playlist.id.clone(),
             route_margin * 2,
+            selection_handle,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());
 

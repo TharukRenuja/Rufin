@@ -2,6 +2,8 @@ use super::*;
 use crate::ui::root::library::configure_library_route_scroller;
 
 const ROUTE_SCROLL_OWNER_CLASS: &str = "route-scroll-owner";
+type PlaylistEntryPlayHandler = Rc<dyn Fn(&PlaylistEntryContextMenuState)>;
+type TrackPlayHandler = Rc<dyn Fn(&Track)>;
 
 pub(in crate::ui) fn mark_route_scroll_owner(scroller: &gtk::ScrolledWindow) {
     scroller.add_css_class(ROUTE_SCROLL_OWNER_CLASS);
@@ -342,6 +344,7 @@ pub(in crate::ui) struct TrackLinkCell {
     route: Rc<RefCell<Option<Route>>>,
     hover_text: Rc<RefCell<String>>,
     current_track: Rc<RefCell<Option<Track>>>,
+    current_position: Rc<Cell<u32>>,
 }
 
 thread_local! {
@@ -375,6 +378,7 @@ pub(in crate::ui) fn track_link_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
+    selection: Option<TrackTableSelection>,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -390,6 +394,7 @@ where
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
         let route = Rc::new(RefCell::new(None::<Route>));
         let hover_text = Rc::new(RefCell::new(String::new()));
 
@@ -438,7 +443,23 @@ where
             }
         });
 
-        install_dynamic_track_context_menu(&root, &setup_shell, Rc::clone(&current_track));
+        if let Some(selection) = selection.clone() {
+            let play_position = Rc::clone(&current_position);
+            let on_play: Rc<dyn Fn(&Track)> = Rc::new(move |_track| {
+                let position = play_position.get();
+                if position != gtk::INVALID_LIST_POSITION {
+                    selection.select(position);
+                }
+            });
+            install_dynamic_track_context_menu_with_play_handler(
+                &root,
+                &setup_shell,
+                Rc::clone(&current_track),
+                on_play,
+            );
+        } else {
+            install_dynamic_track_context_menu(&root, &setup_shell, Rc::clone(&current_track));
+        }
         list_item.set_child(Some(&root));
         store_track_link_cell(
             list_item,
@@ -449,6 +470,7 @@ where
                 route,
                 hover_text,
                 current_track,
+                current_position,
             },
         );
     });
@@ -469,6 +491,7 @@ where
         let track = boxed.borrow::<Track>().clone();
         let (text, route) = value(&track);
         *cell.current_track.borrow_mut() = Some(track);
+        cell.current_position.set(list_item.position());
         if let Some(route) = route {
             *cell.route.borrow_mut() = Some(route);
             *cell.hover_text.borrow_mut() = text.clone();
@@ -495,6 +518,7 @@ where
             cell.hover_text.borrow_mut().clear();
             *cell.route.borrow_mut() = None;
             *cell.current_track.borrow_mut() = None;
+            cell.current_position.set(gtk::INVALID_LIST_POSITION);
         }
     });
 
@@ -541,10 +565,11 @@ pub(in crate::ui) fn install_track_context_menu(
 ) {
     install_dynamic_track_context_menu(target, shell, Rc::new(RefCell::new(Some(track))));
 }
-pub(in crate::ui) fn install_dynamic_playlist_entry_context_menu(
+pub(in crate::ui) fn install_dynamic_playlist_entry_context_menu_with_play_handler(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     state: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
+    on_play: PlaylistEntryPlayHandler,
 ) {
     let shell = Rc::clone(shell);
     install_context_menu_openers(
@@ -553,12 +578,19 @@ pub(in crate::ui) fn install_dynamic_playlist_entry_context_menu(
             let Some(state) = state.borrow().clone() else {
                 return;
             };
-            present_track_menu(
+            let track = context_track(&shell, &state.track);
+            let action_state = state.clone();
+            let on_play = Rc::clone(&on_play);
+            let on_play: Rc<dyn Fn()> = Rc::new(move || {
+                on_play(&action_state);
+            });
+            present_track_menu_with_play_handler(
                 target,
                 &shell,
-                context_track(&shell, &state.track),
+                track,
                 state.remove_action,
                 position,
+                on_play,
             );
         }),
     );
@@ -568,6 +600,24 @@ pub(in crate::ui) fn install_dynamic_track_context_menu(
     shell: &Rc<Shell>,
     track: Rc<RefCell<Option<Track>>>,
 ) {
+    install_dynamic_track_context_menu_inner(target, shell, track, None);
+}
+
+pub(in crate::ui) fn install_dynamic_track_context_menu_with_play_handler(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    track: Rc<RefCell<Option<Track>>>,
+    on_play: TrackPlayHandler,
+) {
+    install_dynamic_track_context_menu_inner(target, shell, track, Some(on_play));
+}
+
+fn install_dynamic_track_context_menu_inner(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    track: Rc<RefCell<Option<Track>>>,
+    on_play: Option<TrackPlayHandler>,
+) {
     let shell = Rc::clone(shell);
     install_context_menu_openers(
         target,
@@ -575,7 +625,18 @@ pub(in crate::ui) fn install_dynamic_track_context_menu(
             let Some(track) = track.borrow().clone() else {
                 return;
             };
-            present_track_context_menu(target, &shell, context_track(&shell, &track), position);
+            let track = context_track(&shell, &track);
+            if let Some(on_play) = on_play.clone() {
+                let action_track = track.clone();
+                let on_play: Rc<dyn Fn()> = Rc::new(move || {
+                    on_play(&action_track);
+                });
+                present_track_context_menu_with_play_handler(
+                    target, &shell, track, position, on_play,
+                );
+            } else {
+                present_track_context_menu(target, &shell, track, position);
+            }
         }),
     );
 }

@@ -12,6 +12,21 @@ pub(in crate::ui) struct LibraryRouteLoadTiming {
     loaded_before_complete: usize,
 }
 
+struct EmbeddedTrackPanelOptions {
+    source_descriptor: Option<PlaySourceDescriptor>,
+    content_inset: i32,
+    max_visible_rows: Option<usize>,
+    selection_handle: Option<TrackTableSelectionHandle>,
+}
+
+pub(in crate::ui) struct SearchableTrackOptions {
+    pub(in crate::ui) on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
+    pub(in crate::ui) source_descriptor: Option<PlaySourceDescriptor>,
+    pub(in crate::ui) content_inset: i32,
+    pub(in crate::ui) width_mode: ColumnViewWidthMode,
+    pub(in crate::ui) selection_handle: Option<TrackTableSelectionHandle>,
+}
+
 impl Shell {
     pub(in crate::ui) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Albums);
@@ -1176,9 +1191,33 @@ impl Shell {
             tracks,
             key,
             context,
-            source_descriptor,
-            content_inset,
-            None,
+            EmbeddedTrackPanelOptions {
+                source_descriptor,
+                content_inset,
+                max_visible_rows: None,
+                selection_handle: None,
+            },
+        )
+    }
+    pub(in crate::ui) fn library_tracks_panel_with_source_selection(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+        context: &str,
+        source_descriptor: Option<PlaySourceDescriptor>,
+        content_inset: i32,
+        selection_handle: TrackTableSelectionHandle,
+    ) -> gtk::Widget {
+        self.library_tracks_panel_with_source_options(
+            tracks,
+            key,
+            context,
+            EmbeddedTrackPanelOptions {
+                source_descriptor,
+                content_inset,
+                max_visible_rows: None,
+                selection_handle: Some(selection_handle),
+            },
         )
     }
     pub(in crate::ui) fn compact_artist_tracks_table(
@@ -1186,14 +1225,18 @@ impl Shell {
         tracks: Vec<Track>,
         context: &str,
         source_descriptor: Option<PlaySourceDescriptor>,
+        selection_handle: Option<TrackTableSelectionHandle>,
     ) -> gtk::Widget {
         self.library_tracks_panel_with_source_options(
             tracks,
             LibraryListKey::ArtistTracks,
             context,
-            source_descriptor,
-            0,
-            Some(5),
+            EmbeddedTrackPanelOptions {
+                source_descriptor,
+                content_inset: 0,
+                max_visible_rows: Some(5),
+                selection_handle,
+            },
         )
     }
     fn library_tracks_panel_with_source_options(
@@ -1201,12 +1244,11 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
-        content_inset: i32,
-        max_visible_rows: Option<usize>,
+        options: EmbeddedTrackPanelOptions,
     ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         let resize_scroller = scroller.clone();
+        let max_visible_rows = options.max_visible_rows;
         let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
             set_library_table_content_height(&resize_scroller, row_count, max_visible_rows);
         });
@@ -1218,10 +1260,13 @@ impl Shell {
         let (_empty, search, view, _model, _settings) = self.searchable_track_collection(
             tracks,
             key,
-            Some(resize),
-            source_descriptor,
-            content_inset,
-            width_mode,
+            SearchableTrackOptions {
+                on_visible_count_changed: Some(resize),
+                source_descriptor: options.source_descriptor,
+                content_inset: options.content_inset,
+                width_mode,
+                selection_handle: options.selection_handle,
+            },
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
@@ -1261,13 +1306,34 @@ impl Shell {
         content_margin_start: i32,
         source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
+        self.library_tracks_scrolling_panel_with_selection(
+            tracks,
+            key,
+            context,
+            content_margin_start,
+            source_descriptor,
+            None,
+        )
+    }
+    pub(in crate::ui) fn library_tracks_scrolling_panel_with_selection(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+        context: &str,
+        content_margin_start: i32,
+        source_descriptor: Option<PlaySourceDescriptor>,
+        selection_handle: Option<TrackTableSelectionHandle>,
+    ) -> gtk::Widget {
         let (_empty, search, view, model, settings) = self.searchable_track_collection(
             tracks,
             key,
-            None,
-            source_descriptor,
-            content_margin_start,
-            ColumnViewWidthMode::RouteScroller,
+            SearchableTrackOptions {
+                on_visible_count_changed: None,
+                source_descriptor,
+                content_inset: content_margin_start,
+                width_mode: ColumnViewWidthMode::RouteScroller,
+                selection_handle,
+            },
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
@@ -1307,10 +1373,13 @@ impl Shell {
         let (empty, search, view, model, settings) = self.searchable_track_collection(
             tracks,
             key,
-            None,
-            source_descriptor,
-            0,
-            ColumnViewWidthMode::RouteScroller,
+            SearchableTrackOptions {
+                on_visible_count_changed: None,
+                source_descriptor,
+                content_inset: 0,
+                width_mode: ColumnViewWidthMode::RouteScroller,
+                selection_handle: None,
+            },
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -1341,10 +1410,7 @@ impl Shell {
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
-        on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
-        source_descriptor: Option<PlaySourceDescriptor>,
-        content_inset: i32,
-        width_mode: ColumnViewWidthMode,
+        options: SearchableTrackOptions,
     ) -> (
         bool,
         gtk::SearchEntry,
@@ -1359,14 +1425,14 @@ impl Shell {
         let settings = self.library_settings(key);
         let visible_tracks = tracks_for_settings(source_tracks.as_ref(), &settings, "", false);
         let visible_count = visible_tracks.len();
-        if track_route_tracks_key(key, width_mode).is_some() {
+        if track_route_tracks_key(key, options.width_mode).is_some() {
             self.state
                 .route_track_refs
                 .replace(track_image_refs(&visible_tracks));
         }
         warm_track_covers_for_settings(self, &visible_tracks, &settings);
         replace_tracks_in_model(&model, visible_tracks);
-        if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
+        if let Some(on_visible_count_changed) = options.on_visible_count_changed.as_ref() {
             on_visible_count_changed(visible_count);
         }
         let search = gtk::SearchEntry::new();
@@ -1376,7 +1442,8 @@ impl Shell {
             let shell = Rc::clone(self);
             let model = model.clone();
             let source_tracks = Rc::clone(&source_tracks);
-            let on_visible_count_changed = on_visible_count_changed.clone();
+            let on_visible_count_changed = options.on_visible_count_changed.clone();
+            let width_mode = options.width_mode;
             let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
                 *query.borrow_mut() = entry.text().trim().to_string();
@@ -1401,7 +1468,7 @@ impl Shell {
                 }
             });
         }
-        let play_context = source_descriptor.map(|descriptor| {
+        let play_context = options.source_descriptor.map(|descriptor| {
             track_collection_play_context(self, descriptor, key, Rc::clone(&query), false)
         });
         let view = track_collection_widget(
@@ -1409,8 +1476,9 @@ impl Shell {
             model.clone(),
             key,
             play_context,
-            content_inset,
-            width_mode,
+            options.content_inset,
+            options.width_mode,
+            options.selection_handle,
         );
         (empty, search, view, model, settings)
     }

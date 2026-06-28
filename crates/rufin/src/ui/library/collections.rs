@@ -103,6 +103,7 @@ pub(in crate::ui) fn track_collection_widget(
     play_context: Option<LoadedTrackPlayContext>,
     content_inset: i32,
     width_mode: ColumnViewWidthMode,
+    selection_handle: Option<TrackTableSelectionHandle>,
 ) -> gtk::Widget {
     match shell.library_settings(key).layout {
         LibraryLayout::Grid => track_grid(shell, model, key, play_context).upcast(),
@@ -110,14 +111,26 @@ pub(in crate::ui) fn track_collection_widget(
             shell,
             model,
             key,
-            false,
-            play_context,
-            content_inset,
-            width_mode,
+            TrackTableOptions {
+                detail: false,
+                play_context,
+                content_inset,
+                width_mode,
+                selection_handle,
+            },
         )
         .upcast(),
     }
 }
+
+pub(in crate::ui) struct TrackTableOptions {
+    pub(in crate::ui) detail: bool,
+    pub(in crate::ui) play_context: Option<LoadedTrackPlayContext>,
+    pub(in crate::ui) content_inset: i32,
+    pub(in crate::ui) width_mode: ColumnViewWidthMode,
+    pub(in crate::ui) selection_handle: Option<TrackTableSelectionHandle>,
+}
+
 fn track_model_play_action(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
@@ -462,6 +475,7 @@ where
         initial_width,
         single_click_activate,
         activate,
+        None,
     )
 }
 
@@ -472,11 +486,13 @@ fn collection_table_with_width<T>(
     initial_width: i32,
     single_click_activate: bool,
     activate: Option<Box<dyn Fn(u32, T)>>,
+    selection: Option<gtk::SelectionModel>,
 ) -> gtk::ColumnView
 where
     T: Clone + 'static,
 {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let selection =
+        selection.unwrap_or_else(|| gtk::NoSelection::new(Some(model.clone())).upcast());
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
     if single_click_activate {
@@ -522,12 +538,16 @@ pub(in crate::ui) fn track_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
-    detail: bool,
-    play_context: Option<LoadedTrackPlayContext>,
-    content_inset: i32,
-    width_mode: ColumnViewWidthMode,
+    options: TrackTableOptions,
 ) -> gtk::ColumnView {
-    let fields = if detail {
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    selection.set_autoselect(false);
+    selection.set_can_unselect(true);
+    let track_selection = TrackTableSelection::new(&model, &selection);
+    if let Some(selection_handle) = options.selection_handle.as_ref() {
+        *selection_handle.borrow_mut() = Some(track_selection.clone());
+    }
+    let fields = if options.detail {
         shell.library_settings(key).detail_track_fields
     } else {
         shell.library_settings(key).row_fields
@@ -535,29 +555,35 @@ pub(in crate::ui) fn track_table(
     let columns = fields
         .into_iter()
         .map(|field| {
-            let column = track_column_for_key(shell, key, field);
+            let column = track_column_for_key(shell, key, field, Some(track_selection.clone()));
             (column, track_column_fit_width(key, field))
         })
         .collect::<Vec<_>>();
     let controller = shell.controller.clone();
     let activate_model = model.clone();
+    let activate_selection = track_selection.clone();
     let activate = Box::new(move |position, track: Track| {
+        activate_selection.select(position);
         play_track_from_model(
             &controller,
             &activate_model,
-            play_context.as_ref(),
+            options.play_context.as_ref(),
             Some(position),
             track,
         );
     });
-    collection_table_with_width(
+    let table = collection_table_with_width(
         shell,
         model,
         columns,
-        column_view_initial_width(shell, content_inset, width_mode),
+        column_view_initial_width(shell, options.content_inset, options.width_mode),
         false,
         Some(activate),
-    )
+        Some(selection.upcast()),
+    );
+    table.add_css_class("track-list");
+    track_selection.install_guard();
+    table
 }
 pub(in crate::ui) fn set_library_table_content_height(
     scroller: &gtk::ScrolledWindow,
