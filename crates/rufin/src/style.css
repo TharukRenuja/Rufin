@@ -760,6 +760,55 @@ menubutton.server-selector > button:hover {
   transform: scale(0.96);
 }
 
+.cover-hover-button.cover-hover-animated {
+  background: transparent;
+  transform: none;
+  transition:
+    background 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.cover-hover-face {
+  border-radius: 999px;
+  background: white;
+  transform: scale(1);
+  transition:
+    background 120ms ease-out,
+    transform 120ms ease-out;
+}
+
+.cover-hover-button.cover-hover-animated:hover {
+  background: transparent;
+  transform: none;
+}
+
+.cover-hover-button.cover-hover-animated:hover .cover-hover-face {
+  background: #f7f7f7;
+  transform: scale(1.08);
+}
+
+.cover-hover-button.cover-hover-animated:active {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+  transform: none;
+}
+
+.cover-hover-button.cover-hover-animated:active .cover-hover-face {
+  transform: scale(0.96);
+}
+
+.cover-side-button .cover-hover-face,
+.cover-menu-button .cover-hover-face {
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.cover-play-button .cover-hover-face {
+  min-width: 54px;
+  min-height: 54px;
+}
+
 .cover-hover-transport {
   background: transparent;
 }
@@ -1221,48 +1270,72 @@ popover.audio-output-popover > contents {
   min-width: 48px;
   min-height: 48px;
   padding: 0;
-  background: white;
+  background: transparent;
   color: #111111;
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.18),
     inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition:
+    background 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.detail-showcase-action-face {
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 999px;
+  background: white;
   transform: scale(1);
   transition:
     background 120ms ease-out,
-    box-shadow 120ms ease-out,
     transform 120ms ease-out;
 }
 
 .detail-showcase-action-button:hover {
-  background: #f7f7f7;
+  background: transparent;
   box-shadow:
     0 10px 26px rgba(0, 0, 0, 0.26),
     inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.detail-showcase-action-button:hover .detail-showcase-action-face {
+  background: #f7f7f7;
   transform: scale(1.08);
 }
 
 .detail-showcase-action-button:active {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.24),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.detail-showcase-action-button:active .detail-showcase-action-face {
   transform: scale(0.96);
 }
 
 .detail-showcase-play-button {
   min-width: 56px;
   min-height: 56px;
-  background: white;
+  background: transparent;
   color: #111111;
   -gtk-icon-size: 18px;
 }
 
-.detail-showcase-play-button:hover {
-  background: #f7f7f7;
+.detail-showcase-play-button .detail-showcase-action-face {
+  min-width: 56px;
+  min-height: 56px;
 }
 
 .detail-showcase-action-button.favorite-toggle.active-toggle {
   color: @error_color;
+  background: transparent;
+}
+
+.detail-showcase-action-button.favorite-toggle.active-toggle .detail-showcase-action-face {
   background: white;
 }
 
-.detail-showcase-action-button.favorite-toggle.active-toggle:hover {
+.detail-showcase-action-button.favorite-toggle.active-toggle:hover .detail-showcase-action-face {
   background: #f7f7f7;
 }
 

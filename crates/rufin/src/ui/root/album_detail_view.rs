@@ -174,6 +174,7 @@ impl Shell {
 
         let favorite = favorite_icon_button("Favorite");
         favorite.add_css_class("detail-showcase-action-button");
+        wrap_button_child_in_face(&favorite, "detail-showcase-action-face");
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let shell = Rc::clone(self);

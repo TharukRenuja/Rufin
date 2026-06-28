@@ -961,14 +961,19 @@ pub(in crate::ui) fn favorite_icon_button(label: &str) -> gtk::Button {
 }
 pub(in crate::ui) fn set_favorite_button_active(button: &gtk::Button, active: bool) {
     set_active_class(button, active);
-    button.set_label(if active {
+    let glyph = if active {
         FAVORITE_FILLED_GLYPH
     } else {
         FAVORITE_EMPTY_GLYPH
-    });
+    };
+    if let Some(label) = favorite_button_glyph(button) {
+        label.set_label(glyph);
+    } else {
+        button.set_label(glyph);
+    }
 }
 pub(in crate::ui) fn favorite_button_is_active(button: &gtk::Button) -> bool {
-    button.label().as_deref() == Some(FAVORITE_FILLED_GLYPH)
+    button.has_css_class("active-toggle")
 }
 pub(in crate::ui) fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon_name);
@@ -978,6 +983,51 @@ pub(in crate::ui) fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
     button
+}
+pub(in crate::ui) fn nudge_transport_action_icon(button: &gtk::Button, icon_name: &str) {
+    let start_margin = if icon_name == "media-playback-start-symbolic" {
+        4
+    } else if icon_name == PLAY_NEXT_ICON || icon_name == PLAY_LATER_ICON {
+        2
+    } else {
+        return;
+    };
+    let Some(child) = button.child() else {
+        return;
+    };
+    if let Ok(image) = child.downcast::<gtk::Image>() {
+        image.set_margin_start(start_margin);
+    }
+}
+pub(in crate::ui) fn wrap_button_child_in_face(button: &gtk::Button, css_class: &str) {
+    let Some(child) = button.child() else {
+        return;
+    };
+    button.set_child(None::<&gtk::Widget>);
+    child.set_halign(gtk::Align::Center);
+    child.set_valign(gtk::Align::Center);
+
+    let face = gtk::CenterBox::new();
+    face.add_css_class(css_class);
+    face.set_can_target(false);
+    face.set_halign(gtk::Align::Center);
+    face.set_valign(gtk::Align::Center);
+    face.set_center_widget(Some(&child));
+    button.set_child(Some(&face));
+}
+fn favorite_button_glyph(button: &gtk::Button) -> Option<gtk::Label> {
+    button.child().and_then(favorite_glyph_from_widget)
+}
+fn favorite_glyph_from_widget(widget: gtk::Widget) -> Option<gtk::Label> {
+    let widget = match widget.downcast::<gtk::Label>() {
+        Ok(label) => return Some(label),
+        Err(widget) => widget,
+    };
+    widget
+        .downcast::<gtk::CenterBox>()
+        .ok()
+        .and_then(|face| face.center_widget())
+        .and_then(favorite_glyph_from_widget)
 }
 pub(in crate::ui) fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();

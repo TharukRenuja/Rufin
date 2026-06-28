@@ -273,6 +273,7 @@ impl Shell {
 
         let favorite = favorite_icon_button("Favorite");
         favorite.add_css_class("detail-showcase-action-button");
+        wrap_button_child_in_face(&favorite, "detail-showcase-action-face");
         set_favorite_button_active(&favorite, artist.favorite);
         self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
         let shell = Rc::clone(self);
