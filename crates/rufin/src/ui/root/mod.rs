@@ -291,8 +291,8 @@ pub(in crate::ui) const HOME_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const GRID_COVER_LIMIT: usize = 192;
 pub(in crate::ui) const WARM_SETTLE_MS: u64 = RESPONSIVE_RENDER_DELAY_MS * 5;
 pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
-pub(in crate::ui) const FAVORITE_EMPTY_GLYPH: &str = "♡";
-pub(in crate::ui) const FAVORITE_FILLED_GLYPH: &str = "♥";
+pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "rufin-favorite-add-symbolic";
+pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "rufin-favorite-remove-symbolic";
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
 
 pub(in crate::ui) fn library_preparing_status() -> String {
@@ -301,11 +301,27 @@ pub(in crate::ui) fn library_preparing_status() -> String {
 pub(in crate::ui) const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
 pub(in crate::ui) const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
 pub(in crate::ui) const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
-pub(in crate::ui) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
-pub(in crate::ui) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
+pub(in crate::ui) const PLAY_ICON: &str = "rufin-play-symbolic";
+pub(in crate::ui) const PLAY_NEXT_ICON: &str = "rufin-play-next-symbolic";
+pub(in crate::ui) const PLAY_LATER_ICON: &str = "rufin-play-later-symbolic";
+pub(in crate::ui) const EDIT_ICON: &str = "rufin-edit-symbolic";
+pub(in crate::ui) const ADD_ICON: &str = "rufin-add-symbolic";
+pub(in crate::ui) const REMOVE_ICON: &str = "rufin-remove-symbolic";
+pub(in crate::ui) const MORE_ICON: &str = "rufin-more-symbolic";
+pub(in crate::ui) const SORT_ORDER_ICON: &str = "rufin-sort-name-symbolic";
+pub(in crate::ui) const SORT_ORDER_DESCENDING_ICON: &str = "rufin-sort-name-descending-symbolic";
 pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 pub(in crate::ui) const RESPONSIVE_ROUTE_SETTLE_MS: u64 = 180;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub(in crate::ui) fn sort_order_icon(descending: bool) -> &'static str {
+    if descending {
+        SORT_ORDER_DESCENDING_ICON
+    } else {
+        SORT_ORDER_ICON
+    }
+}
+
 pub(in crate::ui) fn route_resize_diagnostics_enabled() -> bool {
     matches!(
         std::env::var("RUFIN_RESIZE_DEBUG")

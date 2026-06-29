@@ -254,11 +254,11 @@ pub(in crate::ui) fn detail_delete_button(label: &str) -> gtk::Button {
     button.add_css_class("circular");
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
-    button.set_child(Some(&gtk::Image::from_icon_name("window-close-symbolic")));
+    button.set_child(Some(&gtk::Image::from_icon_name(REMOVE_ICON)));
     configure_action_button(
         &button,
         ActionButtonVariant::DetailAction,
-        Some("window-close-symbolic"),
+        Some(REMOVE_ICON),
     );
     button
 }

@@ -131,7 +131,7 @@ impl PreferencesPageKind {
             Self::Layout => "preferences-desktop-display-symbolic",
             Self::Scrobbling => SCROBBLING_ICON_NAME,
             Self::Playback => "media-playback-start-symbolic",
-            Self::Library => "route-tracks-symbolic",
+            Self::Library => "rufin-route-tracks-symbolic",
         }
     }
 
@@ -989,7 +989,7 @@ fn sidebar_item_row(
         })
         .build();
 
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     row.add_prefix(&drag);

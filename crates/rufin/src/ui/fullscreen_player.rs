@@ -266,7 +266,7 @@ fn fullscreen_player_switcher(
     switcher.set_halign(gtk::Align::Center);
 
     let (queue, queue_label) = fullscreen_player_tab_button(
-        gtk::Image::from_icon_name("view-list-ordered-symbolic").upcast(),
+        gtk::Image::from_icon_name("rufin-view-list-ordered-symbolic").upcast(),
         "Queue",
     );
     let (lyrics, lyrics_label) = fullscreen_player_tab_button(

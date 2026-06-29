@@ -11,12 +11,10 @@ const CONTEXT_PLAYLIST_ROW_COVER_SIZE: i32 = 48;
 const CONTEXT_SUBMENU_CLOSE_DELAY_MS: u64 = 120;
 const ADD_TO_PLAYLIST_DIALOG_WIDTH: i32 = 700;
 const ADD_TO_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
-pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "route-playlists-symbolic";
-pub(in crate::ui) const ALBUM_ICON: &str = "route-albums-symbolic";
-pub(in crate::ui) const ARTIST_ICON: &str = "route-artists-symbolic";
-pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "favorite-add";
-pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "favorite-remove";
-pub(in crate::ui) const RADIO_ICON: &str = "audio-radio-symbolic";
+pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
+pub(in crate::ui) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
+pub(in crate::ui) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
+pub(in crate::ui) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 thread_local! {
     static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };
@@ -106,11 +104,7 @@ fn present_track_context_menu_inner(
     on_play: Option<Rc<dyn Fn()>>,
 ) {
     let main_menu = context_menu_box();
-    main_menu.append(&context_menu_action(
-        "Play",
-        "track.play",
-        "media-playback-start-symbolic",
-    ));
+    main_menu.append(&context_menu_action("Play", "track.play", PLAY_ICON));
     main_menu.append(&context_menu_action(
         "Play Next",
         "track.play-next",
@@ -171,7 +165,7 @@ fn present_track_context_menu_inner(
         main_menu.append(&context_menu_action(
             "Remove from playlist",
             "track.remove-from-playlist",
-            "remove-minus",
+            REMOVE_ICON,
         ));
     }
 
@@ -289,11 +283,7 @@ pub(in crate::ui) fn present_album_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let main_menu = context_menu_box();
-    main_menu.append(&context_menu_action(
-        "Play",
-        "album.play",
-        "media-playback-start-symbolic",
-    ));
+    main_menu.append(&context_menu_action("Play", "album.play", PLAY_ICON));
     main_menu.append(&context_menu_action(
         "Play Next",
         "album.play-next",
@@ -459,11 +449,7 @@ pub(in crate::ui) fn present_artist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let main_menu = context_menu_box();
-    main_menu.append(&context_menu_action(
-        "Play",
-        "artist.play",
-        "media-playback-start-symbolic",
-    ));
+    main_menu.append(&context_menu_action("Play", "artist.play", PLAY_ICON));
     main_menu.append(&context_menu_action(
         "Play Next",
         "artist.play-next",
@@ -626,11 +612,7 @@ pub(in crate::ui) fn present_genre_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let main_menu = context_menu_box();
-    main_menu.append(&context_menu_action(
-        "Play",
-        "genre.play",
-        "media-playback-start-symbolic",
-    ));
+    main_menu.append(&context_menu_action("Play", "genre.play", PLAY_ICON));
     main_menu.append(&context_menu_action(
         "Play Next",
         "genre.play-next",
@@ -739,11 +721,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let menu = context_menu_box();
-    menu.append(&context_menu_action(
-        "Play",
-        "playlist.play",
-        "media-playback-start-symbolic",
-    ));
+    menu.append(&context_menu_action("Play", "playlist.play", PLAY_ICON));
     menu.append(&context_menu_action(
         "Play Next",
         "playlist.play-next",
@@ -763,7 +741,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
     menu.append(&context_menu_action(
         "Delete",
         "playlist.delete",
-        "window-close-symbolic",
+        REMOVE_ICON,
     ));
 
     let surface =
@@ -853,12 +831,12 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
     menu.append(&context_menu_action(
         "Play",
         "smart-playlist.play",
-        "media-playback-start-symbolic",
+        PLAY_ICON,
     ));
     menu.append(&context_menu_action(
         "Delete",
         "smart-playlist.delete",
-        "window-close-symbolic",
+        REMOVE_ICON,
     ));
 
     let surface = ContextMenuSurface::new(
@@ -1177,7 +1155,7 @@ fn playlist_picker_row(
     let meta = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     meta.add_css_class("context-playlist-meta");
     meta.append(&playlist_picker_meta(
-        "route-tracks-symbolic",
+        "rufin-route-tracks-symbolic",
         &track_count_text(playlist.track_count.into()),
     ));
     meta.append(&playlist_picker_meta(
@@ -1407,7 +1385,7 @@ pub(in crate::ui) fn radio_context_submenu(group: &str) -> gtk::Box {
     menu.append(&context_menu_action(
         "Play",
         &format!("{group}.play-radio"),
-        "media-playback-start-symbolic",
+        PLAY_ICON,
     ));
     menu.append(&context_menu_action(
         "Play Next",
@@ -1505,21 +1483,22 @@ fn context_menu_button_content(label: &str, icon_name: &str) -> gtk::Box {
     row
 }
 fn context_menu_icon(icon_name: &str) -> gtk::Widget {
-    let icon = if icon_name == FAVORITE_REMOVE_ICON {
-        gtk::Label::new(Some(FAVORITE_FILLED_GLYPH)).upcast::<gtk::Widget>()
-    } else if icon_name == FAVORITE_ADD_ICON {
-        gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH)).upcast::<gtk::Widget>()
-    } else if icon_name == "remove-minus" {
-        gtk::Label::new(Some("−")).upcast::<gtk::Widget>()
-    } else {
+    let icon = {
         let image = gtk::Image::from_icon_name(icon_name);
-        let pixel_size = if icon_name == "media-playback-start-symbolic" {
+        let pixel_size = if icon_name == PLAY_ICON {
             12
         } else if icon_name == ADD_TO_PLAYLIST_ICON {
             16
         } else if matches!(
             icon_name,
-            PLAY_NEXT_ICON | PLAY_LATER_ICON | ARTIST_ICON | ALBUM_ICON | RADIO_ICON
+            PLAY_NEXT_ICON
+                | PLAY_LATER_ICON
+                | ARTIST_ICON
+                | ALBUM_ICON
+                | RADIO_ICON
+                | FAVORITE_ADD_ICON
+                | FAVORITE_REMOVE_ICON
+                | REMOVE_ICON
         ) {
             20
         } else {

@@ -307,7 +307,7 @@ fn schedule_server_selection_popdown(
 
 fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
     match &content.selected_source {
-        Some(LibrarySourceSelection::Local) => "route-folders-symbolic",
+        Some(LibrarySourceSelection::Local) => "rufin-route-folders-symbolic",
         Some(LibrarySourceSelection::Server(_)) => content
             .active_server
             .as_ref()
@@ -345,7 +345,7 @@ fn provider_icon_name(provider: &str) -> &'static str {
         "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
         "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
         "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
-        "local" | "fake" => "route-folders-symbolic",
+        "local" | "fake" => "rufin-route-folders-symbolic",
         _ => "network-server-symbolic",
     }
 }
@@ -387,7 +387,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     if !content.local_folders.is_empty() {
         let local_active = matches!(content.selected_source, Some(LibrarySourceSelection::Local));
         let local = server_action_row(
-            "route-folders-symbolic",
+            "rufin-route-folders-symbolic",
             &tr("Local"),
             &local_source_popup_detail(&content.local_folders),
             local_active,
@@ -477,7 +477,12 @@ fn append_server_music_folder_rows(
     content: &ServerSelectorContent,
 ) {
     let all_active = content.selected_music_folder_id.is_none();
-    let all = server_action_row("route-folders-symbolic", &tr("All Music"), "", all_active);
+    let all = server_action_row(
+        "rufin-route-folders-symbolic",
+        &tr("All Music"),
+        "",
+        all_active,
+    );
     if !all_active {
         let row_popover = popover.clone();
         let controller = shell.controller.clone();

@@ -197,7 +197,7 @@ impl Shell {
         );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
+        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let detail_for_play = detail.clone();
@@ -217,7 +217,7 @@ impl Shell {
             controller.play_smart_playlist_detail(detail_for_play.clone());
         });
         actions.append(&play);
-        let edit = detail_action_button("document-edit-symbolic", "Edit");
+        let edit = detail_action_button(EDIT_ICON, "Edit");
         let shell = Rc::clone(self);
         let playlist_for_edit = detail.smart_playlist.clone();
         edit.connect_clicked(move |_| shell.edit_smart_playlist_dialog(playlist_for_edit.clone()));
@@ -351,7 +351,7 @@ impl Shell {
         );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
+        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let playlist_id_for_play = detail.playlist.id.clone();
@@ -390,7 +390,7 @@ impl Shell {
             }
         });
         actions.append(&play);
-        let rename = detail_action_button("document-edit-symbolic", "Rename");
+        let rename = detail_action_button(EDIT_ICON, "Rename");
         let shell = Rc::clone(self);
         let playlist_id_for_rename = detail.playlist.id.clone();
         let current_name = detail.playlist.name.clone();
@@ -398,7 +398,7 @@ impl Shell {
             shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
         });
         actions.append(&rename);
-        let add_current = detail_action_button("list-add-symbolic", "Add current");
+        let add_current = detail_action_button(ADD_ICON, "Add current");
         let current_track = self
             .state
             .player
@@ -534,7 +534,7 @@ impl Shell {
         sort_dropdown.set_halign(gtk::Align::End);
         sort_dropdown.set_width_request(playlist_sort_width(content_width));
 
-        let direction = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
+        let direction = gtk::Button::from_icon_name(sort_order_icon(state.borrow().descending));
         direction.add_css_class("flat");
         direction.set_tooltip_text(Some(&tr("Change sort order")));
         toolbar.append(&sort_dropdown);
@@ -577,17 +577,13 @@ impl Shell {
             let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
-            direction.connect_clicked(move |button| {
+            direction.connect_clicked(move |direction| {
                 let descending = {
                     let mut state = state.borrow_mut();
                     state.descending = !state.descending;
                     state.descending
                 };
-                button.set_icon_name(if descending {
-                    "view-sort-descending-symbolic"
-                } else {
-                    "view-sort-ascending-symbolic"
-                });
+                direction.set_icon_name(sort_order_icon(descending));
                 rebuild_playlist_entries_model(&model, &entries, &state.borrow());
             });
         }
@@ -600,7 +596,7 @@ fn playlist_detail_summary(track_count: u32, duration_seconds: u32) -> gtk::Box 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_halign(gtk::Align::Start);
     row.append(&playlist_detail_summary_item(
-        "route-tracks-symbolic",
+        "rufin-route-tracks-symbolic",
         &track_count_text(track_count.into()),
     ));
     row.append(&playlist_detail_summary_item(

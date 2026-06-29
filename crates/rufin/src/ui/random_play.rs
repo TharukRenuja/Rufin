@@ -7,7 +7,9 @@ use source::PlayedFilter;
 use crate::controller::{RandomPlayAction, RandomPlayRequest};
 use crate::i18n::tr;
 
-use super::{PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, present_light_dismiss_dialog, text_button};
+use super::{
+    PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, present_light_dismiss_dialog, text_button,
+};
 
 const DEFAULT_LIMIT: f64 = 100.0;
 const MIN_LIMIT: f64 = 1.0;
@@ -84,7 +86,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
     let play_next = text_button(PLAY_NEXT_ICON, "Play Next");
-    let play_now = text_button("media-playback-start-symbolic", "Play");
+    let play_now = text_button(PLAY_ICON, "Play");
     play_now.add_css_class("suggested-action");
     let add_last = text_button(PLAY_LATER_ICON, "Add Last");
     actions.append(&play_next);

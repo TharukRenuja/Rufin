@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::msgid;
+use crate::ui::{ADD_ICON, MORE_ICON, sort_order_icon};
 
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
@@ -370,12 +371,7 @@ impl Shell {
         match key {
             LibraryListKey::Playlists => {
                 let create = gtk::Button::new();
-                set_library_command_button_content(
-                    &create,
-                    false,
-                    "list-add-symbolic",
-                    "New Playlist",
-                );
+                set_library_command_button_content(&create, false, ADD_ICON, "New Playlist");
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
                 controls.append(&create);
@@ -383,12 +379,7 @@ impl Shell {
             }
             LibraryListKey::SmartPlaylists => {
                 let create = gtk::Button::new();
-                set_library_command_button_content(
-                    &create,
-                    false,
-                    "list-add-symbolic",
-                    "New Playlist",
-                );
+                set_library_command_button_content(&create, false, ADD_ICON, "New Playlist");
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_smart_playlist_dialog());
                 controls.append(&create);
@@ -424,19 +415,18 @@ impl Shell {
         }
         controls.append(&sort_dropdown);
 
-        let direction = gtk::Button::from_icon_name(if settings.descending {
-            "view-sort-descending-symbolic"
-        } else {
-            "view-sort-ascending-symbolic"
-        });
+        let direction = gtk::Button::from_icon_name(sort_order_icon(settings.descending));
         direction.add_css_class("flat");
         direction.set_tooltip_text(Some(&tr("Change sort order")));
         {
             let shell = Rc::clone(self);
-            direction.connect_clicked(move |_| {
+            direction.connect_clicked(move |direction| {
+                let mut descending = false;
                 shell.update_library_list_settings(key, |settings| {
                     settings.descending = !settings.descending;
+                    descending = settings.descending;
                 });
+                direction.set_icon_name(sort_order_icon(descending));
                 shell.render_current_route_preserving_scroll();
             });
         }
@@ -460,7 +450,7 @@ impl Shell {
         }
         controls.append(&layout);
 
-        let configure = gtk::Button::from_icon_name("view-more-symbolic");
+        let configure = gtk::Button::from_icon_name(MORE_ICON);
         configure.add_css_class("flat");
         configure.set_tooltip_text(Some(&tr("Customize display")));
         {
@@ -791,12 +781,7 @@ fn apply_library_toolbar_layout(
     if let Some(button) = command_button {
         let compact = library_toolbar_compact_for_width(width);
         if command_compact.replace(compact) != compact {
-            set_library_command_button_content(
-                button,
-                compact,
-                "list-add-symbolic",
-                "New Playlist",
-            );
+            set_library_command_button_content(button, compact, ADD_ICON, "New Playlist");
         }
     }
 }

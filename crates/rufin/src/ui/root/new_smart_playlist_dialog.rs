@@ -290,7 +290,7 @@ fn append_rule_list(
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_halign(gtk::Align::End);
 
-    let add_rule = text_button("list-add-symbolic", "Add Rule");
+    let add_rule = text_button(ADD_ICON, "Add Rule");
     {
         let rules = Rc::clone(&rules);
         let rerender = Rc::clone(&rerender);
@@ -381,7 +381,7 @@ fn append_rule_row(
     append_value_editor(&value_box, Rc::clone(&rules), index, &rule);
     row.append(&value_box);
 
-    let remove = gtk::Button::from_icon_name("window-close-symbolic");
+    let remove = gtk::Button::from_icon_name(REMOVE_ICON);
     remove.add_css_class("flat");
     remove.set_tooltip_text(Some(&tr("Remove rule")));
     {

@@ -817,7 +817,7 @@ pub(in crate::ui) fn smart_playlist_card(
 }
 
 pub(in crate::ui) fn smart_playlist_drag_handle(playlist_id: &SmartPlaylistId) -> gtk::Image {
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     drag.set_width_request(SMART_PLAYLIST_REORDER_WIDTH);

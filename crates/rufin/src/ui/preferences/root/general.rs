@@ -441,7 +441,7 @@ async fn connect_librefm_session(shell: &Rc<Shell>) -> Result<AudioscrobblerSess
 pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Playback"))
-        .icon_name("route-tracks-symbolic")
+        .icon_name("rufin-route-tracks-symbolic")
         .build();
 
     let app_settings = shell.state.settings.borrow().clone();

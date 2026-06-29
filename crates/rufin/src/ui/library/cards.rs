@@ -569,7 +569,7 @@ pub(in crate::ui) fn library_field_config_row(
         .subtitle(if enabled { tr("Visible") } else { tr("Hidden") })
         .build();
 
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     row.add_prefix(&drag);
@@ -886,8 +886,8 @@ pub(in crate::ui) fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> 
 pub(in crate::ui) fn layout_icon(layout: LibraryLayout) -> &'static str {
     match layout {
         LibraryLayout::Grid => "view-grid-symbolic",
-        LibraryLayout::Row => "view-list-symbolic",
-        LibraryLayout::Detail => "view-list-details-symbolic",
+        LibraryLayout::Row => "rufin-view-list-symbolic",
+        LibraryLayout::Detail => "rufin-view-list-details-symbolic",
     }
 }
 pub(in crate::ui) fn layout_title(layout: LibraryLayout) -> &'static str {

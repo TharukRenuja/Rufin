@@ -4,4 +4,4 @@ Icons in `hicolor/64x64/apps` are taken from repositories of [Jellyfin (CC-BY-SA
 
 External service icons in `hicolor/64x64/apps` are resized from [Last.fm favicon](https://commons.wikimedia.org/wiki/File:Last.fm_favicon.png) and [MusicBrainz Logo Icon (2016)](https://commons.wikimedia.org/wiki/File:MusicBrainz_Logo_Icon_(2016).svg).
 
-`hicolor/scalable/actions/route-smart-playlists-symbolic.svg` is based on `playlist-symbolic.svg` from [FolderPlay (GPL-3.0)](https://github.com/juancarlosbernal/FolderPlay).
+`hicolor/scalable/actions/rufin-route-smart-playlists-symbolic.svg` is based on `playlist-symbolic.svg` from [FolderPlay (GPL-3.0)](https://github.com/juancarlosbernal/FolderPlay).

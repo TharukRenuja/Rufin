@@ -811,7 +811,7 @@ fn playlist_entry_title_column(
     column
 }
 fn playlist_entry_drag_handle(state: &PlaylistEntryCellState) -> gtk::Image {
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     drag.set_width_request(PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH);
@@ -950,7 +950,7 @@ pub(in crate::ui) fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bo
     }
 }
 pub(in crate::ui) fn favorite_icon_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::with_label(FAVORITE_EMPTY_GLYPH);
+    let button = gtk::Button::from_icon_name(FAVORITE_ADD_ICON);
     button.add_css_class("icon-button");
     button.add_css_class("flat");
     button.add_css_class("circular");
@@ -961,15 +961,15 @@ pub(in crate::ui) fn favorite_icon_button(label: &str) -> gtk::Button {
 }
 pub(in crate::ui) fn set_favorite_button_active(button: &gtk::Button, active: bool) {
     set_active_class(button, active);
-    let glyph = if active {
-        FAVORITE_FILLED_GLYPH
+    let icon_name = if active {
+        FAVORITE_REMOVE_ICON
     } else {
-        FAVORITE_EMPTY_GLYPH
+        FAVORITE_ADD_ICON
     };
-    if let Some(label) = favorite_button_glyph(button) {
-        label.set_label(glyph);
+    if let Some(image) = button.child().and_then(icon_image_from_widget) {
+        image.set_icon_name(Some(icon_name));
     } else {
-        button.set_label(glyph);
+        button.set_icon_name(icon_name);
     }
 }
 pub(in crate::ui) fn favorite_button_is_active(button: &gtk::Button) -> bool {
@@ -1053,13 +1053,6 @@ pub(in crate::ui) fn configure_action_button(
         "detail-showcase-action-face"
     };
     wrap_button_child_in_action_layers(button, face_class);
-    if matches!(
-        variant,
-        ActionButtonVariant::CoverCornerFavorite | ActionButtonVariant::DetailFavorite
-    ) && let Some(label) = favorite_button_glyph(button)
-    {
-        label.set_margin_start(1);
-    }
 }
 
 fn pin_action_button(button: &gtk::Button, size: i32) {
@@ -1069,7 +1062,7 @@ fn pin_action_button(button: &gtk::Button, size: i32) {
 }
 
 fn nudge_transport_action_icon(button: &gtk::Button, icon_name: &str) {
-    let start_margin = if icon_name == "media-playback-start-symbolic" {
+    let start_margin = if icon_name == PLAY_ICON {
         4
     } else if icon_name == PLAY_NEXT_ICON || icon_name == PLAY_LATER_ICON {
         2
@@ -1102,19 +1095,16 @@ fn wrap_button_child_in_action_layers(button: &gtk::Button, face_class: &str) {
     shadow.set_center_widget(Some(&face));
     button.set_child(Some(&shadow));
 }
-fn favorite_button_glyph(button: &gtk::Button) -> Option<gtk::Label> {
-    button.child().and_then(favorite_glyph_from_widget)
-}
-fn favorite_glyph_from_widget(widget: gtk::Widget) -> Option<gtk::Label> {
-    let widget = match widget.downcast::<gtk::Label>() {
-        Ok(label) => return Some(label),
+fn icon_image_from_widget(widget: gtk::Widget) -> Option<gtk::Image> {
+    let widget = match widget.downcast::<gtk::Image>() {
+        Ok(image) => return Some(image),
         Err(widget) => widget,
     };
     widget
         .downcast::<gtk::CenterBox>()
         .ok()
         .and_then(|face| face.center_widget())
-        .and_then(favorite_glyph_from_widget)
+        .and_then(icon_image_from_widget)
 }
 pub(in crate::ui) fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();

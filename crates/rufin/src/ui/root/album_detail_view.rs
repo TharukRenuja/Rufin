@@ -77,7 +77,7 @@ impl Shell {
         let facts = detail_summary_row(&[
             ("x-office-calendar-symbolic", album.year.to_string()),
             (
-                "route-tracks-symbolic",
+                "rufin-route-tracks-symbolic",
                 track_count_text(album.track_count.into()),
             ),
             (
@@ -149,7 +149,7 @@ impl Shell {
         let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
         actions.set_halign(gtk::Align::Start);
-        let play_album = detail_primary_action_button("media-playback-start-symbolic", "Play");
+        let play_album = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let album_id_for_play = album.id.clone();

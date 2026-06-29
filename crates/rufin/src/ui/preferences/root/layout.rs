@@ -21,7 +21,7 @@ pub(in crate::ui) fn populate_home_block_rows(
             .subtitle(home_block_subtitle(block, active, visible_index))
             .build();
 
-        let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+        let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
         drag.add_css_class("dim-label");
         drag.set_tooltip_text(Some(&tr("Drag to reorder")));
         row.add_prefix(&drag);
