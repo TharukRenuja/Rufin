@@ -149,8 +149,7 @@ impl Shell {
         let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
         actions.set_halign(gtk::Align::Start);
-        let play_album = detail_action_button("media-playback-start-symbolic", "Play");
-        play_album.add_css_class("detail-showcase-play-button");
+        let play_album = detail_primary_action_button("media-playback-start-symbolic", "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let album_id_for_play = album.id.clone();
@@ -173,8 +172,7 @@ impl Shell {
         append_track_batch_queue_actions(&actions, &self.controller, Rc::new(tracks.clone()));
 
         let favorite = favorite_icon_button("Favorite");
-        favorite.add_css_class("detail-showcase-action-button");
-        wrap_button_child_in_face(&favorite, "detail-showcase-action-face");
+        configure_action_button(&favorite, ActionButtonVariant::DetailFavorite, None);
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let shell = Rc::clone(self);

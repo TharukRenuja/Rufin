@@ -984,7 +984,91 @@ pub(in crate::ui) fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
     button
 }
-pub(in crate::ui) fn nudge_transport_action_icon(button: &gtk::Button, icon_name: &str) {
+
+#[derive(Clone, Copy)]
+pub(in crate::ui) enum ActionButtonVariant {
+    CoverSideTransport,
+    CoverPrimaryTransport,
+    CoverCornerMenu,
+    CoverCornerFavorite,
+    DetailAction,
+    DetailPrimary,
+    DetailFavorite,
+}
+
+pub(in crate::ui) fn configure_action_button(
+    button: &gtk::Button,
+    variant: ActionButtonVariant,
+    icon_name: Option<&str>,
+) {
+    let is_cover = matches!(
+        variant,
+        ActionButtonVariant::CoverSideTransport
+            | ActionButtonVariant::CoverPrimaryTransport
+            | ActionButtonVariant::CoverCornerMenu
+            | ActionButtonVariant::CoverCornerFavorite
+    );
+    if is_cover {
+        button.add_css_class("cover-hover-button");
+        button.add_css_class("cover-hover-animated");
+    } else {
+        button.add_css_class("detail-showcase-action-button");
+    }
+
+    let nudge_icon = match variant {
+        ActionButtonVariant::CoverSideTransport => {
+            button.add_css_class("cover-side-button");
+            pin_action_button(button, 34);
+            true
+        }
+        ActionButtonVariant::CoverPrimaryTransport => {
+            button.add_css_class("cover-play-button");
+            pin_action_button(button, 54);
+            true
+        }
+        ActionButtonVariant::CoverCornerMenu => {
+            button.add_css_class("cover-menu-button");
+            pin_action_button(button, 34);
+            false
+        }
+        ActionButtonVariant::CoverCornerFavorite => {
+            button.add_css_class("cover-favorite-button");
+            pin_action_button(button, 34);
+            false
+        }
+        ActionButtonVariant::DetailAction => true,
+        ActionButtonVariant::DetailPrimary => {
+            button.add_css_class("detail-showcase-play-button");
+            true
+        }
+        ActionButtonVariant::DetailFavorite => false,
+    };
+
+    if let (true, Some(icon_name)) = (nudge_icon, icon_name) {
+        nudge_transport_action_icon(button, icon_name);
+    }
+    let face_class = if is_cover {
+        "cover-hover-face"
+    } else {
+        "detail-showcase-action-face"
+    };
+    wrap_button_child_in_action_layers(button, face_class);
+    if matches!(
+        variant,
+        ActionButtonVariant::CoverCornerFavorite | ActionButtonVariant::DetailFavorite
+    ) && let Some(label) = favorite_button_glyph(button)
+    {
+        label.set_margin_start(1);
+    }
+}
+
+fn pin_action_button(button: &gtk::Button, size: i32) {
+    button.set_size_request(size, size);
+    button.set_halign(gtk::Align::Center);
+    button.set_valign(gtk::Align::Center);
+}
+
+fn nudge_transport_action_icon(button: &gtk::Button, icon_name: &str) {
     let start_margin = if icon_name == "media-playback-start-symbolic" {
         4
     } else if icon_name == PLAY_NEXT_ICON || icon_name == PLAY_LATER_ICON {
@@ -999,7 +1083,7 @@ pub(in crate::ui) fn nudge_transport_action_icon(button: &gtk::Button, icon_name
         image.set_margin_start(start_margin);
     }
 }
-pub(in crate::ui) fn wrap_button_child_in_face(button: &gtk::Button, css_class: &str) {
+fn wrap_button_child_in_action_layers(button: &gtk::Button, face_class: &str) {
     let Some(child) = button.child() else {
         return;
     };
@@ -1007,13 +1091,16 @@ pub(in crate::ui) fn wrap_button_child_in_face(button: &gtk::Button, css_class: 
     child.set_halign(gtk::Align::Center);
     child.set_valign(gtk::Align::Center);
 
+    let shadow = gtk::CenterBox::new();
+    shadow.add_css_class("action-button-shadow");
+    shadow.set_can_target(false);
+
     let face = gtk::CenterBox::new();
-    face.add_css_class(css_class);
+    face.add_css_class(face_class);
     face.set_can_target(false);
-    face.set_halign(gtk::Align::Center);
-    face.set_valign(gtk::Align::Center);
     face.set_center_widget(Some(&child));
-    button.set_child(Some(&face));
+    shadow.set_center_widget(Some(&face));
+    button.set_child(Some(&shadow));
 }
 fn favorite_button_glyph(button: &gtk::Button) -> Option<gtk::Label> {
     button.child().and_then(favorite_glyph_from_widget)

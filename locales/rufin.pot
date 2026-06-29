@@ -187,9 +187,6 @@ msgstr ""
 msgid "Appears On"
 msgstr ""
 
-msgid "Play"
-msgstr ""
-
 msgid "Play album"
 msgstr ""
 
@@ -654,6 +651,9 @@ msgid "Auto DJ"
 msgstr ""
 
 msgid "Open fullscreen player"
+msgstr ""
+
+msgid "Play"
 msgstr ""
 
 msgid "Resume"

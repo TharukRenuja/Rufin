@@ -197,8 +197,7 @@ impl Shell {
         );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let play = detail_action_button("media-playback-start-symbolic", "Play");
-        play.add_css_class("detail-showcase-play-button");
+        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let detail_for_play = detail.clone();
@@ -352,8 +351,7 @@ impl Shell {
         );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let play = detail_action_button("media-playback-start-symbolic", "Play");
-        play.add_css_class("detail-showcase-play-button");
+        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let playlist_id_for_play = detail.playlist.id.clone();
