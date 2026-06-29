@@ -19,7 +19,8 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
 
     match args.remove(0).as_str() {
         "icons" => {
-            if print_help_if_requested(&args, "Usage: cargo xtask verify icons")? {
+            if print_help_if_requested(&args, "Usage: cargo run --locked -p xtask -- verify icons")?
+            {
                 return Ok(());
             }
             ensure_no_args(&args)?;
@@ -117,7 +118,7 @@ fn local(mut args: Vec<String>) -> Result<()> {
                 base_ref = args.remove(0);
             }
             "-h" | "--help" => {
-                eprintln!("Usage: cargo xtask verify local [--base-ref REF]");
+                eprintln!("Usage: cargo run --locked -p xtask -- verify local [--base-ref REF]");
                 return Ok(());
             }
             arg => return Err(format!("unexpected argument: {arg}").into()),
@@ -178,7 +179,7 @@ fn changed_paths_since(base_commit: &str) -> Result<HashSet<String>> {
 
 fn package_layout(args: Vec<String>) -> Result<()> {
     if matches!(args.as_slice(), [arg] if arg == "-h" || arg == "--help") {
-        eprintln!("Usage: cargo xtask verify package-layout ROOT [PREFIX]");
+        eprintln!("Usage: cargo run --locked -p xtask -- verify package-layout ROOT [PREFIX]");
         return Ok(());
     }
     if args.is_empty() || args.len() > 2 {
@@ -273,7 +274,7 @@ fn po_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
 fn release_tag(args: Vec<String>) -> Result<()> {
     if matches!(args.as_slice(), [arg] if arg == "-h" || arg == "--help") {
-        eprintln!("Usage: cargo xtask verify release-tag TAG");
+        eprintln!("Usage: cargo run --locked -p xtask -- verify release-tag TAG");
         return Ok(());
     }
     if args.len() != 1 {

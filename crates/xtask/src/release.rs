@@ -28,12 +28,12 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
 
 fn prepare(args: Vec<String>) -> Result<()> {
     if matches!(args.as_slice(), [arg] if arg == "-h" || arg == "--help") {
-        eprintln!("Usage: cargo xtask release prepare VERSION SUMMARY");
+        eprintln!("Usage: cargo run --locked -p xtask -- release prepare VERSION SUMMARY");
         return Ok(());
     }
 
     if args.len() != 2 {
-        eprintln!("Usage: cargo xtask release prepare VERSION SUMMARY");
+        eprintln!("Usage: cargo run --locked -p xtask -- release prepare VERSION SUMMARY");
         return Err("release prepare requires VERSION and SUMMARY".into());
     }
 
@@ -76,7 +76,7 @@ fn update_flathub_manifest(mut args: Vec<String>) -> Result<()> {
             }
             "-h" | "--help" => {
                 eprintln!(
-                    "Usage: cargo xtask release update-flathub-manifest [--manifest PATH] TAG"
+                    "Usage: cargo run --locked -p xtask -- release update-flathub-manifest [--manifest PATH] TAG"
                 );
                 return Ok(());
             }
@@ -174,7 +174,7 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
             "--skip-flathub" => skip_flathub = true,
             "-h" | "--help" => {
                 eprintln!(
-                    "Usage: cargo xtask release create-tag [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY"
+                    "Usage: cargo run --locked -p xtask -- release create-tag [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY"
                 );
                 return Ok(());
             }
