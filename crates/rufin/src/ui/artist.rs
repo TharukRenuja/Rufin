@@ -240,8 +240,7 @@ impl Shell {
 
         let action_tracks = Rc::new(tracks.to_vec());
 
-        let play = detail_action_button("media-playback-start-symbolic", "Play");
-        play.add_css_class("detail-showcase-play-button");
+        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&action_tracks);
@@ -272,8 +271,7 @@ impl Shell {
         append_track_batch_queue_actions(&actions, &self.controller, Rc::clone(&action_tracks));
 
         let favorite = favorite_icon_button("Favorite");
-        favorite.add_css_class("detail-showcase-action-button");
-        wrap_button_child_in_face(&favorite, "detail-showcase-action-face");
+        configure_action_button(&favorite, ActionButtonVariant::DetailFavorite, None);
         set_favorite_button_active(&favorite, artist.favorite);
         self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
         let shell = Rc::clone(self);

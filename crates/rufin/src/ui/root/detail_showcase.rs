@@ -164,9 +164,13 @@ pub(in crate::ui) fn detail_summary_row(items: &[(&str, String)]) -> gtk::Box {
 
 pub(in crate::ui) fn detail_action_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = icon_button(icon_name, label);
-    button.add_css_class("detail-showcase-action-button");
-    nudge_transport_action_icon(&button, icon_name);
-    wrap_button_child_in_face(&button, "detail-showcase-action-face");
+    configure_action_button(&button, ActionButtonVariant::DetailAction, Some(icon_name));
+    button
+}
+
+pub(in crate::ui) fn detail_primary_action_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = icon_button(icon_name, label);
+    configure_action_button(&button, ActionButtonVariant::DetailPrimary, Some(icon_name));
     button
 }
 
@@ -248,11 +252,14 @@ pub(in crate::ui) fn detail_delete_button(label: &str) -> gtk::Button {
     button.add_css_class("icon-button");
     button.add_css_class("flat");
     button.add_css_class("circular");
-    button.add_css_class("detail-showcase-action-button");
     button.set_valign(gtk::Align::Center);
     button.set_tooltip_text(Some(&tr(label)));
     button.set_child(Some(&gtk::Image::from_icon_name("window-close-symbolic")));
-    wrap_button_child_in_face(&button, "detail-showcase-action-face");
+    configure_action_button(
+        &button,
+        ActionButtonVariant::DetailAction,
+        Some("window-close-symbolic"),
+    );
     button
 }
 

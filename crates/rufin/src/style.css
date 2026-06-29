@@ -778,10 +778,9 @@ menubutton.server-selector > button:hover {
 
 .cover-hover-button.cover-hover-animated {
   background: transparent;
+  box-shadow: none;
   transform: none;
-  transition:
-    background 120ms ease-out,
-    box-shadow 120ms ease-out;
+  transition: background 120ms ease-out;
 }
 
 .cover-hover-face {
@@ -793,8 +792,21 @@ menubutton.server-selector > button:hover {
     transform 120ms ease-out;
 }
 
+.action-button-shadow {
+  border-radius: 999px;
+  background: transparent;
+  transition: box-shadow 120ms ease-out;
+}
+
+.cover-hover-button.cover-hover-animated .action-button-shadow {
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.26),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
 .cover-hover-button.cover-hover-animated:hover {
   background: transparent;
+  box-shadow: none;
   transform: none;
 }
 
@@ -803,10 +815,14 @@ menubutton.server-selector > button:hover {
   transform: scale(1.08);
 }
 
-.cover-hover-button.cover-hover-animated:active {
+.cover-hover-button.cover-hover-animated:hover .action-button-shadow {
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.3),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+    0 10px 26px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.cover-hover-button.cover-hover-animated:active {
+  box-shadow: none;
   transform: none;
 }
 
@@ -814,13 +830,24 @@ menubutton.server-selector > button:hover {
   transform: scale(0.96);
 }
 
+.cover-hover-button.cover-hover-animated:active .action-button-shadow {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
 .cover-side-button .cover-hover-face,
-.cover-menu-button .cover-hover-face {
+.cover-menu-button .cover-hover-face,
+.cover-favorite-button .cover-hover-face,
+.cover-side-button .action-button-shadow,
+.cover-menu-button .action-button-shadow,
+.cover-favorite-button .action-button-shadow {
   min-width: 34px;
   min-height: 34px;
 }
 
-.cover-play-button .cover-hover-face {
+.cover-play-button .cover-hover-face,
+.cover-play-button .action-button-shadow {
   min-width: 54px;
   min-height: 54px;
 }
@@ -853,6 +880,18 @@ menubutton.server-selector > button:hover {
 
 .cover-hover-button.favorite-toggle.active-toggle {
   background: white;
+}
+
+.cover-hover-button.cover-hover-animated.favorite-toggle.active-toggle {
+  background: transparent;
+}
+
+.cover-hover-button.cover-hover-animated.favorite-toggle.active-toggle .cover-hover-face {
+  background: white;
+}
+
+.cover-hover-button.cover-hover-animated.favorite-toggle.active-toggle:hover .cover-hover-face {
+  background: #f7f7f7;
 }
 
 .cover-favorite-button.favorite-toggle {
@@ -1288,12 +1327,8 @@ popover.audio-output-popover > contents {
   padding: 0;
   background: transparent;
   color: #111111;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.18),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-  transition:
-    background 120ms ease-out,
-    box-shadow 120ms ease-out;
+  box-shadow: none;
+  transition: background 120ms ease-out;
 }
 
 .detail-showcase-action-face {
@@ -1307,11 +1342,17 @@ popover.audio-output-popover > contents {
     transform 120ms ease-out;
 }
 
+.detail-showcase-action-button .action-button-shadow {
+  min-width: 48px;
+  min-height: 48px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
 .detail-showcase-action-button:hover {
   background: transparent;
-  box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.26),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
 }
 
 .detail-showcase-action-button:hover .detail-showcase-action-face {
@@ -1319,14 +1360,24 @@ popover.audio-output-popover > contents {
   transform: scale(1.08);
 }
 
-.detail-showcase-action-button:active {
+.detail-showcase-action-button:hover .action-button-shadow {
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.24),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+    0 10px 26px rgba(0, 0, 0, 0.26),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.detail-showcase-action-button:active {
+  box-shadow: none;
 }
 
 .detail-showcase-action-button:active .detail-showcase-action-face {
   transform: scale(0.96);
+}
+
+.detail-showcase-action-button:active .action-button-shadow {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.24),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14);
 }
 
 .detail-showcase-play-button {
@@ -1337,7 +1388,8 @@ popover.audio-output-popover > contents {
   -gtk-icon-size: 18px;
 }
 
-.detail-showcase-play-button .detail-showcase-action-face {
+.detail-showcase-play-button .detail-showcase-action-face,
+.detail-showcase-play-button .action-button-shadow {
   min-width: 56px;
   min-height: 56px;
 }
