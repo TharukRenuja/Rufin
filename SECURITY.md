@@ -2,11 +2,13 @@
 
 ## Security Stance
 
-Rufin is a desktop music client, directly built for Flatpak, Nix and AUR. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
+Rufin is a desktop music client, directly built for Flatpak, Nix and AUR. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP for funsies)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
 
-Memory unsafe code is strictly forbidden, and Rufin does not compile it. Rust dependencies are checked with cargo-deny, including advisories, license policy and source policy. Dependency updates are held for 7 days before our own Renovate bot opens them, and generated Flatpak and Nix dependency artifacts are checked when dependencies change.
+Memory unsafe code is strictly forbidden, and Rufin does not compile it. Rust dependencies are checked with cargo-deny, including advisories, license policy and source policy. Dependency updates are held for 7 days before our own Renovate bot opens them, generated Flatpak and Nix dependency artifacts are checked when dependencies change.
 
 Release tags are signed via maintainer GPG key. Release builds verify the tag signature against the public key in `.github/release-gpg.pub` before building packages.
+
+CI caches are only used to fasten the builds. PRs can restore the Rust build cache, but cache writes are limited to pushes to `main`, and cached binaries are disabled. Nix/Cachix cache write is limited to `main` or releases, with with releases verifying the signed release tag first.
 
 Right now there is one allowed RustSec advisory for `paste`, a dependency of `lofty`. This does not mean the package is malicious, but it is just not maintained anymore, as it is considered feature-complete ([see](https://github.com/rustsec/advisory-db/pull/2215#issuecomment-2709315704)).
 
@@ -16,7 +18,7 @@ Rufin stores server tokens and service credentials on system keyring if possible
 
 ## External Requests
 
-Rufin, by design, comes with external lyric, metadata and cover lookups enabled, and Discord Rich Presence disabled, and Last.fm/Libre.fm/ListenBrainz scrobbling disabled as well as they need to be authorized. Covers and metadata are looked up in bulk, they also help filling empty artist IDs in your tracks while always respecting your source metadata. Lyrics are cached lazily. We have a private mode that stops all of these external requests, on top of separate toggles for each of these, and it can be enabled during onboarding as well. Private mode still reports to your music server, therefore it can not control what your plugins do, and it also can not stop metadata providers configured in your server from working. Rufin talks to these servers:
+Rufin, by design, comes with external lyric, metadata and cover lookups enabled, Discord Rich Presence disabled, and Last.fm/Libre.fm/ListenBrainz scrobbling disabled as well as they need to be authorized. Covers and metadata are looked up in bulk, they also help filling empty artist IDs in your tracks while always respecting your source metadata. Lyrics are cached lazily. We have a private mode that stops all of these external requests, on top of separate toggles for each of these, and it can be enabled during onboarding as well. Private mode still reports to your music server, therefore it can not control what your plugins do, and it also can not stop metadata providers configured in your server from working. Rufin talks to these servers:
 
 ### Music servers
 
