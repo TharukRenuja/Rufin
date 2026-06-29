@@ -18,11 +18,11 @@ Rufin stores server tokens and service credentials on system keyring if possible
 
 ## External Requests
 
-Rufin, by design, comes with external lyric, metadata and cover lookups enabled, Discord Rich Presence disabled, and Last.fm/Libre.fm/ListenBrainz scrobbling disabled as well as they need to be authorized. Covers and metadata are looked up in bulk, they also help filling empty artist IDs in your tracks while always respecting your source metadata. Lyrics are cached lazily. We have a private mode that stops all of these external requests, on top of separate toggles for each of these, and it can be enabled during onboarding as well. Private mode still reports to your music server, therefore it can not control what your plugins do, and it also can not stop metadata providers configured in your server from working. Rufin talks to these servers:
+Rufin, by design, comes with external lyric, metadata and cover lookups enabled, Discord Rich Presence disabled, and Last.fm/Libre.fm/ListenBrainz scrobbling disabled as well as they need to be authorized. Covers and metadata are looked up in bulk, they also help filling empty artist IDs in your tracks while always respecting your source metadata. Lyrics are cached lazily. We have a private mode that stops all of these external requests, on top of separate toggles for each of these, and it can be enabled during onboarding as well. Private mode still reports to your music server, therefore it can not control what your plugins do, and it also can not stop metadata providers configured in your server from working. Rufin talks to these services:
 
 ### Music servers
 
-Your configured Jellyfin, Subsonic, Navidrome or OpenSubsonic server. Again, Rufin can not control your server settings that talk to external requests. Private mode keeps this path working.
+Your configured Jellyfin, Subsonic, Navidrome or OpenSubsonic server. Again, Rufin can not control your server settings that do external requests on their own. Private mode keeps this path working.
 
 ### Metadata
 
