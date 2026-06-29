@@ -36,7 +36,7 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
 fn flatpak_sources_command(args: Vec<String>) -> Result<()> {
     let Some(check) = parse_check_flag(
         args,
-        "Usage: cargo xtask generate flatpak-sources [--check]",
+        "Usage: cargo run --locked -p xtask -- generate flatpak-sources [--check]",
     )?
     else {
         return Ok(());
@@ -54,7 +54,7 @@ pub(crate) fn flatpak_sources(check: bool) -> Result<()> {
         let current = read_to_string(&sources_file)?;
         if current != generated {
             return Err(
-                "packaging/flatpak/cargo-sources.json is stale; run cargo xtask generate flatpak-sources"
+                "packaging/flatpak/cargo-sources.json is stale; run cargo run --locked -p xtask -- generate flatpak-sources"
                     .into(),
             );
         }
@@ -180,7 +180,9 @@ fn i18n_template_command(mut args: Vec<String>) -> Result<()> {
                 output = PathBuf::from(args.remove(0));
             }
             "-h" | "--help" => {
-                eprintln!("Usage: cargo xtask generate i18n-template [--check] [--output PATH]");
+                eprintln!(
+                    "Usage: cargo run --locked -p xtask -- generate i18n-template [--check] [--output PATH]"
+                );
                 return Ok(());
             }
             arg => return Err(format!("unexpected argument: {arg}").into()),
@@ -204,7 +206,10 @@ pub(crate) fn i18n_template_check() -> Result<()> {
     if checked_in == generated {
         Ok(())
     } else {
-        Err("locales/rufin.pot is stale; run cargo xtask generate i18n-template".into())
+        Err(
+            "locales/rufin.pot is stale; run cargo run --locked -p xtask -- generate i18n-template"
+                .into(),
+        )
     }
 }
 
@@ -303,8 +308,10 @@ fn strip_xgettext_header(input: &str) -> &str {
 }
 
 fn nix_cargo_hash_command(args: Vec<String>) -> Result<()> {
-    let Some(check) =
-        parse_check_flag(args, "Usage: cargo xtask generate nix-cargo-hash [--check]")?
+    let Some(check) = parse_check_flag(
+        args,
+        "Usage: cargo run --locked -p xtask -- generate nix-cargo-hash [--check]",
+    )?
     else {
         return Ok(());
     };
@@ -416,7 +423,7 @@ fn aur_stable_command(mut args: Vec<String>) -> Result<()> {
             "--skip-srcinfo" => skip_srcinfo = true,
             "-h" | "--help" => {
                 eprintln!(
-                    "Usage: cargo xtask generate aur-stable [--check] [--skip-srcinfo] VERSION"
+                    "Usage: cargo run --locked -p xtask -- generate aur-stable [--check] [--skip-srcinfo] VERSION"
                 );
                 return Ok(());
             }
@@ -482,7 +489,7 @@ pub(crate) fn aur_stable(check: bool, skip_srcinfo: bool, version: &str) -> Resu
     );
     eprintln!("Run:");
     eprintln!(
-        "  cargo xtask generate aur-stable v{}",
+        "  cargo run --locked -p xtask -- generate aur-stable v{}",
         normalize_plain_version(version)?
     );
     print_diff(

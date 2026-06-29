@@ -30,7 +30,7 @@ fn i18n_template_matches_generated_output() {
 
     assert_eq!(
         checked_in, generated,
-        "locales/rufin.pot is stale; run cargo xtask generate i18n-template"
+        "locales/rufin.pot is stale; run cargo run --locked -p xtask -- generate i18n-template"
     );
 }
 
