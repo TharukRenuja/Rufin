@@ -14,12 +14,12 @@ use super::layout::{
     home_album_card_height, home_album_card_size, home_album_content_width, home_album_page_size,
 };
 use super::{
-    ActionButtonVariant, GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell,
-    THUMB_COVER_SIZE, add_card_label_link, album_artist_route, configure_action_button,
-    favorite_button_is_active, favorite_icon_button, icon_button, install_album_context_menu,
-    install_track_context_menu, present_album_context_menu, present_playlist_context_menu,
-    present_smart_playlist_context_menu, present_track_context_menu, set_favorite_button_active,
-    stable_seed, track_artist_route,
+    ActionButtonVariant, GRID_COVER_SIZE, HomeSectionState, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON,
+    PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE, add_card_label_link, album_artist_route,
+    configure_action_button, favorite_button_is_active, favorite_icon_button, icon_button,
+    install_album_context_menu, install_track_context_menu, present_album_context_menu,
+    present_playlist_context_menu, present_smart_playlist_context_menu, present_track_context_menu,
+    set_favorite_button_active, stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -581,7 +581,7 @@ pub(super) struct CoverHoverControls {
 
 impl CoverHoverControls {
     pub(super) fn add_context_button(&mut self) -> gtk::Button {
-        let menu = icon_button("view-more-symbolic", "More actions");
+        let menu = icon_button(MORE_ICON, "More actions");
         configure_action_button(&menu, ActionButtonVariant::CoverCornerMenu, None);
         menu.set_halign(gtk::Align::Start);
         menu.set_valign(gtk::Align::End);
@@ -670,11 +670,11 @@ pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHov
     );
     play_next.set_visible(true);
 
-    let play = icon_button("media-playback-start-symbolic", play_label);
+    let play = icon_button(PLAY_ICON, play_label);
     configure_action_button(
         &play,
         ActionButtonVariant::CoverPrimaryTransport,
-        Some("media-playback-start-symbolic"),
+        Some(PLAY_ICON),
     );
     play.set_visible(true);
 

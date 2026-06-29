@@ -240,7 +240,7 @@ impl Shell {
 
         let action_tracks = Rc::new(tracks.to_vec());
 
-        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
+        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&action_tracks);
@@ -378,7 +378,7 @@ impl Shell {
         row.set_halign(gtk::Align::Start);
 
         let albums = artist_count_button(
-            "route-albums-symbolic",
+            "rufin-route-albums-symbolic",
             &album_count_text(album_count as u64),
         );
         let shell = Rc::clone(self);
@@ -389,7 +389,7 @@ impl Shell {
         row.append(&albums);
 
         let tracks = artist_count_button(
-            "route-tracks-symbolic",
+            "rufin-route-tracks-symbolic",
             &track_count_text(track_count.into()),
         );
         let shell = Rc::clone(self);

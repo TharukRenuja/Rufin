@@ -11,8 +11,8 @@ use crate::i18n::{msgid, tr};
 
 use super::{
     ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, FAVORITE_ADD_ICON,
-    FAVORITE_EMPTY_GLYPH, FAVORITE_REMOVE_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, RADIO_ICON, Shell,
-    THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_action, context_menu_box,
+    FAVORITE_REMOVE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, RADIO_ICON, REMOVE_ICON,
+    Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_action, context_menu_box,
     context_menu_can_add_to_playlist, context_menu_picker_button, context_menu_submenu_action,
     favorite_button_is_active, favorite_icon_button, install_context_menu_openers,
     radio_context_submenu, set_favorite_button_active, track_from_queue_entry,
@@ -793,8 +793,9 @@ fn fullscreen_queue_header_row(widths: QueueFullscreenColumnWidths) -> gtk::Widg
     let cover = fullscreen_queue_fixed_spacer(QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH);
     let title = queue_header_text_label(&tr("Title").to_uppercase(), widths.title, 0.0);
     let duration = queue_duration_header_icon();
-    let favorite = gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH));
+    let favorite = gtk::Image::from_icon_name(FAVORITE_ADD_ICON);
     favorite.add_css_class("muted");
+    favorite.set_pixel_size(14);
     favorite.set_width_request(QUEUE_FAVORITE_COLUMN_WIDTH);
     favorite.set_halign(gtk::Align::Center);
 
@@ -989,7 +990,7 @@ fn split_queue_text_width(width: i32, show_year: bool) -> QueueFullscreenColumnW
 }
 
 fn queue_drag_handle(entry_id: &QueueEntryId) -> gtk::Widget {
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
     drag.set_width_request(QUEUE_DRAG_HANDLE_WIDTH);
@@ -1054,13 +1055,9 @@ fn show_queue_row_context_menu(
     main_menu.append(&context_menu_action(
         "Remove from Queue",
         "queue.remove",
-        "remove-minus",
+        REMOVE_ICON,
     ));
-    main_menu.append(&context_menu_action(
-        "Play",
-        "queue.play-now",
-        "media-playback-start-symbolic",
-    ));
+    main_menu.append(&context_menu_action("Play", "queue.play-now", PLAY_ICON));
     main_menu.append(&context_menu_action(
         "Play Next",
         "queue.play-next",

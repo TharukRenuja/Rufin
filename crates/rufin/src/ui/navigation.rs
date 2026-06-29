@@ -13,7 +13,7 @@ use crate::i18n::tr;
 const NORMAL_NAV_ICON_SIZE: i32 = 16;
 const COMPACT_NAV_ICON_SIZE: i32 = 20;
 #[cfg(test)]
-const ROUTE_ICON_PREFIX: &str = "route-";
+const ROUTE_ICON_PREFIX: &str = "rufin-route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
@@ -32,53 +32,53 @@ const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
 const NAV_ROUTE_ICONS: [(&str, &str, &str); 10] = [
     (
         NAV_ROUTE_HOME_CLASS,
-        "route-home-symbolic",
-        "route-home-selected-symbolic",
+        "rufin-route-home-symbolic",
+        "rufin-route-home-selected-symbolic",
     ),
     (
         NAV_ROUTE_FAVORITES_CLASS,
-        "route-favorites-symbolic",
-        "route-favorites-selected-symbolic",
+        "rufin-route-favorites-symbolic",
+        "rufin-route-favorites-selected-symbolic",
     ),
     (
         NAV_ROUTE_ALBUMS_CLASS,
-        "route-albums-symbolic",
-        "route-albums-selected-symbolic",
+        "rufin-route-albums-symbolic",
+        "rufin-route-albums-selected-symbolic",
     ),
     (
         NAV_ROUTE_TRACKS_CLASS,
-        "route-tracks-symbolic",
-        "route-tracks-selected-symbolic",
+        "rufin-route-tracks-symbolic",
+        "rufin-route-tracks-selected-symbolic",
     ),
     (
         NAV_ROUTE_ARTISTS_CLASS,
-        "route-artists-symbolic",
-        "route-artists-selected-symbolic",
+        "rufin-route-artists-symbolic",
+        "rufin-route-artists-selected-symbolic",
     ),
     (
         NAV_ROUTE_ALBUM_ARTISTS_CLASS,
-        "route-album-artists-symbolic",
-        "route-album-artists-selected-symbolic",
+        "rufin-route-album-artists-symbolic",
+        "rufin-route-album-artists-selected-symbolic",
     ),
     (
         NAV_ROUTE_GENRES_CLASS,
-        "route-genres-symbolic",
-        "route-genres-selected-symbolic",
+        "rufin-route-genres-symbolic",
+        "rufin-route-genres-selected-symbolic",
     ),
     (
         NAV_ROUTE_FOLDERS_CLASS,
-        "route-folders-symbolic",
-        "route-folders-selected-symbolic",
+        "rufin-route-folders-symbolic",
+        "rufin-route-folders-selected-symbolic",
     ),
     (
         NAV_ROUTE_PLAYLISTS_CLASS,
-        "route-playlists-symbolic",
-        "route-playlists-selected-symbolic",
+        "rufin-route-playlists-symbolic",
+        "rufin-route-playlists-selected-symbolic",
     ),
     (
         NAV_ROUTE_SMART_PLAYLISTS_CLASS,
-        "route-smart-playlists-symbolic",
-        "route-smart-playlists-selected-symbolic",
+        "rufin-route-smart-playlists-symbolic",
+        "rufin-route-smart-playlists-selected-symbolic",
     ),
 ];
 
@@ -355,7 +355,7 @@ fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::
         &popover,
         &tr("Version History"),
         "win.show-release-notes",
-        "view-list-symbolic",
+        "rufin-view-list-symbolic",
     ));
     wrapper.append(&primary_menu_action_row(
         &popover,
@@ -424,7 +424,7 @@ fn primary_menu_sidebar_toggle_label(shell: &Shell) -> String {
 
 fn primary_menu_sidebar_toggle_icon(shell: &Shell) -> &'static str {
     if shell.state.resolved_left_sidebar.get() == ResolvedLeftSidebarMode::Full {
-        "sidebar-hide-symbolic"
+        "rufin-sidebar-hide-symbolic"
     } else {
         "sidebar-show-symbolic"
     }
@@ -501,52 +501,52 @@ fn nav_items(shell: &Shell) -> Vec<NavItem> {
 fn nav_item(item: SidebarRouteItem) -> NavItem {
     match item {
         SidebarRouteItem::Home => NavItem {
-            icon_name: "route-home-symbolic",
+            icon_name: "rufin-route-home-symbolic",
             label: "Home",
             route: Route::Home,
         },
         SidebarRouteItem::Favorites => NavItem {
-            icon_name: "route-favorites-symbolic",
+            icon_name: "rufin-route-favorites-symbolic",
             label: "Favorites",
             route: Route::Favorites,
         },
         SidebarRouteItem::Albums => NavItem {
-            icon_name: "route-albums-symbolic",
+            icon_name: "rufin-route-albums-symbolic",
             label: "Albums",
             route: Route::Albums,
         },
         SidebarRouteItem::Tracks => NavItem {
-            icon_name: "route-tracks-symbolic",
+            icon_name: "rufin-route-tracks-symbolic",
             label: "Tracks",
             route: Route::Tracks,
         },
         SidebarRouteItem::Artists => NavItem {
-            icon_name: "route-artists-symbolic",
+            icon_name: "rufin-route-artists-symbolic",
             label: "Artists",
             route: Route::Artists,
         },
         SidebarRouteItem::AlbumArtists => NavItem {
-            icon_name: "route-album-artists-symbolic",
+            icon_name: "rufin-route-album-artists-symbolic",
             label: "Album Artists",
             route: Route::AlbumArtists,
         },
         SidebarRouteItem::Genres => NavItem {
-            icon_name: "route-genres-symbolic",
+            icon_name: "rufin-route-genres-symbolic",
             label: "Genres",
             route: Route::Genres,
         },
         SidebarRouteItem::Folders => NavItem {
-            icon_name: "route-folders-symbolic",
+            icon_name: "rufin-route-folders-symbolic",
             label: "Folders",
             route: Route::Folders { path: Vec::new() },
         },
         SidebarRouteItem::Playlists => NavItem {
-            icon_name: "route-playlists-symbolic",
+            icon_name: "rufin-route-playlists-symbolic",
             label: "Playlists",
             route: Route::Playlists,
         },
         SidebarRouteItem::SmartPlaylists => NavItem {
-            icon_name: "route-smart-playlists-symbolic",
+            icon_name: "rufin-route-smart-playlists-symbolic",
             label: "Smart Playlists",
             route: Route::SmartPlaylists,
         },

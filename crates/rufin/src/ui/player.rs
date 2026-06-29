@@ -19,7 +19,7 @@ use super::player_icons::{
     volume_icon_state,
 };
 use super::{
-    ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
+    ArtworkTile, MORE_ICON, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
     add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
     favorite_button_is_active, favorite_icon_button, icon_button,
     install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
@@ -808,7 +808,7 @@ fn build_now_playing_controls() -> NowPlayingControls {
     identity.set_halign(gtk::Align::Fill);
     identity.set_valign(gtk::Align::Center);
     let title = player_link("player-title");
-    let menu_button = icon_button("view-more-symbolic", "More actions");
+    let menu_button = icon_button(MORE_ICON, "More actions");
     menu_button.add_css_class("player-title-menu-button");
     menu_button.set_size_request(
         BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE,
@@ -1022,6 +1022,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     root.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
     favorite_button.add_css_class("player-favorite-button");
+    set_button_image_pixel_size(&favorite_button, BOTTOM_PLAYER_ACTION_ICON_SIZE);
     configure_player_action_button(&favorite_button);
     root.append(&favorite_button);
 
@@ -1082,6 +1083,15 @@ fn configure_play_button(button: &gtk::Button) {
 
 fn configure_player_action_button(button: &gtk::Button) {
     button.set_valign(gtk::Align::Center);
+}
+
+fn set_button_image_pixel_size(button: &gtk::Button, size: i32) {
+    if let Some(image) = button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+    {
+        image.set_pixel_size(size);
+    }
 }
 
 fn bottom_player_volume_width(player_width: i32) -> i32 {

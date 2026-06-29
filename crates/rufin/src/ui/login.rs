@@ -811,7 +811,7 @@ fn provider_choice_icon_name(provider: StreamingProvider) -> &'static str {
         StreamingProvider::Jellyfin => "io.github.screwys.Rufin.provider.jellyfin",
         StreamingProvider::Navidrome => "io.github.screwys.Rufin.provider.navidrome",
         StreamingProvider::Subsonic => "io.github.screwys.Rufin.provider.opensubsonic",
-        StreamingProvider::Local => "route-folders-symbolic",
+        StreamingProvider::Local => "rufin-route-folders-symbolic",
     }
 }
 
@@ -1056,7 +1056,7 @@ fn refresh_local_folder_selection_rows(selection: &LocalFolderSelectionRows) {
             .subtitle(path_subtitle(&folder))
             .subtitle_lines(2)
             .build();
-        row.add_prefix(&gtk::Image::from_icon_name("route-folders-symbolic"));
+        row.add_prefix(&gtk::Image::from_icon_name("rufin-route-folders-symbolic"));
         let remove = gtk::Button::from_icon_name("window-close-symbolic");
         remove.set_tooltip_text(Some(&tr("Remove folder")));
         remove.add_css_class("flat");

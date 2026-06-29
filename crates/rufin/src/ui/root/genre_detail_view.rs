@@ -31,7 +31,7 @@ impl Shell {
         };
         let seed = stable_seed(detail.genre.id.as_str());
         let mut summary_items = vec![(
-            "route-tracks-symbolic",
+            "rufin-route-tracks-symbolic",
             track_count_text(detail.genre.track_count.into()),
         )];
         if detail.genre.duration_seconds > 0 {
@@ -107,7 +107,7 @@ impl Shell {
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
 
-        let play = detail_primary_action_button("media-playback-start-symbolic", "Play");
+        let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
         let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&tracks);
