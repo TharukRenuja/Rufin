@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-26 10:03+0000\n"
+"PO-Revision-Date: 2026-06-30 17:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Russian <https://hosted.weblate.org/projects/rufin/app/ru/>\n"
 "Language: ru\n"
@@ -292,9 +292,8 @@ msgstr "Закрыть полноэкранный плеер"
 msgid "Club"
 msgstr "Клубная"
 
-#, fuzzy
 msgid "Collapse sidebar"
-msgstr "Скрыть боковую панель"
+msgstr "Свернуть боковую панель"
 
 msgid "Collection"
 msgstr "Коллекция"
@@ -449,9 +448,8 @@ msgstr "Эквалайзер"
 msgid "Exit to tray"
 msgstr "Свернуть в трей"
 
-#, fuzzy
 msgid "Expand sidebar"
-msgstr "Скрыть боковую панель"
+msgstr "Развернуть боковую панель"
 
 msgid "Explore"
 msgstr "Изучить"
@@ -1519,11 +1517,9 @@ msgstr "Режим перехода"
 msgid "Turn off only for a server you control"
 msgstr "Отключайте только для сервера, которым вы управляете"
 
-#, fuzzy
 msgid "Turn off private mode"
-msgstr "Включить приватный режим"
+msgstr "Выключить приватный режим"
 
-#, fuzzy
 msgid "Turn on private mode"
 msgstr "Включить приватный режим"
 
