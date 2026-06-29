@@ -12,12 +12,18 @@ const RELEASE_NOTES_XML: &str = include_str!(concat!(
     "/../../data/io.github.screwys.Rufin.metainfo.xml"
 ));
 
-#[derive(Debug, Eq, PartialEq)]
-struct ReleaseNote {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReleaseNote {
     version: String,
     date: String,
     summary: Option<String>,
     items: Vec<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ReleaseUpdate {
+    latest: String,
+    notes: Vec<ReleaseNote>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +42,19 @@ pub(in crate::ui) fn schedule_release_toast(shell: &Rc<Shell>) {
 
 fn release_notes_from_appstream() -> Vec<ReleaseNote> {
     parse_appstream_release_notes(RELEASE_NOTES_XML, 5)
+}
+
+fn release_notes_with_fetched(fetched: &[ReleaseNote]) -> Vec<ReleaseNote> {
+    let mut notes = fetched.to_vec();
+    for note in release_notes_from_appstream() {
+        if !notes
+            .iter()
+            .any(|existing| existing.version == note.version)
+        {
+            notes.push(note);
+        }
+    }
+    notes
 }
 
 fn latest_release_version() -> Option<String> {
@@ -132,7 +151,7 @@ fn release_relative_date(date: &str) -> String {
         .unwrap_or_else(|| date.to_string())
 }
 
-fn fetch_latest_flathub_release_version() -> Result<Option<String>, String> {
+fn fetch_flathub_release_update() -> Result<Option<ReleaseUpdate>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(RELEASE_CHECK_TIMEOUT_SECONDS))
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
@@ -145,18 +164,72 @@ fn fetch_latest_flathub_release_version() -> Result<Option<String>, String> {
         .map_err(|error| error.to_string())?
         .json::<serde_json::Value>()
         .map_err(|error| error.to_string())?;
-    Ok(latest_release_version_from_flathub_json(&value))
+    Ok(release_update_from_flathub_json(&value))
 }
 
-fn latest_release_version_from_flathub_json(value: &serde_json::Value) -> Option<String> {
-    value
+fn fallback_release_update() -> Option<ReleaseUpdate> {
+    latest_release_version().map(|latest| ReleaseUpdate {
+        latest,
+        notes: release_notes_from_appstream(),
+    })
+}
+
+fn release_update_from_flathub_json(value: &serde_json::Value) -> Option<ReleaseUpdate> {
+    let notes: Vec<_> = value
         .get("releases")?
         .as_array()?
         .iter()
-        .filter_map(|release| release.get("version")?.as_str())
-        .map(str::trim)
-        .find(|version| !version.is_empty())
-        .map(str::to_string)
+        .filter_map(release_note_from_flathub_json)
+        .take(5)
+        .collect();
+    let latest = notes.first()?.version.clone();
+    Some(ReleaseUpdate { latest, notes })
+}
+
+fn release_note_from_flathub_json(value: &serde_json::Value) -> Option<ReleaseNote> {
+    let version = value.get("version")?.as_str()?.trim();
+    if version.is_empty() {
+        return None;
+    }
+    let description = value
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    Some(ReleaseNote {
+        version: version.to_string(),
+        date: flathub_release_date(value),
+        summary: tag_texts(description, "p").into_iter().next(),
+        items: tag_texts(description, "li"),
+    })
+}
+
+fn flathub_release_date(value: &serde_json::Value) -> String {
+    value
+        .get("date")
+        .and_then(serde_json::Value::as_str)
+        .filter(|date| !date.trim().is_empty())
+        .map(|date| date.trim().to_string())
+        .or_else(|| {
+            value
+                .get("timestamp")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|timestamp| timestamp.parse::<i64>().ok())
+                .map(unix_timestamp_date)
+        })
+        .unwrap_or_default()
+}
+
+fn unix_timestamp_date(timestamp: i64) -> String {
+    glib::DateTime::from_unix_utc(timestamp)
+        .map(|date| {
+            format!(
+                "{:04}-{:02}-{:02}",
+                date.year(),
+                date.month(),
+                date.day_of_month()
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn release_notification_due(settings: &AppSettings, latest: &str, current: &str) -> bool {
@@ -367,7 +440,7 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     row.upcast()
 }
 
-fn present_release_notes_dialog(window: &adw::ApplicationWindow) {
+fn present_release_notes_dialog(window: &adw::ApplicationWindow, notes: &[ReleaseNote]) {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Version History"), "")));
@@ -375,8 +448,8 @@ fn present_release_notes_dialog(window: &adw::ApplicationWindow) {
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     list.add_css_class("release-notes-list");
-    for note in release_notes_from_appstream() {
-        list.append(&release_note_row(window, &note));
+    for note in notes {
+        list.append(&release_note_row(window, note));
     }
 
     let popup_width = large_popup_content_width(RELEASE_NOTES_POPUP_WIDTH);
@@ -407,22 +480,30 @@ impl Shell {
         };
         let shell = Rc::clone(self);
         glib::spawn_future_local(async move {
-            let latest = match gio::spawn_blocking(fetch_latest_flathub_release_version).await {
-                Ok(Ok(Some(version))) => Some(version),
-                Ok(Ok(None)) => latest_release_version(),
+            let update = match gio::spawn_blocking(fetch_flathub_release_update).await {
+                Ok(Ok(Some(update))) => Some(update),
+                Ok(Ok(None)) => fallback_release_update(),
                 Ok(Err(error)) => {
                     debug!(%error, "failed to check Flathub release");
-                    latest_release_version()
+                    fallback_release_update()
                 }
                 Err(_) => {
                     debug!("Flathub release check task failed");
-                    latest_release_version()
+                    fallback_release_update()
                 }
             };
-            if let Some(latest) = latest {
+            if let Some(update) = update {
+                let ReleaseUpdate { latest, notes } = update;
+                shell.store_fetched_release_notes(notes);
                 shell.show_release_toast_if_needed(&latest);
             }
         });
+    }
+
+    fn store_fetched_release_notes(&self, notes: Vec<ReleaseNote>) {
+        if !notes.is_empty() {
+            *self.state.fetched_release_notes.borrow_mut() = notes;
+        }
     }
 
     fn show_release_toast_if_needed(self: &Rc<Self>, latest: &str) {
@@ -439,14 +520,15 @@ impl Shell {
 
     fn show_release_toast(&self) {
         let toast = adw::Toast::new(&tr(RELEASE_TOAST_TITLE));
-        toast.set_timeout(5);
+        toast.set_timeout(0);
         toast.set_button_label(Some(&tr("View")));
         toast.set_action_name(Some("win.show-release-notes"));
         self.toast_overlay.add_toast(toast);
     }
 
     pub(in crate::ui) fn present_release_notes(&self) {
-        present_release_notes_dialog(&self.window);
+        let notes = release_notes_with_fetched(&self.state.fetched_release_notes.borrow());
+        present_release_notes_dialog(&self.window, &notes);
     }
 }
 
@@ -482,6 +564,26 @@ mod tests {
                 summary: Some("Summary & context.".to_string()),
                 items: vec!["First item".to_string(), "Second item".to_string()],
             }]
+        );
+    }
+
+    #[test]
+    fn fetched_release_notes_are_prepended_to_bundled_history() {
+        let notes = release_notes_with_fetched(&[ReleaseNote {
+            version: "999.0.0".to_string(),
+            date: "2026-01-03".to_string(),
+            summary: Some("Fetched release.".to_string()),
+            items: Vec::new(),
+        }]);
+
+        assert_eq!(
+            notes.first().map(|note| note.version.as_str()),
+            Some("999.0.0")
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.version == env!("CARGO_PKG_VERSION"))
         );
     }
 
@@ -547,17 +649,41 @@ mod tests {
     }
 
     #[test]
-    fn flathub_appstream_json_uses_first_release_version() {
+    fn flathub_appstream_json_uses_live_release_notes() {
         let value = serde_json::json!({
             "releases": [
-                { "version": "2.0.0", "timestamp": "1780000000" },
-                { "version": "1.0.0", "timestamp": "1770000000" }
+                {
+                    "version": "2.0.0",
+                    "timestamp": "1782604800",
+                    "description": "<p>Summary &amp; context.</p><ul><li>First item</li></ul><ul><li>Second item</li></ul>"
+                },
+                {
+                    "version": "1.0.0",
+                    "date": "2026-01-01",
+                    "description": "<p>Older item</p>"
+                }
             ]
         });
 
         assert_eq!(
-            latest_release_version_from_flathub_json(&value),
-            Some("2.0.0".to_string())
+            release_update_from_flathub_json(&value),
+            Some(ReleaseUpdate {
+                latest: "2.0.0".to_string(),
+                notes: vec![
+                    ReleaseNote {
+                        version: "2.0.0".to_string(),
+                        date: "2026-06-28".to_string(),
+                        summary: Some("Summary & context.".to_string()),
+                        items: vec!["First item".to_string(), "Second item".to_string()],
+                    },
+                    ReleaseNote {
+                        version: "1.0.0".to_string(),
+                        date: "2026-01-01".to_string(),
+                        summary: Some("Older item".to_string()),
+                        items: Vec::new(),
+                    }
+                ],
+            })
         );
     }
 }
