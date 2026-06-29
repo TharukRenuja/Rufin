@@ -8,7 +8,7 @@ Memory unsafe code is strictly forbidden, and Rufin does not compile it. Rust de
 
 Release tags are signed via maintainer GPG key. Release builds verify the tag signature against the public key in `.github/release-gpg.pub` before building packages.
 
-CI caches are only used to fasten the builds. PRs can restore the Rust build cache, but cache writes are limited to pushes to `main`, and cached binaries are disabled. Nix/Cachix cache write is limited to `main` or releases, with with releases verifying the signed release tag first.
+CI caches are only used to fasten the builds. PRs can restore the Rust build cache, but cache writes are limited to pushes to `main`, and cached binaries are disabled. Nix/Cachix cache write is limited to `main` or releases, with releases verifying the signed release tag first.
 
 Right now there is one allowed RustSec advisory for `paste`, a dependency of `lofty`. This does not mean the package is malicious, but it is just not maintained anymore, as it is considered feature-complete ([see](https://github.com/rustsec/advisory-db/pull/2215#issuecomment-2709315704)).
 
