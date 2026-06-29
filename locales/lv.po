@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.6.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-26 10:03+0000\n"
+"PO-Revision-Date: 2026-06-30 17:01+0000\n"
 "Last-Translator: Александр Стельмах <aguhadug@gmail.com>\n"
 "Language-Team: Latvian <https://hosted.weblate.org/projects/rufin/app/lv/>\n"
 "Language: lv\n"
@@ -290,9 +290,8 @@ msgstr "Aizvērt pilnekrāna atskaņotāju"
 msgid "Club"
 msgstr "Klubs"
 
-#, fuzzy
 msgid "Collapse sidebar"
-msgstr "Paslēpt sānu paneli"
+msgstr "Sakļaut sānu paneli"
 
 msgid "Collection"
 msgstr "Kolekcija"
@@ -446,9 +445,8 @@ msgstr "Ekvalaizers"
 msgid "Exit to tray"
 msgstr "Iziet uz sistēmas joslu"
 
-#, fuzzy
 msgid "Expand sidebar"
-msgstr "Paslēpt sānu paneli"
+msgstr "Izvērst sānu paneli"
 
 msgid "Explore"
 msgstr "Izpētīt"
@@ -1506,11 +1504,9 @@ msgstr "Pārejas režīms"
 msgid "Turn off only for a server you control"
 msgstr "Izslēdziet tikai serverim, ko pārvaldāt"
 
-#, fuzzy
 msgid "Turn off private mode"
-msgstr "Ieslēgt privāto režīmu"
+msgstr "Izslēgt privāto režīmu"
 
-#, fuzzy
 msgid "Turn on private mode"
 msgstr "Ieslēgt privāto režīmu"
 
