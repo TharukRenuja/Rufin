@@ -14,7 +14,7 @@ on:
       - crates/xtask/**
       - flake.nix
       - packaging/flatpak/cargo-sources.json
-      - scripts/retry-nix-command.sh
+      - scripts/retry-nix.sh
       - .github/workflows/dependency-artifacts.yml
 
 permissions:
@@ -80,7 +80,7 @@ jobs:
             stalled-download-timeout = 90
 
       - name: Refresh Flatpak cargo sources
-        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop . --command cargo run --locked -p xtask -- generate flatpak-sources
+        run: bash scripts/retry-nix.sh nix --accept-flake-config develop . --command cargo run --locked -p xtask -- generate flatpak-sources
 
       - name: Refresh Nix cargo hash
         run: cargo run --locked -p xtask -- generate nix-cargo-hash

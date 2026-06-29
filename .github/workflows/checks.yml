@@ -56,6 +56,10 @@ jobs:
           fi
 
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
+          if [[ "${GITHUB_ACTOR:-}" == "weblate" && "${GITHUB_HEAD_REF:-}" == weblate-* ]]; then
+            export RUFIN_I18N_ALLOW_CATALOG_ONLY=1
+          fi
+          bash scripts/check-i18n --base-ref "$base" --head-ref "$HEAD_SHA"
 
           rust_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
@@ -119,28 +123,28 @@ jobs:
           cache-bin: "false"
           prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
+          cmd-format: bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
 
       - name: Check Flatpak cargo sources
-        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
+        run: bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
 
       - name: Check Rust formatting
-        run: bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
+        run: bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
       - name: Check Rust lints
         run: |
-          bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo clippy --workspace --lib --bins --locked -- -D warnings -D clippy::expect_used -D clippy::panic
-          bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
-          bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo clippy -p domain --lib --all-features --locked -- -D clippy::indexing_slicing
 
       - name: Run Rust tests
         run: |
-          bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo run --locked -p xtask -- verify icons
-          bash scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
   cargo-deny:

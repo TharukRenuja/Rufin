@@ -127,10 +127,15 @@ fn local(mut args: Vec<String>) -> Result<()> {
 
     ensure_command("cargo")?;
     ensure_command("cargo-deny")?;
+    ensure_command("bash")?;
     ensure_command("just")?;
 
     let root = repo_root()?;
     env::set_current_dir(&root)?;
+    run_command(
+        "bash",
+        ["scripts/check-i18n", "--base-ref", base_ref.as_str()],
+    )?;
     let base_commit = command_stdout("git", ["merge-base", "HEAD", &base_ref])?;
     let changed_paths = changed_paths_since(base_commit.trim())?;
     let needs_nix_hash_check = changed_paths.iter().any(|path| {
@@ -139,7 +144,7 @@ fn local(mut args: Vec<String>) -> Result<()> {
             || path.ends_with("/Cargo.toml")
             || path == "flake.nix"
             || path.starts_with("crates/xtask/")
-            || path == "scripts/retry-nix-command.sh"
+            || path == "scripts/retry-nix.sh"
     });
 
     if needs_nix_hash_check {
