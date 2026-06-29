@@ -38,6 +38,47 @@ const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
+
+fn selection_row<F>(
+    title: &str,
+    option_titles: &[String],
+    selected: u32,
+    on_selected: F,
+) -> adw::ActionRow
+where
+    F: Fn(u32) + 'static,
+{
+    let row = adw::ActionRow::builder().title(title).build();
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    buttons.add_css_class("linked");
+    buttons.add_css_class("preference-selection-buttons");
+    buttons.set_valign(gtk::Align::Center);
+    let on_selected = Rc::new(on_selected);
+    let mut first_button: Option<gtk::ToggleButton> = None;
+
+    for (index, title) in option_titles.iter().enumerate() {
+        let button = gtk::ToggleButton::with_label(title);
+        button.add_css_class("preference-selection-button");
+        button.set_tooltip_text(Some(title));
+        if let Some(first) = &first_button {
+            button.set_group(Some(first));
+        } else {
+            first_button = Some(button.clone());
+        }
+        button.set_active(index as u32 == selected);
+        let on_selected = Rc::clone(&on_selected);
+        button.connect_toggled(move |button| {
+            if button.is_active() {
+                on_selected(index as u32);
+            }
+        });
+        buttons.append(&button);
+    }
+
+    row.add_suffix(&buttons);
+    row
+}
+
 pub(in crate::ui) fn present_preferences_dialog(shell: &Rc<Shell>) {
     present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false);
 }
@@ -462,7 +503,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
 
     let external_metadata_row = adw::SwitchRow::builder()
-        .title(tr("External cover lookup"))
+        .title(tr("External metadata lookup"))
         .active(settings.external_metadata_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
@@ -606,7 +647,8 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
     let link_options = gtk::StringList::new(&link_refs);
     let link_row = adw::ComboRow::builder()
-        .title(tr("Activity links and MusicBrainz covers"))
+        .title(tr("Metadata source"))
+        .subtitle(tr("Source to use for cover images and song/artist links"))
         .model(&link_options)
         .selected(discord_link_index(settings.discord_link_type))
         .build();
@@ -756,44 +798,44 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
         .title(tr("Interface"))
         .build();
 
+    let default_left_shell = Rc::clone(shell);
     let default_left_row = left_sidebar_row(
         &tr("Default left sidebar"),
         settings.layout.default_profile.left_sidebar,
+        move |selected| {
+            let mode = left_sidebar_mode_from_index(selected);
+            default_left_shell.update_app_settings("layout setting", |settings| {
+                if settings.layout.default_profile.left_sidebar == mode {
+                    return false;
+                }
+                settings.layout.default_profile.left_sidebar = mode;
+                true
+            });
+            default_left_shell.update_layout();
+        },
     );
-    let default_left_shell = Rc::clone(shell);
-    default_left_row.connect_selected_notify(move |row| {
-        let mode = left_sidebar_mode_from_index(row.selected());
-        default_left_shell.update_app_settings("layout setting", |settings| {
-            if settings.layout.default_profile.left_sidebar == mode {
-                return false;
-            }
-            settings.layout.default_profile.left_sidebar = mode;
-            true
-        });
-        default_left_shell.update_layout();
-    });
     group.add(&default_left_row);
 
+    let default_right_shell = Rc::clone(shell);
     let default_right_row = right_sidebar_row(
         &tr("Default right sidebar"),
         settings.layout.default_profile.right_sidebar,
+        move |selected| {
+            let mode = right_sidebar_mode_from_index(selected);
+            default_right_shell.update_app_settings("layout setting", |settings| {
+                if settings.layout.default_profile.right_sidebar == mode {
+                    return false;
+                }
+                settings.layout.default_profile.right_sidebar = mode;
+                if mode.is_visible() {
+                    settings.layout.default_profile.last_visible_right_sidebar = mode;
+                }
+                settings.layout.sanitize();
+                true
+            });
+            default_right_shell.update_layout();
+        },
     );
-    let default_right_shell = Rc::clone(shell);
-    default_right_row.connect_selected_notify(move |row| {
-        let mode = right_sidebar_mode_from_index(row.selected());
-        default_right_shell.update_app_settings("layout setting", |settings| {
-            if settings.layout.default_profile.right_sidebar == mode {
-                return false;
-            }
-            settings.layout.default_profile.right_sidebar = mode;
-            if mode.is_visible() {
-                settings.layout.default_profile.last_visible_right_sidebar = mode;
-            }
-            settings.layout.sanitize();
-            true
-        });
-        default_right_shell.update_layout();
-    });
     group.add(&default_right_row);
 
     let lyrics_panel_row = adw::SwitchRow::builder()
@@ -845,46 +887,46 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     });
     group.add(&threshold_row);
 
+    let narrow_left_shell = Rc::clone(shell);
     let narrow_left_row = left_sidebar_row(
         &tr("Narrow left sidebar"),
         settings.layout.narrow_profile.left_sidebar,
+        move |selected| {
+            let mode = left_sidebar_mode_from_index(selected);
+            narrow_left_shell.update_app_settings("layout setting", |settings| {
+                if settings.layout.narrow_profile.left_sidebar == mode {
+                    return false;
+                }
+                settings.layout.narrow_profile.left_sidebar = mode;
+                true
+            });
+            narrow_left_shell.update_layout();
+        },
     );
     narrow_left_row.set_sensitive(settings.layout.narrow_enabled);
-    let narrow_left_shell = Rc::clone(shell);
-    narrow_left_row.connect_selected_notify(move |row| {
-        let mode = left_sidebar_mode_from_index(row.selected());
-        narrow_left_shell.update_app_settings("layout setting", |settings| {
-            if settings.layout.narrow_profile.left_sidebar == mode {
-                return false;
-            }
-            settings.layout.narrow_profile.left_sidebar = mode;
-            true
-        });
-        narrow_left_shell.update_layout();
-    });
     group.add(&narrow_left_row);
 
+    let narrow_right_shell = Rc::clone(shell);
     let narrow_right_row = right_sidebar_row(
         &tr("Narrow right sidebar"),
         settings.layout.narrow_profile.right_sidebar,
+        move |selected| {
+            let mode = right_sidebar_mode_from_index(selected);
+            narrow_right_shell.update_app_settings("layout setting", |settings| {
+                if settings.layout.narrow_profile.right_sidebar == mode {
+                    return false;
+                }
+                settings.layout.narrow_profile.right_sidebar = mode;
+                if mode.is_visible() {
+                    settings.layout.narrow_profile.last_visible_right_sidebar = mode;
+                }
+                settings.layout.sanitize();
+                true
+            });
+            narrow_right_shell.update_layout();
+        },
     );
     narrow_right_row.set_sensitive(settings.layout.narrow_enabled);
-    let narrow_right_shell = Rc::clone(shell);
-    narrow_right_row.connect_selected_notify(move |row| {
-        let mode = right_sidebar_mode_from_index(row.selected());
-        narrow_right_shell.update_app_settings("layout setting", |settings| {
-            if settings.layout.narrow_profile.right_sidebar == mode {
-                return false;
-            }
-            settings.layout.narrow_profile.right_sidebar = mode;
-            if mode.is_visible() {
-                settings.layout.narrow_profile.last_visible_right_sidebar = mode;
-            }
-            settings.layout.sanitize();
-            true
-        });
-        narrow_right_shell.update_layout();
-    });
     group.add(&narrow_right_row);
 
     let threshold_row_for_toggle = threshold_row.clone();

@@ -226,14 +226,20 @@ pub(in crate::ui) fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow 
         .end_icon_name("go-next-symbolic")
         .build()
 }
-pub(in crate::ui) fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
-    let titles = [tr("Full"), tr("Compact"), tr("Hidden")];
-    let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
-    adw::ComboRow::builder()
-        .title(title)
-        .model(&gtk::StringList::new(&refs))
-        .selected(left_sidebar_mode_index(mode))
-        .build()
+pub(in crate::ui) fn left_sidebar_row<F>(
+    title: &str,
+    mode: LeftSidebarMode,
+    on_selected: F,
+) -> adw::ActionRow
+where
+    F: Fn(u32) + 'static,
+{
+    selection_row(
+        title,
+        &[tr("Full"), tr("Compact"), tr("Hidden")],
+        left_sidebar_mode_index(mode),
+        on_selected,
+    )
 }
 pub(in crate::ui) fn left_sidebar_mode_index(mode: LeftSidebarMode) -> u32 {
     match mode {
@@ -249,20 +255,26 @@ pub(in crate::ui) fn left_sidebar_mode_from_index(index: u32) -> LeftSidebarMode
         _ => LeftSidebarMode::Full,
     }
 }
-pub(in crate::ui) fn right_sidebar_row(title: &str, mode: RightSidebarMode) -> adw::ComboRow {
-    let titles = [
-        tr("Hidden"),
-        tr("Compact"),
-        tr("Default"),
-        tr("Comfortable"),
-        tr("Spacious"),
-    ];
-    let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
-    adw::ComboRow::builder()
-        .title(title)
-        .model(&gtk::StringList::new(&refs))
-        .selected(right_sidebar_mode_index(mode))
-        .build()
+pub(in crate::ui) fn right_sidebar_row<F>(
+    title: &str,
+    mode: RightSidebarMode,
+    on_selected: F,
+) -> adw::ActionRow
+where
+    F: Fn(u32) + 'static,
+{
+    selection_row(
+        title,
+        &[
+            tr("Hidden"),
+            tr("Compact"),
+            tr("Default"),
+            tr("Comfortable"),
+            tr("Spacious"),
+        ],
+        right_sidebar_mode_index(mode),
+        on_selected,
+    )
 }
 pub(in crate::ui) fn right_sidebar_mode_index(mode: RightSidebarMode) -> u32 {
     match mode {

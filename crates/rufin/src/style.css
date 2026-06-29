@@ -147,6 +147,19 @@ toastoverlay toast label {
   background: @window_bg_color;
 }
 
+.preference-selection-buttons {
+  margin: 0;
+}
+
+.preference-selection-button {
+  min-height: 24px;
+  padding: 1px 8px;
+}
+
+.preference-selection-button label {
+  font-size: 12px;
+}
+
 .wide-sidebar-slot,
 .compact-rail-slot,
 .wide-sidebar,

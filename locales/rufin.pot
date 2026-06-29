@@ -842,6 +842,9 @@ msgstr ""
 msgid "Queue and transitions"
 msgstr ""
 
+msgid "Transition mode"
+msgstr ""
+
 msgid "Crossfade"
 msgstr ""
 
@@ -849,9 +852,6 @@ msgid "Default"
 msgstr ""
 
 msgid "Gapless"
-msgstr ""
-
-msgid "Transition mode"
 msgstr ""
 
 msgid "Crossfade duration"
@@ -881,10 +881,13 @@ msgstr ""
 msgid "Audio"
 msgstr ""
 
+msgid "ReplayGain"
+msgstr ""
+
 msgid "Off"
 msgstr ""
 
-msgid "ReplayGain"
+msgid "Stream quality"
 msgstr ""
 
 msgid "Original"
@@ -900,9 +903,6 @@ msgid "192 kbps"
 msgstr ""
 
 msgid "128 kbps"
-msgstr ""
-
-msgid "Stream quality"
 msgstr ""
 
 msgid "Waveform seekbar"
@@ -989,7 +989,7 @@ msgstr ""
 msgid "Prefer server lyrics"
 msgstr ""
 
-msgid "External cover lookup"
+msgid "External metadata lookup"
 msgstr ""
 
 msgid "External lyric lookup"
@@ -1031,7 +1031,10 @@ msgstr ""
 msgid "MusicBrainz + Last.fm"
 msgstr ""
 
-msgid "Activity links and MusicBrainz covers"
+msgid "Metadata source"
+msgstr ""
+
+msgid "Source to use for cover images and song/artist links"
 msgstr ""
 
 msgid "Show paused status"

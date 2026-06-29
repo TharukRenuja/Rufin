@@ -450,23 +450,17 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let transition_group = adw::PreferencesGroup::builder()
         .title(tr("Queue and transitions"))
         .build();
-    let transition_titles = [tr("Default"), tr("Gapless"), tr("Crossfade")];
-    let transition_refs = transition_titles
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let transition_options = gtk::StringList::new(&transition_refs);
-    let transition_row = adw::ComboRow::builder()
-        .title(tr("Transition mode"))
-        .model(&transition_options)
-        .selected(transition_index(settings.transition_mode))
-        .build();
     let transition_shell = Rc::clone(shell);
-    transition_row.connect_selected_notify(move |row| {
-        transition_shell.update_playback_settings(|settings| {
-            settings.transition_mode = transition_from_index(row.selected());
-        });
-    });
+    let transition_row = selection_row(
+        &tr("Transition mode"),
+        &[tr("Default"), tr("Gapless"), tr("Crossfade")],
+        transition_index(settings.transition_mode),
+        move |selected| {
+            transition_shell.update_playback_settings(|settings| {
+                settings.transition_mode = transition_from_index(selected);
+            });
+        },
+    );
     transition_group.add(&transition_row);
 
     let crossfade_row = adw::ActionRow::builder()
@@ -550,48 +544,36 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&transition_group);
 
     let audio_group = adw::PreferencesGroup::builder().title(tr("Audio")).build();
-    let replay_gain_titles = [tr("Off"), tr("Track"), tr("Album")];
-    let replay_gain_refs = replay_gain_titles
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let replay_gain_options = gtk::StringList::new(&replay_gain_refs);
-    let replay_gain_row = adw::ComboRow::builder()
-        .title(tr("ReplayGain"))
-        .model(&replay_gain_options)
-        .selected(replay_gain_index(settings.replay_gain))
-        .build();
     let replay_gain_shell = Rc::clone(shell);
-    replay_gain_row.connect_selected_notify(move |row| {
-        replay_gain_shell.update_playback_settings(|settings| {
-            settings.replay_gain = replay_gain_from_index(row.selected());
-        });
-    });
+    let replay_gain_row = selection_row(
+        &tr("ReplayGain"),
+        &[tr("Off"), tr("Track"), tr("Album")],
+        replay_gain_index(settings.replay_gain),
+        move |selected| {
+            replay_gain_shell.update_playback_settings(|settings| {
+                settings.replay_gain = replay_gain_from_index(selected);
+            });
+        },
+    );
     audio_group.add(&replay_gain_row);
 
-    let quality_titles = [
-        tr("Original"),
-        tr("320 kbps"),
-        tr("256 kbps"),
-        tr("192 kbps"),
-        tr("128 kbps"),
-    ];
-    let quality_refs = quality_titles
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let quality_options = gtk::StringList::new(&quality_refs);
-    let quality_row = adw::ComboRow::builder()
-        .title(tr("Stream quality"))
-        .model(&quality_options)
-        .selected(stream_quality_index(settings.stream_quality))
-        .build();
     let quality_shell = Rc::clone(shell);
-    quality_row.connect_selected_notify(move |row| {
-        quality_shell.update_playback_settings(|settings| {
-            settings.stream_quality = stream_quality_from_index(row.selected());
-        });
-    });
+    let quality_row = selection_row(
+        &tr("Stream quality"),
+        &[
+            tr("Original"),
+            tr("320 kbps"),
+            tr("256 kbps"),
+            tr("192 kbps"),
+            tr("128 kbps"),
+        ],
+        stream_quality_index(settings.stream_quality),
+        move |selected| {
+            quality_shell.update_playback_settings(|settings| {
+                settings.stream_quality = stream_quality_from_index(selected);
+            });
+        },
+    );
     audio_group.add(&quality_row);
 
     let waveform_row = adw::SwitchRow::builder()
