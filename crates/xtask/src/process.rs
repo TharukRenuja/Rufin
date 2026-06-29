@@ -77,7 +77,7 @@ where
     let root = repo_root()?;
     let mut command = Command::new("bash");
     command
-        .arg("scripts/retry-nix-command.sh")
+        .arg("scripts/retry-nix.sh")
         .args(args)
         .current_dir(root)
         .env_remove("LD_PRELOAD");
@@ -96,7 +96,7 @@ where
 {
     let root = repo_root()?;
     let status = Command::new("bash")
-        .arg("scripts/retry-nix-command.sh")
+        .arg("scripts/retry-nix.sh")
         .args(args)
         .current_dir(root)
         .env_remove("LD_PRELOAD")
