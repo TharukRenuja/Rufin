@@ -50,7 +50,7 @@ test *args: _tmp
     fi
 
 _check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo check --workspace --locked
+    TMPDIR="$PWD/target/tmp" cargo clippy -p rufin --bin rufin --locked -- -D warnings -D clippy::expect_used -D clippy::panic
 
 _fmt-check: _tmp
     TMPDIR="$PWD/target/tmp" cargo fmt --all -- --check

@@ -23,16 +23,22 @@ To enable the debug logging, refer to [README.md#troubleshooting](README.md#trou
 ## Development commands
 
 ```bash
-just build
-just debug
-just fmt
-just test
+just build # builds the app
+just debug # runs the development app
+just fmt # formats Rust code
+just test # runs the test suite
 ```
 
 To run the full local gate:
 
 ```bash
 just check
+```
+
+To run the focused app lint check:
+
+```bash
+just _check
 ```
 
 Outside `nix develop`, this also needs rustfmt, clippy, cargo-deny, and gettext. cargo-nextest is used when available.
