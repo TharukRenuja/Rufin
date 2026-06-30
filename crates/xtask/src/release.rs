@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -376,63 +376,23 @@ fn verify_nix_flake() -> Result<()> {
 fn release_notes(base_tag: &str, version: &str, summary: &str) -> Result<String> {
     let repo_url = repo_url_from_origin()?.unwrap_or_default();
     let repo_slug = github_repo_from_origin()?.unwrap_or_default();
-    let use_github_metadata = github_metadata_available(&repo_slug);
-    let mut changelog = ChangelogWriter::new(&repo_slug, use_github_metadata);
-    let log = command_stdout(
-        "git",
-        [
-            "log",
-            "--reverse",
-            "--pretty=format:%H%x09%s",
-            &format!("{base_tag}..HEAD"),
-        ],
-    )?;
-
-    let mut notes = String::new();
-    notes.push_str(summary);
-    notes.push_str("\n\n## Changelog\n\n");
-    for line in log.lines() {
-        let Some((commit, subject)) = line.split_once('\t') else {
-            continue;
-        };
-        if is_release_housekeeping_subject(subject) {
-            continue;
-        }
-        match changelog.entry_for_commit(commit, subject)? {
-            ReleaseNoteEntry::Line(entry) => {
-                notes.push_str(&entry);
-                notes.push('\n');
-            }
-            ReleaseNoteEntry::Skip => {}
-            ReleaseNoteEntry::Fallback if !repo_url.is_empty() => {
-                notes.push_str(&format!(
-                    "- {subject} ([{}]({repo_url}/commit/{commit}))\n",
-                    &commit[..7]
-                ));
-            }
-            ReleaseNoteEntry::Fallback => {
-                notes.push_str(&format!("- {subject} ({})\n", &commit[..7]));
-            }
-        }
+    if repo_url.is_empty() || repo_slug.is_empty() {
+        return Err("could not determine GitHub repository from origin".into());
     }
 
-    if !changelog.new_contributors.is_empty() {
-        notes.push_str("\n## New Contributors\n\n");
-        for (author, pr_number) in &changelog.new_contributors {
-            notes.push_str(&format!(
-                "- {} made their first contribution in #{pr_number}\n",
-                format_release_note_author(author)
-            ));
-        }
-    }
+    let target_commitish = release_notes_target_commitish()?;
+    let generated =
+        github_generated_release_notes(&repo_slug, base_tag, version, &target_commitish)?;
 
-    if !repo_url.is_empty() {
-        notes.push_str(&format!(
-            "\n**Full Changelog:** [{base_tag}...{version}]({repo_url}/compare/{base_tag}...{version})\n"
-        ));
-    }
-    notes.push('\n');
-    Ok(notes)
+    release_notes_from_generated_body(
+        &repo_slug,
+        &repo_url,
+        base_tag,
+        version,
+        summary,
+        &generated,
+        |pr_number, pr_author| release_note_extra_authors_for_pr(&repo_slug, pr_number, pr_author),
+    )
 }
 
 fn print_notes(notes: &str) {
@@ -441,146 +401,69 @@ fn print_notes(notes: &str) {
     print!("{notes}");
 }
 
-struct ChangelogWriter<'a> {
-    repo_slug: &'a str,
-    use_github_metadata: bool,
-    seen_prs: HashSet<String>,
-    first_pr_by_author: HashMap<String, String>,
-    first_commit_by_author: HashMap<String, String>,
-    new_contributor_seen: HashSet<String>,
-    new_contributors: Vec<(String, String)>,
-}
-
-impl<'a> ChangelogWriter<'a> {
-    fn new(repo_slug: &'a str, use_github_metadata: bool) -> Self {
-        Self {
-            repo_slug,
-            use_github_metadata,
-            seen_prs: HashSet::new(),
-            first_pr_by_author: HashMap::new(),
-            first_commit_by_author: HashMap::new(),
-            new_contributor_seen: HashSet::new(),
-            new_contributors: Vec::new(),
-        }
-    }
-
-    fn entry_for_commit(&mut self, commit: &str, _subject: &str) -> Result<ReleaseNoteEntry> {
-        if !self.use_github_metadata {
-            return Ok(ReleaseNoteEntry::Fallback);
-        }
-
-        let Some(pr) = release_note_pr_for_commit(self.repo_slug, commit)? else {
-            return Ok(ReleaseNoteEntry::Fallback);
-        };
-
-        if !self.seen_prs.insert(pr.number.clone()) {
-            return Ok(ReleaseNoteEntry::Skip);
-        }
-        if is_release_publish_pr_title(&pr.title) {
-            return Ok(ReleaseNoteEntry::Skip);
-        }
-
-        let mut author_display = format_release_note_author(&pr.author);
-        if is_release_note_bot_author(&pr.author) {
-            for extra_author in
-                release_note_extra_authors_for_pr(self.repo_slug, &pr.number, &pr.author)?
-            {
-                author_display.push_str(", ");
-                author_display.push_str(&format_release_note_author(&extra_author));
-            }
-        }
-
-        if !pr.author.is_empty() && !is_release_note_bot_author(&pr.author) {
-            let first_pr = if let Some(value) = self.first_pr_by_author.get(&pr.author) {
-                value.clone()
-            } else {
-                let value =
-                    first_merged_pr_for_author(self.repo_slug, &pr.author)?.unwrap_or_default();
-                self.first_pr_by_author
-                    .insert(pr.author.clone(), value.clone());
-                value
-            };
-            if first_pr == pr.number && self.new_contributor_seen.insert(pr.author.clone()) {
-                self.new_contributors
-                    .push((pr.author.clone(), pr.number.clone()));
-            }
-        }
-
-        if is_release_note_bot_author(&pr.author)
-            && let Some(commit_author) = github_author_for_commit(self.repo_slug, commit)?
-            && !is_release_note_bot_author(&commit_author)
-        {
-            let first_commit = if let Some(value) = self.first_commit_by_author.get(&commit_author)
-            {
-                value.clone()
-            } else {
-                let value =
-                    first_commit_for_author(self.repo_slug, &commit_author)?.unwrap_or_default();
-                self.first_commit_by_author
-                    .insert(commit_author.clone(), value.clone());
-                value
-            };
-            if first_commit == commit && self.new_contributor_seen.insert(commit_author.clone()) {
-                self.new_contributors
-                    .push((commit_author, pr.number.clone()));
-            }
-        }
-
-        Ok(ReleaseNoteEntry::Line(format!(
-            "- {} by {} in #{}",
-            pr.title, author_display, pr.number
-        )))
-    }
-}
-
-enum ReleaseNoteEntry {
-    Line(String),
-    Skip,
-    Fallback,
-}
-
-struct PullRequestInfo {
+struct GeneratedReleaseNoteEntry {
     number: String,
     title: String,
     author: String,
 }
 
-fn github_metadata_available(repo_slug: &str) -> bool {
-    !repo_slug.is_empty()
-        && find_on_path("gh")
-        && capture_command("gh", ["auth", "status"])
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+fn release_notes_target_commitish() -> Result<String> {
+    let log = command_stdout(
+        "git",
+        ["log", "--first-parent", "--format=%H%x09%s", "HEAD"],
+    )?;
+    for line in log.lines() {
+        let Some((commit, subject)) = line.split_once('\t') else {
+            continue;
+        };
+        if !is_release_notes_target_housekeeping_subject(subject) {
+            return Ok(commit.to_owned());
+        }
+    }
+    Err("could not find a non-release commit for generated release notes".into())
 }
 
-fn release_note_pr_for_commit(repo_slug: &str, commit: &str) -> Result<Option<PullRequestInfo>> {
+fn github_generated_release_notes(
+    repo_slug: &str,
+    base_tag: &str,
+    version: &str,
+    target_commitish: &str,
+) -> Result<String> {
+    if !find_on_path("gh") {
+        return Err("gh is required to generate release notes".into());
+    }
+
+    let tag_field = format!("tag_name={version}");
+    let previous_tag_field = format!("previous_tag_name={base_tag}");
+    let target_field = format!("target_commitish={target_commitish}");
+    let endpoint = format!("repos/{repo_slug}/releases/generate-notes");
     let output = capture_command(
         "gh",
         [
             "api",
-            "-H",
-            "Accept: application/vnd.github+json",
-            &format!("repos/{repo_slug}/commits/{commit}/pulls"),
+            "--method",
+            "POST",
+            endpoint.as_str(),
+            "-f",
+            tag_field.as_str(),
+            "-f",
+            previous_tag_field.as_str(),
+            "-f",
+            target_field.as_str(),
             "--jq",
-            "map(select(.merged_at != null)) | sort_by(.merged_at) | .[-1] | select(. != null) | [.number, .title, .user.login] | @tsv",
+            ".body",
         ],
     )?;
     if !output.status.success() {
-        return Ok(None);
+        eprint!("{}", output.stderr);
+        return Err(format!("failed to generate GitHub release notes for {version}").into());
     }
-    let line = output.stdout.trim();
-    if line.is_empty() {
-        return Ok(None);
+
+    let body = output.stdout.trim();
+    if body.is_empty() {
+        return Err(format!("GitHub generated no release notes for {version}").into());
     }
-    let fields = line.splitn(3, '\t').collect::<Vec<_>>();
-    if fields.len() != 3 {
-        return Ok(None);
-    }
-    Ok(Some(PullRequestInfo {
-        number: fields[0].to_owned(),
-        title: fields[1].to_owned(),
-        author: fields[2].to_owned(),
-    }))
+    Ok(body.to_owned())
 }
 
 fn release_note_extra_authors_for_pr(
@@ -603,7 +486,8 @@ fn release_note_extra_authors_for_pr(
         ],
     )?;
     if !output.status.success() {
-        return Ok(Vec::new());
+        eprint!("{}", output.stderr);
+        return Err(format!("failed to inspect release note PR #{pr_number}").into());
     }
     let mut seen = HashSet::new();
     let mut authors = Vec::new();
@@ -616,68 +500,135 @@ fn release_note_extra_authors_for_pr(
     Ok(authors)
 }
 
-fn first_merged_pr_for_author(repo_slug: &str, author: &str) -> Result<Option<String>> {
-    github_single_value([
-        "api",
-        "--method",
-        "GET",
-        "search/issues",
-        "-f",
-        &format!("q=repo:{repo_slug} type:pr is:merged author:{author}"),
-        "-f",
-        "sort=created",
-        "-f",
-        "order=asc",
-        "-f",
-        "per_page=1",
-        "--jq",
-        ".items[0].number // empty",
-    ])
-}
+fn release_notes_from_generated_body<F>(
+    repo_slug: &str,
+    repo_url: &str,
+    base_tag: &str,
+    version: &str,
+    summary: &str,
+    generated_body: &str,
+    mut extra_authors_for_pr: F,
+) -> Result<String>
+where
+    F: FnMut(&str, &str) -> Result<Vec<String>>,
+{
+    let entries = generated_changelog_entries(repo_slug, generated_body)?;
+    let mut notes = String::new();
+    notes.push_str(summary);
+    notes.push_str("\n\n## Changelog\n\n");
+    let mut wrote_entry = false;
 
-fn github_author_for_commit(repo_slug: &str, commit: &str) -> Result<Option<String>> {
-    github_single_value([
-        "api",
-        "--method",
-        "GET",
-        &format!("repos/{repo_slug}/commits/{commit}"),
-        "--jq",
-        ".author.login // empty",
-    ])
-}
+    for entry in entries {
+        if is_release_note_housekeeping_title(&entry.title) {
+            continue;
+        }
 
-fn first_commit_for_author(repo_slug: &str, author: &str) -> Result<Option<String>> {
-    github_single_value([
-        "api",
-        "--method",
-        "GET",
-        "search/commits",
-        "-H",
-        "Accept: application/vnd.github.cloak-preview+json",
-        "-f",
-        &format!("q=repo:{repo_slug} author:{author}"),
-        "-f",
-        "sort=author-date",
-        "-f",
-        "order=asc",
-        "-f",
-        "per_page=1",
-        "--jq",
-        ".items[0].sha // empty",
-    ])
-}
+        let mut author_display = format_release_note_author(&entry.author);
+        if is_release_note_bot_author(&entry.author) {
+            for extra_author in extra_authors_for_pr(&entry.number, &entry.author)? {
+                author_display.push_str(", ");
+                author_display.push_str(&format_release_note_author(&extra_author));
+            }
+        }
 
-fn github_single_value<const N: usize>(args: [&str; N]) -> Result<Option<String>> {
-    let output = capture_command("gh", args)?;
-    if !output.status.success() {
-        return Ok(None);
+        notes.push_str(&format!(
+            "- {} by {} in #{}\n",
+            entry.title, author_display, entry.number
+        ));
+        wrote_entry = true;
     }
-    let value = output.stdout.trim();
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(value.to_owned()))
+
+    if !wrote_entry {
+        return Err("release notes contain no public changelog entries".into());
     }
+
+    notes.push_str(&format!(
+        "\n**Full Changelog:** [{base_tag}...{version}]({repo_url}/compare/{base_tag}...{version})\n"
+    ));
+    notes.push('\n');
+    Ok(notes)
+}
+
+fn generated_changelog_entries(
+    repo_slug: &str,
+    generated_body: &str,
+) -> Result<Vec<GeneratedReleaseNoteEntry>> {
+    let mut entries = Vec::new();
+    let mut in_changes = false;
+    let mut saw_changes = false;
+
+    for line in generated_body.lines() {
+        if line.trim() == "## What's Changed" {
+            in_changes = true;
+            saw_changes = true;
+            continue;
+        }
+
+        if !in_changes {
+            continue;
+        }
+
+        if line.starts_with("## ") || line.starts_with("**Full Changelog**") {
+            break;
+        }
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        entries.push(
+            parse_generated_changelog_line(repo_slug, line)
+                .ok_or("unexpected GitHub release note format")?,
+        );
+    }
+
+    if !saw_changes {
+        return Err("GitHub release notes missing What's Changed".into());
+    }
+    if entries.is_empty() {
+        return Err("GitHub release notes missing changelog entries".into());
+    }
+    Ok(entries)
+}
+
+fn parse_generated_changelog_line(
+    repo_slug: &str,
+    line: &str,
+) -> Option<GeneratedReleaseNoteEntry> {
+    let entry = line.strip_prefix("* ")?;
+    let pr_url_prefix = format!("https://github.com/{repo_slug}/pull/");
+    let (before_url, number) = entry.rsplit_once(&pr_url_prefix)?;
+    let before_url = before_url.strip_suffix(" in ")?;
+    let (title, author) = before_url.rsplit_once(" by ")?;
+    let number = number.trim();
+    if number.is_empty() || !number.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(GeneratedReleaseNoteEntry {
+        number: number.to_owned(),
+        title: title.to_owned(),
+        author: parse_generated_author(author)?,
+    })
+}
+
+fn parse_generated_author(author: &str) -> Option<String> {
+    let author = author.trim();
+    if let Some(login) = author.strip_prefix('@') {
+        if login.is_empty() || login.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(login.to_owned());
+    }
+
+    if let Some(rest) = author.strip_prefix("[@")
+        && let Some((login, _)) = rest.split_once("](")
+        && !login.is_empty()
+    {
+        return Some(login.to_owned());
+    }
+
+    None
 }
 
 fn format_release_note_author(author: &str) -> String {
@@ -695,6 +646,18 @@ fn is_release_note_bot_author(author: &str) -> bool {
 fn is_release_publish_pr_title(title: &str) -> bool {
     title.starts_with("release: publish prep for v")
         || title.starts_with("chore(release): publish v")
+}
+
+fn is_release_note_housekeeping_title(title: &str) -> bool {
+    is_release_publish_pr_title(title) || is_release_housekeeping_subject(title)
+}
+
+fn is_release_notes_target_housekeeping_subject(subject: &str) -> bool {
+    is_release_publish_pr_title(subject)
+        || subject.starts_with("chore(flatpak): update Flathub manifest for v")
+        || subject.starts_with("chore(aur): update stable package for v")
+        || subject.starts_with("release: publish stable packages for v")
+        || subject.starts_with("release: sync stable package metadata for v")
 }
 
 fn is_release_housekeeping_subject(subject: &str) -> bool {
