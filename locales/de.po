@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-29 12:01+0000\n"
+"PO-Revision-Date: 2026-06-30 17:01+0000\n"
 "Last-Translator: Sebastian <sebastian.dold@gmail.com>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/rufin/app/de/>\n"
 "Language: de\n"
@@ -98,13 +98,13 @@ msgid "Album"
 msgstr "Album"
 
 msgid "Album Artists"
-msgstr "Album-Interpreten"
+msgstr "Album-Künstler"
 
 msgid "Album artist"
-msgstr "Album-Interpret"
+msgstr "Album-Künstler"
 
 msgid "Album artists"
-msgstr "Album-Interpreten"
+msgstr "Album-Künstler"
 
 msgid "Album radio"
 msgstr "Album-Radio"
@@ -152,13 +152,13 @@ msgid "Artist albums"
 msgstr "Alben"
 
 msgid "Artist name"
-msgstr "Interpret"
+msgstr "Künstler-Name"
 
 msgid "Artist radio"
-msgstr "Interpret-Radio"
+msgstr "Künstler-Radio"
 
 msgid "Artist tracks"
-msgstr "Interpreten-Titel"
+msgstr "Künstler-Titel"
 
 msgid "Artists"
 msgstr "Künstler"
@@ -292,9 +292,8 @@ msgstr "Vollbildmodus beenden"
 msgid "Club"
 msgstr "Klub"
 
-#, fuzzy
 msgid "Collapse sidebar"
-msgstr "Seitenleiste ausblenden"
+msgstr "Seitenleiste einklappen"
 
 msgid "Collection"
 msgstr "Sammlung"
@@ -338,7 +337,7 @@ msgid "Connection"
 msgstr "Verbindung"
 
 msgid "Control notifications"
-msgstr "Benachrichtigungen steuern"
+msgstr "Benachrichtigungen verwalten"
 
 msgid "Create"
 msgstr "Erstellen"
@@ -416,7 +415,7 @@ msgid "Edit"
 msgstr "Bearbeiten"
 
 msgid "Edit Smart Playlist"
-msgstr "Intelligente Playlist bearbeiten"
+msgstr "Smart-Playlist bearbeiten"
 
 msgid "Enable equalizer"
 msgstr "Equalizer einschalten"
@@ -440,7 +439,7 @@ msgid "Enter a server address, username, and password"
 msgstr "Serveradresse, Benutzername und Passwort eingeben"
 
 msgid "Enter an artist or song."
-msgstr "Interpret oder Titel eingeben."
+msgstr "Künstler oder Titel eingeben."
 
 msgid "Equalizer"
 msgstr "Equalizer"
@@ -448,9 +447,8 @@ msgstr "Equalizer"
 msgid "Exit to tray"
 msgstr "In den Infobereich minimieren"
 
-#, fuzzy
 msgid "Expand sidebar"
-msgstr "Seitenleiste ausblenden"
+msgstr "Seitenleiste ausklappen"
 
 msgid "Explore"
 msgstr "Entdecken"
@@ -544,7 +542,7 @@ msgid "Go to Album"
 msgstr "Zum Album gehen"
 
 msgid "Go to Artist"
-msgstr "Zum Interpreten gehen"
+msgstr "Zum Künstler springen"
 
 msgid "Grid"
 msgstr "Raster"
@@ -706,7 +704,7 @@ msgid "Maximum year"
 msgstr "Maximaljahr"
 
 msgid "Menu"
-msgstr ""
+msgstr "Menü"
 
 msgid "Metadata"
 msgstr "Metadaten"
@@ -778,7 +776,7 @@ msgid "New Playlist"
 msgstr "Neue Playlist"
 
 msgid "New Smart Playlist"
-msgstr "Neue intelligente Playlist"
+msgstr "Neue Smart-Playlist"
 
 msgid "Newly added"
 msgstr "Zuletzt hinzugefügt"
@@ -1366,19 +1364,20 @@ msgid "Skip same-album crossfade"
 msgstr "Überblendung bei gleichem Album überspringen"
 
 msgid "Smart Playlist"
-msgstr "Intelligente Playlist"
+msgstr "Smart-Playlist"
 
 msgid "Smart Playlists"
-msgstr "Intelligente Playlists"
+msgstr "Smart-Playlists"
 
 msgid "Smart playlist tracks"
-msgstr "Intelligente Playlist-Titel"
+msgstr "Smart-Playlist-Titel"
 
 msgid "Smart playlists"
-msgstr "Intelligente Playlisten"
+msgstr "Smart-Playlists"
 
 msgid "Smart playlists will appear here after the default set is seeded."
-msgstr "Intelligente Playlisten erscheinen nach Erstellung der Standardlisten."
+msgstr ""
+"Smart-Playlists erscheinen hier, nachdem das Standardset generiert wurde."
 
 msgid "Song"
 msgstr "Song"
@@ -1508,13 +1507,11 @@ msgstr "Übergangsmodus"
 msgid "Turn off only for a server you control"
 msgstr "Nur bei einem selbst kontrollierten Server ausschalten"
 
-#, fuzzy
 msgid "Turn off private mode"
-msgstr "Privater Modus"
+msgstr "Privaten Modus deaktivieren"
 
-#, fuzzy
 msgid "Turn on private mode"
-msgstr "Privater Modus"
+msgstr "Privaten Modus aktivieren"
 
 msgid "Type to search"
 msgstr "Tippen zum Suchen"

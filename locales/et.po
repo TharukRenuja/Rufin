@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"PO-Revision-Date: 2026-06-26 10:03+0000\n"
+"PO-Revision-Date: 2026-06-30 17:01+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -105,7 +105,7 @@ msgid "Album artists"
 msgstr "Albumi esitajad"
 
 msgid "Album radio"
-msgstr "Albumi raadio"
+msgstr "Albumipõhine raadio"
 
 msgid "Album title"
 msgstr "Albumi pealkiri"
@@ -153,7 +153,7 @@ msgid "Artist name"
 msgstr "Esitaja nimi"
 
 msgid "Artist radio"
-msgstr "Esitaja raadio"
+msgstr "Esitajapõhine raadio"
 
 msgid "Artist tracks"
 msgstr "Esitaja lood"
@@ -164,9 +164,8 @@ msgstr "Esitajad"
 msgid "Audio"
 msgstr "Heli"
 
-#, fuzzy
 msgid "Audio fade on play/pause"
-msgstr "Heli sujuv vaibumine esitamisel/pausil"
+msgstr "Esitamisel/peatamisel hajuta heli sujuvalt"
 
 msgid "Audio output"
 msgstr "Heliväljund"
@@ -174,9 +173,8 @@ msgstr "Heliväljund"
 msgid "Auto DJ"
 msgstr "Automaatne diskor"
 
-#, fuzzy
 msgid "Auto DJ off"
-msgstr "Automaatne diskor välja lülitatud"
+msgstr "Automaatne diskor pole kasutusel"
 
 msgid "Auto DJ on"
 msgstr "Automaatne diskor on lülitatud sissse"
@@ -226,14 +224,13 @@ msgstr "Muuda turvalist andmeruumi"
 msgid "Change sort order"
 msgstr "Muuda järjestust"
 
-#, fuzzy
 msgid ""
 "Changing secret backend removes legacy config secrets and signs you out "
 "everywhere, including API secrets. App cache is not affected."
 msgstr ""
-"Salajase taustasüsteemi muutmine eemaldab vanad konfiguratsioonisaladused ja "
-"logib teid välja kõikjal, sealhulgas ka API-saladuste puhul. Rakenduse "
-"vahemälu ei mõjuta see."
+"Saladuste salvestamise taustateenuse muutmine eemaldab vanad seadistuste "
+"saladused/salasõnad ja logib sind kõikjalt välja, sealhulgas ka API-"
+"saladuste puhul. Rakenduse vahemälu see ei mõjuta."
 
 #, rust-format
 msgid "Checking {provider} server..."
@@ -289,9 +286,8 @@ msgstr "Sulge muusikaesitaja täisekraanivaade"
 msgid "Club"
 msgstr "Klubimuusika"
 
-#, fuzzy
 msgid "Collapse sidebar"
-msgstr "Peida külgriba"
+msgstr "Ahenda külgriba"
 
 msgid "Collection"
 msgstr "Kogu"
@@ -379,7 +375,6 @@ msgstr "Järjesta kahanevalt"
 msgid "Detail"
 msgstr "Üksikasjad"
 
-#, fuzzy
 msgid "Detail track columns"
 msgstr "Lugude üksikasjade veerud"
 
@@ -446,9 +441,8 @@ msgstr "Ekvalaiser"
 msgid "Exit to tray"
 msgstr "Väljumisel jäta rakendus süsteemisalve"
 
-#, fuzzy
 msgid "Expand sidebar"
-msgstr "Peida külgriba"
+msgstr "Laienda külgriba"
 
 msgid "Explore"
 msgstr "Uuri ja avasta"
@@ -600,7 +594,7 @@ msgid "Language"
 msgstr "Keel"
 
 msgid "Laptop/Headphones"
-msgstr ""
+msgstr "Sülearvuti/kõrvaklapid"
 
 msgid "Last played"
 msgstr "Viimati esitatud"
@@ -1139,16 +1133,14 @@ msgstr "Taasta"
 msgid "Restore Default"
 msgstr "Taasta vaikimisi väärtus"
 
-#, fuzzy
 msgid "Restore selected preset to default bands."
-msgstr "Taasta valitud eelseadistus vaikeväärtustega."
+msgstr "Taasta sagedusalade vaikeseadistused."
 
 msgid "Resume"
 msgstr "Jätka"
 
-#, fuzzy
 msgid "Rich presence"
-msgstr "Laiendatud teave"
+msgstr "Andmerikas olekuteave"
 
 msgid "Rock"
 msgstr "Rokkmuusika"
@@ -1185,7 +1177,11 @@ msgid_plural ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"Vastendus on salvestatud. {direct} otsene, {prefix} eesliitega, {metadata} "
+"metateabega, {unmatched} puuduv vaste {total} loo puhul."
 msgstr[1] ""
+"Vastendus on salvestatud. {direct} otsene, {prefix} eesliitega, {metadata} "
+"metateabega, {unmatched} puuduvat vastet {total} loo puhul."
 
 msgid "Saved to"
 msgstr "Salvestatud asukohta"
@@ -1328,13 +1324,13 @@ msgid "Show/hide right sidebar"
 msgstr "Kuva/peida parempoolne külgriba"
 
 msgid "Showcase"
-msgstr "Esitle"
+msgstr "Esiletõstetud"
 
 msgid "Shuffle"
 msgstr "Sega lood"
 
 msgid "Shuffle off"
-msgstr "Lülita lugude segamine välja"
+msgstr "Lugude segamine pole kasutusel"
 
 msgid "Shuffle on"
 msgstr "Lugude segamine on kasutusel"
@@ -1369,7 +1365,6 @@ msgstr "Nutika esitusloendi lood"
 msgid "Smart playlists"
 msgstr "Nutikad esitusloendid"
 
-#, fuzzy
 msgid "Smart playlists will appear here after the default set is seeded."
 msgstr "Nutikad esitusloendid ilmuvad siia pärast vaikimisi komplekti loomist."
 
@@ -1416,14 +1411,13 @@ msgstr "Sünkroonimisel on {provider} teenuse muusikakogu…"
 msgid "System default"
 msgstr "Süsteemi vaikeseadistus"
 
-#, fuzzy
 msgid ""
 "Tap to the entry to load the lyrics and save in the app cache, click save "
 "only if you also want to save it in your music folder"
 msgstr ""
-"Puuduta kirjet, et laadida laulusõnad ja salvestada need rakenduse "
-"vahemällu. Kliki nuppu Salvesta”, kui soovid salvestada need ka "
-"muusikafailide kaustas"
+"Laulusõnade laadimiseks ja nende salvestamiseks rakenduse vahemällu klõpsa "
+"kirjet. Klõpsa nuppu „Salvesta“, kui soovid salvestada need ka "
+"muusikafailide kausta"
 
 msgid "Techno"
 msgstr "Teknomuusika"
@@ -1438,21 +1432,19 @@ msgstr ""
 "Täname, et oled proovinud Rufinit! Kui märkasid probleeme või sul on "
 "soovitusi, palun koosta vastav teade meie GitHubi veahalduses."
 
-#, fuzzy
 msgid ""
 "These folders are combined into the Local source and shown through folder "
 "browsing."
 msgstr ""
-"Need kaustad on koondatud kohalikku andmekogusse ja neid saab vaadata "
-"kaustade sirvimise kaudu."
+"Need kaustad on koondatud kohalikku andmekogusse ja neid saad näha kaustade "
+"sirvimise vaatest."
 
-#, fuzzy
 msgid ""
 "This playlist uses nested rule groups. Rule editing is unavailable in this "
 "editor."
 msgstr ""
-"See esitusloend kasutab hierarhilisi reeglite rühmi. Reeglite redigeerimine "
-"pole selles redaktoris võimalik."
+"See esitusloend kasutab hierarhilisi reeglite rühmi. Reeglite muutmine pole "
+"selles vaates võimalik."
 
 msgid "This removes cached library metadata for"
 msgstr "Järgnevaga kustutakse puhverdatud muusikakogu andmed teenusest"
@@ -1471,6 +1463,8 @@ msgid ""
 "This uses Jellyfin API for play radio, necessary if you want recommendation "
 "plugins to work."
 msgstr ""
+"Siinkohal on raadiorežiimi kontekstis kasutusel Jellyfini API ja see on "
+"nõutav, kui tahad, et soovituste lisamoodul toimiks."
 
 msgid "Timed out waiting for Last.fm authorization."
 msgstr "Aegumine Last.fm-i autentimise ootamisel."
@@ -1490,9 +1484,8 @@ msgstr "Lülita täisekraanivaade sisse/välja"
 msgid "Track"
 msgstr "Lugu"
 
-#, fuzzy
 msgid "Track radio"
-msgstr "Esita lugu"
+msgstr "Lugudepõhine raadio"
 
 msgid "Tracks"
 msgstr "Lood"
@@ -1503,16 +1496,14 @@ msgstr "Lugudevahetuse viis"
 msgid "Turn off only for a server you control"
 msgstr "Lülita välja vaid enda kontrollitava serveri jaoks"
 
-#, fuzzy
 msgid "Turn off private mode"
-msgstr "Lülita privaatne režiim sisse"
+msgstr "Lülita privaatne režiim välja"
 
-#, fuzzy
 msgid "Turn on private mode"
 msgstr "Lülita privaatne režiim sisse"
 
 msgid "Type to search"
-msgstr "Otsimiseks siesta midagi"
+msgstr "Otsimiseks sisesta midagi"
 
 msgid "Type to search or create a new playlist"
 msgstr "Sisesta otsimiseks või uue esitusloendi loomiseks"
@@ -1528,10 +1519,14 @@ msgid_plural ""
 "Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
 "{unmatched} unmatched of {total} tracks."
 msgstr[0] ""
+"Salvestamata muudatused. {direct} otsene, {prefix} eesliite osas, {metadata} "
+"metaandmete osas, {unmatched} mittevastavus kokku {total}-st loost."
 msgstr[1] ""
+"Salvestamata muudatused. {direct} otsene, {prefix} eesliite osas, {metadata} "
+"metaandmete osas, {unmatched} mittevastavust kokku {total}-st loost."
 
 msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
+msgstr "Kasuta soovitusteks Jellyfini „Instant Mix“ liidestust"
 
 msgid "Use different layout below a threshold width"
 msgstr ""
@@ -1687,21 +1682,21 @@ msgid_plural "{count} years ago"
 msgstr[0] "{count} aasta tagasi"
 msgstr[1] "{count} aastat tagasi"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
-msgstr "{track_count} lugu lisati esitusloendisse {playlist_count}"
+msgstr "{track_count} lugu lisati {playlist_count} esitusloendisse"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{track_count} song added to {playlist_count} playlists"
 msgstr "{track_count} lugu lisati {playlist_count} esitusloendisse"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{track_count} songs added to {playlist_count} playlist"
-msgstr "{track_count} lugu lisatud {playlist_count} esitusloendisse"
+msgstr "{track_count} lugu on lisatud {playlist_count} esitusloendisse"
 
-#, fuzzy, rust-format
+#, rust-format
 msgid "{track_count} songs added to {playlist_count} playlists"
-msgstr "Lisati {track_count} lugu {playlist_count} esitusloendisse"
+msgstr "{track_count} lugu on lisatud {playlist_count} esitusloendisse"
 
 #~ msgid "Actions"
 #~ msgstr "Tegevused"
