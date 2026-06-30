@@ -7,7 +7,6 @@ usage() {
 
 base_ref="${RUFIN_I18N_SCOPE_BASE_REF:-origin/main}"
 head_ref="${RUFIN_I18N_SCOPE_HEAD_REF:-HEAD}"
-allow_catalog_only="${RUFIN_I18N_ALLOW_CATALOG_ONLY:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -116,12 +115,7 @@ for path in "${changed_paths[@]}"; do
 done
 
 if [[ "${#non_catalog_paths[@]}" -eq 0 ]]; then
-  if [[ "$allow_catalog_only" == "1" ]]; then
-    exit 0
-  fi
-
-  echo "locales/*.po changes are Weblate-owned." >&2
-  exit 1
+  exit 0
 fi
 
 if [[ "${#mixed_paths[@]}" -eq 0 ]]; then

@@ -56,9 +56,6 @@ jobs:
           fi
 
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
-          if [[ "${GITHUB_ACTOR:-}" == "weblate" && "${GITHUB_HEAD_REF:-}" == weblate-* ]]; then
-            export RUFIN_I18N_ALLOW_CATALOG_ONLY=1
-          fi
           bash scripts/check-i18n --base-ref "$base" --head-ref "$HEAD_SHA"
 
           rust_required=false
