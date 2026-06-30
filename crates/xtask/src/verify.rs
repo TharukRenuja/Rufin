@@ -108,6 +108,7 @@ fn flatpak_rufin_build_commands(manifest: &Path) -> Result<HashSet<String>> {
 fn local(mut args: Vec<String>) -> Result<()> {
     let mut base_ref =
         env::var("RUFIN_RELEASE_CHECK_BASE_REF").unwrap_or_else(|_| "origin/main".to_owned());
+    let mut skip_nix_cargo_hash = false;
 
     while !args.is_empty() {
         match args.remove(0).as_str() {
@@ -117,8 +118,11 @@ fn local(mut args: Vec<String>) -> Result<()> {
                 }
                 base_ref = args.remove(0);
             }
+            "--skip-nix-cargo-hash" => skip_nix_cargo_hash = true,
             "-h" | "--help" => {
-                eprintln!("Usage: cargo run --locked -p xtask -- verify local [--base-ref REF]");
+                eprintln!(
+                    "Usage: cargo run --locked -p xtask -- verify local [--base-ref REF] [--skip-nix-cargo-hash]"
+                );
                 return Ok(());
             }
             arg => return Err(format!("unexpected argument: {arg}").into()),
@@ -144,10 +148,10 @@ fn local(mut args: Vec<String>) -> Result<()> {
             || path.ends_with("/Cargo.toml")
             || path == "flake.nix"
             || path.starts_with("crates/xtask/")
-            || path == "scripts/retry-nix.sh"
+            || path == "scripts/retry-nix"
     });
 
-    if needs_nix_hash_check {
+    if needs_nix_hash_check && !skip_nix_cargo_hash {
         generate::nix_cargo_hash(true)?;
     }
     run_command("just", ["check"])?;

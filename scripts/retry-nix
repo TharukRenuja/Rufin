@@ -27,14 +27,13 @@ attempt=1
 while (( attempt <= attempts )); do
   : > "$log_file"
   set +e
-  "$@" >"$log_file" 2>&1
-  status="$?"
+  "$@" 2>&1 | tee "$log_file"
+  status="${PIPESTATUS[0]}"
   set -e
 
   if [[ "$status" -eq 0 ]] ||
     (( attempt == attempts )) ||
     ! grep -Eiq "$transient_pattern" "$log_file"; then
-    cat "$log_file"
     exit "$status"
   fi
 

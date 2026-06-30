@@ -81,7 +81,7 @@ is_i18n_tooling_path() {
     locales/POTFILES.in|\
     locales/rufin.pot|\
     scripts/check-i18n|\
-    scripts/retry-nix.sh)
+    scripts/retry-nix)
       return 0
       ;;
     *)
