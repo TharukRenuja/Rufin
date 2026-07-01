@@ -18,17 +18,28 @@ pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) configure_scroller: Option<LibraryRouteScrollerConfigurator>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::ui) fn log_route_page_timing(
-    route: &Route,
-    action: &'static str,
-    offset: usize,
-    count: usize,
-    total: usize,
-    load_ms: u64,
-    apply_ms: u64,
-    total_ms: u64,
-) {
+pub(in crate::ui) struct RoutePageTiming<'a> {
+    pub(in crate::ui) route: &'a Route,
+    pub(in crate::ui) action: &'static str,
+    pub(in crate::ui) offset: usize,
+    pub(in crate::ui) count: usize,
+    pub(in crate::ui) total: usize,
+    pub(in crate::ui) load_ms: u64,
+    pub(in crate::ui) apply_ms: u64,
+    pub(in crate::ui) total_ms: u64,
+}
+
+pub(in crate::ui) fn log_route_page_timing(timing: RoutePageTiming<'_>) {
+    let RoutePageTiming {
+        route,
+        action,
+        offset,
+        count,
+        total,
+        load_ms,
+        apply_ms,
+        total_ms,
+    } = timing;
     if total_ms >= SLOW_ROUTE_PAGE_LOAD_MS {
         warn!(
             ?route,
@@ -139,16 +150,16 @@ impl Shell {
                         tracks.borrow_mut().extend(items.iter().cloned());
                         append_tracks_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(
-                            &Route::Tracks,
-                            "append",
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Tracks,
+                            action: "append",
                             offset,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached tracks page");
@@ -208,16 +219,16 @@ impl Shell {
                         replace_tracks_in_model(&model, visible_tracks);
                         warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(
-                            &Route::Tracks,
-                            "search",
-                            0,
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Tracks,
+                            action: "search",
+                            offset: 0,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached tracks page");

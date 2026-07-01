@@ -191,16 +191,16 @@ impl Shell {
                             &album_tracks.borrow(),
                         );
                         finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(
-                            &Route::Albums,
-                            "search",
-                            0,
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Albums,
+                            action: "search",
+                            offset: 0,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached albums page");
@@ -254,16 +254,16 @@ impl Shell {
                             &album_tracks.borrow(),
                         );
                         finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(
-                            &Route::Albums,
-                            "append",
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Albums,
+                            action: "append",
                             offset,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached albums page");
@@ -556,16 +556,16 @@ impl Shell {
                         warm_artist_covers_for_settings(&shell, &artists.borrow(), key, &settings);
                         populate_artist_model(&model, &artists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(
-                            &search_route,
-                            "search",
-                            0,
+                        log_route_page_timing(RoutePageTiming {
+                            route: &search_route,
+                            action: "search",
+                            offset: 0,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached artists page");
@@ -612,16 +612,16 @@ impl Shell {
                         artists.borrow_mut().extend(items.iter().cloned());
                         append_artists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(
-                            &load_route,
-                            "append",
+                        log_route_page_timing(RoutePageTiming {
+                            route: &load_route,
+                            action: "append",
                             offset,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached artists page");
@@ -797,16 +797,16 @@ impl Shell {
                         warm_genre_covers_for_settings(&shell, &genres.borrow(), &settings);
                         populate_genre_model(&model, &genres.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(
-                            &Route::Genres,
-                            "search",
-                            0,
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Genres,
+                            action: "search",
+                            offset: 0,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached genres page");
@@ -850,16 +850,16 @@ impl Shell {
                         genres.borrow_mut().extend(items.iter().cloned());
                         append_genres_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(
-                            &Route::Genres,
-                            "append",
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Genres,
+                            action: "append",
                             offset,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached genres page");
@@ -1010,16 +1010,16 @@ impl Shell {
                         warm_playlist_covers_for_settings(&shell, &playlists.borrow(), &settings);
                         populate_playlist_model(&model, &playlists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(
-                            &Route::Playlists,
-                            "search",
-                            0,
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Playlists,
+                            action: "search",
+                            offset: 0,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached playlists page");
@@ -1066,16 +1066,16 @@ impl Shell {
                         playlists.borrow_mut().extend(items.iter().cloned());
                         append_playlists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(
-                            &Route::Playlists,
-                            "append",
+                        log_route_page_timing(RoutePageTiming {
+                            route: &Route::Playlists,
+                            action: "append",
                             offset,
                             count,
                             total,
                             load_ms,
-                            apply_started.elapsed().as_millis() as u64,
-                            total_started.elapsed().as_millis() as u64,
-                        );
+                            apply_ms: apply_started.elapsed().as_millis() as u64,
+                            total_ms: total_started.elapsed().as_millis() as u64,
+                        });
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached playlists page");

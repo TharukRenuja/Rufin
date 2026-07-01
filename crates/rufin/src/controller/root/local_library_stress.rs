@@ -299,7 +299,6 @@ fn append_stress_genres(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_stress_tracks(
     tracks: &mut Vec<Track>,
     base_tracks: &[Track],
