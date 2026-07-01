@@ -11,7 +11,9 @@ const RELEASE_TYPE_LOOKUP_LIMIT: usize = 500;
 const SYNC_CANCELLED_ERROR: &str = "Sync cancelled.";
 static RELEASE_TYPE_LOOKUPS_IN_FLIGHT: OnceLock<Mutex<HashSet<ServerId>>> = OnceLock::new();
 
-fn check_sync_cancelled(cancellation: &CancellationToken) -> Result<(), String> {
+pub(in crate::controller) fn check_sync_cancelled(
+    cancellation: &CancellationToken,
+) -> Result<(), String> {
     if cancellation.cancelled() {
         return Err(SYNC_CANCELLED_ERROR.to_string());
     }
@@ -48,7 +50,7 @@ fn mark_sync_cancelled(store: &StoreHandle, server_id: &ServerId, generation: i6
     }
 }
 
-async fn await_provider<T, Fut>(
+pub(in crate::controller) async fn await_provider<T, Fut>(
     cancellation: &CancellationToken,
     operation: Fut,
 ) -> Result<T, String>
@@ -86,7 +88,11 @@ pub(in crate::controller) fn start_background_sync_thread(
     context: SyncContext,
     saved: SavedServer,
 ) {
-    start_sync_thread_inner(context, saved, false, false, false);
+    if active_server_needs_sync(&context.store, &saved.server.id) {
+        start_sync_thread_inner(context, saved, false, false, false);
+    } else {
+        start_cached_active_source_reconciliation_thread(context, saved);
+    }
 }
 
 pub(in crate::controller) fn start_sync_thread_with_snapshots(
@@ -116,7 +122,7 @@ pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved
     start_sync_thread_inner(context, saved, false, true, true);
 }
 
-fn start_sync_thread_inner(
+pub(in crate::controller) fn start_sync_thread_inner(
     context: SyncContext,
     saved: SavedServer,
     force_snapshots: bool,
@@ -284,7 +290,7 @@ impl SyncJobOutcome {
     }
 }
 
-fn send_library_sync_status(
+pub(in crate::controller) fn send_library_sync_status(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
     saved: &SavedServer,
@@ -1449,6 +1455,7 @@ pub(in crate::controller) async fn sync_local_provider_outcome_with_stress_multi
     )
     .await
 }
+
 #[instrument(skip(store, provider, progress), fields(server_id = %server_id.as_str(), generation))]
 async fn sync_provider_generation(
     store: &StoreHandle,

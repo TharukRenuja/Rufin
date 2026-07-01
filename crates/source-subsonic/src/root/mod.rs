@@ -185,6 +185,24 @@ impl SubsonicProvider {
         Ok(artists)
     }
 
+    pub async fn newest_albums(&self, limit: usize) -> ProviderResult<Vec<Album>> {
+        let body: AlbumListBody = self
+            .get_json(
+                "getAlbumList2",
+                &[
+                    ("type", "newest".to_string()),
+                    ("size", limit.clamp(1, 500).to_string()),
+                ],
+            )
+            .await?;
+        Ok(body
+            .album_list
+            .album
+            .into_iter()
+            .map(|album| album_from_dto(self, album))
+            .collect())
+    }
+
     async fn songs_by_genre(&self, genre_name: &str) -> ProviderResult<Vec<Track>> {
         let mut offset = 0;
         let mut tracks = Vec::new();

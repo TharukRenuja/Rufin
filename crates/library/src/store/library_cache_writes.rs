@@ -134,6 +134,54 @@ impl Store {
         Ok(delta)
     }
 
+    pub fn delete_tracks_delta(
+        &self,
+        server_id: &ServerId,
+        track_ids: &[TrackId],
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        let mut existing_tracks = Vec::new();
+        for track_id in track_ids {
+            if let Some(track) = self.load_track_for_delta(server_id, track_id)? {
+                existing_tracks.push(track);
+            }
+        }
+        if existing_tracks.is_empty() {
+            return Ok(delta);
+        }
+
+        let deleted_track_ids = existing_tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let playlist_stats_before =
+            self.playlists_for_track_stat_changes(server_id, &deleted_track_ids)?;
+        for track in &existing_tracks {
+            delta.tracks.deleted.push(track.id.clone());
+            delta.albums.links.push(track.album_id.clone());
+            if let Some(artist_id) = track.artist_id.clone() {
+                delta.artists.links.push(artist_id);
+            }
+            delta
+                .artists
+                .links
+                .extend(track.artist_credits.iter().map(|credit| credit.id.clone()));
+            delta.album_artists.links.extend(
+                track
+                    .album_artist_credits
+                    .iter()
+                    .map(|credit| credit.id.clone()),
+            );
+            delta
+                .genres
+                .links
+                .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
+        }
+        self.delete_local_track_rows(server_id, &deleted_track_ids)?;
+        self.refresh_track_dependent_playlist_stats(server_id, playlist_stats_before, &mut delta)?;
+        Ok(delta)
+    }
+
     pub fn upsert_artists_delta(
         &self,
         server_id: &ServerId,

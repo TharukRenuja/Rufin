@@ -18,6 +18,7 @@ impl AppController {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let local_library_watcher = Arc::clone(&self.local_library_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -101,14 +102,16 @@ impl AppController {
             }
             emit_snapshot(&store, &events);
             if select_local {
-                start_sync_thread_with_snapshots(sync_context, saved);
+                start_sync_thread_with_snapshots(sync_context.clone(), saved);
             }
+            refresh_local_library_watcher(sync_context, local_library_watcher);
         });
     }
     pub fn remove_local_library_folder(&self, path: String) {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let local_library_watcher = Arc::clone(&self.local_library_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -229,11 +232,12 @@ impl AppController {
             }
             if !no_local_folders {
                 if selected_local {
-                    start_sync_thread_with_snapshots(sync_context, saved);
+                    start_sync_thread_with_snapshots(sync_context.clone(), saved);
                 } else {
-                    start_sync_thread(sync_context, saved);
+                    start_sync_thread(sync_context.clone(), saved);
                 }
             }
+            refresh_local_library_watcher(sync_context, local_library_watcher);
         });
     }
 }

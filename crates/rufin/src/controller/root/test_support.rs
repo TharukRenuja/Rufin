@@ -79,6 +79,8 @@ pub(in crate::controller) fn controller_from_store_for_test(
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
         external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
+        local_library_watcher: Arc::new(Mutex::new(None)),
+        remote_library_watcher: Arc::new(Mutex::new(None)),
         external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
         events,
         sync_in_flight: InFlightGuards::new("Sync"),

@@ -1,5 +1,7 @@
 use super::*;
 
+const ACTIVE_SOURCE_RECONCILIATION_DELAY_MS: u64 = 2_000;
+
 impl AppController {
     pub fn start_background_sync_for_active(&self) {
         let active = self
@@ -168,6 +170,20 @@ impl AppController {
             startup_delay_ms = ?readiness.startup_delay_ms,
             "evaluated active source readiness"
         );
-        readiness.startup_delay_ms
+        let local_source_configured = saved.server.provider != LOCAL_PROVIDER_ID
+            || !load_settings_from_store(&self.store)
+                .sources
+                .local_folders
+                .is_empty();
+        if local_source_configured
+            && cached_library_exists(&self.store, &saved.server.id)
+            && readiness.sync_required_reason.is_none()
+            && (saved.server.provider == LOCAL_PROVIDER_ID
+                || active_source_reconciliation_supported(&saved))
+        {
+            Some(ACTIVE_SOURCE_RECONCILIATION_DELAY_MS)
+        } else {
+            readiness.startup_delay_ms
+        }
     }
 }

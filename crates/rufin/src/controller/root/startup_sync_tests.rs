@@ -2487,10 +2487,10 @@ pub(in crate::controller) fn empty_cache_schedule() {
 
     assert_eq!(
         readiness.sync_required_reason,
-        Some(SyncRequiredReason::LocalManifestRefresh)
+        Some(SyncRequiredReason::EmptyCache)
     );
-    assert_eq!(readiness.startup_delay_ms, Some(8_000));
-    assert!(readiness.metadata_fresh);
+    assert_eq!(readiness.startup_delay_ms, Some(500));
+    assert!(!readiness.metadata_fresh);
     assert!(readiness.artwork_fresh);
     assert!(active_server_needs_sync(&store, &local.server.id));
     let _cleanup = fs::remove_dir_all(root);
@@ -2636,10 +2636,10 @@ pub(in crate::controller) fn startup_ignore_ready() {
     });
     assert_eq!(
         local_running.sync_required_reason,
-        Some(SyncRequiredReason::LocalManifestRefresh)
+        Some(SyncRequiredReason::PreviousSyncError)
     );
     assert_eq!(local_running.startup_delay_ms, Some(8_000));
-    assert!(local_running.metadata_fresh);
+    assert!(!local_running.metadata_fresh);
     assert!(local_running.artwork_fresh);
 
     let remote_stale = source_sync_readiness(SourceSyncReadinessInput {
@@ -2672,6 +2672,129 @@ pub(in crate::controller) fn startup_ignore_ready() {
     assert_eq!(local_missing_artwork.startup_delay_ms, None);
     assert!(local_missing_artwork.metadata_fresh);
     assert!(!local_missing_artwork.artwork_fresh);
+}
+#[test]
+pub(in crate::controller) fn stale_remote_cache_requests_activation_sync_fallback() {
+    let (store, root) = disk_store_for_test("remote-stale-activation");
+    let saved = saved_server();
+    let track = library_track(1, Some(ArtistId::fake(1)), AlbumId::fake(1), "Artist", &[]);
+    seed_cached_library(&store, &saved, &[], &[track], &[]);
+    let database_path = disk_store_database_path(&store);
+    Connection::open(database_path)
+        .expect("open cache db")
+        .execute(
+            "
+            UPDATE sync_state
+            SET last_completed_at = datetime('now', '-25 hours')
+            WHERE server_id = ?1
+            ",
+            [saved.server.id.as_str()],
+        )
+        .expect("age sync state");
+
+    let readiness = active_source_readiness(&store, &saved.server.id).expect("readiness");
+
+    assert_eq!(
+        readiness.sync_required_reason,
+        Some(SyncRequiredReason::RemoteCacheStale)
+    );
+    assert!(active_server_needs_sync(&store, &saved.server.id));
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn ready_subsonic_remotes_schedule_active_reconciliation() {
+    for provider in ["subsonic", "navidrome"] {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let mut saved = saved_server();
+        saved.server.provider = provider.to_string();
+        saved.server.id = ServerId::new(format!("{provider}:server:ready"));
+        let album = library_album(1, "Artist", "Album", None);
+        let track = library_track(1, Some(ArtistId::fake(1)), album.id.clone(), "Artist", &[]);
+        seed_cached_library(&store, &saved, &[album], &[track], &[]);
+        let (controller, _events) = controller_from_store_for_test(store);
+        controller
+            .secrets
+            .save_token(&saved.server.id, "token")
+            .expect("save token");
+
+        assert!(!active_server_needs_sync(
+            &controller.store,
+            &saved.server.id
+        ));
+        assert_eq!(
+            controller.startup_sync_delay_ms(),
+            Some(2_000),
+            "{provider}"
+        );
+    }
+}
+#[test]
+pub(in crate::controller) fn stale_local_cache_requests_activation_sync_fallback() {
+    let (store, cache_root) = disk_store_for_test("local-stale-activation");
+    let local = local_source_saved();
+    let root = unique_test_dir("local-stale-activation-root");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    let album = local_album_with_image_ref(ImageRef::new(
+        "local:cover:file%3A%2F%2Fstale-local-cover",
+        None,
+    ));
+    let track = local_track_with_image_ref(
+        1,
+        &album,
+        ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
+    );
+    seed_cached_library(&store, &local, &[album], &[track], &[]);
+    let database_path = disk_store_database_path(&store);
+    Connection::open(database_path)
+        .expect("open cache db")
+        .execute(
+            "
+            UPDATE sync_state
+            SET last_completed_at = datetime('now', '-25 hours')
+            WHERE server_id = ?1
+            ",
+            [local.server.id.as_str()],
+        )
+        .expect("age sync state");
+
+    let readiness = active_source_readiness(&store, &local.server.id).expect("readiness");
+
+    assert_eq!(
+        readiness.sync_required_reason,
+        Some(SyncRequiredReason::LocalManifestRefresh)
+    );
+    assert!(active_server_needs_sync(&store, &local.server.id));
+    let (controller, _events) = controller_from_store_for_test(store);
+    assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
+    let _cleanup_cache = fs::remove_dir_all(cache_root);
+    let _cleanup_music = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn active_local_reconciliation_updates_manifest_delta() {
+    let (store, _local, root, _generation) =
+        seed_cached_local_source("local-active-reconciliation");
+    let album_dir = root.join("Artist").join("Album");
+    fs::write(album_dir.join("Second.mp3"), []).expect("audio");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.start_background_sync_for_active();
+
+    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+    assert!(!status.delta.tracks.added.is_empty());
+    assert_eq!(status.counts.tracks, 2);
+    let tracks = controller
+        .store
+        .with_store(|store| store.load_tracks(&status.server_id, 0, 10))
+        .expect("load local tracks")
+        .items;
+    assert_eq!(tracks.len(), 2);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn startup_local_source() {

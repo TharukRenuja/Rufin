@@ -870,15 +870,16 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
 }
 
 pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
-    let Some(delay_ms) = shell.controller.startup_sync_delay_ms() else {
-        return;
-    };
+    shell.controller.refresh_local_library_watcher();
+    shell.controller.refresh_remote_library_watcher();
 
-    let shell = Rc::clone(shell);
-    glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
-        debug!(delay_ms, "starting deferred background sync");
-        shell.controller.start_background_sync_for_active();
-    });
+    if let Some(delay_ms) = shell.controller.startup_sync_delay_ms() {
+        let shell = Rc::clone(shell);
+        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            debug!(delay_ms, "starting deferred active source reconciliation");
+            shell.controller.start_background_sync_for_active();
+        });
+    }
 }
 pub(in crate::ui) fn apply_library_sync_status(
     library: &mut LibrarySnapshot,

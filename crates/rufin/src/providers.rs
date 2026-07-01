@@ -4,7 +4,8 @@ use source::{
 };
 use source_jellyfin::JellyfinProvider;
 pub use source_jellyfin::{
-    DiscoveredJellyfinServer, JellyfinLyricsSearch, discover_jellyfin_servers,
+    DiscoveredJellyfinServer, JellyfinLibraryChange, JellyfinLyricsSearch,
+    discover_jellyfin_servers,
 };
 use source_local::{LOCAL_PROVIDER_ID, LocalProvider};
 use source_subsonic::{SubsonicFlavor, SubsonicLoginRequest, SubsonicProvider};
