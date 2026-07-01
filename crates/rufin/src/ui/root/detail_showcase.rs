@@ -85,9 +85,7 @@ pub(in crate::ui) fn media_detail_showcase(
     body.append(&metadata);
 
     header.append(&body);
-    let showcase = detail_showcase_frame_with_back(shell, header.upcast());
-    showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-    showcase
+    detail_showcase_frame_with_back(shell, header.upcast())
 }
 
 pub(in crate::ui) fn collection_detail_showcase(
@@ -115,9 +113,7 @@ pub(in crate::ui) fn collection_detail_showcase(
     }
     header.append(&metadata);
 
-    let showcase = detail_showcase_frame_with_back(shell, header.upcast());
-    showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-    showcase
+    detail_showcase_frame_with_back(shell, header.upcast())
 }
 
 pub(in crate::ui) fn playlist_detail_showcase(

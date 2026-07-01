@@ -203,13 +203,11 @@ pub(in crate::ui) fn route_boundary_for_route(
 ) -> gtk::Widget {
     route_boundary_from_spec(view, route_boundary_spec_for_route(route), content_width)
 }
-pub(in crate::ui) fn apply_route_boundary_width(boundary: &gtk::Widget, content_width: i32) {
-    let width = content_width.max(1);
-    boundary.set_width_request(width);
+pub(in crate::ui) fn apply_route_boundary_width(boundary: &gtk::Widget, _content_width: i32) {
+    boundary.set_width_request(1);
     if let Some(scroller) = boundary.downcast_ref::<gtk::ScrolledWindow>() {
-        scroller.set_max_content_width(-1);
-        scroller.set_min_content_width(width);
-        scroller.set_max_content_width(width);
+        scroller.set_min_content_width(0);
+        scroller.set_max_content_width(1);
     }
 }
 fn route_boundary_from_spec(
@@ -265,7 +263,6 @@ pub(in crate::ui) fn detail_route_scroller(shell: &Rc<Shell>, content: gtk::Widg
     mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_overlay_scrolling(false);
     scroller.set_child(Some(&content));
     scroller.upcast()
 }

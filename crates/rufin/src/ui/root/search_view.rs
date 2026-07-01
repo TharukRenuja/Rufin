@@ -44,7 +44,7 @@ impl Shell {
                     query: query.to_string(),
                     selected_music_folder_id: selected_music_folder_id(self),
                 }),
-                PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END + DETAIL_ROUTE_SCROLL_GUTTER,
+                PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END,
             ));
         } else if loading {
             content.append(&self.route_empty_view(msgid("Searching...")));

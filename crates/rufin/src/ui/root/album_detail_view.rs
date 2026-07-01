@@ -1,6 +1,6 @@
 use super::*;
 
-const ALBUM_DETAIL_ROUTE_INSET: i32 = PRIMARY_ROUTE_MARGIN_START + DETAIL_ROUTE_SCROLL_GUTTER;
+const ALBUM_DETAIL_ROUTE_INSET: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 
 impl Shell {
     pub(in crate::ui) fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
@@ -57,7 +57,7 @@ impl Shell {
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(0);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);

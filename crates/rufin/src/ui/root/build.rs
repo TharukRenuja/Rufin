@@ -188,8 +188,3 @@ pub(in crate::ui) fn upsert_snapshot_home_section(
         sections.push(section);
     }
 }
-pub(in crate::ui) fn reset_home_section_pages(
-    states: &mut HashMap<HomeSectionKind, HomeSectionState>,
-) {
-    states.clear();
-}

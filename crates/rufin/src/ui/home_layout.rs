@@ -2,7 +2,7 @@ use adw::prelude::*;
 
 use crate::i18n::tr;
 
-use super::{DETAIL_GRADIENT_MARGIN_END, icon_button};
+use super::icon_button;
 
 const HOME_SHOWCASE_TEXT_MIN_WIDTH: i32 = 420;
 const HOME_SHOWCASE_COMPACT_WIDTH: i32 = 640;
@@ -17,7 +17,7 @@ pub(super) struct HomeSectionHeader {
     pub(super) refresh: gtk::Button,
 }
 
-pub(super) fn home_section_header(title: &str, _width: i32) -> HomeSectionHeader {
+pub(super) fn home_section_header(title: &str) -> HomeSectionHeader {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header.set_hexpand(true);
     header.set_halign(gtk::Align::Fill);
@@ -34,7 +34,6 @@ pub(super) fn home_section_header(title: &str, _width: i32) -> HomeSectionHeader
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     controls.set_halign(gtk::Align::End);
     controls.set_hexpand(false);
-    controls.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
 
     let previous = icon_button("go-previous-symbolic", "Previous page");
     let next = icon_button("go-next-symbolic", "Next page");

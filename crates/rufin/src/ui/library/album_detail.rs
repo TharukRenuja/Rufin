@@ -1126,7 +1126,7 @@ fn album_detail_row_content_width(key: LibraryListKey, route_width: i32) -> i32 
 
 fn album_detail_route_inset(key: LibraryListKey) -> i32 {
     let _ = key;
-    PRIMARY_ROUTE_MARGIN_START.saturating_add(DETAIL_ROUTE_SCROLL_GUTTER)
+    PRIMARY_ROUTE_MARGIN_START.saturating_add(PRIMARY_ROUTE_MARGIN_END)
 }
 
 fn album_detail_min_track_area_width(fields: &[LibraryField]) -> i32 {
@@ -1176,7 +1176,7 @@ mod album_detail_width_tests {
     }
 
     #[test]
-    fn album_detail_width_leaves_scroll_gutter() {
+    fn album_detail_width_respects_route_side_insets() {
         let fields = [
             LibraryField::Image,
             LibraryField::Title,
@@ -1203,7 +1203,7 @@ mod album_detail_width_tests {
             );
             let route_budget = route_width
                 .saturating_sub(PRIMARY_ROUTE_MARGIN_START)
-                .saturating_sub(DETAIL_ROUTE_SCROLL_GUTTER)
+                .saturating_sub(PRIMARY_ROUTE_MARGIN_END)
                 .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
                 .max(1);
             assert!(row_width <= route_budget);

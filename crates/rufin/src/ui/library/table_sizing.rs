@@ -80,11 +80,8 @@ fn vertical_scrollbar_width() -> i32 {
     natural.max(0)
 }
 
-fn column_view_reserves_scrollbar(mode: ColumnViewWidthMode) -> bool {
-    matches!(
-        mode,
-        ColumnViewWidthMode::RouteScroller | ColumnViewWidthMode::EmbeddedScroller
-    )
+fn column_view_reserves_scrollbar(_mode: ColumnViewWidthMode) -> bool {
+    false
 }
 
 pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
@@ -300,6 +297,16 @@ fn nearest_scrolled_window(table: &gtk::ColumnView) -> Option<gtk::ScrolledWindo
 
 fn scroller_vertical_scrollbar_width(scroller: &gtk::ScrolledWindow) -> i32 {
     let (_, vertical_policy) = scroller.policy();
+    scroller_vertical_scrollbar_width_for_fit(vertical_policy, scroller.is_overlay_scrolling())
+}
+
+fn scroller_vertical_scrollbar_width_for_fit(
+    vertical_policy: gtk::PolicyType,
+    overlay_scrolling: bool,
+) -> i32 {
+    if overlay_scrolling {
+        return 0;
+    }
     if matches!(
         vertical_policy,
         gtk::PolicyType::Always | gtk::PolicyType::Automatic | gtk::PolicyType::External
@@ -353,13 +360,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scrollable_embedded_tables_reserve_scrollbar_width() {
-        assert!(column_view_reserves_scrollbar(
+    fn scrollable_route_tables_use_overlay_scrollbar_width() {
+        assert!(!column_view_reserves_scrollbar(
+            ColumnViewWidthMode::RouteScroller
+        ));
+        assert!(!column_view_reserves_scrollbar(
             ColumnViewWidthMode::EmbeddedScroller
         ));
         assert!(!column_view_reserves_scrollbar(
             ColumnViewWidthMode::Embedded
         ));
+        assert_eq!(
+            scroller_vertical_scrollbar_width_for_fit(gtk::PolicyType::Always, true),
+            0
+        );
     }
 
     #[test]

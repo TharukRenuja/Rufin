@@ -9,6 +9,7 @@ use domain::{
 
 use crate::i18n::msgid;
 
+use super::library::library_route_inset;
 use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
@@ -57,7 +58,7 @@ impl Shell {
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(0);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -124,7 +125,7 @@ impl Shell {
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(0);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -169,9 +170,6 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(0);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.set_width_request(1);
@@ -184,13 +182,16 @@ impl Shell {
                 .track_count
                 .max(detail.tracks.len().min(u32::MAX as usize) as u32),
         );
-        wrapper.append(&self.artist_subroute_header(&detail.artist, "Tracks", &summary));
+        wrapper.append(&library_route_inset(self.artist_subroute_header(
+            &detail.artist,
+            "Tracks",
+            &summary,
+        )));
 
         wrapper.append(&self.library_tracks_scrolling_panel(
             detail.tracks,
             LibraryListKey::ArtistTracks,
             "artist-tracks",
-            0,
             Some(PlaySourceDescriptor::ArtistTracks {
                 artist_id: detail.artist.id,
                 scope: ArtistTrackScope::AllCredits,
@@ -362,9 +363,7 @@ impl Shell {
         header.append(&kind);
         header.append(&title);
         header.append(&summary);
-        let showcase = detail_showcase_frame_with_back(self, header.upcast());
-        showcase.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
-        showcase
+        detail_showcase_frame_with_back(self, header.upcast())
     }
 
     fn artist_count_buttons(

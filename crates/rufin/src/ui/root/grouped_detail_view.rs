@@ -1,5 +1,6 @@
+use super::library::library_route_inset;
 use super::*;
-use crate::ui::root::playlist_detail_view::{playlist_cover_size, playlist_route_margin};
+use crate::ui::root::playlist_detail_view::playlist_cover_size;
 
 pub(in crate::ui) const GROUPED_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
 
@@ -20,13 +21,11 @@ impl Shell {
             table_context,
             source_descriptor,
         } = data;
-        let content_width = route_content_width(self);
-        let route_margin = playlist_route_margin(content_width);
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = playlist_cover_size(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
-        wrapper.set_margin_bottom(36);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
@@ -63,14 +62,12 @@ impl Shell {
                 metadata,
             },
         );
-        wrapper.append(&showcase);
+        wrapper.append(&library_route_inset(showcase));
 
         if tracks.is_empty() {
             let placeholder =
                 self.placeholder_view("Tracks", "No cached tracks are linked here yet.");
-            placeholder.set_margin_start(route_margin);
-            placeholder.set_margin_end(route_margin);
-            wrapper.append(&placeholder);
+            wrapper.append(&library_route_inset(placeholder));
         } else {
             let key = if table_context == "genre-detail" {
                 LibraryListKey::GenreTracks
@@ -81,7 +78,6 @@ impl Shell {
                 tracks,
                 key,
                 table_context,
-                route_margin,
                 source_descriptor,
                 selection_handle,
             ));

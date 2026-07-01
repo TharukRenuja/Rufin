@@ -45,7 +45,6 @@
         "install -Dm644 -t /app/share/icons/hicolor/64x64/apps data/icons/hicolor/64x64/apps/*.png",
         "test -f /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-add-symbolic.svg",
-        "test -f /app/share/icons/hicolor/scalable/actions/rufin-audio-radio-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-edit-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-favorite-add-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-favorite-remove-symbolic.svg",

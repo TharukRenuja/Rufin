@@ -669,10 +669,6 @@ menubutton.server-selector > button:hover {
   color: @destructive_color;
 }
 
-.album-strip {
-  padding-bottom: 4px;
-}
-
 .seeded-gradient-showcase {
   border-radius: 8px;
   color: @window_fg_color;

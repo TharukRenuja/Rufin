@@ -77,11 +77,9 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         let toolbar = self.library_toolbar(key, search.clone());
-        toolbar.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
         wrapper.append(&toolbar);
         self.install_type_to_search(&search);
         let collection = non_propagating_width_clip(album_collection_widget(self, model, key));
-        collection.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
         wrapper.append(&collection);
         wrapper.upcast()
     }

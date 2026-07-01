@@ -28,7 +28,7 @@ use super::{
     lyrics_result_subtitle, lyrics_result_subtitle_markup, lyrics_result_title_markup,
     lyrics_search_response_matches_query, lyrics_search_result_has_content, playlist_cover_size,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
-    playlist_route_margin, playlist_sort_width, preferences_login_status_toast_message,
+    playlist_sort_width, preferences_login_status_toast_message,
     preferences_login_status_toast_message_for_surface, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
@@ -1049,11 +1049,8 @@ pub(in crate::ui) fn shell_track_field() {
 }
 #[test]
 pub(in crate::ui) fn shell_playlist_panes() {
-    assert_eq!(playlist_route_margin(450), 10);
     assert!(playlist_detail_compact_for_width(550));
-    assert_eq!(playlist_route_margin(550), 16);
     assert!(!playlist_detail_compact_for_width(760));
-    assert_eq!(playlist_route_margin(760), 24);
     assert_eq!(playlist_cover_size(419), 150);
     assert_eq!(playlist_cover_size(450), 159);
     assert_eq!(playlist_cover_size(519), 181);

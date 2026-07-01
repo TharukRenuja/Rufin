@@ -13,7 +13,7 @@ pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
 pub(super) const MIN_APP_WINDOW_WIDTH: i32 = 450;
 pub(super) const MIN_APP_WINDOW_HEIGHT: i32 = 400;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
-pub(super) const DETAIL_ROUTE_SCROLL_GUTTER: i32 = 24;
+pub(super) const ROUTE_CONTENT_SIDE_INSET: i32 = 6;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
@@ -28,17 +28,11 @@ const ALBUM_GRID_TARGET_SIZE: i32 = 256;
 const ALBUM_GRID_MAX_SIZE: i32 = 256;
 const ALBUM_GRID_MIN_COLUMNS: usize = 2;
 const ALBUM_GRID_MAX_COLUMNS: usize = 40;
-pub(super) const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
-pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
+pub(super) const PRIMARY_ROUTE_MARGIN_START: i32 = ROUTE_CONTENT_SIDE_INSET;
+pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = ROUTE_CONTENT_SIDE_INSET;
 pub(super) const WINDOW_CHROME_MARGIN_END: i32 = 8;
-pub(super) const DETAIL_GRADIENT_MARGIN_END: i32 = 20;
 pub(super) const ROUTE_TOP_MARGIN: i32 = 26;
-const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + DETAIL_GRADIENT_MARGIN_END;
-const CARD_LABEL_LINE_HEIGHT: i32 = 20;
-pub(super) const HOME_ALBUM_CARD_LABEL_GAP: i32 = 2;
-pub(super) const HOME_ALBUM_TITLE_LINES: i32 = 1;
-pub(super) const HOME_ALBUM_ARTIST_LINES: i32 = 1;
-pub(super) const HOME_ALBUM_YEAR_LINES: i32 = 1;
+const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 
 pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = MIN_APP_WINDOW_HEIGHT;
 const LARGE_POPUP_HEIGHT_PERCENT: i32 = 85;
@@ -64,6 +58,7 @@ pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>)
     }
     while page_size < HOME_ALBUM_MAX_COLUMNS
         && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE
+        && home_album_raw_card_size(width, page_size + 1) >= HOME_ALBUM_MIN_SIZE
     {
         page_size += 1;
     }
@@ -254,19 +249,6 @@ fn smaller_right_sidebar_mode(mode: RightSidebarMode) -> RightSidebarMode {
     }
 }
 
-pub(super) fn clamp_home_album_page_start(
-    page_start: usize,
-    page_size: usize,
-    album_count: usize,
-) -> usize {
-    if album_count == 0 {
-        return 0;
-    }
-    let page_size = page_size.max(1);
-    let last_page_start = ((album_count - 1) / page_size) * page_size;
-    page_start.min(last_page_start)
-}
-
 pub(super) fn home_album_content_width(shell: &Shell) -> i32 {
     home_album_content_width_for(route_content_width(shell))
 }
@@ -282,10 +264,14 @@ pub(super) fn route_content_width(shell: &Shell) -> i32 {
     )
 }
 
+pub(super) fn route_content_width_for_main_width(main_width: i32) -> i32 {
+    main_width.max(1)
+}
+
 pub(super) fn detail_route_inner_width(shell: &Shell, horizontal_inset: i32) -> i32 {
     route_content_width(shell)
         .saturating_sub(horizontal_inset)
-        .saturating_sub(DETAIL_ROUTE_SCROLL_GUTTER)
+        .saturating_sub(PRIMARY_ROUTE_MARGIN_END)
         .max(1)
 }
 
@@ -420,56 +406,6 @@ fn lock_horizontal_adjustment(scroller: &gtk::ScrolledWindow) {
     });
 }
 
-fn card_label_width_chars(size: i32) -> i32 {
-    (size / 8).clamp(8, 28)
-}
-
-fn constrain_card_label(label: &gtk::Label, size: i32) {
-    label.set_width_request(size);
-    label.set_size_request(size, -1);
-    label.set_width_chars(1);
-    label.set_max_width_chars(card_label_width_chars(size));
-    label.set_halign(gtk::Align::Fill);
-    label.set_hexpand(false);
-}
-
-pub(super) fn clipped_card_label_with_lines(
-    label: &gtk::Label,
-    size: i32,
-    lines: i32,
-) -> gtk::Widget {
-    let clip = gtk::ScrolledWindow::new();
-    clip.add_css_class("card-label-clip");
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    clip.set_width_request(size);
-    clip.set_size_request(size, card_label_height(lines));
-    clip.set_min_content_width(size);
-    clip.set_max_content_width(size);
-    clip.set_min_content_height(card_label_height(lines));
-    clip.set_max_content_height(card_label_height(lines));
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(false);
-    clip.set_hexpand(false);
-    clip.set_child(Some(label));
-    clip.upcast()
-}
-
-fn card_label_height(lines: i32) -> i32 {
-    CARD_LABEL_LINE_HEIGHT * lines.max(1)
-}
-
-pub(super) fn home_album_card_height(size: i32) -> i32 {
-    size + HOME_ALBUM_CARD_LABEL_GAP * 3
-        + card_label_height(HOME_ALBUM_TITLE_LINES)
-        + card_label_height(HOME_ALBUM_ARTIST_LINES)
-        + card_label_height(HOME_ALBUM_YEAR_LINES)
-}
-
-pub(super) fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
-    constrain_card_label(label, size);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
 #[cfg(test)]
 mod tests {
     use domain::{LayoutSettings, LeftSidebarMode, RightSidebarMode};
@@ -491,7 +427,7 @@ mod tests {
             (1, None, 1),
             (10_000, None, HOME_ALBUM_MAX_COLUMNS),
             (three_min, Some(3), 3),
-            (three_min - 1, Some(3), 3),
+            (three_min - 1, Some(3), 2),
             (
                 (HOME_ALBUM_MIN_SIZE - 20) * 3 + HOME_ALBUM_GAP * 2,
                 Some(3),
@@ -560,18 +496,6 @@ mod tests {
         assert_eq!(detail_showcase_cover_size(760), 224);
         assert!(detail_showcase_cover_only(419));
         assert!(!detail_showcase_cover_only(420));
-    }
-
-    #[test]
-    fn home_page_start_stays_in_range() {
-        for (start, page_size, total, expected) in
-            [(0, 3, 0, 0), (3, 3, 10, 3), (9, 3, 10, 9), (12, 3, 10, 9)]
-        {
-            assert_eq!(
-                clamp_home_album_page_start(start, page_size, total),
-                expected
-            );
-        }
     }
 
     #[test]

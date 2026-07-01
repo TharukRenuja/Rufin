@@ -11,7 +11,6 @@ impl Shell {
 
         if is_home && !was_home {
             self.state.home_showcase_seed.set(next_home_showcase_seed());
-            reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
             self.prepare_cached_home_entry();
         }
     }
@@ -59,15 +58,6 @@ impl Shell {
         upsert_snapshot_home_section(&mut self.state.library.borrow_mut().home_sections, section);
     }
     pub(in crate::ui) fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
-        if let Some(state) = self
-            .state
-            .home_section_state
-            .borrow_mut()
-            .get_mut(&section_kind)
-        {
-            state.page_start = 0;
-        }
-
         if section_kind == HomeSectionKind::Explore && self.apply_prefetched_explore() {
             return;
         }
@@ -128,7 +118,6 @@ impl Shell {
             }
         }
         if changed {
-            reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
             self.controller
                 .promote_prefetched_explore_for_active(section.clone());
         }
