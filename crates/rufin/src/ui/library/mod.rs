@@ -825,7 +825,6 @@ fn library_interaction_viewport_cover_ranges(
         GRID_INTERACTION_AHEAD,
     )
 }
-#[allow(clippy::too_many_arguments)]
 fn priority_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,

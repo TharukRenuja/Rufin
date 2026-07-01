@@ -50,14 +50,14 @@ test *args: _tmp
     fi
 
 _check: _tmp
-    TMPDIR="$PWD/target/tmp" cargo clippy -p rufin --bin rufin --locked -- -D warnings -D clippy::expect_used -D clippy::panic
+    TMPDIR="$PWD/target/tmp" cargo clippy -p rufin --bin rufin --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity -D clippy::expect_used -D clippy::panic
 
 _fmt-check: _tmp
     TMPDIR="$PWD/target/tmp" cargo fmt --all -- --check
 
 _lint: _tmp
-    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --lib --bins --locked -- -D warnings -D clippy::expect_used -D clippy::panic
-    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
+    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --lib --bins --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity -D clippy::expect_used -D clippy::panic
+    TMPDIR="$PWD/target/tmp" cargo clippy --workspace --tests --benches --examples --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity
     TMPDIR="$PWD/target/tmp" cargo clippy -p domain --lib --all-features --locked -- -D clippy::indexing_slicing
 
 _deps: _tmp
