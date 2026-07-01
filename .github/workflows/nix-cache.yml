@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CACHIX_CACHE_NAME: screwys-rufin
+  CACHIX_CACHE_NAME: rufin
 
 jobs:
   build:
