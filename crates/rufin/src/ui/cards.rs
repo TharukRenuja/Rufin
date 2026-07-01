@@ -2,34 +2,28 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use domain::{
-    Album, HomeSectionKind, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, Route,
-    SmartPlaylist, Track,
+    Album, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, Route, SmartPlaylist,
+    Track,
 };
 use source::FavoriteItemId;
 
 use super::favorites::{album_favorite_key, track_favorite_key};
 use super::layout::{
-    HOME_ALBUM_CARD_LABEL_GAP, album_grid_card_size, album_grid_page_size,
-    clamp_home_album_page_start, clipped_card_label_with_lines, constrain_single_line_card_label,
-    home_album_card_height, home_album_card_size, home_album_content_width, home_album_page_size,
+    album_grid_card_size, album_grid_page_size, home_album_card_size, home_album_content_width,
+    home_album_page_size,
 };
 use super::{
-    ActionButtonVariant, GRID_COVER_SIZE, HomeSectionState, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON,
-    PLAY_NEXT_ICON, Shell, THUMB_COVER_SIZE, add_card_label_link, album_artist_route,
-    configure_action_button, favorite_button_is_active, favorite_icon_button, icon_button,
-    install_album_context_menu, install_track_context_menu, present_album_context_menu,
-    present_playlist_context_menu, present_smart_playlist_context_menu, present_track_context_menu,
-    set_favorite_button_active, stable_seed, track_artist_route,
+    ActionButtonVariant, GRID_COVER_SIZE, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON,
+    Shell, THUMB_COVER_SIZE, configure_action_button, favorite_button_is_active,
+    favorite_icon_button, icon_button, present_album_context_menu, present_playlist_context_menu,
+    present_smart_playlist_context_menu, present_track_context_menu, set_favorite_button_active,
+    stable_seed,
 };
 use crate::controller::AppController;
 
 const COVER_CORNER_ACTION_INSET: i32 = 8;
 
 impl Shell {
-    fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
-        album_card_widget_with_size(self, album, size, Some(&self.controller))
-    }
-
     pub(super) fn collection_card_grid_metrics(&self) -> (usize, i32) {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.collection_grid_columns.get());
@@ -56,138 +50,6 @@ impl Shell {
         self.state.collection_grid_columns.set(columns);
         (columns, album_grid_card_size(width, columns))
     }
-}
-
-pub(super) fn render_home_album_page(
-    shell: &Rc<Shell>,
-    row: &gtk::Box,
-    previous: &gtk::Button,
-    next: &gtk::Button,
-    section_kind: HomeSectionKind,
-    albums: &[Album],
-) {
-    while let Some(child) = row.first_child() {
-        row.remove(&child);
-    }
-
-    if albums.is_empty() {
-        previous.set_sensitive(false);
-        next.set_sensitive(false);
-        return;
-    }
-
-    let (page_start, page_size, card_size) = home_page_metrics(shell, section_kind, albums.len());
-    let page_end = page_start.saturating_add(page_size).min(albums.len());
-
-    previous.set_sensitive(page_start > 0);
-    next.set_sensitive(page_end < albums.len());
-
-    for album in &albums[page_start..page_end] {
-        row.append(&shell.album_card_with_size(album, card_size));
-    }
-}
-
-pub(super) fn render_home_track_page(
-    shell: &Rc<Shell>,
-    row: &gtk::Box,
-    previous: &gtk::Button,
-    next: &gtk::Button,
-    section_kind: HomeSectionKind,
-    tracks: &[Track],
-) {
-    while let Some(child) = row.first_child() {
-        row.remove(&child);
-    }
-
-    if tracks.is_empty() {
-        previous.set_sensitive(false);
-        next.set_sensitive(false);
-        return;
-    }
-
-    let (page_start, page_size, card_size) = home_page_metrics(shell, section_kind, tracks.len());
-    let page_end = page_start.saturating_add(page_size).min(tracks.len());
-
-    previous.set_sensitive(page_start > 0);
-    next.set_sensitive(page_end < tracks.len());
-
-    for track in &tracks[page_start..page_end] {
-        row.append(&track_card_widget_with_size(shell, track, card_size));
-    }
-}
-
-fn home_page_metrics(
-    shell: &Rc<Shell>,
-    section_kind: HomeSectionKind,
-    item_count: usize,
-) -> (usize, usize, i32) {
-    let width = home_album_content_width(shell);
-    let page_start = {
-        let mut states = shell.state.home_section_state.borrow_mut();
-        let existing_page_size = states.get(&section_kind).map(|state| state.page_size);
-        let page_size = home_album_page_size(width, existing_page_size);
-        let state = states.entry(section_kind).or_insert(HomeSectionState {
-            page_start: 0,
-            page_size,
-        });
-        if state.page_size != page_size {
-            state.page_start -= state.page_start % page_size.max(1);
-            state.page_size = page_size;
-        }
-        state.page_start = clamp_home_album_page_start(state.page_start, page_size, item_count);
-        state.page_start
-    };
-    let page_size = shell
-        .state
-        .home_section_state
-        .borrow()
-        .get(&section_kind)
-        .map(|state| state.page_size)
-        .unwrap_or_else(|| home_album_page_size(width, None));
-    (
-        page_start,
-        page_size,
-        home_album_card_size(width, page_size),
-    )
-}
-
-fn album_card_widget_with_size(
-    shell: &Rc<Shell>,
-    album: &Album,
-    size: i32,
-    controller: Option<&AppController>,
-) -> gtk::Widget {
-    let card = media_card(size);
-    card.append(&album_cover_tile(shell, album, size, controller));
-
-    let title = single_line_card_label(&album.title, size, &["album-title"]);
-    let title_clip = label_clip(&title, size);
-    add_card_label_link(
-        shell,
-        &title_clip,
-        &title,
-        &album.title,
-        Some(Route::AlbumDetail(album.id.clone())),
-    );
-
-    let artist = single_line_card_label(&album.artist, size, &["artist-label"]);
-    let artist_clip = label_clip(&artist, size);
-    add_card_label_link(
-        shell,
-        &artist_clip,
-        &artist,
-        &album.artist,
-        album_artist_route(album),
-    );
-
-    let year = single_line_card_label(&album.year.to_string(), size, &["muted"]);
-    let year_clip = label_clip(&year, size);
-
-    card.append(&title_clip);
-    card.append(&artist_clip);
-    card.append(&year_clip);
-    install_album_context_menu(&card, shell, album.clone());
-    card.upcast()
 }
 
 pub(super) fn album_cover_tile(
@@ -274,51 +136,6 @@ pub(super) fn album_cover_tile(
     controls.connect_hover(&overlay);
 
     overlay.upcast()
-}
-
-fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
-    let card = media_card(size);
-    card.append(&track_cover_tile(shell, track, size));
-
-    let title = single_line_card_label(&track.title, size, &["album-title"]);
-    let title_clip = clipped_card_label_with_lines(&title, size, 1);
-    add_card_label_link(
-        shell,
-        &title_clip,
-        &title,
-        &track.title,
-        Some(Route::AlbumDetail(track.album_id.clone())),
-    );
-
-    let artist = single_line_card_label(&track.artist, size, &["artist-label"]);
-    let artist_clip = clipped_card_label_with_lines(&artist, size, 1);
-    add_card_label_link(
-        shell,
-        &artist_clip,
-        &artist,
-        &track.artist,
-        track_artist_route(track),
-    );
-
-    let album = single_line_card_label(&track.album, size, &["muted"]);
-    let album_clip = clipped_card_label_with_lines(&album, size, 1);
-    add_card_label_link(
-        shell,
-        &album_clip,
-        &album,
-        &track.album,
-        Some(Route::AlbumDetail(track.album_id.clone())),
-    );
-
-    card.append(&title_clip);
-    card.append(&artist_clip);
-    card.append(&album_clip);
-    install_track_context_menu(&card, shell, track.clone());
-    card.upcast()
-}
-
-pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
-    track_play_tile(shell, track, size, None)
 }
 
 pub(super) fn track_play_tile(
@@ -536,30 +353,6 @@ pub(super) fn smart_playlist_cover_tile(
     controls.connect_hover(&overlay);
 
     overlay.upcast()
-}
-
-fn media_card(size: i32) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, HOME_ALBUM_CARD_LABEL_GAP);
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    card.set_size_request(size, home_album_card_height(size));
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-    card
-}
-
-fn single_line_card_label(text: &str, size: i32, css_classes: &[&str]) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    for css_class in css_classes {
-        label.add_css_class(css_class);
-    }
-    label.set_xalign(0.0);
-    constrain_single_line_card_label(&label, size);
-    label
-}
-
-fn label_clip(label: &gtk::Label, size: i32) -> gtk::Widget {
-    clipped_card_label_with_lines(label, size, 1)
 }
 
 pub(super) fn cover_overlay(size: i32) -> gtk::Overlay {

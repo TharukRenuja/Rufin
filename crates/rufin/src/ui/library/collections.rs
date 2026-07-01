@@ -8,11 +8,13 @@ pub(in crate::ui) struct LibraryRouteInsetSpec {
     pub(in crate::ui) hexpand: bool,
 }
 const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
+const HOME_ALBUM_GRID_FIELDS: [LibraryField; 2] = [LibraryField::AlbumArtist, LibraryField::Year];
+const HOME_TRACK_GRID_FIELDS: [LibraryField; 2] = [LibraryField::Artist, LibraryField::Album];
 
 pub(in crate::ui) fn library_route_inset_spec() -> LibraryRouteInsetSpec {
     LibraryRouteInsetSpec {
         margin_start: PRIMARY_ROUTE_MARGIN_START,
-        margin_end: 0,
+        margin_end: PRIMARY_ROUTE_MARGIN_END,
         hexpand: true,
     }
 }
@@ -33,7 +35,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller.add_css_class("library-route-scroller");
     configure_fill_width_clip(scroller, gtk::PolicyType::Always);
     scroller.set_propagate_natural_height(false);
-    scroller.set_overlay_scrolling(false);
+    scroller.set_overlay_scrolling(true);
     scroller.set_hexpand(true);
     scroller.set_vexpand(true);
 
@@ -296,6 +298,44 @@ pub(in crate::ui) fn track_grid(
             );
         },
     )
+}
+pub(in crate::ui) fn home_album_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    columns: usize,
+    card_size: i32,
+) -> gtk::GridView {
+    let card_shell = Rc::clone(shell);
+    let activate_shell = Rc::clone(shell);
+    let grid = collection_grid(
+        model,
+        columns,
+        move |album| album_card_with_fields(&card_shell, album, &HOME_ALBUM_GRID_FIELDS, card_size),
+        move |_, album: Album| activate_shell.navigate(Route::AlbumDetail(album.id)),
+    );
+    grid.set_vexpand(false);
+    grid
+}
+pub(in crate::ui) fn home_track_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    columns: usize,
+    card_size: i32,
+) -> gtk::GridView {
+    let card_shell = Rc::clone(shell);
+    let controller = shell.controller.clone();
+    let grid = collection_grid(
+        model,
+        columns,
+        move |track: &Track| {
+            track_card_with_fields(&card_shell, track, &HOME_TRACK_GRID_FIELDS, card_size, None)
+        },
+        move |_, track: Track| {
+            controller.play_now(track);
+        },
+    );
+    grid.set_vexpand(false);
+    grid
 }
 fn collection_grid<T, Card, Activate>(
     model: gio::ListStore,
@@ -619,6 +659,14 @@ pub(in crate::ui) fn album_card(
     size: i32,
 ) -> gtk::Widget {
     let fields = shell.library_settings(key).grid_fields;
+    album_card_with_fields(shell, album, &fields, size)
+}
+fn album_card_with_fields(
+    shell: &Rc<Shell>,
+    album: &Album,
+    fields: &[LibraryField],
+    size: i32,
+) -> gtk::Widget {
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::album_cover_tile(
         shell,
@@ -627,7 +675,7 @@ pub(in crate::ui) fn album_card(
         Some(&shell.controller),
     ));
     card.append(&left_grid_title(&album.title, "track-title", size));
-    for field in fields {
+    for field in fields.iter().copied() {
         let value = album_field(album, field);
         if !value.is_empty() {
             let label = left_collection_grid_field_label(&value, field, size);
@@ -864,14 +912,23 @@ pub(in crate::ui) fn track_card(
     play_action: Option<Rc<dyn Fn()>>,
 ) -> gtk::Widget {
     let fields = shell.library_settings(key).grid_fields;
+    track_card_with_fields(shell, track, &fields, size, play_action)
+}
+fn track_card_with_fields(
+    shell: &Rc<Shell>,
+    track: &Track,
+    fields: &[LibraryField],
+    size: i32,
+    play_action: Option<Rc<dyn Fn()>>,
+) -> gtk::Widget {
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::track_play_tile(shell, track, size, play_action));
     card.append(&center_grid_title(&track.title, "track-title", size));
-    for field in fields {
+    for field in fields.iter().copied() {
         let value = track_field(track, field);
         if !value.is_empty() {
             let label = collection_grid_field_label(&value, field, size);
-            if let Some(route) = track_grid_artist_route(track, field) {
+            if let Some(route) = track_grid_field_route(track, field) {
                 add_card_label_link(shell, &label.0, &label.1, &value, Some(route));
             }
             card.append(&label.0);
@@ -912,10 +969,11 @@ fn left_collection_grid_field_label(
     label
 }
 
-fn track_grid_artist_route(track: &Track, field: LibraryField) -> Option<Route> {
+fn track_grid_field_route(track: &Track, field: LibraryField) -> Option<Route> {
     match field {
         LibraryField::Artist => track_artist_route(track),
         LibraryField::AlbumArtist => track_album_artist_route(track),
+        LibraryField::Album => Some(Route::AlbumDetail(track.album_id.clone())),
         _ => None,
     }
 }

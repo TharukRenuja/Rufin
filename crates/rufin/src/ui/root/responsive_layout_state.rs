@@ -66,7 +66,8 @@ impl Shell {
             .state
             .resolved_right_sidebar_width
             .replace(resolved.right_sidebar_width);
-        let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
+        let route_content_width = route_content_width_for_main_width(resolved.main_width);
+        let previous_main_width = self.state.main_content_width.replace(route_content_width);
 
         let app_active = !login_active && !startup_loading_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
@@ -97,7 +98,7 @@ impl Shell {
         self.player_controls
             .root
             .set_visible(!login_active && !startup_loading_active);
-        self.sync_current_route_boundary_width(resolved.main_width);
+        self.sync_current_route_boundary_width(route_content_width);
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
         self.apply_bottom_player_width(self.layout_width());
@@ -108,7 +109,7 @@ impl Shell {
         let changed = previous_left != resolved.left_sidebar
             || previous_right != resolved.right_sidebar
             || previous_right_width != resolved.right_sidebar_width
-            || previous_main_width != resolved.main_width;
+            || previous_main_width != route_content_width;
         if changed {
             debug!(?resolved, "resolved layout changed");
             self.refit_route_column_views();

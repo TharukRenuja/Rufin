@@ -3,20 +3,23 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route};
+use gtk::{gio, glib};
 
 use crate::controller::LibrarySnapshot;
 use crate::i18n::{msgid, tr};
 
-use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
+use super::cards::album_cover_tile;
 use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
+use super::library::{home_album_grid, home_track_grid, non_propagating_width_clip};
 use super::{
-    DETAIL_GRADIENT_MARGIN_END, HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
+    HomeSectionContent, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
     Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
     album_count_text, configure_fill_width_clip, detail_radio_button, detail_summary_row,
-    format_duration_units, mark_route_scroll_owner, route_content_width, track_count_text,
+    format_duration_units, home_album_content_width, mark_route_scroll_owner,
+    render_home_section_page_model, track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -66,7 +69,7 @@ impl Shell {
         let scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&scroller);
         configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
-        scroller.set_overlay_scrolling(false);
+        scroller.set_overlay_scrolling(true);
         scroller.set_vexpand(true);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -77,7 +80,7 @@ impl Shell {
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(0);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
         let blocks = self.state.settings.borrow().home_blocks.clone();
         let library = self.state.library.borrow();
@@ -119,7 +122,7 @@ impl Shell {
         library: &LibrarySnapshot,
         seed: u64,
     ) -> Option<gtk::Widget> {
-        let width = route_content_width(self);
+        let width = home_album_content_width(self);
         let mode = home_showcase_mode(width);
         let cover_size = home_showcase_cover_size(width);
         let album = showcase_album(library, seed)?;
@@ -134,7 +137,6 @@ impl Shell {
         body.set_halign(gtk::Align::Fill);
         body.set_valign(gtk::Align::Start);
         body.set_width_request(1);
-        body.set_margin_end(DETAIL_GRADIENT_MARGIN_END);
         body.set_overflow(gtk::Overflow::Hidden);
         let cover = album_cover_tile(self, &album, cover_size, Some(&self.controller));
         cover.add_css_class("home-showcase-cover");
@@ -303,16 +305,27 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = home_section_header(section_data.kind.title(), route_content_width(self));
+        let header = home_section_header(section_data.kind.title());
         let previous = header.previous.clone();
         let next = header.next.clone();
         let refresh = header.refresh.clone();
         section.append(&header.root);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
-        row.add_css_class("album-strip");
-        row.set_hexpand(true);
-        section.append(&row);
+        let (page_size, card_size) = self.collection_card_grid_metrics();
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let (page_start, page_end) = render_home_section_page_model(
+            &model,
+            HomeSectionContent::Albums,
+            section_data,
+            0,
+            page_size,
+        );
+        previous.set_sensitive(page_start > 0);
+        next.set_sensitive(page_end < section_data.albums.len());
+        let collection = non_propagating_width_clip(
+            home_album_grid(self, model.clone(), page_size, card_size).upcast(),
+        );
+        section.append(&collection);
 
         let shell = Rc::clone(self);
         previous.connect_clicked(move |_| {
@@ -326,17 +339,18 @@ impl Shell {
 
         let shell = Rc::clone(self);
         refresh.connect_clicked(move |_| {
+            shell.reset_visible_home_section_page(section_kind);
             shell.refresh_home_section(section_kind);
         });
 
-        self.register_home_section_view(section_kind, &section, &row, &previous, &next);
-        render_home_album_page(
-            self,
-            &row,
+        self.register_home_section_view(
+            section_kind,
+            &section,
+            &model,
+            HomeSectionContent::Albums,
             &previous,
             &next,
-            section_kind,
-            &section_data.albums,
+            page_size,
         );
         section.upcast()
     }
@@ -346,16 +360,27 @@ impl Shell {
         section.set_hexpand(true);
         let section_kind = section_data.kind;
 
-        let header = home_section_header(section_data.kind.title(), route_content_width(self));
+        let header = home_section_header(section_data.kind.title());
         let previous = header.previous.clone();
         let next = header.next.clone();
         let refresh = header.refresh.clone();
         section.append(&header.root);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
-        row.add_css_class("album-strip");
-        row.set_hexpand(true);
-        section.append(&row);
+        let (page_size, card_size) = self.collection_card_grid_metrics();
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let (page_start, page_end) = render_home_section_page_model(
+            &model,
+            HomeSectionContent::Tracks,
+            section_data,
+            0,
+            page_size,
+        );
+        previous.set_sensitive(page_start > 0);
+        next.set_sensitive(page_end < section_data.tracks.len());
+        let collection = non_propagating_width_clip(
+            home_track_grid(self, model.clone(), page_size, card_size).upcast(),
+        );
+        section.append(&collection);
 
         let shell = Rc::clone(self);
         previous.connect_clicked(move |_| {
@@ -369,17 +394,18 @@ impl Shell {
 
         let shell = Rc::clone(self);
         refresh.connect_clicked(move |_| {
+            shell.reset_visible_home_section_page(section_kind);
             shell.refresh_home_section(section_kind);
         });
 
-        self.register_home_section_view(section_kind, &section, &row, &previous, &next);
-        render_home_track_page(
-            self,
-            &row,
+        self.register_home_section_view(
+            section_kind,
+            &section,
+            &model,
+            HomeSectionContent::Tracks,
             &previous,
             &next,
-            section_kind,
-            &section_data.tracks,
+            page_size,
         );
         section.upcast()
     }

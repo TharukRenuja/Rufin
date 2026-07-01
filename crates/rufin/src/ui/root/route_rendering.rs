@@ -218,9 +218,6 @@ impl Shell {
         if !route_delta_affects(&route, &delta) {
             return;
         }
-        if matches!(route, Route::Home) {
-            reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
-        }
         if matches!(route, Route::Search { .. }) {
             self.start_search_for_route(&route);
         }

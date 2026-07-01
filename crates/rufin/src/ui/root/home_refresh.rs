@@ -14,7 +14,7 @@ const ADD_TO_PLAYLIST_DIALOG_HEIGHT: i32 = 510;
 pub(in crate::ui) const ADD_TO_PLAYLIST_ICON: &str = "rufin-route-playlists-symbolic";
 pub(in crate::ui) const ALBUM_ICON: &str = "rufin-route-albums-symbolic";
 pub(in crate::ui) const ARTIST_ICON: &str = "rufin-route-artists-symbolic";
-pub(in crate::ui) const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
+pub(in crate::ui) const RADIO_ICON: &str = "audio-radio";
 
 thread_local! {
     static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };

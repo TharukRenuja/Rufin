@@ -102,12 +102,12 @@ use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
 use layout::{
-    COMPACT_RAIL_WIDTH, DETAIL_GRADIENT_MARGIN_END, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP,
-    MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout, ResolvedLeftSidebarMode,
-    SidebarWidths, configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
-    detail_showcase_cover_only, detail_showcase_cover_size, large_popup_content_height,
-    large_popup_content_width, resolve_layout_with_sidebar_widths, route_content_width,
+    COMPACT_RAIL_WIDTH, MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
+    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout,
+    ResolvedLeftSidebarMode, SidebarWidths, configure_exact_width_clip, configure_fill_width_clip,
+    detail_route_inner_width, detail_showcase_cover_only, detail_showcase_cover_size,
+    home_album_content_width, large_popup_content_height, large_popup_content_width,
+    resolve_layout_with_sidebar_widths, route_content_width, route_content_width_for_main_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -240,6 +240,7 @@ pub(in crate::ui) use equalizer::{
     equalizer_selected_preset, install_equalizer_scroll,
 };
 pub(in crate::ui) use home_refresh::*;
+pub(in crate::ui) use home_visible_sections::render_home_section_page_model;
 pub(in crate::ui) use layout_rendering::*;
 pub(in crate::ui) use library::{TrackTableSelection, TrackTableSelectionHandle};
 
@@ -247,8 +248,7 @@ type NowPlayingSelection = Rc<dyn Fn(&QueueSnapshot)>;
 
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
-    playlist_cover_size, playlist_detail_compact_for_width, playlist_route_margin,
-    playlist_sort_width,
+    playlist_cover_size, playlist_detail_compact_for_width, playlist_sort_width,
 };
 pub(in crate::ui) use release_notes::*;
 pub(in crate::ui) use shell_navigation::*;
@@ -416,7 +416,6 @@ pub(in crate::ui) struct AppState {
     current_route_boundary: RefCell<Option<gtk::Widget>>,
     column_view_width_fits: RefCell<Vec<library::ColumnViewWidthFit>>,
     collection_grid_columns: Cell<usize>,
-    home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     route_track_refs: RefCell<Vec<Option<ImageRef>>>,
@@ -513,16 +512,20 @@ pub(in crate::ui) struct ArtworkBindOutcome {
     pub(in crate::ui) generation: u64,
     pub(in crate::ui) request_needed: bool,
 }
-pub(in crate::ui) struct HomeSectionState {
-    page_start: usize,
-    page_size: usize,
+#[derive(Clone, Copy)]
+pub(in crate::ui) enum HomeSectionContent {
+    Albums,
+    Tracks,
 }
 #[derive(Clone)]
 pub(in crate::ui) struct HomeSectionView {
     root: gtk::Widget,
-    row: gtk::Box,
+    model: gio::ListStore,
+    content: HomeSectionContent,
     previous: gtk::Button,
     next: gtk::Button,
+    page_start: Rc<Cell<usize>>,
+    page_size: usize,
 }
 #[derive(Clone)]
 pub(in crate::ui) struct PrefetchedHomeSection {
@@ -760,7 +763,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         current_route_boundary: RefCell::new(None),
         column_view_width_fits: RefCell::new(Vec::new()),
         collection_grid_columns: Cell::new(0),
-        home_section_state: RefCell::new(HashMap::new()),
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
         route_track_refs: RefCell::new(Vec::new()),
@@ -904,7 +906,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let lyrics_pane = right_panel_parts.lyrics_pane;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
-    content_chrome.root.set_margin_start(8);
     let right_panel_slot = content_chrome.right_panel_slot;
     let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
     tiny_nav_button.add_css_class("icon-button");

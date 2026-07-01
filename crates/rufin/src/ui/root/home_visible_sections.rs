@@ -1,13 +1,16 @@
 use super::*;
 
 impl Shell {
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn register_home_section_view(
         &self,
         section_kind: HomeSectionKind,
         root: &gtk::Box,
-        row: &gtk::Box,
+        model: &gio::ListStore,
+        content: HomeSectionContent,
         previous: &gtk::Button,
         next: &gtk::Button,
+        page_size: usize,
     ) {
         if !matches!(self.state.routes.borrow().current(), Route::Home) {
             return;
@@ -17,9 +20,12 @@ impl Shell {
             section_kind,
             HomeSectionView {
                 root: root.clone().upcast::<gtk::Widget>(),
-                row: row.clone(),
+                model: model.clone(),
+                content,
                 previous: previous.clone(),
                 next: next.clone(),
+                page_start: Rc::new(Cell::new(0)),
+                page_size,
             },
         );
     }
@@ -79,25 +85,7 @@ impl Shell {
         };
 
         view.root.set_visible(true);
-        if !section.tracks.is_empty() {
-            cards::render_home_track_page(
-                self,
-                &view.row,
-                &view.previous,
-                &view.next,
-                section.kind,
-                &section.tracks,
-            );
-        } else {
-            cards::render_home_album_page(
-                self,
-                &view.row,
-                &view.previous,
-                &view.next,
-                section.kind,
-                &section.albums,
-            );
-        }
+        update_home_section_page_model(&view, section);
         true
     }
     pub(in crate::ui) fn hide_visible_home_section(&self, section_kind: HomeSectionKind) -> bool {
@@ -112,6 +100,17 @@ impl Shell {
         };
         view.root.set_visible(false);
         true
+    }
+    pub(in crate::ui) fn reset_visible_home_section_page(&self, section_kind: HomeSectionKind) {
+        let view = self
+            .state
+            .home_section_views
+            .borrow()
+            .get(&section_kind)
+            .cloned();
+        if let Some(view) = view {
+            view.page_start.set(0);
+        }
     }
     pub(in crate::ui) fn show_previous_home_section_page(
         self: &Rc<Self>,
@@ -134,6 +133,15 @@ impl Shell {
             return;
         }
 
+        let view = self
+            .state
+            .home_section_views
+            .borrow()
+            .get(&section_kind)
+            .cloned();
+        let Some(view) = view else {
+            return;
+        };
         let section = self
             .state
             .library
@@ -145,35 +153,25 @@ impl Shell {
         let Some(section) = section else {
             return;
         };
-        let item_count = if section.tracks.is_empty() {
-            section.albums.len()
-        } else {
-            section.tracks.len()
-        };
+        let item_count = home_section_item_count(view.content, &section);
         if item_count == 0 {
             return;
         }
 
-        {
-            let mut states = self.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            match direction {
-                HomeSectionPageDirection::Previous => {
-                    state.page_start = state.page_start.saturating_sub(state.page_size);
-                }
-                HomeSectionPageDirection::Next => {
-                    let next_page = state.page_start.saturating_add(state.page_size);
-                    if next_page < item_count {
-                        state.page_start = next_page;
-                    }
+        let page_size = view.page_size.max(1);
+        match direction {
+            HomeSectionPageDirection::Previous => {
+                view.page_start
+                    .set(view.page_start.get().saturating_sub(page_size));
+            }
+            HomeSectionPageDirection::Next => {
+                let next_page = view.page_start.get().saturating_add(page_size);
+                if next_page < item_count {
+                    view.page_start.set(next_page);
                 }
             }
         }
-
-        self.render_visible_home_section(&section);
+        update_home_section_page_model(&view, &section);
     }
 }
 
@@ -181,6 +179,79 @@ impl Shell {
 enum HomeSectionPageDirection {
     Previous,
     Next,
+}
+
+pub(in crate::ui) fn render_home_section_page_model(
+    model: &gio::ListStore,
+    content: HomeSectionContent,
+    section: &HomeSection,
+    page_start: usize,
+    page_size: usize,
+) -> (usize, usize) {
+    let item_count = home_section_item_count(content, section);
+    let page_size = page_size.max(1);
+    let page_start = clamped_home_section_page_start(page_start, page_size, item_count);
+    let page_end = page_start.saturating_add(page_size).min(item_count);
+    match content {
+        HomeSectionContent::Albums => {
+            replace_home_section_page_model(
+                model,
+                section.albums[page_start..page_end].iter().cloned(),
+            );
+        }
+        HomeSectionContent::Tracks => {
+            replace_home_section_page_model(
+                model,
+                section.tracks[page_start..page_end].iter().cloned(),
+            );
+        }
+    }
+    (page_start, page_end)
+}
+
+fn replace_home_section_page_model<T: 'static>(
+    model: &gio::ListStore,
+    items: impl IntoIterator<Item = T>,
+) {
+    let additions = items
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+
+fn update_home_section_page_model(view: &HomeSectionView, section: &HomeSection) {
+    let (page_start, page_end) = render_home_section_page_model(
+        &view.model,
+        view.content,
+        section,
+        view.page_start.get(),
+        view.page_size,
+    );
+    view.page_start.set(page_start);
+    let item_count = home_section_item_count(view.content, section);
+    view.previous.set_sensitive(page_start > 0);
+    view.next.set_sensitive(page_end < item_count);
+}
+
+fn home_section_item_count(content: HomeSectionContent, section: &HomeSection) -> usize {
+    match content {
+        HomeSectionContent::Albums => section.albums.len(),
+        HomeSectionContent::Tracks => section.tracks.len(),
+    }
+}
+
+fn clamped_home_section_page_start(
+    page_start: usize,
+    page_size: usize,
+    item_count: usize,
+) -> usize {
+    if item_count == 0 {
+        return 0;
+    }
+    let page_size = page_size.max(1);
+    let last_page_start = ((item_count - 1) / page_size) * page_size;
+    page_start.min(last_page_start)
 }
 
 pub(in crate::ui) fn changed_visible_home_section_kinds(

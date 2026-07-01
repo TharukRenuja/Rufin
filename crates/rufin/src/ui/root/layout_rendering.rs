@@ -1,6 +1,6 @@
 use super::library::{
     configure_library_route_scroller, install_column_view_width_fit, item_at, item_at_from_item,
-    play_count_column_width, route_column_view_initial_width_with_inset,
+    library_route_inset, play_count_column_width, route_column_view_initial_width_with_inset,
 };
 use super::*;
 use crate::i18n::msgid;
@@ -151,6 +151,7 @@ fn sync_playlist_entry_selection(
 struct PlaylistEntryCellState {
     menu: Rc<RefCell<Option<PlaylistEntryContextMenuState>>>,
     row: Rc<Cell<Option<usize>>>,
+    link_route: Rc<RefCell<Option<Route>>>,
 }
 #[derive(Clone)]
 struct PlaylistEntryTitleCell {
@@ -283,7 +284,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     let scroller = gtk::ScrolledWindow::new();
     mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
-    scroller.set_child(Some(&table));
+    scroller.set_child(Some(&library_route_inset(table.clone().upcast())));
     {
         let entries = Rc::clone(&entries);
         let model = model.clone();
@@ -356,6 +357,7 @@ fn playlist_entry_cell_state() -> PlaylistEntryCellState {
     PlaylistEntryCellState {
         menu: Rc::new(RefCell::new(None)),
         row: Rc::new(Cell::new(None)),
+        link_route: Rc::new(RefCell::new(None)),
     }
 }
 fn store_playlist_entry_cell_state(item: &gtk::ListItem, state: PlaylistEntryCellState) {
@@ -393,6 +395,23 @@ fn bind_playlist_entry_cell_state(
 fn clear_playlist_entry_cell_state(state: &PlaylistEntryCellState) {
     state.row.set(None);
     state.menu.borrow_mut().take();
+    state.link_route.borrow_mut().take();
+}
+fn setup_playlist_entry_link_label(
+    label: &gtk::Label,
+    shell: &Rc<Shell>,
+    state: &PlaylistEntryCellState,
+) {
+    label.add_css_class("table-link-label");
+    label.set_cursor_from_name(Some("pointer"));
+    add_dynamic_link_hover(label.upcast_ref(), label);
+    let shell = Rc::clone(shell);
+    let route = Rc::clone(&state.link_route);
+    add_label_click(label, move || {
+        if let Some(route) = route.borrow().clone() {
+            shell.navigate(route);
+        }
+    });
 }
 fn setup_playlist_entry_cell_actions(
     target: &impl IsA<gtk::Widget>,
@@ -584,6 +603,9 @@ fn playlist_entry_album_column(
         playlist_id,
         select_entry_id,
         |entry| entry.track.album.clone(),
+        Some(Rc::new(|entry: &PlaylistEntry| {
+            Some(Route::AlbumDetail(entry.track.album_id.clone()))
+        })),
     )
 }
 fn playlist_entry_play_count_column(
@@ -600,8 +622,10 @@ fn playlist_entry_play_count_column(
         playlist_id,
         select_entry_id,
         |entry| playlist_entry_play_count_text(entry.track.play_count),
+        None,
     )
 }
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn playlist_entry_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
@@ -610,12 +634,14 @@ fn playlist_entry_text_column<F>(
     playlist_id: PlaylistId,
     select_entry_id: Rc<dyn Fn(&str)>,
     value: F,
+    route: Option<Rc<dyn Fn(&PlaylistEntry) -> Option<Route>>>,
 ) -> gtk::ColumnViewColumn
 where
     F: Fn(&PlaylistEntry) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
+    let has_link = route.is_some();
     let setup_shell = Rc::clone(shell);
     let setup_entries = Rc::clone(&entries);
     let setup_playlist_id = playlist_id.clone();
@@ -639,6 +665,9 @@ where
         label.set_width_chars(1);
         label.set_max_width_chars((width / 8).clamp(8, 32));
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        if has_link {
+            setup_playlist_entry_link_label(&label, &setup_shell, &state);
+        }
         root.append(&label);
 
         setup_playlist_entry_cell_actions(
@@ -674,6 +703,9 @@ where
             return;
         };
         label.set_text(&(value)(entry));
+        if let Some(route) = route.as_ref() {
+            *state.link_route.borrow_mut() = route(entry);
+        }
         bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {
@@ -726,6 +758,7 @@ fn playlist_entry_title_column(
         let title = playlist_entry_text_label("", "", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
         title.add_css_class("playlist-entry-title");
         let artist = playlist_entry_text_label("", "muted", PLAYLIST_ENTRY_TITLE_MAX_CHARS);
+        setup_playlist_entry_link_label(&artist, &setup_shell, &state);
         labels.append(&title);
         labels.append(&artist);
         let cell = playlist_title_cell(cover.widget(), labels.upcast());
@@ -779,6 +812,7 @@ fn playlist_entry_title_column(
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
+        *state.link_route.borrow_mut() = track_artist_route(&entry.track);
         bind_playlist_entry_cell_state(&state, row, entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {

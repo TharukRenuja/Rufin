@@ -1233,7 +1233,7 @@ impl Shell {
             context,
             EmbeddedTrackPanelOptions {
                 source_descriptor,
-                content_inset: 0,
+                content_inset: PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END,
                 max_visible_rows: Some(5),
                 selection_handle,
             },
@@ -1274,13 +1274,11 @@ impl Shell {
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
         let toolbar = self.library_toolbar(key, search.clone());
-        toolbar.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
         wrapper.append(&toolbar);
         self.install_type_to_search(&search);
         if max_visible_rows.is_some() {
             configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
-            scroller.set_overlay_scrolling(false);
-            scroller.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
+            scroller.set_overlay_scrolling(true);
             install_embedded_track_scroll_latch(&scroller);
         } else {
             scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
@@ -1303,14 +1301,12 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        content_margin_start: i32,
         source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
         self.library_tracks_scrolling_panel_with_selection(
             tracks,
             key,
             context,
-            content_margin_start,
             source_descriptor,
             None,
         )
@@ -1320,7 +1316,6 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        content_margin_start: i32,
         source_descriptor: Option<PlaySourceDescriptor>,
         selection_handle: Option<TrackTableSelectionHandle>,
     ) -> gtk::Widget {
@@ -1330,7 +1325,7 @@ impl Shell {
             SearchableTrackOptions {
                 on_visible_count_changed: None,
                 source_descriptor,
-                content_inset: content_margin_start,
+                content_inset: 0,
                 width_mode: ColumnViewWidthMode::RouteScroller,
                 selection_handle,
             },
@@ -1341,16 +1336,14 @@ impl Shell {
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_vexpand(true);
         let toolbar = self.library_toolbar(key, search.clone());
-        toolbar.set_margin_start(content_margin_start);
-        wrapper.append(&toolbar);
+        wrapper.append(&library_route_inset(toolbar));
         self.install_type_to_search(&search);
 
         let scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&scroller);
         configure_library_route_scroller(self, &scroller);
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
-        view.set_margin_start(content_margin_start);
-        scroller.set_child(Some(&view));
+        scroller.set_child(Some(&library_route_inset(view)));
         wrapper.append(&scroller);
         wrapper.upcast()
     }

@@ -1,8 +1,6 @@
+use super::library::library_route_inset;
 use super::*;
 
-const PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN: i32 = 24;
-const PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN: i32 = 16;
-const PLAYLIST_DETAIL_TINY_ROUTE_MARGIN: i32 = 10;
 const PLAYLIST_DETAIL_COMPACT_WIDTH: i32 = 760;
 const PLAYLIST_DETAIL_TINY_WIDTH: i32 = 520;
 const PLAYLIST_DETAIL_COVER_ONLY_WIDTH: i32 = 420;
@@ -13,16 +11,6 @@ const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
 
 pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
     width < PLAYLIST_DETAIL_COMPACT_WIDTH
-}
-
-pub(in crate::ui) fn playlist_route_margin(width: i32) -> i32 {
-    if width < PLAYLIST_DETAIL_TINY_WIDTH {
-        PLAYLIST_DETAIL_TINY_ROUTE_MARGIN
-    } else if playlist_detail_compact_for_width(width) {
-        PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN
-    } else {
-        PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN
-    }
 }
 
 pub(in crate::ui) fn playlist_toolbar_orientation(_width: i32) -> gtk::Orientation {
@@ -168,9 +156,8 @@ impl Shell {
         let mut smart_playlist = detail.smart_playlist.clone();
         smart_playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
-        let content_width = route_content_width(self);
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let compact = playlist_detail_compact_for_width(content_width);
-        let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
@@ -179,7 +166,6 @@ impl Shell {
         wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
-        wrapper.set_margin_bottom(36);
         let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
 
         let cover = self.cover_group_tile_for_artwork(
@@ -240,19 +226,16 @@ impl Shell {
                 actions: actions.upcast(),
             },
         );
-        wrapper.append(&showcase);
+        wrapper.append(&library_route_inset(showcase));
 
         if detail.tracks.is_empty() {
             let empty = self.placeholder_view("Tracks", "No tracks match this smart playlist.");
-            empty.set_margin_start(route_margin);
-            empty.set_margin_end(route_margin);
-            wrapper.append(&empty);
+            wrapper.append(&library_route_inset(empty));
         } else {
             wrapper.append(&self.library_tracks_scrolling_panel_with_selection(
                 detail.tracks,
                 LibraryListKey::SmartPlaylistTracks,
                 "smart-playlist-detail",
-                route_margin,
                 Some(PlaySourceDescriptor::SmartPlaylist {
                     smart_playlist_id: detail.smart_playlist.id.clone(),
                     definition_fingerprint: smart_playlist_definition_fingerprint(
@@ -263,9 +246,7 @@ impl Shell {
                 Some(track_selection),
             ));
         }
-        let route = detail_route_wrapper(0);
-        route.append(&detail_route_scroller(self, wrapper.upcast()));
-        route.upcast()
+        wrapper.upcast()
     }
 
     pub(in crate::ui) fn playlist_detail_view(
@@ -321,9 +302,8 @@ impl Shell {
         let mut playlist = detail.playlist.clone();
         playlist.image_refs = cover_refs;
         let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
-        let content_width = route_content_width(self);
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let compact = playlist_detail_compact_for_width(content_width);
-        let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
         wrapper.add_css_class("route-content");
@@ -332,7 +312,6 @@ impl Shell {
         wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
-        wrapper.set_margin_bottom(36);
         let entry_selection: PlaylistEntrySelectionHandle = Rc::new(RefCell::new(None));
 
         let cover = self.cover_group_tile_for_artwork(
@@ -457,23 +436,17 @@ impl Shell {
                 actions: actions.upcast(),
             },
         );
-        wrapper.append(&showcase);
+        wrapper.append(&library_route_inset(showcase));
 
         if detail.entries.is_empty() {
             let placeholder =
                 self.placeholder_view("Tracks", "No cached tracks are linked here yet.");
-            placeholder.set_margin_start(route_margin);
-            placeholder.set_margin_end(route_margin);
-            wrapper.append(&placeholder);
+            wrapper.append(&library_route_inset(placeholder));
         } else {
             let entries = self.playlist_entries_view(&detail, Some(entry_selection));
-            entries.set_margin_start(route_margin);
-            entries.set_margin_end(route_margin);
             wrapper.append(&entries);
         }
-        let route = detail_route_wrapper(0);
-        route.append(&detail_route_scroller(self, wrapper.upcast()));
-        route.upcast()
+        wrapper.upcast()
     }
 
     fn playlist_detail_from_loaded_tracks(
@@ -509,8 +482,7 @@ impl Shell {
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
 
-        let content_width = route_content_width(self);
-        let route_margin = playlist_route_margin(content_width);
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let toolbar = gtk::Box::new(playlist_toolbar_orientation(content_width), 8);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
@@ -539,14 +511,14 @@ impl Shell {
         direction.set_tooltip_text(Some(&tr("Change sort order")));
         toolbar.append(&sort_dropdown);
         toolbar.append(&direction);
-        wrapper.append(&toolbar);
+        wrapper.append(&library_route_inset(toolbar.upcast()));
 
         let (table, model) = playlist_entries_table_panel(
             self,
             Rc::clone(&entries),
             Rc::clone(&state),
             detail.playlist.id.clone(),
-            route_margin * 2,
+            0,
             selection_handle,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());
