@@ -188,9 +188,9 @@ impl AppController {
             let store = self.store.clone();
             let local_external_providers = external_providers.clone();
             thread::spawn(move || {
-                match allow_external_fallback
-                    .then(|| external_best_lyrics(&entry, &local_external_providers))
-                {
+                match allow_external_fallback.then(|| {
+                    external_best_lyrics(&store, &server_id, &entry, &local_external_providers)
+                }) {
                     Some(Ok(Some(lyrics))) => {
                         debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                         let _saved =
@@ -247,9 +247,9 @@ impl AppController {
                         track_id = %entry.track_id,
                         allow_external_fallback, "provider returned no lyrics"
                     );
-                    match allow_external_fallback
-                        .then(|| external_best_lyrics(&entry, &external_providers))
-                    {
+                    match allow_external_fallback.then(|| {
+                        external_best_lyrics(&store, &server_id, &entry, &external_providers)
+                    }) {
                         Some(Ok(Some(lyrics))) => {
                             debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                             let _saved =
@@ -266,9 +266,9 @@ impl AppController {
                     }
                 }
                 Err(error) => {
-                    match allow_external_fallback
-                        .then(|| external_best_lyrics(&entry, &external_providers))
-                    {
+                    match allow_external_fallback.then(|| {
+                        external_best_lyrics(&store, &server_id, &entry, &external_providers)
+                    }) {
                         Some(Ok(Some(lyrics))) => {
                             debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider after provider error");
                             let _saved =

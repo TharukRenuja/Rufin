@@ -350,11 +350,150 @@ pub(in crate::controller) fn lrclib_automatic_search(
         track_name,
     )
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::controller) struct LyricsLookup {
+    artist_names: Vec<String>,
+    track_name: String,
+    duration_seconds: u32,
+}
+impl LyricsLookup {
+    pub(in crate::controller) fn from_search(
+        artist_name: &str,
+        track_name: &str,
+        duration_seconds: u32,
+    ) -> Self {
+        let mut lookup = Self {
+            artist_names: Vec::new(),
+            track_name: track_name.trim().to_string(),
+            duration_seconds,
+        };
+        lookup.push_artist_name(artist_name);
+        lookup.push_primary_artist_variants();
+        lookup
+    }
+
+    fn from_entry(entry: &QueueEntry, track: Option<&Track>) -> Self {
+        let mut lookup = Self::from_search(&entry.artist, &entry.title, entry.duration_seconds);
+        if let Some(track) = track {
+            if let Some(credit) = track.artist_credits.first() {
+                lookup.push_artist_name(&credit.name);
+            } else if let Some(credit) = track.album_artist_credits.first() {
+                lookup.push_artist_name(&credit.name);
+            }
+            lookup.push_artist_name(&track.artist);
+            lookup.push_primary_artist_variants();
+        }
+        lookup
+    }
+
+    fn queries(&self) -> Vec<(String, String)> {
+        let artists = if self.artist_names.is_empty() {
+            vec![String::new()]
+        } else {
+            self.artist_names.clone()
+        };
+        let mut queries = Vec::new();
+        let mut seen = HashSet::new();
+        for artist_name in artists {
+            if self.track_name.is_empty() && artist_name.is_empty() {
+                continue;
+            }
+            let key = (
+                normalize_search_text(&artist_name),
+                normalize_search_text(&self.track_name),
+            );
+            if seen.insert(key) {
+                queries.push((artist_name, self.track_name.clone()));
+            }
+        }
+        queries
+    }
+
+    fn push_artist_name(&mut self, artist_name: &str) {
+        let artist_name = artist_name.trim();
+        let normalized = normalize_search_text(artist_name);
+        if artist_name.is_empty()
+            || normalized.is_empty()
+            || self
+                .artist_names
+                .iter()
+                .any(|existing| normalize_search_text(existing) == normalized)
+        {
+            return;
+        }
+        self.artist_names.push(artist_name.to_string());
+    }
+
+    fn push_primary_artist_variants(&mut self) {
+        let artists = self.artist_names.clone();
+        for artist_name in artists {
+            if let Some(primary) = primary_artist_name(&artist_name) {
+                self.push_artist_name(&primary);
+            }
+        }
+    }
+}
+fn lyrics_lookup_for_entry(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    entry: &QueueEntry,
+) -> LyricsLookup {
+    let track = match store.with_store(|store| store.load_track(server_id, &entry.track_id)) {
+        Ok(track) => track,
+        Err(error) => {
+            debug!(
+                track_id = %entry.track_id,
+                %error,
+                "could not load cached track credits for lyric lookup"
+            );
+            None
+        }
+    };
+    LyricsLookup::from_entry(entry, track.as_ref())
+}
+fn primary_artist_name(artist_name: &str) -> Option<String> {
+    const SEPARATORS: &[&str] = &[
+        " • ",
+        "•",
+        " · ",
+        "·",
+        " / ",
+        " | ",
+        "; ",
+        ";",
+        " feat. ",
+        " feat ",
+        " featuring ",
+        " ft. ",
+        " ft ",
+        " with ",
+        " x ",
+        " vs. ",
+    ];
+    let artist_name = artist_name.trim();
+    let lower = artist_name.to_ascii_lowercase();
+    let index = SEPARATORS
+        .iter()
+        .filter_map(|separator| {
+            lower
+                .find(&separator.to_ascii_lowercase())
+                .map(|index| (index, separator.len()))
+        })
+        .min_by_key(|(index, _)| *index)
+        .map(|(index, _)| index)?;
+    let primary = artist_name.get(..index)?.trim();
+    if primary.is_empty() || normalize_search_text(primary) == normalize_search_text(artist_name) {
+        None
+    } else {
+        Some(primary.to_string())
+    }
+}
 pub(in crate::controller) fn external_lyrics_search(
     providers: &[ExternalLyricsProvider],
     artist_name: &str,
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
+    let lookup = LyricsLookup::from_search(artist_name, track_name, 0);
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut had_success = false;
@@ -363,10 +502,11 @@ pub(in crate::controller) fn external_lyrics_search(
             .iter()
             .copied()
             .map(|provider| {
+                let lookup = &lookup;
                 scope.spawn(move || {
                     (
                         provider,
-                        external_provider_search(provider, artist_name, track_name, false),
+                        external_provider_search_for_lookup(provider, lookup, false),
                     )
                 })
             })
@@ -379,8 +519,8 @@ pub(in crate::controller) fn external_lyrics_search(
             match result {
                 Ok(mut batch) => {
                     had_success = true;
-                    filter_external_results_for_query(&mut batch, artist_name, track_name);
-                    order_external_provider_results(&mut batch, artist_name, track_name);
+                    filter_external_results_for_lookup(&mut batch, &lookup);
+                    order_external_provider_results(&mut batch, &lookup);
                     results.extend(batch);
                 }
                 Err(error) => errors.push(format!("{}: {error}", provider.title())),
@@ -393,9 +533,12 @@ pub(in crate::controller) fn external_lyrics_search(
     Ok(results)
 }
 pub(in crate::controller) fn external_best_lyrics(
+    store: &StoreHandle,
+    server_id: &ServerId,
     entry: &QueueEntry,
     providers: &[ExternalLyricsProvider],
 ) -> Result<Option<Lyrics>, String> {
+    let lookup = lyrics_lookup_for_entry(store, server_id, entry);
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut had_success = false;
@@ -404,7 +547,13 @@ pub(in crate::controller) fn external_best_lyrics(
             .iter()
             .copied()
             .map(|provider| {
-                scope.spawn(move || (provider, external_best_lyrics_for_provider(entry, provider)))
+                let lookup = &lookup;
+                scope.spawn(move || {
+                    (
+                        provider,
+                        external_best_lyrics_for_provider(lookup, provider),
+                    )
+                })
             })
             .collect::<Vec<_>>();
         for handle in handles {
@@ -423,17 +572,18 @@ pub(in crate::controller) fn external_best_lyrics(
             }
         }
     });
+    dedupe_external_results(&mut results);
     if results.is_empty() {
         if !had_success && !errors.is_empty() {
             return Err(errors.join("; "));
         }
         return Ok(None);
     }
-    filter_external_results_for_query(&mut results, &entry.artist, &entry.title);
+    filter_external_results_for_lookup(&mut results, &lookup);
     if results.is_empty() {
         return Ok(None);
     }
-    order_external_results(&mut results, &entry.artist, &entry.title, providers);
+    order_external_results(&mut results, &lookup, providers);
     for result in results {
         match lyrics_from_search_result(entry.track_id.clone(), &result) {
             Ok(Some(lyrics)) => return Ok(Some(lyrics)),
@@ -448,51 +598,110 @@ pub(in crate::controller) fn external_best_lyrics(
     }
 }
 fn external_best_lyrics_for_provider(
-    entry: &QueueEntry,
+    lookup: &LyricsLookup,
     provider: ExternalLyricsProvider,
 ) -> Result<Vec<LyricsSearchResult>, String> {
     let mut results = Vec::new();
     if provider == ExternalLyricsProvider::Lrclib
-        && let Some(result) = lrclib_exact_result(entry)?
+        && let Some(result) = lrclib_exact_result(lookup)?
     {
         results.push(result);
     }
-    results.extend(external_provider_search(
-        provider,
-        &entry.artist,
-        &entry.title,
-        true,
-    )?);
+    results.extend(external_provider_search_for_lookup(provider, lookup, true)?);
+    dedupe_external_results(&mut results);
     Ok(results)
 }
+#[cfg(test)]
 pub(in crate::controller) fn filter_external_results_for_query(
     results: &mut Vec<LyricsSearchResult>,
     artist_name: &str,
     track_name: &str,
 ) {
-    results.retain(|result| external_result_matches_query(result, artist_name, track_name));
+    let lookup = LyricsLookup::from_search(artist_name, track_name, 0);
+    filter_external_results_for_lookup(results, &lookup);
 }
-fn external_result_matches_query(
-    result: &LyricsSearchResult,
-    artist_name: &str,
-    track_name: &str,
-) -> bool {
-    let artist_name = artist_name.trim();
-    let track_name = track_name.trim();
-    if !track_name.is_empty() && text_match_score(track_name, &result.track_name) > 70 {
+fn filter_external_results_for_lookup(
+    results: &mut Vec<LyricsSearchResult>,
+    lookup: &LyricsLookup,
+) {
+    results.retain(|result| external_result_matches_lookup(result, lookup));
+}
+fn external_result_matches_lookup(result: &LyricsSearchResult, lookup: &LyricsLookup) -> bool {
+    if !lookup.track_name.is_empty()
+        && text_match_score(&lookup.track_name, &result.track_name) > 70
+    {
         return false;
     }
-    if !artist_name.is_empty() && text_match_score(artist_name, &result.artist_name) > 80 {
+    if !lookup.artist_names.is_empty()
+        && lookup
+            .artist_names
+            .iter()
+            .map(|artist_name| text_match_score(artist_name, &result.artist_name))
+            .min()
+            .unwrap_or(0)
+            > 80
+    {
         return false;
     }
     true
 }
-fn lrclib_exact_result(entry: &QueueEntry) -> Result<Option<LyricsSearchResult>, String> {
-    let Some(url) = lrclib_get_url(&entry.artist, &entry.title, entry.duration_seconds)? else {
+fn lrclib_exact_result(lookup: &LyricsLookup) -> Result<Option<LyricsSearchResult>, String> {
+    let Some((artist_name, track_name)) = lookup.queries().into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(url) = lrclib_get_url(&artist_name, &track_name, lookup.duration_seconds)? else {
         return Ok(None);
     };
     let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     lrclib_fetch_get(&client, url)
+}
+fn external_provider_search_for_lookup(
+    provider: ExternalLyricsProvider,
+    lookup: &LyricsLookup,
+    automatic: bool,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let queries = lookup.queries();
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
+    if queries.len() == 1 {
+        let (artist_name, track_name) = &queries[0];
+        return external_provider_search(provider, artist_name, track_name, automatic);
+    }
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    let mut had_success = false;
+    std::thread::scope(|scope| {
+        let handles = queries
+            .into_iter()
+            .map(|(artist_name, track_name)| {
+                scope.spawn(move || {
+                    external_provider_search(provider, &artist_name, &track_name, automatic)
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            match handle
+                .join()
+                .unwrap_or_else(|_| Err("Lyric search worker failed.".to_string()))
+            {
+                Ok(batch) => {
+                    had_success = true;
+                    results.extend(batch);
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+    });
+    if !had_success && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    dedupe_external_results(&mut results);
+    Ok(results)
+}
+fn dedupe_external_results(results: &mut Vec<LyricsSearchResult>) {
+    let mut seen = HashSet::new();
+    results.retain(|result| seen.insert((result.provider, result.id.clone())));
 }
 fn external_provider_search(
     provider: ExternalLyricsProvider,
@@ -1036,23 +1245,23 @@ pub(in crate::controller) fn order_lrclib_results(
     artist_name: &str,
     track_name: &str,
 ) {
+    let lookup = LyricsLookup::from_search(artist_name, track_name, 0);
     results.sort_by(|a, b| {
-        lrclib_match_score(a, artist_name, track_name)
-            .cmp(&lrclib_match_score(b, artist_name, track_name))
+        lyrics_match_score(a, &lookup)
+            .cmp(&lyrics_match_score(b, &lookup))
             .then_with(|| lrclib_has_synced_lyrics(b).cmp(&lrclib_has_synced_lyrics(a)))
             .then_with(|| lrclib_has_plain_lyrics(b).cmp(&lrclib_has_plain_lyrics(a)))
             .then_with(|| a.track_name.cmp(&b.track_name))
             .then_with(|| a.artist_name.cmp(&b.artist_name))
     });
 }
-fn order_external_provider_results(
+pub(in crate::controller) fn order_external_provider_results(
     results: &mut [LyricsSearchResult],
-    artist_name: &str,
-    track_name: &str,
+    lookup: &LyricsLookup,
 ) {
     results.sort_by(|a, b| {
-        lrclib_match_score(a, artist_name, track_name)
-            .cmp(&lrclib_match_score(b, artist_name, track_name))
+        lyrics_match_score(a, lookup)
+            .cmp(&lyrics_match_score(b, lookup))
             .then_with(|| result_has_synced_lyrics(b).cmp(&result_has_synced_lyrics(a)))
             .then_with(|| result_has_plain_lyrics(b).cmp(&result_has_plain_lyrics(a)))
             .then_with(|| a.track_name.cmp(&b.track_name))
@@ -1061,13 +1270,12 @@ fn order_external_provider_results(
 }
 fn order_external_results(
     results: &mut [LyricsSearchResult],
-    artist_name: &str,
-    track_name: &str,
+    lookup: &LyricsLookup,
     providers: &[ExternalLyricsProvider],
 ) {
     results.sort_by(|a, b| {
-        lrclib_match_score(a, artist_name, track_name)
-            .cmp(&lrclib_match_score(b, artist_name, track_name))
+        lyrics_match_score(a, lookup)
+            .cmp(&lyrics_match_score(b, lookup))
             .then_with(|| {
                 provider_rank(a.provider, providers).cmp(&provider_rank(b.provider, providers))
             })
@@ -1083,13 +1291,35 @@ fn provider_rank(provider: ExternalLyricsProvider, providers: &[ExternalLyricsPr
         .position(|candidate| *candidate == provider)
         .unwrap_or(usize::MAX)
 }
-pub(in crate::controller) fn lrclib_match_score(
-    result: &LyricsSearchResult,
-    artist_name: &str,
-    track_name: &str,
-) -> u16 {
-    text_match_score(track_name, &result.track_name).saturating_mul(2)
-        + text_match_score(artist_name, &result.artist_name)
+fn lyrics_match_score(result: &LyricsSearchResult, lookup: &LyricsLookup) -> u16 {
+    text_match_score(&lookup.track_name, &result.track_name)
+        .saturating_mul(2)
+        .saturating_add(artist_match_score(lookup, &result.artist_name))
+        .saturating_add(duration_match_penalty(
+            lookup.duration_seconds,
+            result.duration_seconds,
+        ))
+}
+fn artist_match_score(lookup: &LyricsLookup, artist_name: &str) -> u16 {
+    lookup
+        .artist_names
+        .iter()
+        .map(|query| text_match_score(query, artist_name))
+        .min()
+        .unwrap_or(0)
+}
+fn duration_match_penalty(target_seconds: u32, candidate_seconds: u32) -> u16 {
+    if target_seconds == 0 || candidate_seconds == 0 {
+        return 0;
+    }
+    let diff = target_seconds.abs_diff(candidate_seconds);
+    match diff {
+        0..=2 => 0,
+        3..=5 => 4,
+        6..=10 => 12,
+        11..=20 => 30,
+        _ => 60 + diff.min(90) as u16,
+    }
 }
 pub(in crate::controller) fn text_match_score(query: &str, candidate: &str) -> u16 {
     let query = normalize_search_text(query);

@@ -1731,6 +1731,70 @@ pub(in crate::controller) fn lyrics_filter_manual_query_results() {
     assert_eq!(artist_results.len(), 2);
 }
 #[test]
+pub(in crate::controller) fn lyrics_accept_primary_artist_result_for_credited_display_artist() {
+    let mut results = vec![
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "primary-artist".to_string(),
+            track_name: "Everybody Wants to Rule the World".to_string(),
+            artist_name: "Tears for Fears".to_string(),
+            album_name: String::new(),
+            duration_seconds: 251,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        },
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "wrong-title".to_string(),
+            track_name: "Shout".to_string(),
+            artist_name: "Tears for Fears".to_string(),
+            album_name: String::new(),
+            duration_seconds: 0,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        },
+    ];
+
+    super::filter_external_results_for_query(
+        &mut results,
+        "Tears for Fears • Roland Orzabal • Ian Stanley • Christopher Merrick Hughes",
+        "Everybody Wants to Rule the World",
+    );
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "primary-artist");
+}
+#[test]
+pub(in crate::controller) fn lyrics_rank_matching_duration_before_wrong_duration() {
+    let lookup = super::LyricsLookup::from_search("The Cure", "Lovesong", 210);
+    let mut results = vec![
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "wrong-duration".to_string(),
+            track_name: "Lovesong".to_string(),
+            artist_name: "The Cure".to_string(),
+            album_name: "Disintegration".to_string(),
+            duration_seconds: 310,
+            synced_lyrics: Some("[00:01.00]line".to_string()),
+            plain_lyrics: Some("line".to_string()),
+        },
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "right-duration".to_string(),
+            track_name: "Lovesong".to_string(),
+            artist_name: "The Cure".to_string(),
+            album_name: "Disintegration".to_string(),
+            duration_seconds: 211,
+            synced_lyrics: None,
+            plain_lyrics: Some("line".to_string()),
+        },
+    ];
+
+    super::order_external_provider_results(&mut results, &lookup);
+
+    assert_eq!(results[0].id, "right-duration");
+}
+#[test]
 pub(in crate::controller) fn lyrics_match_token() {
     let mut results = vec![
         super::LyricsSearchResult {
