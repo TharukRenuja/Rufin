@@ -5,6 +5,8 @@ impl AppController {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let local_library_watcher = Arc::clone(&self.local_library_watcher);
+        let remote_library_watcher = Arc::clone(&self.remote_library_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -29,7 +31,7 @@ impl AppController {
                 return;
             }
 
-            let selected_saved_needing_sync = match source {
+            let (selected_saved_needing_sync, selected_saved_for_reconciliation) = match source {
                 LibrarySourceSelection::Local => {
                     let saved = match ensure_local_source_server(&store) {
                         Ok(saved) => saved,
@@ -66,9 +68,13 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                    (!settings.sources.local_folders.is_empty()
-                        && active_server_needs_sync(&store, &saved.server.id))
-                    .then_some(saved)
+                    let local_configured = !settings.sources.local_folders.is_empty();
+                    let needs_sync =
+                        local_configured && active_server_needs_sync(&store, &saved.server.id);
+                    (
+                        needs_sync.then_some(saved.clone()),
+                        (local_configured && !needs_sync).then_some(saved),
+                    )
                 }
                 LibrarySourceSelection::Server(server_id) => {
                     let saved = match store.with_store(|store| {
@@ -110,6 +116,14 @@ impl AppController {
                             &events,
                         );
                         emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                        refresh_local_library_watcher(
+                            sync_context.clone(),
+                            Arc::clone(&local_library_watcher),
+                        );
+                        refresh_remote_library_watcher(
+                            sync_context,
+                            Arc::clone(&remote_library_watcher),
+                        );
                         return;
                     }
                     if let Err(error) = activate_saved_queue(
@@ -128,15 +142,24 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                    active_server_needs_sync(&store, &saved.server.id).then_some(saved)
+                    let needs_sync = active_server_needs_sync(&store, &saved.server.id);
+                    (
+                        needs_sync.then_some(saved.clone()),
+                        (!needs_sync).then_some(saved),
+                    )
                 }
             };
 
             if let Some(saved) = selected_saved_needing_sync {
-                start_sync_thread_with_snapshots(sync_context, saved);
+                start_sync_thread_with_snapshots(sync_context.clone(), saved);
             } else {
                 emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                if let Some(saved) = selected_saved_for_reconciliation {
+                    start_background_sync_thread(sync_context.clone(), saved);
+                }
             }
+            refresh_local_library_watcher(sync_context.clone(), local_library_watcher);
+            refresh_remote_library_watcher(sync_context, remote_library_watcher);
         });
     }
 }

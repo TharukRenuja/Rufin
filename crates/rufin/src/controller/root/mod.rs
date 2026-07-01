@@ -3,7 +3,7 @@ pub use super::discovery::{DiscoveredServer, ServerDiscoveryStatus};
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
 use crate::external_scrobbling::{self, ExternalScrobbleState};
 use crate::providers::{
-    JellyfinLyricsSearch, LoadedProvider, StreamingProvider,
+    JellyfinLibraryChange, JellyfinLyricsSearch, LoadedProvider, StreamingProvider,
     jellyfin_stream_descriptor_from_saved_session, login_provider, provider_display_name,
     provider_from_saved,
 };
@@ -71,6 +71,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
+mod active_source_reconciliation;
 mod auto_dj;
 mod auto_dj_commands;
 mod cached_library_api;
@@ -81,6 +82,7 @@ mod controller_startup;
 mod folder_search_commands;
 mod library_mutations;
 mod local_library_stress;
+mod local_library_watcher;
 mod local_source_commands;
 mod lyrics_commands;
 pub(in crate::controller) mod play_activation;
@@ -96,6 +98,7 @@ mod queue_commands;
 mod queue_mutation;
 mod queue_state;
 mod refresh_commands;
+mod remote_library_watcher;
 mod server_cache_commands;
 mod server_lifecycle_commands;
 mod server_local_access_commands;
@@ -119,8 +122,10 @@ mod startup_sync_tests;
 #[cfg(test)]
 mod test_support;
 
+pub(in crate::controller) use active_source_reconciliation::*;
 pub(in crate::controller) use cached_reads::*;
 pub(in crate::controller) use controller_startup::*;
+use local_library_watcher::{LocalLibraryWatcher, refresh_local_library_watcher};
 pub(crate) use play_activation::{
     FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
@@ -133,6 +138,7 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
+use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watcher};
 pub(crate) use server_local_access_commands::ServerSettingsInput;
 use source_image_policy::{
     image_ref_allowed, is_local_album_id, is_local_artist_id, is_local_provider_image_ref,
@@ -470,6 +476,8 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
+    local_library_watcher: Arc<Mutex<Option<LocalLibraryWatcher>>>,
+    remote_library_watcher: Arc<Mutex<Option<RemoteLibraryWatcher>>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<ServerId>,

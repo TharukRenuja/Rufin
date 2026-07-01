@@ -27,10 +27,12 @@ use tracing::instrument;
 
 mod client;
 mod provider_impl;
+mod websocket;
 
 use client::*;
 pub(crate) use client::{jellyfin_id, normalize_base_url, stable_hash};
 use provider_impl::*;
+pub use websocket::JellyfinLibraryChange;
 
 #[cfg(test)]
 mod library_api_tests;
@@ -190,6 +192,44 @@ impl JellyfinProvider {
             url.query_pairs_mut().append_pair("tag", tag);
         }
         Ok(url.to_string())
+    }
+
+    pub async fn tracks_by_raw_item_ids(&self, raw_ids: &[String]) -> ProviderResult<Vec<Track>> {
+        let mut tracks = Vec::new();
+        for chunk in raw_ids.chunks(100).filter(|chunk| !chunk.is_empty()) {
+            let mut url = endpoint(&self.base_url, "Items")?;
+            url.query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("Recursive", "true")
+                .append_pair("IncludeItemTypes", "Audio")
+                .append_pair("Ids", &chunk.join(","))
+                .append_pair("Fields", ITEM_FIELDS)
+                .append_pair("EnableTotalRecordCount", "false");
+            tracks.extend(
+                self.get_json::<ItemQueryResult>(url)
+                    .await?
+                    .items
+                    .into_iter()
+                    .filter(is_audio_item)
+                    .map(track_from_item),
+            );
+        }
+        Ok(tracks)
+    }
+
+    pub async fn recently_added_tracks(&self, limit: usize) -> ProviderResult<Vec<Track>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let response = self
+            .item_page_sorted(
+                "Audio",
+                PagedRequest::new(0, limit.clamp(1, 500)),
+                "DateCreated,SortName",
+                "Descending",
+            )
+            .await?;
+        Ok(response.items.into_iter().map(track_from_item).collect())
     }
 
     pub async fn lyrics_with_search(

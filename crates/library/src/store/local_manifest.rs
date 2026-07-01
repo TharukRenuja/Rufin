@@ -511,12 +511,16 @@ impl Store {
         }
         self.write_batch(|connection| {
             for table in [
+                "playlist_tracks",
                 "track_music_folders",
                 "track_genres",
                 "track_artist_links",
                 "tracks",
             ] {
                 delete_track_ids(connection, table, server_id, track_ids)?;
+            }
+            for table in ["home_section_items", "home_section_prefetch_items"] {
+                delete_home_track_ids(connection, table, server_id, track_ids)?;
             }
             delete_track_entity_rows(connection, server_id, track_ids)?;
             delete_track_fts_rows(connection, server_id, track_ids)?;
@@ -1095,6 +1099,30 @@ fn delete_track_ids(
             .join(", ");
         let sql =
             format!("DELETE FROM {table} WHERE server_id = ? AND track_id IN ({placeholders})");
+        let mut values = vec![Value::Text(server_id.as_str().to_string())];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
+        connection.execute(&sql, params_from_iter(values))?;
+    }
+    Ok(())
+}
+
+fn delete_home_track_ids(
+    connection: &Connection,
+    table: &str,
+    server_id: &ServerId,
+    track_ids: &[TrackId],
+) -> StoreResult<()> {
+    for chunk in track_ids.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "DELETE FROM {table} WHERE server_id = ? AND item_type = 'track' AND item_id IN ({placeholders})"
+        );
         let mut values = vec![Value::Text(server_id.as_str().to_string())];
         values.extend(
             chunk

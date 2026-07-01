@@ -19,11 +19,10 @@ pub(in crate::controller) fn cache_home_sections(
     sections: &[HomeSection],
     generation: i64,
 ) -> Result<(), String> {
-    let sections = source_scoped_home_sections(server_id, sections);
-    for section in &sections {
+    for section in sections {
         cache_home_section_items(store, server_id, section, generation)?;
     }
-    store.with_store(|store| store.upsert_home_sections(server_id, &sections, generation))?;
+    store.with_store(|store| store.upsert_home_sections(server_id, sections, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section(
@@ -50,13 +49,6 @@ pub(in crate::controller) fn cache_home_section_items(
         store.with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
     }
     Ok(())
-}
-#[cfg(test)]
-fn source_scoped_home_sections(server_id: &ServerId, sections: &[HomeSection]) -> Vec<HomeSection> {
-    sections
-        .iter()
-        .map(|section| source_scoped_home_section(server_id, section))
-        .collect()
 }
 fn source_scoped_home_section(server_id: &ServerId, section: &HomeSection) -> HomeSection {
     if server_id.as_str() != LOCAL_SOURCE_SERVER_ID {
