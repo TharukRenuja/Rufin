@@ -157,7 +157,7 @@ Rufin publishes release tag and `main` build results to Cachix. This is
 optional, but can speed up Nix builds and runs:
 
 ```bash
-nix-shell -p cachix --run "cachix use screwys-rufin"
+nix-shell -p cachix --run "cachix use rufin"
 ```
 
 The dev shell works without this cache.

@@ -43,8 +43,8 @@ jobs:
             accept-flake-config = true
             connect-timeout = 10
             download-attempts = 5
-            extra-substituters = https://screwys-rufin.cachix.org
-            extra-trusted-public-keys = screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA=
+            extra-substituters = https://rufin.cachix.org
+            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
@@ -74,8 +74,8 @@ jobs:
             accept-flake-config = true
             connect-timeout = 10
             download-attempts = 5
-            extra-substituters = https://screwys-rufin.cachix.org
-            extra-trusted-public-keys = screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA=
+            extra-substituters = https://rufin.cachix.org
+            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
