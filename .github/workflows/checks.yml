@@ -109,8 +109,8 @@ jobs:
           extra_nix_config: |
             connect-timeout = 10
             download-attempts = 5
-            extra-substituters = https://screwys-rufin.cachix.org
-            extra-trusted-public-keys = screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA=
+            extra-substituters = https://rufin.cachix.org
+            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
@@ -118,7 +118,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-bin: "false"
-          prefix-key: v1-rust
+          prefix-key: v2-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
 
