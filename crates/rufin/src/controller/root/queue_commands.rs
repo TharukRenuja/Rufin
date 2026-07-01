@@ -468,7 +468,7 @@ impl AppController {
             },
         };
         if let Some(activation) = loaded_tracks_activation(source_key, &detail.tracks, 0) {
-            self.play_activation(activation);
+            self.play_activation(activation.shuffled_start());
         }
     }
     pub fn play_loaded_source_window(
@@ -478,12 +478,32 @@ impl AppController {
         anchor_index: usize,
         track_at: impl FnMut(usize) -> Option<Track>,
     ) -> bool {
+        self.play_loaded_source_window_with_shuffle_start(
+            source_key,
+            total_items,
+            anchor_index,
+            track_at,
+            false,
+        )
+    }
+    fn play_loaded_source_window_with_shuffle_start(
+        &self,
+        source_key: PlaySourceKey,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+        shuffle_start: bool,
+    ) -> bool {
         let Some(activation) =
             loaded_tracks_window_activation(source_key, total_items, anchor_index, track_at)
         else {
             return false;
         };
-        self.play_activation(activation);
+        self.play_activation(if shuffle_start {
+            activation.shuffled_start()
+        } else {
+            activation
+        });
         true
     }
     pub fn play_library_source_window(
@@ -539,7 +559,7 @@ impl AppController {
         anchor_index: usize,
         track_at: impl FnMut(usize) -> Option<Track>,
     ) -> bool {
-        self.play_loaded_source_window(
+        self.play_loaded_source_window_with_shuffle_start(
             PlaySourceKey {
                 descriptor: PlaySourceDescriptor::ArtistTracks {
                     artist_id,
@@ -551,6 +571,7 @@ impl AppController {
             total_items,
             anchor_index,
             track_at,
+            true,
         )
     }
     pub fn play_genre_tracks_window(
@@ -560,7 +581,7 @@ impl AppController {
         anchor_index: usize,
         track_at: impl FnMut(usize) -> Option<Track>,
     ) -> bool {
-        self.play_loaded_source_window(
+        self.play_loaded_source_window_with_shuffle_start(
             PlaySourceKey {
                 descriptor: PlaySourceDescriptor::GenreTracks {
                     genre_id,
@@ -571,6 +592,7 @@ impl AppController {
             total_items,
             anchor_index,
             track_at,
+            true,
         )
     }
 
@@ -897,7 +919,8 @@ fn playlist_detail_activation(
     detail: PlaylistDetail,
 ) -> Option<PlayActivation> {
     if detail.entries.is_empty() {
-        return loaded_tracks_activation(source_key, &detail.tracks, 0);
+        return loaded_tracks_activation(source_key, &detail.tracks, 0)
+            .map(PlayActivation::shuffled_start);
     }
 
     let total_items = detail.entries.len();
@@ -959,11 +982,7 @@ fn loaded_tracks_window_activation(
             .collect::<Option<Vec<_>>>()?,
     };
     let activation = store_backed_window_play_activation(source_key, window, anchor_index).ok()?;
-    Some(if anchor_index == 0 {
-        activation.shuffled_start()
-    } else {
-        activation
-    })
+    Some(activation)
 }
 
 fn normalize_store_backed_window_tracks(
@@ -1311,6 +1330,45 @@ mod tests {
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>(),
             initial_ids
+        );
+    }
+
+    #[test]
+    fn first_row_source_activation_plays_clicked_track_with_shuffle_enabled() {
+        let (controller, events, snapshot, ..) =
+            AppController::bootstrap_with_fake(FakeScale::Small);
+        let tracks = snapshot.tracks[0..8].to_vec();
+        controller
+            .with_queue_mut(|queue| {
+                queue.play_now(&tracks[0]);
+                queue.set_shuffle(true, 19);
+                Ok(())
+            })
+            .expect("set shuffled current");
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: PlaylistId::fake(9),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: None,
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        };
+
+        let played = controller.play_loaded_source_window(source_key, tracks.len(), 0, |index| {
+            tracks.get(index).cloned()
+        });
+
+        assert!(played);
+        let queue = wait_for_queue(&events).expect("source queue");
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(
+            queue
+                .current_index
+                .and_then(|index| queue.entries.get(index))
+                .map(|entry| &entry.track_id),
+            Some(&tracks[0].id)
         );
     }
 
