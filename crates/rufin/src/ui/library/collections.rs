@@ -587,6 +587,7 @@ pub(in crate::ui) fn track_table(
     if let Some(selection_handle) = options.selection_handle.as_ref() {
         *selection_handle.borrow_mut() = Some(track_selection.clone());
     }
+    shell.register_current_route_track_selection(track_selection.clone());
     let fields = if options.detail {
         shell.library_settings(key).detail_track_fields
     } else {

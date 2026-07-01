@@ -244,7 +244,7 @@ pub(in crate::ui) use home_visible_sections::render_home_section_page_model;
 pub(in crate::ui) use layout_rendering::*;
 pub(in crate::ui) use library::{TrackTableSelection, TrackTableSelectionHandle};
 
-type NowPlayingSelection = Rc<dyn Fn(&QueueSnapshot)>;
+type PendingQueueSelection = Rc<dyn Fn(&QueueSnapshot)>;
 
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
@@ -365,7 +365,10 @@ pub(in crate::ui) struct AppState {
     library: RefCell<LibrarySnapshot>,
     track_index: RefCell<HashMap<TrackId, usize>>,
     queue: RefCell<Option<QueueSnapshot>>,
-    pending_now_playing_selection: RefCell<Option<NowPlayingSelection>>,
+    now_playing_track_id: RefCell<Option<TrackId>>,
+    current_route_track_selections: RefCell<Vec<TrackTableSelection>>,
+    current_route_playlist_entry_selections: RefCell<Vec<PlaylistEntryTableSelection>>,
+    pending_playlist_entry_selection: RefCell<Option<PendingQueueSelection>>,
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<domain::TrackId>>,
@@ -613,12 +616,68 @@ pub(in crate::ui) fn queue_current_entry(queue: &QueueSnapshot) -> Option<&Queue
 }
 
 impl Shell {
-    pub(in crate::ui) fn arm_now_playing_selection(&self, select: NowPlayingSelection) {
-        *self.state.pending_now_playing_selection.borrow_mut() = Some(select);
+    pub(in crate::ui) fn register_current_route_track_selection(
+        &self,
+        selection: TrackTableSelection,
+    ) {
+        selection.select_now_playing_track(self.state.now_playing_track_id.borrow().as_ref());
+        self.state
+            .current_route_track_selections
+            .borrow_mut()
+            .push(selection);
     }
 
-    pub(in crate::ui) fn apply_pending_now_playing_selection(&self, queue: Option<&QueueSnapshot>) {
-        let Some(select) = self.state.pending_now_playing_selection.borrow_mut().take() else {
+    pub(in crate::ui) fn register_current_route_playlist_entry_selection(
+        &self,
+        selection: PlaylistEntryTableSelection,
+    ) {
+        selection.select_now_playing_track(self.state.now_playing_track_id.borrow().as_ref());
+        self.state
+            .current_route_playlist_entry_selections
+            .borrow_mut()
+            .push(selection);
+    }
+
+    pub(in crate::ui) fn refresh_current_route_now_playing_selections(&self) {
+        let now_playing_track_id = self.state.now_playing_track_id.borrow();
+        for selection in self.state.current_route_track_selections.borrow().iter() {
+            selection.select_now_playing_track(now_playing_track_id.as_ref());
+        }
+        for selection in self
+            .state
+            .current_route_playlist_entry_selections
+            .borrow()
+            .iter()
+        {
+            selection.select_now_playing_track(now_playing_track_id.as_ref());
+        }
+    }
+
+    pub(in crate::ui) fn apply_now_playing_track_id(&self, queue: Option<&QueueSnapshot>) {
+        let track_id = queue
+            .and_then(queue_current_entry)
+            .map(|entry| entry.track_id.clone());
+        if self.state.now_playing_track_id.borrow().as_ref() == track_id.as_ref() {
+            return;
+        }
+        *self.state.now_playing_track_id.borrow_mut() = track_id;
+        self.refresh_current_route_now_playing_selections();
+    }
+
+    pub(in crate::ui) fn arm_playlist_entry_selection(&self, select: PendingQueueSelection) {
+        *self.state.pending_playlist_entry_selection.borrow_mut() = Some(select);
+    }
+
+    pub(in crate::ui) fn apply_pending_playlist_entry_selection(
+        &self,
+        queue: Option<&QueueSnapshot>,
+    ) {
+        let Some(select) = self
+            .state
+            .pending_playlist_entry_selection
+            .borrow_mut()
+            .take()
+        else {
             return;
         };
         if let Some(queue) = queue {
@@ -626,8 +685,11 @@ impl Shell {
         }
     }
 
-    pub(in crate::ui) fn clear_pending_now_playing_selection(&self) {
-        self.state.pending_now_playing_selection.borrow_mut().take();
+    pub(in crate::ui) fn clear_pending_playlist_entry_selection(&self) {
+        self.state
+            .pending_playlist_entry_selection
+            .borrow_mut()
+            .take();
     }
 
     pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
@@ -702,6 +764,11 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
     let track_index = track_index_for(&library.tracks);
 
+    let now_playing_track_id = queue
+        .as_ref()
+        .and_then(queue_current_entry)
+        .map(|entry| entry.track_id.clone());
+
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         settings: RefCell::new(settings.clone()),
@@ -712,7 +779,10 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         library: RefCell::new(library),
         track_index: RefCell::new(track_index),
         queue: RefCell::new(queue),
-        pending_now_playing_selection: RefCell::new(None),
+        now_playing_track_id: RefCell::new(now_playing_track_id),
+        current_route_track_selections: RefCell::new(Vec::new()),
+        current_route_playlist_entry_selections: RefCell::new(Vec::new()),
+        pending_playlist_entry_selection: RefCell::new(None),
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),

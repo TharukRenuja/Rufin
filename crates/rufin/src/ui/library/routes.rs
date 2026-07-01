@@ -1456,6 +1456,7 @@ impl Shell {
                 }
                 warm_track_covers_for_settings(&shell, &visible_tracks, &settings);
                 replace_tracks_in_model(&model, visible_tracks);
+                shell.refresh_current_route_now_playing_selections();
                 if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
                     on_visible_count_changed(visible_count);
                 }

@@ -72,7 +72,6 @@ impl Shell {
             albums.len(),
             appears_on.len(),
             track_count,
-            has_favorite_tracks.then(|| Rc::clone(&favorite_track_selection)),
         ));
 
         if has_favorite_tracks {
@@ -209,7 +208,6 @@ impl Shell {
         album_count: usize,
         appears_on_count: usize,
         track_count: u32,
-        favorite_track_selection: Option<TrackTableSelectionHandle>,
     ) -> gtk::Widget {
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = detail_showcase_cover_size(content_width);
@@ -243,22 +241,9 @@ impl Shell {
 
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
-        let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&action_tracks);
         let artist_id = artist.id.clone();
-        let play_selection = favorite_track_selection.clone();
         play.connect_clicked(move |_| {
-            if let Some(play_selection) = play_selection.as_ref() {
-                let play_selection = Rc::clone(play_selection);
-                shell.arm_now_playing_selection(Rc::new(move |queue| {
-                    let Some(entry) = queue_current_entry(queue) else {
-                        return;
-                    };
-                    if let Some(selection) = play_selection.borrow().as_ref() {
-                        selection.select_track_id(&entry.track_id);
-                    }
-                }));
-            }
             controller.play_artist_tracks_window(
                 artist_id.clone(),
                 ArtistTrackScope::AllCredits,

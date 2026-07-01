@@ -151,20 +151,9 @@ impl Shell {
         actions.set_halign(gtk::Align::Start);
         let play_album = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
-        let shell = Rc::clone(self);
         let album_id_for_play = album.id.clone();
         let album_tracks = tracks.clone();
-        let play_selection = Rc::clone(&track_selection);
         play_album.connect_clicked(move |_| {
-            let play_selection = Rc::clone(&play_selection);
-            shell.arm_now_playing_selection(Rc::new(move |queue| {
-                let Some(entry) = queue_current_entry(queue) else {
-                    return;
-                };
-                if let Some(selection) = play_selection.borrow().as_ref() {
-                    selection.select_track_id(&entry.track_id);
-                }
-            }));
             controller.play_album_tracks(album_id_for_play.clone(), album_tracks.clone(), 0, true);
         });
         actions.append(&play_album);
