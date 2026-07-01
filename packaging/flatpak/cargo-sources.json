@@ -3941,14 +3941,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tokio-tungstenite/tokio-tungstenite-0.28.0.crate",
-        "sha256": "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857",
-        "dest": "cargo/vendor/tokio-tungstenite-0.28.0"
+        "url": "https://static.crates.io/crates/tokio-tungstenite/tokio-tungstenite-0.29.0.crate",
+        "sha256": "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c",
+        "dest": "cargo/vendor/tokio-tungstenite-0.29.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857\", \"files\": {}}",
-        "dest": "cargo/vendor/tokio-tungstenite-0.28.0",
+        "contents": "{\"package\": \"8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c\", \"files\": {}}",
+        "dest": "cargo/vendor/tokio-tungstenite-0.29.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4188,14 +4188,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tungstenite/tungstenite-0.28.0.crate",
-        "sha256": "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442",
-        "dest": "cargo/vendor/tungstenite-0.28.0"
+        "url": "https://static.crates.io/crates/tungstenite/tungstenite-0.29.0.crate",
+        "sha256": "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8",
+        "dest": "cargo/vendor/tungstenite-0.29.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442\", \"files\": {}}",
-        "dest": "cargo/vendor/tungstenite-0.28.0",
+        "contents": "{\"package\": \"6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8\", \"files\": {}}",
+        "dest": "cargo/vendor/tungstenite-0.29.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4261,19 +4261,6 @@
         "type": "inline",
         "contents": "{\"package\": \"ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed\", \"files\": {}}",
         "dest": "cargo/vendor/url-2.5.8",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/utf-8/utf-8-0.7.6.crate",
-        "sha256": "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9",
-        "dest": "cargo/vendor/utf-8-0.7.6"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9\", \"files\": {}}",
-        "dest": "cargo/vendor/utf-8-0.7.6",
         "dest-filename": ".cargo-checksum.json"
     },
     {
