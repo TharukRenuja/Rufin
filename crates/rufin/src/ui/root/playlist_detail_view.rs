@@ -185,21 +185,8 @@ impl Shell {
         actions.set_halign(gtk::Align::Start);
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
-        let shell = Rc::clone(self);
         let detail_for_play = detail.clone();
-        let play_selection = Rc::clone(&track_selection);
         play.connect_clicked(move |_| {
-            if !detail_for_play.tracks.is_empty() {
-                let play_selection = Rc::clone(&play_selection);
-                shell.arm_now_playing_selection(Rc::new(move |queue| {
-                    let Some(entry) = queue_current_entry(queue) else {
-                        return;
-                    };
-                    if let Some(selection) = play_selection.borrow().as_ref() {
-                        selection.select_track_id(&entry.track_id);
-                    }
-                }));
-            }
             controller.play_smart_playlist_detail(detail_for_play.clone());
         });
         actions.append(&play);
@@ -341,7 +328,7 @@ impl Shell {
             if let Some(entry) = entry_for_play.clone() {
                 let entries_for_selection = Rc::clone(&entries_for_selection);
                 let play_selection = Rc::clone(&play_selection);
-                shell.arm_now_playing_selection(Rc::new(move |queue| {
+                shell.arm_playlist_entry_selection(Rc::new(move |queue| {
                     let Some(current_index) = queue.current_index else {
                         return;
                     };
@@ -522,17 +509,21 @@ impl Shell {
             selection_handle,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());
+        self.refresh_current_route_now_playing_selections();
 
         {
+            let shell = Rc::clone(self);
             let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
             search.connect_search_changed(move |entry| {
                 state.borrow_mut().query = entry.text().trim().to_string();
                 rebuild_playlist_entries_model(&model, &entries, &state.borrow());
+                shell.refresh_current_route_now_playing_selections();
             });
         }
         {
+            let shell = Rc::clone(self);
             let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
@@ -543,9 +534,11 @@ impl Shell {
                     .unwrap_or(PlaylistEntrySort::Order);
                 state.borrow_mut().sort = selected;
                 rebuild_playlist_entries_model(&model, &entries, &state.borrow());
+                shell.refresh_current_route_now_playing_selections();
             });
         }
         {
+            let shell = Rc::clone(self);
             let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
@@ -557,6 +550,7 @@ impl Shell {
                 };
                 direction.set_icon_name(sort_order_icon(descending));
                 rebuild_playlist_entries_model(&model, &entries, &state.borrow());
+                shell.refresh_current_route_now_playing_selections();
             });
         }
         wrapper.append(&table);

@@ -51,11 +51,7 @@ impl Shell {
         let kind_row = self.genre_detail_kind_row(&genre);
         let action_tracks = Rc::new(detail.tracks.clone());
         let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
-        let actions = self.genre_detail_actions(
-            genre_id.clone(),
-            Rc::clone(&action_tracks),
-            Rc::clone(&track_selection),
-        );
+        let actions = self.genre_detail_actions(genre_id.clone(), Rc::clone(&action_tracks));
         self.grouped_detail_view(GroupedDetailData {
             kind_row: Some(kind_row.upcast()),
             title: genre.name,
@@ -102,28 +98,14 @@ impl Shell {
         self: &Rc<Self>,
         genre_id: domain::GenreId,
         tracks: Rc<Vec<Track>>,
-        selection: TrackTableSelectionHandle,
     ) -> gtk::Box {
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
 
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
-        let shell = Rc::clone(self);
         let play_tracks = Rc::clone(&tracks);
-        let play_selection = Rc::clone(&selection);
         play.connect_clicked(move |_| {
-            if !play_tracks.is_empty() {
-                let play_selection = Rc::clone(&play_selection);
-                shell.arm_now_playing_selection(Rc::new(move |queue| {
-                    let Some(entry) = queue_current_entry(queue) else {
-                        return;
-                    };
-                    if let Some(selection) = play_selection.borrow().as_ref() {
-                        selection.select_track_id(&entry.track_id);
-                    }
-                }));
-            }
             controller.play_genre_tracks_window(genre_id.clone(), play_tracks.len(), 0, |index| {
                 play_tracks.as_ref().get(index).cloned()
             });

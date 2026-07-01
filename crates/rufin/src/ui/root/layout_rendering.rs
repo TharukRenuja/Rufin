@@ -10,6 +10,72 @@ const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
 const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
 pub(in crate::ui) type PlaylistEntrySelectionHandle = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
 
+#[derive(Clone)]
+pub(in crate::ui) struct PlaylistEntryTableSelection {
+    entries: Rc<Vec<PlaylistEntry>>,
+    model: gio::ListStore,
+    selection: gtk::SingleSelection,
+    selected_entry_id: Rc<RefCell<Option<String>>>,
+}
+
+impl PlaylistEntryTableSelection {
+    fn new(
+        entries: Rc<Vec<PlaylistEntry>>,
+        model: &gio::ListStore,
+        selection: &gtk::SingleSelection,
+        selected_entry_id: Rc<RefCell<Option<String>>>,
+    ) -> Self {
+        Self {
+            entries,
+            model: model.clone(),
+            selection: selection.clone(),
+            selected_entry_id,
+        }
+    }
+
+    fn select_entry_id(&self, entry_id: &str) {
+        *self.selected_entry_id.borrow_mut() = Some(entry_id.to_string());
+        self.sync();
+    }
+
+    fn clear(&self) {
+        self.selected_entry_id.borrow_mut().take();
+        self.sync();
+    }
+
+    fn select_track_id(&self, track_id: &TrackId) -> bool {
+        for position in 0..self.model.n_items() {
+            let Some(row) = item_at::<PlaylistEntryTableRow>(&self.model, position) else {
+                continue;
+            };
+            let Some(entry) = self.entries.get(row.original_index) else {
+                continue;
+            };
+            if entry.track.id == *track_id {
+                self.select_entry_id(&entry.entry_id);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(in crate::ui) fn select_now_playing_track(&self, track_id: Option<&TrackId>) {
+        if track_id.is_some_and(|track_id| self.select_track_id(track_id)) {
+            return;
+        }
+        self.clear();
+    }
+
+    fn sync(&self) {
+        sync_playlist_entry_selection(
+            &self.selection,
+            self.entries.as_ref(),
+            &self.model,
+            &self.selected_entry_id,
+        );
+    }
+}
+
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
         match self {
@@ -177,19 +243,22 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let selected_entry_id = Rc::new(RefCell::new(None::<String>));
+    let playlist_selection = PlaylistEntryTableSelection::new(
+        Rc::clone(&entries),
+        &model,
+        &selection,
+        Rc::clone(&selected_entry_id),
+    );
     let select_entry_id: Rc<dyn Fn(&str)> = Rc::new({
-        let entries = Rc::clone(&entries);
-        let model = model.clone();
-        let selection = selection.clone();
-        let selected_entry_id = Rc::clone(&selected_entry_id);
+        let playlist_selection = playlist_selection.clone();
         move |entry_id| {
-            *selected_entry_id.borrow_mut() = Some(entry_id.to_string());
-            sync_playlist_entry_selection(&selection, entries.as_ref(), &model, &selected_entry_id);
+            playlist_selection.select_entry_id(entry_id);
         }
     });
     if let Some(selection_handle) = selection_handle.as_ref() {
         *selection_handle.borrow_mut() = Some(Rc::clone(&select_entry_id));
     }
+    shell.register_current_route_playlist_entry_selection(playlist_selection);
 
     let table = gtk::ColumnView::new(Some(selection.clone()));
     table.add_css_class("track-table");

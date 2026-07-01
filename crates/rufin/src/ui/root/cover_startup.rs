@@ -1298,7 +1298,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::Queue(queue) => {
                     let next_queue = *queue;
-                    shell.apply_pending_now_playing_selection(next_queue.as_ref());
+                    shell.apply_now_playing_track_id(next_queue.as_ref());
+                    shell.apply_pending_playlist_entry_selection(next_queue.as_ref());
                     let waits_for_source_snapshot = {
                         let library = shell.state.library.borrow();
                         queue_source_waits_for_snapshot(
@@ -1519,7 +1520,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                 }
                 ControllerEvent::Error(error) => {
-                    shell.clear_pending_now_playing_selection();
+                    shell.clear_pending_playlist_entry_selection();
                     if !controller_error_is_user_visible(&error) {
                         debug!(%error, "suppressed controller error");
                         continue;

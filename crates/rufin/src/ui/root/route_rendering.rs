@@ -255,6 +255,14 @@ impl Shell {
         clear_favorite_controls(&self.state.favorite_controls);
         self.state.type_to_search.borrow_mut().take();
         self.state.current_route_boundary.borrow_mut().take();
+        self.state
+            .current_route_track_selections
+            .borrow_mut()
+            .clear();
+        self.state
+            .current_route_playlist_entry_selections
+            .borrow_mut()
+            .clear();
         self.state.column_view_width_fits.borrow_mut().clear();
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);

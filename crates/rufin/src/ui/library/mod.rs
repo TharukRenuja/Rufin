@@ -120,7 +120,11 @@ impl TrackTableSelection {
         self.selection.set_selected(position);
     }
 
-    pub(in crate::ui) fn select_track_id(&self, track_id: &TrackId) {
+    pub(in crate::ui) fn clear(&self) {
+        self.select(gtk::INVALID_LIST_POSITION);
+    }
+
+    pub(in crate::ui) fn select_track_id(&self, track_id: &TrackId) -> bool {
         if let Some(position) = (0..self.model.n_items()).find(|position| {
             self.model
                 .item(*position)
@@ -128,7 +132,17 @@ impl TrackTableSelection {
                 .is_some_and(|boxed| boxed.borrow::<Track>().id == *track_id)
         }) {
             self.select(position);
+            true
+        } else {
+            false
         }
+    }
+
+    pub(in crate::ui) fn select_now_playing_track(&self, track_id: Option<&TrackId>) {
+        if track_id.is_some_and(|track_id| self.select_track_id(track_id)) {
+            return;
+        }
+        self.clear();
     }
 }
 

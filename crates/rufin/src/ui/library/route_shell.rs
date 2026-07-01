@@ -149,6 +149,7 @@ impl Shell {
                         warm_track_covers_for_settings(&shell, &items, &settings);
                         tracks.borrow_mut().extend(items.iter().cloned());
                         append_tracks_to_model(&model, items);
+                        shell.refresh_current_route_now_playing_selections();
                         finish_grid_page(&cursor, offset, count, total);
                         log_route_page_timing(RoutePageTiming {
                             route: &Route::Tracks,
@@ -187,6 +188,7 @@ impl Shell {
                         .route_track_refs
                         .replace(track_image_refs(&visible_tracks));
                     replace_tracks_in_model(&model, visible_tracks);
+                    shell.refresh_current_route_now_playing_selections();
                     warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                     cursor.offset.set(visible_count);
                     cursor.total.set(visible_count);
@@ -217,6 +219,7 @@ impl Shell {
                             .route_track_refs
                             .replace(track_image_refs(&visible_tracks));
                         replace_tracks_in_model(&model, visible_tracks);
+                        shell.refresh_current_route_now_playing_selections();
                         warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
                         log_route_page_timing(RoutePageTiming {
