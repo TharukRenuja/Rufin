@@ -99,6 +99,7 @@ impl Shell {
             .root
             .set_visible(!login_active && !startup_loading_active);
         self.sync_current_route_boundary_width(route_content_width);
+        self.sync_library_toolbar_end_margin();
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
         self.apply_bottom_player_width(self.layout_width());

@@ -12,8 +12,8 @@ use super::{
     install_dynamic_track_context_menu, install_dynamic_track_context_menu_with_play_handler,
     install_genre_context_menu, install_track_context_menu,
     layout::{
-        configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
-        route_content_width,
+        WINDOW_CHROME_MARGIN_END, configure_fill_width_clip, large_popup_content_height,
+        large_popup_content_width, route_content_width,
     },
     present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
     present_light_dismiss_dialog, present_playlist_context_menu,
