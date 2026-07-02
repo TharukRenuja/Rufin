@@ -538,6 +538,85 @@ fn playback_track_pipeline() {
     assert!(shared.gapless_pending.is_none());
 }
 #[test]
+fn release_pause_promotes_visible_crossfade_track() {
+    let mut engine = test_engine_with_pending_seek(0);
+    engine.pending_seek = None;
+    engine.state = PlaybackState::Playing;
+    let outgoing =
+        PreparedPlaybackItem::new(track(1), StreamDescriptor::new("https://music.example/old"));
+    let incoming =
+        PreparedPlaybackItem::new(track(2), StreamDescriptor::new("https://music.example/new"));
+
+    {
+        let mut shared = engine.shared.lock().expect("shared");
+        shared.current = Some(outgoing);
+        shared.active = Slot::Primary;
+        shared.crossfade = Some(CrossfadeState {
+            from: Slot::Primary,
+            to: Slot::Secondary,
+            started_at: Instant::now(),
+            duration: Duration::from_secs(5),
+            item: incoming.clone(),
+        });
+    }
+
+    engine.release_active_pause_transport();
+
+    let released = engine.released_pause.as_ref().expect("released pause");
+    assert_eq!(released.item, incoming);
+    assert_eq!(released.position_millis, 0);
+    let shared = engine.shared.lock().expect("shared");
+    assert_eq!(shared.active, Slot::Secondary);
+    assert_eq!(shared.current, Some(incoming));
+    assert!(shared.crossfade.is_none());
+}
+#[test]
+fn seek_during_release_pause_fade_updates_released_position() {
+    let mut engine = test_engine_with_pending_seek(0);
+    engine.pending_seek = None;
+    engine.state = PlaybackState::Paused;
+    let current = PreparedPlaybackItem::new(
+        track(1),
+        StreamDescriptor::new("https://music.example/current"),
+    );
+    {
+        let mut shared = engine.shared.lock().expect("shared");
+        shared.current = Some(current.clone());
+        shared.active = Slot::Primary;
+        shared.volume = 0.8;
+        shared.muted = false;
+        shared.settings.audio_fade_on_status_change = true;
+    }
+    engine.status_fade = Some(StatusFade::new(
+        Slot::Primary,
+        StatusFadeTarget::ReleasePause,
+        0.8,
+        0.0,
+        false,
+        Instant::now(),
+    ));
+
+    engine.start_seek(42_000).expect("seek");
+
+    assert!(engine.status_fade.is_none());
+    assert!(engine.pending_seek.is_none());
+    let released = engine.released_pause.as_ref().expect("released pause");
+    assert_eq!(released.item, current);
+    assert_eq!(released.position_millis, 42_000);
+    let events: Vec<_> = engine
+        .events
+        .lock()
+        .expect("events")
+        .iter()
+        .cloned()
+        .collect();
+    assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(TrackId::fake(1)),
+        seconds: 42,
+        millis: 42_000,
+    }));
+}
+#[test]
 fn status_fade_volume_progress() {
     let now = Instant::now();
     let fade = StatusFade::new(Slot::Primary, StatusFadeTarget::Pause, 0.8, 0.0, false, now);
@@ -585,6 +664,8 @@ fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
             Instant::now(),
         )),
         status_fade: None,
+        released_pause: None,
+        restore_output_on_playing: false,
         play_command_started_at: None,
     }
 }
@@ -594,5 +675,5 @@ fn test_pipeline(
     _events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) -> PlayerPipeline {
     gstreamer::init().expect("gst init");
-    PlayerPipeline::new(name, shared).expect("test pipeline")
+    PlayerPipeline::new(name, shared)
 }

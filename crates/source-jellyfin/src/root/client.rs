@@ -721,10 +721,6 @@ pub(super) fn stream_descriptor(
         .max_bitrate_kbps()
         .map(|kbps| kbps.saturating_mul(1_000).to_string());
 
-    if max_bitrate.is_none() {
-        return download_stream_descriptor(base_url, raw_track_id, access_token);
-    }
-
     let mut url = endpoint(base_url, &format!("Audio/{raw_track_id}/stream"))?;
     let static_stream = if max_bitrate.is_some() {
         "false"
@@ -761,26 +757,6 @@ pub(super) fn stream_descriptor(
                 .append_pair("AudioCodec", "mp3");
         }
     }
-    Ok(StreamDescriptor::with_redacted(
-        url.to_string(),
-        redacted_url.to_string(),
-    ))
-}
-
-fn download_stream_descriptor(
-    base_url: &Url,
-    raw_track_id: &str,
-    access_token: &str,
-) -> ProviderResult<StreamDescriptor> {
-    let mut url = endpoint(base_url, &format!("Items/{raw_track_id}/Download"))?;
-    url.query_pairs_mut().append_pair("api_key", access_token);
-
-    let mut redacted_url = url.clone();
-    redacted_url
-        .query_pairs_mut()
-        .clear()
-        .append_pair("api_key", "<redacted>");
-
     Ok(StreamDescriptor::with_redacted(
         url.to_string(),
         redacted_url.to_string(),
