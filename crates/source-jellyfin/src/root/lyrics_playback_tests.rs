@@ -246,17 +246,17 @@ async fn lyrics_redact_token() {
     assert!(
         stream
             .uri()
-            .starts_with(&format!("{}/Items/track-one/Download?", server.uri()))
+            .starts_with(&format!("{}/Audio/track-one/stream?", server.uri()))
     );
     assert!(stream.uri().contains("api_key=secret-token"));
-    assert!(!stream.uri().contains("Static="));
-    assert!(!stream.uri().contains("DeviceId="));
+    assert!(stream.uri().contains("Static=true"));
+    assert!(stream.uri().contains("DeviceId=rufin-install-one"));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 
 #[test]
-fn original_stream_from_saved_session_uses_download() {
+fn original_stream_from_saved_session_uses_audio_endpoint() {
     let session = saved_session();
 
     let stream = JellyfinProvider::stream_descriptor_from_saved_session(
@@ -268,10 +268,10 @@ fn original_stream_from_saved_session_uses_download() {
     assert!(
         stream
             .uri()
-            .starts_with("https://library.example.test/Items/track-one/Download?")
+            .starts_with("https://library.example.test/Audio/track-one/stream?")
     );
     assert!(stream.uri().contains("api_key=secret-token"));
-    assert!(!stream.uri().contains("Static="));
+    assert!(stream.uri().contains("Static=true"));
     assert!(!stream.uri().contains("MaxStreamingBitrate="));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
 }
@@ -316,7 +316,7 @@ fn saved_session() -> SavedProviderSession {
 }
 
 #[test]
-fn original_stream_uses_download_endpoint() {
+fn original_stream_uses_audio_endpoint() {
     let base_url = normalize_base_url("https://library.example.test").expect("base url");
     let stream = stream_descriptor(
         &base_url,
@@ -330,10 +330,10 @@ fn original_stream_uses_download_endpoint() {
     assert!(
         stream
             .uri()
-            .starts_with("https://library.example.test/Items/track-one/Download?")
+            .starts_with("https://library.example.test/Audio/track-one/stream?")
     );
     assert!(stream.uri().contains("api_key=secret-token"));
-    assert!(!stream.uri().contains("Static="));
+    assert!(stream.uri().contains("Static=true"));
     assert!(!stream.uri().contains("MaxStreamingBitrate="));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));

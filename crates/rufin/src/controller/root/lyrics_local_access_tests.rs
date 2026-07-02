@@ -842,8 +842,9 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
         &PlaybackSettings::default(),
     )
     .expect("stream");
-    assert!(stream.uri().starts_with("https://music.example/Items/"));
-    assert!(stream.uri().contains("/Download?"));
+    assert!(stream.uri().starts_with("https://music.example/Audio/"));
+    assert!(stream.uri().contains("/stream?"));
+    assert!(stream.uri().contains("Static=true"));
     assert!(stream.uri().contains("api_key=test-token"));
     let _cleanup = fs::remove_dir_all(root);
 }

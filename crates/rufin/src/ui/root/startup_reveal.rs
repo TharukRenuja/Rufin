@@ -38,47 +38,80 @@ pub(in crate::ui) fn cover_warm_delay() -> u64 {
     WARM_SETTLE_MS
 }
 
-pub(in crate::ui) fn startup_stall_delay_ms(expected: Duration, observed: Duration) -> u64 {
+pub(in crate::ui) fn main_loop_stall_delay_ms(expected: Duration, observed: Duration) -> u64 {
     observed.saturating_sub(expected).as_millis() as u64
 }
 
-pub(in crate::ui) fn install_startup_stall_monitor(shell: &Rc<Shell>) {
+pub(in crate::ui) fn install_startup_main_loop_stall_monitor(shell: &Rc<Shell>) {
     let started_at = Instant::now();
     let last_tick = Rc::new(Cell::new(started_at));
     let shell = Rc::clone(shell);
     glib::timeout_add_local(
-        Duration::from_millis(STARTUP_STALL_MONITOR_INTERVAL_MS),
+        Duration::from_millis(STARTUP_MAIN_LOOP_STALL_MONITOR_INTERVAL_MS),
         move || {
             let now = Instant::now();
             let elapsed = now.duration_since(started_at);
-            let expected = Duration::from_millis(STARTUP_STALL_MONITOR_INTERVAL_MS);
+            let expected = Duration::from_millis(STARTUP_MAIN_LOOP_STALL_MONITOR_INTERVAL_MS);
             let observed = now.duration_since(last_tick.get());
             last_tick.set(now);
-            let delayed_ms = startup_stall_delay_ms(expected, observed);
-            if delayed_ms >= STARTUP_STALL_WARN_MS {
+            let delayed_ms = main_loop_stall_delay_ms(expected, observed);
+            if delayed_ms >= STARTUP_MAIN_LOOP_STALL_LOG_MS {
+                let startup_revealed = shell.state.startup_route_revealed.get();
+                let phase = if startup_revealed {
+                    "post_startup_reveal"
+                } else {
+                    "startup_reveal"
+                };
                 let cover = shell.cover_work_stats();
-                warn!(
-                    delayed_ms,
-                    observed_ms = observed.as_millis() as u64,
-                    elapsed_ms = elapsed.as_millis() as u64,
-                    route = ?shell.state.routes.borrow().current().clone(),
-                    startup_revealed = shell.state.startup_route_revealed.get(),
-                    startup_render_pending = shell.state.startup_route_render_pending.get(),
-                    startup_content_prepared = shell.state.startup_route_content_prepared.get(),
-                    cover_prime_pending = cover.prime_pending,
-                    cover_path_lookups = cover.path_lookups,
-                    cover_fetches = cover.fetches,
-                    cover_visible_requests = cover.visible_requests,
-                    cover_bindings = cover.bindings,
-                    cover_decode_queue = cover.decode_queue,
-                    cover_decodes = cover.decodes,
-                    decoded_covers = cover.decoded,
-                    cover_warm_pending = cover.warm_pending,
-                    cover_warm_started = cover.warm_started,
-                    "startup UI thread stalled"
-                );
+                if startup_revealed && delayed_ms < POST_REVEAL_MAIN_LOOP_STALL_WARN_MS {
+                    debug!(
+                        target: "rufin::ui::root::main_loop_stall",
+                        delayed_ms,
+                        observed_ms = observed.as_millis() as u64,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        phase,
+                        route = ?shell.state.routes.borrow().current().clone(),
+                        startup_revealed,
+                        startup_render_pending = shell.state.startup_route_render_pending.get(),
+                        startup_content_prepared = shell.state.startup_route_content_prepared.get(),
+                        cover_prime_pending = cover.prime_pending,
+                        cover_path_lookups = cover.path_lookups,
+                        cover_fetches = cover.fetches,
+                        cover_visible_requests = cover.visible_requests,
+                        cover_bindings = cover.bindings,
+                        cover_decode_queue = cover.decode_queue,
+                        cover_decodes = cover.decodes,
+                        decoded_covers = cover.decoded,
+                        cover_warm_pending = cover.warm_pending,
+                        cover_warm_started = cover.warm_started,
+                        "main loop stalled after startup route reveal"
+                    );
+                } else {
+                    warn!(
+                        target: "rufin::ui::root::main_loop_stall",
+                        delayed_ms,
+                        observed_ms = observed.as_millis() as u64,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        phase,
+                        route = ?shell.state.routes.borrow().current().clone(),
+                        startup_revealed,
+                        startup_render_pending = shell.state.startup_route_render_pending.get(),
+                        startup_content_prepared = shell.state.startup_route_content_prepared.get(),
+                        cover_prime_pending = cover.prime_pending,
+                        cover_path_lookups = cover.path_lookups,
+                        cover_fetches = cover.fetches,
+                        cover_visible_requests = cover.visible_requests,
+                        cover_bindings = cover.bindings,
+                        cover_decode_queue = cover.decode_queue,
+                        cover_decodes = cover.decodes,
+                        decoded_covers = cover.decoded,
+                        cover_warm_pending = cover.warm_pending,
+                        cover_warm_started = cover.warm_started,
+                        "main loop stalled during startup monitor window"
+                    );
+                }
             }
-            if elapsed >= Duration::from_millis(STARTUP_STALL_MONITOR_WINDOW_MS) {
+            if elapsed >= Duration::from_millis(STARTUP_MAIN_LOOP_STALL_MONITOR_WINDOW_MS) {
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue

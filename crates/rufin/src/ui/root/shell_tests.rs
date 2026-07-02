@@ -15,9 +15,9 @@ use super::right_panel::{
     queue_lyrics_initial_position, queue_lyrics_position_for_height, queue_lyrics_saved_height,
 };
 use super::startup_reveal::{
-    StartupRevealAction, connection_progress_status_label, startup_loading_status_label,
-    startup_loading_status_parts, startup_prime_action, startup_route_reveal_action,
-    startup_stall_delay_ms, take_pending_warm,
+    StartupRevealAction, connection_progress_status_label, main_loop_stall_delay_ms,
+    startup_loading_status_label, startup_loading_status_parts, startup_prime_action,
+    startup_route_reveal_action, take_pending_warm,
 };
 use super::{
     AutoLyricsRequest, LibrarySyncToastState, LocalSourceCacheGateAction,
@@ -756,13 +756,13 @@ pub(in crate::ui) fn run_cover_prime() {
     );
 }
 #[test]
-pub(in crate::ui) fn startup_stall_delay() {
+pub(in crate::ui) fn main_loop_stall_delay() {
     assert_eq!(
-        startup_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(80)),
+        main_loop_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(80)),
         0
     );
     assert_eq!(
-        startup_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(725)),
+        main_loop_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(725)),
         625
     );
 }
