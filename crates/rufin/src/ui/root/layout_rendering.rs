@@ -351,7 +351,6 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     });
 
     let scroller = gtk::ScrolledWindow::new();
-    mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
     scroller.set_child(Some(&library_route_inset(table.clone().upcast())));
     {
@@ -370,7 +369,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
             sync_playlist_entry_selection(&selection, entries.as_ref(), model, &selected_entry_id);
         });
     }
-    (scroller.upcast(), model)
+    (route_scroller_widget(scroller), model)
 }
 pub(in crate::ui) fn rebuild_playlist_entries_model(
     model: &gio::ListStore,

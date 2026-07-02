@@ -57,8 +57,6 @@ impl Shell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
-        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -109,7 +107,10 @@ impl Shell {
             ));
         }
 
-        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.append(&detail_route_scroller(
+            self,
+            library_route_inset(content.upcast()),
+        ));
         wrapper.upcast()
     }
 
@@ -123,8 +124,6 @@ impl Shell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
-        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -152,7 +151,10 @@ impl Shell {
             ));
         }
 
-        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.append(&detail_route_scroller(
+            self,
+            library_route_inset(content.upcast()),
+        ));
         wrapper.upcast()
     }
 

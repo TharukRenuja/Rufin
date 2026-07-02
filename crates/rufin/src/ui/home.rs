@@ -13,13 +13,14 @@ use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
 };
-use super::library::{home_album_grid, home_track_grid, non_propagating_width_clip};
+use super::library::{
+    home_album_grid, home_track_grid, library_route_inset, non_propagating_width_clip,
+};
 use super::{
-    HomeSectionContent, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN,
-    Shell, add_album_seed_gradient_class, add_card_label_link, album_artist_route,
-    album_count_text, configure_fill_width_clip, detail_radio_button, detail_summary_row,
-    format_duration_units, home_album_content_width, mark_route_scroll_owner,
-    render_home_section_page_model, track_count_text,
+    HomeSectionContent, ROUTE_TOP_MARGIN, Shell, add_album_seed_gradient_class,
+    add_card_label_link, album_artist_route, album_count_text, configure_fill_width_clip,
+    detail_radio_button, detail_summary_row, format_duration_units, home_album_content_width,
+    render_home_section_page_model, route_scroller_widget, track_count_text,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -67,9 +68,7 @@ pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Alb
 impl Shell {
     pub(super) fn home_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
         configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
-        scroller.set_overlay_scrolling(true);
         scroller.set_vexpand(true);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -79,8 +78,6 @@ impl Shell {
         content.set_width_request(1);
         content.set_margin_top(ROUTE_TOP_MARGIN);
         content.set_margin_bottom(36);
-        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
         let blocks = self.state.settings.borrow().home_blocks.clone();
         let library = self.state.library.borrow();
@@ -113,8 +110,8 @@ impl Shell {
             )));
         }
 
-        scroller.set_child(Some(&content));
-        scroller.upcast()
+        scroller.set_child(Some(&library_route_inset(content.upcast())));
+        route_scroller_widget(scroller)
     }
 
     fn home_showcase_block(

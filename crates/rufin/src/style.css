@@ -186,6 +186,49 @@ toastoverlay toast label {
   background: @window_bg_color;
 }
 
+scrolledwindow.route-scroll-owner scrollbar.vertical {
+  min-width: 6px;
+  opacity: 1;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+scrolledwindow.route-scroll-owner scrollbar.vertical > range,
+scrolledwindow.route-scroll-owner scrollbar.vertical > range > trough {
+  min-width: 6px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+scrolledwindow.route-scroll-owner scrollbar.vertical > range > trough > slider {
+  min-width: 4px;
+  min-height: 42px;
+  margin: 0 1px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, @theme_fg_color 38%, transparent);
+  box-shadow: none;
+}
+
+scrolledwindow.route-scroll-owner scrollbar.vertical > range > trough > slider:hover,
+scrolledwindow.route-scroll-owner scrollbar.vertical > range > trough > slider:active {
+  min-width: 6px;
+  margin: 0;
+  background: color-mix(in srgb, @theme_fg_color 56%, transparent);
+}
+
+scrolledwindow.route-scroll-owner undershoot,
+scrolledwindow.route-scroll-owner overshoot {
+  background: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+}
+
 .track-table {
   background: transparent;
 }
@@ -743,10 +786,6 @@ menubutton.server-selector > button:hover {
   background: transparent;
   border: none;
   padding: 0;
-}
-
-.card-label-clip > viewport {
-  background: transparent;
 }
 
 .cover-tile {

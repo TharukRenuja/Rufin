@@ -359,7 +359,7 @@ pub(in crate::ui) fn grid_label_with_label(
     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_lines(lines);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    constrain_collection_grid_label(&label, width, height);
+    constrain_collection_grid_label(&label, width);
     if !text.is_empty() {
         label.set_tooltip_text(Some(text));
     }
@@ -367,6 +367,14 @@ pub(in crate::ui) fn grid_label_with_label(
     (collection_grid_label_clip(&label, width, height), label)
 }
 pub(in crate::ui) fn grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    grid_title_with_label(text, css_class, width).0
+}
+
+pub(in crate::ui) fn grid_title_with_label(
+    text: &str,
+    css_class: &str,
+    width: i32,
+) -> (gtk::Widget, gtk::Label) {
     let width = width.max(1);
     let height = collection_grid_label_height(COLLECTION_GRID_TITLE_LINES);
     let label = gtk::Label::new(Some(text));
@@ -379,20 +387,18 @@ pub(in crate::ui) fn grid_title(text: &str, css_class: &str, width: i32) -> gtk:
     label.set_single_line_mode(true);
     label.set_lines(COLLECTION_GRID_TITLE_LINES);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    constrain_collection_grid_label(&label, width, height);
+    constrain_collection_grid_label(&label, width);
     if !text.is_empty() {
         label.set_tooltip_text(Some(text));
     }
 
-    collection_grid_label_clip(&label, width, height)
+    (collection_grid_label_clip(&label, width, height), label)
 }
 
-fn constrain_collection_grid_label(label: &gtk::Label, width: i32, height: i32) {
+fn constrain_collection_grid_label(label: &gtk::Label, width: i32) {
     label.set_width_chars(1);
     label.set_max_width_chars((width / 8).clamp(8, 32));
     label.set_width_request(width);
-    label.set_height_request(height);
-    label.set_size_request(width, height);
     label.set_halign(gtk::Align::Fill);
     label.set_valign(gtk::Align::Center);
     label.set_hexpand(false);
@@ -416,6 +422,7 @@ fn collection_grid_label_clip(label: &gtk::Label, width: i32, height: i32) -> gt
     clip.set_propagate_natural_height(false);
     clip.set_hexpand(false);
     clip.set_halign(gtk::Align::Center);
+    clip.set_valign(gtk::Align::Center);
     clip.set_child(Some(label));
     clip.upcast()
 }

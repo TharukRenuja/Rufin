@@ -19,8 +19,16 @@ pub(in crate::ui) enum FavoriteControlKey {
     Artist(String),
 }
 
-pub(super) type FavoriteControls =
-    RefCell<HashMap<FavoriteControlKey, Vec<glib::WeakRef<gtk::Button>>>>;
+#[derive(Default)]
+pub(super) struct FavoriteControls {
+    static_controls: RefCell<HashMap<FavoriteControlKey, Vec<glib::WeakRef<gtk::Button>>>>,
+    dynamic_controls: RefCell<Vec<DynamicFavoriteControl>>,
+}
+
+struct DynamicFavoriteControl {
+    key: Rc<dyn Fn() -> Option<FavoriteControlKey>>,
+    button: glib::WeakRef<gtk::Button>,
+}
 
 pub(super) fn album_favorite_key(album_id: &AlbumId) -> FavoriteControlKey {
     FavoriteControlKey::Album(album_id.as_str().to_string())
@@ -49,7 +57,25 @@ pub(super) fn register_favorite_control(
 ) {
     let weak = glib::WeakRef::new();
     weak.set(Some(button));
-    controls.borrow_mut().entry(key).or_default().push(weak);
+    controls
+        .static_controls
+        .borrow_mut()
+        .entry(key)
+        .or_default()
+        .push(weak);
+}
+
+pub(super) fn register_dynamic_favorite_control(
+    controls: &FavoriteControls,
+    key: Rc<dyn Fn() -> Option<FavoriteControlKey>>,
+    button: &gtk::Button,
+) {
+    let weak = glib::WeakRef::new();
+    weak.set(Some(button));
+    controls
+        .dynamic_controls
+        .borrow_mut()
+        .push(DynamicFavoriteControl { key, button: weak });
 }
 
 pub(super) fn update_favorite_controls(
@@ -57,7 +83,7 @@ pub(super) fn update_favorite_controls(
     key: &FavoriteControlKey,
     favorite: bool,
 ) {
-    if let Some(buttons) = controls.borrow_mut().get_mut(key) {
+    if let Some(buttons) = controls.static_controls.borrow_mut().get_mut(key) {
         buttons.retain(|button| {
             let Some(button) = button.upgrade() else {
                 return false;
@@ -66,10 +92,20 @@ pub(super) fn update_favorite_controls(
             true
         });
     }
+    controls.dynamic_controls.borrow_mut().retain(|control| {
+        let Some(button) = control.button.upgrade() else {
+            return false;
+        };
+        if (control.key)().as_ref() == Some(key) {
+            set_favorite_button_active(&button, favorite);
+        }
+        true
+    });
 }
 
 pub(super) fn clear_favorite_controls(controls: &FavoriteControls) {
-    controls.borrow_mut().clear();
+    controls.static_controls.borrow_mut().clear();
+    controls.dynamic_controls.borrow_mut().clear();
 }
 
 impl Shell {

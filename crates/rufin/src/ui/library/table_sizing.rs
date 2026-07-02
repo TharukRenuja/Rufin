@@ -47,7 +47,7 @@ pub(in crate::ui) enum ColumnViewWidthMode {
 }
 
 pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
-    column_view_initial_width(shell, 0, ColumnViewWidthMode::RouteScroller)
+    route_column_view_initial_width_with_inset(shell, PRIMARY_ROUTE_HORIZONTAL_INSET)
 }
 
 pub(in crate::ui) fn route_column_view_initial_width_with_inset(
@@ -309,7 +309,7 @@ fn scroller_vertical_scrollbar_width_for_fit(
     }
     if matches!(
         vertical_policy,
-        gtk::PolicyType::Always | gtk::PolicyType::Automatic | gtk::PolicyType::External
+        gtk::PolicyType::Always | gtk::PolicyType::Automatic
     ) {
         vertical_scrollbar_width()
     } else {
@@ -372,6 +372,10 @@ mod tests {
         ));
         assert_eq!(
             scroller_vertical_scrollbar_width_for_fit(gtk::PolicyType::Always, true),
+            0
+        );
+        assert_eq!(
+            scroller_vertical_scrollbar_width_for_fit(gtk::PolicyType::External, false),
             0
         );
     }
