@@ -79,6 +79,12 @@ msgstr ""
 msgid "Genre"
 msgstr ""
 
+msgid "Moods"
+msgstr ""
+
+msgid "Mood"
+msgstr ""
+
 msgid "Folders"
 msgstr ""
 
@@ -113,6 +119,9 @@ msgid "Artist tracks"
 msgstr ""
 
 msgid "Genre tracks"
+msgstr ""
+
+msgid "Mood tracks"
 msgstr ""
 
 msgid "Playlist tracks"
@@ -1096,6 +1105,9 @@ msgstr ""
 msgid "Sidebar Items"
 msgstr ""
 
+msgid "Not supported for Jellyfin"
+msgstr ""
+
 msgid "No queue items match the search."
 msgstr ""
 
@@ -1523,6 +1535,9 @@ msgid "Any"
 msgstr ""
 
 msgid "Comment"
+msgstr ""
+
+msgid "BPM"
 msgstr ""
 
 msgid "Played"

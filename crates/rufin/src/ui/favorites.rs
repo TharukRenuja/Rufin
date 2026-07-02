@@ -320,6 +320,8 @@ mod tests {
                 source_format: None,
                 comment: None,
                 skip_count: None,
+                bpm: None,
+                moods: Vec::new(),
             }],
             artists: Vec::new(),
             album_artists: Vec::new(),

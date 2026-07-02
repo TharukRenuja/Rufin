@@ -1858,6 +1858,8 @@ pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Tr
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 

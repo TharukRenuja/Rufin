@@ -167,6 +167,27 @@ pub(super) fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) ->
     }
     values
 }
+fn moods_from_item(moods: Vec<String>) -> Vec<String> {
+    let mut values = Vec::new();
+    for mood in moods {
+        let mood = mood.trim();
+        if !mood.is_empty()
+            && !values
+                .iter()
+                .any(|value: &String| value.eq_ignore_ascii_case(mood))
+        {
+            values.push(mood.to_string());
+        }
+    }
+    values
+}
+fn bpm_from_u32(value: u32) -> Option<u16> {
+    if value == 0 || value > u32::from(u16::MAX) {
+        None
+    } else {
+        Some(value as u16)
+    }
+}
 fn clean_optional(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
@@ -257,6 +278,8 @@ pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) ->
         source_format,
         comment: song.comment.filter(|value| !value.trim().is_empty()),
         skip_count: None,
+        bpm: song.bpm.and_then(bpm_from_u32),
+        moods: moods_from_item(song.moods),
     }
 }
 
@@ -597,6 +620,10 @@ pub(super) struct SubsonicSong {
     pub(super) comment: Option<String>,
     #[serde(default)]
     pub(super) genres: Vec<GenreName>,
+    #[serde(default)]
+    pub(super) moods: Vec<String>,
+    #[serde(default)]
+    pub(super) bpm: Option<u32>,
     #[serde(default, rename = "discNumber")]
     pub(super) disc_number: Option<i32>,
     #[serde(default)]

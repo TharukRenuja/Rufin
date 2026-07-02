@@ -13,7 +13,7 @@ use domain::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -32,6 +32,16 @@ fn current_schema_initializes_empty_database() {
             .table_has_column("genres", "duration_seconds")
             .expect("column lookup"),
         "genres.duration_seconds should exist"
+    );
+    assert!(
+        store
+            .table_has_column("tracks", "bpm")
+            .expect("column lookup"),
+        "tracks.bpm should exist"
+    );
+    assert!(
+        store.table_exists("track_moods").expect("table lookup"),
+        "track_moods should exist"
     );
     for table in [
         "source_objects",
@@ -373,7 +383,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -425,7 +435,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -451,7 +461,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -515,7 +525,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -561,7 +571,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -584,12 +594,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 20)
+        .pragma_update(None, "user_version", 21)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -624,11 +634,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 19);
+        assert_eq!(store.schema_version().expect("schema version"), 20);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 19);
+    assert_eq!(store.schema_version().expect("schema version"), 20);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));

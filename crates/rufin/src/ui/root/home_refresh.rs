@@ -1660,6 +1660,8 @@ pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track>
         source_format: entry.source_format.clone(),
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     })
 }
 pub(in crate::ui) fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
@@ -2284,6 +2286,8 @@ mod tests {
             source_format: None,
             comment: None,
             skip_count: None,
+            bpm: None,
+            moods: Vec::new(),
         }
     }
 }

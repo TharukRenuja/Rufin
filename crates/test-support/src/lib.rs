@@ -575,6 +575,8 @@ fn fake_track(index: usize, album: &Album, track_number: u16) -> Track {
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 

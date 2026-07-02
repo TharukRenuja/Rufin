@@ -713,6 +713,8 @@ fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Trac
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 fn test_track_with_image(id: u32, title: &str, image_id: &str) -> Track {

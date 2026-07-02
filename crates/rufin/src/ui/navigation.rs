@@ -535,6 +535,11 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             label: "Genres",
             route: Route::Genres,
         },
+        SidebarRouteItem::Moods => NavItem {
+            icon_name: "rufin-route-genres-symbolic",
+            label: "Moods",
+            route: Route::Moods,
+        },
         SidebarRouteItem::Folders => NavItem {
             icon_name: "rufin-route-folders-symbolic",
             label: "Folders",
@@ -661,7 +666,9 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
         | Route::ArtistDiscography(_)
         | Route::ArtistTracks(_) => Some(NAV_ROUTE_ARTISTS_CLASS),
         Route::AlbumArtists => Some(NAV_ROUTE_ALBUM_ARTISTS_CLASS),
-        Route::Genres | Route::GenreDetail(_) => Some(NAV_ROUTE_GENRES_CLASS),
+        Route::Genres | Route::GenreDetail(_) | Route::Moods | Route::MoodDetail(_) => {
+            Some(NAV_ROUTE_GENRES_CLASS)
+        }
         Route::Folders { .. } => Some(NAV_ROUTE_FOLDERS_CLASS),
         Route::Playlists | Route::PlaylistDetail(_) => Some(NAV_ROUTE_PLAYLISTS_CLASS),
         Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => {

@@ -653,6 +653,8 @@ mod tests {
                 source_format: None,
                 comment: None,
                 skip_count: None,
+                bpm: None,
+                moods: Vec::new(),
             },
             domain::Track {
                 id: domain::TrackId::new("track-long"),
@@ -682,6 +684,8 @@ mod tests {
                 source_format: None,
                 comment: None,
                 skip_count: None,
+                bpm: None,
+                moods: Vec::new(),
             },
         ];
 
@@ -721,6 +725,8 @@ mod tests {
             source_format: None,
             comment: None,
             skip_count: None,
+            bpm: None,
+            moods: Vec::new(),
         }];
         let tree_width = super::folder_tree_width(420);
         let width = super::name_column_width_for(420, tree_width, &folders, &tracks);

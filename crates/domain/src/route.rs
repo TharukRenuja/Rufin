@@ -1,5 +1,5 @@
 use crate::{
-    domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId, SmartPlaylistId},
+    domain::{AlbumId, ArtistId, FolderId, GenreId, MoodId, PlaylistId, SmartPlaylistId},
     msgid,
 };
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,8 @@ pub enum Route {
     AlbumArtists,
     Genres,
     GenreDetail(GenreId),
+    Moods,
+    MoodDetail(MoodId),
     Folders { path: Vec<FolderPathItem> },
     Playlists,
     PlaylistDetail(PlaylistId),
@@ -56,6 +58,8 @@ impl Route {
             Self::AlbumArtists => msgid("Album Artists"),
             Self::Genres => msgid("Genres"),
             Self::GenreDetail(_) => msgid("Genre"),
+            Self::Moods => msgid("Moods"),
+            Self::MoodDetail(_) => msgid("Mood"),
             Self::Folders { .. } => msgid("Folders"),
             Self::Playlists => msgid("Playlists"),
             Self::PlaylistDetail(_) => msgid("Playlist"),

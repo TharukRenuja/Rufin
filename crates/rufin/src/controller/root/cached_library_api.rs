@@ -314,6 +314,21 @@ impl AppController {
         scrub_selected_genre_image_refs(&saved, &settings, &mut page.items);
         Ok(page)
     }
+
+    pub fn smart_playlist_rule_value_suggestions(
+        &self,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        self.store.with_store(|store| {
+            Ok((
+                store.load_track_genre_names(&saved.server.id)?,
+                store.load_track_mood_names(&saved.server.id)?,
+            ))
+        })
+    }
+
     pub fn cached_playlists_page(
         &self,
         offset: usize,

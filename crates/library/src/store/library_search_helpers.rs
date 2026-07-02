@@ -599,6 +599,7 @@ impl Store {
                 "genres",
                 "album_genres",
                 "track_genres",
+                "track_moods",
                 "album_artist_links",
                 "track_artist_links",
                 "server_music_folders",

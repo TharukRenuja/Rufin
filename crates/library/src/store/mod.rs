@@ -18,7 +18,7 @@ use domain::{
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 19;
+const SCHEMA_VERSION: i64 = 20;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
@@ -199,6 +199,7 @@ pub struct TrackDelta {
     pub added: Vec<TrackId>,
     pub deleted: Vec<TrackId>,
     pub fields: Vec<TrackId>,
+    pub metadata: Vec<TrackId>,
     pub stats: Vec<TrackId>,
     pub skip_stats: Vec<TrackId>,
     pub favorite: Vec<TrackId>,
@@ -210,6 +211,7 @@ impl TrackDelta {
         merge_ids(&mut self.added, other.added);
         merge_ids(&mut self.deleted, other.deleted);
         merge_ids(&mut self.fields, other.fields);
+        merge_ids(&mut self.metadata, other.metadata);
         merge_ids(&mut self.stats, other.stats);
         merge_ids(&mut self.skip_stats, other.skip_stats);
         merge_ids(&mut self.favorite, other.favorite);
@@ -220,6 +222,7 @@ impl TrackDelta {
         self.added.is_empty()
             && self.deleted.is_empty()
             && self.fields.is_empty()
+            && self.metadata.is_empty()
             && self.stats.is_empty()
             && self.skip_stats.is_empty()
             && self.favorite.is_empty()

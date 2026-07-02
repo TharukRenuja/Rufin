@@ -236,5 +236,7 @@ pub(super) fn track(number: u32, album: &Album) -> Track {
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
