@@ -340,16 +340,7 @@ pub(in crate::ui) fn collection_grid_card_height(size: i32, field_count: usize) 
         )
 }
 
-pub(in crate::ui) fn center_label(
-    text: &str,
-    css_class: &str,
-    width: i32,
-    lines: i32,
-) -> gtk::Widget {
-    center_label_with_label(text, css_class, width, lines).0
-}
-
-pub(in crate::ui) fn center_label_with_label(
+pub(in crate::ui) fn grid_label_with_label(
     text: &str,
     css_class: &str,
     width: i32,
@@ -362,8 +353,8 @@ pub(in crate::ui) fn center_label_with_label(
     if !css_class.is_empty() {
         label.add_css_class(css_class);
     }
-    label.set_xalign(0.5);
-    label.set_justify(gtk::Justification::Center);
+    label.set_xalign(0.0);
+    label.set_justify(gtk::Justification::Left);
     label.set_wrap(true);
     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_lines(lines);
@@ -375,29 +366,15 @@ pub(in crate::ui) fn center_label_with_label(
 
     (collection_grid_label_clip(&label, width, height), label)
 }
-pub(in crate::ui) fn center_grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
-    grid_title(text, css_class, width, 0.5, gtk::Justification::Center)
-}
-
-pub(in crate::ui) fn left_grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
-    grid_title(text, css_class, width, 0.0, gtk::Justification::Left)
-}
-
-fn grid_title(
-    text: &str,
-    css_class: &str,
-    width: i32,
-    xalign: f32,
-    justify: gtk::Justification,
-) -> gtk::Widget {
+pub(in crate::ui) fn grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
     let width = width.max(1);
     let height = collection_grid_label_height(COLLECTION_GRID_TITLE_LINES);
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
     }
-    label.set_xalign(xalign);
-    label.set_justify(justify);
+    label.set_xalign(0.0);
+    label.set_justify(gtk::Justification::Left);
     label.set_wrap(false);
     label.set_single_line_mode(true);
     label.set_lines(COLLECTION_GRID_TITLE_LINES);
