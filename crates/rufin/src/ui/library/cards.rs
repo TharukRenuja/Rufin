@@ -366,10 +366,6 @@ pub(in crate::ui) fn grid_label_with_label(
 
     (collection_grid_label_clip(&label, width, height), label)
 }
-pub(in crate::ui) fn grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
-    grid_title_with_label(text, css_class, width).0
-}
-
 pub(in crate::ui) fn grid_title_with_label(
     text: &str,
     css_class: &str,

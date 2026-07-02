@@ -11,7 +11,7 @@ pub(super) trait ReusableCollectionGridCell<T>: 'static {
     fn clear(&self);
 }
 
-pub(super) fn reusable_collection_grid<T, Cell, Make, Activate>(
+pub(super) fn collection_grid<T, Cell, Make, Activate>(
     model: gio::ListStore,
     columns: usize,
     make_cell: Make,
@@ -89,6 +89,8 @@ pub(super) struct TrackGridCell {
     shell: Rc<Shell>,
     model: gio::ListStore,
     play_context: Option<LoadedTrackPlayContext>,
+    cover_tile: ArtworkTile,
+    size: i32,
     favorite: gtk::Button,
     current_track: Rc<RefCell<Option<Track>>>,
     current_play_action: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
@@ -191,7 +193,7 @@ impl TrackGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let body = CollectionGridCardCell::new(&shell, fields, size, cover_tile, overlay.upcast());
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
         install_dynamic_track_context_menu(&body.card, &shell, Rc::clone(&current_track));
 
         Self {
@@ -199,6 +201,8 @@ impl TrackGridCell {
             shell,
             model,
             play_context,
+            cover_tile,
+            size,
             favorite,
             current_track,
             current_play_action,
@@ -221,24 +225,26 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
                 track.clone(),
             )
         });
-        self.body.bind(
-            &self.shell,
+        self.shell.bind_cover_tile_for(
+            &self.cover_tile,
             track.image_ref.as_ref(),
             stable_seed(track.id.as_str()),
-            &track.title,
-            |field| {
-                (
-                    track_field(&track, field),
-                    track_grid_field_route(&track, field),
-                )
-            },
+            self.size,
+            GRID_COVER_SIZE,
         );
+        self.body.bind(&track.title, |field| {
+            (
+                track_field(&track, field),
+                track_grid_field_route(&track, field),
+            )
+        });
         set_favorite_button_active(&self.favorite, track.favorite);
         *self.current_track.borrow_mut() = Some(track);
         *self.current_play_action.borrow_mut() = play_action;
     }
 
     fn clear(&self) {
+        self.cover_tile.clear_image();
         self.body.clear();
         *self.current_track.borrow_mut() = None;
         *self.current_play_action.borrow_mut() = None;
@@ -248,6 +254,8 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
 pub(super) struct AlbumGridCell {
     body: CollectionGridCardCell,
     shell: Rc<Shell>,
+    cover_tile: ArtworkTile,
+    size: i32,
     favorite: gtk::Button,
     current_album: Rc<RefCell<Option<Album>>>,
 }
@@ -344,12 +352,14 @@ impl AlbumGridCell {
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);
 
-        let body = CollectionGridCardCell::new(&shell, fields, size, cover_tile, overlay.upcast());
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
         install_dynamic_album_context_menu(&body.card, &shell, Rc::clone(&current_album));
 
         Self {
             body,
             shell,
+            cover_tile,
+            size,
             favorite,
             current_album,
         }
@@ -362,49 +372,730 @@ impl ReusableCollectionGridCell<Album> for AlbumGridCell {
     }
 
     fn bind(&self, _: u32, album: Album) {
-        self.body.bind(
-            &self.shell,
+        self.shell.bind_cover_tile_for(
+            &self.cover_tile,
             album.image_ref.as_ref(),
             album.color_seed,
-            &album.title,
-            |field| {
-                let value = album_field(&album, field);
-                let route = if value.is_empty()
-                    || !matches!(field, LibraryField::Artist | LibraryField::AlbumArtist)
-                {
-                    None
-                } else {
-                    album_artist_route(&album)
-                };
-                (value, route)
-            },
+            self.size,
+            GRID_COVER_SIZE,
         );
+        self.body.bind(&album.title, |field| {
+            let value = album_field(&album, field);
+            let route = if value.is_empty()
+                || !matches!(field, LibraryField::Artist | LibraryField::AlbumArtist)
+            {
+                None
+            } else {
+                album_artist_route(&album)
+            };
+            (value, route)
+        });
         set_favorite_button_active(&self.favorite, album.favorite);
         *self.current_album.borrow_mut() = Some(album);
     }
 
     fn clear(&self) {
+        self.cover_tile.clear_image();
         self.body.clear();
         *self.current_album.borrow_mut() = None;
     }
 }
 
-struct CollectionGridCardCell {
-    card: gtk::Box,
+pub(super) struct ArtistGridCell {
+    body: CollectionGridCardCell,
+    shell: Rc<Shell>,
     cover_tile: ArtworkTile,
     size: i32,
+    favorite: gtk::Button,
+    current_artist: Rc<RefCell<Option<Artist>>>,
+}
+
+impl ArtistGridCell {
+    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], size: i32) -> Self {
+        let current_artist = Rc::new(RefCell::new(None::<Artist>));
+
+        let overlay = cards::cover_overlay(size);
+        let (artist_button, cover_tile) = collection_grid_cover_button(size);
+        let open_shell = Rc::clone(&shell);
+        let open_artist = Rc::clone(&current_artist);
+        artist_button.connect_clicked(move |_| {
+            let Some(artist) = open_artist.borrow().as_ref().cloned() else {
+                return;
+            };
+            open_shell.navigate(Route::ArtistDetail(artist.id));
+        });
+        overlay.set_child(Some(&artist_button));
+
+        let (mut controls, favorite) =
+            cards::cover_hover_controls_with_favorite(size, msgid("Play artist"), false);
+        let menu = controls.add_context_button();
+        let menu_shell = Rc::clone(&shell);
+        let menu_artist = Rc::clone(&current_artist);
+        let menu_target = overlay.clone();
+        menu.connect_clicked(move |_| {
+            let Some(artist) = menu_artist.borrow().as_ref().cloned() else {
+                return;
+            };
+            present_artist_context_menu(
+                menu_target.upcast_ref(),
+                &menu_shell,
+                context_artist(&menu_shell, &artist),
+                cards::cover_context_point(size),
+            );
+        });
+
+        let controller = shell.controller.clone();
+        let play_artist = Rc::clone(&current_artist);
+        controls.play.connect_clicked(move |_| {
+            let Some(artist_id) = play_artist
+                .borrow()
+                .as_ref()
+                .map(|artist| artist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+                controller.play_artist_tracks_window(
+                    artist_id,
+                    domain::ArtistTrackScope::AllCredits,
+                    detail.tracks.len(),
+                    0,
+                    |index| detail.tracks.get(index).cloned(),
+                );
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let next_artist = Rc::clone(&current_artist);
+        controls.play_next.connect_clicked(move |_| {
+            let Some(artist_id) = next_artist
+                .borrow()
+                .as_ref()
+                .map(|artist| artist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+                for track in detail.tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let last_artist = Rc::clone(&current_artist);
+        controls.play_last.connect_clicked(move |_| {
+            let Some(artist_id) = last_artist
+                .borrow()
+                .as_ref()
+                .map(|artist| artist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+                controller.play_last(detail.tracks);
+            }
+        });
+
+        let favorite_key_artist = Rc::clone(&current_artist);
+        shell.register_dynamic_favorite_button(
+            Rc::new(move || {
+                favorite_key_artist
+                    .borrow()
+                    .as_ref()
+                    .map(|artist| artist_favorite_key(&artist.id))
+            }),
+            &favorite,
+        );
+        let favorite_shell = Rc::clone(&shell);
+        let favorite_artist = Rc::clone(&current_artist);
+        favorite.connect_clicked(move |button| {
+            let Some(artist) = favorite_artist.borrow().as_ref().cloned() else {
+                return;
+            };
+            let favorite = !favorite_button_is_active(button);
+            favorite_shell.set_favorite_with_feedback(
+                source::FavoriteItemId::Artist(artist.id),
+                favorite,
+                Some(button),
+            );
+        });
+        controls.add_to_overlay(&overlay);
+        controls.connect_hover(&overlay);
+
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
+        install_dynamic_artist_context_menu(&body.card, &shell, Rc::clone(&current_artist));
+
+        Self {
+            body,
+            shell,
+            cover_tile,
+            size,
+            favorite,
+            current_artist,
+        }
+    }
+}
+
+impl ReusableCollectionGridCell<Artist> for ArtistGridCell {
+    fn widget(&self) -> gtk::Widget {
+        self.body.widget()
+    }
+
+    fn bind(&self, _: u32, artist: Artist) {
+        let image_ref = artist_cover_image_ref(&self.shell, &artist);
+        self.shell.bind_cover_tile_for(
+            &self.cover_tile,
+            image_ref.as_ref(),
+            stable_seed(artist.id.as_str()),
+            self.size,
+            GRID_COVER_SIZE,
+        );
+        self.body
+            .bind(&artist.name, |field| (artist_field(&artist, field), None));
+        set_favorite_button_active(&self.favorite, artist.favorite);
+        *self.current_artist.borrow_mut() = Some(artist);
+    }
+
+    fn clear(&self) {
+        self.cover_tile.clear_image();
+        self.body.clear();
+        *self.current_artist.borrow_mut() = None;
+    }
+}
+
+pub(super) struct GenreGridCell {
+    body: CollectionGridCardCell,
+    shell: Rc<Shell>,
+    cover_button: gtk::Button,
+    size: i32,
+    current_genre: Rc<RefCell<Option<Genre>>>,
+}
+
+impl GenreGridCell {
+    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], size: i32) -> Self {
+        let current_genre = Rc::new(RefCell::new(None::<Genre>));
+
+        let overlay = cards::cover_overlay(size);
+        let cover_button = collection_grid_cover_shell(size);
+        let open_shell = Rc::clone(&shell);
+        let open_genre = Rc::clone(&current_genre);
+        cover_button.connect_clicked(move |_| {
+            let Some(genre) = open_genre.borrow().as_ref().cloned() else {
+                return;
+            };
+            open_shell.navigate(Route::GenreDetail(genre.id));
+        });
+        overlay.set_child(Some(&cover_button));
+
+        let mut controls = cards::cover_play_hover_controls(size, msgid("Play genre"));
+        let menu = controls.add_context_button();
+        let menu_shell = Rc::clone(&shell);
+        let menu_genre = Rc::clone(&current_genre);
+        let menu_target = overlay.clone();
+        menu.connect_clicked(move |_| {
+            let Some(genre) = menu_genre.borrow().as_ref().cloned() else {
+                return;
+            };
+            present_genre_context_menu(
+                menu_target.upcast_ref(),
+                &menu_shell,
+                genre,
+                cards::cover_context_point(size),
+            );
+        });
+
+        let controller = shell.controller.clone();
+        let play_genre = Rc::clone(&current_genre);
+        controls.play.connect_clicked(move |_| {
+            let Some(genre_id) = play_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                let tracks = detail.tracks;
+                controller.play_genre_tracks_window(genre_id, tracks.len(), 0, |index| {
+                    tracks.get(index).cloned()
+                });
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let next_genre = Rc::clone(&current_genre);
+        controls.play_next.connect_clicked(move |_| {
+            let Some(genre_id) = next_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                for track in detail.tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let last_genre = Rc::clone(&current_genre);
+        controls.play_last.connect_clicked(move |_| {
+            let Some(genre_id) = last_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+                controller.play_last(detail.tracks);
+            }
+        });
+        controls.add_to_overlay(&overlay);
+        controls.connect_hover(&overlay);
+
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
+        install_dynamic_genre_context_menu(&body.card, &shell, Rc::clone(&current_genre));
+
+        Self {
+            body,
+            shell,
+            cover_button,
+            size,
+            current_genre,
+        }
+    }
+}
+
+impl ReusableCollectionGridCell<Genre> for GenreGridCell {
+    fn widget(&self) -> gtk::Widget {
+        self.body.widget()
+    }
+
+    fn bind(&self, _: u32, genre: Genre) {
+        let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
+        self.cover_button
+            .set_child(Some(&self.shell.cover_group_tile_for_artwork(
+                &artwork,
+                stable_seed(genre.id.as_str()),
+                self.size,
+                THUMB_COVER_SIZE,
+            )));
+        self.body
+            .bind(&genre.name, |field| (genre_field(&genre, field), None));
+        *self.current_genre.borrow_mut() = Some(genre);
+    }
+
+    fn clear(&self) {
+        self.cover_button.set_child(None::<&gtk::Widget>);
+        self.body.clear();
+        *self.current_genre.borrow_mut() = None;
+    }
+}
+
+pub(super) struct PlaylistGridCell {
+    body: CollectionGridCardCell,
+    shell: Rc<Shell>,
+    cover_button: gtk::Button,
+    size: i32,
+    current_playlist: Rc<RefCell<Option<Playlist>>>,
+}
+
+impl PlaylistGridCell {
+    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], size: i32) -> Self {
+        let current_playlist = Rc::new(RefCell::new(None::<Playlist>));
+
+        let overlay = cards::cover_overlay(size);
+        let cover_button = collection_grid_cover_shell(size);
+        let open_shell = Rc::clone(&shell);
+        let open_playlist = Rc::clone(&current_playlist);
+        cover_button.connect_clicked(move |_| {
+            let Some(playlist) = open_playlist.borrow().as_ref().cloned() else {
+                return;
+            };
+            open_shell.navigate(Route::PlaylistDetail(playlist.id));
+        });
+        overlay.set_child(Some(&cover_button));
+
+        let mut controls = cards::cover_play_hover_controls(size, msgid("Play playlist"));
+        let menu = controls.add_context_button();
+        let menu_shell = Rc::clone(&shell);
+        let menu_playlist = Rc::clone(&current_playlist);
+        let menu_target = overlay.clone();
+        menu.connect_clicked(move |_| {
+            let Some(playlist) = menu_playlist.borrow().as_ref().cloned() else {
+                return;
+            };
+            present_playlist_context_menu(
+                menu_target.upcast_ref(),
+                &menu_shell,
+                playlist,
+                cards::cover_context_point(size),
+            );
+        });
+
+        let controller = shell.controller.clone();
+        let play_playlist = Rc::clone(&current_playlist);
+        controls.play.connect_clicked(move |_| {
+            let Some(playlist_id) = play_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            controller.play_cached_playlist(playlist_id);
+        });
+
+        let controller = shell.controller.clone();
+        let next_playlist = Rc::clone(&current_playlist);
+        controls.play_next.connect_clicked(move |_| {
+            let Some(playlist_id) = next_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            controller.play_cached_playlist_next(playlist_id);
+        });
+
+        let controller = shell.controller.clone();
+        let last_playlist = Rc::clone(&current_playlist);
+        controls.play_last.connect_clicked(move |_| {
+            let Some(playlist_id) = last_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            controller.play_cached_playlist_last(playlist_id);
+        });
+        controls.add_to_overlay(&overlay);
+        controls.connect_hover(&overlay);
+
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
+        install_dynamic_playlist_context_menu(&body.card, &shell, Rc::clone(&current_playlist));
+
+        Self {
+            body,
+            shell,
+            cover_button,
+            size,
+            current_playlist,
+        }
+    }
+}
+
+impl ReusableCollectionGridCell<Playlist> for PlaylistGridCell {
+    fn widget(&self) -> gtk::Widget {
+        self.body.widget()
+    }
+
+    fn bind(&self, _: u32, playlist: Playlist) {
+        let artwork = crate::cover_art_policy::selected_playlist_artwork(
+            &playlist,
+            &self.shell.state.settings.borrow(),
+        );
+        self.cover_button
+            .set_child(Some(&self.shell.cover_group_tile_for_artwork(
+                &artwork,
+                stable_seed(playlist.id.as_str()),
+                self.size,
+                THUMB_COVER_SIZE,
+            )));
+        self.body.bind(&playlist.name, |field| {
+            (playlist_field(&playlist, field), None)
+        });
+        *self.current_playlist.borrow_mut() = Some(playlist);
+    }
+
+    fn clear(&self) {
+        self.cover_button.set_child(None::<&gtk::Widget>);
+        self.body.clear();
+        *self.current_playlist.borrow_mut() = None;
+    }
+}
+
+pub(super) struct SmartPlaylistGridCell {
+    body: CollectionGridCardCell,
+    shell: Rc<Shell>,
+    cover_button: gtk::Button,
+    widget: gtk::Overlay,
+    size: i32,
+    current_playlist: Rc<RefCell<Option<SmartPlaylist>>>,
+}
+
+impl SmartPlaylistGridCell {
+    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], size: i32) -> Self {
+        let current_playlist = Rc::new(RefCell::new(None::<SmartPlaylist>));
+
+        let overlay = cards::cover_overlay(size);
+        let cover_button = collection_grid_cover_shell(size);
+        let open_shell = Rc::clone(&shell);
+        let open_playlist = Rc::clone(&current_playlist);
+        cover_button.connect_clicked(move |_| {
+            let Some(playlist) = open_playlist.borrow().as_ref().cloned() else {
+                return;
+            };
+            open_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
+        });
+        overlay.set_child(Some(&cover_button));
+
+        let mut controls = cards::cover_play_hover_controls(size, msgid("Play smart playlist"));
+        let menu = controls.add_context_button();
+        let menu_shell = Rc::clone(&shell);
+        let menu_playlist = Rc::clone(&current_playlist);
+        let menu_target = overlay.clone();
+        menu.connect_clicked(move |_| {
+            let Some(playlist) = menu_playlist.borrow().as_ref().cloned() else {
+                return;
+            };
+            present_smart_playlist_context_menu(
+                menu_target.upcast_ref(),
+                &menu_shell,
+                playlist,
+                cards::cover_context_point(size),
+            );
+        });
+
+        let controller = shell.controller.clone();
+        let play_playlist = Rc::clone(&current_playlist);
+        controls.play.connect_clicked(move |_| {
+            let Some(playlist_id) = play_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+                controller.play_smart_playlist_detail(detail);
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let next_playlist = Rc::clone(&current_playlist);
+        controls.play_next.connect_clicked(move |_| {
+            let Some(playlist_id) = next_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+                for track in detail.tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+
+        let controller = shell.controller.clone();
+        let last_playlist = Rc::clone(&current_playlist);
+        controls.play_last.connect_clicked(move |_| {
+            let Some(playlist_id) = last_playlist
+                .borrow()
+                .as_ref()
+                .map(|playlist| playlist.id.clone())
+            else {
+                return;
+            };
+            if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+                controller.play_last(detail.tracks);
+            }
+        });
+        controls.add_to_overlay(&overlay);
+        controls.connect_hover(&overlay);
+
+        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
+        let widget = smart_playlist_grid_overlay(
+            size,
+            fields.len(),
+            &body.card,
+            Rc::clone(&current_playlist),
+        );
+        install_dynamic_smart_playlist_drop_target(&widget, &shell, Rc::clone(&current_playlist));
+        install_dynamic_smart_playlist_context_menu(&widget, &shell, Rc::clone(&current_playlist));
+
+        Self {
+            body,
+            shell,
+            cover_button,
+            widget,
+            size,
+            current_playlist,
+        }
+    }
+}
+
+impl ReusableCollectionGridCell<SmartPlaylist> for SmartPlaylistGridCell {
+    fn widget(&self) -> gtk::Widget {
+        self.widget.clone().upcast()
+    }
+
+    fn bind(&self, _: u32, playlist: SmartPlaylist) {
+        let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&playlist);
+        self.cover_button
+            .set_child(Some(&self.shell.cover_group_tile_for_artwork(
+                &artwork,
+                stable_seed(playlist.id.as_str()),
+                self.size,
+                THUMB_COVER_SIZE,
+            )));
+        self.body
+            .bind(&smart_playlist_display_name(&playlist), |field| {
+                (smart_playlist_field(&playlist, field), None)
+            });
+        *self.current_playlist.borrow_mut() = Some(playlist);
+    }
+
+    fn clear(&self) {
+        self.cover_button.set_child(None::<&gtk::Widget>);
+        self.body.clear();
+        *self.current_playlist.borrow_mut() = None;
+    }
+}
+
+fn install_dynamic_artist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    artist: Rc<RefCell<Option<Artist>>>,
+) {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(artist) = artist.borrow().clone() else {
+                return;
+            };
+            present_artist_context_menu(target, &shell, context_artist(&shell, &artist), position);
+        }),
+    );
+}
+
+fn install_dynamic_genre_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    genre: Rc<RefCell<Option<Genre>>>,
+) {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(genre) = genre.borrow().clone() else {
+                return;
+            };
+            present_genre_context_menu(target, &shell, genre, position);
+        }),
+    );
+}
+
+fn install_dynamic_playlist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    playlist: Rc<RefCell<Option<Playlist>>>,
+) {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(playlist) = playlist.borrow().clone() else {
+                return;
+            };
+            present_playlist_context_menu(target, &shell, playlist, position);
+        }),
+    );
+}
+
+fn install_dynamic_smart_playlist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    playlist: Rc<RefCell<Option<SmartPlaylist>>>,
+) {
+    let shell = Rc::clone(shell);
+    install_context_menu_openers(
+        target,
+        Rc::new(move |target, position| {
+            let Some(playlist) = playlist.borrow().clone() else {
+                return;
+            };
+            present_smart_playlist_context_menu(target, &shell, playlist, position);
+        }),
+    );
+}
+
+fn smart_playlist_grid_overlay(
+    size: i32,
+    field_count: usize,
+    card: &gtk::Box,
+    playlist: Rc<RefCell<Option<SmartPlaylist>>>,
+) -> gtk::Overlay {
+    let card_height = collection_grid_card_height(size, field_count);
+    let overlay = gtk::Overlay::new();
+    overlay.set_size_request(size, card_height);
+    overlay.set_hexpand(false);
+    overlay.set_halign(gtk::Align::Center);
+    overlay.set_child(Some(card));
+
+    let drag = dynamic_smart_playlist_drag_handle(playlist);
+    drag.set_margin_start(6);
+    drag.set_margin_top(6);
+    drag.set_halign(gtk::Align::Start);
+    drag.set_valign(gtk::Align::Start);
+    overlay.add_overlay(&drag);
+    overlay
+}
+
+fn dynamic_smart_playlist_drag_handle(playlist: Rc<RefCell<Option<SmartPlaylist>>>) -> gtk::Image {
+    let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    drag.set_width_request(SMART_PLAYLIST_REORDER_WIDTH);
+    drag.set_halign(gtk::Align::Center);
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    source.connect_prepare(move |_, _, _| {
+        let playlist_id = playlist.borrow().as_ref()?.id.as_str().to_string();
+        Some(gtk::gdk::ContentProvider::for_value(
+            &playlist_id.to_value(),
+        ))
+    });
+    drag.add_controller(source);
+    drag
+}
+
+fn install_dynamic_smart_playlist_drop_target(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    playlist: Rc<RefCell<Option<SmartPlaylist>>>,
+) {
+    let widget = target.as_ref().clone();
+    let controller = shell.controller.clone();
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(dragged_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(target_id) = playlist
+            .borrow()
+            .as_ref()
+            .map(|playlist| playlist.id.clone())
+        else {
+            return false;
+        };
+        let dragged_id = SmartPlaylistId::new(dragged_id);
+        if dragged_id == target_id {
+            return false;
+        }
+        let after = y > f64::from(widget.height()) / 2.0;
+        controller.move_smart_playlist(dragged_id, target_id, after);
+        true
+    });
+    target.add_controller(drop_target);
+}
+
+struct CollectionGridCardCell {
+    card: gtk::Box,
     title: gtk::Label,
     fields: Vec<CollectionGridFieldCell>,
 }
 
 impl CollectionGridCardCell {
-    fn new(
-        shell: &Rc<Shell>,
-        fields: &[LibraryField],
-        size: i32,
-        cover_tile: ArtworkTile,
-        cover: gtk::Widget,
-    ) -> Self {
+    fn new(shell: &Rc<Shell>, fields: &[LibraryField], size: i32, cover: gtk::Widget) -> Self {
         let card = collection_grid_card(size, fields.len());
         card.append(&cover);
         let (title_widget, title) = grid_title_with_label("", "track-title", size);
@@ -419,8 +1110,6 @@ impl CollectionGridCardCell {
         }
         Self {
             card,
-            cover_tile,
-            size,
             title,
             fields,
         }
@@ -432,19 +1121,9 @@ impl CollectionGridCardCell {
 
     fn bind(
         &self,
-        shell: &Rc<Shell>,
-        image_ref: Option<&ImageRef>,
-        seed: u32,
         title: &str,
         mut field_value: impl FnMut(LibraryField) -> (String, Option<Route>),
     ) {
-        shell.bind_cover_tile_for(
-            &self.cover_tile,
-            image_ref,
-            seed,
-            self.size,
-            GRID_COVER_SIZE,
-        );
         self.title.set_text(title);
         self.title
             .set_tooltip_text((!title.is_empty()).then_some(title));
@@ -455,7 +1134,6 @@ impl CollectionGridCardCell {
     }
 
     fn clear(&self) {
-        self.cover_tile.clear_image();
         self.title.set_text("");
         self.title.set_tooltip_text(None);
         for field in &self.fields {
@@ -464,12 +1142,17 @@ impl CollectionGridCardCell {
     }
 }
 
-fn collection_grid_cover_button(size: i32) -> (gtk::Button, ArtworkTile) {
+fn collection_grid_cover_shell(size: i32) -> gtk::Button {
     let cover_button = gtk::Button::new();
     cover_button.add_css_class("album-cover-button");
     cover_button.add_css_class("flat");
     cards::constrain_cover_widget(&cover_button, size);
     cards::clip_cover(&cover_button);
+    cover_button
+}
+
+fn collection_grid_cover_button(size: i32) -> (gtk::Button, ArtworkTile) {
+    let cover_button = collection_grid_cover_shell(size);
     let cover_tile = ArtworkTile::new(size, 0);
     cover_button.set_child(Some(&cover_tile.widget()));
     (cover_button, cover_tile)

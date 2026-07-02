@@ -667,32 +667,6 @@ pub(in crate::ui) fn install_dynamic_album_context_menu(
         }),
     );
 }
-pub(in crate::ui) fn install_playlist_context_menu(
-    target: &impl IsA<gtk::Widget>,
-    shell: &Rc<Shell>,
-    playlist: Playlist,
-) {
-    let shell = Rc::clone(shell);
-    install_context_menu_openers(
-        target,
-        Rc::new(move |target, position| {
-            present_playlist_context_menu(target, &shell, playlist.clone(), position);
-        }),
-    );
-}
-pub(in crate::ui) fn install_smart_playlist_context_menu(
-    target: &impl IsA<gtk::Widget>,
-    shell: &Rc<Shell>,
-    playlist: SmartPlaylist,
-) {
-    let shell = Rc::clone(shell);
-    install_context_menu_openers(
-        target,
-        Rc::new(move |target, position| {
-            present_smart_playlist_context_menu(target, &shell, playlist.clone(), position);
-        }),
-    );
-}
 pub(in crate::ui) fn install_artist_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,

@@ -1,23 +1,18 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{
-    Album, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, Route, SmartPlaylist,
-    Track,
-};
+use domain::{Album, LibraryLayout, LibraryListKey, LibraryListSettings, Route};
 use source::FavoriteItemId;
 
-use super::favorites::{album_favorite_key, track_favorite_key};
+use super::favorites::album_favorite_key;
 use super::layout::{
     album_grid_card_size, album_grid_page_size, home_album_card_size, home_album_content_width,
     home_album_page_size,
 };
 use super::{
     ActionButtonVariant, GRID_COVER_SIZE, MORE_ICON, PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON,
-    Shell, THUMB_COVER_SIZE, configure_action_button, favorite_button_is_active,
-    favorite_icon_button, icon_button, present_album_context_menu, present_playlist_context_menu,
-    present_smart_playlist_context_menu, present_track_context_menu, set_favorite_button_active,
-    stable_seed,
+    Shell, configure_action_button, favorite_button_is_active, favorite_icon_button, icon_button,
+    present_album_context_menu, set_favorite_button_active,
 };
 use crate::controller::AppController;
 
@@ -52,11 +47,11 @@ impl Shell {
     }
 }
 
-pub(super) fn album_cover_tile(
+pub(super) fn album_cover_overlay(
     shell: &Rc<Shell>,
     album: &Album,
     size: i32,
-    controller: Option<&AppController>,
+    controller: &AppController,
 ) -> gtk::Widget {
     let overlay = cover_overlay(size);
 
@@ -90,265 +85,43 @@ pub(super) fn album_cover_tile(
             cover_context_point(size),
         );
     });
-    if let Some(controller) = controller {
-        let controller = controller.clone();
-        let album_id = album.id.clone();
-        controls
-            .play
-            .connect_clicked(move |_| controller.play_album_now(album_id.clone()));
-    }
-    if let Some(controller) = controller {
-        let controller = controller.clone();
-        let album_id = album.id.clone();
-        controls.play_next.connect_clicked(move |_| {
-            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-                for track in tracks.iter().rev() {
-                    controller.play_next(track.clone());
-                }
+    let play_controller = controller.clone();
+    let album_id = album.id.clone();
+    controls
+        .play
+        .connect_clicked(move |_| play_controller.play_album_now(album_id.clone()));
+
+    let next_controller = controller.clone();
+    let album_id = album.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = next_controller.cached_album_detail(&album_id) {
+            for track in tracks.iter().rev() {
+                next_controller.play_next(track.clone());
             }
-        });
-    }
-    if let Some(controller) = controller {
-        let controller = controller.clone();
-        let album_id = album.id.clone();
-        controls.play_last.connect_clicked(move |_| {
-            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-                controller.play_last(tracks);
-            }
-        });
-    }
+        }
+    });
+
+    let last_controller = controller.clone();
+    let album_id = album.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = last_controller.cached_album_detail(&album_id) {
+            last_controller.play_last(tracks);
+        }
+    });
+
     if let Some(favorite) = controls.favorite.as_ref() {
         shell.register_favorite_button(album_favorite_key(&album.id), favorite);
-        if controller.is_some() {
-            let shell = Rc::clone(shell);
-            let album_id = album.id.clone();
-            favorite.connect_clicked(move |button| {
-                let favorite = !favorite_button_is_active(button);
-                shell.set_favorite_with_feedback(
-                    FavoriteItemId::Album(album_id.clone()),
-                    favorite,
-                    Some(button),
-                );
-            });
-        }
-    }
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
-
-pub(super) fn track_play_tile(
-    shell: &Rc<Shell>,
-    track: &Track,
-    size: i32,
-    play_action: Option<Rc<dyn Fn()>>,
-) -> gtk::Widget {
-    let overlay = cover_overlay(size);
-
-    let cover_button = gtk::Button::new();
-    cover_button.add_css_class("album-cover-button");
-    cover_button.add_css_class("flat");
-    constrain_cover_widget(&cover_button, size);
-    clip_cover(&cover_button);
-    cover_button.set_child(Some(&shell.cover_tile_for(
-        track.image_ref.as_ref(),
-        stable_seed(track.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    )));
-    let controller = shell.controller.clone();
-    let track_for_play = track.clone();
-    let button_play_action = play_action.clone();
-    cover_button.connect_clicked(move |_| {
-        if let Some(play_action) = button_play_action.as_ref() {
-            play_action();
-        } else {
-            controller.play_now(track_for_play.clone());
-        }
-    });
-    overlay.set_child(Some(&cover_button));
-
-    let mut controls = cover_hover_controls(size, "Play track", track.favorite);
-    let menu = controls.add_context_button();
-    let menu_target = overlay.clone();
-    let menu_shell = Rc::clone(shell);
-    let menu_track = track.clone();
-    menu.connect_clicked(move |_| {
-        present_track_context_menu(
-            menu_target.upcast_ref(),
-            &menu_shell,
-            super::context_track(&menu_shell, &menu_track),
-            cover_context_point(size),
-        );
-    });
-    let controller = shell.controller.clone();
-    let track_for_play = track.clone();
-    let hover_play_action = play_action.clone();
-    controls.play.connect_clicked(move |_| {
-        if let Some(play_action) = hover_play_action.as_ref() {
-            play_action();
-        } else {
-            controller.play_now(track_for_play.clone());
-        }
-    });
-
-    let controller = shell.controller.clone();
-    let track_for_play_next = track.clone();
-    controls
-        .play_next
-        .connect_clicked(move |_| controller.play_next(track_for_play_next.clone()));
-
-    let controller = shell.controller.clone();
-    let track_for_play_last = track.clone();
-    controls
-        .play_last
-        .connect_clicked(move |_| controller.play_last(vec![track_for_play_last.clone()]));
-
-    if let Some(favorite) = controls.favorite.as_ref() {
-        shell.register_favorite_button(track_favorite_key(&track.id), favorite);
         let shell = Rc::clone(shell);
-        let track_id = track.id.clone();
+        let album_id = album.id.clone();
         favorite.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             shell.set_favorite_with_feedback(
-                FavoriteItemId::Track(track_id.clone()),
+                FavoriteItemId::Album(album_id.clone()),
                 favorite,
                 Some(button),
             );
         });
     }
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
-
-pub(super) fn playlist_cover_tile(
-    shell: &Rc<Shell>,
-    playlist: &Playlist,
-    size: i32,
-) -> gtk::Widget {
-    let overlay = cover_overlay(size);
-
-    let playlist_button = gtk::Button::new();
-    playlist_button.add_css_class("album-cover-button");
-    playlist_button.add_css_class("flat");
-    constrain_cover_widget(&playlist_button, size);
-    clip_cover(&playlist_button);
-    let artwork = crate::cover_art_policy::selected_playlist_artwork(
-        playlist,
-        &shell.state.settings.borrow(),
-    );
-    playlist_button.set_child(Some(&shell.cover_group_tile_for_artwork(
-        &artwork,
-        stable_seed(playlist.id.as_str()),
-        size,
-        THUMB_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_playlist_id = playlist.id.clone();
-    playlist_button.connect_clicked(move |_| {
-        open_shell.navigate(Route::PlaylistDetail(open_playlist_id.clone()))
-    });
-    overlay.set_child(Some(&playlist_button));
-
-    let mut controls = cover_play_hover_controls(size, "Play playlist");
-    let menu = controls.add_context_button();
-    let menu_target = overlay.clone();
-    let menu_shell = Rc::clone(shell);
-    let menu_playlist = playlist.clone();
-    menu.connect_clicked(move |_| {
-        present_playlist_context_menu(
-            menu_target.upcast_ref(),
-            &menu_shell,
-            menu_playlist.clone(),
-            cover_context_point(size),
-        );
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play.connect_clicked(move |_| {
-        controller.play_cached_playlist(playlist_id.clone());
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play_next.connect_clicked(move |_| {
-        controller.play_cached_playlist_next(playlist_id.clone());
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play_last.connect_clicked(move |_| {
-        controller.play_cached_playlist_last(playlist_id.clone());
-    });
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
-
-pub(super) fn smart_playlist_cover_tile(
-    shell: &Rc<Shell>,
-    playlist: &SmartPlaylist,
-    size: i32,
-) -> gtk::Widget {
-    let overlay = cover_overlay(size);
-
-    let playlist_button = gtk::Button::new();
-    playlist_button.add_css_class("album-cover-button");
-    playlist_button.add_css_class("flat");
-    constrain_cover_widget(&playlist_button, size);
-    clip_cover(&playlist_button);
-    let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(playlist);
-    playlist_button.set_child(Some(&shell.cover_group_tile_for_artwork(
-        &artwork,
-        stable_seed(playlist.id.as_str()),
-        size,
-        THUMB_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_playlist_id = playlist.id.clone();
-    playlist_button.connect_clicked(move |_| {
-        open_shell.navigate(Route::SmartPlaylistDetail(open_playlist_id.clone()))
-    });
-    overlay.set_child(Some(&playlist_button));
-
-    let mut controls = cover_play_hover_controls(size, "Play smart playlist");
-    let menu = controls.add_context_button();
-    let menu_target = overlay.clone();
-    let menu_shell = Rc::clone(shell);
-    let menu_playlist = playlist.clone();
-    menu.connect_clicked(move |_| {
-        present_smart_playlist_context_menu(
-            menu_target.upcast_ref(),
-            &menu_shell,
-            menu_playlist.clone(),
-            cover_context_point(size),
-        );
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            controller.play_smart_playlist_detail(detail);
-        }
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            for track in detail.tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
-    });
-    let controller = shell.controller.clone();
-    let playlist_id = playlist.id.clone();
-    controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            controller.play_last(detail.tracks);
-        }
-    });
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);
 
