@@ -391,7 +391,7 @@ pub(in crate::ui) fn album_table(
         shell,
         model,
         columns,
-        false,
+        true,
         Some(Box::new(move |_, album: Album| {
             activate_shell.navigate(Route::AlbumDetail(album.id));
         })),
@@ -410,7 +410,7 @@ pub(in crate::ui) fn artist_table(
         shell,
         model,
         columns,
-        false,
+        true,
         Some(Box::new(move |_, artist: Artist| {
             activate_shell.navigate(Route::ArtistDetail(artist.id));
         })),
@@ -429,7 +429,16 @@ pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gt
             }
         },
     );
-    collection_table::<Genre>(shell, model, columns, false, None)
+    let activate_shell = Rc::clone(shell);
+    collection_table(
+        shell,
+        model,
+        columns,
+        true,
+        Some(Box::new(move |_, genre: Genre| {
+            activate_shell.navigate(Route::GenreDetail(genre.id));
+        })),
+    )
 }
 pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let fields = shell.library_settings(LibraryListKey::Playlists).row_fields;
