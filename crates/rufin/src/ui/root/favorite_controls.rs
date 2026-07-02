@@ -8,6 +8,13 @@ impl Shell {
     ) {
         register_favorite_control(&self.state.favorite_controls, key, button);
     }
+    pub(in crate::ui) fn register_dynamic_favorite_button(
+        &self,
+        key: Rc<dyn Fn() -> Option<FavoriteControlKey>>,
+        button: &gtk::Button,
+    ) {
+        register_dynamic_favorite_control(&self.state.favorite_controls, key, button);
+    }
     pub(in crate::ui) fn update_visible_favorite_buttons(
         &self,
         item_id: &FavoriteItemId,

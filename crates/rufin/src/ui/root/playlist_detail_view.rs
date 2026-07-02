@@ -505,7 +505,7 @@ impl Shell {
             Rc::clone(&entries),
             Rc::clone(&state),
             detail.playlist.id.clone(),
-            0,
+            PRIMARY_ROUTE_HORIZONTAL_INSET,
             selection_handle,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());

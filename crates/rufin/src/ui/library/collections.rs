@@ -20,8 +20,6 @@ pub(in crate::ui) fn library_route_inset_spec() -> LibraryRouteInsetSpec {
 }
 pub(in crate::ui) fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
     let spec = library_route_inset_spec();
-    // this keeps the scrollbar at the pane edge while the actual
-    // library content keeps the same visual inset.
     child.set_margin_start(spec.margin_start);
     child.set_margin_end(spec.margin_end);
     child.set_hexpand(spec.hexpand);
@@ -33,7 +31,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller: &gtk::ScrolledWindow,
 ) {
     scroller.add_css_class("library-route-scroller");
-    configure_fill_width_clip(scroller, gtk::PolicyType::Always);
+    configure_fill_width_clip(scroller, gtk::PolicyType::Automatic);
     scroller.set_propagate_natural_height(false);
     scroller.set_overlay_scrolling(true);
     scroller.set_hexpand(true);
@@ -133,7 +131,7 @@ pub(in crate::ui) struct TrackTableOptions {
     pub(in crate::ui) selection_handle: Option<TrackTableSelectionHandle>,
 }
 
-fn track_model_play_action(
+pub(super) fn track_model_play_action(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     play_context: LoadedTrackPlayContext,
@@ -199,12 +197,13 @@ pub(in crate::ui) fn album_grid(
 ) -> gtk::GridView {
     let settings = shell.library_settings(key);
     let (columns, card_size) = shell.collection_card_grid_metrics_for(key, &settings);
-    let card_shell = Rc::clone(shell);
+    let fields = settings.grid_fields;
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
-    collection_grid(
+    reusable_collection_grid(
         model,
         columns,
-        move |album| album_card(&card_shell, album, key, card_size),
+        move || AlbumGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, album: Album| activate_shell.navigate(Route::AlbumDetail(album.id)),
     )
 }
@@ -219,7 +218,7 @@ pub(in crate::ui) fn artist_grid(
     collection_grid(
         model,
         columns,
-        move |artist| artist_card(&card_shell, artist, key, card_size),
+        move |_, artist| artist_card(&card_shell, artist, key, card_size),
         move |_, artist: Artist| activate_shell.navigate(Route::ArtistDetail(artist.id)),
     )
 }
@@ -230,7 +229,7 @@ pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk
     collection_grid(
         model,
         columns,
-        move |genre| genre_card(&card_shell, genre, card_size),
+        move |_, genre| genre_card(&card_shell, genre, card_size),
         move |_, genre: Genre| activate_shell.navigate(Route::GenreDetail(genre.id)),
     )
 }
@@ -241,7 +240,7 @@ pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> 
     collection_grid(
         model,
         columns,
-        move |playlist| playlist_card(&card_shell, playlist, card_size),
+        move |_, playlist| playlist_card(&card_shell, playlist, card_size),
         move |_, playlist: Playlist| activate_shell.navigate(Route::PlaylistDetail(playlist.id)),
     )
 }
@@ -255,7 +254,7 @@ pub(in crate::ui) fn smart_playlist_grid(
     collection_grid(
         model,
         columns,
-        move |playlist| smart_playlist_card(&card_shell, playlist, card_size),
+        move |_, playlist| smart_playlist_card(&card_shell, playlist, card_size),
         move |_, playlist: SmartPlaylist| {
             activate_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
         },
@@ -268,25 +267,23 @@ pub(in crate::ui) fn track_grid(
     play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let card_shell = Rc::clone(shell);
-    let card_model = model.clone();
-    let card_play_context = play_context.clone();
+    let fields = shell.library_settings(key).grid_fields;
+    let cell_shell = Rc::clone(shell);
+    let cell_model = model.clone();
+    let cell_play_context = play_context.clone();
     let controller = shell.controller.clone();
     let activate_model = model.clone();
-    collection_grid(
+    reusable_collection_grid(
         model,
         columns,
-        move |track: &Track| {
-            let play_action = card_play_context.as_ref().map(|context| {
-                track_model_play_action(
-                    &card_shell,
-                    &card_model,
-                    context.clone(),
-                    None,
-                    track.clone(),
-                )
-            });
-            track_card(&card_shell, track, key, card_size, play_action)
+        move || {
+            TrackGridCell::new(
+                Rc::clone(&cell_shell),
+                &fields,
+                card_size,
+                cell_model.clone(),
+                cell_play_context.clone(),
+            )
         },
         move |position, track: Track| {
             play_track_from_model(
@@ -310,7 +307,9 @@ pub(in crate::ui) fn home_album_grid(
     let grid = collection_grid(
         model,
         columns,
-        move |album| album_card_with_fields(&card_shell, album, &HOME_ALBUM_GRID_FIELDS, card_size),
+        move |_, album| {
+            album_card_with_fields(&card_shell, album, &HOME_ALBUM_GRID_FIELDS, card_size)
+        },
         move |_, album: Album| activate_shell.navigate(Route::AlbumDetail(album.id)),
     );
     grid.set_vexpand(false);
@@ -327,7 +326,7 @@ pub(in crate::ui) fn home_track_grid(
     let grid = collection_grid(
         model,
         columns,
-        move |track: &Track| {
+        move |_, track: &Track| {
             track_card_with_fields(&card_shell, track, &HOME_TRACK_GRID_FIELDS, card_size, None)
         },
         move |_, track: Track| {
@@ -345,7 +344,7 @@ fn collection_grid<T, Card, Activate>(
 ) -> gtk::GridView
 where
     T: Clone + 'static,
-    Card: Fn(&T) -> gtk::Widget + 'static,
+    Card: Fn(u32, &T) -> gtk::Widget + 'static,
     Activate: Fn(u32, T) + 'static,
 {
     let selection = gtk::NoSelection::new(Some(model.clone()));
@@ -361,7 +360,7 @@ where
             return;
         };
         let value = boxed.borrow::<T>();
-        item.set_child(Some(&card(&value)));
+        item.set_child(Some(&card(item.position(), &value)));
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));
@@ -378,6 +377,7 @@ where
     });
     grid
 }
+
 pub(in crate::ui) fn album_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -662,15 +662,6 @@ pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
     route_content_width(shell) < 760
 }
 
-pub(in crate::ui) fn album_card(
-    shell: &Rc<Shell>,
-    album: &Album,
-    key: LibraryListKey,
-    size: i32,
-) -> gtk::Widget {
-    let fields = shell.library_settings(key).grid_fields;
-    album_card_with_fields(shell, album, &fields, size)
-}
 fn album_card_with_fields(
     shell: &Rc<Shell>,
     album: &Album,
@@ -894,16 +885,6 @@ pub(in crate::ui) fn install_smart_playlist_drop_target(
     });
     target.add_controller(drop_target);
 }
-pub(in crate::ui) fn track_card(
-    shell: &Rc<Shell>,
-    track: &Track,
-    key: LibraryListKey,
-    size: i32,
-    play_action: Option<Rc<dyn Fn()>>,
-) -> gtk::Widget {
-    let fields = shell.library_settings(key).grid_fields;
-    track_card_with_fields(shell, track, &fields, size, play_action)
-}
 fn track_card_with_fields(
     shell: &Rc<Shell>,
     track: &Track,
@@ -935,7 +916,7 @@ fn collection_grid_field_class(field: LibraryField) -> &'static str {
     }
 }
 
-fn collection_grid_field_label(
+pub(super) fn collection_grid_field_label(
     value: &str,
     field: LibraryField,
     size: i32,
@@ -948,7 +929,7 @@ fn collection_grid_field_label(
     )
 }
 
-fn track_grid_field_route(track: &Track, field: LibraryField) -> Option<Route> {
+pub(super) fn track_grid_field_route(track: &Track, field: LibraryField) -> Option<Route> {
     match field {
         LibraryField::Artist => track_artist_route(track),
         LibraryField::AlbumArtist => track_album_artist_route(track),
@@ -964,7 +945,7 @@ fn track_album_artist_route(track: &Track) -> Option<Route> {
         .map(|artist| Route::ArtistDetail(artist.id.clone()))
 }
 
-fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
+pub(super) fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
     let height = collection_grid_card_height(size, field_count);
     let card = gtk::Box::new(gtk::Orientation::Vertical, COLLECTION_GRID_CARD_GAP);
     card.add_css_class("album-card");
@@ -975,6 +956,7 @@ fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
     card.set_valign(gtk::Align::Start);
     card
 }
+
 pub(in crate::ui) fn artist_cover_tile(
     shell: &Rc<Shell>,
     artist: &Artist,

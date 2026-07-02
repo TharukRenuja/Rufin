@@ -1233,7 +1233,7 @@ impl Shell {
             context,
             EmbeddedTrackPanelOptions {
                 source_descriptor,
-                content_inset: PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END,
+                content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 max_visible_rows: Some(5),
                 selection_handle,
             },
@@ -1325,7 +1325,7 @@ impl Shell {
             SearchableTrackOptions {
                 on_visible_count_changed: None,
                 source_descriptor,
-                content_inset: 0,
+                content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 width_mode: ColumnViewWidthMode::RouteScroller,
                 selection_handle,
             },
@@ -1340,11 +1340,10 @@ impl Shell {
         self.install_type_to_search(&search);
 
         let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
         configure_library_route_scroller(self, &scroller);
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
         scroller.set_child(Some(&library_route_inset(view)));
-        wrapper.append(&scroller);
+        wrapper.append(&route_scroller_widget(scroller));
         wrapper.upcast()
     }
     pub(in crate::ui) fn library_tracks_route_panel(
@@ -1369,7 +1368,7 @@ impl Shell {
             SearchableTrackOptions {
                 on_visible_count_changed: None,
                 source_descriptor,
-                content_inset: 0,
+                content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 width_mode: ColumnViewWidthMode::RouteScroller,
                 selection_handle: None,
             },
@@ -1390,11 +1389,10 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            mark_route_scroll_owner(&scroller);
             configure_library_route_scroller(self, &scroller);
             connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
             scroller.set_child(Some(&library_route_inset(view)));
-            wrapper.append(&scroller);
+            wrapper.append(&route_scroller_widget(scroller));
         }
 
         wrapper.upcast()

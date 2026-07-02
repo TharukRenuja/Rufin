@@ -4,11 +4,12 @@ use adw::prelude::*;
 use domain::{Folder, FolderPathItem, Route, Track, TrackTableSettings, format_duration};
 use source::FolderDetail;
 
+use super::library::library_route_inset;
 use super::{
-    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, Shell,
-    THUMB_COVER_SIZE, configure_exact_width_clip, configure_fill_width_clip,
-    install_track_context_menu, mark_route_scroll_owner, route_content_width,
-    sort_tracks_with_options, stable_seed, track_matches_query,
+    PRIMARY_ROUTE_MARGIN_END, ROUTE_TOP_MARGIN, Shell, THUMB_COVER_SIZE,
+    configure_exact_width_clip, configure_fill_width_clip, install_track_context_menu,
+    route_content_width, route_scroller_widget, sort_tracks_with_options, stable_seed,
+    track_matches_query,
 };
 use crate::i18n::{msgid, tr};
 
@@ -37,32 +38,36 @@ impl Shell {
         wrapper.add_css_class("folders-route");
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
 
-        wrapper.append(&folder_breadcrumbs(self, &path));
+        wrapper.append(&library_route_inset(
+            folder_breadcrumbs(self, &path).upcast(),
+        ));
 
         if state.loading {
-            wrapper.append(&self.route_empty_view(msgid("Loading folders...")));
+            wrapper.append(&library_route_inset(
+                self.route_empty_view(msgid("Loading folders...")),
+            ));
             return wrapper.upcast();
         }
 
         if let Some(error) = state.error.as_deref() {
-            wrapper.append(&folder_error_view(error));
+            wrapper.append(&library_route_inset(folder_error_view(error).upcast()));
             return wrapper.upcast();
         }
 
         let Some(detail) = state.detail else {
-            wrapper.append(&self.route_empty_view(msgid("No folder contents found.")));
+            wrapper.append(&library_route_inset(
+                self.route_empty_view(msgid("No folder contents found.")),
+            ));
             return wrapper.upcast();
         };
 
         let search = gtk::SearchEntry::new();
         search.add_css_class("folder-search");
         search.set_placeholder_text(Some(&tr("Search current folder")));
-        wrapper.append(&search);
+        wrapper.append(&library_route_inset(search.clone().upcast()));
         self.install_type_to_search(&search);
 
         let route_width = route_content_width(self);
@@ -81,11 +86,11 @@ impl Shell {
         populate_folder_table(self, &table, &path, &detail, "", tree_width);
 
         let table_scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&table_scroller);
         configure_fill_width_clip(&table_scroller, gtk::PolicyType::Automatic);
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);
-        table_scroller.set_child(Some(&table));
+        table_scroller.set_child(Some(&library_route_inset(table.clone().upcast())));
+        let table_view = route_scroller_widget(table_scroller);
 
         let table_for_search = table.clone();
         let detail_for_search = detail.clone();
@@ -122,12 +127,12 @@ impl Shell {
             content.set_start_child(Some(&tree_scroller));
             content.set_resize_start_child(false);
             content.set_shrink_start_child(false);
-            content.set_end_child(Some(&table_scroller));
+            content.set_end_child(Some(&table_view));
             content.set_resize_end_child(true);
             content.set_shrink_end_child(true);
             wrapper.append(&content);
         } else {
-            wrapper.append(&table_scroller);
+            wrapper.append(&table_view);
         }
         wrapper.upcast()
     }

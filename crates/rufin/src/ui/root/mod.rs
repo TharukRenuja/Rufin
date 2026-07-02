@@ -91,8 +91,8 @@ use domain::{
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,
     artist_favorite_key, clear_favorite_controls, favorite_change_needs_route_render,
-    favorite_control_key, merge_favorite_snapshot, register_favorite_control,
-    update_favorite_controls,
+    favorite_control_key, merge_favorite_snapshot, register_dynamic_favorite_control,
+    register_favorite_control, track_favorite_key, update_favorite_controls,
 };
 use fullscreen_player::{
     FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
@@ -103,11 +103,12 @@ use gtk::gio;
 use gtk::glib;
 use layout::{
     COMPACT_RAIL_WIDTH, MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
-    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ROUTE_TOP_MARGIN, ResolvedLayout,
-    ResolvedLeftSidebarMode, SidebarWidths, configure_exact_width_clip, configure_fill_width_clip,
-    detail_route_inner_width, detail_showcase_cover_only, detail_showcase_cover_size,
-    home_album_content_width, large_popup_content_height, large_popup_content_width,
-    resolve_layout_with_sidebar_widths, route_content_width, route_content_width_for_main_width,
+    PRIMARY_ROUTE_HORIZONTAL_INSET, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
+    ROUTE_TOP_MARGIN, ResolvedLayout, ResolvedLeftSidebarMode, SidebarWidths,
+    configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
+    detail_showcase_cover_only, detail_showcase_cover_size, home_album_content_width,
+    large_popup_content_height, large_popup_content_width, resolve_layout_with_sidebar_widths,
+    route_content_width, route_content_width_for_main_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -880,7 +881,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         decoded_cover_order: RefCell::new(VecDeque::new()),
         decoded_cover_bytes: Cell::new(0),
         decoded_cover_touch: Cell::new(0),
-        favorite_controls: RefCell::new(HashMap::new()),
+        favorite_controls: FavoriteControls::default(),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),
         search_request_generation: Cell::new(0),

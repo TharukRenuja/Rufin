@@ -9,6 +9,15 @@ pub(in crate::ui) fn mark_route_scroll_owner(scroller: &gtk::ScrolledWindow) {
     scroller.add_css_class(ROUTE_SCROLL_OWNER_CLASS);
 }
 
+pub(in crate::ui) fn route_scroller_widget(scroller: gtk::ScrolledWindow) -> gtk::Widget {
+    let (_, vertical_policy) = scroller.policy();
+    if vertical_policy != gtk::PolicyType::Never {
+        mark_route_scroll_owner(&scroller);
+        scroller.set_overlay_scrolling(true);
+    }
+    scroller.upcast()
+}
+
 pub(in crate::ui) fn find_largest_scrolled_window(
     widget: &gtk::Widget,
 ) -> Option<gtk::ScrolledWindow> {
@@ -260,11 +269,9 @@ pub(in crate::ui) fn route_boundary_spec_for_route(_route: &Route) -> RouteBound
 
 pub(in crate::ui) fn detail_route_scroller(shell: &Rc<Shell>, content: gtk::Widget) -> gtk::Widget {
     let scroller = gtk::ScrolledWindow::new();
-    mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
-    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_child(Some(&content));
-    scroller.upcast()
+    route_scroller_widget(scroller)
 }
 
 pub(in crate::ui) fn detail_route_wrapper(spacing: i32) -> gtk::Box {

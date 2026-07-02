@@ -267,7 +267,7 @@ impl Shell {
                 model,
                 LibraryListKey::Tracks,
                 Some(play_context),
-                0,
+                PRIMARY_ROUTE_HORIZONTAL_INSET,
                 ColumnViewWidthMode::RouteScroller,
                 None,
             ),
@@ -303,7 +303,6 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            mark_route_scroll_owner(&scroller);
             configure_library_route_scroller(self, &scroller);
             scroller.set_child(Some(&library_route_inset(content)));
             if let Some(configure_scroller) = configure_scroller {
@@ -312,7 +311,7 @@ impl Shell {
             if let Some(load_next) = load_next {
                 connect_paged_grid_loader(&scroller, load_next);
             }
-            wrapper.append(&scroller);
+            wrapper.append(&route_scroller_widget(scroller));
         }
 
         wrapper.upcast()

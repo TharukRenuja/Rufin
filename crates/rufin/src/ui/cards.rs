@@ -435,6 +435,14 @@ pub(super) fn cover_hover_controls(
     play_label: &str,
     favorite_active: bool,
 ) -> CoverHoverControls {
+    cover_hover_controls_with_favorite(size, play_label, favorite_active).0
+}
+
+pub(super) fn cover_hover_controls_with_favorite(
+    size: i32,
+    play_label: &str,
+    favorite_active: bool,
+) -> (CoverHoverControls, gtk::Button) {
     let mut controls = cover_play_hover_controls(size, play_label);
     let favorite = favorite_icon_button("Favorite");
     configure_action_button(&favorite, ActionButtonVariant::CoverCornerFavorite, None);
@@ -444,8 +452,8 @@ pub(super) fn cover_hover_controls(
     favorite.set_margin_end(COVER_CORNER_ACTION_INSET);
     favorite.set_visible(false);
     set_favorite_button_active(&favorite, favorite_active);
-    controls.favorite = Some(favorite);
-    controls
+    controls.favorite = Some(favorite.clone());
+    (controls, favorite)
 }
 
 pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHoverControls {
