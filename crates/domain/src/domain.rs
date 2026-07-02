@@ -51,6 +51,7 @@ opaque_id!(AlbumId, "album-");
 opaque_id!(TrackId, "track-");
 opaque_id!(ArtistId, "artist-");
 opaque_id!(GenreId, "genre-");
+opaque_id!(MoodId, "mood-");
 opaque_id!(PlaylistId, "playlist-");
 opaque_id!(SmartPlaylistId, "smart-playlist-");
 opaque_id!(ServerId, "server-");
@@ -196,6 +197,10 @@ pub struct Track {
     pub comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<u16>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moods: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -365,6 +370,8 @@ pub enum SmartPlaylistRuleField {
     Album,
     Comment,
     Genre,
+    Mood,
+    Bpm,
     Rating,
     Year,
     Favorite,
@@ -412,6 +419,7 @@ pub enum SmartPlaylistSortField {
     LastPlayed,
     PlayCount,
     SkipCount,
+    Bpm,
     Rating,
     Duration,
 }
@@ -472,6 +480,19 @@ pub struct Genre {
     pub id: GenreId,
     pub name: String,
     pub album_count: u32,
+    pub track_count: u32,
+    #[serde(default)]
+    pub duration_seconds: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_refs: Vec<ImageRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Mood {
+    pub id: MoodId,
+    pub name: String,
     pub track_count: u32,
     #[serde(default)]
     pub duration_seconds: u32,

@@ -2,6 +2,36 @@ use super::servers::*;
 use super::*;
 
 impl Store {
+    pub fn load_track_genre_names(&self, server_id: &ServerId) -> StoreResult<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT DISTINCT genre_name
+            FROM track_genres
+            WHERE server_id = ?1
+              AND TRIM(genre_name) != ''
+            ORDER BY genre_name COLLATE NOCASE
+            ",
+        )?;
+        collect_rows(
+            statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?,
+        )
+    }
+
+    pub fn load_track_mood_names(&self, server_id: &ServerId) -> StoreResult<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT DISTINCT mood_name
+            FROM track_moods
+            WHERE server_id = ?1
+              AND TRIM(mood_name) != ''
+            ORDER BY mood_name COLLATE NOCASE
+            ",
+        )?;
+        collect_rows(
+            statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?,
+        )
+    }
+
     pub fn load_genres(
         &self,
         server_id: &ServerId,

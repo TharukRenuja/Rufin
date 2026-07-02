@@ -37,6 +37,8 @@ pub(in crate::controller) fn library_track(
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 
@@ -261,6 +263,8 @@ pub(in crate::controller) fn restored_track() -> Track {
         source_format: None,
         comment: None,
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 

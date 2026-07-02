@@ -982,11 +982,7 @@ fn sidebar_item_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(tr(sidebar_route_item_title(entry.item)))
-        .subtitle(if entry.visible {
-            tr("Visible")
-        } else {
-            tr("Hidden")
-        })
+        .subtitle(sidebar_route_item_subtitle(&entry))
         .build();
 
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
@@ -1164,6 +1160,7 @@ fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Artists => "Artists",
         SidebarRouteItem::AlbumArtists => "AlbumArtists",
         SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Moods => "Moods",
         SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
         SidebarRouteItem::SmartPlaylists => "SmartPlaylists",
@@ -1183,8 +1180,21 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Artists => "Artists",
         SidebarRouteItem::AlbumArtists => "Album Artists",
         SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Moods => "Moods",
         SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
         SidebarRouteItem::SmartPlaylists => "Smart Playlists",
+    }
+}
+fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings) -> String {
+    let state = if entry.visible {
+        tr("Visible")
+    } else {
+        tr("Hidden")
+    };
+    if entry.item == SidebarRouteItem::Moods {
+        format!("{state} · {}", tr("Not supported for Jellyfin"))
+    } else {
+        state
     }
 }

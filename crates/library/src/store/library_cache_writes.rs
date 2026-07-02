@@ -86,6 +86,9 @@ impl Store {
                     if track_fields_changed(&existing, track) {
                         delta.tracks.fields.push(track.id.clone());
                     }
+                    if track_metadata_changed(&existing, track) {
+                        delta.tracks.metadata.push(track.id.clone());
+                    }
                     if existing.duration_seconds != track.duration_seconds
                         || existing.genres != track.genres
                     {
@@ -124,6 +127,9 @@ impl Store {
                         .genres
                         .links
                         .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
+                    if track.bpm.is_some() || !track.moods.is_empty() {
+                        delta.tracks.metadata.push(track.id.clone());
+                    }
                 }
             }
         }
@@ -715,9 +721,10 @@ impl Store {
                     year, release_date, date_added, last_played, play_count, user_rating,
                     duration_seconds, favorite, disc_number, track_number,
                     image_item_id, image_tag, image_origin, local_path, source_format, comment, skip_count,
+                    bpm,
                     sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
                 ON CONFLICT(server_id, track_id) DO UPDATE SET
                     album_id = excluded.album_id,
                     title = excluded.title,
@@ -741,11 +748,15 @@ impl Store {
                     source_format = excluded.source_format,
                     comment = excluded.comment,
                     skip_count = excluded.skip_count,
+                    bpm = excluded.bpm,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
             let mut delete_genres = connection.prepare(
                 "DELETE FROM track_genres WHERE server_id = ?1 AND track_id = ?2",
+            )?;
+            let mut delete_moods = connection.prepare(
+                "DELETE FROM track_moods WHERE server_id = ?1 AND track_id = ?2",
             )?;
             let mut delete_artist_links = connection.prepare(
                 "DELETE FROM track_artist_links WHERE server_id = ?1 AND track_id = ?2",
@@ -755,6 +766,14 @@ impl Store {
                 INSERT INTO track_genres (server_id, track_id, genre_name, sync_generation)
                 VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT(server_id, track_id, genre_name) DO UPDATE SET
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            let mut insert_mood = connection.prepare(
+                "
+                INSERT INTO track_moods (server_id, track_id, mood_name, sync_generation)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(server_id, track_id, mood_name) DO UPDATE SET
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -824,10 +843,12 @@ impl Store {
                     track.source_format.as_deref(),
                     track.comment.as_deref(),
                     track.skip_count.map(i64::from),
+                    track.bpm.map(i64::from),
                     generation,
                 ])?;
                 upsert_track_entity_data_on_connection(connection, server_id, track)?;
                 delete_genres.execute(params![server_id.as_str(), track.id.as_str()])?;
+                delete_moods.execute(params![server_id.as_str(), track.id.as_str()])?;
                 delete_artist_links.execute(params![server_id.as_str(), track.id.as_str()])?;
                 for genre in &track.genres {
                     if !genre.trim().is_empty() {
@@ -835,6 +856,16 @@ impl Store {
                             server_id.as_str(),
                             track.id.as_str(),
                             genre.trim(),
+                            generation,
+                        ])?;
+                    }
+                }
+                for mood in &track.moods {
+                    if !mood.trim().is_empty() {
+                        insert_mood.execute(params![
+                            server_id.as_str(),
+                            track.id.as_str(),
+                            mood.trim(),
                             generation,
                         ])?;
                     }
@@ -925,11 +956,16 @@ impl Store {
                 local_path TEXT,
                 source_format TEXT,
                 comment TEXT,
-                skip_count INTEGER
+                skip_count INTEGER,
+                bpm INTEGER
             ) WITHOUT ROWID;
             CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_genres (
                 track_id TEXT NOT NULL,
                 genre_name TEXT NOT NULL
+            );
+            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_moods (
+                track_id TEXT NOT NULL,
+                mood_name TEXT NOT NULL
             );
             CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_artists (
                 track_id TEXT NOT NULL,
@@ -940,6 +976,7 @@ impl Store {
             );
             DELETE FROM temp_local_stress_tracks;
             DELETE FROM temp_local_stress_track_genres;
+            DELETE FROM temp_local_stress_track_moods;
             DELETE FROM temp_local_stress_track_artists;
             ",
         )?;
@@ -950,17 +987,23 @@ impl Store {
                     track_id, base_track_id, album_id, title, artist, artist_id, album,
                     year, release_date, date_added, last_played, play_count, user_rating,
                     duration_seconds, favorite, disc_number, track_number, image_item_id,
-                    image_tag, image_origin, local_path, source_format, comment, skip_count
+                    image_tag, image_origin, local_path, source_format, comment, skip_count, bpm
                 )
                 VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
                 )
                 ",
             )?;
             let mut insert_genre = connection.prepare(
                 "
                 INSERT INTO temp_local_stress_track_genres (track_id, genre_name)
+                VALUES (?1, ?2)
+                ",
+            )?;
+            let mut insert_mood = connection.prepare(
+                "
+                INSERT INTO temp_local_stress_track_moods (track_id, mood_name)
                 VALUES (?1, ?2)
                 ",
             )?;
@@ -1003,11 +1046,18 @@ impl Store {
                     track.source_format.as_deref(),
                     track.comment.as_deref(),
                     track.skip_count.map(i64::from),
+                    track.bpm.map(i64::from),
                 ])?;
                 for genre in &track.genres {
                     let genre = genre.trim();
                     if !genre.is_empty() {
                         insert_genre.execute(params![track.id.as_str(), genre])?;
+                    }
+                }
+                for mood in &track.moods {
+                    let mood = mood.trim();
+                    if !mood.is_empty() {
+                        insert_mood.execute(params![track.id.as_str(), mood])?;
                     }
                 }
                 for (position, artist) in track_artist_credits(track).iter().enumerate() {
@@ -1024,6 +1074,7 @@ impl Store {
         for sql in [
             "DELETE FROM track_music_folders WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
             "DELETE FROM track_genres WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
+            "DELETE FROM track_moods WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
             "DELETE FROM track_artist_links WHERE server_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
             "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'track' AND item_id IN (SELECT track_id FROM temp_local_stress_tracks)",
             "DELETE FROM entity_identity_keys WHERE server_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
@@ -1039,12 +1090,12 @@ impl Store {
                 year, release_date, date_added, last_played, play_count, user_rating,
                 duration_seconds, favorite, disc_number, track_number,
                 image_item_id, image_tag, image_origin, local_path, source_format, comment,
-                skip_count, sync_generation
+                skip_count, bpm, sync_generation
             )
             SELECT ?1, track_id, album_id, title, artist, artist_id, album, year, release_date,
                    date_added, last_played, play_count, user_rating, duration_seconds, favorite,
                    disc_number, track_number, image_item_id, image_tag, image_origin, local_path,
-                   source_format, comment, skip_count, ?2
+                   source_format, comment, skip_count, bpm, ?2
             FROM temp_local_stress_tracks stress
             WHERE 1
             ON CONFLICT(server_id, track_id) DO UPDATE SET
@@ -1070,6 +1121,7 @@ impl Store {
                 source_format = excluded.source_format,
                 comment = excluded.comment,
                 skip_count = excluded.skip_count,
+                bpm = excluded.bpm,
                 sync_generation = excluded.sync_generation
             ",
             params![server_id.as_str(), generation],
@@ -1094,6 +1146,17 @@ impl Store {
             FROM temp_local_stress_track_genres
             WHERE 1
             ON CONFLICT(server_id, track_id, genre_name) DO UPDATE SET
+                sync_generation = excluded.sync_generation
+            ",
+            params![server_id.as_str(), generation],
+        )?;
+        connection.execute(
+            "
+            INSERT INTO track_moods (server_id, track_id, mood_name, sync_generation)
+            SELECT DISTINCT ?1, track_id, mood_name, ?2
+            FROM temp_local_stress_track_moods
+            WHERE 1
+            ON CONFLICT(server_id, track_id, mood_name) DO UPDATE SET
                 sync_generation = excluded.sync_generation
             ",
             params![server_id.as_str(), generation],
@@ -1867,7 +1930,8 @@ impl Store {
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
                        duration_seconds, favorite, disc_number, track_number,
-                       image_item_id, image_tag, local_path, source_format, comment, skip_count
+                       image_item_id, image_tag, local_path, source_format, comment, skip_count,
+                       bpm
                 FROM tracks
                 WHERE server_id = ?1 AND track_id = ?2
                 ",
@@ -2041,12 +2105,17 @@ fn album_fields_changed(left: &Album, right: &Album) -> bool {
 
 fn track_changed(left: &Track, right: &Track) -> bool {
     track_fields_changed(left, right)
+        || track_metadata_changed(left, right)
         || track_stats_changed(left, right)
         || left.album_id != right.album_id
         || track_artist_links_changed(left, right)
         || left.genres != right.genres
         || left.favorite != right.favorite
         || left.image_ref != right.image_ref
+}
+
+fn track_metadata_changed(left: &Track, right: &Track) -> bool {
+    left.bpm != right.bpm || left.moods != right.moods
 }
 
 fn track_fields_changed(left: &Track, right: &Track) -> bool {

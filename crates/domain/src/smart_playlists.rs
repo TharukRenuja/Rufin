@@ -21,12 +21,14 @@ pub struct SmartPlaylistRuleOp {
     pub value_kind: SmartPlaylistRuleValueKind,
 }
 
-const RULE_FIELDS: [SmartPlaylistRuleField; 13] = [
+const RULE_FIELDS: [SmartPlaylistRuleField; 15] = [
     SmartPlaylistRuleField::Title,
     SmartPlaylistRuleField::Artist,
     SmartPlaylistRuleField::Album,
     SmartPlaylistRuleField::Comment,
     SmartPlaylistRuleField::Genre,
+    SmartPlaylistRuleField::Mood,
+    SmartPlaylistRuleField::Bpm,
     SmartPlaylistRuleField::Rating,
     SmartPlaylistRuleField::Year,
     SmartPlaylistRuleField::Favorite,
@@ -37,7 +39,7 @@ const RULE_FIELDS: [SmartPlaylistRuleField; 13] = [
     SmartPlaylistRuleField::DateAdded,
 ];
 
-const SORT_FIELDS: [SmartPlaylistSortField; 10] = [
+const SORT_FIELDS: [SmartPlaylistSortField; 11] = [
     SmartPlaylistSortField::Title,
     SmartPlaylistSortField::Artist,
     SmartPlaylistSortField::Album,
@@ -46,6 +48,7 @@ const SORT_FIELDS: [SmartPlaylistSortField; 10] = [
     SmartPlaylistSortField::LastPlayed,
     SmartPlaylistSortField::PlayCount,
     SmartPlaylistSortField::SkipCount,
+    SmartPlaylistSortField::Bpm,
     SmartPlaylistSortField::Rating,
     SmartPlaylistSortField::Duration,
 ];
@@ -208,9 +211,10 @@ pub fn rule_ops(field: SmartPlaylistRuleField) -> &'static [SmartPlaylistRuleOp]
         | SmartPlaylistRuleField::Artist
         | SmartPlaylistRuleField::Album
         | SmartPlaylistRuleField::Comment => &TEXT_OPS,
-        SmartPlaylistRuleField::Genre => &GENRE_OPS,
+        SmartPlaylistRuleField::Genre | SmartPlaylistRuleField::Mood => &GENRE_OPS,
         SmartPlaylistRuleField::Rating => &RATING_OPS,
         SmartPlaylistRuleField::Year
+        | SmartPlaylistRuleField::Bpm
         | SmartPlaylistRuleField::PlayCount
         | SmartPlaylistRuleField::SkipCount => &NUMBER_OPS,
         SmartPlaylistRuleField::Favorite | SmartPlaylistRuleField::Played => &BOOL_OPS,
@@ -309,6 +313,7 @@ pub fn number_bounds(field: SmartPlaylistRuleField) -> (i64, i64, i64) {
     match field {
         SmartPlaylistRuleField::Rating => (0, 5, 4),
         SmartPlaylistRuleField::Year => (0, 3000, 2000),
+        SmartPlaylistRuleField::Bpm => (0, 400, 120),
         SmartPlaylistRuleField::PlayCount | SmartPlaylistRuleField::SkipCount => (0, 999_999, 1),
         _ => (0, 999_999, 0),
     }

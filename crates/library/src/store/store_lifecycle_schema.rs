@@ -2,11 +2,18 @@ use super::servers::*;
 use super::*;
 use std::time::Duration;
 
-const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[SchemaMigration {
-    from_version: MIN_SUPPORTED_SCHEMA_VERSION,
-    run: migrate_to_genre_duration_schema,
-}];
+const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
+    SchemaMigration {
+        from_version: MIN_SUPPORTED_SCHEMA_VERSION,
+        run: migrate_to_genre_duration_schema,
+    },
+    SchemaMigration {
+        from_version: 19,
+        run: migrate_to_track_mood_bpm_schema,
+    },
+];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
+const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
 const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
@@ -28,6 +35,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "smart_playlist_seed_state",
     "album_genres",
     "track_genres",
+    "track_moods",
     "album_artist_links",
     "track_artist_links",
     "playlist_tracks",
@@ -75,7 +83,9 @@ const SUPPORTED_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("genres", "image_origin"),
     ("playlists", "image_origin"),
 ];
-const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
+const GENRE_DURATION_SCHEMA_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
+const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] =
+    &[("genres", "duration_seconds"), ("tracks", "bpm")];
 const IMAGE_ORIGIN_TABLES: &[&str] = &[
     "albums",
     "tracks",
@@ -119,6 +129,14 @@ fn schema_migration_path(
     Some(path)
 }
 
+fn previous_schema_tables() -> Vec<&'static str> {
+    SCHEMA_TABLES
+        .iter()
+        .copied()
+        .filter(|table| *table != "track_moods")
+        .collect()
+}
+
 fn migrate_to_genre_duration_schema(store: &Store) -> StoreResult<()> {
     store.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
     store.connection.execute(
@@ -134,6 +152,24 @@ fn migrate_to_genre_duration_schema(store: &Store) -> StoreResult<()> {
         ), 0)
         ",
         [],
+    )?;
+    Ok(())
+}
+
+fn migrate_to_track_mood_bpm_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column("tracks", "bpm", "INTEGER")?;
+    store.connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS track_moods (
+            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+            track_id TEXT NOT NULL,
+            mood_name TEXT NOT NULL,
+            sync_generation INTEGER NOT NULL,
+            PRIMARY KEY (server_id, track_id, mood_name)
+        );
+        CREATE INDEX IF NOT EXISTS track_moods_server_mood_idx
+            ON track_moods(server_id, mood_name, track_id);
+        ",
     )?;
     Ok(())
 }
@@ -240,8 +276,11 @@ impl Store {
     fn schema_is_complete_for_version(&self, version: i64) -> StoreResult<bool> {
         match version {
             MIN_SUPPORTED_SCHEMA_VERSION => {
-                self.schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)
+                self.schema_has_required_parts(&previous_schema_tables(), SUPPORTED_SCHEMA_COLUMNS)
             }
+            GENRE_DURATION_SCHEMA_VERSION => Ok(self
+                .schema_has_required_parts(&previous_schema_tables(), SUPPORTED_SCHEMA_COLUMNS)?
+                && self.schema_has_required_parts(&[], GENRE_DURATION_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -469,6 +508,7 @@ impl Store {
                 source_format TEXT,
                 comment TEXT,
                 skip_count INTEGER,
+                bpm INTEGER,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, track_id)
             );
@@ -558,6 +598,13 @@ impl Store {
                 genre_name TEXT NOT NULL,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, track_id, genre_name)
+            );
+            CREATE TABLE IF NOT EXISTS track_moods (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                mood_name TEXT NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, track_id, mood_name)
             );
             CREATE TABLE IF NOT EXISTS album_artist_links (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
@@ -686,6 +733,8 @@ impl Store {
                 ON album_genres(server_id, genre_name, album_id);
             CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
                 ON track_genres(server_id, genre_name, track_id);
+            CREATE INDEX IF NOT EXISTS track_moods_server_mood_idx
+                ON track_moods(server_id, mood_name, track_id);
             CREATE INDEX IF NOT EXISTS collection_cover_refs_lookup_idx
                 ON collection_cover_refs(server_id, collection_type, collection_id, position);
             CREATE INDEX IF NOT EXISTS album_artist_links_server_artist_idx
@@ -704,6 +753,7 @@ impl Store {
         self.ensure_column("tracks", "source_format", "TEXT")?;
         self.ensure_column("tracks", "comment", "TEXT")?;
         self.ensure_column("tracks", "skip_count", "INTEGER")?;
+        self.ensure_column("tracks", "bpm", "INTEGER")?;
         self.ensure_column("albums", "release_types_json", "TEXT NOT NULL DEFAULT '[]'")?;
         self.ensure_column("albums", "is_compilation", "INTEGER")?;
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;

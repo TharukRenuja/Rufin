@@ -283,6 +283,33 @@ fn settings_migrate_preferences() {
             .iter()
             .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
     );
+    let genres = settings
+        .sidebar
+        .route_items
+        .iter()
+        .position(|entry| entry.item == SidebarRouteItem::Genres)
+        .expect("genres item");
+    let moods = settings
+        .sidebar
+        .route_items
+        .iter()
+        .position(|entry| entry.item == SidebarRouteItem::Moods)
+        .expect("moods item");
+    let folders = settings
+        .sidebar
+        .route_items
+        .iter()
+        .position(|entry| entry.item == SidebarRouteItem::Folders)
+        .expect("folders item");
+    assert!(genres < moods);
+    assert!(moods < folders);
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::Moods && !entry.visible)
+    );
 }
 
 #[test]

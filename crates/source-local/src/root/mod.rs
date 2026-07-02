@@ -1549,6 +1549,8 @@ fn cue_scanned_track(
             source_format: backing_track.track.source_format.clone(),
             comment: None,
             skip_count: None,
+            bpm: backing_track.track.bpm,
+            moods: backing_track.track.moods.clone(),
         },
         album_artist,
         musicbrainz_album_id: backing_track.musicbrainz_album_id.clone(),
@@ -1850,6 +1852,8 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzRecordingId));
     let musicbrainz_release_track_id =
         tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzTrackId));
+    let bpm = tag_bpm(tag);
+    let moods = tag_moods(tag);
     let cover = path.parent().and_then(folder_cover).map(local_file_cover);
     let embedded_cover_path = cover.is_none().then(|| path.clone());
     let year = tag
@@ -1899,6 +1903,8 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
                 .map(ToString::to_string),
             comment,
             skip_count: None,
+            bpm,
+            moods,
         },
         album_artist,
         musicbrainz_album_id,
@@ -1950,6 +1956,26 @@ fn tag_mbids(tag: Option<&Tag>, key: ItemKey) -> Vec<String> {
             .into_iter()
             .flat_map(|value| split_credit_names(&value))
             .filter_map(|value| clean_mbid(&value))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default()
+}
+
+fn tag_bpm(tag: Option<&Tag>) -> Option<u16> {
+    let tag = tag?;
+    tag_values(tag, ItemKey::IntegerBpm)
+        .into_iter()
+        .chain(tag_values(tag, ItemKey::Bpm))
+        .find_map(|value| clean_bpm(&value))
+}
+
+fn tag_moods(tag: Option<&Tag>) -> Vec<String> {
+    tag.map(|tag| {
+        tag_values(tag, ItemKey::Mood)
+            .into_iter()
+            .flat_map(|value| split_credit_names(&value))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
     })
     .unwrap_or_default()
@@ -2024,6 +2050,14 @@ fn clean_mbid(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_string())
+}
+
+fn clean_bpm(value: &str) -> Option<u16> {
+    let rounded = value.trim().parse::<f64>().ok()?.round();
+    if !(1.0..=f64::from(u16::MAX)).contains(&rounded) {
+        return None;
+    }
+    Some(rounded as u16)
 }
 
 fn local_scan_parse_options() -> ParseOptions {

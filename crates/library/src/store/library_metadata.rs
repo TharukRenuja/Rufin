@@ -844,12 +844,33 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn attach_track_moods(
+        &self,
+        server_id: &ServerId,
+        tracks: &mut [Track],
+    ) -> StoreResult<()> {
+        if tracks.is_empty() {
+            return Ok(());
+        }
+        let ids = tracks
+            .iter()
+            .map(|track| track.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        let moods =
+            self.load_named_links(server_id, "track_moods", "track_id", "mood_name", &ids)?;
+        for track in tracks {
+            track.moods = moods.get(track.id.as_str()).cloned().unwrap_or_default();
+        }
+        Ok(())
+    }
+
     pub(super) fn attach_track_metadata(
         &self,
         server_id: &ServerId,
         tracks: &mut [Track],
     ) -> StoreResult<()> {
         self.attach_track_genres(server_id, tracks)?;
+        self.attach_track_moods(server_id, tracks)?;
         if tracks.is_empty() {
             return Ok(());
         }
@@ -1125,6 +1146,17 @@ impl Store {
         id_column: &str,
         ids: &[String],
     ) -> StoreResult<HashMap<String, Vec<String>>> {
+        self.load_named_links(server_id, table, id_column, "genre_name", ids)
+    }
+
+    pub(super) fn load_named_links(
+        &self,
+        server_id: &ServerId,
+        table: &str,
+        id_column: &str,
+        name_column: &str,
+        ids: &[String],
+    ) -> StoreResult<HashMap<String, Vec<String>>> {
         let mut by_item = HashMap::<String, Vec<String>>::new();
         for chunk in ids.chunks(500) {
             let placeholders = std::iter::repeat_n("?", chunk.len())
@@ -1132,11 +1164,11 @@ impl Store {
                 .join(", ");
             let sql = format!(
                 "
-                SELECT {id_column}, genre_name
+                SELECT {id_column}, {name_column}
                 FROM {table}
                 WHERE server_id = ?
                   AND {id_column} IN ({placeholders})
-                ORDER BY genre_name COLLATE NOCASE
+                ORDER BY {name_column} COLLATE NOCASE
                 "
             );
             let mut values = Vec::with_capacity(chunk.len() + 1);
@@ -1147,8 +1179,8 @@ impl Store {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
             for row in rows {
-                let (item_id, genre_name) = row?;
-                by_item.entry(item_id).or_default().push(genre_name);
+                let (item_id, name) = row?;
+                by_item.entry(item_id).or_default().push(name);
             }
         }
         Ok(by_item)

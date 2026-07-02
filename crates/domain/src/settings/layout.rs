@@ -182,12 +182,13 @@ pub enum SidebarRouteItem {
     Artists,
     AlbumArtists,
     Genres,
+    Moods,
     Folders,
     Playlists,
     SmartPlaylists,
 }
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 10] {
+    pub fn all() -> [Self; 11] {
         [
             Self::Home,
             Self::Favorites,
@@ -196,6 +197,7 @@ impl SidebarRouteItem {
             Self::Artists,
             Self::AlbumArtists,
             Self::Genres,
+            Self::Moods,
             Self::Folders,
             Self::Playlists,
             Self::SmartPlaylists,
@@ -203,7 +205,7 @@ impl SidebarRouteItem {
     }
 
     fn default_visible(self) -> bool {
-        true
+        !matches!(self, Self::Moods)
     }
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -241,10 +243,13 @@ impl SidebarSettings {
         }
         for item in SidebarRouteItem::all() {
             if !sanitized.iter().any(|entry| entry.item == item) {
-                sanitized.push(SidebarRouteItemSettings {
-                    item,
-                    visible: item.default_visible(),
-                });
+                insert_sidebar_route_item_in_default_order(
+                    &mut sanitized,
+                    SidebarRouteItemSettings {
+                        item,
+                        visible: item.default_visible(),
+                    },
+                );
             }
         }
         if !sanitized.iter().any(|entry| entry.visible)
@@ -256,6 +261,26 @@ impl SidebarSettings {
         }
         self.route_items = sanitized;
     }
+}
+fn insert_sidebar_route_item_in_default_order(
+    items: &mut Vec<SidebarRouteItemSettings>,
+    entry: SidebarRouteItemSettings,
+) {
+    let default_order = SidebarRouteItem::all();
+    let Some(entry_index) = default_order.iter().position(|item| *item == entry.item) else {
+        items.push(entry);
+        return;
+    };
+    let insert_index = items
+        .iter()
+        .position(|existing| {
+            default_order
+                .iter()
+                .position(|item| *item == existing.item)
+                .is_some_and(|existing_index| existing_index > entry_index)
+        })
+        .unwrap_or(items.len());
+    items.insert(insert_index, entry);
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum LibrarySourceSelection {
@@ -518,17 +543,19 @@ pub enum LibraryListKey {
     Tracks,
     FavoriteTracks,
     Genres,
+    Moods,
     Playlists,
     SmartPlaylists,
     AlbumDetailTracks,
     ArtistAlbums,
     ArtistTracks,
     GenreTracks,
+    MoodTracks,
     PlaylistTracks,
     SmartPlaylistTracks,
 }
 impl LibraryListKey {
-    pub fn all() -> [Self; 14] {
+    pub fn all() -> [Self; 16] {
         [
             Self::Albums,
             Self::Artists,
@@ -536,12 +563,14 @@ impl LibraryListKey {
             Self::Tracks,
             Self::FavoriteTracks,
             Self::Genres,
+            Self::Moods,
             Self::Playlists,
             Self::SmartPlaylists,
             Self::AlbumDetailTracks,
             Self::ArtistAlbums,
             Self::ArtistTracks,
             Self::GenreTracks,
+            Self::MoodTracks,
             Self::PlaylistTracks,
             Self::SmartPlaylistTracks,
         ]
@@ -555,12 +584,14 @@ impl LibraryListKey {
             Self::Tracks => msgid("Tracks"),
             Self::FavoriteTracks => msgid("Favorites"),
             Self::Genres => msgid("Genres"),
+            Self::Moods => msgid("Moods"),
             Self::Playlists => msgid("Playlists"),
             Self::SmartPlaylists => msgid("Smart playlists"),
             Self::AlbumDetailTracks => msgid("Album tracks"),
             Self::ArtistAlbums => msgid("Artist albums"),
             Self::ArtistTracks => msgid("Artist tracks"),
             Self::GenreTracks => msgid("Genre tracks"),
+            Self::MoodTracks => msgid("Mood tracks"),
             Self::PlaylistTracks => msgid("Playlist tracks"),
             Self::SmartPlaylistTracks => msgid("Smart playlist tracks"),
         }
@@ -581,11 +612,13 @@ impl LibraryListKey {
             | Self::AlbumDetailTracks
             | Self::ArtistTracks
             | Self::GenreTracks
+            | Self::MoodTracks
             | Self::PlaylistTracks
             | Self::SmartPlaylistTracks => LibraryLayout::Row,
             Self::Artists
             | Self::AlbumArtists
             | Self::Genres
+            | Self::Moods
             | Self::Playlists
             | Self::SmartPlaylists
             | Self::ArtistAlbums => LibraryLayout::Grid,
@@ -769,10 +802,12 @@ impl LibraryListSettings {
                 | LibraryListKey::Tracks
                 | LibraryListKey::FavoriteTracks
                 | LibraryListKey::Genres
+                | LibraryListKey::Moods
                 | LibraryListKey::Playlists
                 | LibraryListKey::SmartPlaylists
                 | LibraryListKey::AlbumDetailTracks
                 | LibraryListKey::GenreTracks
+                | LibraryListKey::MoodTracks
                 | LibraryListKey::PlaylistTracks
                 | LibraryListKey::SmartPlaylistTracks => {}
             }
@@ -806,11 +841,13 @@ impl LibraryListSettings {
                 | LibraryListKey::AlbumArtists
                 | LibraryListKey::Tracks
                 | LibraryListKey::Genres
+                | LibraryListKey::Moods
                 | LibraryListKey::Playlists
                 | LibraryListKey::SmartPlaylists
                 | LibraryListKey::AlbumDetailTracks
                 | LibraryListKey::ArtistAlbums
                 | LibraryListKey::GenreTracks
+                | LibraryListKey::MoodTracks
                 | LibraryListKey::PlaylistTracks
                 | LibraryListKey::SmartPlaylistTracks => {}
             }
@@ -862,6 +899,12 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
+        LibraryListKey::Moods => &[
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
         LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => &[
             LibraryField::RowIndex,
             LibraryField::Image,
@@ -874,6 +917,7 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
+        | LibraryListKey::MoodTracks
         | LibraryListKey::PlaylistTracks
         | LibraryListKey::SmartPlaylistTracks => &[
             LibraryField::RowIndex,
@@ -919,6 +963,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::UserRating,
         ],
         LibraryListKey::Genres => &[LibraryField::AlbumCount, LibraryField::SongCount],
+        LibraryListKey::Moods => &[LibraryField::SongCount, LibraryField::Duration],
         LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => {
             &[LibraryField::SongCount, LibraryField::Duration]
         }
@@ -927,6 +972,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
+        | LibraryListKey::MoodTracks
         | LibraryListKey::PlaylistTracks
         | LibraryListKey::SmartPlaylistTracks => &[
             LibraryField::Artist,

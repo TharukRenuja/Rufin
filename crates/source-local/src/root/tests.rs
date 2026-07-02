@@ -443,6 +443,36 @@ fn musicbrainz_ids_become_optional_identity_data() {
     assert!(credit.id.as_str().contains(artist_id));
 }
 
+#[test]
+fn local_track_tags_include_mood_and_bpm() {
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.push_unchecked(TagItem::new(
+        ItemKey::Mood,
+        ItemValue::Text("Energetic; Focus".to_string()),
+    ));
+    tag.push_unchecked(TagItem::new(
+        ItemKey::IntegerBpm,
+        ItemValue::Text("128".to_string()),
+    ));
+
+    assert_eq!(
+        tag_moods(Some(&tag)),
+        vec!["Energetic".to_string(), "Focus".to_string()]
+    );
+    assert_eq!(tag_bpm(Some(&tag)), Some(128));
+}
+
+#[test]
+fn local_track_bpm_accepts_decimal_tag_values() {
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.push_unchecked(TagItem::new(
+        ItemKey::Bpm,
+        ItemValue::Text("127.6".to_string()),
+    ));
+
+    assert_eq!(tag_bpm(Some(&tag)), Some(128));
+}
+
 #[tokio::test]
 async fn manifest_scan_update() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -988,6 +1018,8 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
             source_format: Some("flac".to_string()),
             comment: None,
             skip_count: None,
+            bpm: None,
+            moods: Vec::new(),
         },
         album_artist: "Example Artist".to_string(),
         musicbrainz_album_id: None,

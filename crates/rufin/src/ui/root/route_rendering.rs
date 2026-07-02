@@ -98,6 +98,13 @@ impl Shell {
             Route::GenreDetail(genre_id) => {
                 RouteView::settled_width(self.genre_detail_view(genre_id))
             }
+            Route::Moods => {
+                RouteView::new(self.placeholder_view("Moods", "Not supported for Jellyfin"))
+                    .with_resize(RouteResizePolicy::Stable)
+            }
+            Route::MoodDetail(_) => RouteView::settled_width(
+                self.placeholder_view("Mood", "Not supported for Jellyfin"),
+            ),
             Route::Folders { path } => RouteView::settled_width(self.folders_view(path)),
             Route::Playlists => RouteView::new(self.library_playlists_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Playlists)),
@@ -359,6 +366,7 @@ impl Shell {
                 }
                 Route::AlbumArtists => self.library_layout_signature(LibraryListKey::AlbumArtists),
                 Route::Genres => self.library_layout_signature(LibraryListKey::Genres),
+                Route::Moods => self.library_layout_signature(LibraryListKey::Moods),
                 Route::Playlists => self.library_layout_signature(LibraryListKey::Playlists),
                 Route::SmartPlaylists => {
                     self.library_layout_signature(LibraryListKey::SmartPlaylists)
@@ -493,6 +501,10 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || track_table_delta_affects(delta)
                 || !delta.albums.is_empty()
         }
+        Route::Moods => !delta.tracks.metadata.is_empty() || !delta.tracks.added.is_empty(),
+        Route::MoodDetail(_) => {
+            track_table_delta_affects(delta) || !delta.tracks.metadata.is_empty()
+        }
         Route::Folders { .. } => delta.folders_changed || track_table_delta_affects(delta),
         Route::Playlists => {
             !delta.playlists.added.is_empty()
@@ -540,7 +552,10 @@ fn smart_playlist_track_delta_affects(
     smart_playlist_id: Option<&SmartPlaylistId>,
     delta: &LibraryDelta,
 ) -> bool {
-    if track_table_delta_affects(delta) || !delta.tracks.stats.is_empty() {
+    if track_table_delta_affects(delta)
+        || !delta.tracks.stats.is_empty()
+        || !delta.tracks.metadata.is_empty()
+    {
         return true;
     }
     if delta.tracks.skip_stats.is_empty() {

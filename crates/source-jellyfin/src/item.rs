@@ -211,6 +211,8 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         source_format,
         comment: item.overview.filter(|value| !value.trim().is_empty()),
         skip_count: None,
+        bpm: None,
+        moods: Vec::new(),
     }
 }
 

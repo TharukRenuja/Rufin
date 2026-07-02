@@ -506,7 +506,7 @@ impl Store {
                    t.release_date, t.date_added, {last_played} AS last_played,
                    {play_count} AS play_count, t.user_rating, t.duration_seconds, t.favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag,
-                   t.local_path, t.source_format, t.comment, {skip_count} AS skip_count
+                   t.local_path, t.source_format, t.comment, {skip_count} AS skip_count, t.bpm
             {from}
             WHERE {where_clause}
             ORDER BY {order_by}
@@ -520,7 +520,9 @@ impl Store {
             order_by = query.order_by,
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let tracks = collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)?;
+        let mut tracks =
+            collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)?;
+        self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total))
     }
 
@@ -755,7 +757,13 @@ fn compile_rule(rule: &SmartPlaylistRule) -> SmartSql {
         SmartPlaylistRuleField::Artist => compile_text_rule("t.artist", rule),
         SmartPlaylistRuleField::Album => compile_text_rule("t.album", rule),
         SmartPlaylistRuleField::Comment => compile_text_rule("COALESCE(t.comment, '')", rule),
-        SmartPlaylistRuleField::Genre => compile_genre_rule(rule),
+        SmartPlaylistRuleField::Genre => {
+            compile_linked_text_rule("track_genres", "genre_name", "tg", rule)
+        }
+        SmartPlaylistRuleField::Mood => {
+            compile_linked_text_rule("track_moods", "mood_name", "tm", rule)
+        }
+        SmartPlaylistRuleField::Bpm => compile_number_rule("t.bpm", true, rule),
         SmartPlaylistRuleField::Rating => compile_number_rule("t.user_rating", true, rule),
         SmartPlaylistRuleField::Year => compile_number_rule("t.year", false, rule),
         SmartPlaylistRuleField::Favorite => compile_bool_rule("t.favorite", rule),
@@ -823,7 +831,12 @@ fn compile_text_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
     }
 }
 
-fn compile_genre_rule(rule: &SmartPlaylistRule) -> SmartSql {
+fn compile_linked_text_rule(
+    table: &str,
+    name_column: &str,
+    alias: &str,
+    rule: &SmartPlaylistRule,
+) -> SmartSql {
     let Some(value) = smart_policy::text_value(rule) else {
         return false_sql();
     };
@@ -845,17 +858,17 @@ fn compile_genre_rule(rule: &SmartPlaylistRule) -> SmartSql {
         | SmartPlaylistRuleOperator::IsNotEmpty => return false_sql(),
     };
     let comparison = if operator == "LIKE" {
-        "LOWER(tg.genre_name) LIKE ? ESCAPE '\\'"
+        format!("LOWER({alias}.{name_column}) LIKE ? ESCAPE '\\'")
     } else {
-        "LOWER(tg.genre_name) = ?"
+        format!("LOWER({alias}.{name_column}) = ?")
     };
     let exists = format!(
         "
         EXISTS (
             SELECT 1
-            FROM track_genres tg
-            WHERE tg.server_id = t.server_id
-              AND tg.track_id = t.track_id
+            FROM {table} {alias}
+            WHERE {alias}.server_id = t.server_id
+              AND {alias}.track_id = t.track_id
               AND {comparison}
         )
         "
@@ -1062,12 +1075,14 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
         SmartPlaylistSortField::LastPlayed => smart_last_played_expr(),
         SmartPlaylistSortField::PlayCount => smart_play_count_expr(),
         SmartPlaylistSortField::SkipCount => smart_skip_count_expr(),
+        SmartPlaylistSortField::Bpm => "t.bpm".to_string(),
         SmartPlaylistSortField::Rating => "t.user_rating".to_string(),
         SmartPlaylistSortField::Duration => "t.duration_seconds".to_string(),
     };
     let missing = match field {
         SmartPlaylistSortField::DateAdded
         | SmartPlaylistSortField::LastPlayed
+        | SmartPlaylistSortField::Bpm
         | SmartPlaylistSortField::Rating => format!("{expression} IS NULL ASC, "),
         SmartPlaylistSortField::Title
         | SmartPlaylistSortField::Artist
@@ -1425,5 +1440,68 @@ mod tests {
 
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, first.id);
+    }
+
+    #[test]
+    fn smart_filter_mood_and_bpm() {
+        let store = Store::open_memory().expect("store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let album = album(1);
+        let mut first = track(1, &album);
+        first.title = "Fast Focus".to_string();
+        first.bpm = Some(128);
+        first.moods = vec!["Focused".to_string(), "Energetic".to_string()];
+        let mut second = track(2, &album);
+        second.title = "Slow Focus".to_string();
+        second.bpm = Some(82);
+        second.moods = vec!["Focused".to_string()];
+        let mut third = track(3, &album);
+        third.title = "Fast Calm".to_string();
+        third.bpm = Some(130);
+        third.moods = vec!["Calm".to_string()];
+        store
+            .upsert_albums(&saved.server.id, &[album], 1)
+            .expect("album");
+        store
+            .upsert_tracks(&saved.server.id, &[first.clone(), second, third], 1)
+            .expect("tracks");
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: vec![
+                    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                        field: SmartPlaylistRuleField::Mood,
+                        operator: SmartPlaylistRuleOperator::Equals,
+                        value: Some(SmartPlaylistRuleValue::Text("focused".to_string())),
+                    }),
+                    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                        field: SmartPlaylistRuleField::Bpm,
+                        operator: SmartPlaylistRuleOperator::Between,
+                        value: Some(SmartPlaylistRuleValue::NumberRange { min: 120, max: 140 }),
+                    }),
+                ],
+            },
+            sort_field: SmartPlaylistSortField::Bpm,
+            descending: false,
+            limit: None,
+        };
+        let smart_id = SmartPlaylistId::new("custom:mood-bpm");
+        store
+            .save_smart_playlist(&saved.server.id, &smart_id, "Mood BPM", &definition)
+            .expect("save smart");
+
+        let detail = store
+            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .expect("detail")
+            .expect("detail");
+
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, first.id);
+        assert_eq!(detail.tracks[0].bpm, Some(128));
+        assert_eq!(
+            detail.tracks[0].moods,
+            vec!["Energetic".to_string(), "Focused".to_string()]
+        );
     }
 }
