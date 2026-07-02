@@ -2,13 +2,13 @@
 
 ## Security Stance
 
-Rufin is a desktop music client, directly built for Flatpak, Nix and AUR. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP for funsies)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
+Rufin is a desktop music client, directly built for Flatpak, nixpkgs and AUR. Data security is taken seriously within the expectations of a music client. If you find a security or privacy issue, you can email to `screwygit@proton.me` [(PGP for funsies)](https://raw.githubusercontent.com/screwys/screwys/refs/heads/main/screwygit-pgp-key.asc).
 
 Memory unsafe code is strictly forbidden, and Rufin does not compile it. Rust dependencies are checked with cargo-deny, including advisories, license policy and source policy. Dependency updates are held for 7 days before our own Renovate bot opens them, generated Flatpak and Nix dependency artifacts are checked when dependencies change.
 
 Release tags are signed via maintainer GPG key. Release builds verify the tag signature against the public key in `.github/release-gpg.pub` before building packages.
 
-CI caches are only used to fasten the builds. PRs can restore the Rust build cache, but cache writes are limited to pushes to `main`, and cached binaries are disabled. Nix/Cachix cache write is limited to `main` or releases, with releases verifying the signed release tag first.
+CI caches are only used to speed up builds. PRs can restore the Rust build cache, but cache writes are limited to pushes to `main`, and cached binaries are disabled. Nix/Cachix cache write is limited to `main` or releases, with releases verifying the signed release tag first.
 
 Right now there is one allowed RustSec advisory for `paste`, a dependency of `lofty`. This does not mean the package is malicious, but it is just not maintained anymore, as it is considered feature-complete ([see](https://github.com/rustsec/advisory-db/pull/2215#issuecomment-2709315704)).
 
@@ -32,7 +32,7 @@ Last.fm (only if API key is configured)
 
 Cover Art Archive (default, cover arts only)
 
-MusicBrainz is used for album identity, release types and cover candidates. Cover Art Archive is used for cover images from MusicBrainz release and release-group IDs. Last.fm is used as a cover lookup fallback when configured.
+MusicBrainz is used for most of the metadata. Cover Art Archive is used for cover images and some metadata. Last.fm is used as a cover lookup fallback when configured.
 
 External site link settings in preferences only control whether Last.fm, MusicBrainz and server links are shown on detail pages. They do not control metadata lookup, and Last.fm links can be built from artist and album names without contacting Last.fm.
 

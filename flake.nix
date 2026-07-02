@@ -157,7 +157,6 @@
                 just
                 jq
                 pkg-config
-                rust-analyzer
                 rustc
                 rustfmt
               ]
