@@ -345,7 +345,7 @@ pub(in crate::controller) fn lrclib_automatic_search(
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
     lrclib_search_with_urls(
-        lrclib_automatic_search_urls(artist_name, track_name)?,
+        lrclib_search_urls(artist_name, track_name)?,
         artist_name,
         track_name,
     )
@@ -1169,31 +1169,6 @@ fn shortened_artist_query(artist_name: &str) -> Option<String> {
     }
     tokens.pop();
     Some(tokens.join(" "))
-}
-pub(in crate::controller) fn lrclib_automatic_search_urls(
-    artist_name: &str,
-    track_name: &str,
-) -> Result<Vec<reqwest::Url>, String> {
-    let artist_name = artist_name.trim();
-    let track_name = track_name.trim();
-    if artist_name.is_empty() || track_name.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut urls = Vec::new();
-    let mut combined_url = lrclib_search_base_url()?;
-    combined_url
-        .query_pairs_mut()
-        .append_pair("q", &format!("{track_name} {artist_name}"));
-    push_unique_lrclib_search_url(&mut urls, combined_url);
-
-    let mut field_url = lrclib_search_base_url()?;
-    {
-        let mut query = field_url.query_pairs_mut();
-        query.append_pair("track_name", track_name);
-        query.append_pair("artist_name", artist_name);
-    }
-    push_unique_lrclib_search_url(&mut urls, field_url);
-    Ok(urls)
 }
 fn push_unique_lrclib_search_url(urls: &mut Vec<reqwest::Url>, url: reqwest::Url) {
     if urls

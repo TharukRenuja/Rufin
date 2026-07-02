@@ -1451,40 +1451,6 @@ pub(in crate::controller) fn lyrics_accept_query() {
     );
 }
 #[test]
-pub(in crate::controller) fn lyrics_track_artist() {
-    let urls = super::lrclib_automatic_search_urls("Example Artist", "Opening Theme")
-        .expect("lrclib automatic search urls");
-    let query_sets = urls
-        .iter()
-        .map(|url| {
-            url.query_pairs()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        query_sets,
-        vec![
-            vec![("q".to_string(), "Opening Theme Example Artist".to_string())],
-            vec![
-                ("track_name".to_string(), "Opening Theme".to_string()),
-                ("artist_name".to_string(), "Example Artist".to_string()),
-            ],
-        ]
-    );
-    assert!(
-        super::lrclib_automatic_search_urls("", "Opening Theme")
-            .expect("missing artist urls")
-            .is_empty()
-    );
-    assert!(
-        super::lrclib_automatic_search_urls("Example Artist", "")
-            .expect("missing track urls")
-            .is_empty()
-    );
-}
-#[test]
 pub(in crate::controller) fn lyrics_track_duration() {
     let url = super::lrclib_get_url("The Cure", "Lovesong", 210)
         .expect("lrclib get url")
