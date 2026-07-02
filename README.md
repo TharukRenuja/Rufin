@@ -154,7 +154,7 @@ For a debug run:
 nix develop --command just debug
 ```
 
-Since each `main` push builds cache, you can also set the dev shell to use it:
+Since each `main` push builds cache, you can also set the shell to use it:
 
 ```bash
 nix-shell -p cachix --run "cachix use rufin"
