@@ -684,11 +684,11 @@ fn album_card_with_fields(
         size,
         Some(&shell.controller),
     ));
-    card.append(&left_grid_title(&album.title, "track-title", size));
+    card.append(&grid_title(&album.title, "track-title", size));
     for field in fields.iter().copied() {
         let value = album_field(album, field);
         if !value.is_empty() {
-            let label = left_collection_grid_field_label(&value, field, size);
+            let label = collection_grid_field_label(&value, field, size);
             if matches!(field, LibraryField::Artist | LibraryField::AlbumArtist) {
                 add_card_label_link(shell, &label.0, &label.1, &value, album_artist_route(album));
             }
@@ -707,16 +707,11 @@ pub(in crate::ui) fn artist_card(
     let fields = shell.library_settings(key).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&artist_cover_tile(shell, artist, size));
-    card.append(&center_grid_title(&artist.name, "track-title", size));
+    card.append(&grid_title(&artist.name, "track-title", size));
     for field in fields {
         let value = artist_field(artist, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                collection_grid_field_class(field),
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            card.append(&collection_grid_field_label(&value, field, size).0);
         }
     }
     install_artist_context_menu(&card, shell, artist.clone());
@@ -791,16 +786,11 @@ pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> 
     let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&genre_cover_tile(shell, genre, size));
-    card.append(&center_grid_title(&genre.name, "track-title", size));
+    card.append(&grid_title(&genre.name, "track-title", size));
     for field in fields {
         let value = genre_field(genre, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                "muted",
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            card.append(&collection_grid_field_label(&value, field, size).0);
         }
     }
     install_genre_context_menu(&card, shell, genre.clone());
@@ -816,16 +806,11 @@ pub(in crate::ui) fn playlist_card(
         .grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::playlist_cover_tile(shell, playlist, size));
-    card.append(&center_grid_title(&playlist.name, "track-title", size));
+    card.append(&grid_title(&playlist.name, "track-title", size));
     for field in fields {
         let value = playlist_field(playlist, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                "muted",
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            card.append(&collection_grid_field_label(&value, field, size).0);
         }
     }
     install_playlist_context_menu(&card, shell, playlist.clone());
@@ -842,7 +827,7 @@ pub(in crate::ui) fn smart_playlist_card(
     let card_height = collection_grid_card_height(size, fields.len());
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&center_grid_title(
+    card.append(&grid_title(
         &smart_playlist_display_name(playlist),
         "track-title",
         size,
@@ -850,12 +835,7 @@ pub(in crate::ui) fn smart_playlist_card(
     for field in fields {
         let value = smart_playlist_field(playlist, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                "muted",
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            card.append(&collection_grid_field_label(&value, field, size).0);
         }
     }
     let overlay = gtk::Overlay::new();
@@ -933,7 +913,7 @@ fn track_card_with_fields(
 ) -> gtk::Widget {
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::track_play_tile(shell, track, size, play_action));
-    card.append(&center_grid_title(&track.title, "track-title", size));
+    card.append(&grid_title(&track.title, "track-title", size));
     for field in fields.iter().copied() {
         let value = track_field(track, field);
         if !value.is_empty() {
@@ -960,23 +940,12 @@ fn collection_grid_field_label(
     field: LibraryField,
     size: i32,
 ) -> (gtk::Widget, gtk::Label) {
-    center_label_with_label(
+    grid_label_with_label(
         value,
         collection_grid_field_class(field),
         size,
         COLLECTION_GRID_FIELD_LINES,
     )
-}
-
-fn left_collection_grid_field_label(
-    value: &str,
-    field: LibraryField,
-    size: i32,
-) -> (gtk::Widget, gtk::Label) {
-    let label = collection_grid_field_label(value, field, size);
-    label.1.set_xalign(0.0);
-    label.1.set_justify(gtk::Justification::Left);
-    label
 }
 
 fn track_grid_field_route(track: &Track, field: LibraryField) -> Option<Route> {
