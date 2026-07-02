@@ -8,7 +8,7 @@ use gtk::{gio, glib};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::{msgid, tr};
 
-use super::cards::album_cover_tile;
+use super::cards::album_cover_overlay;
 use super::home_layout::{
     HomeShowcaseMode, home_section_header, home_showcase_cover_size, home_showcase_is_compact,
     home_showcase_mode, home_showcase_spacing,
@@ -135,7 +135,7 @@ impl Shell {
         body.set_valign(gtk::Align::Start);
         body.set_width_request(1);
         body.set_overflow(gtk::Overflow::Hidden);
-        let cover = album_cover_tile(self, &album, cover_size, Some(&self.controller));
+        let cover = album_cover_overlay(self, &album, cover_size, &self.controller);
         cover.add_css_class("home-showcase-cover");
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         cover_column.set_width_request(cover_size);

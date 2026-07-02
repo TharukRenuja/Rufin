@@ -1,5 +1,4 @@
 use super::*;
-use crate::i18n::msgid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LibraryRouteInsetSpec {
@@ -7,7 +6,7 @@ pub(in crate::ui) struct LibraryRouteInsetSpec {
     pub(in crate::ui) margin_end: i32,
     pub(in crate::ui) hexpand: bool,
 }
-const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
+pub(super) const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
 const HOME_ALBUM_GRID_FIELDS: [LibraryField; 2] = [LibraryField::AlbumArtist, LibraryField::Year];
 const HOME_TRACK_GRID_FIELDS: [LibraryField; 2] = [LibraryField::Artist, LibraryField::Album];
 
@@ -200,7 +199,7 @@ pub(in crate::ui) fn album_grid(
     let fields = settings.grid_fields;
     let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
-    reusable_collection_grid(
+    collection_grid(
         model,
         columns,
         move || AlbumGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
@@ -213,34 +212,39 @@ pub(in crate::ui) fn artist_grid(
     key: LibraryListKey,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let card_shell = Rc::clone(shell);
+    let fields = shell.library_settings(key).grid_fields;
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
     collection_grid(
         model,
         columns,
-        move |_, artist| artist_card(&card_shell, artist, key, card_size),
+        move || ArtistGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, artist: Artist| activate_shell.navigate(Route::ArtistDetail(artist.id)),
     )
 }
 pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let card_shell = Rc::clone(shell);
+    let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
     collection_grid(
         model,
         columns,
-        move |_, genre| genre_card(&card_shell, genre, card_size),
+        move || GenreGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, genre: Genre| activate_shell.navigate(Route::GenreDetail(genre.id)),
     )
 }
 pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let card_shell = Rc::clone(shell);
+    let fields = shell
+        .library_settings(LibraryListKey::Playlists)
+        .grid_fields;
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
     collection_grid(
         model,
         columns,
-        move |_, playlist| playlist_card(&card_shell, playlist, card_size),
+        move || PlaylistGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, playlist: Playlist| activate_shell.navigate(Route::PlaylistDetail(playlist.id)),
     )
 }
@@ -249,12 +253,15 @@ pub(in crate::ui) fn smart_playlist_grid(
     model: gio::ListStore,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let card_shell = Rc::clone(shell);
+    let fields = shell
+        .library_settings(LibraryListKey::SmartPlaylists)
+        .grid_fields;
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
     collection_grid(
         model,
         columns,
-        move |_, playlist| smart_playlist_card(&card_shell, playlist, card_size),
+        move || SmartPlaylistGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, playlist: SmartPlaylist| {
             activate_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
         },
@@ -273,7 +280,7 @@ pub(in crate::ui) fn track_grid(
     let cell_play_context = play_context.clone();
     let controller = shell.controller.clone();
     let activate_model = model.clone();
-    reusable_collection_grid(
+    collection_grid(
         model,
         columns,
         move || {
@@ -302,14 +309,12 @@ pub(in crate::ui) fn home_album_grid(
     columns: usize,
     card_size: i32,
 ) -> gtk::GridView {
-    let card_shell = Rc::clone(shell);
+    let cell_shell = Rc::clone(shell);
     let activate_shell = Rc::clone(shell);
     let grid = collection_grid(
         model,
         columns,
-        move |_, album| {
-            album_card_with_fields(&card_shell, album, &HOME_ALBUM_GRID_FIELDS, card_size)
-        },
+        move || AlbumGridCell::new(Rc::clone(&cell_shell), &HOME_ALBUM_GRID_FIELDS, card_size),
         move |_, album: Album| activate_shell.navigate(Route::AlbumDetail(album.id)),
     );
     grid.set_vexpand(false);
@@ -321,13 +326,20 @@ pub(in crate::ui) fn home_track_grid(
     columns: usize,
     card_size: i32,
 ) -> gtk::GridView {
-    let card_shell = Rc::clone(shell);
+    let cell_shell = Rc::clone(shell);
+    let cell_model = model.clone();
     let controller = shell.controller.clone();
     let grid = collection_grid(
         model,
         columns,
-        move |_, track: &Track| {
-            track_card_with_fields(&card_shell, track, &HOME_TRACK_GRID_FIELDS, card_size, None)
+        move || {
+            TrackGridCell::new(
+                Rc::clone(&cell_shell),
+                &HOME_TRACK_GRID_FIELDS,
+                card_size,
+                cell_model.clone(),
+                None,
+            )
         },
         move |_, track: Track| {
             controller.play_now(track);
@@ -336,48 +348,6 @@ pub(in crate::ui) fn home_track_grid(
     grid.set_vexpand(false);
     grid
 }
-fn collection_grid<T, Card, Activate>(
-    model: gio::ListStore,
-    columns: usize,
-    card: Card,
-    activate: Activate,
-) -> gtk::GridView
-where
-    T: Clone + 'static,
-    Card: Fn(u32, &T) -> gtk::Widget + 'static,
-    Activate: Fn(u32, T) + 'static,
-{
-    let selection = gtk::NoSelection::new(Some(model.clone()));
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let value = boxed.borrow::<T>();
-        item.set_child(Some(&card(item.position(), &value)));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
-    grid.add_css_class("album-grid");
-    grid.set_min_columns(columns as u32);
-    grid.set_max_columns(columns as u32);
-    grid.set_single_click_activate(true);
-    grid.set_hexpand(true);
-    grid.set_vexpand(true);
-    grid.connect_activate(move |_, position| {
-        if let Some(value) = item_at::<T>(&model, position) {
-            activate(position, value);
-        }
-    });
-    grid
-}
-
 pub(in crate::ui) fn album_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -662,189 +632,6 @@ pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
     route_content_width(shell) < 760
 }
 
-fn album_card_with_fields(
-    shell: &Rc<Shell>,
-    album: &Album,
-    fields: &[LibraryField],
-    size: i32,
-) -> gtk::Widget {
-    let card = collection_grid_card(size, fields.len());
-    card.append(&cards::album_cover_tile(
-        shell,
-        album,
-        size,
-        Some(&shell.controller),
-    ));
-    card.append(&grid_title(&album.title, "track-title", size));
-    for field in fields.iter().copied() {
-        let value = album_field(album, field);
-        if !value.is_empty() {
-            let label = collection_grid_field_label(&value, field, size);
-            if matches!(field, LibraryField::Artist | LibraryField::AlbumArtist) {
-                add_card_label_link(shell, &label.0, &label.1, &value, album_artist_route(album));
-            }
-            card.append(&label.0);
-        }
-    }
-    install_album_context_menu(&card, shell, album.clone());
-    card.upcast()
-}
-pub(in crate::ui) fn artist_card(
-    shell: &Rc<Shell>,
-    artist: &Artist,
-    key: LibraryListKey,
-    size: i32,
-) -> gtk::Widget {
-    let fields = shell.library_settings(key).grid_fields;
-    let card = collection_grid_card(size, fields.len());
-    card.append(&artist_cover_tile(shell, artist, size));
-    card.append(&grid_title(&artist.name, "track-title", size));
-    for field in fields {
-        let value = artist_field(artist, field);
-        if !value.is_empty() {
-            card.append(&collection_grid_field_label(&value, field, size).0);
-        }
-    }
-    install_artist_context_menu(&card, shell, artist.clone());
-    card.upcast()
-}
-pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let overlay = cards::cover_overlay(size);
-
-    let genre_button = gtk::Button::new();
-    genre_button.add_css_class("album-cover-button");
-    genre_button.add_css_class("flat");
-    cards::constrain_cover_widget(&genre_button, size);
-    cards::clip_cover(&genre_button);
-    let artwork = crate::cover_art_policy::selected_genre_artwork(genre);
-    genre_button.set_child(Some(&shell.cover_group_tile_for_artwork(
-        &artwork,
-        stable_seed(genre.id.as_str()),
-        size,
-        THUMB_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_genre_id = genre.id.clone();
-    genre_button
-        .connect_clicked(move |_| open_shell.navigate(Route::GenreDetail(open_genre_id.clone())));
-    overlay.set_child(Some(&genre_button));
-
-    let mut controls = cards::cover_play_hover_controls(size, "Play genre");
-    let menu = controls.add_context_button();
-    let menu_target = overlay.clone();
-    let menu_shell = Rc::clone(shell);
-    let menu_genre = genre.clone();
-    menu.connect_clicked(move |_| {
-        present_genre_context_menu(
-            menu_target.upcast_ref(),
-            &menu_shell,
-            menu_genre.clone(),
-            cards::cover_context_point(size),
-        );
-    });
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            let tracks = detail.tracks;
-            controller.play_genre_tracks_window(genre_id.clone(), tracks.len(), 0, |index| {
-                tracks.get(index).cloned()
-            });
-        }
-    });
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            for track in detail.tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
-    });
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            controller.play_last(detail.tracks);
-        }
-    });
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
-pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
-    let card = collection_grid_card(size, fields.len());
-    card.append(&genre_cover_tile(shell, genre, size));
-    card.append(&grid_title(&genre.name, "track-title", size));
-    for field in fields {
-        let value = genre_field(genre, field);
-        if !value.is_empty() {
-            card.append(&collection_grid_field_label(&value, field, size).0);
-        }
-    }
-    install_genre_context_menu(&card, shell, genre.clone());
-    card.upcast()
-}
-pub(in crate::ui) fn playlist_card(
-    shell: &Rc<Shell>,
-    playlist: &Playlist,
-    size: i32,
-) -> gtk::Widget {
-    let fields = shell
-        .library_settings(LibraryListKey::Playlists)
-        .grid_fields;
-    let card = collection_grid_card(size, fields.len());
-    card.append(&cards::playlist_cover_tile(shell, playlist, size));
-    card.append(&grid_title(&playlist.name, "track-title", size));
-    for field in fields {
-        let value = playlist_field(playlist, field);
-        if !value.is_empty() {
-            card.append(&collection_grid_field_label(&value, field, size).0);
-        }
-    }
-    install_playlist_context_menu(&card, shell, playlist.clone());
-    card.upcast()
-}
-pub(in crate::ui) fn smart_playlist_card(
-    shell: &Rc<Shell>,
-    playlist: &SmartPlaylist,
-    size: i32,
-) -> gtk::Widget {
-    let fields = shell
-        .library_settings(LibraryListKey::SmartPlaylists)
-        .grid_fields;
-    let card_height = collection_grid_card_height(size, fields.len());
-    let card = collection_grid_card(size, fields.len());
-    card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&grid_title(
-        &smart_playlist_display_name(playlist),
-        "track-title",
-        size,
-    ));
-    for field in fields {
-        let value = smart_playlist_field(playlist, field);
-        if !value.is_empty() {
-            card.append(&collection_grid_field_label(&value, field, size).0);
-        }
-    }
-    let overlay = gtk::Overlay::new();
-    overlay.set_size_request(size, card_height);
-    overlay.set_hexpand(false);
-    overlay.set_halign(gtk::Align::Center);
-    overlay.set_child(Some(&card));
-    let drag = smart_playlist_drag_handle(&playlist.id);
-    drag.set_margin_start(6);
-    drag.set_margin_top(6);
-    drag.set_halign(gtk::Align::Start);
-    drag.set_valign(gtk::Align::Start);
-    overlay.add_overlay(&drag);
-    install_smart_playlist_drop_target(&overlay, shell, &playlist.id);
-    install_smart_playlist_context_menu(&overlay, shell, playlist.clone());
-    overlay.upcast()
-}
-
 pub(in crate::ui) fn smart_playlist_drag_handle(playlist_id: &SmartPlaylistId) -> gtk::Image {
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
@@ -885,30 +672,6 @@ pub(in crate::ui) fn install_smart_playlist_drop_target(
     });
     target.add_controller(drop_target);
 }
-fn track_card_with_fields(
-    shell: &Rc<Shell>,
-    track: &Track,
-    fields: &[LibraryField],
-    size: i32,
-    play_action: Option<Rc<dyn Fn()>>,
-) -> gtk::Widget {
-    let card = collection_grid_card(size, fields.len());
-    card.append(&cards::track_play_tile(shell, track, size, play_action));
-    card.append(&grid_title(&track.title, "track-title", size));
-    for field in fields.iter().copied() {
-        let value = track_field(track, field);
-        if !value.is_empty() {
-            let label = collection_grid_field_label(&value, field, size);
-            if let Some(route) = track_grid_field_route(track, field) {
-                add_card_label_link(shell, &label.0, &label.1, &value, Some(route));
-            }
-            card.append(&label.0);
-        }
-    }
-    install_track_context_menu(&card, shell, track.clone());
-    card.upcast()
-}
-
 fn collection_grid_field_class(field: LibraryField) -> &'static str {
     match field {
         LibraryField::Artist | LibraryField::AlbumArtist => "artist-label",
@@ -957,91 +720,6 @@ pub(super) fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
     card
 }
 
-pub(in crate::ui) fn artist_cover_tile(
-    shell: &Rc<Shell>,
-    artist: &Artist,
-    size: i32,
-) -> gtk::Widget {
-    let overlay = cards::cover_overlay(size);
-
-    let artist_button = gtk::Button::new();
-    artist_button.add_css_class("album-cover-button");
-    artist_button.add_css_class("flat");
-    cards::constrain_cover_widget(&artist_button, size);
-    cards::clip_cover(&artist_button);
-    let image_ref = artist_cover_image_ref(shell, artist);
-    artist_button.set_child(Some(&shell.cover_tile_for(
-        image_ref.as_ref(),
-        stable_seed(artist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_artist_id = artist.id.clone();
-    artist_button
-        .connect_clicked(move |_| open_shell.navigate(Route::ArtistDetail(open_artist_id.clone())));
-    overlay.set_child(Some(&artist_button));
-
-    let mut controls = cards::cover_hover_controls(size, msgid("Play artist"), artist.favorite);
-    let menu = controls.add_context_button();
-    let menu_target = overlay.clone();
-    let menu_shell = Rc::clone(shell);
-    let menu_artist = artist.clone();
-    menu.connect_clicked(move |_| {
-        present_artist_context_menu(
-            menu_target.upcast_ref(),
-            &menu_shell,
-            context_artist(&menu_shell, &menu_artist),
-            cards::cover_context_point(size),
-        );
-    });
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
-            controller.play_artist_tracks_window(
-                artist_id.clone(),
-                domain::ArtistTrackScope::AllCredits,
-                detail.tracks.len(),
-                0,
-                |index| detail.tracks.get(index).cloned(),
-            );
-        }
-    });
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
-            for track in detail.tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
-    });
-    let controller = shell.controller.clone();
-    let artist_id = artist.id.clone();
-    controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
-            controller.play_last(detail.tracks);
-        }
-    });
-    if let Some(favorite) = controls.favorite.as_ref() {
-        shell.register_favorite_button(artist_favorite_key(&artist.id), favorite);
-        let favorite_shell = Rc::clone(shell);
-        let artist_id = artist.id.clone();
-        favorite.connect_clicked(move |button| {
-            let favorite = !favorite_button_is_active(button);
-            favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Artist(artist_id.clone()),
-                favorite,
-                Some(button),
-            );
-        });
-    }
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
 pub(in crate::ui) fn artist_cover_image_ref(
     _shell: &Rc<Shell>,
     artist: &Artist,

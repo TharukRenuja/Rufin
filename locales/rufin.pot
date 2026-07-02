@@ -199,9 +199,6 @@ msgstr ""
 msgid "Play album"
 msgstr ""
 
-msgid "Play track"
-msgstr ""
-
 msgid "More actions"
 msgstr ""
 
@@ -343,7 +340,19 @@ msgstr ""
 msgid "Detail"
 msgstr ""
 
+msgid "Play track"
+msgstr ""
+
 msgid "Play artist"
+msgstr ""
+
+msgid "Play genre"
+msgstr ""
+
+msgid "Play playlist"
+msgstr ""
+
+msgid "Play smart playlist"
 msgstr ""
 
 msgid "Cached entries will appear here after sync finishes"
