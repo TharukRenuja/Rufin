@@ -6,7 +6,7 @@
   <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
   <a href="https://flathub.org/apps/io.github.screwys.Rufin"><img alt="Flathub installs" src="https://img.shields.io/flathub/downloads/io.github.screwys.Rufin?logo=flathub&amp;label=flathub&amp;color=4A86CF"></a>
     <a href="https://aur.archlinux.org/packages/rufin"><img alt="AUR version" src="https://img.shields.io/aur/version/rufin?logo=archlinux&amp;label=AUR&amp;color=1793D1"></a>
-  <a href="flake.nix"><img alt="Nix flake" src="https://img.shields.io/badge/Nix-flake-5277C3?logo=nixos"></a>
+    <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs package" src="https://img.shields.io/badge/Nixpkgs-rufin-5277C3?logo=nixos"></a>
 </p>
 
 <img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="72"> Rufin is a native, fast and easy to use GTK4/libadwaita music client written in Rust. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike.
@@ -24,6 +24,7 @@
 - Automatic metadata, artwork and lyrics caching
 - Synchronized lyrics, built-in lyrics searcher that prioritizies synchronized lyrics
 - Local library support with multiple folders and CUE support with separate playable tracks
+- Moods tab, with ability to create smart playlists based on moods/BPM metadata for Navidrome, Subsonic and local libraries
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
 - Gapless playback, crossfade, ReplayGain, equalizer presets and fullscreen player with visualizer
@@ -82,22 +83,22 @@ yay -S rufin-git
 
 ## Nix
 
-To run the latest stable release:
+Rufin is available in nixpkgs repository. To run Rufin without installing:
 
 ```bash
-nix run github:screwys/Rufin/v0.7.13
+nix run nixpkgs#rufin
 ```
 
-To run the current `main` branch:
+To add it to your profile:
+```bash
+nix profile install nixpkgs#rufin
+```
+
+We also publish release tag and `main` to Cachix. You can run `main` or an older release with:
 
 ```bash
 nix run github:screwys/Rufin/main
-```
-
-You can also add either ref to your profile:
-
-```bash
-nix profile install github:screwys/Rufin/v0.7.13
+nix run github:screwys/Rufin/vX.Y.Z
 ```
 
 ## Building locally
@@ -147,20 +148,17 @@ If you already use Nix, the dev shell is an easy alternative:
 nix develop
 ```
 
-For a one-off source run:
+For a debug run:
 
 ```bash
 nix develop --command just debug
 ```
 
-Rufin publishes release tag and `main` build results to Cachix. This is
-optional, but can speed up Nix builds and runs:
+Since each `main` push builds cache, you can also set the dev shell to use it:
 
 ```bash
 nix-shell -p cachix --run "cachix use rufin"
 ```
-
-The dev shell works without this cache.
 
 To build Rufin from source:
 
