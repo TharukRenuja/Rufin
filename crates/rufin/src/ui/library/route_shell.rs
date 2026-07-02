@@ -5,8 +5,11 @@ use crate::ui::{ADD_ICON, MORE_ICON, sort_order_icon};
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
 const LIBRARY_TOOLBAR_END_MARGIN: i32 = 10;
+const LIBRARY_TOOLBAR_CONTROL_SPACING: i32 = 8;
+const LIBRARY_TOOLBAR_BUTTON_SIZE: i32 = 34;
 const LIBRARY_TOOLBAR_STACK_WIDTH: i32 = 760;
-const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 = 96;
+const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 =
+    WINDOW_CHROME_MARGIN_END + LIBRARY_TOOLBAR_BUTTON_SIZE + LIBRARY_TOOLBAR_CONTROL_SPACING;
 
 pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) key: LibraryListKey,
@@ -364,7 +367,10 @@ impl Shell {
         key: LibraryListKey,
         search: gtk::SearchEntry,
     ) -> gtk::Widget {
-        let toolbar = gtk::Box::new(library_toolbar_orientation_for_width(key, 1), 8);
+        let toolbar = gtk::Box::new(
+            library_toolbar_orientation_for_width(key, 1),
+            LIBRARY_TOOLBAR_CONTROL_SPACING,
+        );
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
         toolbar.set_halign(gtk::Align::Fill);
@@ -372,10 +378,11 @@ impl Shell {
         search.set_hexpand(true);
         search.set_width_request(1);
         toolbar.append(&search);
-        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        controls.set_margin_end(library_toolbar_end_margin(
-            self.state.resolved_right_sidebar.get().is_visible(),
-        ));
+        let controls = gtk::Box::new(
+            gtk::Orientation::Horizontal,
+            LIBRARY_TOOLBAR_CONTROL_SPACING,
+        );
+        self.set_current_library_toolbar_controls(&controls);
         let command_button = Rc::new(RefCell::new(None::<gtk::Button>));
         let command_compact = Rc::new(Cell::new(false));
 
@@ -496,6 +503,24 @@ impl Shell {
             });
         }
         toolbar.upcast()
+    }
+    pub(in crate::ui) fn sync_library_toolbar_end_margin(&self) {
+        let Some(controls) = self
+            .current_library_toolbar_controls
+            .borrow()
+            .as_ref()
+            .and_then(glib::WeakRef::upgrade)
+        else {
+            return;
+        };
+        let right_sidebar = self.state.resolved_right_sidebar.get();
+        let margin = library_toolbar_end_margin(right_sidebar.is_visible());
+        controls.set_margin_end(margin);
+    }
+    fn set_current_library_toolbar_controls(&self, controls: &gtk::Box) {
+        self.current_library_toolbar_controls
+            .replace(Some(controls.downgrade()));
+        self.sync_library_toolbar_end_margin();
     }
     pub(in crate::ui) fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
         let toolbar = adw::ToolbarView::new();
