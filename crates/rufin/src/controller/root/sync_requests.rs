@@ -831,9 +831,9 @@ pub(in crate::controller) fn parse_genius_search_body(
         .unwrap_or_default()
     {
         for hit in section.hits.unwrap_or_default() {
-            if hit.result.url.trim().is_empty() {
+            let Some(url) = trusted_genius_lyrics_url(&hit.result.url) else {
                 continue;
-            }
+            };
             let track_name = if hit.result.full_title.trim().is_empty() {
                 hit.result.title
             } else {
@@ -841,7 +841,7 @@ pub(in crate::controller) fn parse_genius_search_body(
             };
             results.push(LyricsSearchResult {
                 provider: ExternalLyricsProvider::Genius,
-                id: hit.result.url,
+                id: url.to_string(),
                 track_name,
                 artist_name: hit.result.artist_names,
                 album_name: String::new(),
@@ -854,10 +854,21 @@ pub(in crate::controller) fn parse_genius_search_body(
     Ok(results)
 }
 fn genius_fetch_lyrics(url: &str) -> Result<Option<String>, String> {
-    let url = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
+    let Some(url) = trusted_genius_lyrics_url(url) else {
+        return Ok(None);
+    };
     let client = external_lyrics_client(EXTERNAL_LYRICS_REQUEST_TIMEOUT)?;
     let body = fetch_text(&client, url, "Genius lyric lookup")?;
     Ok(extract_genius_lyrics(&body).filter(|lyrics| !lyrics.trim().is_empty()))
+}
+fn trusted_genius_lyrics_url(raw: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    (url.scheme() == "https"
+        && url.host_str() == Some("genius.com")
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then_some(url)
 }
 fn simpmusic_search(
     artist_name: &str,

@@ -1592,7 +1592,7 @@ pub(in crate::controller) fn lyrics_decode_genius_result() {
                         "artist_names": "Example Artist",
                         "full_title": "Example Song by Example Artist",
                         "title": "Example Song",
-                        "url": "https://genius.example/song"
+                        "url": "https://genius.com/Example-artist-example-song-lyrics"
                     }
                 }]
             }]
@@ -1603,7 +1603,69 @@ pub(in crate::controller) fn lyrics_decode_genius_result() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].provider, ExternalLyricsProvider::Genius);
-    assert_eq!(results[0].id, "https://genius.example/song");
+    assert_eq!(
+        results[0].id,
+        "https://genius.com/Example-artist-example-song-lyrics"
+    );
+}
+#[test]
+pub(in crate::controller) fn lyrics_reject_untrusted_genius_result_url() {
+    let json = r#"{
+        "response": {
+            "sections": [{
+                "hits": [
+                    {
+                        "result": {
+                            "artist_names": "Example Artist",
+                            "full_title": "Example Song by Example Artist",
+                            "title": "Example Song",
+                            "url": "https://example.test/song"
+                        }
+                    },
+                    {
+                        "result": {
+                            "artist_names": "Example Artist",
+                            "full_title": "Example Song by Example Artist",
+                            "title": "Example Song",
+                            "url": "http://genius.com/Example-artist-example-song-lyrics"
+                        }
+                    },
+                    {
+                        "result": {
+                            "artist_names": "Example Artist",
+                            "full_title": "Example Song by Example Artist",
+                            "title": "Example Song",
+                            "url": "https://genius.com:8443/Example-artist-example-song-lyrics"
+                        }
+                    }
+                ]
+            }]
+        }
+    }"#;
+
+    let results = super::parse_genius_search_body(json).expect("parse genius response");
+
+    assert!(results.is_empty());
+}
+#[test]
+pub(in crate::controller) fn lyrics_skip_untrusted_genius_fetch_url() {
+    assert_eq!(
+        super::lyrics_from_search_result(
+            TrackId::new("track-one"),
+            &super::LyricsSearchResult {
+                provider: ExternalLyricsProvider::Genius,
+                id: "https://example.test/song".to_string(),
+                track_name: "Example Song".to_string(),
+                artist_name: "Example Artist".to_string(),
+                album_name: String::new(),
+                duration_seconds: 0,
+                synced_lyrics: None,
+                plain_lyrics: None,
+            },
+        )
+        .expect("untrusted genius url"),
+        None
+    );
 }
 #[test]
 pub(in crate::controller) fn lyrics_extract_genius_html() {
