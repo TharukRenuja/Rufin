@@ -56,7 +56,6 @@ fn prepare_version(version: &str, notes: &str) -> Result<()> {
 
     replace_workspace_version(version)?;
     run_command("cargo", ["generate-lockfile", "--offline"])?;
-    update_readme_nix_refs(version)?;
     update_metainfo_release(version, &release_date, notes)?;
     update_issue_template_versions(version)?;
 
@@ -831,45 +830,6 @@ fn replace_workspace_version_in_toml(input: &str, version: &str) -> Result<Strin
     } else {
         Err("missing workspace package version".into())
     }
-}
-
-fn update_readme_nix_refs(version: &str) -> Result<()> {
-    let path = PathBuf::from("README.md");
-    let input = read_to_string(&path)?;
-    let (output, count) = replace_github_version_refs(&input, version);
-    if count != 2 {
-        return Err(format!("expected two README Nix release refs, updated {count}").into());
-    }
-    write_string(&path, &output)
-}
-
-fn replace_github_version_refs(input: &str, version: &str) -> (String, usize) {
-    let mut output = String::new();
-    let mut count = 0;
-    let needle = "github:screwys/Rufin/v";
-    let bytes = input.as_bytes();
-    let mut index = 0;
-
-    while let Some(offset) = input[index..].find(needle) {
-        let start = index + offset;
-        output.push_str(&input[index..start + needle.len()]);
-        let version_start = start + needle.len();
-        let mut version_end = version_start;
-        while version_end < input.len() {
-            let ch = bytes[version_end] as char;
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '.' {
-                version_end += 1;
-            } else {
-                break;
-            }
-        }
-        output.push_str(version);
-        count += 1;
-        index = version_end;
-    }
-
-    output.push_str(&input[index..]);
-    (output, count)
 }
 
 fn update_metainfo_release(version: &str, release_date: &str, notes: &str) -> Result<()> {
