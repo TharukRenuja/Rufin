@@ -203,6 +203,14 @@ fn presence_key(settings: &AppSettings, snapshot: &PlaybackSnapshot) -> Option<P
         PlaybackState::Paused | PlaybackState::Stopped => return None,
     };
     let entry = snapshot.current.as_ref()?;
+    let lastfm_api_key = if matches!(
+        settings.discord_link_type,
+        DiscordLinkType::LastFm | DiscordLinkType::MusicBrainzLastFm
+    ) {
+        settings.lastfm_api_key.trim().to_string()
+    } else {
+        String::new()
+    };
     Some(PresenceKey {
         track_id: entry.track_id.as_str().to_string(),
         title: entry.title.clone(),
@@ -214,7 +222,7 @@ fn presence_key(settings: &AppSettings, snapshot: &PlaybackSnapshot) -> Option<P
         link_type: settings.discord_link_type,
         show_as_listening: settings.discord_show_as_listening,
         show_state_icon: settings.discord_show_state_icon,
-        lastfm_api_key: settings.lastfm_api_key.trim().to_string(),
+        lastfm_api_key,
     })
 }
 
@@ -322,7 +330,15 @@ impl IpcWorker {
     }
 
     fn cover_image_url(&self, key: &PresenceKey) -> Option<String> {
-        lastfm_cover_url(&self.http, key).or_else(|| {
+        let lastfm_cover = if matches!(
+            key.link_type,
+            DiscordLinkType::LastFm | DiscordLinkType::MusicBrainzLastFm
+        ) {
+            lastfm_cover_url(&self.http, key)
+        } else {
+            None
+        };
+        lastfm_cover.or_else(|| {
             if matches!(
                 key.link_type,
                 DiscordLinkType::MusicBrainz | DiscordLinkType::MusicBrainzLastFm
@@ -695,6 +711,22 @@ mod tests {
                 show_state_icon: true,
                 lastfm_api_key: String::new(),
             })
+        );
+
+        settings.lastfm_api_key = " cover-key ".to_string();
+        settings.discord_link_type = DiscordLinkType::None;
+        assert_eq!(
+            presence_key(&settings, &snapshot)
+                .expect("playing track")
+                .lastfm_api_key,
+            ""
+        );
+        settings.discord_link_type = DiscordLinkType::LastFm;
+        assert_eq!(
+            presence_key(&settings, &snapshot)
+                .expect("playing track")
+                .lastfm_api_key,
+            "cover-key"
         );
     }
 
