@@ -1,5 +1,13 @@
 use super::*;
 
+/// set of features Rufin should expose for this source.
+///
+/// this is based only on saved source facts plus Rufin's own policy. it must be
+/// deterministic, and must not be based on live state. if a server connection
+/// dies, trying to favorite fails, but the favorite button does not disappear.
+///
+/// `Native` means the source owns this operation and Rufin supports it. `Store`
+/// means Rufin owns the feature for that source.
 pub(in crate::controller) fn source_capabilities_for_saved(
     saved: &SavedServer,
 ) -> SourceCapabilities {

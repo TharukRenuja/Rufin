@@ -391,6 +391,11 @@ pub enum ControllerEvent {
         favorite: bool,
         snapshot: Box<LibrarySnapshot>,
     },
+    FavoriteChangeFailed {
+        item_id: FavoriteItemId,
+        favorite: bool,
+        error: String,
+    },
     Queue(Box<Option<QueueSnapshot>>),
     Playback(Box<PlaybackSnapshot>),
     Visualizer(Vec<f64>),

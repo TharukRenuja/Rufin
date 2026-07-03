@@ -40,6 +40,7 @@ impl Shell {
             && current.track_id == *track_id
         {
             current.favorite = favorite;
+            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
         }
         self.update_visible_favorite_buttons(&item_id, favorite);
         match item_id {
@@ -91,5 +92,26 @@ impl Shell {
         if favorite_change_needs_route_render(&route, &item_id, track_sort_key) {
             self.render_current_route_preserving_scroll();
         }
+    }
+    pub(in crate::ui) fn apply_favorite_change_failed(
+        self: &Rc<Self>,
+        item_id: FavoriteItemId,
+        attempted_favorite: bool,
+        error: String,
+    ) {
+        let favorite = !attempted_favorite;
+        if let FavoriteItemId::Track(track_id) = &item_id
+            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
+            && current.track_id == *track_id
+        {
+            current.favorite = favorite;
+            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+        }
+        self.update_visible_favorite_buttons(&item_id, favorite);
+        if matches!(item_id, FavoriteItemId::Track(_)) {
+            self.invalidate_queue_panel_render_state();
+            self.render_queue_panel();
+        }
+        self.show_preferences_toast(&error);
     }
 }

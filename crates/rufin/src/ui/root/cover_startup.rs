@@ -1311,6 +1311,13 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 } => {
                     shell.apply_favorite_changed(item_id, favorite, *snapshot);
                 }
+                ControllerEvent::FavoriteChangeFailed {
+                    item_id,
+                    favorite,
+                    error,
+                } => {
+                    shell.apply_favorite_change_failed(item_id, favorite, error);
+                }
                 ControllerEvent::Queue(queue) => {
                     let next_queue = *queue;
                     shell.apply_now_playing_track_id(next_queue.as_ref());
