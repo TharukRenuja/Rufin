@@ -81,6 +81,7 @@ fn visible_cover_window(shell: &Shell, route: &Route) -> VisibleCoverWindow {
         Route::Artists => artist_visible_cover_window(shell, false),
         Route::AlbumArtists => artist_visible_cover_window(shell, true),
         Route::Genres => genre_visible_cover_window(shell),
+        Route::Moods => mood_visible_cover_window(shell),
         Route::Playlists => playlist_visible_cover_window(shell),
         Route::SmartPlaylists => smart_playlist_visible_cover_window(shell),
         _ => VisibleCoverWindow { refs: Vec::new() },
@@ -241,6 +242,37 @@ fn genre_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     }
     let refs = visible_cover_refs(image_refs, fetch_size, size);
     VisibleCoverWindow { refs }
+}
+
+fn mood_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
+    let settings = shell.library_settings(LibraryListKey::Moods);
+    let Some((fetch_size, size)) = collection_cover_prime_sizes(&settings) else {
+        return VisibleCoverWindow { refs: Vec::new() };
+    };
+    let mut moods = cached_moods_for_visible_cover(shell);
+    library::sort_moods(&mut moods, &settings);
+    let (visible_start, visible_end) =
+        visible_index_range(shell, moods.len(), LibraryListKey::Moods, &settings);
+    let mut image_refs = Vec::new();
+    for mood in &moods[visible_start..visible_end] {
+        image_refs.extend(crate::cover_art_policy::selected_mood_artwork(mood).image_refs);
+    }
+    let refs = visible_cover_refs(image_refs, fetch_size, size);
+    VisibleCoverWindow { refs }
+}
+
+fn cached_moods_for_visible_cover(shell: &Shell) -> Vec<Mood> {
+    let Ok(page) = shell.controller.cached_moods_page(0, 1) else {
+        return Vec::new();
+    };
+    if page.total <= page.items.len() {
+        return page.items;
+    }
+    shell
+        .controller
+        .cached_moods_page(0, page.total)
+        .map(|page| page.items)
+        .unwrap_or_default()
 }
 
 fn playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {

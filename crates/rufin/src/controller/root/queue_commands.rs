@@ -595,6 +595,27 @@ impl AppController {
             true,
         )
     }
+    pub fn play_mood_tracks_window(
+        &self,
+        mood_id: MoodId,
+        total_items: usize,
+        anchor_index: usize,
+        track_at: impl FnMut(usize) -> Option<Track>,
+    ) -> bool {
+        self.play_loaded_source_window_with_shuffle_start(
+            PlaySourceKey {
+                descriptor: PlaySourceDescriptor::MoodTracks {
+                    mood_id,
+                    selected_music_folder_id: Self::active_music_folder(&self.store),
+                },
+                order: SourceOrder::Canonical,
+            },
+            total_items,
+            anchor_index,
+            track_at,
+            true,
+        )
+    }
 
     fn active_music_folder(store: &StoreHandle) -> Option<MusicFolderId> {
         store

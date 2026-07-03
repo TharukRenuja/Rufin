@@ -17,8 +17,8 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
     ExternalLyricsProvider, FolderPathItem, GeneratedTrackSeed, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibraryField, LibraryListSettings, LibrarySourceSelection,
-    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId,
-    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
+    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, Mood, MoodId, MusicFolder,
+    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion,
     QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
     SecretStorageMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
@@ -27,8 +27,8 @@ use domain::{
     TrackSortKey, TrackTableSettings,
 };
 use library::{
-    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
-    LibraryDeltaCollector, LocalLibraryDelta, SavedServer, ServerLocalAccess, Store,
+    CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
+    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, SavedServer, ServerLocalAccess, Store,
     StoreBackedSourceItem, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
 };
 use playback::{
@@ -146,8 +146,8 @@ use source_image_policy::{
 };
 pub(in crate::controller) use source_image_policy::{
     scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
-    scrub_selected_genre_image_refs, scrub_selected_playlist_image_refs,
-    scrub_selected_track_image_refs, scrub_smart_refs,
+    scrub_selected_genre_image_refs, scrub_selected_mood_image_refs,
+    scrub_selected_playlist_image_refs, scrub_selected_track_image_refs, scrub_smart_refs,
 };
 use source_presentation::{load_runtime_snapshot, load_snapshot};
 #[cfg(test)]

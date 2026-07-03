@@ -90,6 +90,23 @@ fn route_expands_text_columns() {
     assert_eq!(fitted[5], base_widths[5]);
 }
 #[test]
+fn collection_aggregate_columns_keep_readable_widths() {
+    let base_widths = [
+        super::SMART_PLAYLIST_REORDER_WIDTH,
+        super::column_width(LibraryField::Image),
+        220,
+        super::collection_column_width(LibraryField::SongCount),
+        super::collection_column_width(LibraryField::Duration),
+    ];
+    let fitted = super::fitted_column_widths(&base_widths, 620);
+
+    assert_eq!(fitted.iter().sum::<i32>(), 620);
+    assert!(base_widths[3] >= super::compact_header_column_width("Number of songs", 96));
+    assert!(base_widths[4] >= 128);
+    assert!(fitted[3] >= base_widths[3]);
+    assert_eq!(fitted[4], base_widths[4]);
+}
+#[test]
 fn genre_track_rows_expand_title_and_album() {
     let settings = LibraryListSettings::for_key(LibraryListKey::GenreTracks);
     let base_widths = settings
@@ -663,7 +680,7 @@ fn route_cache_page() {
     assert_eq!(page.total, 5);
 }
 #[test]
-fn route_duration_fields_use_compact_clock_text() {
+fn route_duration_fields_use_contextual_text() {
     let mut album = test_album(1, "Album");
     let mut playlist = test_playlist_with_refs(1, "Playlist", Vec::new(), None);
     let mut smart_playlist = test_smart_playlist_with_refs(1, "Smart Playlist", Vec::new(), None);
@@ -677,11 +694,11 @@ fn route_duration_fields_use_compact_clock_text() {
     assert_eq!(super::album_field(&album, LibraryField::Duration), "5:08");
     assert_eq!(
         super::playlist_field(&playlist, LibraryField::Duration),
-        "5:08"
+        "5m 8s"
     );
     assert_eq!(
         super::smart_playlist_field(&smart_playlist, LibraryField::Duration),
-        "5:08"
+        "5m 8s"
     );
     assert_eq!(super::track_field(&track, LibraryField::Duration), "5:08");
 }

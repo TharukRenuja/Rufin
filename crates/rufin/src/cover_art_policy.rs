@@ -1,6 +1,6 @@
 use domain::{
-    Album, AppSettings, Artist, Genre, HomeSection, ImageRef, Playlist, QueueEntry, QueueSnapshot,
-    SmartPlaylist, Track,
+    Album, AppSettings, Artist, Genre, HomeSection, ImageRef, Mood, Playlist, QueueEntry,
+    QueueSnapshot, SmartPlaylist, Track,
 };
 use source::{PlaylistDetail, SearchResults};
 
@@ -106,6 +106,10 @@ pub fn selected_artist_artwork(artist: &Artist, settings: &AppSettings) -> Selec
 
 pub fn selected_genre_artwork(genre: &Genre) -> SelectedArtwork {
     selected_collection_artwork(&genre.image_refs, genre.image_ref.as_ref(), false)
+}
+
+pub fn selected_mood_artwork(mood: &Mood) -> SelectedArtwork {
+    selected_collection_artwork(&mood.image_refs, mood.image_ref.as_ref(), false)
 }
 
 pub fn selected_playlist_artwork(playlist: &Playlist, settings: &AppSettings) -> SelectedArtwork {

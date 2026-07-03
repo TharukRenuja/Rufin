@@ -346,9 +346,6 @@ msgstr ""
 msgid "Play artist"
 msgstr ""
 
-msgid "Play genre"
-msgstr ""
-
 msgid "Play playlist"
 msgstr ""
 
@@ -356,6 +353,15 @@ msgid "Play smart playlist"
 msgstr ""
 
 msgid "Cached entries will appear here after sync finishes"
+msgstr ""
+
+msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
+msgstr ""
+
+msgid "Play genre"
+msgstr ""
+
+msgid "Play mood"
 msgstr ""
 
 msgid "Change sort order"
@@ -1112,9 +1118,6 @@ msgid "Narrow right sidebar"
 msgstr ""
 
 msgid "Sidebar Items"
-msgstr ""
-
-msgid "Not supported for Jellyfin"
 msgstr ""
 
 msgid "No queue items match the search."

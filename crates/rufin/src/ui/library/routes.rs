@@ -684,486 +684,80 @@ impl Shell {
         view
     }
     pub(in crate::ui) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
-        let settings = self.library_settings(LibraryListKey::Genres);
-        let page = self.complete_genre_snapshot_page().unwrap_or_else(|| {
-            self.controller
-                .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
-                .unwrap_or_else(|error| {
-                    warn!(%error, "failed to load cached genres page");
-                    let genres = self
-                        .state
-                        .library
-                        .borrow()
-                        .genres
-                        .iter()
-                        .take(GRID_ROUTE_PAGE_SIZE)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    source::PagedResponse::new(genres, self.state.library.borrow().genres.len())
-                })
-        });
-        let page = complete_cached_page(
-            page,
-            library_layout_loads_complete_page(LibraryListKey::Genres, &settings),
-            |limit| self.controller.cached_genres_page(0, limit),
-            "genres",
-        );
-        self.library_genre_list_view_from_page(page)
+        self.library_named_collection_view(NamedCollectionKind::Genres)
     }
 
-    pub(in crate::ui) fn library_genre_list_view_from_page(
-        self: &Rc<Self>,
-        page: source::PagedResponse<Genre>,
-    ) -> gtk::Widget {
-        let settings = self.library_settings(LibraryListKey::Genres);
-        let complete_page = page.items.len() >= page.total;
-        let source_genres = Rc::new(page.items.clone());
-        let genres = Rc::new(RefCell::new(page.items));
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        warm_genre_covers_for_settings(self, &genres.borrow(), &settings);
-        populate_genre_model(&model, &genres.borrow(), &settings);
-
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let cursor = Rc::new(super::PagedGridCursor {
-            offset: std::cell::Cell::new(genres.borrow().len()),
-            total: std::cell::Cell::new(page.total),
-            loading: std::cell::Cell::new(false),
-        });
-        let query = Rc::new(RefCell::new(String::new()));
-
-        {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let source_genres = Rc::clone(&source_genres);
-            let genres = Rc::clone(&genres);
-            let cursor = Rc::clone(&cursor);
-            let query = Rc::clone(&query);
-            search.connect_search_changed(move |entry| {
-                let text = entry.text().trim().to_string();
-                *query.borrow_mut() = text.clone();
-                if complete_page {
-                    let query = text.to_lowercase();
-                    let values = source_genres
-                        .iter()
-                        .filter(|genre| query.is_empty() || genre_matches_query(genre, &query))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let count = values.len();
-                    *genres.borrow_mut() = values;
-                    warm_genre_covers_for_settings(
-                        &shell,
-                        &genres.borrow(),
-                        &shell.library_settings(LibraryListKey::Genres),
-                    );
-                    populate_genre_model(
-                        &model,
-                        &genres.borrow(),
-                        &shell.library_settings(LibraryListKey::Genres),
-                    );
-                    cursor.offset.set(count);
-                    cursor.total.set(count);
-                    cursor.loading.set(false);
-                    return;
-                }
-
-                cursor.offset.set(0);
-                cursor.total.set(usize::MAX);
-                cursor.loading.set(true);
-                let total_started = Instant::now();
-                let load_started = Instant::now();
-                match shell
-                    .controller
-                    .cached_genres_page_matching(&text, 0, GRID_ROUTE_PAGE_SIZE)
-                {
-                    Ok(page) => {
-                        let load_ms = load_started.elapsed().as_millis() as u64;
-                        let apply_started = Instant::now();
-                        let settings = shell.library_settings(LibraryListKey::Genres);
-                        let page = complete_cached_page(
-                            page,
-                            library_layout_loads_complete_page(LibraryListKey::Genres, &settings),
-                            |limit| {
-                                shell
-                                    .controller
-                                    .cached_genres_page_matching(&text, 0, limit)
-                            },
-                            "genres search",
-                        );
-                        let count = page.items.len();
-                        let total = page.total;
-                        *genres.borrow_mut() = page.items;
-                        warm_genre_covers_for_settings(&shell, &genres.borrow(), &settings);
-                        populate_genre_model(&model, &genres.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(RoutePageTiming {
-                            route: &Route::Genres,
-                            action: "search",
-                            offset: 0,
-                            count,
-                            total,
-                            load_ms,
-                            apply_ms: apply_started.elapsed().as_millis() as u64,
-                            total_ms: total_started.elapsed().as_millis() as u64,
-                        });
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to search cached genres page");
-                        cursor.loading.set(false);
-                    }
-                }
-            });
-        }
-
-        let load_next = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let genres = Rc::clone(&genres);
-            let cursor = Rc::clone(&cursor);
-            let query = Rc::clone(&query);
-            Rc::new(move || {
-                if !shell.can_load_grid_page(&cursor, &Route::Genres) {
-                    return;
-                }
-                let total_started = Instant::now();
-                let offset = cursor.offset.get();
-                let text = query.borrow().clone();
-                let load_started = Instant::now();
-                match shell.controller.cached_genres_page_matching(
-                    &text,
-                    offset,
-                    GRID_ROUTE_PAGE_SIZE,
-                ) {
-                    Ok(page) => {
-                        let load_ms = load_started.elapsed().as_millis() as u64;
-                        let apply_started = Instant::now();
-                        let count = page.items.len();
-                        let total = page.total;
-                        let mut items = page.items;
-                        sort_genres(&mut items, &shell.library_settings(LibraryListKey::Genres));
-                        warm_genre_covers_for_settings(
-                            &shell,
-                            &items,
-                            &shell.library_settings(LibraryListKey::Genres),
-                        );
-                        genres.borrow_mut().extend(items.iter().cloned());
-                        append_genres_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(RoutePageTiming {
-                            route: &Route::Genres,
-                            action: "append",
-                            offset,
-                            count,
-                            total,
-                            load_ms,
-                            apply_ms: apply_started.elapsed().as_millis() as u64,
-                            total_ms: total_started.elapsed().as_millis() as u64,
-                        });
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to append cached genres page");
-                        cursor.loading.set(false);
-                    }
-                }
-            }) as Rc<dyn Fn()>
-        };
-        let configure_scroller = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_genre_viewport_cover_warm(&shell, scroller, &model, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
-
-        self.library_page_shell(LibraryPageShellOptions {
-            key: LibraryListKey::Genres,
-            empty: genres.borrow().is_empty(),
-            empty_body: msgid("Cached entries will appear here after sync finishes"),
-            search,
-            content: genre_collection_widget(self, model),
-            load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(configure_scroller),
-        })
+    pub(in crate::ui) fn library_mood_list_view(self: &Rc<Self>) -> gtk::Widget {
+        self.library_named_collection_view(NamedCollectionKind::Moods)
     }
+
     pub(in crate::ui) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
-        let settings = self.library_settings(LibraryListKey::Playlists);
-        let page = self.complete_playlist_snapshot_page().unwrap_or_else(|| {
-            self.controller
-                .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
-                .unwrap_or_else(|error| {
-                    warn!(%error, "failed to load cached playlists page");
-                    let playlists = self
-                        .state
-                        .library
-                        .borrow()
-                        .playlists
-                        .iter()
-                        .take(GRID_ROUTE_PAGE_SIZE)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    source::PagedResponse::new(
-                        playlists,
-                        self.state.library.borrow().playlists.len(),
-                    )
-                })
-        });
-        let page = complete_cached_page(
-            page,
-            library_layout_loads_complete_page(LibraryListKey::Playlists, &settings),
-            |limit| self.controller.cached_playlists_page(0, limit),
-            "playlists",
-        );
-        self.library_playlists_view_from_page(page)
-    }
-
-    pub(in crate::ui) fn library_playlists_view_from_page(
-        self: &Rc<Self>,
-        page: source::PagedResponse<Playlist>,
-    ) -> gtk::Widget {
-        let settings = self.library_settings(LibraryListKey::Playlists);
-        let complete_page = page.items.len() >= page.total;
-        let source_playlists = Rc::new(page.items.clone());
-        let playlists = Rc::new(RefCell::new(page.items));
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        warm_playlist_covers_for_settings(self, &playlists.borrow(), &settings);
-        populate_playlist_model(&model, &playlists.borrow(), &settings);
-
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let cursor = Rc::new(super::PagedGridCursor {
-            offset: std::cell::Cell::new(playlists.borrow().len()),
-            total: std::cell::Cell::new(page.total),
-            loading: std::cell::Cell::new(false),
-        });
-        let query = Rc::new(RefCell::new(String::new()));
-
-        {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let source_playlists = Rc::clone(&source_playlists);
-            let playlists = Rc::clone(&playlists);
-            let cursor = Rc::clone(&cursor);
-            let query = Rc::clone(&query);
-            search.connect_search_changed(move |entry| {
-                let text = entry.text().trim().to_string();
-                *query.borrow_mut() = text.clone();
-                if complete_page {
-                    let query = text.to_lowercase();
-                    let values = source_playlists
-                        .iter()
-                        .filter(|playlist| {
-                            query.is_empty() || playlist_matches_query(playlist, &query)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let count = values.len();
-                    *playlists.borrow_mut() = values;
-                    warm_playlist_covers_for_settings(
-                        &shell,
-                        &playlists.borrow(),
-                        &shell.library_settings(LibraryListKey::Playlists),
-                    );
-                    populate_playlist_model(
-                        &model,
-                        &playlists.borrow(),
-                        &shell.library_settings(LibraryListKey::Playlists),
-                    );
-                    cursor.offset.set(count);
-                    cursor.total.set(count);
-                    cursor.loading.set(false);
-                    return;
-                }
-
-                cursor.offset.set(0);
-                cursor.total.set(usize::MAX);
-                cursor.loading.set(true);
-                let total_started = Instant::now();
-                let load_started = Instant::now();
-                match shell.controller.cached_playlists_page_matching(
-                    &text,
-                    0,
-                    GRID_ROUTE_PAGE_SIZE,
-                ) {
-                    Ok(page) => {
-                        let load_ms = load_started.elapsed().as_millis() as u64;
-                        let apply_started = Instant::now();
-                        let settings = shell.library_settings(LibraryListKey::Playlists);
-                        let page = complete_cached_page(
-                            page,
-                            library_layout_loads_complete_page(
-                                LibraryListKey::Playlists,
-                                &settings,
-                            ),
-                            |limit| {
-                                shell
-                                    .controller
-                                    .cached_playlists_page_matching(&text, 0, limit)
-                            },
-                            "playlists search",
-                        );
-                        let count = page.items.len();
-                        let total = page.total;
-                        *playlists.borrow_mut() = page.items;
-                        warm_playlist_covers_for_settings(&shell, &playlists.borrow(), &settings);
-                        populate_playlist_model(&model, &playlists.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, total);
-                        log_route_page_timing(RoutePageTiming {
-                            route: &Route::Playlists,
-                            action: "search",
-                            offset: 0,
-                            count,
-                            total,
-                            load_ms,
-                            apply_ms: apply_started.elapsed().as_millis() as u64,
-                            total_ms: total_started.elapsed().as_millis() as u64,
-                        });
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to search cached playlists page");
-                        cursor.loading.set(false);
-                    }
-                }
-            });
-        }
-
-        let load_next = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let playlists = Rc::clone(&playlists);
-            let cursor = Rc::clone(&cursor);
-            let query = Rc::clone(&query);
-            Rc::new(move || {
-                if !shell.can_load_grid_page(&cursor, &Route::Playlists) {
-                    return;
-                }
-                let total_started = Instant::now();
-                let offset = cursor.offset.get();
-                let text = query.borrow().clone();
-                let load_started = Instant::now();
-                match shell.controller.cached_playlists_page_matching(
-                    &text,
-                    offset,
-                    GRID_ROUTE_PAGE_SIZE,
-                ) {
-                    Ok(page) => {
-                        let load_ms = load_started.elapsed().as_millis() as u64;
-                        let apply_started = Instant::now();
-                        let count = page.items.len();
-                        let total = page.total;
-                        let mut items = page.items;
-                        sort_playlists(
-                            &mut items,
-                            &shell.library_settings(LibraryListKey::Playlists),
-                        );
-                        warm_playlist_covers_for_settings(
-                            &shell,
-                            &items,
-                            &shell.library_settings(LibraryListKey::Playlists),
-                        );
-                        playlists.borrow_mut().extend(items.iter().cloned());
-                        append_playlists_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, total);
-                        log_route_page_timing(RoutePageTiming {
-                            route: &Route::Playlists,
-                            action: "append",
-                            offset,
-                            count,
-                            total,
-                            load_ms,
-                            apply_ms: apply_started.elapsed().as_millis() as u64,
-                            total_ms: total_started.elapsed().as_millis() as u64,
-                        });
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to append cached playlists page");
-                        cursor.loading.set(false);
-                    }
-                }
-            }) as Rc<dyn Fn()>
-        };
-
-        let configure_scroller = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_playlist_viewport_cover_warm(&shell, scroller, &model, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
-
-        self.library_page_shell(LibraryPageShellOptions {
+        CollectionRouteSpec {
             key: LibraryListKey::Playlists,
-            empty: playlists.borrow().is_empty(),
+            route: Route::Playlists,
+            page_name: "playlists",
             empty_body: msgid("Cached entries will appear here after sync finishes"),
-            search,
-            content: playlist_collection_widget(self, model),
-            load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(configure_scroller),
-        })
+            initial_page: Rc::new(|shell| {
+                shell.complete_playlist_snapshot_page().unwrap_or_else(|| {
+                    shell
+                        .controller
+                        .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
+                        .unwrap_or_else(|error| {
+                            warn!(%error, "failed to load cached playlists page");
+                            let library = shell.state.library.borrow();
+                            let playlists = library
+                                .playlists
+                                .iter()
+                                .take(GRID_ROUTE_PAGE_SIZE)
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            source::PagedResponse::new(playlists, library.playlists.len())
+                        })
+                })
+            }),
+            load_page: Some(Rc::new(|shell, offset, limit| {
+                shell.controller.cached_playlists_page(offset, limit)
+            })),
+            load_matching_page: Some(Rc::new(|shell, query, offset, limit| {
+                shell
+                    .controller
+                    .cached_playlists_page_matching(query, offset, limit)
+            })),
+            matches_query: Rc::new(playlist_matches_query),
+            sort_items: Rc::new(sort_playlists),
+            populate_model: Rc::new(populate_playlist_model),
+            append_model: Rc::new(append_playlists_to_model),
+            warm_items: Rc::new(warm_playlist_covers_for_settings),
+            build_content: Rc::new(playlist_collection_widget),
+            configure_scroller: Rc::new(connect_playlist_viewport_cover_warm),
+            after_replace: None,
+        }
+        .view(self)
     }
     pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {
-        let settings = self.library_settings(LibraryListKey::SmartPlaylists);
-        let items = self.smart_playlists_for_route();
-        self.state.smart_playlists.replace(items.clone());
-        let source_playlists = Rc::new(items.clone());
-        let playlists = Rc::new(RefCell::new(items));
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        warm_smart_settings(self, &playlists.borrow(), &settings);
-        populate_smart_playlist_model(&model, &playlists.borrow(), &settings);
-
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let source_playlists = Rc::clone(&source_playlists);
-            let playlists = Rc::clone(&playlists);
-            search.connect_search_changed(move |entry| {
-                let query = entry.text().trim().to_lowercase();
-                let values = source_playlists
-                    .iter()
-                    .filter(|playlist| {
-                        query.is_empty() || smart_playlist_matches_query(playlist, &query)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                shell.state.smart_playlists.replace(values.clone());
-                *playlists.borrow_mut() = values;
-                warm_smart_settings(
-                    &shell,
-                    &playlists.borrow(),
-                    &shell.library_settings(LibraryListKey::SmartPlaylists),
-                );
-                populate_smart_playlist_model(
-                    &model,
-                    &playlists.borrow(),
-                    &shell.library_settings(LibraryListKey::SmartPlaylists),
-                );
-            });
-        }
-
-        let configure_scroller = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_smart_warm(&shell, scroller, &model, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
-
-        self.library_page_shell(LibraryPageShellOptions {
+        CollectionRouteSpec {
             key: LibraryListKey::SmartPlaylists,
-            empty: playlists.borrow().is_empty(),
+            route: Route::SmartPlaylists,
+            page_name: "smart playlists",
             empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
-            search,
-            content: smart_playlist_collection_widget(self, model),
-            load_next: None,
-            configure_scroller: Some(configure_scroller),
-        })
+            initial_page: Rc::new(|shell| {
+                let items = shell.smart_playlists_for_route();
+                source::PagedResponse::new(items.clone(), items.len())
+            }),
+            load_page: None,
+            load_matching_page: None,
+            matches_query: Rc::new(smart_playlist_matches_query),
+            sort_items: Rc::new(sort_smart_playlists),
+            populate_model: Rc::new(populate_smart_playlist_model),
+            append_model: Rc::new(append_boxed_items_to_model),
+            warm_items: Rc::new(warm_smart_settings),
+            build_content: Rc::new(smart_playlist_collection_widget),
+            configure_scroller: Rc::new(connect_smart_warm),
+            after_replace: Some(Rc::new(|shell, playlists| {
+                shell.state.smart_playlists.replace(playlists.to_vec());
+            })),
+        }
+        .view(self)
     }
     fn smart_playlists_for_route(&self) -> Vec<SmartPlaylist> {
         if self.state.smart_playlists_loaded.get() {

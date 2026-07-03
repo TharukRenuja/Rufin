@@ -98,13 +98,9 @@ impl Shell {
             Route::GenreDetail(genre_id) => {
                 RouteView::settled_width(self.genre_detail_view(genre_id))
             }
-            Route::Moods => {
-                RouteView::new(self.placeholder_view("Moods", "Not supported for Jellyfin"))
-                    .with_resize(RouteResizePolicy::Stable)
-            }
-            Route::MoodDetail(_) => RouteView::settled_width(
-                self.placeholder_view("Mood", "Not supported for Jellyfin"),
-            ),
+            Route::Moods => RouteView::new(self.library_mood_list_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Moods)),
+            Route::MoodDetail(mood_id) => RouteView::settled_width(self.mood_detail_view(mood_id)),
             Route::Folders { path } => RouteView::settled_width(self.folders_view(path)),
             Route::Playlists => RouteView::new(self.library_playlists_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Playlists)),
@@ -501,7 +497,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || track_table_delta_affects(delta)
                 || !delta.albums.is_empty()
         }
-        Route::Moods => !delta.tracks.metadata.is_empty() || !delta.tracks.added.is_empty(),
+        Route::Moods => mood_route_delta_affects(delta),
         Route::MoodDetail(_) => {
             track_table_delta_affects(delta) || !delta.tracks.metadata.is_empty()
         }
@@ -546,6 +542,14 @@ fn track_table_delta_affects(delta: &LibraryDelta) -> bool {
 
 fn playlist_detail_track_delta_affects(delta: &LibraryDelta) -> bool {
     track_table_delta_affects(delta) || !delta.tracks.stats.is_empty()
+}
+
+fn mood_route_delta_affects(delta: &LibraryDelta) -> bool {
+    !delta.tracks.added.is_empty()
+        || !delta.tracks.deleted.is_empty()
+        || !delta.tracks.fields.is_empty()
+        || !delta.tracks.metadata.is_empty()
+        || !delta.tracks.cover_refs.is_empty()
 }
 
 fn smart_playlist_track_delta_affects(
@@ -723,6 +727,33 @@ mod tests {
         let mut delta = LibraryDelta::default();
         delta.tracks.added.push(TrackId::fake(2));
         assert!(route_delta_affects(&Route::Tracks, &delta));
+    }
+
+    #[test]
+    fn mood_projection_delta_updates_moods_route() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.metadata.push(TrackId::fake(1));
+        assert!(route_delta_affects(&Route::Moods, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.deleted.push(TrackId::fake(2));
+        assert!(route_delta_affects(&Route::Moods, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.fields.push(TrackId::fake(3));
+        assert!(route_delta_affects(&Route::Moods, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.cover_refs.push(TrackId::fake(4));
+        assert!(route_delta_affects(&Route::Moods, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.stats.push(TrackId::fake(5));
+        assert!(!route_delta_affects(&Route::Moods, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.favorite.push(TrackId::fake(6));
+        assert!(!route_delta_affects(&Route::Moods, &delta));
     }
 
     #[test]

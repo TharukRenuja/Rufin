@@ -9,6 +9,14 @@ pub(in crate::ui) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSet
         )
     });
 }
+pub(in crate::ui) fn sort_moods(moods: &mut [Mood], settings: &LibraryListSettings) {
+    moods.sort_by(|left, right| {
+        apply_desc(
+            compare_mood(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
 pub(in crate::ui) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
     playlists.sort_by(|left, right| {
         apply_desc(
@@ -87,6 +95,14 @@ pub(in crate::ui) fn compare_genre(left: &Genre, right: &Genre, field: LibraryFi
     match field {
         LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+pub(in crate::ui) fn compare_mood(left: &Mood, right: &Mood, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
         _ => cmp_string(&left.name, &right.name),
     }
     .then_with(|| cmp_string(&left.name, &right.name))
@@ -201,19 +217,11 @@ pub(in crate::ui) fn artist_field(artist: &Artist, field: LibraryField) -> Strin
         _ => String::new(),
     }
 }
-pub(in crate::ui) fn genre_field(genre: &Genre, field: LibraryField) -> String {
-    match field {
-        LibraryField::Title | LibraryField::TitleMerged => genre.name.clone(),
-        LibraryField::AlbumCount => album_count_text(genre.album_count.into()),
-        LibraryField::SongCount => track_count_text(genre.track_count.into()),
-        _ => String::new(),
-    }
-}
 pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
         LibraryField::SongCount => track_count_text(playlist.track_count.into()),
-        LibraryField::Duration => domain::format_duration(playlist.duration_seconds),
+        LibraryField::Duration => format_duration_units(playlist.duration_seconds),
         _ => String::new(),
     }
 }
@@ -224,7 +232,7 @@ pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: Libra
             track_count_text(playlist.track_count.into())
         }
         LibraryField::Duration if playlist.duration_seconds > 0 => {
-            domain::format_duration(playlist.duration_seconds)
+            format_duration_units(playlist.duration_seconds)
         }
         _ => String::new(),
     }
@@ -267,9 +275,6 @@ pub(in crate::ui) fn album_matches_query(album: &Album, query: &str) -> bool {
 }
 pub(in crate::ui) fn artist_matches_query(artist: &Artist, query: &str) -> bool {
     artist.name.to_lowercase().contains(query)
-}
-pub(in crate::ui) fn genre_matches_query(genre: &Genre, query: &str) -> bool {
-    genre.name.to_lowercase().contains(query)
 }
 pub(in crate::ui) fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
     playlist.name.to_lowercase().contains(query)
@@ -993,7 +998,7 @@ mod tests {
         );
         assert_eq!(
             smart_playlist_field(&resolved, LibraryField::Duration),
-            "2:00"
+            "2m 0s"
         );
     }
 

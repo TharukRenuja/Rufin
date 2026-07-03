@@ -564,126 +564,6 @@ impl ReusableCollectionGridCell<Artist> for ArtistGridCell {
     }
 }
 
-pub(super) struct GenreGridCell {
-    body: CollectionGridCardCell,
-    shell: Rc<Shell>,
-    cover_button: gtk::Button,
-    size: i32,
-    current_genre: Rc<RefCell<Option<Genre>>>,
-}
-
-impl GenreGridCell {
-    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField], size: i32) -> Self {
-        let current_genre = Rc::new(RefCell::new(None::<Genre>));
-
-        let overlay = cards::cover_overlay(size);
-        let cover_button = collection_grid_cover_shell(size);
-        let open_shell = Rc::clone(&shell);
-        let open_genre = Rc::clone(&current_genre);
-        cover_button.connect_clicked(move |_| {
-            let Some(genre) = open_genre.borrow().as_ref().cloned() else {
-                return;
-            };
-            open_shell.navigate(Route::GenreDetail(genre.id));
-        });
-        overlay.set_child(Some(&cover_button));
-
-        let mut controls = cards::cover_play_hover_controls(size, msgid("Play genre"));
-        let menu = controls.add_context_button();
-        let menu_shell = Rc::clone(&shell);
-        let menu_genre = Rc::clone(&current_genre);
-        let menu_target = overlay.clone();
-        menu.connect_clicked(move |_| {
-            let Some(genre) = menu_genre.borrow().as_ref().cloned() else {
-                return;
-            };
-            present_genre_context_menu(
-                menu_target.upcast_ref(),
-                &menu_shell,
-                genre,
-                cards::cover_context_point(size),
-            );
-        });
-
-        let controller = shell.controller.clone();
-        let play_genre = Rc::clone(&current_genre);
-        controls.play.connect_clicked(move |_| {
-            let Some(genre_id) = play_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
-                return;
-            };
-            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-                let tracks = detail.tracks;
-                controller.play_genre_tracks_window(genre_id, tracks.len(), 0, |index| {
-                    tracks.get(index).cloned()
-                });
-            }
-        });
-
-        let controller = shell.controller.clone();
-        let next_genre = Rc::clone(&current_genre);
-        controls.play_next.connect_clicked(move |_| {
-            let Some(genre_id) = next_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
-                return;
-            };
-            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-                for track in detail.tracks.iter().rev() {
-                    controller.play_next(track.clone());
-                }
-            }
-        });
-
-        let controller = shell.controller.clone();
-        let last_genre = Rc::clone(&current_genre);
-        controls.play_last.connect_clicked(move |_| {
-            let Some(genre_id) = last_genre.borrow().as_ref().map(|genre| genre.id.clone()) else {
-                return;
-            };
-            if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-                controller.play_last(detail.tracks);
-            }
-        });
-        controls.add_to_overlay(&overlay);
-        controls.connect_hover(&overlay);
-
-        let body = CollectionGridCardCell::new(&shell, fields, size, overlay.upcast());
-        install_dynamic_genre_context_menu(&body.card, &shell, Rc::clone(&current_genre));
-
-        Self {
-            body,
-            shell,
-            cover_button,
-            size,
-            current_genre,
-        }
-    }
-}
-
-impl ReusableCollectionGridCell<Genre> for GenreGridCell {
-    fn widget(&self) -> gtk::Widget {
-        self.body.widget()
-    }
-
-    fn bind(&self, _: u32, genre: Genre) {
-        let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
-        self.cover_button
-            .set_child(Some(&self.shell.cover_group_tile_for_artwork(
-                &artwork,
-                stable_seed(genre.id.as_str()),
-                self.size,
-                THUMB_COVER_SIZE,
-            )));
-        self.body
-            .bind(&genre.name, |field| (genre_field(&genre, field), None));
-        *self.current_genre.borrow_mut() = Some(genre);
-    }
-
-    fn clear(&self) {
-        self.cover_button.set_child(None::<&gtk::Widget>);
-        self.body.clear();
-        *self.current_genre.borrow_mut() = None;
-    }
-}
-
 pub(super) struct PlaylistGridCell {
     body: CollectionGridCardCell,
     shell: Rc<Shell>,
@@ -966,7 +846,7 @@ fn install_dynamic_artist_context_menu(
     );
 }
 
-fn install_dynamic_genre_context_menu(
+pub(super) fn install_dynamic_genre_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     genre: Rc<RefCell<Option<Genre>>>,
@@ -1088,14 +968,19 @@ fn install_dynamic_smart_playlist_drop_target(
     target.add_controller(drop_target);
 }
 
-struct CollectionGridCardCell {
-    card: gtk::Box,
+pub(super) struct CollectionGridCardCell {
+    pub(super) card: gtk::Box,
     title: gtk::Label,
     fields: Vec<CollectionGridFieldCell>,
 }
 
 impl CollectionGridCardCell {
-    fn new(shell: &Rc<Shell>, fields: &[LibraryField], size: i32, cover: gtk::Widget) -> Self {
+    pub(super) fn new(
+        shell: &Rc<Shell>,
+        fields: &[LibraryField],
+        size: i32,
+        cover: gtk::Widget,
+    ) -> Self {
         let card = collection_grid_card(size, fields.len());
         card.append(&cover);
         let (title_widget, title) = grid_title_with_label("", "track-title", size);
@@ -1115,11 +1000,11 @@ impl CollectionGridCardCell {
         }
     }
 
-    fn widget(&self) -> gtk::Widget {
+    pub(super) fn widget(&self) -> gtk::Widget {
         self.card.clone().upcast()
     }
 
-    fn bind(
+    pub(super) fn bind(
         &self,
         title: &str,
         mut field_value: impl FnMut(LibraryField) -> (String, Option<Route>),
@@ -1133,7 +1018,7 @@ impl CollectionGridCardCell {
         }
     }
 
-    fn clear(&self) {
+    pub(super) fn clear(&self) {
         self.title.set_text("");
         self.title.set_tooltip_text(None);
         for field in &self.fields {
@@ -1142,7 +1027,7 @@ impl CollectionGridCardCell {
     }
 }
 
-fn collection_grid_cover_shell(size: i32) -> gtk::Button {
+pub(super) fn collection_grid_cover_shell(size: i32) -> gtk::Button {
     let cover_button = gtk::Button::new();
     cover_button.add_css_class("album-cover-button");
     cover_button.add_css_class("flat");

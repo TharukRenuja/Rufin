@@ -163,6 +163,33 @@ impl AppController {
         )?;
         Ok(Some(detail))
     }
+
+    pub fn cached_mood_detail(&self, mood_id: &MoodId) -> Result<Option<CachedMoodDetail>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(None);
+        };
+        let settings = load_settings_for_saved(&self.store, &saved);
+        let Some(mut detail) = self
+            .store
+            .with_store(|store| store.load_mood_detail(&saved.server.id, mood_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_selected_mood_image_refs(&saved, &settings, std::slice::from_mut(&mut detail.mood));
+        scrub_selected_album_image_refs(&saved, &settings, &mut detail.albums);
+        scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
+        cover_art_policy::bind_albums(&mut detail.albums, &settings);
+        cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
+        track_album_refs_with_settings(
+            &self.store,
+            &saved,
+            &settings,
+            &mut detail.tracks,
+            &detail.albums,
+        )?;
+        Ok(Some(detail))
+    }
+
     pub fn cached_albums_page(
         &self,
         offset: usize,
@@ -298,6 +325,40 @@ impl AppController {
         scrub_selected_genre_image_refs(&saved, &settings, &mut page.items);
         Ok(page)
     }
+
+    pub fn cached_moods_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<source::PagedResponse<Mood>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(source::PagedResponse::new(Vec::new(), 0));
+        };
+        let settings = load_settings_for_saved(&self.store, &saved);
+        let mut page = self
+            .store
+            .with_store(|store| store.load_moods(&saved.server.id, offset, limit))?;
+        scrub_selected_mood_image_refs(&saved, &settings, &mut page.items);
+        Ok(page)
+    }
+
+    pub fn cached_moods_page_matching(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<source::PagedResponse<Mood>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(source::PagedResponse::new(Vec::new(), 0));
+        };
+        let settings = load_settings_for_saved(&self.store, &saved);
+        let mut page = self.store.with_store(|store| {
+            store.load_moods_matching(&saved.server.id, query, offset, limit)
+        })?;
+        scrub_selected_mood_image_refs(&saved, &settings, &mut page.items);
+        Ok(page)
+    }
+
     pub fn cached_genres_page_matching(
         &self,
         query: &str,

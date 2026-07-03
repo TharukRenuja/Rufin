@@ -26,10 +26,11 @@ const NAV_ROUTE_TRACKS_CLASS: &str = "nav-route-tracks";
 const NAV_ROUTE_ARTISTS_CLASS: &str = "nav-route-artists";
 const NAV_ROUTE_ALBUM_ARTISTS_CLASS: &str = "nav-route-album-artists";
 const NAV_ROUTE_GENRES_CLASS: &str = "nav-route-genres";
+const NAV_ROUTE_MOODS_CLASS: &str = "nav-route-moods";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
-const NAV_ROUTE_ICONS: [(&str, &str, &str); 10] = [
+const NAV_ROUTE_ICONS: [(&str, &str, &str); 11] = [
     (
         NAV_ROUTE_HOME_CLASS,
         "rufin-route-home-symbolic",
@@ -64,6 +65,11 @@ const NAV_ROUTE_ICONS: [(&str, &str, &str); 10] = [
         NAV_ROUTE_GENRES_CLASS,
         "rufin-route-genres-symbolic",
         "rufin-route-genres-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_MOODS_CLASS,
+        "rufin-route-moods-symbolic",
+        "rufin-route-moods-selected-symbolic",
     ),
     (
         NAV_ROUTE_FOLDERS_CLASS,
@@ -536,7 +542,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Genres,
         },
         SidebarRouteItem::Moods => NavItem {
-            icon_name: "rufin-route-genres-symbolic",
+            icon_name: "rufin-route-moods-symbolic",
             label: "Moods",
             route: Route::Moods,
         },
@@ -666,9 +672,8 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
         | Route::ArtistDiscography(_)
         | Route::ArtistTracks(_) => Some(NAV_ROUTE_ARTISTS_CLASS),
         Route::AlbumArtists => Some(NAV_ROUTE_ALBUM_ARTISTS_CLASS),
-        Route::Genres | Route::GenreDetail(_) | Route::Moods | Route::MoodDetail(_) => {
-            Some(NAV_ROUTE_GENRES_CLASS)
-        }
+        Route::Genres | Route::GenreDetail(_) => Some(NAV_ROUTE_GENRES_CLASS),
+        Route::Moods | Route::MoodDetail(_) => Some(NAV_ROUTE_MOODS_CLASS),
         Route::Folders { .. } => Some(NAV_ROUTE_FOLDERS_CLASS),
         Route::Playlists | Route::PlaylistDetail(_) => Some(NAV_ROUTE_PLAYLISTS_CLASS),
         Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => {
@@ -705,6 +710,15 @@ mod tests {
         assert_ne!(
             nav_route_class(&Route::Playlists),
             nav_route_class(&Route::SmartPlaylists)
+        );
+        assert_eq!(
+            nav_route_class(&Route::Genres),
+            Some(NAV_ROUTE_GENRES_CLASS)
+        );
+        assert_eq!(nav_route_class(&Route::Moods), Some(NAV_ROUTE_MOODS_CLASS));
+        assert_ne!(
+            nav_route_class(&Route::Genres),
+            nav_route_class(&Route::Moods)
         );
     }
 

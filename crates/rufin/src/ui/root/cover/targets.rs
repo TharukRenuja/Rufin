@@ -348,6 +348,15 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
                 push_genre_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
             }
         }
+        Route::Moods => {
+            let list_settings = settings.library_list(LibraryListKey::Moods);
+            let limit = metrics.initial_visible_count(LibraryListKey::Moods, &list_settings);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_moods_page(0, limit) {
+                push_mood_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+            }
+        }
         Route::Playlists if library.playlists.is_empty() && library.cached_playlist_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Playlists);
             let limit = metrics.initial_visible_count(LibraryListKey::Playlists, &list_settings);
@@ -701,6 +710,25 @@ fn push_genre_source_warm_targets(
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
         }
         push_startup_cover_target(targets, genre.image_ref.as_ref(), fetch_size, size);
+    }
+}
+fn push_mood_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    mut moods: Vec<Mood>,
+    settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
+) {
+    let Some((fetch_size, size)) = source_collection_route_cover_size(settings) else {
+        return;
+    };
+    library::sort_moods(&mut moods, settings);
+    for mood in moods
+        .iter()
+        .take(route_metrics.initial_visible_count(LibraryListKey::Moods, settings))
+    {
+        for image_ref in crate::cover_art_policy::selected_mood_artwork(mood).image_refs {
+            push_startup_cover_target(targets, Some(&image_ref), fetch_size, size);
+        }
     }
 }
 fn push_playlist_source_warm_targets(

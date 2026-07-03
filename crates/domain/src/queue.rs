@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    AlbumId, ArtistId, GenreId, ImageRef, MusicFolderId, PlaylistId, ServerId, SmartPlaylistId,
-    Track, TrackId,
+    AlbumId, ArtistId, GenreId, ImageRef, MoodId, MusicFolderId, PlaylistId, ServerId,
+    SmartPlaylistId, Track, TrackId,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -127,6 +127,10 @@ pub enum PlaySourceDescriptor {
     },
     GenreTracks {
         genre_id: GenreId,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    MoodTracks {
+        mood_id: MoodId,
         selected_music_folder_id: Option<MusicFolderId>,
     },
     FavoriteTracks {

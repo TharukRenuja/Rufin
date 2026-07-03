@@ -8,12 +8,13 @@ use std::{
 use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, MusicFolder, MusicFolderId,
-    PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId, QueueEntryId,
-    QueueSnapshot, SearchResults, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
-    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistSortField, Track, TrackId, normalize_release_types,
+    LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, Mood, MoodId, MusicFolder,
+    MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
+    QueueEntryId, QueueSnapshot, SearchResults, ServerId, ServerIdentity, SmartPlaylist,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistSortField, Track, TrackId,
+    normalize_release_types,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
@@ -350,6 +351,13 @@ pub struct CachedArtistDetail {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CachedGenreDetail {
     pub genre: Genre,
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CachedMoodDetail {
+    pub mood: Mood,
     pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
 }
