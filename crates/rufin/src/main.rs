@@ -7,7 +7,7 @@ mod external_metadata;
 mod external_scrobbling;
 mod i18n;
 mod lyrics;
-mod providers;
+mod sources;
 mod ui;
 
 #[cfg(feature = "dev-tools")]

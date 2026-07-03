@@ -45,7 +45,7 @@ pub(in crate::controller) fn source_sync_readiness(
         .is_none_or(|age| age >= STARTUP_CACHE_STALE_SECONDS);
     let sync_required_reason = if input.sync_status == Some("error") {
         Some(SyncRequiredReason::PreviousSyncError)
-    } else if input.provider == LOCAL_PROVIDER_ID && input.local_library_configured {
+    } else if input.provider == LOCAL_SOURCE_ID && input.local_library_configured {
         if input.sync_status == Some("running") {
             Some(SyncRequiredReason::PreviousSyncError)
         } else if input.cached_item_count == 0 {
@@ -57,12 +57,12 @@ pub(in crate::controller) fn source_sync_readiness(
         }
     } else if input.cached_item_count == 0 && input.sync_completed_age_seconds.is_none() {
         Some(SyncRequiredReason::EmptyCache)
-    } else if stale && input.provider != LOCAL_PROVIDER_ID {
+    } else if stale && input.provider != LOCAL_SOURCE_ID {
         Some(SyncRequiredReason::RemoteCacheStale)
     } else {
         None
     };
-    let prefetch_required_reason = (input.provider == LOCAL_PROVIDER_ID
+    let prefetch_required_reason = (input.provider == LOCAL_SOURCE_ID
         && input.cached_item_count > 0
         && input.local_artwork_missing)
         .then_some(SyncRequiredReason::LocalArtworkMissing);
@@ -121,7 +121,7 @@ fn active_source_readiness_inner(
                 .map(|saved| saved.server.provider)
                 .unwrap_or_else(|| {
                     if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
-                        LOCAL_PROVIDER_ID.to_string()
+                        LOCAL_SOURCE_ID.to_string()
                     } else {
                         String::new()
                     }
@@ -138,7 +138,7 @@ fn active_source_readiness_inner(
             ))
         })?;
     let local_artwork_missing = include_local_artwork
-        && provider == LOCAL_PROVIDER_ID
+        && provider == LOCAL_SOURCE_ID
         && local_cover_cache_missing(store, server_id, false);
     Ok(source_sync_readiness(SourceSyncReadinessInput {
         provider: &provider,

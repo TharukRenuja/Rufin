@@ -245,7 +245,7 @@ fn fake_snapshot(
     scale: FakeScale,
 ) -> Result<LibrarySnapshot, String> {
     let started = std::time::Instant::now();
-    let provider = FakeProvider::new(scale);
+    let provider = FakeSource::new(scale);
     let server = provider.identity().server.clone();
     let saved = SavedServer {
         server: server.clone(),

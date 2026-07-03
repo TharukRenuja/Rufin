@@ -29,6 +29,9 @@ impl Shell {
         favorite: bool,
         button: Option<&gtk::Button>,
     ) {
+        if !self.favorite_mutation_supported() {
+            return;
+        }
         if let Some(button) = button {
             set_favorite_button_active(button, favorite);
         }

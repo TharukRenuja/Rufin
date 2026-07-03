@@ -10,10 +10,10 @@ use serde::de::{self, DeserializeOwned, Visitor};
 use source::{
     AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest,
     GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, LyricLine, Lyrics,
-    LyricsSource, MusicProvider, PagedRequest, PagedResponse, PlaybackReport, PlaybackReportKind,
-    PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities, ProviderError,
-    ProviderIdentity, ProviderResult, ProviderSession, RandomTrackRequest, SavedProviderSession,
-    SearchResults, StreamDescriptor, StreamRequest,
+    LyricsSource, MusicSource, PagedRequest, PagedResponse, PlaybackReport, PlaybackReportKind,
+    PlayedFilter, PlaylistDetail, PlaylistEntry, RandomTrackRequest, SavedSourceSession,
+    SearchResults, SourceError, SourceIdentity, SourceResult, SourceSession, StreamDescriptor,
+    StreamRequest,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -22,10 +22,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::instrument;
 
 mod client;
-mod provider_impl;
+mod source_impl;
 
 use client::*;
-use provider_impl::*;
+use source_impl::*;
 
 #[cfg(test)]
 mod tests;
@@ -40,15 +40,15 @@ pub enum SubsonicFlavor {
     Subsonic,
 }
 impl SubsonicFlavor {
-    pub fn from_provider_id(provider: &str) -> Option<Self> {
-        match provider {
+    pub fn from_source_id(source_id: &str) -> Option<Self> {
+        match source_id {
             "navidrome" => Some(Self::Navidrome),
             "subsonic" | "opensubsonic" => Some(Self::Subsonic),
             _ => None,
         }
     }
 
-    pub fn provider_id(self) -> &'static str {
+    pub fn source_id(self) -> &'static str {
         match self {
             Self::Navidrome => "navidrome",
             Self::Subsonic => "subsonic",
@@ -71,17 +71,16 @@ pub struct SubsonicLoginRequest {
     pub flavor: SubsonicFlavor,
 }
 #[derive(Clone, Debug)]
-pub struct SubsonicProvider {
+pub struct SubsonicSource {
     client: Client,
     base_url: Url,
     username: String,
     credential: Arc<SubsonicCredential>,
-    identity: ProviderIdentity,
-    capabilities: ProviderCapabilities,
+    identity: SourceIdentity,
 }
-impl SubsonicProvider {
-    #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, provider = request.flavor.provider_id(), trust_invalid_cert = request.trust_invalid_cert))]
-    pub async fn login(request: SubsonicLoginRequest) -> ProviderResult<ProviderSession> {
+impl SubsonicSource {
+    #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, provider = request.flavor.source_id(), trust_invalid_cert = request.trust_invalid_cert))]
+    pub async fn login(request: SubsonicLoginRequest) -> SourceResult<SourceSession> {
         let base_url = normalize_base_url(&request.base_url)?;
         let client = build_client(request.trust_invalid_cert)?;
         let credential = SubsonicCredential::from_password(&request.password);
@@ -92,17 +91,17 @@ impl SubsonicProvider {
         let response = subsonic_json::<AuthenticateBody>(client.get(auth_url)).await?;
         let body = response.body;
 
-        let provider_id = request.flavor.provider_id();
+        let source_id = request.flavor.source_id();
         let server_name = response
             .server_type
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| request.flavor.display_name().to_string());
-        let server_id = stable_server_id(provider_id, base_url.as_str(), &request.username);
+        let server_id = stable_server_id(source_id, base_url.as_str(), &request.username);
 
-        Ok(ProviderSession {
+        Ok(SourceSession {
             server: ServerIdentity {
-                id: ServerId::new(format!("{provider_id}:server:{server_id}")),
-                provider: provider_id.to_string(),
+                id: ServerId::new(format!("{source_id}:server:{server_id}")),
+                provider: source_id.to_string(),
                 name: server_name,
                 base_url: base_url.as_str().trim_end_matches('/').to_string(),
             },
@@ -113,7 +112,7 @@ impl SubsonicProvider {
         })
     }
 
-    pub fn from_saved_session(session: SavedProviderSession) -> ProviderResult<Self> {
+    pub fn from_saved_session(session: SavedSourceSession) -> SourceResult<Self> {
         let base_url = normalize_base_url(&session.server.base_url)?;
         let client = build_client(session.trust_invalid_cert)?;
         let credential = SubsonicCredential::parse(&session.access_token)?;
@@ -122,22 +121,21 @@ impl SubsonicProvider {
             base_url,
             username: session.username,
             credential: Arc::new(credential),
-            identity: ProviderIdentity {
+            identity: SourceIdentity {
                 server: session.server,
             },
-            capabilities: subsonic_capabilities(),
         })
     }
 
-    fn provider_id(&self) -> &str {
+    fn source_id(&self) -> &str {
         self.identity.server.provider.as_str()
     }
 
     fn id(&self, kind: &str, raw_id: &str) -> String {
-        format!("{}:{kind}:{raw_id}", self.provider_id())
+        format!("{}:{kind}:{raw_id}", self.source_id())
     }
 
-    fn authenticated_url(&self, method: &str, extra: &[(&str, String)]) -> ProviderResult<Url> {
+    fn authenticated_url(&self, method: &str, extra: &[(&str, String)]) -> SourceResult<Url> {
         let mut url = endpoint(&self.base_url, method)?;
         {
             let mut query = url.query_pairs_mut();
@@ -153,21 +151,21 @@ impl SubsonicProvider {
         &self,
         method: &str,
         extra: &[(&str, String)],
-    ) -> ProviderResult<T> {
+    ) -> SourceResult<T> {
         let url = self.authenticated_url(method, extra)?;
         subsonic_json(self.client.get(url))
             .await
             .map(|response: SubsonicApiResponse<T>| response.body)
     }
 
-    async fn get_unit(&self, method: &str, extra: &[(&str, String)]) -> ProviderResult<()> {
+    async fn get_unit(&self, method: &str, extra: &[(&str, String)]) -> SourceResult<()> {
         let url = self.authenticated_url(method, extra)?;
         subsonic_json::<SubsonicEmpty>(self.client.get(url))
             .await
             .map(|_| ())
     }
 
-    async fn get_all_artists(&self) -> ProviderResult<Vec<Artist>> {
+    async fn get_all_artists(&self) -> SourceResult<Vec<Artist>> {
         let body: ArtistsBody = self.get_json("getArtists", &[]).await?;
         let mut artists = body
             .artists
@@ -185,7 +183,7 @@ impl SubsonicProvider {
         Ok(artists)
     }
 
-    pub async fn newest_albums(&self, limit: usize) -> ProviderResult<Vec<Album>> {
+    pub async fn newest_albums(&self, limit: usize) -> SourceResult<Vec<Album>> {
         let body: AlbumListBody = self
             .get_json(
                 "getAlbumList2",
@@ -203,7 +201,7 @@ impl SubsonicProvider {
             .collect())
     }
 
-    async fn songs_by_genre(&self, genre_name: &str) -> ProviderResult<Vec<Track>> {
+    async fn songs_by_genre(&self, genre_name: &str) -> SourceResult<Vec<Track>> {
         let mut offset = 0;
         let mut tracks = Vec::new();
         loop {
@@ -230,7 +228,7 @@ impl SubsonicProvider {
         }
     }
 
-    async fn similar_songs(&self, raw_id: &str, count: usize) -> ProviderResult<Vec<Track>> {
+    async fn similar_songs(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
         let body: SimilarSongsBody = self
             .get_json(
                 "getSimilarSongs",
@@ -249,7 +247,7 @@ impl SubsonicProvider {
             .collect())
     }
 
-    async fn similar_songs2(&self, raw_id: &str, count: usize) -> ProviderResult<Vec<Track>> {
+    async fn similar_songs2(&self, raw_id: &str, count: usize) -> SourceResult<Vec<Track>> {
         let body: SimilarSongs2Body = self
             .get_json(
                 "getSimilarSongs2",
@@ -272,7 +270,7 @@ impl SubsonicProvider {
         &self,
         playlist_id: &PlaylistId,
         track_ids: &[TrackId],
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut extra = vec![("playlistId", raw_item_id(playlist_id.as_str()).to_string())];
         extra.extend(
             track_ids
@@ -282,7 +280,7 @@ impl SubsonicProvider {
         self.get_unit("createPlaylist", &extra).await
     }
 
-    async fn playlist_track_ids(&self, playlist_id: &PlaylistId) -> ProviderResult<Vec<TrackId>> {
+    async fn playlist_track_ids(&self, playlist_id: &PlaylistId) -> SourceResult<Vec<TrackId>> {
         Ok(self
             .playlist_detail(playlist_id)
             .await?

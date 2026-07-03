@@ -9,16 +9,17 @@ use domain::{
     TrackId,
 };
 use library::SavedServer;
-use source_local::LOCAL_PROVIDER_ID;
+use source_local::LOCAL_SOURCE_ID;
 use tracing::info;
 
 use super::{
     AppController, ControllerEvent, RandomPlayAction, SNAPSHOT_TRACK_LIMIT,
-    load_settings_for_saved, provider_for_saved,
-    provider_tracks::{
-        generated_track_strategy_for_saved, prepare_cached_tracks, prepare_provider_tracks,
-    },
+    load_settings_for_saved,
     root::local_source_saved,
+    source_for_saved,
+    source_tracks::{
+        generated_track_strategy_for_saved, prepare_cached_tracks, prepare_source_tracks,
+    },
 };
 
 pub(in crate::controller) use local_cache::spread_radio_tracks;
@@ -240,18 +241,18 @@ impl AppController {
         let settings = load_settings_for_saved(&self.store, saved);
         let mut tracks = if saved.server.provider == "fake" {
             self.generated_tracks_from_cache(&saved.server.id, seed, limit)?
-        } else if saved.server.provider == LOCAL_PROVIDER_ID {
+        } else if saved.server.provider == LOCAL_SOURCE_ID {
             let mut tracks =
                 self.local_generated_tracks_from_cache(&saved.server.id, seed, limit)?;
             dedupe_tracks(&mut tracks);
             prepare_cached_tracks(self, saved, &settings, &mut tracks)?;
             return Ok(tracks);
         } else {
-            let provider = provider_for_saved(&self.store, &self.runtime, &self.secrets, saved)?;
+            let provider = source_for_saved(&self.store, &self.runtime, &self.secrets, saved)?;
             self.runtime
                 .block_on(
                     provider
-                        .as_music_provider()
+                        .as_music_source()
                         .generated_tracks(GeneratedTracksRequest {
                             seed,
                             limit,
@@ -261,7 +262,7 @@ impl AppController {
                 .map_err(|error| error.to_string())?
         };
         dedupe_tracks(&mut tracks);
-        prepare_provider_tracks(self, saved, &settings, &mut tracks)?;
+        prepare_source_tracks(self, saved, &settings, &mut tracks)?;
         Ok(tracks)
     }
 

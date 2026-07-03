@@ -378,13 +378,13 @@ fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
 fn server_display_name(server: &ServerIdentity) -> String {
     let name = server.name.trim();
     if name.is_empty() {
-        provider_display_name(&server.provider)
+        source_display_name(&server.provider)
     } else {
         name.to_string()
     }
 }
 
-fn provider_display_name(provider: &str) -> String {
+fn source_display_name(provider: &str) -> String {
     match provider {
         "jellyfin" => tr("Jellyfin"),
         "navidrome" => tr("Navidrome"),

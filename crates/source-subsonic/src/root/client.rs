@@ -18,16 +18,12 @@ const SUBSONIC_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 #[async_trait(?Send)]
-impl MusicProvider for SubsonicProvider {
-    fn identity(&self) -> &ProviderIdentity {
+impl MusicSource for SubsonicSource {
+    fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
-    fn capabilities(&self) -> &ProviderCapabilities {
-        &self.capabilities
-    }
-
-    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
+    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
         let sections = [
             self.home_section(HomeSectionKind::Explore).await?,
             self.home_section(HomeSectionKind::MostPlayed).await?,
@@ -41,7 +37,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(sections)
     }
 
-    async fn home_section(&self, kind: HomeSectionKind) -> ProviderResult<HomeSection> {
+    async fn home_section(&self, kind: HomeSectionKind) -> SourceResult<HomeSection> {
         match kind {
             HomeSectionKind::Explore => {
                 let body: RandomSongsBody = self
@@ -151,7 +147,7 @@ impl MusicProvider for SubsonicProvider {
         }
     }
 
-    async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+    async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
         let body: AlbumListBody = self
             .get_json(
                 "getAlbumList2",
@@ -172,7 +168,7 @@ impl MusicProvider for SubsonicProvider {
         ))
     }
 
-    async fn album_detail(&self, album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail> {
         let body: AlbumBody = self
             .get_json(
                 "getAlbum",
@@ -189,7 +185,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(AlbumDetail { album, tracks })
     }
 
-    async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
+    async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
         let body: SearchBody = self
             .get_json(
                 "search3",
@@ -215,7 +211,7 @@ impl MusicProvider for SubsonicProvider {
         ))
     }
 
-    async fn music_folders(&self) -> ProviderResult<Vec<MusicFolder>> {
+    async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>> {
         let body: MusicFoldersBody = self.get_json("getMusicFolders", &[]).await?;
         Ok(body
             .music_folders
@@ -232,7 +228,7 @@ impl MusicProvider for SubsonicProvider {
         &self,
         folder_id: &MusicFolderId,
         request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<Track>> {
+    ) -> SourceResult<PagedResponse<Track>> {
         let body: SearchBody = self
             .get_json(
                 "search3",
@@ -263,7 +259,7 @@ impl MusicProvider for SubsonicProvider {
         &self,
         folder_id: Option<&FolderId>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> ProviderResult<FolderDetail> {
+    ) -> SourceResult<FolderDetail> {
         let Some(folder_id) = folder_id else {
             let mut extra = Vec::new();
             if let Some(music_folder_id) = music_folder_id {
@@ -323,9 +319,9 @@ impl MusicProvider for SubsonicProvider {
         })
     }
 
-    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+    async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
         if request.played_filter != PlayedFilter::All {
-            return Err(ProviderError::Unsupported("random played filter"));
+            return Err(SourceError::Unsupported("random played filter"));
         }
 
         let mut extra = vec![("size", request.limit.clamp(1, 500).to_string())];
@@ -355,10 +351,7 @@ impl MusicProvider for SubsonicProvider {
             .collect())
     }
 
-    async fn generated_tracks(
-        &self,
-        request: GeneratedTracksRequest,
-    ) -> ProviderResult<Vec<Track>> {
+    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
         match request.seed {
             GeneratedTrackSeed::Track(track_id) => {
                 self.similar_songs(raw_item_id(track_id.as_str()), request.limit)
@@ -385,23 +378,23 @@ impl MusicProvider for SubsonicProvider {
             }
             GeneratedTrackSeed::Playlist(playlist_id) => {
                 let detail = self.playlist_detail(&playlist_id).await?;
-                let seed = detail.tracks.first().ok_or(ProviderError::NotFound)?;
+                let seed = detail.tracks.first().ok_or(SourceError::NotFound)?;
                 self.similar_songs(raw_item_id(seed.id.as_str()), request.limit)
                     .await
             }
         }
     }
 
-    async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         let artists = self.get_all_artists().await?;
         Ok(page(artists, request))
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         self.artists(request).await
     }
 
-    async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
+    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
         let body: GenresBody = self.get_json("getGenres", &[]).await?;
         let mut genres = body
             .genres
@@ -413,7 +406,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(page(genres, request))
     }
 
-    async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
+    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
         let body: PlaylistsBody = self.get_json("getPlaylists", &[]).await?;
         let mut playlists = body
             .playlists
@@ -426,7 +419,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(page(playlists, request))
     }
 
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
         let body: PlaylistBody = self
             .get_json(
                 "getPlaylist",
@@ -453,7 +446,7 @@ impl MusicProvider for SubsonicProvider {
         })
     }
 
-    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
         let genre_name = raw_item_id(genre_id.as_str()).to_string();
         let tracks = self.songs_by_genre(&genre_name).await?;
         let mut albums = HashMap::<AlbumId, Album>::new();
@@ -503,7 +496,7 @@ impl MusicProvider for SubsonicProvider {
         })
     }
 
-    async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
+    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
         let body: SongBody = self
             .get_json(
                 "getSong",
@@ -513,15 +506,12 @@ impl MusicProvider for SubsonicProvider {
         Ok(track_from_dto(self, body.song))
     }
 
-    async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
+    async fn stream(&self, track_id: &TrackId) -> SourceResult<StreamDescriptor> {
         self.stream_with_request(&StreamRequest::original(track_id.clone()))
             .await
     }
 
-    async fn stream_with_request(
-        &self,
-        request: &StreamRequest,
-    ) -> ProviderResult<StreamDescriptor> {
+    async fn stream_with_request(&self, request: &StreamRequest) -> SourceResult<StreamDescriptor> {
         let mut extra = vec![("id", raw_item_id(request.track_id.as_str()).to_string())];
         if let Some(kbps) = request.quality.max_bitrate_kbps() {
             extra.push(("maxBitRate", kbps.to_string()));
@@ -531,7 +521,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(StreamDescriptor::with_redacted(url.to_string(), redacted))
     }
 
-    async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
+    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
         let body: SearchBody = self
             .get_json(
                 "search3",
@@ -570,11 +560,7 @@ impl MusicProvider for SubsonicProvider {
         })
     }
 
-    async fn image_metadata(
-        &self,
-        item_id: &str,
-        kind: ImageKind,
-    ) -> ProviderResult<ImageMetadata> {
+    async fn image_metadata(&self, item_id: &str, kind: ImageKind) -> SourceResult<ImageMetadata> {
         let url =
             self.authenticated_url("getCoverArt", &[("id", raw_item_id(item_id).to_string())])?;
         Ok(ImageMetadata {
@@ -585,7 +571,7 @@ impl MusicProvider for SubsonicProvider {
         })
     }
 
-    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+    async fn image_bytes(&self, request: ImageRequest) -> SourceResult<ImageBytes> {
         let mut extra = vec![("id", raw_item_id(&request.item_id).to_string())];
         if request.size > 0 {
             extra.push(("size", request.size.to_string()));
@@ -594,7 +580,7 @@ impl MusicProvider for SubsonicProvider {
         subsonic_bytes(self.client.get(url)).await
     }
 
-    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> ProviderResult<()> {
+    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> SourceResult<()> {
         let method = if favorite { "star" } else { "unstar" };
         let key = match &item_id {
             FavoriteItemId::Album(_) => "albumId",
@@ -605,11 +591,7 @@ impl MusicProvider for SubsonicProvider {
             .await
     }
 
-    async fn create_playlist(
-        &self,
-        name: &str,
-        track_ids: &[TrackId],
-    ) -> ProviderResult<PlaylistId> {
+    async fn create_playlist(&self, name: &str, track_ids: &[TrackId]) -> SourceResult<PlaylistId> {
         let mut extra = vec![("name", name.trim().to_string())];
         extra.extend(
             track_ids
@@ -622,7 +604,7 @@ impl MusicProvider for SubsonicProvider {
         ))
     }
 
-    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> ProviderResult<()> {
+    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> SourceResult<()> {
         self.get_unit(
             "updatePlaylist",
             &[
@@ -633,7 +615,7 @@ impl MusicProvider for SubsonicProvider {
         .await
     }
 
-    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<()> {
+    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> SourceResult<()> {
         self.get_unit(
             "deletePlaylist",
             &[("id", raw_item_id(playlist_id.as_str()).to_string())],
@@ -645,7 +627,7 @@ impl MusicProvider for SubsonicProvider {
         &self,
         playlist_id: &PlaylistId,
         track_ids: &[TrackId],
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut ids = self.playlist_track_ids(playlist_id).await?;
         ids.extend_from_slice(track_ids);
         self.replace_playlist_tracks(playlist_id, &ids).await
@@ -655,7 +637,7 @@ impl MusicProvider for SubsonicProvider {
         &self,
         playlist_id: &PlaylistId,
         entry_ids: &[String],
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let remove = entry_ids.iter().cloned().collect::<HashSet<_>>();
         let ids = self
             .playlist_detail(playlist_id)
@@ -673,7 +655,7 @@ impl MusicProvider for SubsonicProvider {
         playlist_id: &PlaylistId,
         entry_id: &str,
         new_index: usize,
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut entries = self.playlist_detail(playlist_id).await?.entries;
         if let Some(old_index) = entries.iter().position(|entry| entry.entry_id == entry_id) {
             let entry = entries.remove(old_index);
@@ -690,7 +672,7 @@ impl MusicProvider for SubsonicProvider {
         &self,
         track_id: &TrackId,
         _allow_remote: bool,
-    ) -> ProviderResult<Option<Lyrics>> {
+    ) -> SourceResult<Option<Lyrics>> {
         let track = self.track(track_id).await?;
         let body: LyricsBody = self
             .get_json(
@@ -722,7 +704,7 @@ impl MusicProvider for SubsonicProvider {
         }))
     }
 
-    async fn report_playback(&self, report: PlaybackReport) -> ProviderResult<()> {
+    async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
         match report.kind {
             PlaybackReportKind::Started => {
                 self.get_unit(
@@ -760,14 +742,14 @@ impl SubsonicCredential {
         Self { salt, token }
     }
 
-    pub(super) fn parse(raw: &str) -> ProviderResult<Self> {
+    pub(super) fn parse(raw: &str) -> SourceResult<Self> {
         let Some((salt, token)) = raw.split_once(':') else {
-            return Err(ProviderError::Other(
+            return Err(SourceError::Other(
                 "saved Subsonic credential is invalid".to_string(),
             ));
         };
         if salt.is_empty() || token.is_empty() {
-            return Err(ProviderError::Other(
+            return Err(SourceError::Other(
                 "saved Subsonic credential is invalid".to_string(),
             ));
         }
@@ -805,7 +787,7 @@ pub(super) struct SubsonicApiResponse<T> {
 }
 pub(super) async fn subsonic_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
-) -> ProviderResult<SubsonicApiResponse<T>> {
+) -> SourceResult<SubsonicApiResponse<T>> {
     let envelope = remote_http::json::<SubsonicEnvelope<T>>(
         request,
         SUBSONIC_HTTP,
@@ -821,7 +803,7 @@ pub(super) async fn subsonic_json<T: DeserializeOwned>(
             .error
             .map(|error| error.message)
             .unwrap_or_else(|| format!("Subsonic returned {}", envelope.response.status));
-        return Err(ProviderError::Server {
+        return Err(SourceError::Server {
             status: 200,
             message,
         });
@@ -831,7 +813,7 @@ pub(super) async fn subsonic_json<T: DeserializeOwned>(
         server_type: envelope.response.server_type,
     })
 }
-pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> SourceResult<ImageBytes> {
     remote_http::bytes(
         request,
         SUBSONIC_HTTP,
@@ -842,7 +824,7 @@ pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> Provider
     )
     .await
 }
-pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+pub(super) fn build_client(trust_invalid_cert: bool) -> SourceResult<Client> {
     build_client_with_timeouts(
         trust_invalid_cert,
         SUBSONIC_CONNECT_TIMEOUT,
@@ -854,7 +836,7 @@ pub(super) fn build_client_with_timeouts(
     trust_invalid_cert: bool,
     connect_timeout: Duration,
     request_timeout: Duration,
-) -> ProviderResult<Client> {
+) -> SourceResult<Client> {
     remote_http::build_client(
         trust_invalid_cert,
         RemoteTimeouts {
@@ -864,15 +846,14 @@ pub(super) fn build_client_with_timeouts(
         SUBSONIC_HTTP,
     )
 }
-pub(super) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
+pub(super) fn normalize_base_url(raw: &str) -> SourceResult<Url> {
     let trimmed = raw.trim().trim_end_matches('/');
     let candidate = if trimmed.contains("://") {
         trimmed.to_string()
     } else {
         format!("http://{trimmed}")
     };
-    let mut url =
-        Url::parse(&candidate).map_err(|error| ProviderError::Other(error.to_string()))?;
+    let mut url = Url::parse(&candidate).map_err(|error| SourceError::Other(error.to_string()))?;
     let path = url.path().trim_end_matches('/').to_string();
     let normalized_path = if path.is_empty() {
         "/".to_string()
@@ -882,7 +863,7 @@ pub(super) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     url.set_path(&normalized_path);
     Ok(url)
 }
-pub(super) fn endpoint(base_url: &Url, method: &str) -> ProviderResult<Url> {
+pub(super) fn endpoint(base_url: &Url, method: &str) -> SourceResult<Url> {
     let mut url = base_url.clone();
     let base_path = base_url.path().trim_end_matches('/');
     let method = method.trim_end_matches(".view");

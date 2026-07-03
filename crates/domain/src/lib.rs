@@ -49,8 +49,8 @@ pub use source::{
     AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTrackStrategy,
     GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
     LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
-    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderSession,
-    RandomTrackRequest, SavedProviderSession, SearchResults, SourceCapabilities,
-    SourceFeatureOwner, SourceFeatureSupport, SourcePlaylistCapabilities, StreamDescriptor,
+    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, RandomTrackRequest,
+    SavedSourceSession, SearchResults, SourceCapabilities, SourceFeatureOwner,
+    SourceFeatureSupport, SourcePlaylistCapabilities, SourceSession, StreamDescriptor,
     StreamRequest,
 };

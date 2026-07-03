@@ -178,7 +178,7 @@ impl AppController {
             .store
             .with_store(|store| store.saved_server(&server_id))
             .unwrap_or(None)
-            .is_some_and(|saved| saved.server.provider == LOCAL_PROVIDER_ID);
+            .is_some_and(|saved| saved.server.provider == LOCAL_SOURCE_ID);
         if provider_is_local {
             debug!(
                 track_id = %entry.track_id,
@@ -231,7 +231,7 @@ impl AppController {
                 return;
             }
             let result =
-                provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+                source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                     runtime
                         .block_on(provider.lyrics_with_search(&entry.track_id, search))
                         .map_err(|error| error.to_string())

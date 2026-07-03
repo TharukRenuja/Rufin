@@ -18,16 +18,12 @@ const JELLYFIN_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 #[async_trait(?Send)]
-impl MusicProvider for JellyfinProvider {
-    fn identity(&self) -> &ProviderIdentity {
+impl MusicSource for JellyfinSource {
+    fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
-    fn capabilities(&self) -> &ProviderCapabilities {
-        &self.capabilities
-    }
-
-    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
+    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
         let sections = [
             self.home_section(HomeSectionKind::Explore).await?,
             self.home_section(HomeSectionKind::MostPlayed).await?,
@@ -41,7 +37,7 @@ impl MusicProvider for JellyfinProvider {
         Ok(sections)
     }
 
-    async fn home_section(&self, kind: HomeSectionKind) -> ProviderResult<HomeSection> {
+    async fn home_section(&self, kind: HomeSectionKind) -> SourceResult<HomeSection> {
         match kind {
             HomeSectionKind::Explore => {
                 self.home_album_section(kind, "Random,SortName", "Ascending")
@@ -66,7 +62,7 @@ impl MusicProvider for JellyfinProvider {
         }
     }
 
-    async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+    async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
         let response = self.item_page("MusicAlbum", request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(album_from_item).collect(),
@@ -74,7 +70,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn album_detail(&self, album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail> {
         let raw_album_id = raw_item_id(album_id.as_str());
         let mut album_url = endpoint(&self.base_url, &format!("Items/{raw_album_id}"))?;
         album_url
@@ -99,7 +95,7 @@ impl MusicProvider for JellyfinProvider {
         Ok(AlbumDetail { album, tracks })
     }
 
-    async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
+    async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
         let response = self.item_page("Audio", request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(track_from_item).collect(),
@@ -107,7 +103,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn music_folders(&self) -> ProviderResult<Vec<MusicFolder>> {
+    async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>> {
         let mut url = endpoint(&self.base_url, &format!("Users/{}/Views", self.user_id))?;
         url.query_pairs_mut()
             .append_pair("IncludeExternalContent", "false");
@@ -133,7 +129,7 @@ impl MusicProvider for JellyfinProvider {
         &self,
         folder_id: &MusicFolderId,
         request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<Track>> {
+    ) -> SourceResult<PagedResponse<Track>> {
         let mut url = endpoint(&self.base_url, "Items")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -156,7 +152,7 @@ impl MusicProvider for JellyfinProvider {
         &self,
         folder_id: Option<&FolderId>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> ProviderResult<FolderDetail> {
+    ) -> SourceResult<FolderDetail> {
         if let Some(folder_id) = folder_id {
             let raw_folder_id = raw_item_id(folder_id.as_str());
             let mut folder_url = endpoint(&self.base_url, &format!("Items/{raw_folder_id}"))?;
@@ -225,7 +221,7 @@ impl MusicProvider for JellyfinProvider {
         })
     }
 
-    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+    async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
         let mut url = endpoint(&self.base_url, "Items")?;
         let limit = request.limit.clamp(1, 500).to_string();
         let years = jellyfin_year_filter(request.min_year, request.max_year)?;
@@ -267,12 +263,9 @@ impl MusicProvider for JellyfinProvider {
         Ok(response.items.into_iter().map(track_from_item).collect())
     }
 
-    async fn generated_tracks(
-        &self,
-        request: GeneratedTracksRequest,
-    ) -> ProviderResult<Vec<Track>> {
+    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
         match request.strategy {
-            GeneratedTrackStrategy::ProviderDefault | GeneratedTrackStrategy::SimilarFirst => {
+            GeneratedTrackStrategy::SourceDefault | GeneratedTrackStrategy::SimilarFirst => {
                 if let GeneratedTrackSeed::Track(track_id) = &request.seed {
                     let tracks = self.similar_tracks(track_id, request.limit).await?;
                     if !tracks.is_empty() {
@@ -287,7 +280,7 @@ impl MusicProvider for JellyfinProvider {
         }
     }
 
-    async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         let response = self.people_page("Artists", request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(artist_from_item).collect(),
@@ -295,7 +288,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         let response = self.people_page("Artists/AlbumArtists", request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(artist_from_item).collect(),
@@ -303,7 +296,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
+    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
         let response = self.music_genre_page(request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(genre_from_item).collect(),
@@ -311,7 +304,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
+    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
         let response = self.item_page("Playlist", request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(playlist_from_item).collect(),
@@ -319,7 +312,7 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
         let raw_playlist_id = raw_item_id(playlist_id.as_str());
         let mut playlist_url = endpoint(&self.base_url, &format!("Items/{raw_playlist_id}"))?;
         playlist_url
@@ -368,7 +361,7 @@ impl MusicProvider for JellyfinProvider {
         })
     }
 
-    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
         let raw_genre_id = raw_item_id(genre_id.as_str());
         let mut genre_url = endpoint(&self.base_url, &format!("Items/{raw_genre_id}"))?;
         genre_url
@@ -420,7 +413,7 @@ impl MusicProvider for JellyfinProvider {
         })
     }
 
-    async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
+    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
         let mut url = endpoint(
             &self.base_url,
             &format!("Items/{}", raw_item_id(track_id.as_str())),
@@ -433,15 +426,12 @@ impl MusicProvider for JellyfinProvider {
             .map(track_from_item)
     }
 
-    async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
+    async fn stream(&self, track_id: &TrackId) -> SourceResult<StreamDescriptor> {
         self.stream_with_request(&StreamRequest::original(track_id.clone()))
             .await
     }
 
-    async fn stream_with_request(
-        &self,
-        request: &StreamRequest,
-    ) -> ProviderResult<StreamDescriptor> {
+    async fn stream_with_request(&self, request: &StreamRequest) -> SourceResult<StreamDescriptor> {
         stream_descriptor(
             &self.base_url,
             &self.user_id,
@@ -451,7 +441,7 @@ impl MusicProvider for JellyfinProvider {
         )
     }
 
-    async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
+    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
         if query.trim().is_empty() {
             return Ok(SearchResults::default());
         }
@@ -480,11 +470,7 @@ impl MusicProvider for JellyfinProvider {
         Ok(results)
     }
 
-    async fn image_metadata(
-        &self,
-        item_id: &str,
-        kind: ImageKind,
-    ) -> ProviderResult<ImageMetadata> {
+    async fn image_metadata(&self, item_id: &str, kind: ImageKind) -> SourceResult<ImageMetadata> {
         Ok(ImageMetadata {
             item_id: raw_item_id(item_id).to_string(),
             kind,
@@ -493,7 +479,7 @@ impl MusicProvider for JellyfinProvider {
         })
     }
 
-    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+    async fn image_bytes(&self, request: ImageRequest) -> SourceResult<ImageBytes> {
         let mut url = endpoint(
             &self.base_url,
             &format!(
@@ -521,7 +507,7 @@ impl MusicProvider for JellyfinProvider {
         .await
     }
 
-    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> ProviderResult<()> {
+    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> SourceResult<()> {
         let mut url = endpoint(
             &self.base_url,
             &format!("UserFavoriteItems/{}", raw_item_id(item_id.as_str())),
@@ -534,11 +520,7 @@ impl MusicProvider for JellyfinProvider {
         }
     }
 
-    async fn create_playlist(
-        &self,
-        name: &str,
-        track_ids: &[TrackId],
-    ) -> ProviderResult<PlaylistId> {
+    async fn create_playlist(&self, name: &str, track_ids: &[TrackId]) -> SourceResult<PlaylistId> {
         let url = endpoint(&self.base_url, "Playlists")?;
         let body = CreatePlaylistDto {
             name: name.to_string(),
@@ -553,7 +535,7 @@ impl MusicProvider for JellyfinProvider {
         Ok(PlaylistId::new(jellyfin_id("playlist", &result.id)))
     }
 
-    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> ProviderResult<()> {
+    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> SourceResult<()> {
         let url = endpoint(
             &self.base_url,
             &format!("Playlists/{}", raw_item_id(playlist_id.as_str())),
@@ -564,7 +546,7 @@ impl MusicProvider for JellyfinProvider {
         self.send_unit(self.client.post(url).json(&body)).await
     }
 
-    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<()> {
+    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> SourceResult<()> {
         let url = endpoint(
             &self.base_url,
             &format!("Items/{}", raw_item_id(playlist_id.as_str())),
@@ -576,7 +558,7 @@ impl MusicProvider for JellyfinProvider {
         &self,
         playlist_id: &PlaylistId,
         track_ids: &[TrackId],
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut url = endpoint(
             &self.base_url,
             &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
@@ -591,7 +573,7 @@ impl MusicProvider for JellyfinProvider {
         &self,
         playlist_id: &PlaylistId,
         entry_ids: &[String],
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut url = endpoint(
             &self.base_url,
             &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
@@ -606,7 +588,7 @@ impl MusicProvider for JellyfinProvider {
         playlist_id: &PlaylistId,
         entry_id: &str,
         new_index: usize,
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let url = endpoint(
             &self.base_url,
             &format!(
@@ -619,11 +601,7 @@ impl MusicProvider for JellyfinProvider {
         self.send_unit(self.client.post(url)).await
     }
 
-    async fn lyrics(
-        &self,
-        track_id: &TrackId,
-        allow_remote: bool,
-    ) -> ProviderResult<Option<Lyrics>> {
+    async fn lyrics(&self, track_id: &TrackId, allow_remote: bool) -> SourceResult<Option<Lyrics>> {
         let search = if allow_remote {
             JellyfinLyricsSearch::ServerThenRemote
         } else {
@@ -632,7 +610,7 @@ impl MusicProvider for JellyfinProvider {
         self.lyrics_with_search(track_id, search).await
     }
 
-    async fn report_playback(&self, report: PlaybackReport) -> ProviderResult<()> {
+    async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
         let path = match report.kind {
             PlaybackReportKind::Started => "Sessions/Playing",
             PlaybackReportKind::Progress => "Sessions/Playing/Progress",
@@ -660,7 +638,7 @@ pub(super) async fn public_server_name(
 }
 pub(super) async fn send_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
-) -> ProviderResult<T> {
+) -> SourceResult<T> {
     remote_http::json(
         request,
         JELLYFIN_HTTP,
@@ -671,10 +649,10 @@ pub(super) async fn send_json<T: DeserializeOwned>(
     )
     .await
 }
-pub(super) async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
+pub(super) async fn send_unit(request: reqwest::RequestBuilder) -> SourceResult<()> {
     remote_http::unit(request, JELLYFIN_HTTP).await
 }
-pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> SourceResult<ImageBytes> {
     remote_http::bytes(
         request,
         JELLYFIN_HTTP,
@@ -685,7 +663,7 @@ pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResu
     )
     .await
 }
-pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+pub(super) fn build_client(trust_invalid_cert: bool) -> SourceResult<Client> {
     build_client_with_timeouts(
         trust_invalid_cert,
         JELLYFIN_CONNECT_TIMEOUT,
@@ -697,7 +675,7 @@ pub(super) fn build_client_with_timeouts(
     trust_invalid_cert: bool,
     connect_timeout: Duration,
     request_timeout: Duration,
-) -> ProviderResult<Client> {
+) -> SourceResult<Client> {
     remote_http::build_client(
         trust_invalid_cert,
         RemoteTimeouts {
@@ -714,7 +692,7 @@ pub(super) fn stream_descriptor(
     device_id: &str,
     access_token: &str,
     request: &StreamRequest,
-) -> ProviderResult<StreamDescriptor> {
+) -> SourceResult<StreamDescriptor> {
     let raw_track_id = raw_item_id(request.track_id.as_str());
     let max_bitrate = request
         .quality
@@ -763,15 +741,14 @@ pub(super) fn stream_descriptor(
     ))
 }
 
-pub(crate) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
+pub(crate) fn normalize_base_url(raw: &str) -> SourceResult<Url> {
     let trimmed = raw.trim().trim_end_matches('/');
     let candidate = if trimmed.contains("://") {
         trimmed.to_string()
     } else {
         format!("http://{trimmed}")
     };
-    let mut url =
-        Url::parse(&candidate).map_err(|error| ProviderError::Other(error.to_string()))?;
+    let mut url = Url::parse(&candidate).map_err(|error| SourceError::Other(error.to_string()))?;
     let path = url.path().trim_end_matches('/').to_string();
     let normalized_path = if path.is_empty() {
         "/".to_string()
@@ -781,7 +758,7 @@ pub(crate) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     url.set_path(&normalized_path);
     Ok(url)
 }
-pub(super) fn endpoint(base_url: &Url, path: &str) -> ProviderResult<Url> {
+pub(super) fn endpoint(base_url: &Url, path: &str) -> SourceResult<Url> {
     let mut url = base_url.clone();
     let base_path = base_url.path().trim_end_matches('/');
     let path = path.trim_start_matches('/');
@@ -816,14 +793,14 @@ pub(super) fn image_kind_path(kind: ImageKind) -> &'static str {
 pub(super) fn jellyfin_year_filter(
     min_year: Option<u16>,
     max_year: Option<u16>,
-) -> ProviderResult<Option<String>> {
+) -> SourceResult<Option<String>> {
     if min_year.is_none() && max_year.is_none() {
         return Ok(None);
     }
     let min = min_year.unwrap_or(1850);
     let max = max_year.unwrap_or(2050);
     if min > max {
-        return Err(ProviderError::Other(
+        return Err(SourceError::Other(
             "minimum year cannot be greater than maximum year".to_string(),
         ));
     }
@@ -833,21 +810,6 @@ pub(super) fn jellyfin_year_filter(
             .collect::<Vec<_>>()
             .join(","),
     ))
-}
-pub(super) fn jellyfin_capabilities() -> ProviderCapabilities {
-    ProviderCapabilities {
-        lyrics: true,
-        playback_reporting: true,
-        playlist_mutations: true,
-        playlist_delete: true,
-        favorite_mutations: true,
-        auto_dj: true,
-        random_tracks: true,
-        random_played_filter: true,
-        music_folders: true,
-        folder_browsing: true,
-        ..ProviderCapabilities::default()
-    }
 }
 pub(crate) fn jellyfin_id(kind: &str, id: &str) -> String {
     format!("jellyfin:{kind}:{id}")

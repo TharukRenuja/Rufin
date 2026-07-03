@@ -5,7 +5,7 @@ use source::{PlayedFilter, RandomTrackRequest};
 
 use super::{
     AppController, ControllerEvent, SNAPSHOT_TRACK_LIMIT, load_settings_for_saved,
-    provider_for_saved, provider_tracks::prepare_provider_tracks,
+    source_for_saved, source_tracks::prepare_source_tracks,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,11 +54,11 @@ impl AppController {
         let mut tracks = if saved.server.provider == "fake" {
             self.random_tracks_from_cache(&saved.server.id, request)?
         } else {
-            let provider = provider_for_saved(&self.store, &self.runtime, &self.secrets, &saved)?;
+            let provider = source_for_saved(&self.store, &self.runtime, &self.secrets, &saved)?;
             self.runtime
                 .block_on(
                     provider
-                        .as_music_provider()
+                        .as_music_source()
                         .random_tracks(RandomTrackRequest {
                             limit: request.limit,
                             min_year: request.min_year,
@@ -70,7 +70,7 @@ impl AppController {
                 )
                 .map_err(|error| error.to_string())?
         };
-        prepare_provider_tracks(self, &saved, &settings, &mut tracks)?;
+        prepare_source_tracks(self, &saved, &settings, &mut tracks)?;
         Ok(tracks)
     }
 

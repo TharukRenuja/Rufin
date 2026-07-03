@@ -26,64 +26,64 @@ pub(super) fn external_album_refs(mut albums: Vec<Album>, settings: &AppSettings
     image_refs
 }
 
-pub(super) fn provider_artist_refs(artists: Vec<Artist>) -> Vec<ImageRef> {
+pub(super) fn source_artist_refs(artists: Vec<Artist>) -> Vec<ImageRef> {
     let mut image_refs = Vec::new();
     let mut seen = HashSet::new();
-    push_provider_artist_image_refs(&mut image_refs, &mut seen, artists);
+    push_source_artist_image_refs(&mut image_refs, &mut seen, artists);
     image_refs
 }
 
-pub(super) fn push_provider_album_image_refs(
+pub(super) fn push_source_album_image_refs(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     albums: Vec<Album>,
 ) {
     for album in albums {
-        push_provider_image_ref(image_refs, seen, album.image_ref.as_ref());
+        push_source_image_ref(image_refs, seen, album.image_ref.as_ref());
     }
 }
 
-pub(super) fn push_provider_track_image_refs(
+pub(super) fn push_source_track_image_refs(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     tracks: Vec<Track>,
 ) {
     for track in tracks {
-        push_provider_image_ref(image_refs, seen, track.image_ref.as_ref());
+        push_source_image_ref(image_refs, seen, track.image_ref.as_ref());
     }
 }
 
-pub(super) fn push_provider_artist_image_refs(
+pub(super) fn push_source_artist_image_refs(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     artists: Vec<Artist>,
 ) {
     for artist in artists {
-        push_provider_image_ref(image_refs, seen, artist.image_ref.as_ref());
+        push_source_image_ref(image_refs, seen, artist.image_ref.as_ref());
     }
 }
 
-pub(super) fn push_provider_genre_image_refs(
+pub(super) fn push_source_genre_image_refs(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     genres: Vec<Genre>,
 ) {
     for genre in genres {
-        push_provider_image_ref(image_refs, seen, genre.image_ref.as_ref());
+        push_source_image_ref(image_refs, seen, genre.image_ref.as_ref());
     }
 }
 
-pub(super) fn push_provider_playlist_image_refs(
+pub(super) fn push_source_playlist_image_refs(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     playlists: Vec<Playlist>,
 ) {
     for playlist in playlists {
-        push_provider_image_ref(image_refs, seen, playlist.image_ref.as_ref());
+        push_source_image_ref(image_refs, seen, playlist.image_ref.as_ref());
     }
 }
 
-fn push_provider_image_ref(
+fn push_source_image_ref(
     image_refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     image_ref: Option<&ImageRef>,
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn sync_artist_cover() {
-        let refs = provider_artist_refs(vec![
+        let refs = source_artist_refs(vec![
             artist_without_cover(1, "Slowdive"),
             artist_with_cover(2, "Ride"),
             artist_with_cover(2, "Ride"),
@@ -182,31 +182,31 @@ mod tests {
 
         assert_eq!(refs.len(), 1);
         assert!(!external_metadata::is_external_image_ref(&refs[0]));
-        assert_eq!(refs[0].item_id, "provider-artist-2");
+        assert_eq!(refs[0].item_id, "source-artist-2");
     }
 
     #[test]
     fn candidate_track_refs() {
         let mut refs = Vec::new();
         let mut seen = HashSet::new();
-        push_provider_album_image_refs(
+        push_source_album_image_refs(
             &mut refs,
             &mut seen,
             vec![album_with_cover(1, "Souvlaki", "Slowdive")],
         );
-        push_provider_track_image_refs(
+        push_source_track_image_refs(
             &mut refs,
             &mut seen,
             vec![
                 track_with_cover(
                     1,
                     "Alison",
-                    ImageRef::new("provider-album-1", Some("tag-1".to_string())),
+                    ImageRef::new("source-album-1", Some("tag-1".to_string())),
                 ),
                 track_with_cover(
                     2,
                     "Machine Gun",
-                    ImageRef::new("provider-track-2", Some("tag-2".to_string())),
+                    ImageRef::new("source-track-2", Some("tag-2".to_string())),
                 ),
                 track_with_cover(
                     3,
@@ -223,7 +223,7 @@ mod tests {
             refs.iter()
                 .map(|image_ref| image_ref.item_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["provider-album-1", "provider-track-2"]
+            vec!["source-album-1", "source-track-2"]
         );
     }
 
@@ -257,7 +257,7 @@ mod tests {
     fn album_with_cover(number: u32, title: &str, artist: &str) -> Album {
         Album {
             image_ref: Some(ImageRef::new(
-                format!("provider-album-{number}"),
+                format!("source-album-{number}"),
                 Some(format!("tag-{number}")),
             )),
             ..album_without_cover(number, title, artist)
@@ -322,7 +322,7 @@ mod tests {
     fn artist_with_cover(number: u32, name: &str) -> Artist {
         Artist {
             image_ref: Some(ImageRef::new(
-                format!("provider-artist-{number}"),
+                format!("source-artist-{number}"),
                 Some(format!("tag-{number}")),
             )),
             ..artist_without_cover(number, name)

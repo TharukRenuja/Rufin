@@ -23,10 +23,10 @@ use super::{
 };
 use cache::*;
 use fetch::fetch_and_cache_cover;
-pub(super) use fetch::is_provider_not_found_error;
+pub(super) use fetch::is_source_not_found_error;
 pub(super) use prefetch::{
-    ExternalCoverPrefetchRequest, ProviderCoverPrefetchRequest,
-    prefetch_initial_provider_cover_cache, start_cover_prefetch,
+    ExternalCoverPrefetchRequest, SourceCoverPrefetchRequest, prefetch_initial_source_cover_cache,
+    start_cover_prefetch,
 };
 
 const EXTERNAL_PREFETCH_PAGE_SIZE: usize = 500;
@@ -333,7 +333,7 @@ impl AppController {
                             }
                             if is_external_cover {
                                 debug!(%error, "external metadata cover was not available");
-                            } else if is_provider_not_found_error(&error) {
+                            } else if is_source_not_found_error(&error) {
                                 debug!(%error, "cached cover source item is no longer available");
                             } else {
                                 warn!(%error, "cover is not available");
@@ -406,11 +406,11 @@ fn emit_cover_outcome(
 }
 
 fn cover_error_is_terminal(provider: &str, is_external_cover: bool, error: &str) -> bool {
-    is_provider_not_found_error(error)
+    is_source_not_found_error(error)
         || error == "cover response was empty"
         || error.contains("No such file or directory")
         || error.contains("os error 2")
-        || (provider == source_local::LOCAL_PROVIDER_ID
+        || (provider == source_local::LOCAL_SOURCE_ID
             && (error.contains("local cover exceeded")
                 || error.contains("embedded cover exceeded")
                 || error.contains("no pictures")
@@ -446,14 +446,14 @@ mod tests {
         assert!(!cover_error_is_terminal(
             "jellyfin",
             true,
-            "provider network failed: timed out"
+            "source network failed: timed out"
         ));
     }
 
     #[test]
     fn cover_local_unavailable() {
         assert!(cover_error_is_terminal(
-            source_local::LOCAL_PROVIDER_ID,
+            source_local::LOCAL_SOURCE_ID,
             false,
             "No such file or directory (os error 2)"
         ));

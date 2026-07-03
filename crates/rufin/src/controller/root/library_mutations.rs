@@ -37,17 +37,16 @@ impl AppController {
             };
             match owner {
                 SourceFeatureOwner::Native => {
-                    let result = provider_for_saved(&store, &runtime, &secrets, &saved).and_then(
-                        |provider| {
+                    let result =
+                        source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                             runtime
                                 .block_on(
                                     provider
-                                        .as_music_provider()
+                                        .as_music_source()
                                         .set_favorite(item_id.clone(), favorite),
                                 )
                                 .map_err(|error| error.to_string())
-                        },
-                    );
+                        });
                     if let Err(error) = result {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
@@ -59,13 +58,28 @@ impl AppController {
             let result = store.with_store(|store| {
                 match &item_id {
                     FavoriteItemId::Album(album_id) => {
-                        store.set_album_favorite(&saved.server.id, album_id, favorite)?;
+                        store.set_album_favorite_for_owner(
+                            &saved.server.id,
+                            album_id,
+                            favorite,
+                            owner,
+                        )?;
                     }
                     FavoriteItemId::Track(track_id) => {
-                        store.set_track_favorite(&saved.server.id, track_id, favorite)?;
+                        store.set_track_favorite_for_owner(
+                            &saved.server.id,
+                            track_id,
+                            favorite,
+                            owner,
+                        )?;
                     }
                     FavoriteItemId::Artist(artist_id) => {
-                        store.set_artist_favorite(&saved.server.id, artist_id, favorite)?;
+                        store.set_artist_favorite_for_owner(
+                            &saved.server.id,
+                            artist_id,
+                            favorite,
+                            owner,
+                        )?;
                     }
                 }
                 Ok(())

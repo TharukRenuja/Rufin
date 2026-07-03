@@ -19,7 +19,7 @@ pub(in crate::controller) fn prepare_cached_tracks(
     track_album_refs_with_settings(&controller.store, saved, settings, tracks, &[])
 }
 
-pub(in crate::controller) fn prepare_provider_tracks(
+pub(in crate::controller) fn prepare_source_tracks(
     controller: &AppController,
     saved: &SavedServer,
     settings: &AppSettings,
@@ -40,6 +40,6 @@ pub(in crate::controller) fn generated_track_strategy_for_saved(
     if saved.server.provider == "jellyfin" && saved.use_jellyfin_instant_mix {
         GeneratedTrackStrategy::MixOnly
     } else {
-        GeneratedTrackStrategy::ProviderDefault
+        GeneratedTrackStrategy::SourceDefault
     }
 }

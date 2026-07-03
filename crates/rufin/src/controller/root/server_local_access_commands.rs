@@ -86,18 +86,18 @@ impl AppController {
                             .to_string(),
                     );
                 }
-                let provider_name = request.provider.title();
+                let source_name = request.source.title();
                 let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                    "Checking {provider_name} server..."
+                    "Checking {source_name} server..."
                 )));
-                let device_id = if request.provider == StreamingProvider::Jellyfin {
+                let device_id = if request.source == StreamingSource::Jellyfin {
                     Some(ensure_jellyfin_device_id(&store)?)
                 } else {
                     None
                 };
                 runtime
-                    .block_on(login_provider(
-                        request.provider,
+                    .block_on(login_source(
+                        request.source,
                         request.base_url,
                         request.username,
                         request.password,
@@ -224,7 +224,7 @@ pub(crate) struct ServerSettingsInput {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ServerSettingsReauthRequest {
-    provider: StreamingProvider,
+    source: StreamingSource,
     base_url: String,
     username: String,
     password: String,
@@ -281,7 +281,7 @@ fn update_server_settings_with_login(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
     input: ServerSettingsInput,
-    login: impl FnOnce(ServerSettingsReauthRequest) -> Result<ProviderSession, String>,
+    login: impl FnOnce(ServerSettingsReauthRequest) -> Result<SourceSession, String>,
 ) -> Result<ServerSettingsUpdateOutcome, String> {
     let saved = store.with_store(|store| {
         Ok(store
@@ -316,7 +316,7 @@ fn prepare_server_settings_update(
     saved: SavedServer,
     input: ServerSettingsInput,
 ) -> Result<Option<PreparedServerSettingsUpdate>, String> {
-    let remote = saved.server.provider != LOCAL_PROVIDER_ID;
+    let remote = saved.server.provider != LOCAL_SOURCE_ID;
     let next_name = input.name.trim().to_string();
     let next_base_url = if remote {
         input.base_url.trim().to_string()
@@ -366,10 +366,10 @@ fn prepare_server_settings_update(
     }
 
     let reauth = if auth_sensitive {
-        let provider = StreamingProvider::from_provider_id(&saved.server.provider)
-            .ok_or_else(|| "Saved server provider is no longer supported.".to_string())?;
+        let source = StreamingSource::from_source_id(&saved.server.provider)
+            .ok_or_else(|| "Saved server source is no longer supported.".to_string())?;
         Some(ServerSettingsReauthRequest {
-            provider,
+            source,
             base_url: next_base_url.clone(),
             username: next_username.clone(),
             password: input.password,
@@ -394,12 +394,12 @@ fn persist_prepared_server_settings_update(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
     prepared: &PreparedServerSettingsUpdate,
-    session: Option<&ProviderSession>,
+    session: Option<&SourceSession>,
 ) -> Result<ServerSettingsUpdateOutcome, String> {
     if let Some(session) = session
         && session.server.provider != prepared.saved.server.provider
     {
-        return Err("Authenticated provider did not match the saved server.".to_string());
+        return Err("Authenticated source did not match the saved server.".to_string());
     }
 
     let identity_changed =
@@ -445,7 +445,7 @@ fn persist_prepared_server_settings_update(
 
 fn next_saved_server(
     prepared: &PreparedServerSettingsUpdate,
-    session: Option<&ProviderSession>,
+    session: Option<&SourceSession>,
 ) -> SavedServer {
     let mut saved = prepared.saved.clone();
     saved.server.name = prepared.next_name.clone();
@@ -463,7 +463,7 @@ fn next_saved_server(
     saved
 }
 
-fn authenticated_identity_changed(saved: &SavedServer, session: &ProviderSession) -> bool {
+fn authenticated_identity_changed(saved: &SavedServer, session: &SourceSession) -> bool {
     saved.server.provider != session.server.provider
         || saved.server.id != session.server.id
         || saved.user_id != session.user_id
@@ -568,8 +568,8 @@ mod tests {
         user_id: &str,
         username: &str,
         token: &str,
-    ) -> ProviderSession {
-        ProviderSession {
+    ) -> SourceSession {
+        SourceSession {
             server: ServerIdentity {
                 id: server_id,
                 provider: saved.server.provider.clone(),

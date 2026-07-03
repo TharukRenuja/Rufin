@@ -104,7 +104,7 @@ pub(in crate::controller) fn album_track_refs(
     saved: &SavedServer,
     albums: &mut [Album],
 ) -> Result<(), String> {
-    if saved.server.provider != LOCAL_PROVIDER_ID || albums.is_empty() {
+    if saved.server.provider != LOCAL_SOURCE_ID || albums.is_empty() {
         return Ok(());
     }
     let album_ids = albums.iter().map(|album| album.id.clone()).fold(

@@ -19,7 +19,7 @@ use domain::{
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 22;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
@@ -42,6 +42,8 @@ pub enum StoreError {
     UnsupportedSourceWindow,
     #[error("invalid playlist owner: {0}")]
     InvalidPlaylistOwner(String),
+    #[error("invalid favorite item kind: {0}")]
+    InvalidFavoriteItemKind(String),
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -58,6 +60,16 @@ fn playlist_owner_to_str(owner: SourceFeatureOwner) -> &'static str {
     match owner {
         SourceFeatureOwner::Native => "native",
         SourceFeatureOwner::Store => "store",
+    }
+}
+
+fn favorite_item_kind_to_table(kind: &str) -> StoreResult<(&'static str, &'static str)> {
+    match kind {
+        "album" => Ok(("albums", "album_id")),
+        "track" => Ok(("tracks", "track_id")),
+        "artist" => Ok(("artists", "artist_id")),
+        "album_artist" => Ok(("album_artists", "artist_id")),
+        other => Err(StoreError::InvalidFavoriteItemKind(other.to_string())),
     }
 }
 

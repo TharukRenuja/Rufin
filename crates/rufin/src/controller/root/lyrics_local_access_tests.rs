@@ -201,8 +201,8 @@ pub(in crate::controller) fn lyrics_local_lookup() {
 pub(in crate::controller) fn lyrics_local_capability() {
     let root = self::unique_test_dir("local-provider-lyrics-capability");
     fs::create_dir_all(&root).expect("create local root");
-    let provider = LoadedProvider::Local(
-        LocalProvider::from_roots_with_identity(vec![root.clone()], local_source_saved().server)
+    let provider = LoadedSource::Local(
+        LocalSource::from_roots_with_identity(vec![root.clone()], local_source_saved().server)
             .expect("local provider"),
     );
     let runtime = Runtime::new().expect("runtime");
@@ -656,7 +656,7 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
     let store = StoreHandle::open_memory().expect("memory store");
     let mut saved = self::saved_server();
     saved.server.id = ServerId::new("local:server:library");
-    saved.server.provider = LOCAL_PROVIDER_ID.to_string();
+    saved.server.provider = LOCAL_SOURCE_ID.to_string();
     let dir = self::unique_test_dir("cue-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
     let audio = dir.join("fruits.flac");
@@ -1012,7 +1012,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
     let saved = SavedServer {
         server: ServerIdentity {
             id: ServerId::new("local:server:no-rescan"),
-            provider: LOCAL_PROVIDER_ID.to_string(),
+            provider: LOCAL_SOURCE_ID.to_string(),
             name: "Local".to_string(),
             base_url: root.to_string_lossy().into_owned(),
         },
@@ -1022,9 +1022,8 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         use_jellyfin_instant_mix: false,
     };
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let provider =
-        LocalProvider::from_roots_with_identity(vec![root.clone()], saved.server.clone())
-            .expect("local provider");
+    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], saved.server.clone())
+        .expect("local provider");
     let mut track = runtime
         .block_on(provider.tracks(source::PagedRequest::new(0, 1)))
         .expect("tracks")
@@ -1906,11 +1905,11 @@ pub(in crate::controller) fn controller_events_are_sendable() {
 }
 #[test]
 pub(in crate::controller) fn lyrics_found_classified() {
-    assert!(super::covers::is_provider_not_found_error(
-        "provider item was not found"
+    assert!(super::covers::is_source_not_found_error(
+        "source item was not found"
     ));
-    assert!(!super::covers::is_provider_not_found_error(
-        "provider network failed: offline"
+    assert!(!super::covers::is_source_not_found_error(
+        "source network failed: offline"
     ));
 }
 #[test]

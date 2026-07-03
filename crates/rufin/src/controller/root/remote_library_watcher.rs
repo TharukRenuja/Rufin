@@ -89,11 +89,11 @@ fn watch_jellyfin_library(
         "started Jellyfin library watcher"
     );
     while !cancellation.cancelled() && remote_freshness_target_is_active(&context, &saved) {
-        let result = provider_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
-            .and_then(|provider| match provider {
-                LoadedProvider::Jellyfin(provider) => context
+        let result = source_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
+            .and_then(|source| match source {
+                LoadedSource::Jellyfin(source) => context
                     .runtime
-                    .block_on(provider.listen_library_changes(
+                    .block_on(source.listen_library_changes(
                         |change| {
                             if !remote_freshness_target_is_active(&context, &saved) {
                                 return false;
@@ -145,7 +145,7 @@ fn poll_subsonic_library(
 ) {
     info!(
         server_id = %saved.server.id.as_str(),
-        provider = %saved.server.provider,
+        source = %saved.server.provider,
         interval_ms = SUBSONIC_FRESHNESS_INTERVAL.as_millis() as u64,
         "started remote library freshness poller"
     );
@@ -156,7 +156,7 @@ fn poll_subsonic_library(
     }
     info!(
         server_id = %saved.server.id.as_str(),
-        provider = %saved.server.provider,
+        source = %saved.server.provider,
         "stopped remote library freshness poller"
     );
 }
@@ -235,13 +235,13 @@ fn start_jellyfin_library_change_reconciliation_thread(
         let items_added = change.items_added.len();
         let items_updated = change.items_updated.len();
         let items_removed = change.items_removed.len();
-        let result = provider_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
-            .and_then(|provider| match provider {
-                LoadedProvider::Jellyfin(provider) => {
+        let result = source_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
+            .and_then(|source| match source {
+                LoadedSource::Jellyfin(source) => {
                     context.runtime.block_on(reconcile_jellyfin_library_change(
                         &context.store,
                         &server_id,
-                        &provider,
+                        &source,
                         change,
                         generation,
                         &cancellation,
@@ -385,7 +385,7 @@ fn pending_has_change(pending: &PendingJellyfinChange) -> bool {
 async fn reconcile_jellyfin_library_change(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &source_jellyfin::JellyfinProvider,
+    source: &source_jellyfin::JellyfinSource,
     change: JellyfinLibraryChange,
     generation: i64,
     cancellation: &CancellationToken,
@@ -393,8 +393,7 @@ async fn reconcile_jellyfin_library_change(
     let mut collector = LibraryDeltaCollector::new();
     let fetch_ids = change.fetch_item_ids();
     if !fetch_ids.is_empty() {
-        let tracks =
-            await_provider(cancellation, provider.tracks_by_raw_item_ids(&fetch_ids)).await?;
+        let tracks = await_source(cancellation, source.tracks_by_raw_item_ids(&fetch_ids)).await?;
         check_sync_cancelled(cancellation)?;
         if !tracks.is_empty() {
             collector.merge(

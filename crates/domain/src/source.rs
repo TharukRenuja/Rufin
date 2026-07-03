@@ -86,7 +86,7 @@ pub struct RandomTrackRequest {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum GeneratedTrackStrategy {
     #[default]
-    ProviderDefault,
+    SourceDefault,
     SimilarFirst,
     MixOnly,
 }
@@ -200,7 +200,7 @@ pub struct LoginRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ProviderSession {
+pub struct SourceSession {
     pub server: ServerIdentity,
     pub user_id: String,
     pub username: String,
@@ -210,7 +210,7 @@ pub struct ProviderSession {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SavedProviderSession {
+pub struct SavedSourceSession {
     pub server: ServerIdentity,
     pub user_id: String,
     pub username: String,

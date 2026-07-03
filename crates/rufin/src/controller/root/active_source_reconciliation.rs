@@ -10,7 +10,7 @@ pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
     if !cached_current {
         return;
     }
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         if !load_settings_from_store(&context.store)
             .sources
             .local_folders
@@ -45,12 +45,12 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
     thread::spawn(move || {
         let _permit = permit;
         let started = Instant::now();
-        let result = provider_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
-            .and_then(|provider| {
+        let result = source_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
+            .and_then(|source| {
                 context.runtime.block_on(reconcile_active_source(
                     &context.store,
                     &server_id,
-                    &provider,
+                    &source,
                     generation,
                     &cancellation,
                 ))
@@ -97,32 +97,32 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
 pub(in crate::controller) async fn reconcile_active_source(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &LoadedProvider,
+    source: &LoadedSource,
     generation: i64,
     cancellation: &CancellationToken,
 ) -> Result<LibraryDelta, String> {
-    match provider {
-        LoadedProvider::Jellyfin(provider) => {
-            reconcile_jellyfin_active_source(store, server_id, provider, generation, cancellation)
+    match source {
+        LoadedSource::Jellyfin(source) => {
+            reconcile_jellyfin_active_source(store, server_id, source, generation, cancellation)
                 .await
         }
-        LoadedProvider::Subsonic(provider) => {
-            reconcile_subsonic_active_source(store, server_id, provider, generation, cancellation)
+        LoadedSource::Subsonic(source) => {
+            reconcile_subsonic_active_source(store, server_id, source, generation, cancellation)
                 .await
         }
-        LoadedProvider::Local(_) => Ok(LibraryDelta::default()),
+        LoadedSource::Local(_) => Ok(LibraryDelta::default()),
     }
 }
 
 async fn reconcile_jellyfin_active_source(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &source_jellyfin::JellyfinProvider,
+    source: &source_jellyfin::JellyfinSource,
     generation: i64,
     cancellation: &CancellationToken,
 ) -> Result<LibraryDelta, String> {
     let mut collector = LibraryDeltaCollector::new();
-    let tracks = await_provider(cancellation, provider.recently_added_tracks(50)).await?;
+    let tracks = await_source(cancellation, source.recently_added_tracks(50)).await?;
     check_sync_cancelled(cancellation)?;
     if !tracks.is_empty() {
         let delta =
@@ -139,14 +139,14 @@ async fn reconcile_jellyfin_active_source(
 async fn reconcile_subsonic_active_source(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &source_subsonic::SubsonicProvider,
+    source: &source_subsonic::SubsonicSource,
     generation: i64,
     cancellation: &CancellationToken,
 ) -> Result<LibraryDelta, String> {
     const NEWEST_ALBUM_LIMIT: usize = 20;
 
     let newest_albums =
-        await_provider(cancellation, provider.newest_albums(NEWEST_ALBUM_LIMIT)).await?;
+        await_source(cancellation, source.newest_albums(NEWEST_ALBUM_LIMIT)).await?;
     check_sync_cancelled(cancellation)?;
     if newest_albums.is_empty() {
         return Ok(LibraryDelta::default());
@@ -157,7 +157,7 @@ async fn reconcile_subsonic_active_source(
     let mut detail_albums = Vec::new();
     let mut detail_tracks = Vec::new();
     for album_id in albums_needing_detail {
-        let detail = await_provider(cancellation, provider.album_detail(&album_id)).await?;
+        let detail = await_source(cancellation, source.album_detail(&album_id)).await?;
         check_sync_cancelled(cancellation)?;
         detail_albums.push(detail.album);
         detail_tracks.extend(detail.tracks);

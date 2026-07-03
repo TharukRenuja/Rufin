@@ -706,6 +706,16 @@ impl Shell {
             .is_some()
     }
 
+    pub(in crate::ui) fn favorite_mutation_supported(&self) -> bool {
+        self.state
+            .library
+            .borrow()
+            .source_capabilities
+            .favorite_mutations
+            .owner()
+            .is_some()
+    }
+
     pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
         let track_index = track_index_for(&snapshot.tracks);
         *self.state.library.borrow_mut() = snapshot;

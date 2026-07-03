@@ -15,10 +15,15 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 20,
         run: migrate_to_playlist_owner_schema,
     },
+    SchemaMigration {
+        from_version: 21,
+        run: migrate_to_favorite_override_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
 const TRACK_MOOD_BPM_SCHEMA_VERSION: i64 = 20;
+const PLAYLIST_OWNER_SCHEMA_VERSION: i64 = 21;
 const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
@@ -44,6 +49,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "album_artist_links",
     "track_artist_links",
     "playlist_tracks",
+    "item_favorite_overrides",
     "home_section_items",
     "home_section_prefetch_items",
     "lyrics_cache",
@@ -91,10 +97,16 @@ const SUPPORTED_SCHEMA_COLUMNS: &[(&str, &str)] = &[
 const GENRE_DURATION_SCHEMA_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
 const TRACK_MOOD_BPM_SCHEMA_COLUMNS: &[(&str, &str)] =
     &[("genres", "duration_seconds"), ("tracks", "bpm")];
+const PLAYLIST_OWNER_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+];
 const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("genres", "duration_seconds"),
     ("tracks", "bpm"),
     ("playlists", "owner"),
+    ("item_favorite_overrides", "updated_at"),
 ];
 const IMAGE_ORIGIN_TABLES: &[&str] = &[
     "albums",
@@ -139,11 +151,19 @@ fn schema_migration_path(
     Some(path)
 }
 
-fn previous_schema_tables() -> Vec<&'static str> {
+fn schema_tables_before_track_moods() -> Vec<&'static str> {
     SCHEMA_TABLES
         .iter()
         .copied()
-        .filter(|table| *table != "track_moods")
+        .filter(|table| !matches!(*table, "track_moods" | "item_favorite_overrides"))
+        .collect()
+}
+
+fn schema_tables_before_favorite_overrides() -> Vec<&'static str> {
+    SCHEMA_TABLES
+        .iter()
+        .copied()
+        .filter(|table| *table != "item_favorite_overrides")
         .collect()
 }
 
@@ -203,6 +223,12 @@ fn migrate_to_playlist_owner_schema(store: &Store) -> StoreResult<()> {
         ",
         [],
     )?;
+    Ok(())
+}
+
+fn migrate_to_favorite_override_schema(store: &Store) -> StoreResult<()> {
+    store.create_favorite_override_schema()?;
+    store.seed_store_favorite_overrides_for_legacy_sources()?;
     Ok(())
 }
 
@@ -307,15 +333,25 @@ impl Store {
     }
     fn schema_is_complete_for_version(&self, version: i64) -> StoreResult<bool> {
         match version {
-            MIN_SUPPORTED_SCHEMA_VERSION => {
-                self.schema_has_required_parts(&previous_schema_tables(), SUPPORTED_SCHEMA_COLUMNS)
-            }
-            GENRE_DURATION_SCHEMA_VERSION => Ok(self
-                .schema_has_required_parts(&previous_schema_tables(), SUPPORTED_SCHEMA_COLUMNS)?
-                && self.schema_has_required_parts(&[], GENRE_DURATION_SCHEMA_COLUMNS)?),
-            TRACK_MOOD_BPM_SCHEMA_VERSION => Ok(self
-                .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
-                && self.schema_has_required_parts(&[], TRACK_MOOD_BPM_SCHEMA_COLUMNS)?),
+            MIN_SUPPORTED_SCHEMA_VERSION => self.schema_has_required_parts(
+                &schema_tables_before_track_moods(),
+                SUPPORTED_SCHEMA_COLUMNS,
+            ),
+            GENRE_DURATION_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_track_moods(),
+                SUPPORTED_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], GENRE_DURATION_SCHEMA_COLUMNS)?),
+            TRACK_MOOD_BPM_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_favorite_overrides(),
+                SUPPORTED_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], TRACK_MOOD_BPM_SCHEMA_COLUMNS)?),
+            PLAYLIST_OWNER_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_favorite_overrides(),
+                SUPPORTED_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], PLAYLIST_OWNER_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -670,6 +706,14 @@ impl Store {
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, playlist_id, entry_id)
             );
+            CREATE TABLE IF NOT EXISTS item_favorite_overrides (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                item_kind TEXT NOT NULL CHECK (item_kind IN ('album', 'track', 'artist', 'album_artist')),
+                item_id TEXT NOT NULL,
+                favorite INTEGER NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, item_kind, item_id)
+            );
             CREATE TABLE IF NOT EXISTS collection_cover_refs (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 collection_type TEXT NOT NULL,
@@ -751,6 +795,8 @@ impl Store {
                 ON playlists(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS playlist_tracks_order_idx
                 ON playlist_tracks(server_id, playlist_id, position, entry_id);
+            CREATE INDEX IF NOT EXISTS item_favorite_overrides_lookup_idx
+                ON item_favorite_overrides(server_id, item_kind, favorite, item_id);
             CREATE INDEX IF NOT EXISTS tracks_server_album_idx
                 ON tracks(server_id, album_id, disc_number, track_number);
             CREATE INDEX IF NOT EXISTS tracks_server_artist_idx
@@ -800,6 +846,7 @@ impl Store {
             "owner",
             "TEXT NOT NULL DEFAULT 'native' CHECK (owner IN ('native', 'store'))",
         )?;
+        self.create_favorite_override_schema()?;
         self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column(
             "servers",
@@ -810,6 +857,49 @@ impl Store {
         self.create_entity_identity_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    }
+    fn create_favorite_override_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS item_favorite_overrides (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                item_kind TEXT NOT NULL CHECK (item_kind IN ('album', 'track', 'artist', 'album_artist')),
+                item_id TEXT NOT NULL,
+                favorite INTEGER NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, item_kind, item_id)
+            );
+            CREATE INDEX IF NOT EXISTS item_favorite_overrides_lookup_idx
+                ON item_favorite_overrides(server_id, item_kind, favorite, item_id);
+            ",
+        )?;
+        Ok(())
+    }
+    fn seed_store_favorite_overrides_for_legacy_sources(&self) -> StoreResult<()> {
+        for (table, id_column, kind) in [
+            ("albums", "album_id", "album"),
+            ("tracks", "track_id", "track"),
+            ("artists", "artist_id", "artist"),
+            ("album_artists", "artist_id", "album_artist"),
+        ] {
+            self.connection.execute(
+                &format!(
+                    "
+                    INSERT OR REPLACE INTO item_favorite_overrides (
+                        server_id, item_kind, item_id, favorite, updated_at
+                    )
+                    SELECT {table}.server_id, ?1, {table}.{id_column}, {table}.favorite, CURRENT_TIMESTAMP
+                    FROM {table}
+                    JOIN servers
+                      ON servers.server_id = {table}.server_id
+                    WHERE servers.provider IN ('local', 'fake')
+                      AND {table}.favorite = 1
+                    "
+                ),
+                params![kind],
+            )?;
+        }
         Ok(())
     }
     fn create_entity_identity_schema(&self) -> StoreResult<()> {
