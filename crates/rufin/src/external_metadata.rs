@@ -593,16 +593,22 @@ mod tests {
         let value = json!({
             "album": {
                 "image": [
-                    { "#text": "https://example.test/small.jpg", "size": "small" },
+                    {
+                        "#text": "https://lastfm.freetls.fastly.net/i/u/300x300/small.png",
+                        "size": "small"
+                    },
                     { "#text": "", "size": "medium" },
-                    { "#text": "https://example.test/large.jpg", "size": "extralarge" }
+                    {
+                        "#text": "https://lastfm.freetls.fastly.net/i/u/300x300/large.png",
+                        "size": "extralarge"
+                    }
                 ]
             }
         });
 
         assert_eq!(
             lastfm_album_image_url(&value).expect("lastfm album image url"),
-            Some("https://example.test/large.jpg".to_string())
+            Some("https://lastfm.freetls.fastly.net/i/u/300x300/large.png".to_string())
         );
     }
 
@@ -624,7 +630,10 @@ mod tests {
         let value = json!({
             "album": {
                 "image": [
-                    { "#text": "https://example.test/small.jpg", "size": "small" },
+                    {
+                        "#text": "https://lastfm.freetls.fastly.net/i/u/300x300/small.png",
+                        "size": "small"
+                    },
                     {
                         "#text": "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
                         "size": "extralarge"
@@ -635,7 +644,27 @@ mod tests {
 
         assert_eq!(
             lastfm_album_image_url(&value).expect("lastfm album placeholder image url"),
-            Some("https://example.test/small.jpg".to_string())
+            Some("https://lastfm.freetls.fastly.net/i/u/300x300/small.png".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_reject_untrusted_lastfm_image() {
+        let value = json!({
+            "album": {
+                "image": [
+                    { "#text": "https://example.test/large.jpg", "size": "large" },
+                    { "#text": "http://lastfm.freetls.fastly.net/i/u/300x300/large.png", "size": "large" },
+                    { "#text": "https://lastfm.freetls.fastly.net:8443/i/u/300x300/large.png", "size": "large" },
+                    { "#text": "https://user@lastfm.freetls.fastly.net/i/u/300x300/large.png", "size": "large" },
+                    { "#text": "https://127.0.0.1/cover.png", "size": "large" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            lastfm_album_image_url(&value).expect("lastfm album untrusted image url"),
+            None
         );
     }
 

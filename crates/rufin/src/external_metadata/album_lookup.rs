@@ -184,8 +184,18 @@ fn lastfm_image_url(value: &Value, image_pointer: &str) -> Result<Option<String>
         .rev()
         .filter_map(|image| image.get("#text").and_then(Value::as_str))
         .map(str::trim)
-        .find(|url| !url.is_empty() && !is_lastfm_placeholder_image_url(url))
-        .map(str::to_string))
+        .filter(|url| !is_lastfm_placeholder_image_url(url))
+        .find_map(trusted_lastfm_image_url))
+}
+
+fn trusted_lastfm_image_url(raw: &str) -> Option<String> {
+    let url = Url::parse(raw).ok()?;
+    (url.scheme() == "https"
+        && url.host_str() == Some("lastfm.freetls.fastly.net")
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then(|| url.to_string())
 }
 
 fn is_lastfm_placeholder_image_url(url: &str) -> bool {
