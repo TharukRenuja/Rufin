@@ -70,7 +70,7 @@ use crate::controller::{
 use crate::external_metadata;
 use crate::i18n::{self, tr, trn_with};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
-use ::library::{CachedGenreDetail, LibraryDelta, image_cache_key};
+use ::library::{CachedGenreDetail, CachedMoodDetail, LibraryDelta, image_cache_key};
 #[cfg(feature = "dev-tools")]
 use ::test_support::FakeScale;
 use adw::prelude::*;
@@ -80,7 +80,7 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
     HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, MusicFolderId, PlaySourceDescriptor, Playlist,
+    LibraryListSettings, Mood, MusicFolderId, PlaySourceDescriptor, Playlist,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route,
     RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
@@ -208,6 +208,7 @@ mod layout_rendering;
 mod lyrics_highlight_timers;
 mod lyrics_panel;
 mod lyrics_playback_state;
+mod mood_detail_view;
 mod new_playlist_dialog;
 mod new_smart_playlist_dialog;
 mod playlist_detail_view;
@@ -699,6 +700,8 @@ impl Shell {
         let track_index = track_index_for(&snapshot.tracks);
         *self.state.library.borrow_mut() = snapshot;
         *self.state.track_index.borrow_mut() = track_index;
+        self.state.smart_playlists.borrow_mut().clear();
+        self.state.smart_playlists_loaded.set(false);
     }
 
     pub(in crate::ui) fn rebuild_track_index(&self) {

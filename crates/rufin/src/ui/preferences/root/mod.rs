@@ -1193,7 +1193,10 @@ fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings) -> String {
         tr("Hidden")
     };
     if entry.item == SidebarRouteItem::Moods {
-        format!("{state} · {}", tr("Not supported for Jellyfin"))
+        format!(
+            "{state} · {}",
+            tr("Files need Mood/BPM tags written on them. Not supported for Jellyfin")
+        )
     } else {
         state
     }

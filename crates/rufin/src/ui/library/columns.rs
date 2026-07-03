@@ -44,21 +44,6 @@ pub(in crate::ui) fn artist_column(
         ),
     }
 }
-pub(in crate::ui) fn genre_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Title | LibraryField::TitleMerged => {
-            genre_text_column(shell, "Title", 180, true, |genre| genre.name.clone())
-        }
-        _ => genre_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |genre| genre_field(genre, field),
-        ),
-    }
-}
 pub(in crate::ui) fn playlist_column(
     shell: &Rc<Shell>,
     field: LibraryField,
@@ -731,43 +716,6 @@ where
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
         install_artist_context_menu(&label, &shell, artist);
-        item.set_child(Some(&label));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
-    column
-}
-pub(in crate::ui) fn genre_text_column<F>(
-    shell: &Rc<Shell>,
-    title: &str,
-    width: i32,
-    expand: bool,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    F: Fn(&Genre) -> String + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let value = Rc::new(value);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(genre) = item_at_from_item::<Genre>(item) else {
-            return;
-        };
-        let label = gtk::Label::new(Some(&(value)(&genre)));
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
-        label.set_wrap(false);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_single_line_mode(true);
-        install_genre_context_menu(&label, &shell, genre);
         item.set_child(Some(&label));
     });
     factory.connect_unbind(clear_list_item_child);

@@ -106,22 +106,6 @@ pub(in crate::ui) fn append_artists_to_model(
 ) {
     append_boxed_items_to_model(model, artists);
 }
-pub(in crate::ui) fn replace_genres_in_model(
-    model: &gio::ListStore,
-    genres: impl IntoIterator<Item = Genre>,
-) {
-    let additions = genres
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    model.splice(0, model.n_items(), &additions);
-}
-pub(in crate::ui) fn append_genres_to_model(
-    model: &gio::ListStore,
-    genres: impl IntoIterator<Item = Genre>,
-) {
-    append_boxed_items_to_model(model, genres);
-}
 pub(in crate::ui) fn replace_playlists_in_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,

@@ -109,6 +109,74 @@ impl Store {
         self.attach_genre_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
+
+    pub fn load_moods(
+        &self,
+        server_id: &ServerId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Mood>> {
+        let total = self.count_moods(server_id)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT tm.mood_name, tm.mood_name,
+                   COUNT(DISTINCT tm.track_id),
+                   COALESCE(SUM(t.duration_seconds), 0),
+                   NULL, NULL
+            FROM track_moods tm
+            JOIN tracks t
+                ON t.server_id = tm.server_id AND t.track_id = tm.track_id
+            WHERE tm.server_id = ?1
+              AND TRIM(tm.mood_name) != ''
+            GROUP BY tm.mood_name
+            ORDER BY tm.mood_name COLLATE NOCASE
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let mut items = collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            mood_from_row,
+        )?)?;
+        self.attach_mood_cover_image_refs(server_id, &mut items)?;
+        Ok(PagedResponse::new(items, total))
+    }
+
+    pub fn load_moods_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Mood>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_moods(server_id, offset, limit);
+        };
+        let total = self.count_moods_like(server_id, &pattern)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT tm.mood_name, tm.mood_name,
+                   COUNT(DISTINCT tm.track_id),
+                   COALESCE(SUM(t.duration_seconds), 0),
+                   NULL, NULL
+            FROM track_moods tm
+            JOIN tracks t
+                ON t.server_id = tm.server_id AND t.track_id = tm.track_id
+            WHERE tm.server_id = ?1
+              AND TRIM(tm.mood_name) != ''
+              AND LOWER(tm.mood_name) LIKE ?2 ESCAPE '\\'
+            GROUP BY tm.mood_name
+            ORDER BY tm.mood_name COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let mut items = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            mood_from_row,
+        )?)?;
+        self.attach_mood_cover_image_refs(server_id, &mut items)?;
+        Ok(PagedResponse::new(items, total))
+    }
+
     pub fn load_tracks_by_genre_name(
         &self,
         server_id: &ServerId,
@@ -189,6 +257,47 @@ impl Store {
                           WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
                       )
                   )
+                ",
+                params![server_id.as_str(), pattern],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
+    fn count_moods(&self, server_id: &ServerId) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM (
+                    SELECT 1
+                    FROM track_moods
+                    WHERE server_id = ?1
+                      AND TRIM(mood_name) != ''
+                    GROUP BY mood_name
+                )
+                ",
+                params![server_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
+    fn count_moods_like(&self, server_id: &ServerId, pattern: &str) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM (
+                    SELECT 1
+                    FROM track_moods
+                    WHERE server_id = ?1
+                      AND TRIM(mood_name) != ''
+                      AND LOWER(mood_name) LIKE ?2 ESCAPE '\\'
+                    GROUP BY mood_name
+                )
                 ",
                 params![server_id.as_str(), pattern],
                 |row| row.get::<_, i64>(0),
@@ -532,6 +641,135 @@ impl Store {
             albums,
             tracks,
         }))
+    }
+
+    pub fn load_mood_detail(
+        &self,
+        server_id: &ServerId,
+        mood_id: &MoodId,
+    ) -> StoreResult<Option<CachedMoodDetail>> {
+        let mood = self
+            .connection
+            .query_row(
+                "
+                SELECT tm.mood_name,
+                       COUNT(DISTINCT tm.track_id),
+                       COALESCE(SUM(t.duration_seconds), 0)
+                FROM track_moods tm
+                JOIN tracks t
+                    ON t.server_id = tm.server_id AND t.track_id = tm.track_id
+                WHERE tm.server_id = ?1
+                  AND tm.mood_name = ?2
+                  AND TRIM(tm.mood_name) != ''
+                GROUP BY tm.mood_name
+                ",
+                params![server_id.as_str(), mood_id.as_str()],
+                |row| {
+                    Ok(Mood {
+                        id: mood_id.clone(),
+                        name: row.get(0)?,
+                        track_count: u32_from_i64(row.get(1)?),
+                        duration_seconds: u32_from_i64(row.get(2)?),
+                        image_refs: Vec::new(),
+                        image_ref: None,
+                    })
+                },
+            )
+            .optional()?;
+        let Some(mut mood) = mood else {
+            return Ok(None);
+        };
+        let mut albums_statement = self.connection.prepare(
+            "
+            SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
+                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
+                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.image_item_id, a.image_tag
+            FROM albums a
+            JOIN tracks t
+                ON t.server_id = a.server_id AND t.album_id = a.album_id
+            JOIN track_moods tm
+                ON tm.server_id = t.server_id AND tm.track_id = t.track_id
+            WHERE a.server_id = ?1
+              AND tm.mood_name = ?2
+            ORDER BY a.title COLLATE NOCASE
+            ",
+        )?;
+        let mut albums = collect_rows(albums_statement.query_map(
+            params![server_id.as_str(), mood.name.as_str()],
+            album_from_row,
+        )?)?;
+        self.attach_album_metadata(server_id, &mut albums)?;
+        let mut tracks_statement = self.connection.prepare(
+            "
+            SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                   t.album, t.year, t.release_date, t.date_added, t.last_played,
+                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag
+            FROM track_moods tm
+            JOIN tracks t
+                ON t.server_id = tm.server_id AND t.track_id = tm.track_id
+            WHERE tm.server_id = ?1 AND tm.mood_name = ?2
+            ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                     t.title COLLATE NOCASE
+            ",
+        )?;
+        let mut tracks = collect_rows(tracks_statement.query_map(
+            params![server_id.as_str(), mood.name.as_str()],
+            track_from_row,
+        )?)?;
+        self.attach_track_metadata(server_id, &mut tracks)?;
+        mood.image_refs = self.load_mood_cover_refs(server_id, &mood.name)?;
+        if mood.image_ref.is_none() {
+            mood.image_ref = mood.image_refs.first().cloned();
+        }
+        Ok(Some(CachedMoodDetail {
+            mood,
+            albums,
+            tracks,
+        }))
+    }
+
+    fn attach_mood_cover_image_refs(
+        &self,
+        server_id: &ServerId,
+        moods: &mut [Mood],
+    ) -> StoreResult<()> {
+        for mood in moods {
+            mood.image_refs = self.load_mood_cover_refs(server_id, &mood.name)?;
+            if mood.image_ref.is_none() {
+                mood.image_ref = mood.image_refs.first().cloned();
+            }
+        }
+        Ok(())
+    }
+
+    fn load_mood_cover_refs(
+        &self,
+        server_id: &ServerId,
+        mood_name: &str,
+    ) -> StoreResult<Vec<ImageRef>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT DISTINCT t.image_item_id, t.image_tag
+            FROM track_moods tm
+            JOIN tracks t
+                ON t.server_id = tm.server_id AND t.track_id = tm.track_id
+            WHERE tm.server_id = ?1
+              AND tm.mood_name = ?2
+              AND t.image_item_id IS NOT NULL
+              AND TRIM(t.image_item_id) != ''
+            ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                     t.title COLLATE NOCASE
+            LIMIT 4
+            ",
+        )?;
+        let refs = collect_rows(
+            statement.query_map(params![server_id.as_str(), mood_name], |row| {
+                image_ref_from_row(row, 0, 1)
+            })?,
+        )?;
+        Ok(refs.into_iter().flatten().collect())
     }
     pub fn load_favorite_tracks(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;

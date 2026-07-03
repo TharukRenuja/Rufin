@@ -1,5 +1,7 @@
 use super::test_support::*;
-use domain::{PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder};
+use domain::{
+    MoodId, PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder,
+};
 
 #[test]
 fn relation_keep_id() {
@@ -485,6 +487,72 @@ fn relation_use_counts() {
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
     assert_eq!(detail.genre.duration_seconds, track.duration_seconds);
+}
+
+#[test]
+fn mood_projection_uses_track_metadata() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut first = track(1, &album);
+    first.moods = vec!["Focused".to_string(), "Energetic".to_string()];
+    let mut second = track(2, &album);
+    second.moods = vec!["Focused".to_string()];
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[first.clone(), second.clone()],
+            generation,
+        )
+        .expect("upsert tracks");
+
+    let moods = store
+        .load_moods(&saved.server.id, 0, 20)
+        .expect("load moods");
+    let matching = store
+        .load_moods_matching(&saved.server.id, "focus", 0, 20)
+        .expect("search moods");
+    let detail = store
+        .load_mood_detail(&saved.server.id, &MoodId::new("Focused"))
+        .expect("load mood detail")
+        .expect("mood detail");
+
+    assert_eq!(moods.total, 2);
+    assert_eq!(
+        moods
+            .items
+            .iter()
+            .map(|mood| mood.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Energetic", "Focused"]
+    );
+    assert_eq!(matching.total, 1);
+    assert_eq!(matching.items[0].name, "Focused");
+    assert_eq!(matching.items[0].track_count, 2);
+    assert_eq!(
+        matching.items[0].duration_seconds,
+        first.duration_seconds + second.duration_seconds
+    );
+    assert_eq!(detail.mood.name, "Focused");
+    assert_eq!(detail.mood.track_count, 2);
+    assert_eq!(detail.albums, vec![album]);
+    assert_eq!(
+        detail
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![first.id, second.id]
+    );
+    assert_eq!(
+        detail.tracks[0].moods,
+        vec!["Energetic".to_string(), "Focused".to_string()]
+    );
 }
 
 #[test]

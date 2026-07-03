@@ -4,7 +4,7 @@ use super::{
     PagedGridCursor, PlaySourceDescriptor, ROUTE_TOP_MARGIN, Route, SLOW_ROUTE_PAGE_LOAD_MS, Shell,
     THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, add_dynamic_link_hover, add_label_click,
     album_artist_route, album_count_text, album_favorite_key, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
+    append_artists_to_model, append_boxed_items_to_model, append_playlists_to_model,
     append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader, context_album,
     context_artist, context_track, favorite_button_is_active, favorite_icon_button,
     finish_grid_page, format_duration_units, icon_button, install_album_context_menu,
@@ -18,17 +18,17 @@ use super::{
     present_album_context_menu, present_artist_context_menu, present_genre_context_menu,
     present_light_dismiss_dialog, present_playlist_context_menu,
     present_smart_playlist_context_menu, present_track_context_menu, replace_albums_in_model,
-    replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
-    route_scroller_widget, selected_music_folder_id, set_favorite_button_active,
-    smart_playlist_display_name, stable_seed, track_artist_route, track_collection_play_context,
-    track_count_text, track_favorite_key, track_link_column,
+    replace_artists_in_model, replace_playlists_in_model, route_scroller_widget,
+    selected_music_folder_id, set_favorite_button_active, smart_playlist_display_name, stable_seed,
+    track_artist_route, track_collection_play_context, track_count_text, track_favorite_key,
+    track_link_column,
 };
 use crate::cover_art_policy;
 use crate::i18n::tr;
 use adw::prelude::*;
 use domain::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Playlist, SmartPlaylist, SmartPlaylistId, Track, TrackId,
+    LibraryListSettings, Mood, Playlist, SmartPlaylist, SmartPlaylistId, Track, TrackId,
     available_sort_fields,
 };
 use gtk::{gio, glib};
@@ -40,22 +40,26 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 mod album_detail;
+mod collection_routes;
 mod collections;
 mod columns;
 #[path = "cards.rs"]
 mod field_cards;
 mod grid_cells;
 mod models;
+mod named_collections;
 mod route_shell;
 mod routes;
 mod table_sizing;
 
 pub(super) use album_detail::*;
+use collection_routes::*;
 pub(super) use collections::*;
 pub(super) use columns::*;
 pub(super) use field_cards::*;
 use grid_cells::*;
 pub(super) use models::*;
+pub(super) use named_collections::*;
 pub(super) use route_shell::*;
 pub(super) use table_sizing::*;
 
@@ -484,19 +488,6 @@ fn artist_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<Im
     }
     refs
 }
-fn genre_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
-    let mut refs = Vec::new();
-    for index in start..end.min(model.n_items() as usize) {
-        let Some(genre) = item_at::<Genre>(model, index as u32) else {
-            continue;
-        };
-        push_selected_cover_refs(
-            &mut refs,
-            cover_art_policy::selected_genre_artwork(&genre).image_refs,
-        );
-    }
-    refs
-}
 fn playlist_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
     let mut refs = Vec::new();
     for index in start..end.min(model.n_items() as usize) {
@@ -634,27 +625,6 @@ fn prepare_item_cover_model_viewport(shell: &Rc<Shell>, request: CoverViewportRe
         request.fetch_size,
         request.size,
         request.include_warm,
-    );
-}
-fn connect_genre_viewport_cover_warm(
-    shell: &Rc<Shell>,
-    scroller: &gtk::ScrolledWindow,
-    model: &gio::ListStore,
-    settings: &LibraryListSettings,
-) {
-    connect_cover_viewport_warm(
-        shell,
-        scroller,
-        model,
-        settings,
-        CoverViewportSpec {
-            key: LibraryListKey::Genres,
-            cover_sizes: grid_row_sizes,
-            refs_for_range: genre_cover_refs,
-            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
-            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
-            row_warm_delay: GRID_WARM_DELAY,
-        },
     );
 }
 fn connect_playlist_viewport_cover_warm(
@@ -964,26 +934,6 @@ fn warm_artist_cover(
         .iter()
         .take(INITIAL_ROUTE_COVER_WARM_ITEMS)
         .filter_map(|artist| artist.image_ref.clone())
-        .collect::<Vec<ImageRef>>();
-    shell.prime_cover_refs_now(image_refs, fetch_size, size);
-}
-fn warm_genre_covers_for_settings(
-    shell: &Rc<Shell>,
-    genres: &[Genre],
-    settings: &LibraryListSettings,
-) {
-    warm_genre_cover(shell, genres, settings);
-}
-fn warm_genre_cover(shell: &Rc<Shell>, genres: &[Genre], settings: &LibraryListSettings) {
-    let Some((fetch_size, size)) = collection_cover_warm_sizes(settings) else {
-        return;
-    };
-    let mut values = genres.to_vec();
-    sort_genres(&mut values, settings);
-    let image_refs = values
-        .iter()
-        .take(INITIAL_ROUTE_COVER_WARM_ITEMS)
-        .flat_map(|genre| cover_art_policy::selected_genre_artwork(genre).image_refs)
         .collect::<Vec<ImageRef>>();
     shell.prime_cover_refs_now(image_refs, fetch_size, size);
 }

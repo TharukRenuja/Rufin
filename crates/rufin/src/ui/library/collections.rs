@@ -65,15 +65,6 @@ pub(in crate::ui) fn artist_collection_widget(
         LibraryLayout::Grid | LibraryLayout::Detail => artist_grid(shell, model, key).upcast(),
     }
 }
-pub(in crate::ui) fn genre_collection_widget(
-    shell: &Rc<Shell>,
-    model: gio::ListStore,
-) -> gtk::Widget {
-    match shell.library_settings(LibraryListKey::Genres).layout {
-        LibraryLayout::Row => genre_table(shell, model).upcast(),
-        LibraryLayout::Grid | LibraryLayout::Detail => genre_grid(shell, model).upcast(),
-    }
-}
 pub(in crate::ui) fn playlist_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -220,18 +211,6 @@ pub(in crate::ui) fn artist_grid(
         columns,
         move || ArtistGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
         move |_, artist: Artist| activate_shell.navigate(Route::ArtistDetail(artist.id)),
-    )
-}
-pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
-    let (columns, card_size) = shell.collection_card_grid_metrics();
-    let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
-    let cell_shell = Rc::clone(shell);
-    let activate_shell = Rc::clone(shell);
-    collection_grid(
-        model,
-        columns,
-        move || GenreGridCell::new(Rc::clone(&cell_shell), &fields, card_size),
-        move |_, genre: Genre| activate_shell.navigate(Route::GenreDetail(genre.id)),
     )
 }
 pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
@@ -386,30 +365,6 @@ pub(in crate::ui) fn artist_table(
         })),
     )
 }
-pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
-    let fields = shell.library_settings(LibraryListKey::Genres).row_fields;
-    let columns = collection_table_columns(
-        fields,
-        |field| genre_column(shell, field),
-        |field| {
-            if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-                180
-            } else {
-                column_width(field)
-            }
-        },
-    );
-    let activate_shell = Rc::clone(shell);
-    collection_table(
-        shell,
-        model,
-        columns,
-        true,
-        Some(Box::new(move |_, genre: Genre| {
-            activate_shell.navigate(Route::GenreDetail(genre.id));
-        })),
-    )
-}
 pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let fields = shell.library_settings(LibraryListKey::Playlists).row_fields;
     let columns = collection_table_columns(
@@ -458,11 +413,21 @@ fn playlist_column_width(field: LibraryField) -> i32 {
     if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
         220
     } else {
-        column_width(field)
+        collection_column_width(field)
     }
 }
 
-fn collection_table_columns(
+pub(super) fn collection_column_width(field: LibraryField) -> i32 {
+    match field {
+        LibraryField::AlbumCount | LibraryField::SongCount => {
+            compact_header_column_width(field.title(), 96)
+        }
+        LibraryField::Duration => compact_header_column_width(field.title(), 128),
+        _ => column_width(field),
+    }
+}
+
+pub(super) fn collection_table_columns(
     fields: Vec<LibraryField>,
     mut column_for_field: impl FnMut(LibraryField) -> gtk::ColumnViewColumn,
     mut width_for_field: impl FnMut(LibraryField) -> i32,
@@ -476,7 +441,7 @@ fn collection_table_columns(
         .collect()
 }
 
-fn collection_table<T>(
+pub(super) fn collection_table<T>(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     columns: Vec<(gtk::ColumnViewColumn, i32)>,

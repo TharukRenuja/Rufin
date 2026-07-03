@@ -783,6 +783,16 @@ pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
         image_ref: image_ref_from_row(row, 5, 6)?,
     })
 }
+pub(super) fn mood_from_row(row: &Row<'_>) -> rusqlite::Result<Mood> {
+    Ok(Mood {
+        id: MoodId::new(row.get::<_, String>(0)?),
+        name: row.get(1)?,
+        track_count: u32_from_i64(row.get(2)?),
+        duration_seconds: u32_from_i64(row.get(3)?),
+        image_refs: Vec::new(),
+        image_ref: image_ref_from_row(row, 4, 5)?,
+    })
+}
 pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
     Ok(Playlist {
         id: PlaylistId::new(row.get::<_, String>(0)?),

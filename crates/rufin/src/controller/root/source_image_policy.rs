@@ -54,6 +54,15 @@ pub(in crate::controller) fn scrub_selected_genre_image_refs(
     scrub_snapshot_genre_image_refs(saved, genres, external_ref_policy);
 }
 
+pub(in crate::controller) fn scrub_selected_mood_image_refs(
+    saved: &SavedServer,
+    settings: &AppSettings,
+    moods: &mut [Mood],
+) {
+    let external_ref_policy = snapshot_external_ref_policy(settings);
+    scrub_snapshot_mood_image_refs(saved, moods, external_ref_policy);
+}
+
 pub(in crate::controller) fn scrub_selected_playlist_image_refs(
     saved: &SavedServer,
     settings: &AppSettings,
@@ -149,6 +158,17 @@ pub(in crate::controller::root) fn scrub_snapshot_genre_image_refs(
     for genre in genres {
         scrub_snapshot_image_ref(saved, &mut genre.image_ref, external_ref_policy);
         scrub_snapshot_image_ref_vec(saved, &mut genre.image_refs, external_ref_policy);
+    }
+}
+
+pub(in crate::controller::root) fn scrub_snapshot_mood_image_refs(
+    saved: &SavedServer,
+    moods: &mut [Mood],
+    external_ref_policy: SnapshotExternalRefPolicy,
+) {
+    for mood in moods {
+        scrub_snapshot_image_ref(saved, &mut mood.image_ref, external_ref_policy);
+        scrub_snapshot_image_ref_vec(saved, &mut mood.image_refs, external_ref_policy);
     }
 }
 

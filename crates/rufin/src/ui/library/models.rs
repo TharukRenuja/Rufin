@@ -20,16 +20,6 @@ pub(in crate::ui) fn populate_artist_model(
     replace_artists_in_model(model, values);
 }
 
-pub(in crate::ui) fn populate_genre_model(
-    model: &gio::ListStore,
-    genres: &[Genre],
-    settings: &LibraryListSettings,
-) {
-    let mut values = genres.to_vec();
-    sort_genres(&mut values, settings);
-    replace_genres_in_model(model, values);
-}
-
 pub(in crate::ui) fn populate_playlist_model(
     model: &gio::ListStore,
     playlists: &[Playlist],
