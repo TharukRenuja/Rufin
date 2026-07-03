@@ -55,12 +55,12 @@ impl JellyfinLibraryChange {
     }
 }
 
-impl JellyfinProvider {
+impl JellyfinSource {
     pub async fn listen_library_changes(
         &self,
         mut on_change: impl FnMut(JellyfinLibraryChange) -> bool,
         should_stop: impl Fn() -> bool,
-    ) -> ProviderResult<()> {
+    ) -> SourceResult<()> {
         let mut socket = self.connect_library_socket().await?;
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);
         loop {
@@ -102,7 +102,7 @@ impl JellyfinProvider {
         }
     }
 
-    async fn connect_library_socket(&self) -> ProviderResult<WebSocketStream<reqwest::Upgraded>> {
+    async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
         let key = websocket_key()?;
         let config = JellyfinClientConfig::new(
             self.identity.server.base_url.clone(),
@@ -123,9 +123,9 @@ impl JellyfinProvider {
             .header("Sec-WebSocket-Key", key)
             .send()
             .await
-            .map_err(|error| ProviderError::Other(error.to_string()))?;
+            .map_err(|error| SourceError::Other(error.to_string()))?;
         if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-            return Err(ProviderError::Other(format!(
+            return Err(SourceError::Other(format!(
                 "Jellyfin WebSocket upgrade returned {}",
                 response.status()
             )));
@@ -133,7 +133,7 @@ impl JellyfinProvider {
         let upgraded = response
             .upgrade()
             .await
-            .map_err(|error| ProviderError::Other(error.to_string()))?;
+            .map_err(|error| SourceError::Other(error.to_string()))?;
         Ok(WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
     }
 }
@@ -162,16 +162,16 @@ enum JellyfinSocketMessage {
     Other,
 }
 
-fn library_socket_message(text: &str) -> ProviderResult<JellyfinSocketMessage> {
+fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
     let message = serde_json::from_str::<SocketMessage>(text)
-        .map_err(|error| ProviderError::Other(error.to_string()))?;
+        .map_err(|error| SourceError::Other(error.to_string()))?;
     match message.message_type.as_str() {
         "LibraryChanged" => {
             let Some(data) = message.data else {
                 return Ok(JellyfinSocketMessage::Other);
             };
             let info = serde_json::from_value::<LibraryUpdateInfo>(data)
-                .map_err(|error| ProviderError::Other(error.to_string()))?;
+                .map_err(|error| SourceError::Other(error.to_string()))?;
             Ok(JellyfinSocketMessage::LibraryChanged(
                 JellyfinLibraryChange {
                     items_added: clean_raw_item_ids(info.items_added),
@@ -185,7 +185,7 @@ fn library_socket_message(text: &str) -> ProviderResult<JellyfinSocketMessage> {
     }
 }
 
-async fn send_keep_alive(socket: &mut WebSocketStream<reqwest::Upgraded>) -> ProviderResult<()> {
+async fn send_keep_alive(socket: &mut WebSocketStream<reqwest::Upgraded>) -> SourceResult<()> {
     socket
         .send(Message::Text(
             r#"{"MessageType":"KeepAlive"}"#.to_string().into(),
@@ -194,14 +194,14 @@ async fn send_keep_alive(socket: &mut WebSocketStream<reqwest::Upgraded>) -> Pro
         .map_err(websocket_error)
 }
 
-fn websocket_key() -> ProviderResult<String> {
+fn websocket_key() -> SourceResult<String> {
     let mut bytes = [0_u8; JELLYFIN_WEBSOCKET_KEY_BYTES];
-    fill(&mut bytes).map_err(|error| ProviderError::Other(error.to_string()))?;
+    fill(&mut bytes).map_err(|error| SourceError::Other(error.to_string()))?;
     Ok(general_purpose::STANDARD.encode(bytes))
 }
 
-fn websocket_error(error: tokio_tungstenite::tungstenite::Error) -> ProviderError {
-    ProviderError::Other(error.to_string())
+fn websocket_error(error: tokio_tungstenite::tungstenite::Error) -> SourceError {
+    SourceError::Other(error.to_string())
 }
 
 fn clean_raw_item_ids(ids: Vec<String>) -> Vec<String> {

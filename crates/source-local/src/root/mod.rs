@@ -15,9 +15,9 @@ use lofty::tag::{ItemKey, Tag};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use source::{
     AlbumDetail, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes,
-    ImageKind, ImageMetadata, ImageRequest, MusicProvider, PagedRequest, PagedResponse,
-    PlayedFilter, PlaylistDetail, ProviderCapabilities, ProviderError, ProviderIdentity,
-    ProviderResult, RandomTrackRequest, SearchResults, StreamDescriptor,
+    ImageKind, ImageMetadata, ImageRequest, MusicSource, PagedRequest, PagedResponse, PlayedFilter,
+    PlaylistDetail, RandomTrackRequest, SearchResults, SourceError, SourceIdentity, SourceResult,
+    StreamDescriptor,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -30,21 +30,20 @@ use url::Url;
 use walkdir::WalkDir;
 
 mod cue;
-mod provider_impl;
+mod source_impl;
 
 use cue::*;
-use provider_impl::*;
+use source_impl::*;
 
 #[cfg(test)]
 mod tests;
 
-pub const LOCAL_PROVIDER_ID: &str = "local";
+pub const LOCAL_SOURCE_ID: &str = "local";
 const LOCAL_COVER_MAX_BYTES: usize = 32 * 1024 * 1024;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug)]
-pub struct LocalProvider {
-    identity: ProviderIdentity,
-    capabilities: ProviderCapabilities,
+pub struct LocalSource {
+    identity: SourceIdentity,
     library: LocalLibrary,
     manifest_scan: LocalManifestScan,
 }
@@ -150,14 +149,14 @@ pub struct LocalScanProgress {
     pub processed_tracks: usize,
     pub total_tracks: Option<usize>,
 }
-impl LocalProvider {
-    pub fn from_root(root: PathBuf) -> ProviderResult<Self> {
+impl LocalSource {
+    pub fn from_root(root: PathBuf) -> SourceResult<Self> {
         let root = normalize_root(root)?;
         let server = identity_for_root(&root);
         Self::from_roots_with_identity(vec![root], server)
     }
 
-    pub fn from_roots(roots: Vec<PathBuf>) -> ProviderResult<Self> {
+    pub fn from_roots(roots: Vec<PathBuf>) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
         let server = identity_for_roots(&roots);
         Self::from_normalized_roots_with_identity(roots, server)
@@ -166,7 +165,7 @@ impl LocalProvider {
     pub fn from_roots_with_identity(
         roots: Vec<PathBuf>,
         server: ServerIdentity,
-    ) -> ProviderResult<Self> {
+    ) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
         Self::from_normalized_roots_with_identity(roots, server)
     }
@@ -174,11 +173,10 @@ impl LocalProvider {
     fn from_normalized_roots_with_identity(
         roots: Vec<PathBuf>,
         server: ServerIdentity,
-    ) -> ProviderResult<Self> {
+    ) -> SourceResult<Self> {
         let (library, manifest_scan) = scan_library(&roots, Vec::new(), None);
         Ok(Self {
-            identity: ProviderIdentity { server },
-            capabilities: local_capabilities(),
+            identity: SourceIdentity { server },
             library,
             manifest_scan,
         })
@@ -188,7 +186,7 @@ impl LocalProvider {
         roots: Vec<PathBuf>,
         server: ServerIdentity,
         cache: Vec<LocalManifestEntry>,
-    ) -> ProviderResult<Self> {
+    ) -> SourceResult<Self> {
         Self::from_roots_with_manifest_cache_and_progress(roots, server, cache, |_| {})
     }
 
@@ -197,23 +195,21 @@ impl LocalProvider {
         server: ServerIdentity,
         cache: Vec<LocalManifestEntry>,
         mut progress: impl FnMut(LocalScanProgress),
-    ) -> ProviderResult<Self> {
+    ) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
         let (library, manifest_scan) = scan_library(&roots, cache, Some(&mut progress));
         Ok(Self {
-            identity: ProviderIdentity { server },
-            capabilities: local_capabilities(),
+            identity: SourceIdentity { server },
             library,
             manifest_scan,
         })
     }
 
-    pub fn from_server(server: ServerIdentity) -> ProviderResult<Self> {
+    pub fn from_server(server: ServerIdentity) -> SourceResult<Self> {
         let root = normalize_root(PathBuf::from(&server.base_url))?;
         let (library, manifest_scan) = scan_library(&[root], Vec::new(), None);
         Ok(Self {
-            identity: ProviderIdentity { server },
-            capabilities: local_capabilities(),
+            identity: SourceIdentity { server },
             library,
             manifest_scan,
         })
@@ -223,7 +219,7 @@ impl LocalProvider {
         &self.manifest_scan
     }
 
-    pub fn identity_for_root(root: impl AsRef<Path>) -> ProviderResult<ServerIdentity> {
+    pub fn identity_for_root(root: impl AsRef<Path>) -> SourceResult<ServerIdentity> {
         let root = normalize_root(root.as_ref().to_path_buf())?;
         Ok(identity_for_root(&root))
     }
@@ -231,26 +227,22 @@ impl LocalProvider {
     pub fn cover_item_bytes(
         item_id: &str,
         roots: impl IntoIterator<Item = PathBuf>,
-    ) -> ProviderResult<ImageBytes> {
-        let cover = local_cover_from_item_id(item_id).ok_or(ProviderError::NotFound)?;
+    ) -> SourceResult<ImageBytes> {
+        let cover = local_cover_from_item_id(item_id).ok_or(SourceError::NotFound)?;
         let roots = normalize_roots(roots.into_iter().collect())?;
         if !local_cover_is_in_roots(&cover, &roots) {
-            return Err(ProviderError::NotFound);
+            return Err(SourceError::NotFound);
         }
         image_bytes_for_local_cover(&cover)
     }
 }
 #[async_trait(?Send)]
-impl MusicProvider for LocalProvider {
-    fn identity(&self) -> &ProviderIdentity {
+impl MusicSource for LocalSource {
+    fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
-    fn capabilities(&self) -> &ProviderCapabilities {
-        &self.capabilities
-    }
-
-    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
+    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
         let albums = self
             .library
             .albums
@@ -294,18 +286,18 @@ impl MusicProvider for LocalProvider {
         ])
     }
 
-    async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+    async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
         Ok(page(&self.library.albums, request))
     }
 
-    async fn album_detail(&self, album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail> {
         let album = self
             .library
             .albums
             .iter()
             .find(|album| album.id == *album_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let tracks = self
             .library
             .tracks
@@ -316,7 +308,7 @@ impl MusicProvider for LocalProvider {
         Ok(AlbumDetail { album, tracks })
     }
 
-    async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
+    async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
         Ok(page(&self.library.tracks, request))
     }
 
@@ -324,7 +316,7 @@ impl MusicProvider for LocalProvider {
         &self,
         folder_id: Option<&FolderId>,
         _music_folder_id: Option<&domain::MusicFolderId>,
-    ) -> ProviderResult<FolderDetail> {
+    ) -> SourceResult<FolderDetail> {
         let Some(folder_id) = folder_id else {
             return Ok(FolderDetail {
                 folder: Folder {
@@ -346,7 +338,7 @@ impl MusicProvider for LocalProvider {
             .library
             .folders
             .get(folder_id)
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let mut folders = self
             .library
             .folders
@@ -384,14 +376,14 @@ impl MusicProvider for LocalProvider {
         })
     }
 
-    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+    async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
         if request.played_filter != PlayedFilter::All {
-            return Err(ProviderError::Unsupported("random played filter"));
+            return Err(SourceError::Unsupported("random played filter"));
         }
         if let (Some(min_year), Some(max_year)) = (request.min_year, request.max_year)
             && min_year > max_year
         {
-            return Err(ProviderError::Other(
+            return Err(SourceError::Other(
                 "minimum year cannot be greater than maximum year".to_string(),
             ));
         }
@@ -430,10 +422,7 @@ impl MusicProvider for LocalProvider {
             .collect())
     }
 
-    async fn generated_tracks(
-        &self,
-        request: GeneratedTracksRequest,
-    ) -> ProviderResult<Vec<Track>> {
+    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
         let limit = request.limit.clamp(1, 500);
         match request.seed {
             GeneratedTrackSeed::Track(track_id) => {
@@ -442,7 +431,7 @@ impl MusicProvider for LocalProvider {
                     .tracks
                     .iter()
                     .find(|track| track.id == track_id)
-                    .ok_or(ProviderError::NotFound)?;
+                    .ok_or(SourceError::NotFound)?;
                 let mut tracks = self
                     .random_tracks(RandomTrackRequest {
                         limit: limit.saturating_add(1),
@@ -462,7 +451,7 @@ impl MusicProvider for LocalProvider {
                     .albums
                     .iter()
                     .find(|album| album.id == album_id)
-                    .ok_or(ProviderError::NotFound)?;
+                    .ok_or(SourceError::NotFound)?;
                 let mut tracks = self
                     .random_tracks(RandomTrackRequest {
                         limit: limit.saturating_mul(2),
@@ -498,40 +487,40 @@ impl MusicProvider for LocalProvider {
                 })
                 .await
             }
-            GeneratedTrackSeed::Playlist(_) => Err(ProviderError::Unsupported("playlist radio")),
+            GeneratedTrackSeed::Playlist(_) => Err(SourceError::Unsupported("playlist radio")),
         }
     }
 
-    async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         Ok(page(&self.library.artists, request))
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         Ok(page(&self.library.album_artists, request))
     }
 
-    async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
+    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
         Ok(page(&self.library.genres, request))
     }
 
-    async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
+    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
         let _unused = request;
         Ok(PagedResponse::new(Vec::new(), 0))
     }
 
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
         let _unused = playlist_id;
-        Err(ProviderError::NotFound)
+        Err(SourceError::NotFound)
     }
 
-    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
         let genre = self
             .library
             .genres
             .iter()
             .find(|genre| genre.id == *genre_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let tracks = self
             .library
             .tracks
@@ -562,27 +551,27 @@ impl MusicProvider for LocalProvider {
         })
     }
 
-    async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
+    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
         self.library
             .tracks
             .iter()
             .find(|track| track.id == *track_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)
+            .ok_or(SourceError::NotFound)
     }
 
-    async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
+    async fn stream(&self, track_id: &TrackId) -> SourceResult<StreamDescriptor> {
         let track = self.track(track_id).await?;
         let Some(local_path) = track.local_path else {
-            return Err(ProviderError::NotFound);
+            return Err(SourceError::NotFound);
         };
         let url = Url::from_file_path(local_path).map_err(|()| {
-            ProviderError::Other("could not turn local track path into a file URI".to_string())
+            SourceError::Other("could not turn local track path into a file URI".to_string())
         })?;
         Ok(StreamDescriptor::new(url.to_string()))
     }
 
-    async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
+    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
         let query = normalize_search(query);
         if query.is_empty() {
             return Ok(SearchResults::default());
@@ -623,17 +612,13 @@ impl MusicProvider for LocalProvider {
         })
     }
 
-    async fn image_metadata(
-        &self,
-        item_id: &str,
-        kind: ImageKind,
-    ) -> ProviderResult<ImageMetadata> {
+    async fn image_metadata(&self, item_id: &str, kind: ImageKind) -> SourceResult<ImageMetadata> {
         let _unused = kind;
         let cover = self
             .library
             .covers
             .get(item_id)
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         Ok(ImageMetadata {
             item_id: item_id.to_string(),
             kind: ImageKind::Primary,
@@ -642,12 +627,12 @@ impl MusicProvider for LocalProvider {
         })
     }
 
-    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+    async fn image_bytes(&self, request: ImageRequest) -> SourceResult<ImageBytes> {
         let cover = self
             .library
             .covers
             .get(&request.item_id)
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         image_bytes_for_local_cover(cover)
     }
 }
@@ -693,7 +678,7 @@ fn normalize_path_components(path: &Path) -> PathBuf {
     }
     normalized
 }
-fn image_bytes_for_local_cover(cover: &LocalCover) -> ProviderResult<ImageBytes> {
+fn image_bytes_for_local_cover(cover: &LocalCover) -> SourceResult<ImageBytes> {
     match cover {
         LocalCover::File { path, .. } => Ok(ImageBytes {
             bytes: read_cover_file_bounded(path)?,
@@ -720,63 +705,63 @@ fn image_bytes_for_local_cover(cover: &LocalCover) -> ProviderResult<ImageBytes>
         }),
     }
 }
-fn embedded_cover_image_bytes(path: &Path) -> ProviderResult<ImageBytes> {
+fn embedded_cover_image_bytes(path: &Path) -> SourceResult<ImageBytes> {
     let tagged = Probe::open(path)
         .and_then(|probe| probe.read())
-        .map_err(|error| ProviderError::Other(error.to_string()))?;
+        .map_err(|error| SourceError::Other(error.to_string()))?;
     let picture = tagged
         .primary_tag()
         .or_else(|| tagged.first_tag())
         .and_then(|tag| select_best_picture(tag.pictures()))
         .or_else(|| select_best_picture_from_tags(tagged.tags()))
-        .ok_or(ProviderError::NotFound)?;
+        .ok_or(SourceError::NotFound)?;
     Ok(ImageBytes {
         bytes: picture_data_bounded(picture)?,
         content_type: picture.mime_type().map(ToString::to_string),
     })
 }
-fn read_cover_file_bounded(path: &Path) -> ProviderResult<Vec<u8>> {
+fn read_cover_file_bounded(path: &Path) -> SourceResult<Vec<u8>> {
     if fs::metadata(path)
-        .map_err(|error| ProviderError::Other(error.to_string()))?
+        .map_err(|error| SourceError::Other(error.to_string()))?
         .len()
         > LOCAL_COVER_MAX_BYTES as u64
     {
-        return Err(ProviderError::Other(format!(
+        return Err(SourceError::Other(format!(
             "local cover exceeded {} MiB limit",
             bytes_to_mib(LOCAL_COVER_MAX_BYTES)
         )));
     }
-    let file = fs::File::open(path).map_err(|error| ProviderError::Other(error.to_string()))?;
+    let file = fs::File::open(path).map_err(|error| SourceError::Other(error.to_string()))?;
     read_bounded(file, LOCAL_COVER_MAX_BYTES, "local cover")
 }
-fn read_cue_file_bounded(facts: &LocalFileFacts) -> ProviderResult<Vec<u8>> {
+fn read_cue_file_bounded(facts: &LocalFileFacts) -> SourceResult<Vec<u8>> {
     if facts.file_size > LOCAL_CUE_MAX_BYTES as u64 {
-        return Err(ProviderError::Other(format!(
+        return Err(SourceError::Other(format!(
             "local CUE sheet exceeded {} MiB limit",
             bytes_to_mib(LOCAL_CUE_MAX_BYTES)
         )));
     }
     let file =
-        fs::File::open(&facts.path).map_err(|error| ProviderError::Other(error.to_string()))?;
+        fs::File::open(&facts.path).map_err(|error| SourceError::Other(error.to_string()))?;
     read_bounded(file, LOCAL_CUE_MAX_BYTES, "local CUE sheet")
 }
-fn picture_data_bounded(picture: &Picture) -> ProviderResult<Vec<u8>> {
+fn picture_data_bounded(picture: &Picture) -> SourceResult<Vec<u8>> {
     let data = picture.data();
     if data.len() > LOCAL_COVER_MAX_BYTES {
-        return Err(ProviderError::Other(format!(
+        return Err(SourceError::Other(format!(
             "embedded cover exceeded {} MiB limit",
             bytes_to_mib(LOCAL_COVER_MAX_BYTES)
         )));
     }
     Ok(data.to_vec())
 }
-fn read_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> ProviderResult<Vec<u8>> {
+fn read_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> SourceResult<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         let read = reader
             .read(&mut buffer)
-            .map_err(|error| ProviderError::Other(error.to_string()))?;
+            .map_err(|error| SourceError::Other(error.to_string()))?;
         if read == 0 {
             return Ok(bytes);
         }
@@ -785,7 +770,7 @@ fn read_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> Provider
             .checked_add(read)
             .is_none_or(|length| length > limit)
         {
-            return Err(ProviderError::Other(format!(
+            return Err(SourceError::Other(format!(
                 "{context} exceeded {} MiB limit",
                 bytes_to_mib(limit)
             )));
@@ -796,15 +781,15 @@ fn read_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> Provider
 fn bytes_to_mib(bytes: usize) -> usize {
     bytes / 1024 / 1024
 }
-fn normalize_root(root: PathBuf) -> ProviderResult<PathBuf> {
+fn normalize_root(root: PathBuf) -> SourceResult<PathBuf> {
     let expanded = if root.as_os_str().is_empty() {
-        std::env::current_dir().map_err(|error| ProviderError::Other(error.to_string()))?
+        std::env::current_dir().map_err(|error| SourceError::Other(error.to_string()))?
     } else {
         root
     };
     Ok(expanded.canonicalize().unwrap_or(expanded))
 }
-fn normalize_roots(roots: Vec<PathBuf>) -> ProviderResult<Vec<PathBuf>> {
+fn normalize_roots(roots: Vec<PathBuf>) -> SourceResult<Vec<PathBuf>> {
     let mut normalized = Vec::new();
     for root in roots {
         let root = normalize_root(root)?;
@@ -824,7 +809,7 @@ fn identity_for_root(root: &Path) -> ServerIdentity {
         .to_string();
     ServerIdentity {
         id: ServerId::new(format!("local:server:{:016x}", stable_hash(&root_text))),
-        provider: LOCAL_PROVIDER_ID.to_string(),
+        provider: LOCAL_SOURCE_ID.to_string(),
         name,
         base_url: root_text,
     }
@@ -840,26 +825,12 @@ fn identity_for_roots(roots: &[PathBuf]) -> ServerIdentity {
         .join("\n");
     ServerIdentity {
         id: ServerId::new(format!("local:server:{:016x}", stable_hash(&joined))),
-        provider: LOCAL_PROVIDER_ID.to_string(),
+        provider: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         base_url: joined,
     }
 }
 
-fn local_capabilities() -> ProviderCapabilities {
-    ProviderCapabilities {
-        favorites: false,
-        lyrics: false,
-        playback_reporting: false,
-        playlist_mutations: false,
-        favorite_mutations: false,
-        auto_dj: true,
-        playlists: false,
-        random_tracks: true,
-        folder_browsing: true,
-        ..ProviderCapabilities::default()
-    }
-}
 fn scan_library(
     roots: &[PathBuf],
     cache: Vec<LocalManifestEntry>,

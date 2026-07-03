@@ -675,9 +675,7 @@ impl Store {
         generation: i64,
         delta: LocalLibraryDelta,
     ) -> StoreResult<Vec<CoverCacheEntry>> {
-        let mut delta = delta;
         self.write_batch(|connection| {
-            preserve_local_favorite_flags(connection, server_id, &mut delta)?;
             self.upsert_tracks(server_id, &delta.changed_tracks, generation)?;
             self.update_local_track_metadata_rows(server_id, &delta.metadata_tracks, generation)?;
             self.update_local_track_image_refs(server_id, &delta.artwork_tracks, generation)?;
@@ -689,6 +687,7 @@ impl Store {
             self.upsert_genres(server_id, &delta.dirty_genres, generation)?;
             self.upsert_home_sections(server_id, &delta.home_sections, generation)?;
             prune_stale_local_aggregate_rows(connection, server_id, &delta)?;
+            self.materialize_favorite_overrides(server_id)?;
             let pruned_cover_entries = self.complete_local_sync(server_id, generation)?;
             self.replace_local_manifest(server_id, generation, &delta.manifest_entries)?;
             for cue_source in &delta.cue_track_sources {
@@ -748,121 +747,6 @@ impl Store {
         )?;
         Ok(pruned_cover_entries)
     }
-}
-
-fn preserve_local_favorite_flags(
-    connection: &Connection,
-    server_id: &ServerId,
-    delta: &mut LocalLibraryDelta,
-) -> StoreResult<()> {
-    preserve_track_favorites(connection, server_id, &mut delta.changed_tracks)?;
-    preserve_track_favorites(connection, server_id, &mut delta.metadata_tracks)?;
-    preserve_album_favorites(connection, server_id, &mut delta.dirty_albums)?;
-    preserve_artist_favorites(connection, server_id, &mut delta.dirty_artists, false)?;
-    preserve_artist_favorites(connection, server_id, &mut delta.dirty_album_artists, true)?;
-    Ok(())
-}
-
-fn preserve_track_favorites(
-    connection: &Connection,
-    server_id: &ServerId,
-    tracks: &mut [Track],
-) -> StoreResult<()> {
-    let favorites = existing_favorite_map(
-        connection,
-        "tracks",
-        "track_id",
-        server_id,
-        tracks.iter().map(|track| track.id.as_str()),
-    )?;
-    for track in tracks {
-        if let Some(favorite) = favorites.get(track.id.as_str()) {
-            track.favorite = *favorite;
-        }
-    }
-    Ok(())
-}
-
-fn preserve_album_favorites(
-    connection: &Connection,
-    server_id: &ServerId,
-    albums: &mut [Album],
-) -> StoreResult<()> {
-    let favorites = existing_favorite_map(
-        connection,
-        "albums",
-        "album_id",
-        server_id,
-        albums.iter().map(|album| album.id.as_str()),
-    )?;
-    for album in albums {
-        if let Some(favorite) = favorites.get(album.id.as_str()) {
-            album.favorite = *favorite;
-        }
-    }
-    Ok(())
-}
-
-fn preserve_artist_favorites(
-    connection: &Connection,
-    server_id: &ServerId,
-    artists: &mut [Artist],
-    album_artist: bool,
-) -> StoreResult<()> {
-    let table = if album_artist {
-        "album_artists"
-    } else {
-        "artists"
-    };
-    let favorites = existing_favorite_map(
-        connection,
-        table,
-        "artist_id",
-        server_id,
-        artists.iter().map(|artist| artist.id.as_str()),
-    )?;
-    for artist in artists {
-        if let Some(favorite) = favorites.get(artist.id.as_str()) {
-            artist.favorite = *favorite;
-        }
-    }
-    Ok(())
-}
-
-fn existing_favorite_map<'a>(
-    connection: &Connection,
-    table: &str,
-    id_column: &str,
-    server_id: &ServerId,
-    ids: impl Iterator<Item = &'a str>,
-) -> StoreResult<HashMap<String, bool>> {
-    let ids = ids.map(str::to_string).collect::<Vec<_>>();
-    let mut favorites = HashMap::new();
-    for chunk in ids.chunks(900) {
-        if chunk.is_empty() {
-            continue;
-        }
-        let placeholders = std::iter::repeat_n("?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "
-            SELECT {id_column}, favorite
-            FROM {table}
-            WHERE server_id = ?
-              AND {id_column} IN ({placeholders})
-            "
-        );
-        let mut values = vec![Value::Text(server_id.as_str().to_string())];
-        values.extend(chunk.iter().cloned().map(Value::Text));
-        let mut statement = connection.prepare(&sql)?;
-        for row in collect_rows(statement.query_map(params_from_iter(values), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
-        })?)? {
-            favorites.insert(row.0, row.1);
-        }
-    }
-    Ok(favorites)
 }
 
 pub(super) fn clear_local_manifest_on_connection(

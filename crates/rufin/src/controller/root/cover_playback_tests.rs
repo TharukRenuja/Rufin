@@ -79,7 +79,7 @@ pub(in crate::controller) fn cover_fetch_missing() {
             store.set_active_server(&server_id)
         })
         .expect("seed local server");
-    let provider = provider_for_saved(
+    let provider = source_for_saved(
         &controller.store,
         &controller.runtime,
         &controller.secrets,
@@ -88,10 +88,10 @@ pub(in crate::controller) fn cover_fetch_missing() {
     .expect("local provider");
     controller
         .runtime
-        .block_on(sync_provider(
+        .block_on(sync_source(
             &controller.store,
             &server_id,
-            provider.as_music_provider(),
+            provider.as_music_source(),
         ))
         .expect("sync local provider");
     let image_ref = controller

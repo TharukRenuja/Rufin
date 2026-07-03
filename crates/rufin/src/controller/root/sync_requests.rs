@@ -51,7 +51,7 @@ pub(in crate::controller) fn resolve_stream(
         );
         return Ok(StreamDescriptor::new(url.to_string()));
     }
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         return Err(format!(
             "Cached local source is missing for track {}. Resync the local library.",
             track_id.as_str()
@@ -71,11 +71,11 @@ pub(in crate::controller) fn resolve_stream(
         return Ok(stream);
     }
 
-    let provider = provider_for_saved(store, runtime, secrets, &saved)?;
+    let provider = source_for_saved(store, runtime, secrets, &saved)?;
     runtime
         .block_on(
             provider
-                .as_music_provider()
+                .as_music_source()
                 .stream_with_request(&StreamRequest::new(
                     track_id.clone(),
                     playback_settings.stream_quality,
@@ -110,7 +110,7 @@ fn jellyfin_stream_descriptor(
         &saved.server.id,
         track_id,
     );
-    let session = SavedProviderSession {
+    let session = SavedSourceSession {
         server: saved.server.clone(),
         user_id: saved.user_id.clone(),
         username: saved.username.clone(),
@@ -155,7 +155,7 @@ fn playback_stream_lookup(
             let Some(saved) = store.saved_server(server_id)? else {
                 return Ok(None);
             };
-            let cue_source = if saved.server.provider == LOCAL_PROVIDER_ID {
+            let cue_source = if saved.server.provider == LOCAL_SOURCE_ID {
                 store
                     .load_track_source_object(server_id, track_id)?
                     .filter(|source| source.source_kind == "cue_track")
@@ -1584,7 +1584,7 @@ fn playback_audio_path(
     server_id: &ServerId,
     track_id: &TrackId,
 ) -> StoreResult<Option<PathBuf>> {
-    if server.provider == LOCAL_PROVIDER_ID {
+    if server.provider == LOCAL_SOURCE_ID {
         return Ok(store
             .track_local_path(server_id, track_id)?
             .map(PathBuf::from));
@@ -1606,7 +1606,7 @@ fn local_audio_path_lookup(
     track_id: &TrackId,
 ) -> StoreResult<Option<LocalAudioPathLookup>> {
     let raw_path = store.track_local_path(server_id, track_id)?;
-    if server.provider == LOCAL_PROVIDER_ID {
+    if server.provider == LOCAL_SOURCE_ID {
         return Ok(Some(LocalAudioPathLookup {
             provider_is_local: true,
             raw_path,

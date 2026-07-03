@@ -129,8 +129,8 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         genres: item.genres.unwrap_or_default(),
         release_types: Vec::new(),
         is_compilation: None,
-        musicbrainz_album_id: provider_id(&item.provider_ids, "MusicBrainzAlbum"),
-        musicbrainz_release_group_id: provider_id(&item.provider_ids, "MusicBrainzReleaseGroup"),
+        musicbrainz_album_id: source_id(&item.provider_ids, "MusicBrainzAlbum"),
+        musicbrainz_release_group_id: source_id(&item.provider_ids, "MusicBrainzReleaseGroup"),
     }
 }
 
@@ -141,7 +141,7 @@ fn musicbrainz_album_artist_credit(
     let Some(name) = album_artist.map(str::trim).filter(|name| !name.is_empty()) else {
         return Vec::new();
     };
-    let Some(artist_id) = provider_id(provider_ids, "MusicBrainzAlbumArtist") else {
+    let Some(artist_id) = source_id(provider_ids, "MusicBrainzAlbumArtist") else {
         return Vec::new();
     };
     let artist_id = artist_id.trim();
@@ -204,9 +204,9 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         track_number: u16_from_option(item.index_number),
         image_ref,
         genres: item.genres.unwrap_or_default(),
-        musicbrainz_recording_id: provider_id(&item.provider_ids, "MusicBrainzTrack")
-            .or_else(|| provider_id(&item.provider_ids, "MusicBrainzRecording")),
-        musicbrainz_release_track_id: provider_id(&item.provider_ids, "MusicBrainzReleaseTrack"),
+        musicbrainz_recording_id: source_id(&item.provider_ids, "MusicBrainzTrack")
+            .or_else(|| source_id(&item.provider_ids, "MusicBrainzRecording")),
+        musicbrainz_release_track_id: source_id(&item.provider_ids, "MusicBrainzReleaseTrack"),
         local_path: item.path,
         source_format,
         comment: item.overview.filter(|value| !value.trim().is_empty()),
@@ -279,7 +279,7 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
         ),
         play_count: play_count(&item.user_data),
         user_rating: user_rating(&item.user_data),
-        musicbrainz_artist_id: provider_id(&item.provider_ids, "MusicBrainzArtist"),
+        musicbrainz_artist_id: source_id(&item.provider_ids, "MusicBrainzArtist"),
         image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
     }
 }
@@ -357,7 +357,7 @@ fn joined_artist_names(artists: Option<&[String]>) -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
-fn provider_id(ids: &Option<HashMap<String, String>>, key: &str) -> Option<String> {
+fn source_id(ids: &Option<HashMap<String, String>>, key: &str) -> Option<String> {
     ids.as_ref()
         .and_then(|ids| ids.get(key))
         .filter(|value| !value.trim().is_empty())

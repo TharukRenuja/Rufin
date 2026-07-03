@@ -5,18 +5,18 @@ use lofty::tag::{ItemValue, TagItem, TagType};
 fn local_root_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
 
-    let first = LocalProvider::identity_for_root(dir.path()).expect("identity");
-    let second = LocalProvider::identity_for_root(dir.path()).expect("identity");
+    let first = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let second = LocalSource::identity_for_root(dir.path()).expect("identity");
 
     assert_eq!(first, second);
-    assert_eq!(first.provider, LOCAL_PROVIDER_ID);
+    assert_eq!(first.provider, LOCAL_SOURCE_ID);
 }
 #[tokio::test]
 async fn local_stream_uses_file_uri() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("track.mp3");
     fs::write(&path, []).expect("audio file");
-    let provider = LocalProvider::from_root(dir.path().to_path_buf()).expect("provider");
+    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
     let track = provider
         .tracks(PagedRequest::new(0, 1))
         .await
@@ -37,7 +37,7 @@ async fn local_provider_scans_multiple_roots() {
     fs::write(first.path().join("first.mp3"), []).expect("first track");
     fs::write(second.path().join("second.mp3"), []).expect("second track");
 
-    let provider = LocalProvider::from_roots(vec![
+    let provider = LocalSource::from_roots(vec![
         first.path().to_path_buf(),
         second.path().to_path_buf(),
     ])
@@ -72,7 +72,7 @@ FILE "album.wav" WAVE
     )
     .expect("write cue");
 
-    let provider = LocalProvider::from_root(dir.path().to_path_buf()).expect("provider");
+    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
     let tracks = provider
         .tracks(PagedRequest::new(0, 10))
         .await
@@ -121,10 +121,10 @@ FILE "album.wav" WAVE
     .expect("write cue");
     let server = identity_for_root(dir.path());
     let cold =
-        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
             .expect("cold provider");
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![dir.path().to_path_buf()],
         server,
         cold.manifest_scan().entries.clone(),
@@ -155,7 +155,7 @@ async fn local_provider_replaces_cached_file_track_with_cue_tracks() {
     write_silent_wav(&audio, 8).expect("write wav");
     let server = identity_for_root(dir.path());
     let cold =
-        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
             .expect("cold provider");
     let old_track_id = cold.manifest_scan().entries[0].track.id.clone();
     fs::write(
@@ -174,7 +174,7 @@ FILE "album.wav" WAVE
     )
     .expect("write cue");
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![dir.path().to_path_buf()],
         server,
         cold.manifest_scan().entries.clone(),
@@ -215,7 +215,7 @@ FILE "album.wav" WAVE
     file.set_len((LOCAL_CUE_MAX_BYTES + 1) as u64)
         .expect("cue length");
 
-    let provider = LocalProvider::from_root(dir.path().to_path_buf()).expect("provider");
+    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
     let tracks = provider
         .tracks(PagedRequest::new(0, 10))
         .await
@@ -233,7 +233,7 @@ async fn local_provider_dedupes_overlapping_roots() {
     fs::write(nested.join("track.mp3"), []).expect("track");
 
     let provider =
-        LocalProvider::from_roots(vec![root.path().to_path_buf(), nested]).expect("provider");
+        LocalSource::from_roots(vec![root.path().to_path_buf(), nested]).expect("provider");
 
     let tracks = provider
         .tracks(PagedRequest::new(0, 10))
@@ -272,12 +272,12 @@ fn write_silent_wav(path: &Path, seconds: u32) -> std::io::Result<()> {
 async fn manifest_scan_reuse() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("track.mp3"), []).expect("track file");
-    let server = LocalProvider::identity_for_root(dir.path()).expect("identity");
+    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
     let cold =
-        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
             .expect("cold provider");
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![dir.path().to_path_buf()],
         server,
         cold.manifest_scan().entries.clone(),
@@ -363,10 +363,10 @@ fn manifest_sync_stores_projected_embedded_cover() {
 fn local_scan_reports_progress() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("track.mp3"), []).expect("track file");
-    let server = LocalProvider::identity_for_root(dir.path()).expect("identity");
+    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
     let mut reports = Vec::new();
 
-    let provider = LocalProvider::from_roots_with_manifest_cache_and_progress(
+    let provider = LocalSource::from_roots_with_manifest_cache_and_progress(
         vec![dir.path().to_path_buf()],
         server,
         Vec::new(),
@@ -479,9 +479,9 @@ async fn manifest_scan_update() {
     fs::write(dir.path().join("track.mp3"), []).expect("track file");
     let cover = dir.path().join("cover.jpg");
     fs::write(&cover, [1_u8]).expect("cover file");
-    let server = LocalProvider::identity_for_root(dir.path()).expect("identity");
+    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
     let cold =
-        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
             .expect("cold provider");
     let cold_tag = cold
         .albums(PagedRequest::new(0, 10))
@@ -494,7 +494,7 @@ async fn manifest_scan_update() {
         .expect("cold cover tag");
     fs::write(&cover, [1_u8, 2]).expect("replace cover file");
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![dir.path().to_path_buf()],
         server,
         cold.manifest_scan().entries.clone(),
@@ -667,11 +667,10 @@ async fn local_use_bytes() {
             revision: Some("embedded:test".to_string()),
         },
     );
-    let provider = LocalProvider {
-        identity: ProviderIdentity {
+    let provider = LocalSource {
+        identity: SourceIdentity {
             server: identity_for_root(dir.path()),
         },
-        capabilities: local_capabilities(),
         library: LocalLibrary {
             covers,
             ..LocalLibrary::default()
@@ -707,11 +706,10 @@ async fn local_reject_file() {
             revision: None,
         },
     );
-    let provider = LocalProvider {
-        identity: ProviderIdentity {
+    let provider = LocalSource {
+        identity: SourceIdentity {
             server: identity_for_root(dir.path()),
         },
-        capabilities: local_capabilities(),
         library: LocalLibrary {
             covers,
             ..LocalLibrary::default()
@@ -741,7 +739,7 @@ fn local_read_root() {
         revision: None,
     });
 
-    let image = LocalProvider::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
+    let image = LocalSource::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
         .expect("local cover");
 
     assert_eq!(image.bytes, vec![1, 2, 3]);
@@ -758,10 +756,10 @@ fn local_reject_root() {
         revision: None,
     });
 
-    let error = LocalProvider::cover_item_bytes(&item_id, vec![root.path().to_path_buf()])
+    let error = LocalSource::cover_item_bytes(&item_id, vec![root.path().to_path_buf()])
         .expect_err("outside-root cover");
 
-    assert_eq!(error.to_string(), "provider item was not found");
+    assert_eq!(error.to_string(), "source item was not found");
 }
 #[test]
 fn embedded_reject_picture() {
@@ -876,7 +874,7 @@ async fn local_root_folder() {
     let first = tempfile::tempdir().expect("first root");
     let second = tempfile::tempdir().expect("second root");
 
-    let provider = LocalProvider::from_roots(vec![
+    let provider = LocalSource::from_roots(vec![
         first.path().to_path_buf(),
         second.path().to_path_buf(),
     ])
@@ -913,7 +911,7 @@ async fn local_track_folders() {
     fs::create_dir_all(&album).expect("album dir");
     fs::write(artist.join("single.mp3"), []).expect("single track");
     fs::write(album.join("album-track.mp3"), []).expect("album track");
-    let provider = LocalProvider::from_root(root.path().to_path_buf()).expect("provider");
+    let provider = LocalSource::from_root(root.path().to_path_buf()).expect("provider");
 
     let root_path = root.path().canonicalize().expect("canonical root");
     let artist_id = folder_for_path(&root_path.join("Artist")).id;
@@ -940,12 +938,12 @@ async fn local_track_folders() {
 #[tokio::test]
 async fn local_reject_id() {
     let root = tempfile::tempdir().expect("root");
-    let provider = LocalProvider::from_root(root.path().to_path_buf()).expect("provider");
+    let provider = LocalSource::from_root(root.path().to_path_buf()).expect("provider");
     let outside = FolderId::new("local:folder:%2Fetc%2Fmusic");
 
     let result = provider.folder(Some(&outside), None).await;
 
-    assert!(matches!(result, Err(ProviderError::NotFound)));
+    assert!(matches!(result, Err(SourceError::NotFound)));
 }
 
 struct ReparsedClassification {

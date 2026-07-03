@@ -5,9 +5,9 @@ use domain::{
 };
 use source::{
     AlbumDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind,
-    ImageMetadata, ImageRequest, MusicProvider, PagedRequest, PagedResponse, PlayedFilter,
-    PlaylistDetail, PlaylistEntry, ProviderCapabilities, ProviderError, ProviderIdentity,
-    ProviderResult, RandomTrackRequest, SearchResults,
+    ImageMetadata, ImageRequest, MusicSource, PagedRequest, PagedResponse, PlayedFilter,
+    PlaylistDetail, PlaylistEntry, RandomTrackRequest, SearchResults, SourceError, SourceIdentity,
+    SourceResult,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,28 +49,21 @@ struct FakeLibrary {
 }
 
 #[derive(Clone, Debug)]
-pub struct FakeProvider {
-    identity: ProviderIdentity,
-    capabilities: ProviderCapabilities,
+pub struct FakeSource {
+    identity: SourceIdentity,
     library: FakeLibrary,
 }
 
-impl FakeProvider {
+impl FakeSource {
     pub fn new(scale: FakeScale) -> Self {
         Self {
-            identity: ProviderIdentity {
+            identity: SourceIdentity {
                 server: ServerIdentity {
                     id: ServerId::new("fake:server:local"),
                     provider: "fake".to_string(),
                     name: "Fake Library".to_string(),
                     base_url: "fake://local".to_string(),
                 },
-            },
-            capabilities: ProviderCapabilities {
-                auto_dj: true,
-                random_tracks: true,
-                random_played_filter: true,
-                ..ProviderCapabilities::default()
             },
             library: generate_fake_library(scale),
         }
@@ -86,16 +79,12 @@ impl FakeProvider {
 }
 
 #[async_trait(?Send)]
-impl MusicProvider for FakeProvider {
-    fn identity(&self) -> &ProviderIdentity {
+impl MusicSource for FakeSource {
+    fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
-    fn capabilities(&self) -> &ProviderCapabilities {
-        &self.capabilities
-    }
-
-    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
+    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
         let album_section = |kind, offset| HomeSection {
             kind,
             albums: self
@@ -131,18 +120,18 @@ impl MusicProvider for FakeProvider {
         Ok(sections)
     }
 
-    async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+    async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
         Ok(page(&self.library.albums, request))
     }
 
-    async fn album_detail(&self, album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail> {
         let album = self
             .library
             .albums
             .iter()
             .find(|album| album.id == *album_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let tracks: Vec<Track> = self
             .library
             .tracks
@@ -154,34 +143,34 @@ impl MusicProvider for FakeProvider {
         Ok(AlbumDetail { album, tracks })
     }
 
-    async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
+    async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
         Ok(page(&self.library.tracks, request))
     }
 
-    async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         Ok(page(&self.library.artists, request))
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
+    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
         Ok(page(&self.library.album_artists, request))
     }
 
-    async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
+    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
         Ok(page(&self.library.genres, request))
     }
 
-    async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
+    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
         Ok(page(&self.library.playlists, request))
     }
 
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
         let playlist = self
             .library
             .playlists
             .iter()
             .find(|playlist| playlist.id == *playlist_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let tracks: Vec<Track> = self
             .library
             .tracks
@@ -205,14 +194,14 @@ impl MusicProvider for FakeProvider {
         })
     }
 
-    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
         let genre = self
             .library
             .genres
             .iter()
             .find(|genre| genre.id == *genre_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)?;
+            .ok_or(SourceError::NotFound)?;
         let albums = self
             .library
             .albums
@@ -235,16 +224,16 @@ impl MusicProvider for FakeProvider {
         })
     }
 
-    async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
+    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
         self.library
             .tracks
             .iter()
             .find(|track| track.id == *track_id)
             .cloned()
-            .ok_or(ProviderError::NotFound)
+            .ok_or(SourceError::NotFound)
     }
 
-    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+    async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
         let mut tracks = self
             .library
             .tracks
@@ -270,10 +259,7 @@ impl MusicProvider for FakeProvider {
             .collect())
     }
 
-    async fn generated_tracks(
-        &self,
-        request: GeneratedTracksRequest,
-    ) -> ProviderResult<Vec<Track>> {
+    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
         let mut tracks = self.library.tracks.clone();
         match request.seed {
             GeneratedTrackSeed::Track(track_id) => {
@@ -283,7 +269,7 @@ impl MusicProvider for FakeProvider {
                     .iter()
                     .find(|track| track.id == track_id)
                     .cloned()
-                    .ok_or(ProviderError::NotFound)?;
+                    .ok_or(SourceError::NotFound)?;
                 tracks.retain(|track| {
                     track.id != seed.id
                         && (track.artist_id == seed.artist_id
@@ -311,7 +297,7 @@ impl MusicProvider for FakeProvider {
             .collect())
     }
 
-    async fn stream(&self, track_id: &TrackId) -> ProviderResult<source::StreamDescriptor> {
+    async fn stream(&self, track_id: &TrackId) -> SourceResult<source::StreamDescriptor> {
         self.track(track_id).await?;
         Ok(source::StreamDescriptor::new(format!(
             "fake://local/stream/{}",
@@ -319,7 +305,7 @@ impl MusicProvider for FakeProvider {
         )))
     }
 
-    async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
+    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
         let query = query.to_lowercase();
         let albums = self
             .library
@@ -369,11 +355,7 @@ impl MusicProvider for FakeProvider {
         })
     }
 
-    async fn image_metadata(
-        &self,
-        item_id: &str,
-        kind: ImageKind,
-    ) -> ProviderResult<ImageMetadata> {
+    async fn image_metadata(&self, item_id: &str, kind: ImageKind) -> SourceResult<ImageMetadata> {
         Ok(ImageMetadata {
             item_id: item_id.to_string(),
             kind,
@@ -382,7 +364,7 @@ impl MusicProvider for FakeProvider {
         })
     }
 
-    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+    async fn image_bytes(&self, request: ImageRequest) -> SourceResult<ImageBytes> {
         let seed = color_seed(request.item_id.len() as u32);
         let red = (seed & 0xff) as u8;
         let green = ((seed >> 8) & 0xff) as u8;
@@ -647,16 +629,16 @@ const PLAYLISTS: &[&str] = &[
 mod tests {
     use domain::{AlbumId, HOME_SECTION_ITEM_LIMIT};
     use futures_executor::block_on;
-    use source::{MusicProvider, PagedRequest, ProviderError};
+    use source::{MusicSource, PagedRequest, SourceError};
 
-    use super::{FakeProvider, FakeScale};
+    use super::{FakeScale, FakeSource};
 
     #[test]
     fn paged_read_stable() {
-        let provider = FakeProvider::new(FakeScale::Small);
+        let source = FakeSource::new(FakeScale::Small);
 
-        let albums = block_on(provider.albums(PagedRequest::new(10, 3))).expect("albums");
-        let tracks = block_on(provider.tracks(PagedRequest::new(10, 3))).expect("tracks");
+        let albums = block_on(source.albums(PagedRequest::new(10, 3))).expect("albums");
+        let tracks = block_on(source.tracks(PagedRequest::new(10, 3))).expect("tracks");
 
         assert_eq!(albums.total, 80);
         assert_eq!(albums.items.len(), 3);
@@ -667,9 +649,9 @@ mod tests {
 
     #[test]
     fn home_wide_sections() {
-        let provider = FakeProvider::new(FakeScale::Small);
+        let source = FakeSource::new(FakeScale::Small);
 
-        let sections = block_on(provider.home_sections()).expect("home sections");
+        let sections = block_on(source.home_sections()).expect("home sections");
 
         assert_eq!(sections.len(), 5);
         assert_eq!(sections[0].albums.len(), HOME_SECTION_ITEM_LIMIT);
@@ -681,8 +663,8 @@ mod tests {
 
     #[test]
     fn album_detail_returns_matching_tracks() {
-        let provider = FakeProvider::new(FakeScale::Small);
-        let detail = block_on(provider.album_detail(&AlbumId::fake(1))).expect("album detail");
+        let source = FakeSource::new(FakeScale::Small);
+        let detail = block_on(source.album_detail(&AlbumId::fake(1))).expect("album detail");
 
         assert_eq!(detail.album.id, AlbumId::fake(1));
         assert_eq!(detail.tracks.len(), detail.album.track_count as usize);
@@ -696,9 +678,9 @@ mod tests {
 
     #[test]
     fn missing_album_returns_not_found() {
-        let provider = FakeProvider::new(FakeScale::Small);
-        let error = block_on(provider.album_detail(&AlbumId::new("missing"))).expect_err("error");
+        let source = FakeSource::new(FakeScale::Small);
+        let error = block_on(source.album_detail(&AlbumId::new("missing"))).expect_err("error");
 
-        assert!(matches!(error, ProviderError::NotFound));
+        assert!(matches!(error, SourceError::NotFound));
     }
 }

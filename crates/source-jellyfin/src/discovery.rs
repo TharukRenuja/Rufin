@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, TcpStream, 
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use source::{ProviderError, ProviderResult};
+use source::{SourceError, SourceResult};
 use tracing::instrument;
 
 use crate::root::normalize_base_url;
@@ -27,9 +27,7 @@ pub struct DiscoveredJellyfinServer {
 }
 
 #[instrument(skip_all, fields(timeout_ms = timeout.as_millis()))]
-pub fn discover_jellyfin_servers(
-    timeout: Duration,
-) -> ProviderResult<Vec<DiscoveredJellyfinServer>> {
+pub fn discover_jellyfin_servers(timeout: Duration) -> SourceResult<Vec<DiscoveredJellyfinServer>> {
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
         .map_err(|error| map_io_error("bind Jellyfin discovery socket", error))?;
     socket
@@ -98,8 +96,8 @@ fn discovery_targets() -> Vec<SocketAddrV4> {
     ]
 }
 
-fn map_io_error(context: &str, error: io::Error) -> ProviderError {
-    ProviderError::Network(format!("{context}: {error}"))
+fn map_io_error(context: &str, error: io::Error) -> SourceError {
+    SourceError::Network(format!("{context}: {error}"))
 }
 
 fn discovered_server_from_packet(packet: &[u8]) -> Option<DiscoveredJellyfinServer> {

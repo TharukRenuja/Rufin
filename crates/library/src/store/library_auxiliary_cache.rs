@@ -850,6 +850,24 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn set_album_favorite_for_owner(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        favorite: bool,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            Self::set_favorite_for_owner(
+                connection,
+                server_id,
+                "album",
+                album_id.as_str(),
+                favorite,
+                owner,
+            )
+        })
+    }
     pub fn set_track_favorite(
         &self,
         server_id: &ServerId,
@@ -861,6 +879,24 @@ impl Store {
             params![server_id.as_str(), track_id.as_str(), bool_to_i64(favorite)],
         )?;
         Ok(())
+    }
+    pub fn set_track_favorite_for_owner(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+        favorite: bool,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            Self::set_favorite_for_owner(
+                connection,
+                server_id,
+                "track",
+                track_id.as_str(),
+                favorite,
+                owner,
+            )
+        })
     }
     pub fn set_artist_favorite(
         &self,
@@ -884,6 +920,138 @@ impl Store {
                 bool_to_i64(favorite)
             ],
         )?;
+        Ok(())
+    }
+    pub fn set_artist_favorite_for_owner(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+        favorite: bool,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            Self::set_favorite_for_owner(
+                connection,
+                server_id,
+                "artist",
+                artist_id.as_str(),
+                favorite,
+                owner,
+            )?;
+            Self::set_favorite_for_owner(
+                connection,
+                server_id,
+                "album_artist",
+                artist_id.as_str(),
+                favorite,
+                owner,
+            )
+        })
+    }
+    fn set_favorite_for_owner(
+        connection: &Connection,
+        server_id: &ServerId,
+        kind: &str,
+        item_id: &str,
+        favorite: bool,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        match owner {
+            SourceFeatureOwner::Native => {
+                Self::delete_favorite_override(connection, server_id, kind, item_id)?;
+                Self::write_favorite_column(connection, server_id, kind, item_id, favorite)
+            }
+            SourceFeatureOwner::Store => {
+                Self::upsert_favorite_override(connection, server_id, kind, item_id, favorite)?;
+                Self::write_favorite_column(connection, server_id, kind, item_id, favorite)
+            }
+        }
+    }
+    fn upsert_favorite_override(
+        connection: &Connection,
+        server_id: &ServerId,
+        kind: &str,
+        item_id: &str,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        let _validated = favorite_item_kind_to_table(kind)?;
+        connection.execute(
+            "
+            INSERT INTO item_favorite_overrides (
+                server_id, item_kind, item_id, favorite, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, item_kind, item_id) DO UPDATE SET
+                favorite = excluded.favorite,
+                updated_at = CURRENT_TIMESTAMP
+            ",
+            params![server_id.as_str(), kind, item_id, bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+    fn delete_favorite_override(
+        connection: &Connection,
+        server_id: &ServerId,
+        kind: &str,
+        item_id: &str,
+    ) -> StoreResult<()> {
+        let _validated = favorite_item_kind_to_table(kind)?;
+        connection.execute(
+            "
+            DELETE FROM item_favorite_overrides
+            WHERE server_id = ?1 AND item_kind = ?2 AND item_id = ?3
+            ",
+            params![server_id.as_str(), kind, item_id],
+        )?;
+        Ok(())
+    }
+    fn write_favorite_column(
+        connection: &Connection,
+        server_id: &ServerId,
+        kind: &str,
+        item_id: &str,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        let (table, id_column) = favorite_item_kind_to_table(kind)?;
+        connection.execute(
+            &format!(
+                "
+                UPDATE {table}
+                SET favorite = ?3
+                WHERE server_id = ?1 AND {id_column} = ?2
+                "
+            ),
+            params![server_id.as_str(), item_id, bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+    pub fn materialize_favorite_overrides(&self, server_id: &ServerId) -> StoreResult<()> {
+        for kind in ["album", "track", "artist", "album_artist"] {
+            let (table, id_column) = favorite_item_kind_to_table(kind)?;
+            self.connection.execute(
+                &format!(
+                    "
+                    UPDATE {table}
+                    SET favorite = (
+                        SELECT o.favorite
+                        FROM item_favorite_overrides o
+                        WHERE o.server_id = {table}.server_id
+                          AND o.item_kind = ?2
+                          AND o.item_id = {table}.{id_column}
+                    )
+                    WHERE server_id = ?1
+                      AND EXISTS (
+                          SELECT 1
+                          FROM item_favorite_overrides o
+                          WHERE o.server_id = {table}.server_id
+                            AND o.item_kind = ?2
+                            AND o.item_id = {table}.{id_column}
+                      )
+                    "
+                ),
+                params![server_id.as_str(), kind],
+            )?;
+        }
         Ok(())
     }
     pub fn rename_playlist(
@@ -1089,7 +1257,7 @@ impl Store {
             .optional()
             .map_err(StoreError::from)
     }
-    pub fn selected_provider_cover_cache_missing(&self, server_id: &ServerId) -> StoreResult<bool> {
+    pub fn selected_source_cover_cache_missing(&self, server_id: &ServerId) -> StoreResult<bool> {
         let library_rows = self.connection.query_row(
             "
             SELECT (SELECT COUNT(*) FROM albums WHERE server_id = ?1)

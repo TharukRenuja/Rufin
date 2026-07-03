@@ -2,14 +2,14 @@ use super::covers;
 pub use super::discovery::{DiscoveredServer, ServerDiscoveryStatus};
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
 use crate::external_scrobbling::{self, ExternalScrobbleState};
-use crate::providers::{
-    JellyfinLibraryChange, JellyfinLyricsSearch, LoadedProvider, StreamingProvider,
-    jellyfin_stream_descriptor_from_saved_session, login_provider, provider_display_name,
-    provider_from_saved,
+use crate::sources::{
+    JellyfinLibraryChange, JellyfinLyricsSearch, LoadedSource, StreamingSource,
+    jellyfin_stream_descriptor_from_saved_session, login_source, source_display_name,
+    source_from_saved,
 };
 use crate::{cover_art_policy, external_metadata};
 #[cfg(any(test, feature = "dev-tools"))]
-use ::test_support::{FakeProvider, FakeScale};
+use ::test_support::{FakeScale, FakeSource};
 use directories::ProjectDirs;
 #[cfg(test)]
 use domain::ThemePreference;
@@ -49,13 +49,13 @@ use secrets::{
 };
 use serde::{Deserialize, Serialize};
 use source::{
-    FavoriteItemId, FolderDetail, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
-    PlaybackReportKind, PlaylistEntry, ProviderSession, SavedProviderSession, SearchResults,
+    FavoriteItemId, FolderDetail, Lyrics, MusicSource, PagedRequest, PlaybackReport,
+    PlaybackReportKind, PlaylistEntry, SavedSourceSession, SearchResults, SourceSession,
     StreamRequest,
 };
 #[cfg(test)]
 use source::{LyricLine, LyricsSource, PlayedFilter};
-use source_local::{LOCAL_PROVIDER_ID, LocalProvider, LocalScanProgress, LocalScanStage};
+use source_local::{LOCAL_SOURCE_ID, LocalScanProgress, LocalScanStage, LocalSource};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::Hash;
@@ -145,7 +145,7 @@ use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watche
 pub(crate) use server_local_access_commands::ServerSettingsInput;
 pub(in crate::controller) use source_capabilities::source_capabilities_for_saved;
 use source_image_policy::{
-    is_local_album_id, is_local_artist_id, is_local_provider_image_ref, is_local_track_id,
+    is_local_album_id, is_local_artist_id, is_local_source_image_ref, is_local_track_id,
     scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
 };
 pub(in crate::controller) use source_image_policy::{
@@ -454,7 +454,7 @@ pub enum ControllerEvent {
 
 #[derive(Clone, Debug)]
 pub struct LoginRequest {
-    pub provider: StreamingProvider,
+    pub source: StreamingSource,
     pub server_name: Option<String>,
     pub server_url: String,
     pub username: String,

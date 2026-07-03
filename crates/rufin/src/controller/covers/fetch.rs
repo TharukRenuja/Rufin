@@ -8,13 +8,13 @@ use domain::ImageRef;
 use gdk_pixbuf::{InterpType, Pixbuf};
 use library::{CoverCacheEntry, SavedServer, Store, StoreResult, image_cache_key};
 use secrets::SecretStore;
-use source::{ImageKind, ImageRequest, MusicProvider};
-use source_local::{LOCAL_PROVIDER_ID, LocalProvider};
+use source::{ImageKind, ImageRequest, MusicSource};
+use source_local::{LOCAL_SOURCE_ID, LocalSource};
 use tokio::runtime::Runtime;
 
 use crate::controller::{
     IMAGE_TAG_UNTAGGED, StoreHandle, cover_cache_path_for_key, load_settings_from_store,
-    local_folder_paths, provider_for_saved,
+    local_folder_paths, source_for_saved,
 };
 use crate::external_metadata;
 
@@ -52,44 +52,44 @@ pub(super) fn fetch_and_cache_cover(
             external_metadata::fetch_album_cover(&art, size, settings.lastfm_api_key.trim())?;
         return save_cover_bytes(store, saved, image_ref, size, bytes);
     }
-    if saved.server.provider == LOCAL_PROVIDER_ID && image_ref.item_id.starts_with("local:cover:") {
+    if saved.server.provider == LOCAL_SOURCE_ID && image_ref.item_id.starts_with("local:cover:") {
         let settings = load_settings_from_store(store);
         let image =
-            LocalProvider::cover_item_bytes(&image_ref.item_id, local_folder_paths(&settings))
+            LocalSource::cover_item_bytes(&image_ref.item_id, local_folder_paths(&settings))
                 .map_err(|error| error.to_string())?;
         if image.bytes.is_empty() {
             return Err("cover response was empty".to_string());
         }
         return save_cover_bytes(store, saved, image_ref, size, image.bytes);
     }
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    fetch_and_cache_provider_cover(
+    let provider = source_for_saved(store, runtime, secrets, saved)?;
+    fetch_and_cache_source_cover(
         store,
         runtime,
         saved,
-        provider.as_music_provider(),
+        provider.as_music_source(),
         image_ref,
         size,
     )
 }
 
-pub(super) fn fetch_and_cache_provider_cover(
+pub(super) fn fetch_and_cache_source_cover(
     store: &StoreHandle,
     runtime: &Runtime,
     saved: &SavedServer,
-    provider: &dyn MusicProvider,
+    provider: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<PathBuf, String> {
-    fetch_and_cache_provider_cover_timed(store, runtime, saved, provider, image_ref, size)
+    fetch_and_cache_source_cover_timed(store, runtime, saved, provider, image_ref, size)
         .map(|result| result.path)
 }
 
-pub(super) fn fetch_and_cache_provider_cover_timed(
+pub(super) fn fetch_and_cache_source_cover_timed(
     store: &StoreHandle,
     runtime: &Runtime,
     saved: &SavedServer,
-    provider: &dyn MusicProvider,
+    provider: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<CoverFetchResult, String> {
@@ -101,11 +101,11 @@ pub(super) fn fetch_and_cache_provider_cover_timed(
     Ok(CoverFetchResult { path, timing })
 }
 
-pub(super) fn fetch_and_cache_provider_cover_timed_with_store(
+pub(super) fn fetch_and_cache_source_cover_timed_with_store(
     cache_store: &Store,
     runtime: &Runtime,
     saved: &SavedServer,
-    provider: &dyn MusicProvider,
+    provider: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<CoverFetchResult, String> {
@@ -126,7 +126,7 @@ pub(super) fn fetch_and_cache_provider_cover_timed_with_store(
 
 fn fetch_provider_cover_image(
     runtime: &Runtime,
-    provider: &dyn MusicProvider,
+    provider: &dyn MusicSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<(Vec<u8>, CoverFetchTiming), String> {
@@ -315,8 +315,8 @@ fn provider_image_kind(image_ref: &ImageRef) -> ImageKind {
     }
 }
 
-pub(in crate::controller) fn is_provider_not_found_error(error: &str) -> bool {
-    error == "provider item was not found"
+pub(in crate::controller) fn is_source_not_found_error(error: &str) -> bool {
+    error == "source item was not found"
 }
 
 #[cfg(test)]

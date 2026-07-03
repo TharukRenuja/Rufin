@@ -267,7 +267,7 @@ fn server_source_subtitle(
     server: &ServerIdentity,
     summary: Option<&ServerLocalAccessSnapshot>,
 ) -> String {
-    let provider = provider_display_name(&server.provider);
+    let provider = source_display_name(&server.provider);
     let address = if server.base_url.trim().is_empty() {
         String::new()
     } else {
@@ -339,13 +339,13 @@ fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {
 fn server_display_name(server: &ServerIdentity) -> String {
     let name = server.name.trim();
     if name.is_empty() {
-        provider_display_name(&server.provider)
+        source_display_name(&server.provider)
     } else {
         name.to_string()
     }
 }
 
-fn provider_display_name(provider: &str) -> String {
+fn source_display_name(provider: &str) -> String {
     match provider {
         "jellyfin" => tr("Jellyfin"),
         "navidrome" => tr("Navidrome"),

@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::{AppController, ControllerEvent};
-use crate::providers::{DiscoveredJellyfinServer, discover_jellyfin_servers};
+use crate::sources::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 
 const SERVER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1_800);
 

@@ -141,15 +141,15 @@ pub(in crate::controller) fn seed_fake_cache(
     scale: FakeScale,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let provider = FakeProvider::new(scale);
+    let source = FakeSource::new(scale);
     info!(
         ?scale,
-        albums = provider.album_count(),
-        tracks = provider.track_count(),
+        albums = source.album_count(),
+        tracks = source.track_count(),
         elapsed_ms = started.elapsed().as_millis() as u64,
         "generated fake library"
     );
-    let server = provider.identity().server.clone();
+    let server = source.identity().server.clone();
     let saved = SavedServer {
         server: server.clone(),
         user_id: "fake-user".to_string(),
@@ -166,44 +166,44 @@ pub(in crate::controller) fn seed_fake_cache(
 
     let runtime = Runtime::new().map_err(|error| error.to_string())?;
     let album_limit = match scale {
-        FakeScale::Small => provider.album_count(),
+        FakeScale::Small => source.album_count(),
         FakeScale::Large => 1_000,
-        FakeScale::Stress => provider.album_count(),
-        FakeScale::ThirtyK => provider.album_count(),
+        FakeScale::Stress => source.album_count(),
+        FakeScale::ThirtyK => source.album_count(),
     };
     let track_limit = match scale {
-        FakeScale::Small => provider.track_count(),
+        FakeScale::Small => source.track_count(),
         FakeScale::Large => 2_000,
-        FakeScale::Stress => provider.track_count(),
-        FakeScale::ThirtyK => provider.track_count(),
+        FakeScale::Stress => source.track_count(),
+        FakeScale::ThirtyK => source.track_count(),
     };
     runtime.block_on(async {
         let fetch_started = Instant::now();
-        let albums = provider
+        let albums = source
             .albums(PagedRequest::new(0, album_limit))
             .await
             .map_err(|error| error.to_string())?;
-        let tracks = provider
+        let tracks = source
             .tracks(PagedRequest::new(0, track_limit))
             .await
             .map_err(|error| error.to_string())?;
-        let artists = provider
+        let artists = source
             .artists(PagedRequest::new(0, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        let album_artists = provider
+        let album_artists = source
             .album_artists(PagedRequest::new(0, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        let genres = provider
+        let genres = source
             .genres(PagedRequest::new(0, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        let playlists = provider
+        let playlists = source
             .playlists(PagedRequest::new(0, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        let home_sections = provider
+        let home_sections = source
             .home_sections()
             .await
             .map_err(|error| error.to_string())?;
@@ -327,7 +327,7 @@ pub(in crate::controller) type LoginActivationContext<'a> = QueueActivationConte
 
 #[derive(Clone, Copy)]
 pub(in crate::controller) struct LoginActivationRequest<'a> {
-    pub(in crate::controller) session: &'a ProviderSession,
+    pub(in crate::controller) session: &'a SourceSession,
     pub(in crate::controller) server_name: Option<&'a str>,
     pub(in crate::controller) trust_invalid_cert: bool,
     pub(in crate::controller) use_jellyfin_instant_mix: bool,
@@ -582,7 +582,7 @@ pub(in crate::controller) fn local_folder_paths(settings: &AppSettings) -> Vec<P
 pub(in crate::controller) fn local_source_server() -> ServerIdentity {
     ServerIdentity {
         id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
-        provider: LOCAL_PROVIDER_ID.to_string(),
+        provider: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         base_url: String::new(),
     }
@@ -730,11 +730,11 @@ pub(in crate::controller) fn local_cover_cache_missing(
             if album_count == 0 && track_count == 0 {
                 return Ok(missing_library_requires_prefetch);
             }
-            missing_provider_refs(store, server_id)
+            missing_source_refs(store, server_id)
         })
         .unwrap_or(true)
 }
-fn missing_provider_refs(store: &Store, server_id: &ServerId) -> Result<bool, StoreError> {
+fn missing_source_refs(store: &Store, server_id: &ServerId) -> Result<bool, StoreError> {
     let mut seen = HashSet::new();
     if local_album_cover_refs_missing(store, server_id, &mut seen)? {
         return Ok(true);
@@ -832,7 +832,7 @@ fn local_image_ref_cache_missing(
     let Some(image_ref) = image_ref else {
         return Ok(false);
     };
-    if !is_local_provider_image_ref(image_ref) {
+    if !is_local_source_image_ref(image_ref) {
         return Ok(false);
     }
     let tag = image_ref
@@ -1068,7 +1068,7 @@ pub(in crate::controller) fn saved_server_needs_auth(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
 ) -> bool {
-    if saved.server.provider == LOCAL_PROVIDER_ID || saved.server.provider == "fake" {
+    if saved.server.provider == LOCAL_SOURCE_ID || saved.server.provider == "fake" {
         return false;
     }
     !config_token_available(secrets, &saved.server.id)

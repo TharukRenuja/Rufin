@@ -1,5 +1,5 @@
 use super::*;
-use source::MusicProvider;
+use source::MusicSource;
 use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -21,7 +21,7 @@ async fn login_map_session() {
         .mount(&server)
         .await;
 
-    let session = SubsonicProvider::login(SubsonicLoginRequest {
+    let session = SubsonicSource::login(SubsonicLoginRequest {
         base_url: server.uri(),
         username: "demo".to_string(),
         password: "pw".to_string(),
@@ -225,7 +225,7 @@ async fn random_filter_subsonic() {
         .await
         .expect_err("unsupported played filter");
 
-    assert!(matches!(error, ProviderError::Unsupported(_)));
+    assert!(matches!(error, SourceError::Unsupported(_)));
 }
 
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn generated_track_radio_uses_similar_songs() {
         .generated_tracks(GeneratedTracksRequest {
             seed: GeneratedTrackSeed::Track(TrackId::new("subsonic:track:track-one")),
             limit: 4,
-            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+            strategy: source::GeneratedTrackStrategy::SourceDefault,
         })
         .await
         .expect("generated tracks");
@@ -301,7 +301,7 @@ async fn generated_artist_radio_uses_similar_songs2() {
         .generated_tracks(GeneratedTracksRequest {
             seed: GeneratedTrackSeed::Artist(ArtistId::new("subsonic:artist:artist-one")),
             limit: 4,
-            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+            strategy: source::GeneratedTrackStrategy::SourceDefault,
         })
         .await
         .expect("generated tracks");
@@ -369,7 +369,7 @@ async fn generated_playlist_radio_uses_first_playlist_track() {
                 "subsonic:playlist:playlist-one",
             )),
             limit: 4,
-            strategy: source::GeneratedTrackStrategy::ProviderDefault,
+            strategy: source::GeneratedTrackStrategy::SourceDefault,
         })
         .await
         .expect("generated tracks");
@@ -544,7 +544,7 @@ async fn subsonic_map_error() {
         .await
         .expect_err("timeout");
 
-    assert!(matches!(error, ProviderError::Network(_)));
+    assert!(matches!(error, SourceError::Network(_)));
     assert!(!format!("{error:?}").contains(&credential.salt));
     assert!(!format!("{error:?}").contains(&credential.token));
     assert!(!error.to_string().contains(&credential.salt));
@@ -703,8 +703,8 @@ async fn folder_track_folders() {
     );
     assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-two");
 }
-fn provider(server: &MockServer) -> SubsonicProvider {
-    SubsonicProvider::from_saved_session(SavedProviderSession {
+fn provider(server: &MockServer) -> SubsonicSource {
+    SubsonicSource::from_saved_session(SavedSourceSession {
         server: ServerIdentity {
             id: ServerId::new("subsonic:server:test"),
             provider: "subsonic".to_string(),

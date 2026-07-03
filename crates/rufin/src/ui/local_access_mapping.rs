@@ -9,7 +9,7 @@ use library::ServerLocalAccess;
 
 use crate::controller::{LocalAccessStatus, ServerSettingsInput};
 use crate::i18n::{tr, trn_with};
-use crate::providers::StreamingProvider;
+use crate::sources::StreamingSource;
 
 use super::{
     Shell,
@@ -393,7 +393,7 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
 
     let fields_group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
-        .description(provider_display_name(&server.provider))
+        .description(source_display_name(&server.provider))
         .build();
 
     let (name_address_row, name, address) =
@@ -682,7 +682,7 @@ fn confirm_forget_server(
 
 fn server_display_name(server: &ServerIdentity) -> String {
     if server.name.trim().is_empty() {
-        StreamingProvider::from_provider_id(&server.provider)
+        StreamingSource::from_source_id(&server.provider)
             .map(|provider| tr(provider.title()))
             .unwrap_or_else(|| server.provider.clone())
     } else {
@@ -690,8 +690,8 @@ fn server_display_name(server: &ServerIdentity) -> String {
     }
 }
 
-fn provider_display_name(provider: &str) -> String {
-    StreamingProvider::from_provider_id(provider)
+fn source_display_name(provider: &str) -> String {
+    StreamingSource::from_source_id(provider)
         .map(|provider| tr(provider.title()))
         .unwrap_or_else(|| provider.to_string())
 }

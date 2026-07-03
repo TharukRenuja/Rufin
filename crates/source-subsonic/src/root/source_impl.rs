@@ -19,20 +19,6 @@ pub(super) fn redacted_subsonic_url(url: &Url) -> String {
     redact_subsonic_query(&mut redacted);
     redacted.to_string()
 }
-pub(super) fn subsonic_capabilities() -> ProviderCapabilities {
-    ProviderCapabilities {
-        lyrics: true,
-        playback_reporting: true,
-        playlist_mutations: true,
-        playlist_delete: true,
-        favorite_mutations: true,
-        auto_dj: true,
-        random_tracks: true,
-        music_folders: true,
-        folder_browsing: true,
-        ..ProviderCapabilities::default()
-    }
-}
 pub(super) fn raw_item_id(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
 }
@@ -87,10 +73,10 @@ pub(super) fn random_salt() -> String {
     }
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-pub(super) fn stable_server_id(provider_id: &str, base_url: &str, username: &str) -> String {
+pub(super) fn stable_server_id(source_id: &str, base_url: &str, username: &str) -> String {
     format!(
         "{:016x}",
-        stable_hash(&format!("{provider_id}:{base_url}:{username}"))
+        stable_hash(&format!("{source_id}:{base_url}:{username}"))
     )
 }
 pub(super) fn stable_hash(input: &str) -> u64 {
@@ -118,29 +104,29 @@ pub(super) fn favorite(value: &Option<serde_json::Value>) -> bool {
     })
 }
 pub(super) fn image_ref(
-    provider: &SubsonicProvider,
+    source: &SubsonicSource,
     cover_art: Option<SubsonicId>,
 ) -> Option<ImageRef> {
-    cover_art.map(|id| ImageRef::new(provider.id("cover", &id.0), None))
+    cover_art.map(|id| ImageRef::new(source.id("cover", &id.0), None))
 }
-pub(super) fn folder_from_artist(provider: &SubsonicProvider, artist: SubsonicArtist) -> Folder {
+pub(super) fn folder_from_artist(source: &SubsonicSource, artist: SubsonicArtist) -> Folder {
     Folder {
-        id: FolderId::new(provider.id("folder", artist.id.0.as_str())),
+        id: FolderId::new(source.id("folder", artist.id.0.as_str())),
         name: artist.name.unwrap_or_else(|| "Untitled Folder".to_string()),
     }
 }
-pub(super) fn folder_from_child(provider: &SubsonicProvider, child: SubsonicSong) -> Folder {
+pub(super) fn folder_from_child(source: &SubsonicSource, child: SubsonicSong) -> Folder {
     Folder {
-        id: FolderId::new(provider.id("folder", child.id.0.as_str())),
+        id: FolderId::new(source.id("folder", child.id.0.as_str())),
         name: child.title.unwrap_or_else(|| "Untitled Folder".to_string()),
     }
 }
 pub(super) fn folder_from_directory(
-    provider: &SubsonicProvider,
+    source: &SubsonicSource,
     directory: &SubsonicDirectory,
 ) -> Folder {
     Folder {
-        id: FolderId::new(provider.id("folder", directory.id.0.as_str())),
+        id: FolderId::new(source.id("folder", directory.id.0.as_str())),
         name: directory
             .name
             .clone()
@@ -191,10 +177,10 @@ fn bpm_from_u32(value: u32) -> Option<u16> {
 fn clean_optional(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
-pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
+pub(super) fn album_from_dto(source: &SubsonicSource, album: SubsonicAlbum) -> Album {
     let raw_id = raw_id_string(&album.id);
     Album {
-        id: AlbumId::new(provider.id("album", &raw_id)),
+        id: AlbumId::new(source.id("album", &raw_id)),
         title: album
             .title
             .or(album.name)
@@ -203,7 +189,7 @@ pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) 
         artist: album.artist.unwrap_or_else(|| "Unknown Artist".to_string()),
         artist_id: album
             .artist_id
-            .map(|id| ArtistId::new(provider.id("artist", &id.0))),
+            .map(|id| ArtistId::new(source.id("artist", &id.0))),
         album_artist_credits: Vec::new(),
         artist_credits: Vec::new(),
         year: u16_from_option(album.year),
@@ -222,7 +208,7 @@ pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) 
         duration_seconds: album.duration.unwrap_or_default(),
         favorite: favorite(&album.starred),
         color_seed: color_seed(&raw_id),
-        image_ref: image_ref(provider, album.cover_art),
+        image_ref: image_ref(source, album.cover_art),
         genres: genres_from_item(album.genre, album.genres),
         release_types: normalize_release_types(album.release_types),
         is_compilation: album.is_compilation,
@@ -230,7 +216,7 @@ pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) 
         musicbrainz_release_group_id: None,
     }
 }
-pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
+pub(super) fn track_from_dto(source: &SubsonicSource, song: SubsonicSong) -> Track {
     let raw_id = raw_id_string(&song.id);
     let album_id = song
         .album_id
@@ -244,13 +230,13 @@ pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) ->
         song.path.as_deref(),
     );
     Track {
-        id: TrackId::new(provider.id("track", &raw_id)),
-        album_id: AlbumId::new(provider.id("album", &album_id)),
+        id: TrackId::new(source.id("track", &raw_id)),
+        album_id: AlbumId::new(source.id("album", &album_id)),
         title: song.title.unwrap_or_else(|| "Untitled Track".to_string()),
         artist: song.artist.unwrap_or_else(|| "Unknown Artist".to_string()),
         artist_id: song
             .artist_id
-            .map(|id| ArtistId::new(provider.id("artist", &id.0))),
+            .map(|id| ArtistId::new(source.id("artist", &id.0))),
         artist_credits: Vec::new(),
         album_artist_credits: Vec::new(),
         album: song.album.unwrap_or_else(|| "Unknown Album".to_string()),
@@ -270,7 +256,7 @@ pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) ->
         favorite: favorite(&song.starred),
         disc_number: u16_from_option(song.disc_number).max(1),
         track_number: u16_from_option(song.track).max(1),
-        image_ref: image_ref(provider, song.cover_art),
+        image_ref: image_ref(source, song.cover_art),
         genres: genres_from_item(song.genre, song.genres),
         musicbrainz_recording_id: None,
         musicbrainz_release_track_id: None,
@@ -310,10 +296,10 @@ pub(super) fn source_format_from_song(
                 .map(ToString::to_string)
         })
 }
-pub(super) fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artist {
+pub(super) fn artist_from_dto(source: &SubsonicSource, artist: SubsonicArtist) -> Artist {
     let raw_id = raw_id_string(&artist.id);
     Artist {
-        id: ArtistId::new(provider.id("artist", &raw_id)),
+        id: ArtistId::new(source.id("artist", &raw_id)),
         name: artist.name.unwrap_or_else(|| "Unknown Artist".to_string()),
         album_count: artist.album_count.unwrap_or_default(),
         track_count: artist.song_count.unwrap_or_default(),
@@ -326,12 +312,12 @@ pub(super) fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtis
             .user_rating
             .map(|value| value.min(u32::from(u8::MAX)) as u8),
         musicbrainz_artist_id: None,
-        image_ref: image_ref(provider, artist.cover_art),
+        image_ref: image_ref(source, artist.cover_art),
     }
 }
-pub(super) fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) -> Genre {
+pub(super) fn genre_from_dto(source: &SubsonicSource, genre: SubsonicGenre) -> Genre {
     Genre {
-        id: GenreId::new(provider.id("genre", &genre.value)),
+        id: GenreId::new(source.id("genre", &genre.value)),
         name: genre.value,
         album_count: genre.album_count.unwrap_or_default(),
         track_count: genre.song_count.unwrap_or_default(),
@@ -353,13 +339,10 @@ pub(super) fn normalized_date(value: Option<String>) -> Option<String> {
     }
     Some(value)
 }
-pub(super) fn playlist_from_dto(
-    provider: &SubsonicProvider,
-    playlist: SubsonicPlaylist,
-) -> Playlist {
+pub(super) fn playlist_from_dto(source: &SubsonicSource, playlist: SubsonicPlaylist) -> Playlist {
     let raw_id = raw_id_string(&playlist.id);
     Playlist {
-        id: PlaylistId::new(provider.id("playlist", &raw_id)),
+        id: PlaylistId::new(source.id("playlist", &raw_id)),
         name: playlist
             .name
             .unwrap_or_else(|| "Untitled Playlist".to_string()),
@@ -367,7 +350,7 @@ pub(super) fn playlist_from_dto(
         duration_seconds: playlist.duration.unwrap_or_default(),
         top_genres: Vec::new(),
         image_refs: Vec::new(),
-        image_ref: image_ref(provider, playlist.cover_art),
+        image_ref: image_ref(source, playlist.cover_art),
     }
 }
 #[derive(Clone, Debug, Default, Deserialize)]

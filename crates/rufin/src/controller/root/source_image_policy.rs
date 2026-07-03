@@ -83,7 +83,7 @@ pub(in crate::controller) fn scrub_smart_refs(
 }
 
 pub(in crate::controller) fn scrub_home_refs(saved: &SavedServer, section: &mut HomeSection) {
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         section.albums.retain(|album| is_local_album_id(&album.id));
         section.tracks.retain(|track| is_local_track_id(&track.id));
     }
@@ -112,7 +112,7 @@ pub(in crate::controller::root) fn scrub_snapshot_home_refs(
     section: &mut HomeSection,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         section.albums.retain(|album| is_local_album_id(&album.id));
         section.tracks.retain(|track| is_local_track_id(&track.id));
     }
@@ -251,13 +251,13 @@ pub(in crate::controller) fn image_ref_allowed(
     server: &ServerIdentity,
     image_ref: &ImageRef,
 ) -> bool {
-    if server.provider == LOCAL_PROVIDER_ID {
-        return is_local_provider_image_ref(image_ref);
+    if server.provider == LOCAL_SOURCE_ID {
+        return is_local_source_image_ref(image_ref);
     }
-    !is_local_provider_image_ref(image_ref)
+    !is_local_source_image_ref(image_ref)
 }
 
-pub(in crate::controller) fn is_local_provider_image_ref(image_ref: &ImageRef) -> bool {
+pub(in crate::controller) fn is_local_source_image_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with("local:cover:")
 }
 

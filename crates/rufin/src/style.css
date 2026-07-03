@@ -624,32 +624,32 @@ button.server-selector.menu-source-button .source-selector-detail {
   font-weight: 500;
 }
 
-.provider-choice-list {
+.source-choice-list {
   padding: 4px;
   border-radius: 8px;
   background: @card_bg_color;
 }
 
-.compact-provider-choice-list {
+.compact-source-choice-list {
   padding: 3px;
 }
 
-.provider-choice-button {
+.source-choice-button {
   padding: 7px 4px;
   border-radius: 4px;
   min-height: 66px;
 }
 
-.compact-provider-choice-button {
+.compact-source-choice-button {
   padding: 3px 4px;
   min-height: 46px;
 }
 
-.provider-choice-button:hover {
+.source-choice-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
-.provider-choice-button.active {
+.source-choice-button.active {
   background: color-mix(in srgb, @window_fg_color 10%, transparent);
 }
 

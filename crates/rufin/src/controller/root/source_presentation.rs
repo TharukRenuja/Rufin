@@ -33,7 +33,7 @@ struct ActiveSourceProjection {
 fn snapshot_remote_servers(saved_servers: &[SavedServer]) -> Vec<SavedServer> {
     saved_servers
         .iter()
-        .filter(|saved| saved.server.provider != LOCAL_PROVIDER_ID)
+        .filter(|saved| saved.server.provider != LOCAL_SOURCE_ID)
         .cloned()
         .collect()
 }
@@ -160,7 +160,7 @@ fn local_source_configured(
     }
     let Some(local) = saved_servers
         .iter()
-        .find(|saved| saved.server.provider == LOCAL_PROVIDER_ID)
+        .find(|saved| saved.server.provider == LOCAL_SOURCE_ID)
     else {
         return false;
     };
@@ -194,7 +194,7 @@ fn resolve_selected_source(
     }
 
     if let Some(saved) = active_server {
-        if saved.server.provider == LOCAL_PROVIDER_ID {
+        if saved.server.provider == LOCAL_SOURCE_ID {
             if local_source_configured {
                 return Some(LibrarySourceSelection::Local);
             }
@@ -260,7 +260,7 @@ fn active_server_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn Secret
     let Some(server) = snapshot.server.as_ref() else {
         return false;
     };
-    if server.provider == LOCAL_PROVIDER_ID || server.provider == "fake" {
+    if server.provider == LOCAL_SOURCE_ID || server.provider == "fake" {
         return false;
     }
     !config_token_available(secrets, &server.id)
@@ -373,7 +373,7 @@ fn load_active_source_snapshot(
     selected_source: LibrarySourceSelection,
     saved: SavedServer,
 ) -> Result<LibrarySnapshot, String> {
-    let (local_access, local_access_status) = if saved.server.provider != LOCAL_PROVIDER_ID
+    let (local_access, local_access_status) = if saved.server.provider != LOCAL_SOURCE_ID
         && let Some(summary) = server_local_access
             .iter()
             .find(|summary| summary.server_id == saved.server.id)

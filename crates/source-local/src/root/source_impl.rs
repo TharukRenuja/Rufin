@@ -505,13 +505,13 @@ pub(super) fn cover_revision(cover: &LocalCover) -> Option<String> {
         }
     }
 }
-pub(super) fn cover_url(cover: &LocalCover) -> ProviderResult<String> {
+pub(super) fn cover_url(cover: &LocalCover) -> SourceResult<String> {
     match cover {
         LocalCover::File { path, .. } | LocalCover::Embedded { path, .. } => {
             Url::from_file_path(path)
                 .map(|url| url.to_string())
                 .map_err(|()| {
-                    ProviderError::Other("could not turn cover path into a file URI".to_string())
+                    SourceError::Other("could not turn cover path into a file URI".to_string())
                 })
         }
     }

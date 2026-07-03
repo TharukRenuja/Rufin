@@ -1,4 +1,4 @@
-use crate::{ImageBytes, ProviderError, ProviderResult};
+use crate::{ImageBytes, SourceError, SourceResult};
 use reqwest::{Client, StatusCode, header};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -26,7 +26,7 @@ pub fn build_client(
     trust_invalid_cert: bool,
     timeouts: RemoteTimeouts,
     policy: RemoteHttpPolicy,
-) -> ProviderResult<Client> {
+) -> SourceResult<Client> {
     Client::builder()
         .danger_accept_invalid_certs(trust_invalid_cert)
         .connect_timeout(timeouts.connect)
@@ -39,16 +39,13 @@ pub async fn json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
-) -> ProviderResult<T> {
+) -> SourceResult<T> {
     let response = checked_response(request, policy).await?;
     let bytes = response_bytes_bounded(response, policy, limit).await?;
-    serde_json::from_slice::<T>(&bytes).map_err(|error| ProviderError::Other(error.to_string()))
+    serde_json::from_slice::<T>(&bytes).map_err(|error| SourceError::Other(error.to_string()))
 }
 
-pub async fn unit(
-    request: reqwest::RequestBuilder,
-    policy: RemoteHttpPolicy,
-) -> ProviderResult<()> {
+pub async fn unit(request: reqwest::RequestBuilder, policy: RemoteHttpPolicy) -> SourceResult<()> {
     checked_response(request, policy).await?;
     Ok(())
 }
@@ -57,7 +54,7 @@ pub async fn bytes(
     request: reqwest::RequestBuilder,
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
-) -> ProviderResult<ImageBytes> {
+) -> SourceResult<ImageBytes> {
     let response = checked_response(request, policy).await?;
     let content_type = response
         .headers()
@@ -71,7 +68,7 @@ pub async fn bytes(
     })
 }
 
-pub fn map_reqwest_error(mut error: reqwest::Error, policy: RemoteHttpPolicy) -> ProviderError {
+pub fn map_reqwest_error(mut error: reqwest::Error, policy: RemoteHttpPolicy) -> SourceError {
     if let Some(redact) = policy.redact_error_url
         && let Some(url) = error.url_mut()
     {
@@ -80,41 +77,41 @@ pub fn map_reqwest_error(mut error: reqwest::Error, policy: RemoteHttpPolicy) ->
     let message = error.to_string();
     let lowered = message.to_lowercase();
     if lowered.contains("certificate") || lowered.contains("tls") {
-        ProviderError::Tls(message)
+        SourceError::Tls(message)
     } else if error.is_connect() || error.is_request() || error.is_timeout() {
-        ProviderError::Network(message)
+        SourceError::Network(message)
     } else if let Some(status) = error.status() {
-        ProviderError::Server {
+        SourceError::Server {
             status: status.as_u16(),
             message,
         }
     } else {
-        ProviderError::Other(message)
+        SourceError::Other(message)
     }
 }
 
 async fn checked_response(
     request: reqwest::RequestBuilder,
     policy: RemoteHttpPolicy,
-) -> ProviderResult<reqwest::Response> {
+) -> SourceResult<reqwest::Response> {
     let response = request
         .send()
         .await
         .map_err(|error| map_reqwest_error(error, policy))?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ProviderError::Auth(format!(
+        return Err(SourceError::Auth(format!(
             "{} {}",
             policy.auth_context,
             status.as_u16()
         )));
     }
     if status == StatusCode::NOT_FOUND {
-        return Err(ProviderError::NotFound);
+        return Err(SourceError::NotFound);
     }
     if status.is_client_error() || status.is_server_error() {
         let message = response_text_or_status(response, status, policy).await;
-        return Err(ProviderError::Server {
+        return Err(SourceError::Server {
             status: status.as_u16(),
             message,
         });
@@ -137,7 +134,7 @@ async fn response_bytes_bounded(
     mut response: reqwest::Response,
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
-) -> ProviderResult<Vec<u8>> {
+) -> SourceResult<Vec<u8>> {
     if response
         .content_length()
         .is_some_and(|length| length > limit.max_bytes as u64)
@@ -168,8 +165,8 @@ async fn response_bytes_bounded(
     Ok(bytes)
 }
 
-fn size_error(limit: BodyLimit) -> ProviderError {
-    ProviderError::Other(format!(
+fn size_error(limit: BodyLimit) -> SourceError {
+    SourceError::Other(format!(
         "{} exceeded {} MiB limit",
         limit.context,
         limit.max_bytes / 1024 / 1024
@@ -258,11 +255,11 @@ mod tests {
             .await
             .expect_err("server error");
 
-        assert!(matches!(auth, ProviderError::Auth(_)));
-        assert!(matches!(missing, ProviderError::NotFound));
+        assert!(matches!(auth, SourceError::Auth(_)));
+        assert!(matches!(missing, SourceError::NotFound));
         assert!(matches!(
             broken,
-            ProviderError::Server {
+            SourceError::Server {
                 status: 500,
                 message
             } if message == "broken"
@@ -334,6 +331,6 @@ mod tests {
             .await
             .expect_err("timeout");
 
-        assert!(matches!(error, ProviderError::Network(_)));
+        assert!(matches!(error, SourceError::Network(_)));
     }
 }

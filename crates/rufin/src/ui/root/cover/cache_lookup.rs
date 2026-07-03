@@ -800,7 +800,7 @@ pub(in crate::ui) fn visible_cover_cache_miss_action(
         return VisibleCoverCacheMissAction::FinalMissing;
     }
     if image_ref.item_id.starts_with("local:cover:") {
-        return if provider == Some(source_local::LOCAL_PROVIDER_ID) {
+        return if provider == Some(source_local::LOCAL_SOURCE_ID) {
             VisibleCoverCacheMissAction::Fetch
         } else {
             VisibleCoverCacheMissAction::FinalMissing
@@ -898,7 +898,7 @@ mod tests {
 
         assert_eq!(
             visible_cover_cache_miss_action(
-                Some(source_local::LOCAL_PROVIDER_ID),
+                Some(source_local::LOCAL_SOURCE_ID),
                 &local_cover,
                 false,
                 false

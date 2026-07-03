@@ -24,14 +24,14 @@ pub(in crate::controller) fn source_capabilities_for_saved(
             mutate_store: true,
         },
         smart_playlists: SourceFeatureSupport::store(),
-        favorites: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
+        favorites: if source_kind == "fake" || source_kind == LOCAL_SOURCE_ID {
             SourceFeatureSupport::store()
         } else if native_favorites {
             SourceFeatureSupport::native()
         } else {
             SourceFeatureSupport::Unsupported
         },
-        favorite_mutations: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
+        favorite_mutations: if source_kind == "fake" || source_kind == LOCAL_SOURCE_ID {
             SourceFeatureSupport::store()
         } else if native_favorite_mutations {
             SourceFeatureSupport::native()
@@ -52,7 +52,7 @@ pub(in crate::controller) fn source_capabilities_for_saved(
 }
 
 fn source_kind_has_native_playlists(source_kind: &str) -> bool {
-    !matches!(source_kind, "fake" | LOCAL_PROVIDER_ID)
+    !matches!(source_kind, "fake" | LOCAL_SOURCE_ID)
 }
 
 fn source_kind_has_native_playlist_mutations(source_kind: &str) -> bool {
@@ -86,6 +86,6 @@ fn source_kind_has_native_music_folders(source_kind: &str) -> bool {
 fn source_kind_has_native_folder_browsing(source_kind: &str) -> bool {
     matches!(
         source_kind,
-        LOCAL_PROVIDER_ID | "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+        LOCAL_SOURCE_ID | "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
     )
 }

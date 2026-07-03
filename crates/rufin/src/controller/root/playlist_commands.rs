@@ -28,14 +28,14 @@ impl AppController {
                 return;
             };
             let playlist_id = match create_owner {
-                SourceFeatureOwner::Native => match provider_for_saved(
+                SourceFeatureOwner::Native => match source_for_saved(
                     &store, &runtime, &secrets, &saved,
                 )
                 .and_then(|provider| {
                     runtime
                         .block_on(
                             provider
-                                .as_music_provider()
+                                .as_music_source()
                                 .create_playlist(&name, &track_ids),
                         )
                         .map_err(|error| error.to_string())
@@ -97,11 +97,11 @@ impl AppController {
             }
             if owner == SourceFeatureOwner::Native {
                 let result =
-                    provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+                    source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
                             .block_on(
                                 provider
-                                    .as_music_provider()
+                                    .as_music_source()
                                     .rename_playlist(&playlist_id, &name),
                             )
                             .map_err(|error| error.to_string())
@@ -147,9 +147,9 @@ impl AppController {
             }
             if owner == SourceFeatureOwner::Native {
                 let result =
-                    provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+                    source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
-                            .block_on(provider.as_music_provider().delete_playlist(&playlist_id))
+                            .block_on(provider.as_music_source().delete_playlist(&playlist_id))
                             .map_err(|error| error.to_string())
                     });
                 if let Err(error) = result {

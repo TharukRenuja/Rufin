@@ -1,9 +1,9 @@
 use super::queue_state::defer_queue_snapshot;
 use super::*;
 use crate::controller::generated_radio::{saved_server_for_generated_queue, spread_radio_tracks};
-use crate::controller::provider_tracks::{prepare_cached_tracks, prepare_provider_tracks};
+use crate::controller::source_tracks::{prepare_cached_tracks, prepare_source_tracks};
 use source::{PlayedFilter, RandomTrackRequest};
-use source_local::LOCAL_PROVIDER_ID;
+use source_local::LOCAL_SOURCE_ID;
 
 impl AppController {
     #[cfg(test)]
@@ -245,7 +245,7 @@ fn auto_dj_random_fallback_tracks(
 ) -> Result<Vec<Track>, String> {
     let genre_name = auto_dj_current_genre(controller, state)?;
     let should_spread_cached_tracks =
-        saved.server.provider == "fake" || saved.server.provider == LOCAL_PROVIDER_ID;
+        saved.server.provider == "fake" || saved.server.provider == LOCAL_SOURCE_ID;
     let mut tracks = if should_spread_cached_tracks {
         auto_dj_random_fallback_tracks_from_cache(
             controller,
@@ -253,7 +253,7 @@ fn auto_dj_random_fallback_tracks(
             genre_name.as_deref(),
         )?
     } else {
-        let provider = provider_for_saved(
+        let provider = source_for_saved(
             &controller.store,
             &controller.runtime,
             &controller.secrets,
@@ -263,7 +263,7 @@ fn auto_dj_random_fallback_tracks(
             .runtime
             .block_on(
                 provider
-                    .as_music_provider()
+                    .as_music_source()
                     .random_tracks(RandomTrackRequest {
                         limit: AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
                         min_year: None,
@@ -275,10 +275,10 @@ fn auto_dj_random_fallback_tracks(
             )
             .map_err(|error| error.to_string())?
     };
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         prepare_cached_tracks(controller, saved, settings, &mut tracks)?;
     } else {
-        prepare_provider_tracks(controller, saved, settings, &mut tracks)?;
+        prepare_source_tracks(controller, saved, settings, &mut tracks)?;
     }
     if should_spread_cached_tracks {
         tracks = spread_radio_tracks(

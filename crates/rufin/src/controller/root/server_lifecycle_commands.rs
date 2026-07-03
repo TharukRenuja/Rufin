@@ -128,10 +128,10 @@ impl AppController {
             delete_token_after_forget(secrets, saved.server.id);
         });
     }
-    #[instrument(skip(self, request), fields(provider = request.provider.provider_id(), server_url = %request.server_url, username = %request.username, trust_invalid_cert = request.trust_invalid_cert))]
+    #[instrument(skip(self, request), fields(source = request.source.source_id(), server_url = %request.server_url, username = %request.username, trust_invalid_cert = request.trust_invalid_cert))]
     pub fn login(&self, request: LoginRequest) {
         let LoginRequest {
-            provider,
+            source,
             server_name,
             server_url,
             username,
@@ -153,11 +153,11 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
-            let provider_name = provider.title();
+            let source_name = source.title();
             let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                "Checking {provider_name} server..."
+                "Checking {source_name} server..."
             )));
-            let device_id = if provider == StreamingProvider::Jellyfin {
+            let device_id = if source == StreamingSource::Jellyfin {
                 match ensure_jellyfin_device_id(&store) {
                     Ok(device_id) => Some(device_id),
                     Err(error) => {
@@ -168,8 +168,8 @@ impl AppController {
             } else {
                 None
             };
-            let result = runtime.block_on(login_provider(
-                provider,
+            let result = runtime.block_on(login_source(
+                source,
                 server_url,
                 username,
                 password,
@@ -199,7 +199,7 @@ impl AppController {
                 session: &session,
                 server_name: server_name.as_deref(),
                 trust_invalid_cert,
-                use_jellyfin_instant_mix: provider == StreamingProvider::Jellyfin
+                use_jellyfin_instant_mix: source == StreamingSource::Jellyfin
                     && use_jellyfin_instant_mix,
                 local_access_root: local_access_root.as_deref(),
                 path_replace_from: path_replace_from.as_deref(),

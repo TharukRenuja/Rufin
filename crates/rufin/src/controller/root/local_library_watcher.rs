@@ -49,7 +49,7 @@ fn active_local_watch_target(store: &StoreHandle) -> Option<(SavedServer, Vec<Pa
         .with_store(|store| store.active_server())
         .ok()
         .flatten()?;
-    if saved.server.provider != LOCAL_PROVIDER_ID {
+    if saved.server.provider != LOCAL_SOURCE_ID {
         return None;
     }
     let mut roots = load_settings_from_store(store)

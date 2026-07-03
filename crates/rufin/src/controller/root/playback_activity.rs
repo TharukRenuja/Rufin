@@ -150,7 +150,7 @@ fn record_local_play_now(
         let Some(saved) = store.saved_server(&activity.server_id)? else {
             return Ok(false);
         };
-        if saved.server.provider != LOCAL_PROVIDER_ID {
+        if saved.server.provider != LOCAL_SOURCE_ID {
             return Ok(false);
         }
         store.record_local_track_played(
@@ -262,7 +262,7 @@ mod tests {
         let saved = SavedServer {
             server: ServerIdentity {
                 id: server_id.clone(),
-                provider: LOCAL_PROVIDER_ID.to_string(),
+                provider: LOCAL_SOURCE_ID.to_string(),
                 name: "Local".to_string(),
                 base_url: String::new(),
             },

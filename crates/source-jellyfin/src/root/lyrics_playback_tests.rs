@@ -1,5 +1,5 @@
 use super::*;
-use source::MusicProvider;
+use source::MusicSource;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -231,7 +231,7 @@ async fn lyrics_auth_error() {
         .await
         .expect_err("auth error");
 
-    assert!(matches!(error, ProviderError::Auth(_)));
+    assert!(matches!(error, SourceError::Auth(_)));
 }
 #[tokio::test]
 async fn lyrics_redact_token() {
@@ -259,7 +259,7 @@ async fn lyrics_redact_token() {
 fn original_stream_from_saved_session_uses_audio_endpoint() {
     let session = saved_session();
 
-    let stream = JellyfinProvider::stream_descriptor_from_saved_session(
+    let stream = JellyfinSource::stream_descriptor_from_saved_session(
         &session,
         &source::StreamRequest::original(TrackId::new("jellyfin:track:track-one")),
     )
@@ -280,7 +280,7 @@ fn original_stream_from_saved_session_uses_audio_endpoint() {
 fn capped_stream_from_saved_session_uses_audio_endpoint() {
     let session = saved_session();
 
-    let stream = JellyfinProvider::stream_descriptor_from_saved_session(
+    let stream = JellyfinSource::stream_descriptor_from_saved_session(
         &session,
         &source::StreamRequest::new(
             TrackId::new("jellyfin:track:track-one"),
@@ -299,8 +299,8 @@ fn capped_stream_from_saved_session_uses_audio_endpoint() {
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
 }
 
-fn saved_session() -> SavedProviderSession {
-    SavedProviderSession {
+fn saved_session() -> SavedSourceSession {
+    SavedSourceSession {
         server: ServerIdentity {
             id: ServerId::new("jellyfin:server:test"),
             provider: "jellyfin".to_string(),
@@ -386,8 +386,8 @@ async fn lyrics_add_limited() {
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
-pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinProvider {
-    JellyfinProvider::from_saved_session(SavedProviderSession {
+pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinSource {
+    JellyfinSource::from_saved_session(SavedSourceSession {
         server: ServerIdentity {
             id: ServerId::new("jellyfin:server:test"),
             provider: "jellyfin".to_string(),

@@ -158,29 +158,29 @@ pub(in crate::controller) fn cached_lyrics_allowed_for_track(
         && !(cue_track && lyrics.source == source::LyricsSource::Local)
 }
 
-pub(in crate::controller) fn provider_for_saved(
+pub(in crate::controller) fn source_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
-) -> Result<LoadedProvider, String> {
-    provider_for_saved_with_local_scan_progress(store, runtime, secrets, saved, None)
+) -> Result<LoadedSource, String> {
+    source_for_saved_with_local_scan_progress(store, runtime, secrets, saved, None)
 }
 
-pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
+pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
     mut local_scan_progress: Option<&mut dyn FnMut(LocalScanProgress)>,
-) -> Result<LoadedProvider, String> {
+) -> Result<LoadedSource, String> {
     let _unused = runtime;
-    if saved.server.provider == LOCAL_PROVIDER_ID
+    if saved.server.provider == LOCAL_SOURCE_ID
         && saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
     {
         let settings = load_settings_from_store(store);
         let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
-        return LocalProvider::from_roots_with_manifest_cache_and_progress(
+        return LocalSource::from_roots_with_manifest_cache_and_progress(
             local_folder_paths(&settings),
             saved.server.clone(),
             manifest_cache,
@@ -190,12 +190,12 @@ pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
                 }
             },
         )
-        .map(LoadedProvider::Local)
+        .map(LoadedSource::Local)
         .map_err(|error| error.to_string());
     }
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    if saved.server.provider == LOCAL_SOURCE_ID {
         let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
-        return LocalProvider::from_roots_with_manifest_cache_and_progress(
+        return LocalSource::from_roots_with_manifest_cache_and_progress(
             vec![PathBuf::from(&saved.server.base_url)],
             saved.server.clone(),
             manifest_cache,
@@ -205,7 +205,7 @@ pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
                 }
             },
         )
-        .map(LoadedProvider::Local)
+        .map(LoadedSource::Local)
         .map_err(|error| error.to_string());
     }
     let device_id = if saved.server.provider == "jellyfin" {
@@ -217,7 +217,7 @@ pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
         .load_token(&saved.server.id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No saved token found for the active server.".to_string())?;
-    let session = SavedProviderSession {
+    let session = SavedSourceSession {
         server: saved.server.clone(),
         user_id: saved.user_id.clone(),
         username: saved.username.clone(),
@@ -225,7 +225,7 @@ pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
         access_token: token,
         device_id,
     };
-    provider_from_saved(session).map_err(|error| error.to_string())
+    source_from_saved(session).map_err(|error| error.to_string())
 }
 fn load_local_manifest_cache(
     store: &StoreHandle,
@@ -287,11 +287,12 @@ pub(in crate::controller) fn load_folder_detail(
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
     let settings = load_settings_for_saved(store, &saved);
-    let provider = provider_for_saved(store, runtime, secrets, &saved)?;
-    let music_provider = provider.as_music_provider();
-    if !music_provider.capabilities().folder_browsing {
-        return Err("folder browsing is not supported by the active provider.".to_string());
+    let capabilities = source_capabilities_for_saved(&saved);
+    if capabilities.folder_browsing.owner().is_none() {
+        return Err("Folder browsing is not supported by the active source.".to_string());
     }
+    let provider = source_for_saved(store, runtime, secrets, &saved)?;
+    let music_provider = provider.as_music_source();
     let folder_id = path.last().map(|entry| &entry.id);
     let mut detail = runtime
         .block_on(music_provider.folder(folder_id, selected_music_folder_id.as_ref()))
@@ -308,7 +309,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
     before: &source::PlaylistDetail,
     after: &source::PlaylistDetail,
 ) -> Result<Option<source::PlaylistDetail>, String> {
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
+    let provider = source_for_saved(store, runtime, secrets, saved)?;
     let before_ids = before
         .entries
         .iter()
@@ -330,7 +331,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
         runtime
             .block_on(
                 provider
-                    .as_music_provider()
+                    .as_music_source()
                     .remove_playlist_entries(&before.playlist.id, &removed),
             )
             .map_err(|error| error.to_string())?;
@@ -346,7 +347,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
         runtime
             .block_on(
                 provider
-                    .as_music_provider()
+                    .as_music_source()
                     .add_playlist_tracks(&before.playlist.id, &added),
             )
             .map_err(|error| error.to_string())?;
@@ -362,7 +363,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
         };
         if old_index != new_index && before_ids.contains(entry.entry_id.as_str()) {
             runtime
-                .block_on(provider.as_music_provider().move_playlist_entry(
+                .block_on(provider.as_music_source().move_playlist_entry(
                     &before.playlist.id,
                     &entry.entry_id,
                     new_index,
@@ -374,7 +375,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
     runtime
         .block_on(
             provider
-                .as_music_provider()
+                .as_music_source()
                 .playlist_detail(&before.playlist.id),
         )
         .map(Some)
@@ -400,13 +401,13 @@ pub(in crate::controller) fn report_playback_async(
         if saved.server.provider == "fake" || saved.server.provider == "local" {
             return;
         }
-        let result = provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+        let result = source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
             runtime
-                .block_on(provider.as_music_provider().report_playback(report))
+                .block_on(provider.as_music_source().report_playback(report))
                 .map_err(|error| error.to_string())
         });
         if let Err(error) = result {
-            warn!(%error, "failed to report playback to provider");
+            warn!(%error, "failed to report playback to source");
         }
     });
 }

@@ -1,5 +1,5 @@
 use super::*;
-use source::MusicProvider;
+use source::MusicSource;
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
@@ -26,7 +26,7 @@ async fn library_map_session() {
         .mount(&server)
         .await;
 
-    let session = JellyfinProvider::login(LoginRequest {
+    let session = JellyfinSource::login(LoginRequest {
         base_url: server.uri(),
         username: "demo".to_string(),
         password: "pw".to_string(),

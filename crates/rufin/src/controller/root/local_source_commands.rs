@@ -34,7 +34,7 @@ impl AppController {
             }
             let mut local_paths = Vec::new();
             for root_path in root_paths {
-                match LocalProvider::identity_for_root(&root_path) {
+                match LocalSource::identity_for_root(&root_path) {
                     Ok(identity) => {
                         if !local_paths.iter().any(|path| path == &identity.base_url) {
                             local_paths.push(identity.base_url);
@@ -211,7 +211,7 @@ impl AppController {
             emit_snapshot(&store, &events);
             if selected_local && no_local_folders {
                 match store.with_store(|store| store.active_server()) {
-                    Ok(Some(fallback)) if fallback.server.provider != LOCAL_PROVIDER_ID => {
+                    Ok(Some(fallback)) if fallback.server.provider != LOCAL_SOURCE_ID => {
                         if let Err(error) = activate_saved_queue(
                             &QueueActivationContext {
                                 store: &store,

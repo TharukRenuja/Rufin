@@ -17,21 +17,21 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use source::{
     AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTrackStrategy,
     GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
-    LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
+    LoginRequest, LyricLine, Lyrics, LyricsSource, MusicSource, PagedRequest, PagedResponse,
     PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
-    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
-    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
+    RandomTrackRequest, SavedSourceSession, SearchResults, SourceError, SourceIdentity,
+    SourceResult, SourceSession, StreamDescriptor, StreamRequest,
 };
 use std::sync::Arc;
 use tracing::instrument;
 
 mod client;
-mod provider_impl;
+mod source_impl;
 mod websocket;
 
 use client::*;
 pub(crate) use client::{jellyfin_id, normalize_base_url, stable_hash};
-use provider_impl::*;
+use source_impl::*;
 pub use websocket::JellyfinLibraryChange;
 
 #[cfg(test)]
@@ -79,18 +79,17 @@ pub enum JellyfinLyricsSearch {
     RemoteThenServer,
 }
 #[derive(Clone, Debug)]
-pub struct JellyfinProvider {
+pub struct JellyfinSource {
     client: Client,
     base_url: Url,
     user_id: String,
     access_token: Arc<str>,
     device_id: Arc<str>,
-    identity: ProviderIdentity,
-    capabilities: ProviderCapabilities,
+    identity: SourceIdentity,
 }
-impl JellyfinProvider {
+impl JellyfinSource {
     #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, trust_invalid_cert = request.trust_invalid_cert))]
-    pub async fn login(request: LoginRequest) -> ProviderResult<ProviderSession> {
+    pub async fn login(request: LoginRequest) -> SourceResult<SourceSession> {
         let config = JellyfinClientConfig::new(
             &request.base_url,
             request.trust_invalid_cert,
@@ -120,7 +119,7 @@ impl JellyfinProvider {
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| stable_server_id(base_url.as_str()));
 
-        Ok(ProviderSession {
+        Ok(SourceSession {
             server: ServerIdentity {
                 id: ServerId::new(format!("jellyfin:server:{server_id}")),
                 provider: "jellyfin".to_string(),
@@ -134,7 +133,7 @@ impl JellyfinProvider {
         })
     }
 
-    pub fn from_saved_session(session: SavedProviderSession) -> ProviderResult<Self> {
+    pub fn from_saved_session(session: SavedSourceSession) -> SourceResult<Self> {
         let config = JellyfinClientConfig::new(
             &session.server.base_url,
             session.trust_invalid_cert,
@@ -148,17 +147,16 @@ impl JellyfinProvider {
             user_id: session.user_id,
             access_token: Arc::from(session.access_token),
             device_id: Arc::from(config.device_id),
-            identity: ProviderIdentity {
+            identity: SourceIdentity {
                 server: session.server,
             },
-            capabilities: jellyfin_capabilities(),
         })
     }
 
     pub fn stream_descriptor_from_saved_session(
-        session: &SavedProviderSession,
+        session: &SavedSourceSession,
         request: &StreamRequest,
-    ) -> ProviderResult<StreamDescriptor> {
+    ) -> SourceResult<StreamDescriptor> {
         let config = JellyfinClientConfig::new(
             &session.server.base_url,
             session.trust_invalid_cert,
@@ -179,7 +177,7 @@ impl JellyfinProvider {
         item_id: &str,
         kind: ImageKind,
         tag: Option<&str>,
-    ) -> ProviderResult<String> {
+    ) -> SourceResult<String> {
         let mut url = endpoint(
             &self.base_url,
             &format!(
@@ -194,7 +192,7 @@ impl JellyfinProvider {
         Ok(url.to_string())
     }
 
-    pub async fn tracks_by_raw_item_ids(&self, raw_ids: &[String]) -> ProviderResult<Vec<Track>> {
+    pub async fn tracks_by_raw_item_ids(&self, raw_ids: &[String]) -> SourceResult<Vec<Track>> {
         let mut tracks = Vec::new();
         for chunk in raw_ids.chunks(100).filter(|chunk| !chunk.is_empty()) {
             let mut url = endpoint(&self.base_url, "Items")?;
@@ -217,7 +215,7 @@ impl JellyfinProvider {
         Ok(tracks)
     }
 
-    pub async fn recently_added_tracks(&self, limit: usize) -> ProviderResult<Vec<Track>> {
+    pub async fn recently_added_tracks(&self, limit: usize) -> SourceResult<Vec<Track>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -236,7 +234,7 @@ impl JellyfinProvider {
         &self,
         track_id: &TrackId,
         search: JellyfinLyricsSearch,
-    ) -> ProviderResult<Option<Lyrics>> {
+    ) -> SourceResult<Option<Lyrics>> {
         match search {
             JellyfinLyricsSearch::ServerOnly => self.server_lyrics(track_id).await,
             JellyfinLyricsSearch::ServerThenRemote => {
@@ -258,7 +256,7 @@ impl JellyfinProvider {
         &self,
         include_types: &str,
         request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+    ) -> SourceResult<PagedResponse<JellyfinItem>> {
         self.item_page_sorted(include_types, request, "SortName", "Ascending")
             .await
     }
@@ -269,7 +267,7 @@ impl JellyfinProvider {
         request: PagedRequest,
         sort_by: &str,
         sort_order: &str,
-    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+    ) -> SourceResult<PagedResponse<JellyfinItem>> {
         let mut url = endpoint(&self.base_url, "Items")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -293,7 +291,7 @@ impl JellyfinProvider {
         kind: HomeSectionKind,
         sort_by: &str,
         sort_order: &str,
-    ) -> ProviderResult<HomeSection> {
+    ) -> SourceResult<HomeSection> {
         let page = self
             .item_page_sorted(
                 "MusicAlbum",
@@ -314,7 +312,7 @@ impl JellyfinProvider {
         kind: HomeSectionKind,
         sort_by: &str,
         sort_order: &str,
-    ) -> ProviderResult<HomeSection> {
+    ) -> SourceResult<HomeSection> {
         let page = self
             .item_page_sorted(
                 "Audio",
@@ -334,7 +332,7 @@ impl JellyfinProvider {
         &self,
         path: &str,
         request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+    ) -> SourceResult<PagedResponse<JellyfinItem>> {
         let mut url = endpoint(&self.base_url, path)?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -352,7 +350,7 @@ impl JellyfinProvider {
         ))
     }
 
-    async fn similar_tracks(&self, track_id: &TrackId, limit: usize) -> ProviderResult<Vec<Track>> {
+    async fn similar_tracks(&self, track_id: &TrackId, limit: usize) -> SourceResult<Vec<Track>> {
         let raw_track_id = raw_item_id(track_id.as_str());
         let mut url = endpoint(&self.base_url, &format!("Items/{raw_track_id}/Similar"))?;
         url.query_pairs_mut()
@@ -372,7 +370,7 @@ impl JellyfinProvider {
         &self,
         seed: &GeneratedTrackSeed,
         limit: usize,
-    ) -> ProviderResult<Vec<Track>> {
+    ) -> SourceResult<Vec<Track>> {
         let mut url = self.instant_mix_url(seed)?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -387,7 +385,7 @@ impl JellyfinProvider {
             .collect())
     }
 
-    fn instant_mix_url(&self, seed: &GeneratedTrackSeed) -> ProviderResult<Url> {
+    fn instant_mix_url(&self, seed: &GeneratedTrackSeed) -> SourceResult<Url> {
         match seed {
             GeneratedTrackSeed::Track(track_id) => endpoint(
                 &self.base_url,
@@ -414,7 +412,7 @@ impl JellyfinProvider {
             GeneratedTrackSeed::Genre { id: None, name } => {
                 let mut url = endpoint(&self.base_url, "MusicGenres")?;
                 url.path_segments_mut()
-                    .map_err(|_| ProviderError::Other("invalid Jellyfin base URL".to_string()))?
+                    .map_err(|_| SourceError::Other("invalid Jellyfin base URL".to_string()))?
                     .push(name)
                     .push("InstantMix");
                 Ok(url)
@@ -425,7 +423,7 @@ impl JellyfinProvider {
     async fn music_genre_page(
         &self,
         request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+    ) -> SourceResult<PagedResponse<JellyfinItem>> {
         let mut url = endpoint(&self.base_url, "MusicGenres")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -448,7 +446,7 @@ impl JellyfinProvider {
     async fn folder_children(
         &self,
         raw_parent_id: &str,
-    ) -> ProviderResult<(Vec<Folder>, Vec<Track>)> {
+    ) -> SourceResult<(Vec<Folder>, Vec<Track>)> {
         let mut url = endpoint(&self.base_url, "Items")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -476,7 +474,7 @@ impl JellyfinProvider {
         Ok((folders, tracks))
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, url: Url) -> ProviderResult<T> {
+    async fn get_json<T: DeserializeOwned>(&self, url: Url) -> SourceResult<T> {
         let config = JellyfinClientConfig::new(
             self.identity.server.base_url.clone(),
             false,
@@ -492,7 +490,7 @@ impl JellyfinProvider {
     async fn send_json<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
-    ) -> ProviderResult<T> {
+    ) -> SourceResult<T> {
         let config = JellyfinClientConfig::new(
             self.identity.server.base_url.clone(),
             false,
@@ -505,7 +503,7 @@ impl JellyfinProvider {
         .await
     }
 
-    async fn send_unit(&self, request: reqwest::RequestBuilder) -> ProviderResult<()> {
+    async fn send_unit(&self, request: reqwest::RequestBuilder) -> SourceResult<()> {
         let config = JellyfinClientConfig::new(
             self.identity.server.base_url.clone(),
             false,
@@ -518,7 +516,7 @@ impl JellyfinProvider {
         .await
     }
 
-    async fn server_lyrics(&self, track_id: &TrackId) -> ProviderResult<Option<Lyrics>> {
+    async fn server_lyrics(&self, track_id: &TrackId) -> SourceResult<Option<Lyrics>> {
         let raw_track_id = raw_item_id(track_id.as_str());
         let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
         match self.send_json::<LyricDto>(self.client.get(local_url)).await {
@@ -527,12 +525,12 @@ impl JellyfinProvider {
                 LyricsSource::Server,
                 dto,
             ))),
-            Err(ProviderError::NotFound) => Ok(None),
+            Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
     }
 
-    async fn remote_lyrics(&self, track_id: &TrackId) -> ProviderResult<Option<Lyrics>> {
+    async fn remote_lyrics(&self, track_id: &TrackId) -> SourceResult<Option<Lyrics>> {
         let raw_track_id = raw_item_id(track_id.as_str());
         let remote_url = endpoint(
             &self.base_url,
@@ -543,7 +541,7 @@ impl JellyfinProvider {
             .await
         {
             Ok(results) => results,
-            Err(ProviderError::NotFound) => return Ok(None),
+            Err(SourceError::NotFound) => return Ok(None),
             Err(error) => return Err(error),
         };
         let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
@@ -556,7 +554,7 @@ impl JellyfinProvider {
                 LyricsSource::Remote,
                 dto,
             ))),
-            Err(ProviderError::NotFound) => Ok(None),
+            Err(SourceError::NotFound) => Ok(None),
             Err(error) => Err(error),
         }
     }

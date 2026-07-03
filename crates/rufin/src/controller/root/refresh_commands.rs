@@ -170,7 +170,7 @@ impl AppController {
             startup_delay_ms = ?readiness.startup_delay_ms,
             "evaluated active source readiness"
         );
-        let local_source_configured = saved.server.provider != LOCAL_PROVIDER_ID
+        let local_source_configured = saved.server.provider != LOCAL_SOURCE_ID
             || !load_settings_from_store(&self.store)
                 .sources
                 .local_folders
@@ -178,7 +178,7 @@ impl AppController {
         if local_source_configured
             && cached_library_exists(&self.store, &saved.server.id)
             && readiness.sync_required_reason.is_none()
-            && (saved.server.provider == LOCAL_PROVIDER_ID
+            && (saved.server.provider == LOCAL_SOURCE_ID
                 || active_source_reconciliation_supported(&saved))
         {
             Some(ACTIVE_SOURCE_RECONCILIATION_DELAY_MS)

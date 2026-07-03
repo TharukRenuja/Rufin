@@ -13,7 +13,7 @@ use domain::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -42,6 +42,12 @@ fn current_schema_initializes_empty_database() {
     assert!(
         store.table_exists("track_moods").expect("table lookup"),
         "track_moods should exist"
+    );
+    assert!(
+        store
+            .table_exists("item_favorite_overrides")
+            .expect("table lookup"),
+        "item_favorite_overrides should exist"
     );
     for table in [
         "source_objects",
@@ -389,7 +395,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -441,7 +447,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -467,7 +473,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -531,7 +537,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -612,6 +618,107 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
 }
 
 #[test]
+fn schema_twenty_one_local_favorites_seed_overrides() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "favorite-override-migration"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let mut local = saved_server_with_id("local:server:favorites");
+    local.server.provider = "local".to_string();
+    let remote = saved_server_with_id("jellyfin:server:favorites");
+    let mut local_album = album(1);
+    local_album.favorite = true;
+    let mut remote_album = album(2);
+    remote_album.favorite = true;
+    let mut local_track = track(1, &local_album);
+    local_track.favorite = true;
+    let mut remote_track = track(2, &remote_album);
+    remote_track.favorite = true;
+    let mut local_artist = artist(1, None);
+    local_artist.favorite = true;
+    let mut remote_artist = artist(2, None);
+    remote_artist.favorite = true;
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_server(&local).expect("save local");
+        store.save_server(&remote).expect("save remote");
+        store
+            .upsert_albums(&local.server.id, std::slice::from_ref(&local_album), 1)
+            .expect("upsert local album");
+        store
+            .upsert_albums(&remote.server.id, std::slice::from_ref(&remote_album), 1)
+            .expect("upsert remote album");
+        store
+            .upsert_tracks(&local.server.id, std::slice::from_ref(&local_track), 1)
+            .expect("upsert local track");
+        store
+            .upsert_tracks(&remote.server.id, std::slice::from_ref(&remote_track), 1)
+            .expect("upsert remote track");
+        store
+            .upsert_artists(
+                &local.server.id,
+                std::slice::from_ref(&local_artist),
+                false,
+                1,
+            )
+            .expect("upsert local artist");
+        store
+            .upsert_artists(
+                &remote.server.id,
+                std::slice::from_ref(&remote_artist),
+                false,
+                1,
+            )
+            .expect("upsert remote artist");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    connection
+        .execute_batch(
+            "
+            DROP TABLE item_favorite_overrides;
+            PRAGMA user_version = 21;
+            ",
+        )
+        .expect("simulate schema twenty one");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(store.schema_version().expect("schema version"), 22);
+    let local_override_count = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM item_favorite_overrides
+            WHERE server_id = ?1
+            ",
+            rusqlite::params![local.server.id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("local override count");
+    let remote_override_count = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM item_favorite_overrides
+            WHERE server_id = ?1
+            ",
+            rusqlite::params![remote.server.id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("remote override count");
+    assert_eq!(local_override_count, 3);
+    assert_eq!(remote_override_count, 0);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
 fn schema_seventeen_resets() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
@@ -631,7 +738,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -654,12 +761,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 22)
+        .pragma_update(None, "user_version", 23)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -694,11 +801,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 21);
+        assert_eq!(store.schema_version().expect("schema version"), 22);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 21);
+    assert_eq!(store.schema_version().expect("schema version"), 22);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -894,20 +1001,20 @@ fn schema_track_commit() {
 }
 
 #[test]
-fn schema_local_delta_preserves_favorite_flags() {
+fn schema_local_delta_applies_favorite_overrides() {
     let case = StoreCase::with_server_id("local:server:favorites");
     let mut album = album(1);
-    album.favorite = true;
+    album.favorite = false;
     let mut changed_track = track(10, &album);
-    changed_track.favorite = true;
+    changed_track.favorite = false;
     let mut metadata_track = track(11, &album);
-    metadata_track.favorite = true;
+    metadata_track.favorite = false;
     let mut library_artist = artist(20, None);
     library_artist.id = ArtistId::new("local:artist:favorites-artist");
-    library_artist.favorite = true;
+    library_artist.favorite = false;
     let mut album_artist = artist(21, None);
     album_artist.id = ArtistId::new("local:album-artist:favorites-artist");
-    album_artist.favorite = true;
+    album_artist.favorite = false;
     let first_generation = case.start_sync("begin first sync");
     case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
         .expect("upsert album");
@@ -932,6 +1039,26 @@ fn schema_local_delta_preserves_favorite_flags() {
     )
     .expect("upsert album artist");
     case.finish_sync(first_generation, "complete first sync");
+    case.set_album_favorite_for_owner(&case.id, &album.id, true, SourceFeatureOwner::Store)
+        .expect("favorite album override");
+    case.set_track_favorite_for_owner(&case.id, &changed_track.id, true, SourceFeatureOwner::Store)
+        .expect("favorite changed track override");
+    case.set_track_favorite_for_owner(
+        &case.id,
+        &metadata_track.id,
+        true,
+        SourceFeatureOwner::Store,
+    )
+    .expect("favorite metadata track override");
+    case.set_artist_favorite_for_owner(
+        &case.id,
+        &library_artist.id,
+        true,
+        SourceFeatureOwner::Store,
+    )
+    .expect("favorite artist override");
+    case.set_artist_favorite_for_owner(&case.id, &album_artist.id, true, SourceFeatureOwner::Store)
+        .expect("favorite album artist override");
 
     let mut incoming_album = album.clone();
     incoming_album.favorite = false;
@@ -3890,12 +4017,12 @@ fn remote_track_selected_art_prefers_album_cover() {
     .expect("save provider cover row");
     assert!(
         !case
-            .selected_provider_cover_cache_missing(&case.id)
+            .selected_source_cover_cache_missing(&case.id)
             .expect("cover ready")
     );
     fs::remove_file(&cover_path).expect("remove provider cover");
     assert!(
-        case.selected_provider_cover_cache_missing(&case.id)
+        case.selected_source_cover_cache_missing(&case.id)
             .expect("cover missing")
     );
 }

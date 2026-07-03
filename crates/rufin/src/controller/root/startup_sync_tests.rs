@@ -6,12 +6,12 @@ use super::{
     StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
     load_runtime_snapshot, load_snapshot, prefetch_home_section, promote_prefetched_home_section,
     refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-    refresh_playlist_pages, sync_local_provider_outcome,
-    sync_local_provider_outcome_with_stress_multiplier, sync_local_provider_with_events,
-    sync_page_finished, sync_provider, sync_provider_outcome,
-    sync_provider_outcome_with_cancellation, sync_provider_with_events,
+    refresh_playlist_pages, sync_local_source_outcome,
+    sync_local_source_outcome_with_stress_multiplier, sync_local_source_with_events,
+    sync_page_finished, sync_source, sync_source_outcome, sync_source_outcome_with_cancellation,
+    sync_source_with_events,
 };
-use ::test_support::{FakeProvider, FakeScale};
+use ::test_support::{FakeScale, FakeSource};
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
@@ -23,10 +23,9 @@ use playback::PlaybackState;
 use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
 use source::{
-    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
-    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SearchResults,
-    StreamDescriptor,
+    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicSource,
+    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults, SourceError,
+    SourceIdentity, SourceResult, SourceSession, StreamDescriptor,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -198,7 +197,7 @@ pub(in crate::controller) fn startup_activate_token() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("jellyfin:server:new");
-    let session = ProviderSession {
+    let session = SourceSession {
         server: ServerIdentity {
             id: server_id.clone(),
             provider: "jellyfin".to_string(),
@@ -256,7 +255,7 @@ pub(in crate::controller) fn startup_persist_server() {
         AppController::bootstrap_memory_for_test();
     let secrets: Arc<dyn SecretStore> = Arc::new(SaveFailingSecretStore);
     let server_id = ServerId::new("jellyfin:server:new");
-    let session = ProviderSession {
+    let session = SourceSession {
         server: ServerIdentity {
             id: server_id,
             provider: "jellyfin".to_string(),
@@ -316,7 +315,7 @@ pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() 
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("jellyfin:server:foreground");
-    let session = ProviderSession {
+    let session = SourceSession {
         server: ServerIdentity {
             id: server_id.clone(),
             provider: "jellyfin".to_string(),
@@ -909,10 +908,10 @@ pub(in crate::controller) fn startup_track_deleted() {
         .expect("save local server");
     let runtime = Runtime::new().expect("runtime");
     let (events, _receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
         .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -959,7 +958,7 @@ pub(in crate::controller) fn startup_track_deleted() {
     let manifest = store
         .with_store(|store| store.load_local_manifest(&local.server.id))
         .expect("manifest");
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
@@ -969,7 +968,7 @@ pub(in crate::controller) fn startup_track_deleted() {
     assert_eq!(warm.manifest_scan().deleted_track_ids.len(), 1);
 
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &warm,
@@ -1018,12 +1017,11 @@ pub(in crate::controller) fn startup_local_stress_multiplier_writes_playable_dup
             store.set_active_server(&local.server.id)
         })
         .expect("save local server");
-    let provider =
-        LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
-            .expect("local provider");
+    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
+        .expect("local provider");
 
     runtime
-        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+        .block_on(sync_local_source_outcome_with_stress_multiplier(
             &store,
             &local.server.id,
             &provider,
@@ -1092,14 +1090,14 @@ pub(in crate::controller) fn startup_local_stress_multiplier_writes_playable_dup
         .expect("manifest");
     assert_eq!(manifest.len(), 2);
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
     )
     .expect("warm local provider");
     let unchanged = runtime
-        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+        .block_on(sync_local_source_outcome_with_stress_multiplier(
             &store,
             &local.server.id,
             &warm,
@@ -1113,7 +1111,7 @@ pub(in crate::controller) fn startup_local_stress_multiplier_writes_playable_dup
     assert_eq!(warm_page.total, 6);
 
     runtime
-        .block_on(sync_local_provider_outcome_with_stress_multiplier(
+        .block_on(sync_local_source_outcome_with_stress_multiplier(
             &store,
             &local.server.id,
             &warm,
@@ -1155,10 +1153,10 @@ pub(in crate::controller) fn startup_advance_generation() {
         .expect("save local server");
     let runtime = Runtime::new().expect("runtime");
     let (events, _receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
         .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -1210,7 +1208,7 @@ pub(in crate::controller) fn startup_advance_generation() {
         cached_genres.items[0].image_ref.is_some(),
         "genre should have a derived collection cover ref"
     );
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
@@ -1219,7 +1217,7 @@ pub(in crate::controller) fn startup_advance_generation() {
     assert!(!warm.manifest_scan().library_changed);
 
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &warm,
@@ -1293,7 +1291,7 @@ pub(in crate::controller) fn local_sync_post_sync_work_matches_manifest_change()
         let manifest = store
             .with_store(|store| store.load_local_manifest(&local.server.id))
             .expect("manifest");
-        let warm = LocalProvider::from_roots_with_manifest_cache(
+        let warm = LocalSource::from_roots_with_manifest_cache(
             vec![root.clone()],
             local.server.clone(),
             manifest,
@@ -1303,7 +1301,7 @@ pub(in crate::controller) fn local_sync_post_sync_work_matches_manifest_change()
         let runtime = Runtime::new().expect("runtime");
 
         let outcome = runtime
-            .block_on(sync_local_provider_outcome(&store, &local.server.id, &warm))
+            .block_on(sync_local_source_outcome(&store, &local.server.id, &warm))
             .expect("local sync");
 
         assert_eq!(outcome.delta.is_empty(), !changed, "{label}");
@@ -1329,10 +1327,10 @@ pub(in crate::controller) fn startup_repairs_damaged_local_image_rows() {
         .expect("save local server");
     let runtime = Runtime::new().expect("runtime");
     let (events, _receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
         .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -1404,7 +1402,7 @@ pub(in crate::controller) fn startup_repairs_damaged_local_image_rows() {
     let manifest = store
         .with_store(|store| store.load_local_manifest(&local.server.id))
         .expect("manifest");
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
@@ -1412,7 +1410,7 @@ pub(in crate::controller) fn startup_repairs_damaged_local_image_rows() {
     .expect("warm local provider");
     assert!(!warm.manifest_scan().library_changed);
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &warm,
@@ -1531,7 +1529,7 @@ pub(in crate::controller) fn startup_repairs_local_aggregates_from_retained_trac
         })
         .expect("verify damaged retained track shape");
 
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
@@ -1541,7 +1539,7 @@ pub(in crate::controller) fn startup_repairs_local_aggregates_from_retained_trac
     let runtime = Runtime::new().expect("runtime");
     let (events, _receiver) = channel();
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &warm,
@@ -1602,10 +1600,10 @@ fn seed_cached_local_source(label: &str) -> (StoreHandle, SavedServer, PathBuf, 
         .expect("save local server");
     let runtime = Runtime::new().expect("runtime");
     let (seed_events, _seed_receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
         .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -1640,10 +1638,10 @@ pub(in crate::controller) fn startup_change_audio() {
         .expect("save local server");
     let runtime = Runtime::new().expect("runtime");
     let (events, _receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.server.clone())
         .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -1662,7 +1660,7 @@ pub(in crate::controller) fn startup_change_audio() {
     let manifest = store
         .with_store(|store| store.load_local_manifest(&local.server.id))
         .expect("manifest");
-    let warm = LocalProvider::from_roots_with_manifest_cache(
+    let warm = LocalSource::from_roots_with_manifest_cache(
         vec![root.clone()],
         local.server.clone(),
         manifest,
@@ -1671,7 +1669,7 @@ pub(in crate::controller) fn startup_change_audio() {
     assert!(!warm.manifest_scan().library_changed);
 
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &warm,
@@ -1754,13 +1752,13 @@ pub(in crate::controller) fn startup_removing_cache() {
         .expect("save servers");
     let runtime = Runtime::new().expect("runtime");
     let (seed_events, _seed_receiver) = channel();
-    let cold = LocalProvider::from_roots_with_identity(
+    let cold = LocalSource::from_roots_with_identity(
         vec![first.clone(), second.clone()],
         local.server.clone(),
     )
     .expect("cold local provider");
     runtime
-        .block_on(sync_local_provider_with_events(
+        .block_on(sync_local_source_with_events(
             &store,
             &local.server.id,
             &cold,
@@ -2060,8 +2058,7 @@ pub(in crate::controller) fn startup_sync_total() {
     assert!(sync_page_finished(500, 1_000, 1_000));
 }
 struct CancellingAlbumProvider {
-    identity: ProviderIdentity,
-    capabilities: ProviderCapabilities,
+    identity: SourceIdentity,
     album: Album,
     cancellation: CancellationToken,
 }
@@ -2069,34 +2066,13 @@ struct CancellingAlbumProvider {
 impl CancellingAlbumProvider {
     fn new(cancellation: CancellationToken) -> Self {
         Self {
-            identity: ProviderIdentity {
+            identity: SourceIdentity {
                 server: ServerIdentity {
                     id: ServerId::new("test:server:cancel"),
                     provider: "test".to_string(),
                     name: "Cancel Test".to_string(),
                     base_url: "http://cancel.example.test".to_string(),
                 },
-            },
-            capabilities: ProviderCapabilities {
-                albums: true,
-                tracks: false,
-                artists: false,
-                album_artists: false,
-                genres: false,
-                playlists: false,
-                favorites: false,
-                lyrics: false,
-                playback_reporting: false,
-                playlist_mutations: false,
-                playlist_delete: false,
-                favorite_mutations: false,
-                auto_dj: false,
-                random_tracks: false,
-                random_played_filter: false,
-                search: false,
-                image_metadata: false,
-                music_folders: false,
-                folder_browsing: false,
             },
             album: remote_album_with_image_ref(ImageRef::new("test:cover:one", None)),
             cancellation,
@@ -2105,86 +2081,79 @@ impl CancellingAlbumProvider {
 }
 
 #[async_trait(?Send)]
-impl MusicProvider for CancellingAlbumProvider {
-    fn identity(&self) -> &ProviderIdentity {
+impl MusicSource for CancellingAlbumProvider {
+    fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
-    fn capabilities(&self) -> &ProviderCapabilities {
-        &self.capabilities
+    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
-        Err(ProviderError::Unsupported("cancel test"))
-    }
-
-    async fn albums(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
+    async fn albums(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
         self.cancellation.cancel();
         Ok(PagedResponse::new(vec![self.album.clone()], 1))
     }
 
-    async fn album_detail(&self, _album_id: &AlbumId) -> ProviderResult<AlbumDetail> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn album_detail(&self, _album_id: &AlbumId) -> SourceResult<AlbumDetail> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn tracks(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
-        Err(ProviderError::Other(
+    async fn tracks(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
+        Err(SourceError::Other(
             "tracks fetched after cancellation".to_string(),
         ))
     }
 
-    async fn artists(
-        &self,
-        _request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<domain::Artist>> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn artists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<domain::Artist>> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
     async fn album_artists(
         &self,
         _request: PagedRequest,
-    ) -> ProviderResult<PagedResponse<domain::Artist>> {
-        Err(ProviderError::Unsupported("cancel test"))
+    ) -> SourceResult<PagedResponse<domain::Artist>> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn genres(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn genres(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn playlists(&self, _request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn playlists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn playlist_detail(&self, _playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn playlist_detail(&self, _playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn genre_detail(&self, _genre_id: &GenreId) -> ProviderResult<GenreDetail> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn genre_detail(&self, _genre_id: &GenreId) -> SourceResult<GenreDetail> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn track(&self, _track_id: &TrackId) -> ProviderResult<Track> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn track(&self, _track_id: &TrackId) -> SourceResult<Track> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn stream(&self, _track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn stream(&self, _track_id: &TrackId) -> SourceResult<StreamDescriptor> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn search(&self, _query: &str) -> ProviderResult<SearchResults> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn search(&self, _query: &str) -> SourceResult<SearchResults> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
     async fn image_metadata(
         &self,
         _item_id: &str,
         _kind: ImageKind,
-    ) -> ProviderResult<ImageMetadata> {
-        Err(ProviderError::Unsupported("cancel test"))
+    ) -> SourceResult<ImageMetadata> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 
-    async fn image_bytes(&self, _request: ImageRequest) -> ProviderResult<ImageBytes> {
-        Err(ProviderError::Unsupported("cancel test"))
+    async fn image_bytes(&self, _request: ImageRequest) -> SourceResult<ImageBytes> {
+        Err(SourceError::Unsupported("cancel test"))
     }
 }
 
@@ -2209,7 +2178,7 @@ pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
         .expect("save server");
 
     let error = runtime
-        .block_on(sync_provider_outcome_with_cancellation(
+        .block_on(sync_source_outcome_with_cancellation(
             &store,
             &server_id,
             &provider,
@@ -2237,7 +2206,7 @@ pub(in crate::controller) fn startup_large_window() {
 pub(in crate::controller) fn startup_track_page() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let server_id = provider.identity().server.id.clone();
     let saved = SavedServer {
         server: provider.identity().server.clone(),
@@ -2250,7 +2219,7 @@ pub(in crate::controller) fn startup_track_page() {
         .with_store(|store| store.save_server(&saved))
         .expect("save server");
     runtime
-        .block_on(sync_provider(&store, &server_id, &provider))
+        .block_on(sync_source(&store, &server_id, &provider))
         .expect("sync provider");
     let first_page = store
         .with_store(|store| store.load_tracks(&server_id, 0, 1))
@@ -2266,7 +2235,7 @@ pub(in crate::controller) fn startup_track_page() {
 pub(in crate::controller) fn startup_emit_timing() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let server_id = provider.identity().server.id.clone();
     let saved = SavedServer {
         server: provider.identity().server.clone(),
@@ -2281,7 +2250,7 @@ pub(in crate::controller) fn startup_emit_timing() {
     let (events, receiver) = channel();
 
     runtime
-        .block_on(sync_provider_with_events(
+        .block_on(sync_source_with_events(
             &store, &server_id, &provider, events,
         ))
         .expect("sync provider");
@@ -2621,7 +2590,7 @@ pub(in crate::controller) fn startup_ignore_ready() {
     let stale_age = Some(STARTUP_CACHE_STALE_SECONDS + 60);
 
     let local_unconfigured = source_sync_readiness(SourceSyncReadinessInput {
-        provider: LOCAL_PROVIDER_ID,
+        provider: LOCAL_SOURCE_ID,
         cached_item_count: 42,
         sync_status: Some("idle"),
         sync_completed_age_seconds: stale_age,
@@ -2634,7 +2603,7 @@ pub(in crate::controller) fn startup_ignore_ready() {
     assert!(local_unconfigured.artwork_fresh);
 
     let local_stale = source_sync_readiness(SourceSyncReadinessInput {
-        provider: LOCAL_PROVIDER_ID,
+        provider: LOCAL_SOURCE_ID,
         cached_item_count: 42,
         sync_status: Some("idle"),
         sync_completed_age_seconds: stale_age,
@@ -2650,7 +2619,7 @@ pub(in crate::controller) fn startup_ignore_ready() {
     assert!(local_stale.artwork_fresh);
 
     let local_running = source_sync_readiness(SourceSyncReadinessInput {
-        provider: LOCAL_PROVIDER_ID,
+        provider: LOCAL_SOURCE_ID,
         cached_item_count: 42,
         sync_status: Some("running"),
         sync_completed_age_seconds: Some(0),
@@ -2680,7 +2649,7 @@ pub(in crate::controller) fn startup_ignore_ready() {
     assert_eq!(remote_stale.startup_delay_ms, Some(8_000));
 
     let local_missing_artwork = source_sync_readiness(SourceSyncReadinessInput {
-        provider: LOCAL_PROVIDER_ID,
+        provider: LOCAL_SOURCE_ID,
         cached_item_count: 42,
         sync_status: Some("idle"),
         sync_completed_age_seconds: stale_age,
@@ -4583,7 +4552,7 @@ pub(in crate::controller) fn external_album_refs() {
 pub(in crate::controller) fn startup_remote_cache() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -4595,7 +4564,7 @@ pub(in crate::controller) fn startup_remote_cache() {
         .with_store(|store| store.save_server(&saved))
         .expect("save server");
     runtime
-        .block_on(sync_provider(&store, &saved.server.id, &provider))
+        .block_on(sync_source(&store, &saved.server.id, &provider))
         .expect("sync remote cache");
 
     assert!(initial_cover_cache_required(&store, &saved.server.id));
@@ -4605,7 +4574,7 @@ pub(in crate::controller) fn startup_remote_cache() {
 pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -4620,11 +4589,11 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         })
         .expect("save server");
     runtime
-        .block_on(sync_provider(&store, &saved.server.id, &provider))
+        .block_on(sync_source(&store, &saved.server.id, &provider))
         .expect("seed remote cache");
 
     let noop = runtime
-        .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
+        .block_on(sync_source_outcome(&store, &saved.server.id, &provider))
         .expect("same remote sync");
     assert!(noop.delta.is_empty());
     assert!(!noop.post_sync_work);
@@ -4655,7 +4624,7 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         .expect("seed stale album");
 
     let changed = runtime
-        .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
+        .block_on(sync_source_outcome(&store, &saved.server.id, &provider))
         .expect("changed remote sync");
     assert!(changed.delta.albums.fields.contains(&stale_album.id));
     assert!(changed.post_sync_work);
@@ -4670,7 +4639,7 @@ fn startup_assert_ref(image_ref: Option<&ImageRef>) {
 pub(in crate::controller) fn home_refresh_replace() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -4742,7 +4711,7 @@ pub(in crate::controller) fn home_refresh_replace() {
 pub(in crate::controller) fn playlist_refresh_replace() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -4824,7 +4793,7 @@ pub(in crate::controller) fn playlist_refresh_replace() {
 pub(in crate::controller) fn startup_replace_section() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -4967,7 +4936,7 @@ pub(in crate::controller) fn startup_keep_blocking() {
 pub(in crate::controller) fn startup_home_unchanged() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
@@ -5033,7 +5002,7 @@ pub(in crate::controller) fn startup_home_unchanged() {
 pub(in crate::controller) fn startup_promote_prefetch() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
+    let provider = FakeSource::new(FakeScale::Small);
     let saved = SavedServer {
         server: provider.identity().server.clone(),
         user_id: "fake-user".to_string(),
