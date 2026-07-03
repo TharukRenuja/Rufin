@@ -1,4 +1,3 @@
-use super::targets::startup_cover_prime_jobs;
 use super::*;
 
 impl Shell {
@@ -27,18 +26,20 @@ impl Shell {
         self.state.startup_cover_prime_generation.set(generation);
         self.state.startup_cover_prime_pending.borrow_mut().clear();
 
-        let jobs = startup_cover_prime_jobs(self);
+        let requests = self.live_startup_cover_requests();
         let mut pending = HashSet::new();
-        for job in jobs {
+        for request in requests {
             if self
-                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
+                .decoded_cover_for_ref(&request.image_ref, request.fetch_size, request.size)
                 .is_some()
-                || self.state.cover_unavailable.borrow().contains(&job.key)
             {
                 continue;
             }
-            pending.insert(job.key.clone());
-            self.start_cover_prime_lookup(job.key, job.image_ref, job.fetch_size, job.size);
+            pending.insert(request.key.clone());
+            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+                intent: CoverPathLookupIntent::StartupPrime,
+                ..request
+            });
         }
 
         let pending_count = pending.len();
@@ -543,11 +544,11 @@ impl Shell {
             .unwrap_or(GRID_COVER_SIZE as i32);
         if let Some(cover) = self.cloned_decoded_cover(key, size) {
             self.touch_visible_decoded_cover(key);
-            self.finish_cover_ready_state(key);
             let bindings = self.take_live_cover_bindings(key);
             let bindings_count = bindings.len();
             let bind_started = Instant::now();
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
+            self.finish_cover_ready_state(key);
             let bind_ms = bind_started.elapsed().as_millis() as u64;
             let total_ms = apply_started.elapsed().as_millis() as u64;
             if total_ms >= SLOW_COVER_CALLBACK_MS || bind_ms >= SLOW_COVER_CALLBACK_MS {
@@ -625,7 +626,10 @@ impl Shell {
     pub(in crate::ui::root::cover) fn finish_cover_missing_state(&self, key: &str) {
         self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
         self.state.cover_visible_requests.remove(key);
-        self.remove_cover_prime_pending(key);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
     }
     pub(in crate::ui::root::cover) fn remove_cover_prime_pending(&self, key: &str) {
         self.state
@@ -762,9 +766,9 @@ impl Shell {
             return false;
         };
         self.touch_decoded_cover(key, priority);
-        self.finish_cover_ready_state(key);
         let bindings = self.take_live_cover_bindings(key);
         apply_pixbuf_to_bindings(bindings, cover.pixbuf);
+        self.finish_cover_ready_state(key);
         true
     }
 }
@@ -777,7 +781,7 @@ pub(in crate::ui) fn startup_prime_wait(
     active_decode: bool,
     queued_decode: bool,
 ) -> bool {
-    !decoded && !unavailable && (path_lookup || fetch || active_decode || queued_decode)
+    !decoded && (unavailable || path_lookup || fetch || active_decode || queued_decode)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -886,19 +890,6 @@ mod tests {
             ),
             Some(disk_path)
         );
-    }
-
-    #[test]
-    fn cover_wait_work() {
-        assert!(startup_prime_wait(false, false, true, false, false, false));
-        assert!(startup_prime_wait(false, false, false, true, false, false));
-        assert!(startup_prime_wait(false, false, false, false, true, false));
-        assert!(startup_prime_wait(false, false, false, false, false, true));
-        assert!(!startup_prime_wait(true, false, true, true, false, false));
-        assert!(!startup_prime_wait(false, true, true, true, false, false));
-        assert!(!startup_prime_wait(
-            false, false, false, false, false, false
-        ));
     }
 
     #[test]

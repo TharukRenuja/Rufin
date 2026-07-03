@@ -275,12 +275,28 @@ pub(in crate::controller) fn restore_queue(
     server: Option<&ServerIdentity>,
 ) -> Option<QueueEngine> {
     let server = server?;
-    let settings = load_settings_for_server(store, server);
+    let saved = SavedServer {
+        server: server.clone(),
+        user_id: String::new(),
+        username: String::new(),
+        trust_invalid_cert: false,
+        use_jellyfin_instant_mix: false,
+    };
+    let settings = load_settings_for_saved(store, &saved);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
-            cover_art_policy::bind_queue_snapshot(&mut snapshot, &settings);
-            if let Err(error) = queue_album_refs(store, server, &settings, &mut snapshot.entries) {
-                warn!(%error, "failed to normalize queue image refs");
+            match queue_track_refs(store, &saved, &settings, &mut snapshot.entries) {
+                Ok(true) => {
+                    if let Err(error) =
+                        store.with_store(|store| store.save_queue_snapshot(&snapshot))
+                    {
+                        warn!(%error, "failed to persist refreshed queue image refs");
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(%error, "failed to refresh queue image refs");
+                }
             }
             Some(QueueEngine::restore(snapshot))
         }
@@ -596,13 +612,6 @@ pub(in crate::controller) fn load_settings_for_saved(
 ) -> AppSettings {
     settings_for_server(load_settings_from_store(store), &saved.server)
 }
-pub(in crate::controller) fn load_settings_for_server(
-    store: &StoreHandle,
-    server: &ServerIdentity,
-) -> AppSettings {
-    settings_for_server(load_settings_from_store(store), server)
-}
-
 pub(in crate::controller) fn prune_successful_sync_image_cache(
     store: &StoreHandle,
     server_id: &ServerId,

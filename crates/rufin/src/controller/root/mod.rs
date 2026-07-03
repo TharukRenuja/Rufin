@@ -141,8 +141,8 @@ pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_sna
 use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watcher};
 pub(crate) use server_local_access_commands::ServerSettingsInput;
 use source_image_policy::{
-    image_ref_allowed, is_local_album_id, is_local_artist_id, is_local_provider_image_ref,
-    is_local_track_id, scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
+    is_local_album_id, is_local_artist_id, is_local_provider_image_ref, is_local_track_id,
+    scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
 };
 pub(in crate::controller) use source_image_policy::{
     scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
@@ -157,7 +157,7 @@ use source_readiness::{
 use source_readiness::{active_server_needs_sync, active_source_startup_readiness};
 pub(in crate::controller) use source_refs::track_album_refs_with_settings;
 use source_refs::{
-    album_track_refs, home_image_refs, home_local_refs, queue_album_refs, sync_status_text,
+    album_track_refs, home_image_refs, home_local_refs, queue_track_refs, sync_status_text,
     track_album_refs,
 };
 pub(crate) use source_refs::{grouped_cover_refs_for_items, track_cover_refs_for_items};

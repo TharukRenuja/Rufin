@@ -106,6 +106,7 @@ impl Shell {
                     let bindings_count = bindings.len();
                     let bind_started = Instant::now();
                     apply_pixbuf_to_bindings(bindings, pixbuf);
+                    shell.finish_cover_ready_state(&key);
                     let bind_ms = bind_started.elapsed().as_millis() as u64;
                     let total_ms = callback_started.elapsed().as_millis() as u64;
                     if total_ms >= SLOW_COVER_CALLBACK_MS || bind_ms >= SLOW_COVER_CALLBACK_MS {
@@ -137,7 +138,6 @@ impl Shell {
     }
     pub(in crate::ui) fn finish_cover_decode_success(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
-        self.finish_cover_ready_state(key);
     }
     pub(in crate::ui) fn finish_cover_decode_failure(
         self: &Rc<Self>,
@@ -206,6 +206,26 @@ impl Shell {
             all_bindings.remove(key);
         }
         live
+    }
+    pub(in crate::ui::root::cover) fn live_startup_cover_requests(
+        &self,
+    ) -> Vec<CoverPathLookupRequest> {
+        let mut all_bindings = self.state.cover_bindings.borrow_mut();
+        let mut seen = HashSet::new();
+        let mut requests = Vec::new();
+        all_bindings.retain(|_, bindings| {
+            bindings.retain(|binding| binding.tile.is_current_generation(binding.generation));
+            for binding in bindings.iter() {
+                let Some(request) = &binding.request else {
+                    continue;
+                };
+                if seen.insert(request.key.clone()) {
+                    requests.push(request.clone());
+                }
+            }
+            !bindings.is_empty()
+        });
+        requests
     }
     pub(in crate::ui) fn remember_decoded_cover(
         &self,

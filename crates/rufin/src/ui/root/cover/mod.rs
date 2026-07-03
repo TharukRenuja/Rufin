@@ -57,21 +57,6 @@ impl Shell {
     }
 }
 
-pub(in crate::ui::root::cover) fn route_visible_cover_targets(
-    shell: &Shell,
-    route: &Route,
-) -> Vec<CoverWarmTarget> {
-    visible_cover_window(shell, route)
-        .refs
-        .into_iter()
-        .map(|cover_ref| CoverWarmTarget {
-            image_ref: cover_ref.image_ref,
-            fetch_size: cover_ref.fetch_size,
-            size: cover_ref.size,
-        })
-        .collect()
-}
-
 fn visible_cover_window(shell: &Shell, route: &Route) -> VisibleCoverWindow {
     match route {
         Route::Home => home_visible_cover_window(shell),
@@ -350,6 +335,7 @@ pub(in crate::ui) struct CoverBinding {
     pub(in crate::ui) tile: ArtworkTileWeak,
     pub(in crate::ui) generation: u64,
     pub(in crate::ui) clear_on_failure: bool,
+    pub(in crate::ui::root::cover) request: Option<CoverPathLookupRequest>,
 }
 
 #[derive(Clone)]

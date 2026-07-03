@@ -286,7 +286,6 @@ pub(in crate::ui) const STARTUP_MAIN_LOOP_STALL_LOG_MS: u64 = 100;
 pub(in crate::ui) const POST_REVEAL_MAIN_LOOP_STALL_WARN_MS: u64 = 1_000;
 pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
-pub(in crate::ui) const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
 pub(in crate::ui) const PRIME_TIMEOUT_MS: u64 = 3_000;
 pub(in crate::ui) const PRIME_POLL_MS: u64 = 33;
 pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;

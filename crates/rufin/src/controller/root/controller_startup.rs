@@ -537,17 +537,13 @@ pub(in crate::controller) fn snapshot_queue_refs(
     }
     let mut normalized_entries = original_snapshot.entries.clone();
     let settings = load_settings_for_saved(&context.store, saved);
-    if let Err(error) = queue_album_refs(
-        &context.store,
-        &saved.server,
-        &settings,
-        &mut normalized_entries,
-    ) {
-        warn!(%error, "failed to refresh queue image refs after sync");
-        return;
-    }
-    if normalized_entries == original_snapshot.entries {
-        return;
+    match queue_track_refs(&context.store, saved, &settings, &mut normalized_entries) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            warn!(%error, "failed to refresh queue image refs after sync");
+            return;
+        }
     }
     let mut queue = match context.queue.lock() {
         Ok(queue) => queue,

@@ -1,4 +1,4 @@
-use domain::{Album, AppSettings, Artist, ImageRef, QueueEntry, Track};
+use domain::{Album, AppSettings, Artist, ImageRef, Track};
 
 use crate::external_activity;
 
@@ -139,35 +139,6 @@ pub fn normalize_artist(artist: &mut Artist, settings: &AppSettings) {
         return;
     }
     normalize_image_ref(&mut artist.image_ref, settings);
-}
-
-pub fn normalize_queue_entry_with_album_ref(
-    entry: &mut QueueEntry,
-    album_image_ref: Option<&ImageRef>,
-    settings: &AppSettings,
-) {
-    normalize_image_ref(&mut entry.image_ref, settings);
-    let weak_album_ref = entry.album_id.as_ref().is_some_and(|album_id| {
-        has_untagged_jellyfin_album_ref(&entry.image_ref, album_id.as_str())
-    }) || replaceable_album_ref(&entry.image_ref, album_image_ref);
-    if (entry.image_ref.is_none() || weak_album_ref)
-        && let Some(image_ref) = album_image_ref
-        && (!is_external_image_ref(image_ref) || cached_refs_enabled(settings))
-    {
-        entry.image_ref = Some(image_ref.clone());
-        return;
-    }
-    if enabled(settings) && weak_album_ref {
-        entry.image_ref = None;
-    }
-    if enabled(settings) && entry.image_ref.is_none() {
-        entry.image_ref = external_album_image_ref(&entry.artist, &entry.album);
-    }
-}
-
-#[cfg(test)]
-fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
-    normalize_queue_entry_with_album_ref(entry, None, settings);
 }
 
 pub fn is_expected_lookup_miss(error: &str) -> bool {
@@ -350,14 +321,10 @@ mod tests {
         cover_art_size_path, json_ids, lastfm_album_image_url, read_bounded,
     };
     use super::{
-        album_art_from_image_ref, enabled, external_album_image_ref, is_expected_lookup_miss,
-        is_external_image_ref, normalize_album, normalize_album_detail, normalize_artist,
-        normalize_queue_entry, normalize_queue_entry_with_album_ref, normalize_track,
+        album_art_from_image_ref, enabled, is_expected_lookup_miss, is_external_image_ref,
+        normalize_album, normalize_album_detail, normalize_artist, normalize_track,
     };
-    use domain::{
-        Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, QueueEntry, QueueEntryId, Track,
-        TrackId,
-    };
+    use domain::{Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, Track, TrackId};
     use serde_json::json;
     use std::io::Cursor;
 
@@ -562,83 +529,6 @@ mod tests {
 
         assert_eq!(tagged_track.image_ref, Some(tagged_ref));
         assert_eq!(local_track.image_ref, Some(local_ref));
-    }
-
-    #[test]
-    fn queue_entry_untagged() {
-        let mut entry =
-            queue_entry_without_cover("Example Track", "Example Artist", "Example Album");
-        entry.album_id = Some(AlbumId::new("jellyfin:album:one"));
-        entry.image_ref = Some(ImageRef::new("jellyfin:album:one", None));
-
-        normalize_queue_entry(
-            &mut entry,
-            &AppSettings {
-                external_metadata_enabled: true,
-                ..AppSettings::default()
-            },
-        );
-
-        let image_ref = entry.image_ref.expect("external album image ref");
-        assert!(is_external_image_ref(&image_ref));
-        assert_eq!(
-            album_art_from_image_ref(&image_ref),
-            Some(super::ExternalAlbumArt {
-                artist: "Example Artist".to_string(),
-                album: "Example Album".to_string(),
-                musicbrainz_release_id: None,
-                musicbrainz_release_group_id: None,
-            })
-        );
-    }
-
-    #[test]
-    fn queue_entry_uses_canonical_album_ref() {
-        let settings = AppSettings {
-            external_metadata_enabled: true,
-            ..AppSettings::default()
-        };
-        let album_ref = external_album_image_ref("未来古代楽団", "忘れじの言の葉/エデンの揺り籃")
-            .expect("album ref");
-        let weak_ref = external_album_image_ref(
-            "未来古代楽団, 安次嶺希和子",
-            "忘れじの言の葉/エデンの揺り籃",
-        )
-        .expect("track artist ref");
-        let mut first = queue_entry_without_cover(
-            "忘れじの言の葉",
-            "未来古代楽団, 安次嶺希和子",
-            "忘れじの言の葉/エデンの揺り籃",
-        );
-        first.image_ref = Some(weak_ref);
-        let mut next = queue_entry_without_cover(
-            "エデンの揺り籃",
-            "未来古代楽団",
-            "忘れじの言の葉/エデンの揺り籃",
-        );
-
-        normalize_queue_entry_with_album_ref(&mut first, Some(&album_ref), &settings);
-        normalize_queue_entry_with_album_ref(&mut next, Some(&album_ref), &settings);
-
-        assert_eq!(first.image_ref, Some(album_ref.clone()));
-        assert_eq!(next.image_ref, Some(album_ref));
-    }
-
-    #[test]
-    fn queue_entry_preserves_direct_track_ref() {
-        let settings = AppSettings {
-            external_metadata_enabled: true,
-            ..AppSettings::default()
-        };
-        let album_ref = ImageRef::new("jellyfin:album:one", Some("album-tag".to_string()));
-        let track_ref = ImageRef::new("jellyfin:track:one", Some("track-tag".to_string()));
-        let mut entry =
-            queue_entry_without_cover("Example Track", "Example Artist", "Example Album");
-        entry.image_ref = Some(track_ref.clone());
-
-        normalize_queue_entry_with_album_ref(&mut entry, Some(&album_ref), &settings);
-
-        assert_eq!(entry.image_ref, Some(track_ref));
     }
 
     #[test]
@@ -852,25 +742,6 @@ mod tests {
             skip_count: None,
             bpm: None,
             moods: Vec::new(),
-        }
-    }
-
-    fn queue_entry_without_cover(title: &str, artist: &str, album: &str) -> QueueEntry {
-        QueueEntry {
-            id: QueueEntryId::new("entry-one"),
-            track_id: TrackId::new("track-one"),
-            album_id: Some(AlbumId::new("album-one")),
-            title: title.to_string(),
-            artist: artist.to_string(),
-            artist_id: None,
-            album: album.to_string(),
-            year: 2011,
-            duration_seconds: 60,
-            favorite: false,
-            image_ref: None,
-            local_path: None,
-            source_format: None,
-            origin: None,
         }
     }
 
