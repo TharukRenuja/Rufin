@@ -152,39 +152,58 @@ pub(in crate::controller) fn home_local_refs(
     track_album_refs(store, saved, &mut section.tracks, &albums)
 }
 
-pub(in crate::controller) fn queue_album_refs(
+pub(in crate::controller) fn queue_track_refs(
     store: &StoreHandle,
-    server: &ServerIdentity,
+    saved: &SavedServer,
     settings: &AppSettings,
     entries: &mut [QueueEntry],
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if entries.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
-    let missing_album_ids = entries
-        .iter()
-        .filter_map(|entry| entry.album_id.clone())
-        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
-            if !ids.iter().any(|existing| existing == &album_id) {
-                ids.push(album_id);
+    let track_ids = entries.iter().map(|entry| entry.track_id.clone()).fold(
+        Vec::<TrackId>::new(),
+        |mut ids, track_id| {
+            if !ids.iter().any(|existing| existing == &track_id) {
+                ids.push(track_id);
             }
             ids
-        });
-    if missing_album_ids.is_empty() {
-        return Ok(());
+        },
+    );
+    if track_ids.is_empty() {
+        return Ok(false);
     }
-    let mut image_refs =
-        store.with_store(|store| store.load_album_image_refs(&server.id, &missing_album_ids))?;
-    image_refs.retain(|_, image_ref| image_ref_allowed(server, image_ref));
+    let mut tracks = store.with_store_fast(|store| {
+        let mut tracks = Vec::new();
+        for track_id in &track_ids {
+            if let Some(track) = store.load_track(&saved.server.id, track_id)? {
+                tracks.push(track);
+            }
+        }
+        Ok::<_, StoreError>(tracks)
+    })?;
+    if tracks.is_empty() {
+        return Ok(false);
+    }
+
+    scrub_selected_track_image_refs(saved, settings, &mut tracks);
+    cover_art_policy::bind_tracks(&mut tracks, settings);
+    track_album_refs_with_settings(store, saved, settings, &mut tracks, &[])?;
+
+    let image_refs = tracks
+        .into_iter()
+        .map(|track| (track.id, track.image_ref))
+        .collect::<HashMap<_, _>>();
+    let mut changed = false;
     for entry in entries {
-        let Some(album_id) = &entry.album_id else {
-            continue;
-        };
-        if let Some(image_ref) = image_refs.get(album_id) {
-            cover_art_policy::bind_queue_entry_with_album_ref(entry, Some(image_ref), settings);
+        if let Some(image_ref) = image_refs.get(&entry.track_id)
+            && entry.image_ref != *image_ref
+        {
+            entry.image_ref = image_ref.clone();
+            changed = true;
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 pub(in crate::controller) fn push_unique_cover_ref(

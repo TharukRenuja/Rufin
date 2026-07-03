@@ -3166,6 +3166,56 @@ pub(in crate::controller) fn restored_queue_uses_canonical_external_album_ref() 
 }
 
 #[test]
+pub(in crate::controller) fn restored_queue_refreshes_stale_ref_from_track_projection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let album_ref = ImageRef::new(
+        "navidrome:cover:al-album-one",
+        Some("album-tag".to_string()),
+    );
+    let stale_queue_ref = ImageRef::new(
+        "navidrome:cover:mf-stale-track-one",
+        Some("stale-tag".to_string()),
+    );
+    let album = remote_album_with_image_ref(album_ref.clone());
+    let mut track = library_track(
+        1,
+        Some(ArtistId::new("jellyfin:artist:one")),
+        album.id.clone(),
+        "Example Artist",
+        &[],
+    );
+    track.album = album.title.clone();
+    track.image_ref = Some(album_ref.clone());
+    seed_cached_library(
+        &store,
+        &remote,
+        std::slice::from_ref(&album),
+        std::slice::from_ref(&track),
+        &[],
+    );
+    store
+        .with_store(|store| {
+            let mut queue = QueueEngine::new(remote.server.id.clone());
+            queue.play_now(&track);
+            let mut snapshot = queue.snapshot();
+            snapshot.entries[0].image_ref = Some(stale_queue_ref);
+            store.save_queue_snapshot(&snapshot)
+        })
+        .expect("seed stale remote queue");
+
+    let restored = restore_queue(&store, Some(&remote.server)).expect("restore queue");
+    let queue = restored.snapshot();
+    assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&album_ref));
+
+    let persisted = store
+        .with_store(|store| store.load_queue_snapshot(&remote.server.id))
+        .expect("load persisted queue")
+        .expect("persisted queue");
+    assert_eq!(persisted.entries[0].image_ref.as_ref(), Some(&album_ref));
+}
+
+#[test]
 pub(in crate::controller) fn sync_refreshes_queue() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();

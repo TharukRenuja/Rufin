@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use domain::{QueueEntry, QueueEntryId, RightSidebarMode, Route, format_duration};
+use domain::{ImageRef, QueueEntry, QueueEntryId, RightSidebarMode, Route, format_duration};
 use gtk::{gio, glib};
 
 use crate::controller::AppController;
@@ -48,6 +48,7 @@ pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
 pub(in crate::ui::root) struct QueuePanelRenderState {
     filter: String,
     row_ids: Vec<QueueEntryId>,
+    row_image_refs: Vec<Option<ImageRef>>,
     row_indices: Vec<usize>,
     row_count: usize,
     current_row: Option<usize>,
@@ -415,6 +416,7 @@ impl QueuePanelRenderState {
     fn same_rows_as(&self, next: &Self) -> bool {
         self.filter == next.filter
             && self.row_ids == next.row_ids
+            && self.row_image_refs == next.row_image_refs
             && self.row_count == next.row_count
             && self.show_header == next.show_header
             && self.empty_text == next.empty_text
@@ -430,6 +432,7 @@ fn queue_panel_render_state(
     let has_filter = !queue_filter.is_empty();
     let mut queue_has_entries = false;
     let mut row_ids = Vec::new();
+    let mut row_image_refs = Vec::new();
     let mut row_indices = Vec::new();
     let mut row_count = 0usize;
     let mut current_row = None;
@@ -448,6 +451,7 @@ fn queue_panel_render_state(
                     current_row = Some(row_count);
                 }
                 row_ids.push(entry.id.clone());
+                row_image_refs.push(entry.image_ref.clone());
                 row_indices.push(entry_index);
                 row_count += 1;
             }
@@ -458,6 +462,7 @@ fn queue_panel_render_state(
                     current_row = Some(entry_index);
                 }
                 row_ids.push(entry.id.clone());
+                row_image_refs.push(entry.image_ref.clone());
                 row_indices.push(entry_index);
             }
         }
@@ -473,6 +478,7 @@ fn queue_panel_render_state(
         filter: queue_filter.to_string(),
         show_header: row_count != 0,
         row_ids,
+        row_image_refs,
         row_indices,
         row_count,
         current_row,

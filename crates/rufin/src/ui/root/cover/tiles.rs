@@ -105,7 +105,14 @@ impl Shell {
             return;
         }
         let generation = outcome.generation;
-        self.register_cover_bindings_for_ref(&key, image_ref, fetch_size, tile, generation);
+        self.register_cover_bindings_for_ref(
+            &key,
+            image_ref,
+            fetch_size,
+            decode_size,
+            tile,
+            generation,
+        );
         let shell = Rc::clone(self);
         let image_ref = image_ref.clone();
         let key_for_request = key.clone();
@@ -308,7 +315,14 @@ impl Shell {
             tile.set_pixbuf_if_current(generation, pixbuf);
             return;
         }
-        self.register_cover_bindings_for_ref(&key, &image_ref, fetch_size, tile, generation);
+        self.register_cover_bindings_for_ref(
+            &key,
+            &image_ref,
+            fetch_size,
+            decode_size,
+            tile,
+            generation,
+        );
         self.start_cached_cover_path_lookup(CoverPathLookupRequest {
             key,
             image_ref,
@@ -365,17 +379,31 @@ impl Shell {
         primary_key: &str,
         image_ref: &ImageRef,
         fetch_size: u32,
+        decode_size: i32,
         tile: &ArtworkTile,
         generation: u64,
     ) {
+        let request = CoverPathLookupRequest {
+            key: primary_key.to_string(),
+            image_ref: image_ref.clone(),
+            fetch_size,
+            size: decode_size,
+            intent: CoverPathLookupIntent::StartupPrime,
+        };
         let mut seen = HashSet::new();
         for key in self.cover_cache_candidate_keys(image_ref, fetch_size) {
             let clear_on_failure = key == primary_key;
-            self.register_cover_binding(&key, tile, generation, clear_on_failure);
+            self.register_cover_binding(
+                &key,
+                tile,
+                generation,
+                clear_on_failure,
+                (key == primary_key).then_some(request.clone()),
+            );
             seen.insert(key);
         }
         if !seen.contains(primary_key) {
-            self.register_cover_binding(primary_key, tile, generation, true);
+            self.register_cover_binding(primary_key, tile, generation, true, Some(request));
         }
     }
 
@@ -385,6 +413,7 @@ impl Shell {
         tile: &ArtworkTile,
         generation: u64,
         clear_on_failure: bool,
+        request: Option<CoverPathLookupRequest>,
     ) {
         let mut cover_bindings = self.state.cover_bindings.borrow_mut();
         let bindings = cover_bindings.entry(key.to_string()).or_default();
@@ -393,6 +422,7 @@ impl Shell {
             tile: tile.downgrade(),
             generation,
             clear_on_failure,
+            request,
         });
     }
 }

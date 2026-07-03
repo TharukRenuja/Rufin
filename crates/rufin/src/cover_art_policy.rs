@@ -1,6 +1,5 @@
 use domain::{
-    Album, AppSettings, Artist, Genre, HomeSection, ImageRef, Mood, Playlist, QueueEntry,
-    QueueSnapshot, SmartPlaylist, Track,
+    Album, AppSettings, Artist, Genre, HomeSection, ImageRef, Mood, Playlist, SmartPlaylist, Track,
 };
 use source::{PlaylistDetail, SearchResults};
 
@@ -76,22 +75,6 @@ pub fn selected_track_artwork(
     external_metadata::normalize_track_with_album_ref(&mut track, album_image_ref, settings);
     selected_track_ref(
         track.image_ref,
-        original_ref.as_ref(),
-        album_image_ref,
-        settings,
-    )
-}
-
-pub fn selected_queue_artwork(
-    entry: &QueueEntry,
-    album_image_ref: Option<&ImageRef>,
-    settings: &AppSettings,
-) -> SelectedArtwork {
-    let original_ref = entry.image_ref.clone();
-    let mut entry = entry.clone();
-    external_metadata::normalize_queue_entry_with_album_ref(&mut entry, album_image_ref, settings);
-    selected_track_ref(
-        entry.image_ref,
         original_ref.as_ref(),
         album_image_ref,
         settings,
@@ -194,26 +177,6 @@ pub fn bind_search_results(results: &mut SearchResults, settings: &AppSettings) 
     bind_tracks(&mut results.tracks, settings);
     bind_artists(&mut results.artists, settings);
     bind_playlists(&mut results.playlists, settings);
-}
-
-pub fn bind_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSettings) {
-    for entry in &mut snapshot.entries {
-        bind_queue_entry(entry, settings);
-    }
-}
-
-pub fn bind_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) -> SelectedArtwork {
-    bind_queue_entry_with_album_ref(entry, None, settings)
-}
-
-pub fn bind_queue_entry_with_album_ref(
-    entry: &mut QueueEntry,
-    album_image_ref: Option<&ImageRef>,
-    settings: &AppSettings,
-) -> SelectedArtwork {
-    let artwork = selected_queue_artwork(entry, album_image_ref, settings);
-    entry.image_ref = artwork.image_ref.clone();
-    artwork
 }
 
 pub fn bind_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
