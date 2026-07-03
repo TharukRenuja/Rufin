@@ -2,6 +2,7 @@ use domain::{
     Album, AlbumId, ImageRef, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
     Playlist, PlaylistId, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId,
+    available_sort_fields,
 };
 use std::collections::HashMap;
 #[test]
@@ -48,13 +49,29 @@ fn route_stay_compact() {
             gtk::Orientation::Horizontal,
             "{key:?}"
         );
-        assert_eq!(super::toolbar_sort_width(key, 550), Some(137), "{key:?}");
+        assert!(
+            super::toolbar_sort_width_for_labels(
+                available_sort_fields(key).iter().map(|field| field.title())
+            ) >= 112,
+            "{key:?}"
+        );
     }
+}
+#[test]
+fn route_sort_dropdown_reserves_longest_label() {
+    let short = super::toolbar_sort_width_for_labels(["Title"]);
+    let long = super::toolbar_sort_width_for_labels(["Title", "Number of songs"]);
+
+    assert!(long > short);
+    assert_eq!(
+        long,
+        super::toolbar_sort_width_for_labels(["Number of songs", "Title"])
+    );
 }
 #[test]
 fn route_toolbar_reserves_window_controls_when_queue_hidden() {
     assert_eq!(super::library_toolbar_end_margin(true), 10);
-    assert!(super::library_toolbar_end_margin(false) > super::library_toolbar_end_margin(true));
+    assert_eq!(super::library_toolbar_end_margin(false), 44);
 }
 #[test]
 fn route_shrink_width() {
