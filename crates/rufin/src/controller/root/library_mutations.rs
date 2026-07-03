@@ -28,21 +28,32 @@ impl AppController {
                 return;
             };
 
-            if saved.server.provider != "fake" && saved.server.provider != "local" {
-                let result =
-                    provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-                        runtime
-                            .block_on(
-                                provider
-                                    .as_music_provider()
-                                    .set_favorite(item_id.clone(), favorite),
-                            )
-                            .map_err(|error| error.to_string())
-                    });
-                if let Err(error) = result {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                    return;
+            let capabilities = source_capabilities_for_saved(&saved);
+            let Some(owner) = capabilities.favorite_mutations.owner() else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Favorite changes are not supported by the active source.".to_string(),
+                ));
+                return;
+            };
+            match owner {
+                SourceFeatureOwner::Native => {
+                    let result = provider_for_saved(&store, &runtime, &secrets, &saved).and_then(
+                        |provider| {
+                            runtime
+                                .block_on(
+                                    provider
+                                        .as_music_provider()
+                                        .set_favorite(item_id.clone(), favorite),
+                                )
+                                .map_err(|error| error.to_string())
+                        },
+                    );
+                    if let Err(error) = result {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
                 }
+                SourceFeatureOwner::Store => {}
             }
 
             let result = store.with_store(|store| {

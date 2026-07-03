@@ -6,6 +6,8 @@ pub(in crate::controller) fn source_capabilities_for_saved(
     let source_kind = saved.server.provider.as_str();
     let native_playlists = source_kind_has_native_playlists(source_kind);
     let native_playlist_mutations = source_kind_has_native_playlist_mutations(source_kind);
+    let native_favorites = source_kind_has_native_favorites(source_kind);
+    let native_favorite_mutations = source_kind_has_native_favorite_mutations(source_kind);
     let native_music_folders = source_kind_has_native_music_folders(source_kind);
     let native_folder_browsing = source_kind_has_native_folder_browsing(source_kind);
 
@@ -24,13 +26,17 @@ pub(in crate::controller) fn source_capabilities_for_saved(
         smart_playlists: SourceFeatureSupport::store(),
         favorites: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
             SourceFeatureSupport::store()
-        } else {
+        } else if native_favorites {
             SourceFeatureSupport::native()
+        } else {
+            SourceFeatureSupport::Unsupported
         },
         favorite_mutations: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
             SourceFeatureSupport::store()
-        } else {
+        } else if native_favorite_mutations {
             SourceFeatureSupport::native()
+        } else {
+            SourceFeatureSupport::Unsupported
         },
         music_folders: if native_music_folders {
             SourceFeatureSupport::native()
@@ -50,6 +56,20 @@ fn source_kind_has_native_playlists(source_kind: &str) -> bool {
 }
 
 fn source_kind_has_native_playlist_mutations(source_kind: &str) -> bool {
+    matches!(
+        source_kind,
+        "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+    )
+}
+
+fn source_kind_has_native_favorites(source_kind: &str) -> bool {
+    matches!(
+        source_kind,
+        "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+    )
+}
+
+fn source_kind_has_native_favorite_mutations(source_kind: &str) -> bool {
     matches!(
         source_kind,
         "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
