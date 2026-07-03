@@ -233,6 +233,12 @@ scrolledwindow.route-scroll-owner overshoot {
   background: transparent;
 }
 
+.track-toolbar button.library-toolbar-icon-button {
+  min-width: 18px;
+  min-height: 34px;
+  padding: 0;
+}
+
 listview.album-detail-list row,
 listview.album-detail-list row:hover,
 listview.album-detail-list row:selected {
