@@ -81,7 +81,18 @@ where
 }
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
-    start_sync_thread_inner(context, saved, false, false, true);
+    start_sync_thread_inner(context, saved, false, false, SyncPresentation::UserVisible);
+}
+
+pub(in crate::controller) fn start_silent_sync_thread(context: SyncContext, saved: SavedServer) {
+    start_sync_thread_inner(context, saved, false, false, SyncPresentation::Silent);
+}
+
+pub(in crate::controller) fn start_silent_sync_thread_with_completion_snapshot(
+    context: SyncContext,
+    saved: SavedServer,
+) {
+    start_sync_thread_inner(context, saved, false, true, SyncPresentation::Silent);
 }
 
 pub(in crate::controller) fn start_background_sync_thread(
@@ -89,7 +100,7 @@ pub(in crate::controller) fn start_background_sync_thread(
     saved: SavedServer,
 ) {
     if active_server_needs_sync(&context.store, &saved.server.id) {
-        start_sync_thread_inner(context, saved, false, false, false);
+        start_silent_sync_thread(context, saved);
     } else {
         start_cached_active_source_reconciliation_thread(context, saved);
     }
@@ -98,8 +109,9 @@ pub(in crate::controller) fn start_background_sync_thread(
 pub(in crate::controller) fn start_sync_thread_with_snapshots(
     context: SyncContext,
     saved: SavedServer,
+    presentation: SyncPresentation,
 ) {
-    start_sync_thread_inner(context, saved, true, false, true);
+    start_sync_thread_inner(context, saved, true, false, presentation);
 }
 
 pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved: SavedServer) {
@@ -119,7 +131,19 @@ pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved
         ));
         return;
     }
-    start_sync_thread_inner(context, saved, false, true, true);
+    start_sync_thread_inner(context, saved, false, true, SyncPresentation::UserVisible);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::controller) enum SyncPresentation {
+    Silent,
+    UserVisible,
+}
+
+impl SyncPresentation {
+    fn emits_progress(self) -> bool {
+        matches!(self, Self::UserVisible)
+    }
 }
 
 pub(in crate::controller) fn start_sync_thread_inner(
@@ -127,8 +151,9 @@ pub(in crate::controller) fn start_sync_thread_inner(
     saved: SavedServer,
     force_snapshots: bool,
     completion_snapshot: bool,
-    emit_progress: bool,
+    presentation: SyncPresentation,
 ) {
+    let emit_progress = presentation.emits_progress();
     let server_id = saved.server.id.clone();
     let cached_current = sync_target_is_current(&context.store, &server_id)
         && cached_library_exists(&context.store, &server_id);
@@ -141,7 +166,7 @@ pub(in crate::controller) fn start_sync_thread_inner(
                     "Sync already running.".to_string(),
                 ));
             }
-            if force_snapshots {
+            if force_snapshots || completion_snapshot {
                 emit_runtime_snapshot(&context.store, &context.secrets, &context.events);
             }
             return;
@@ -197,7 +222,7 @@ pub(in crate::controller) fn start_sync_thread_inner(
                 generation,
                 prefetch_initial_covers,
                 skip_sync_snapshots,
-                emit_progress,
+                presentation,
                 &cancellation,
             )
         };
@@ -747,10 +772,11 @@ pub(in crate::controller) fn run_sync_job(
     generation: i64,
     prefetch_initial_covers: bool,
     detect_unchanged: bool,
-    emit_progress: bool,
+    presentation: SyncPresentation,
     cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
     check_sync_cancelled(cancellation)?;
+    let emit_progress = presentation.emits_progress();
     let events = emit_progress.then(|| context.events.clone());
     let mut progress = SyncProgressReporter::new(
         events,

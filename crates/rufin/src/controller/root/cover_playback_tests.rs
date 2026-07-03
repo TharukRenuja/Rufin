@@ -208,6 +208,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
                 panic!("known missing cover unexpectedly became ready");
             }
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::SourceSelectionChanged { .. }
             | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::LibraryDelta(_)
             | ControllerEvent::HomeSectionsUpdated { .. }

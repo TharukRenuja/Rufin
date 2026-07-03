@@ -384,16 +384,78 @@ pub(in crate::controller) fn activate_saved_queue(
     context: &QueueActivationContext<'_>,
     saved: &SavedServer,
 ) -> Result<(), String> {
-    let Some((queue_snapshot, player)) = activate_queue_for_saved(
-        context.store,
-        context.queue,
-        context.playback_snapshot,
-        context.auto_dj_enabled,
-        saved,
-    )?
-    else {
+    let Some(activation) = prepare_saved_queue_activation(context, saved)? else {
         return Ok(());
     };
+    apply_prepared_queue_activation(context, activation)
+}
+pub(in crate::controller) struct PreparedQueueActivation {
+    server_id: ServerId,
+    queue: QueueEngine,
+    queue_snapshot: QueueSnapshot,
+    playback_snapshot: PlaybackSnapshot,
+}
+pub(in crate::controller) fn prepare_saved_queue_activation(
+    context: &QueueActivationContext<'_>,
+    saved: &SavedServer,
+) -> Result<Option<PreparedQueueActivation>, String> {
+    let current_server_id = context
+        .queue
+        .lock()
+        .map_err(|_| "queue lock was poisoned".to_string())?
+        .as_ref()
+        .map(|queue| queue.server_id().clone());
+    if current_server_id.as_ref() == Some(&saved.server.id) {
+        return Ok(None);
+    }
+
+    let restored = restore_queue(context.store, Some(&saved.server))
+        .unwrap_or_else(|| QueueEngine::new(saved.server.id.clone()));
+    let queue_snapshot = restored.snapshot();
+    let auto_dj_enabled = context
+        .auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    let playback_snapshot = playback_snapshot_from_queue(
+        Some(&restored),
+        auto_dj_enabled,
+        &load_settings_for_saved(context.store, saved).playback,
+    );
+
+    Ok(Some(PreparedQueueActivation {
+        server_id: saved.server.id.clone(),
+        queue: restored,
+        queue_snapshot,
+        playback_snapshot,
+    }))
+}
+pub(in crate::controller) fn apply_prepared_queue_activation(
+    context: &QueueActivationContext<'_>,
+    activation: PreparedQueueActivation,
+) -> Result<(), String> {
+    let PreparedQueueActivation {
+        server_id,
+        queue: restored,
+        queue_snapshot,
+        playback_snapshot: player,
+    } = activation;
+
+    let mut queue = context
+        .queue
+        .lock()
+        .map_err(|_| "queue lock was poisoned".to_string())?;
+    let current_server_id = queue.as_ref().map(|queue| queue.server_id().clone());
+    if current_server_id.as_ref() == Some(&server_id) {
+        return Ok(());
+    }
+    *queue = Some(restored);
+    drop(queue);
+
+    if let Ok(mut snapshot) = context.playback_snapshot.lock() {
+        *snapshot = player.clone();
+    }
+
     invalidate_playback_requests(context.playback_request_generation);
     stop_playback_backend(context.playback, context.next_preload, context.events);
     let _sent = context
@@ -403,42 +465,6 @@ pub(in crate::controller) fn activate_saved_queue(
         .events
         .send(ControllerEvent::Playback(Box::new(player)));
     Ok(())
-}
-pub(in crate::controller) fn activate_queue_for_saved(
-    store: &StoreHandle,
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    auto_dj_enabled: &Arc<Mutex<bool>>,
-    saved: &SavedServer,
-) -> Result<Option<(QueueSnapshot, PlaybackSnapshot)>, String> {
-    let mut queue = queue
-        .lock()
-        .map_err(|_| "queue lock was poisoned".to_string())?;
-    let current_server_id = queue.as_ref().map(|queue| queue.server_id().clone());
-    if current_server_id.as_ref() == Some(&saved.server.id) {
-        return Ok(None);
-    }
-
-    let restored = restore_queue(store, Some(&saved.server))
-        .unwrap_or_else(|| QueueEngine::new(saved.server.id.clone()));
-    let queue_snapshot = restored.snapshot();
-    let auto_dj_enabled = auto_dj_enabled
-        .lock()
-        .map(|enabled| *enabled)
-        .unwrap_or_default();
-    let player = playback_snapshot_from_queue(
-        Some(&restored),
-        auto_dj_enabled,
-        &load_settings_for_saved(store, saved).playback,
-    );
-    *queue = Some(restored);
-    drop(queue);
-
-    if let Ok(mut snapshot) = playback_snapshot.lock() {
-        *snapshot = player.clone();
-    }
-
-    Ok(Some((queue_snapshot, player)))
 }
 pub(in crate::controller) fn stop_playback_backend(
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,

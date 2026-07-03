@@ -6,7 +6,8 @@ use std::{
 
 use adw::prelude::*;
 use domain::{
-    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, ServerIdentity,
+    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, ServerId,
+    ServerIdentity,
 };
 use gtk::glib;
 
@@ -21,6 +22,7 @@ const SERVER_OPTION_ICON_SIZE: i32 = 14;
 const SERVER_OPTION_CHECK_SIZE: i32 = 13;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 236;
 const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 148;
+const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 
 pub(super) struct ServerSelector {
     pub normal_button: gtk::Button,
@@ -191,7 +193,11 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
 
 fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     let selected_source = library.selected_source.clone();
-    let Some(server) = library.server.as_ref() else {
+    let active_server = selected_source
+        .as_ref()
+        .and_then(|selection| selected_source_server(selection, &library))
+        .or_else(|| library.server.clone());
+    let Some(server) = active_server else {
         return ServerSelectorContent {
             name: tr("No source"),
             selected_source,
@@ -203,15 +209,52 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
         };
     };
 
-    let name = server_display_name(server);
+    let music_folders = if library
+        .server
+        .as_ref()
+        .is_some_and(|loaded| loaded.id == server.id)
+    {
+        library.music_folders
+    } else {
+        Vec::new()
+    };
+    let selected_music_folder_id = if music_folders.is_empty() {
+        None
+    } else {
+        library.selected_music_folder_id
+    };
+    let name = server_display_name(&server);
     ServerSelectorContent {
         name,
         selected_source,
-        active_server: Some(server.clone()),
+        active_server: Some(server),
         servers: library.servers,
         local_folders: library.local_folders,
-        music_folders: library.music_folders,
-        selected_music_folder_id: library.selected_music_folder_id,
+        music_folders,
+        selected_music_folder_id,
+    }
+}
+
+fn selected_source_server(
+    selected_source: &LibrarySourceSelection,
+    library: &LibrarySnapshot,
+) -> Option<ServerIdentity> {
+    match selected_source {
+        LibrarySourceSelection::Local => Some(local_source_identity()),
+        LibrarySourceSelection::Server(server_id) => library
+            .servers
+            .iter()
+            .find(|server| &server.id == server_id)
+            .cloned(),
+    }
+}
+
+fn local_source_identity() -> ServerIdentity {
+    ServerIdentity {
+        id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
+        provider: "local".to_string(),
+        name: tr("Local"),
+        base_url: String::new(),
     }
 }
 

@@ -69,6 +69,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
         secrets,
         secret_switch,
         queue: Arc::new(Mutex::new(queue)),
+        source_selection_generation: Arc::new(AtomicU64::new(0)),
         play_activation_generation: Arc::new(AtomicU64::new(0)),
         queue_persist_generation: Arc::new(AtomicU64::new(0)),
         playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -612,6 +613,14 @@ pub(in crate::controller) fn wait_for_playlist_changed(
 pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
     wait_for_event(events, "controller event", |event| match event {
         ControllerEvent::LoginStatus(status) => Some(status),
+        _ => None,
+    })
+}
+pub(in crate::controller) fn wait_for_source_selection(
+    events: &Receiver<ControllerEvent>,
+) -> LibrarySourceSelection {
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::SourceSelectionChanged { selected_source } => Some(selected_source),
         _ => None,
     })
 }

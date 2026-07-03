@@ -136,7 +136,7 @@ impl AppController {
                     let _sent = events.send(ControllerEvent::LoginStatus(
                         server_settings_status_message(status).to_string(),
                     ));
-                    start_sync_thread_with_snapshots(sync_context, saved);
+                    start_sync_thread_with_snapshots(sync_context, saved, SyncPresentation::Silent);
                 }
                 Ok(outcome) if outcome.changed => {
                     if server_settings_status_for_outcome(&outcome)
@@ -150,7 +150,11 @@ impl AppController {
                             server_settings_status_message(ServerSettingsStatus::Resyncing)
                                 .to_string(),
                         ));
-                        start_sync_thread_with_snapshots(sync_context, saved);
+                        start_sync_thread_with_snapshots(
+                            sync_context,
+                            saved,
+                            SyncPresentation::Silent,
+                        );
                         return;
                     }
                     let _sent = events.send(ControllerEvent::LoginStatus(
@@ -268,7 +272,7 @@ fn server_settings_status_for_outcome(
 fn server_settings_status_message(status: ServerSettingsStatus) -> &'static str {
     match status {
         ServerSettingsStatus::Saved => "Server settings saved.",
-        ServerSettingsStatus::Resyncing => "Server settings saved. Resyncing library...",
+        ServerSettingsStatus::Resyncing => "Server settings saved.",
         ServerSettingsStatus::Unchanged => "No changes to save.",
     }
 }
@@ -703,6 +707,10 @@ mod tests {
         assert_eq!(
             server_settings_status_for_outcome(&outcome),
             ServerSettingsStatus::Resyncing
+        );
+        assert_eq!(
+            server_settings_status_message(server_settings_status_for_outcome(&outcome)),
+            "Server settings saved."
         );
         let edited = saved_server(&store, &saved.server.id);
         assert_eq!(edited.server.base_url, "https://music-lan.example.test");

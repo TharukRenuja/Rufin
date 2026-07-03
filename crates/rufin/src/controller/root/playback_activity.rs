@@ -394,6 +394,7 @@ mod tests {
             {
                 ControllerEvent::LibraryDelta(delta) => return *delta,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::SourceSelectionChanged { .. }
                 | ControllerEvent::LibrarySyncStatus(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }

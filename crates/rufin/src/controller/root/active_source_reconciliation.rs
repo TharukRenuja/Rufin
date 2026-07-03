@@ -16,7 +16,7 @@ pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
             .local_folders
             .is_empty()
         {
-            start_sync_thread_inner(context, saved, false, false, false);
+            start_silent_sync_thread(context, saved);
         }
         return;
     }
