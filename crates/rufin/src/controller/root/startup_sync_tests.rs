@@ -1924,6 +1924,9 @@ fn wait_for_sync_status_without_snapshot(
             | ControllerEvent::CoverUnavailable { .. }
             | ControllerEvent::CoverDeferred { .. }
             | ControllerEvent::LoginStatus(_) => {}
+            ControllerEvent::FavoriteChangeFailed { error, .. } => {
+                panic!("favorite change failed: {error}");
+            }
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }

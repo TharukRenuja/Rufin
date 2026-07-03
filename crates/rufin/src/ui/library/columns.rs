@@ -1181,6 +1181,7 @@ pub(in crate::ui) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         };
         let button = favorite_icon_button("Favorite album");
         set_favorite_button_active(&button, album.favorite);
+        shell.register_favorite_button(album_favorite_key(&album.id), &button);
         install_album_context_menu(&button, &shell, album.clone());
         let favorite_shell = Rc::clone(&shell);
         button.connect_clicked(move |button| {
@@ -1210,6 +1211,7 @@ pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnVie
         };
         let button = favorite_icon_button("Favorite artist");
         set_favorite_button_active(&button, artist.favorite);
+        shell.register_favorite_button(artist_favorite_key(&artist.id), &button);
         install_artist_context_menu(&button, &shell, artist.clone());
         let favorite_shell = Rc::clone(&shell);
         button.connect_clicked(move |button| {
@@ -1248,6 +1250,16 @@ pub(in crate::ui) fn track_favorite_column(
             Rc::clone(&current_track),
             Rc::clone(&current_position),
             selection.clone(),
+        );
+        let favorite_key_track = Rc::clone(&current_track);
+        setup_shell.register_dynamic_favorite_button(
+            Rc::new(move || {
+                favorite_key_track
+                    .borrow()
+                    .as_ref()
+                    .map(|track| track_favorite_key(&track.id))
+            }),
+            &button,
         );
         let favorite_shell = Rc::clone(&setup_shell);
         let click_track = Rc::clone(&current_track);

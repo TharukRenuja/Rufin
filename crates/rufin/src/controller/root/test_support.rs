@@ -653,6 +653,9 @@ fn wait_for_event<T>(
         let event = events.recv_timeout(TEST_WAIT).expect(context);
         match event {
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            ControllerEvent::FavoriteChangeFailed { error, .. } => {
+                panic!("favorite change failed: {error}");
+            }
             event => {
                 if let Some(value) = select(event) {
                     return value;

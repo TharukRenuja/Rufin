@@ -15,6 +15,10 @@ pub enum PlayedFilter {
     Played,
 }
 
+/// owner of supported features.
+///
+/// `Native` means the source owns this operation and Rufin supports it. `Store`
+/// means Rufin owns the feature for that source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SourceFeatureOwner {
     Native,
@@ -45,6 +49,14 @@ impl SourceFeatureSupport {
     }
 }
 
+/// playlist ownership is decided at two levels.
+///
+/// creating a playlist is based on how the active source does it: it is either a
+/// supported native source feature (playlists for Jellyfin) or app-owned
+/// (playlists for local folders).
+///
+/// after a playlist exists, edits follow that playlist's owner, either by source
+/// API or store edits.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourcePlaylistCapabilities {
     pub read_native: bool,
@@ -54,11 +66,19 @@ pub struct SourcePlaylistCapabilities {
     pub mutate_store: bool,
 }
 
-/// App-facing feature contract for one configured source.
+/// contract for what configured sources can do.
 ///
-/// Source capabilities describe what Rufin should offer for the active library
-/// source and which owner is authoritative for each operation. They may include
-/// native adapter behavior and Rufin store-owned behavior in the same source.
+/// a capability answers: should Rufin offer this operation for this source, and
+/// who owns its management? the `owner` here can be the source (`Native`) or the
+/// app itself (`Store`). this allows local libraries to support
+/// favorites/playlists even though files do not carry these states, and a remote
+/// source can still gain Rufin-owned features later, as smart playlists already
+/// do.
+///
+/// this is not a list of every field a source may return. add a capability when
+/// UI/controller code needs to decide whether an operation, a page, or an edit
+/// is available, or when the app must choose between `Native` and `Store` for
+/// the operation. plain metadata belongs on cached entities/projections instead.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceCapabilities {
     pub playlists: SourcePlaylistCapabilities,

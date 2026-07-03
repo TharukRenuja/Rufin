@@ -785,6 +785,7 @@ pub(in crate::ui) fn album_detail_track_cell(
         LibraryField::Favorite => {
             let button = favorite_icon_button("Favorite track");
             set_favorite_button_active(&button, track.favorite);
+            shell.register_favorite_button(track_favorite_key(&track.id), &button);
             let favorite_shell = Rc::clone(shell);
             let track_id = track.id.clone();
             button.connect_clicked(move |button| {

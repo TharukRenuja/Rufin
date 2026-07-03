@@ -232,6 +232,9 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             | ControllerEvent::CoverUnavailable { .. }
             | ControllerEvent::CoverDeferred { .. }
             | ControllerEvent::LoginStatus(_) => {}
+            ControllerEvent::FavoriteChangeFailed { error, .. } => {
+                panic!("favorite change failed: {error}");
+            }
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
