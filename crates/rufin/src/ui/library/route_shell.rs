@@ -5,11 +5,15 @@ use crate::ui::{ADD_ICON, MORE_ICON, sort_order_icon};
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
 const LIBRARY_TOOLBAR_END_MARGIN: i32 = 10;
-const LIBRARY_TOOLBAR_CONTROL_SPACING: i32 = 8;
-const LIBRARY_TOOLBAR_BUTTON_SIZE: i32 = 34;
+const LIBRARY_TOOLBAR_CONTROL_SPACING: i32 = 12;
+const LIBRARY_TOOLBAR_ICON_BUTTON_WIDTH: i32 = 18;
+const LIBRARY_TOOLBAR_CLOSE_VISIBLE_SIZE: i32 = 24;
+const LIBRARY_TOOLBAR_SORT_MIN_WIDTH: i32 = 112;
+const LIBRARY_TOOLBAR_SORT_CHAR_WIDTH: i32 = 8;
+const LIBRARY_TOOLBAR_SORT_HORIZONTAL_PADDING: i32 = 44;
 const LIBRARY_TOOLBAR_STACK_WIDTH: i32 = 760;
 const LIBRARY_TOOLBAR_WINDOW_CONTROLS_RESERVE: i32 =
-    WINDOW_CHROME_MARGIN_END + LIBRARY_TOOLBAR_BUTTON_SIZE + LIBRARY_TOOLBAR_CONTROL_SPACING;
+    WINDOW_CHROME_MARGIN_END + LIBRARY_TOOLBAR_CLOSE_VISIBLE_SIZE + LIBRARY_TOOLBAR_CONTROL_SPACING;
 
 pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) key: LibraryListKey,
@@ -411,6 +415,7 @@ impl Shell {
             .iter()
             .map(|field| tr(field.title()))
             .collect::<Vec<_>>();
+        let sort_width = toolbar_sort_width_for_labels(sort_titles.iter().map(String::as_str));
         let sort_refs = sort_titles.iter().map(String::as_str).collect::<Vec<_>>();
         let sort_options = gtk::StringList::new(&sort_refs);
         let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
@@ -434,8 +439,7 @@ impl Shell {
         controls.append(&sort_dropdown);
 
         let direction = gtk::Button::from_icon_name(sort_order_icon(settings.descending));
-        direction.add_css_class("flat");
-        direction.set_tooltip_text(Some(&tr("Change sort order")));
+        configure_library_toolbar_icon_button(&direction, &tr("Change sort order"));
         {
             let shell = Rc::clone(self);
             direction.connect_clicked(move |direction| {
@@ -451,12 +455,10 @@ impl Shell {
         controls.append(&direction);
 
         let layout = gtk::Button::from_icon_name(layout_icon(settings.layout));
-        layout.add_css_class("flat");
-        layout.set_tooltip_text(Some(&format!(
-            "{}: {}",
-            tr("Layout"),
-            tr(layout_title(settings.layout))
-        )));
+        configure_library_toolbar_icon_button(
+            &layout,
+            &format!("{}: {}", tr("Layout"), tr(layout_title(settings.layout))),
+        );
         {
             let shell = Rc::clone(self);
             layout.connect_clicked(move |_| {
@@ -469,8 +471,7 @@ impl Shell {
         controls.append(&layout);
 
         let configure = gtk::Button::from_icon_name(MORE_ICON);
-        configure.add_css_class("flat");
-        configure.set_tooltip_text(Some(&tr("Customize display")));
+        configure_library_toolbar_icon_button(&configure, &tr("Customize display"));
         {
             let shell = Rc::clone(self);
             configure.connect_clicked(move |_| {
@@ -485,6 +486,7 @@ impl Shell {
             &sort_dropdown,
             command_button.borrow().as_ref(),
             &command_compact,
+            sort_width,
             1,
         );
         {
@@ -498,6 +500,7 @@ impl Shell {
                     &sort_dropdown,
                     command_button.borrow().as_ref(),
                     &command_compact,
+                    sort_width,
                     toolbar.width(),
                 );
             });
@@ -779,8 +782,20 @@ pub(in crate::ui) fn library_toolbar_orientation_for_width(
         gtk::Orientation::Horizontal
     }
 }
-pub(in crate::ui) fn toolbar_sort_width(_key: LibraryListKey, width: i32) -> Option<i32> {
-    library_toolbar_compact_for_width(width).then_some((width / 4).clamp(112, 150))
+pub(in crate::ui) fn toolbar_sort_width_for_labels<'a>(
+    labels: impl IntoIterator<Item = &'a str>,
+) -> i32 {
+    labels
+        .into_iter()
+        .map(toolbar_sort_label_width)
+        .max()
+        .unwrap_or(LIBRARY_TOOLBAR_SORT_MIN_WIDTH)
+}
+
+fn toolbar_sort_label_width(label: &str) -> i32 {
+    (label.chars().count() as i32 * LIBRARY_TOOLBAR_SORT_CHAR_WIDTH
+        + LIBRARY_TOOLBAR_SORT_HORIZONTAL_PADDING)
+        .max(LIBRARY_TOOLBAR_SORT_MIN_WIDTH)
 }
 
 pub(in crate::ui) fn library_toolbar_end_margin(right_sidebar_visible: bool) -> i32 {
@@ -797,29 +812,28 @@ fn apply_library_toolbar_layout(
     sort_dropdown: &gtk::DropDown,
     command_button: Option<&gtk::Button>,
     command_compact: &Cell<bool>,
+    sort_width: i32,
     width: i32,
 ) {
     let width = width.max(1);
     toolbar.set_orientation(library_toolbar_orientation_for_width(key, width));
-    if toolbar_key_stack(key, width) {
-        sort_dropdown.set_hexpand(true);
-        sort_dropdown.set_halign(gtk::Align::Fill);
-        sort_dropdown.set_width_request(1);
-    } else if let Some(width) = toolbar_sort_width(key, width) {
-        sort_dropdown.set_hexpand(false);
-        sort_dropdown.set_halign(gtk::Align::End);
-        sort_dropdown.set_width_request(width);
-    } else {
-        sort_dropdown.set_hexpand(false);
-        sort_dropdown.set_halign(gtk::Align::End);
-        sort_dropdown.set_width_request(-1);
-    }
+    sort_dropdown.set_hexpand(false);
+    sort_dropdown.set_halign(gtk::Align::End);
+    sort_dropdown.set_width_request(sort_width);
     if let Some(button) = command_button {
         let compact = library_toolbar_compact_for_width(width);
         if command_compact.replace(compact) != compact {
             set_library_command_button_content(button, compact, ADD_ICON, "New Playlist");
         }
     }
+}
+
+fn configure_library_toolbar_icon_button(button: &gtk::Button, tooltip: &str) {
+    button.add_css_class("flat");
+    button.add_css_class("icon-button");
+    button.add_css_class("library-toolbar-icon-button");
+    button.set_width_request(LIBRARY_TOOLBAR_ICON_BUTTON_WIDTH);
+    button.set_tooltip_text(Some(tooltip));
 }
 
 fn set_library_command_button_content(
