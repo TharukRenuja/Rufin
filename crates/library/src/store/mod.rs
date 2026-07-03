@@ -13,13 +13,13 @@ use domain::{
     QueueEntryId, QueueSnapshot, SearchResults, ServerId, ServerIdentity, SmartPlaylist,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistSortField, Track, TrackId,
-    normalize_release_types,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceFeatureOwner,
+    Track, TrackId, normalize_release_types,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 21;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
@@ -40,9 +40,50 @@ pub enum StoreError {
     InvalidSourceObject(String),
     #[error("unsupported store-backed source window")]
     UnsupportedSourceWindow,
+    #[error("invalid playlist owner: {0}")]
+    InvalidPlaylistOwner(String),
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
+
+fn playlist_owner_from_str(value: &str) -> StoreResult<SourceFeatureOwner> {
+    match value {
+        "native" => Ok(SourceFeatureOwner::Native),
+        "store" => Ok(SourceFeatureOwner::Store),
+        other => Err(StoreError::InvalidPlaylistOwner(other.to_string())),
+    }
+}
+
+fn playlist_owner_to_str(owner: SourceFeatureOwner) -> &'static str {
+    match owner {
+        SourceFeatureOwner::Native => "native",
+        SourceFeatureOwner::Store => "store",
+    }
+}
+
+const STORE_OWNED_PLAYLIST_SYNC_GENERATION: i64 = -1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlaylistWriteMode {
+    NativeSync { generation: i64 },
+    StoreOwned,
+}
+
+impl PlaylistWriteMode {
+    const fn owner(self) -> SourceFeatureOwner {
+        match self {
+            Self::NativeSync { .. } => SourceFeatureOwner::Native,
+            Self::StoreOwned => SourceFeatureOwner::Store,
+        }
+    }
+
+    const fn sync_generation(self) -> i64 {
+        match self {
+            Self::NativeSync { generation } => generation,
+            Self::StoreOwned => STORE_OWNED_PLAYLIST_SYNC_GENERATION,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SavedServer {

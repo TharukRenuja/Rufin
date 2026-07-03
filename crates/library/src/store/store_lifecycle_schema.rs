@@ -11,9 +11,14 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 19,
         run: migrate_to_track_mood_bpm_schema,
     },
+    SchemaMigration {
+        from_version: 20,
+        run: migrate_to_playlist_owner_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
+const TRACK_MOOD_BPM_SCHEMA_VERSION: i64 = 20;
 const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
@@ -84,8 +89,13 @@ const SUPPORTED_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("playlists", "image_origin"),
 ];
 const GENRE_DURATION_SCHEMA_COLUMNS: &[(&str, &str)] = &[("genres", "duration_seconds")];
-const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] =
+const TRACK_MOOD_BPM_SCHEMA_COLUMNS: &[(&str, &str)] =
     &[("genres", "duration_seconds"), ("tracks", "bpm")];
+const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+];
 const IMAGE_ORIGIN_TABLES: &[&str] = &[
     "albums",
     "tracks",
@@ -170,6 +180,28 @@ fn migrate_to_track_mood_bpm_schema(store: &Store) -> StoreResult<()> {
         CREATE INDEX IF NOT EXISTS track_moods_server_mood_idx
             ON track_moods(server_id, mood_name, track_id);
         ",
+    )?;
+    Ok(())
+}
+
+fn migrate_to_playlist_owner_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column(
+        "playlists",
+        "owner",
+        "TEXT NOT NULL DEFAULT 'native' CHECK (owner IN ('native', 'store'))",
+    )?;
+    store.connection.execute(
+        "
+        UPDATE playlists
+        SET owner = 'store'
+        WHERE owner = 'native'
+          AND server_id IN (
+              SELECT server_id
+              FROM servers
+              WHERE provider IN ('local', 'fake')
+          )
+        ",
+        [],
     )?;
     Ok(())
 }
@@ -281,6 +313,9 @@ impl Store {
             GENRE_DURATION_SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(&previous_schema_tables(), SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], GENRE_DURATION_SCHEMA_COLUMNS)?),
+            TRACK_MOOD_BPM_SCHEMA_VERSION => Ok(self
+                .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
+                && self.schema_has_required_parts(&[], TRACK_MOOD_BPM_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -567,6 +602,7 @@ impl Store {
                 image_item_id TEXT,
                 image_tag TEXT,
                 image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
+                owner TEXT NOT NULL DEFAULT 'native' CHECK (owner IN ('native', 'store')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, playlist_id)
             );
@@ -759,6 +795,11 @@ impl Store {
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
         self.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")?;
+        self.ensure_column(
+            "playlists",
+            "owner",
+            "TEXT NOT NULL DEFAULT 'native' CHECK (owner IN ('native', 'store'))",
+        )?;
         self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column(
             "servers",

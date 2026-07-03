@@ -317,6 +317,7 @@ fn fake_snapshot(
     );
     Ok(LibrarySnapshot {
         server: Some(server.clone()),
+        source_capabilities: source_capabilities_for_saved(&saved),
         servers: vec![server.clone()],
         selected_source: Some(LibrarySourceSelection::Server(server.id)),
         local_folders: Vec::new(),

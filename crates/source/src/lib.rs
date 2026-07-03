@@ -21,6 +21,11 @@ pub struct ProviderIdentity {
     pub server: ServerIdentity,
 }
 
+/// Native capabilities exposed by the backing provider implementation.
+///
+/// These flags describe what the filesystem or remote API can do itself. App-facing
+/// feature support, including Rufin store-owned behavior for a source, belongs in
+/// `domain::SourceCapabilities`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderCapabilities {
     pub albums: bool,

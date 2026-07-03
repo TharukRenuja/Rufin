@@ -114,6 +114,53 @@ pub(in crate::controller) fn playlist_create_empty() {
             .is_empty()
     );
 }
+
+#[test]
+pub(in crate::controller) fn local_playlist_commands_use_store_owner() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let generation = begin_active_sync(&store, &saved);
+    let mut first = restored_track();
+    first.id = TrackId::new("local:track:playlist-one");
+    let mut second = restored_track();
+    second.id = TrackId::new("local:track:playlist-two");
+    store
+        .with_store(|store| {
+            store.upsert_tracks(
+                &saved.server.id,
+                &[first.clone(), second.clone()],
+                generation,
+            )?;
+            store.complete_sync(&saved.server.id, generation)
+        })
+        .expect("seed local tracks");
+    let (controller, events) = controller_from_store_for_test(store.clone());
+
+    controller.create_playlist("Local Playlist".to_string(), vec![first.clone()]);
+    let snapshot = wait_for_snapshot(&events);
+    let playlist = snapshot
+        .playlists
+        .iter()
+        .find(|playlist| playlist.name == "Local Playlist")
+        .expect("created local playlist")
+        .clone();
+    assert_eq!(
+        store
+            .with_store(|store| store.playlist_owner(&saved.server.id, &playlist.id))
+            .expect("playlist owner"),
+        Some(SourceFeatureOwner::Store)
+    );
+
+    controller.add_tracks_to_playlist(playlist.id.clone(), vec![second.clone()]);
+    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    assert_eq!(changed_id, playlist.id);
+    assert_playlist_order(
+        &controller,
+        &playlist.id,
+        &[first.id.as_str(), second.id.as_str()],
+    );
+}
+
 #[test]
 pub(in crate::controller) fn lyrics_emit_event() {
     let (controller, events, snapshot, _queue, _player) =

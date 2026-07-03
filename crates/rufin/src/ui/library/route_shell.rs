@@ -394,6 +394,7 @@ impl Shell {
             LibraryListKey::Playlists => {
                 let create = gtk::Button::new();
                 set_library_command_button_content(&create, false, ADD_ICON, "New Playlist");
+                create.set_sensitive(self.playlist_creation_supported());
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
                 controls.append(&create);

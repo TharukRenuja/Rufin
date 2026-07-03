@@ -272,6 +272,7 @@ mod tests {
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
         LibrarySnapshot {
             server: None,
+            source_capabilities: domain::SourceCapabilities::default(),
             servers: Vec::new(),
             selected_source: None,
             local_folders: Vec::new(),

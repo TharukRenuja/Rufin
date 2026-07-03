@@ -1,0 +1,71 @@
+use super::*;
+
+pub(in crate::controller) fn source_capabilities_for_saved(
+    saved: &SavedServer,
+) -> SourceCapabilities {
+    let source_kind = saved.server.provider.as_str();
+    let native_playlists = source_kind_has_native_playlists(source_kind);
+    let native_playlist_mutations = source_kind_has_native_playlist_mutations(source_kind);
+    let native_music_folders = source_kind_has_native_music_folders(source_kind);
+    let native_folder_browsing = source_kind_has_native_folder_browsing(source_kind);
+
+    SourceCapabilities {
+        playlists: SourcePlaylistCapabilities {
+            read_native: native_playlists,
+            read_store: true,
+            create: if native_playlist_mutations {
+                SourceFeatureSupport::native()
+            } else {
+                SourceFeatureSupport::store()
+            },
+            mutate_native: native_playlist_mutations,
+            mutate_store: true,
+        },
+        smart_playlists: SourceFeatureSupport::store(),
+        favorites: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
+            SourceFeatureSupport::store()
+        } else {
+            SourceFeatureSupport::native()
+        },
+        favorite_mutations: if source_kind == "fake" || source_kind == LOCAL_PROVIDER_ID {
+            SourceFeatureSupport::store()
+        } else {
+            SourceFeatureSupport::native()
+        },
+        music_folders: if native_music_folders {
+            SourceFeatureSupport::native()
+        } else {
+            SourceFeatureSupport::Unsupported
+        },
+        folder_browsing: if native_folder_browsing {
+            SourceFeatureSupport::native()
+        } else {
+            SourceFeatureSupport::Unsupported
+        },
+    }
+}
+
+fn source_kind_has_native_playlists(source_kind: &str) -> bool {
+    !matches!(source_kind, "fake" | LOCAL_PROVIDER_ID)
+}
+
+fn source_kind_has_native_playlist_mutations(source_kind: &str) -> bool {
+    matches!(
+        source_kind,
+        "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+    )
+}
+
+fn source_kind_has_native_music_folders(source_kind: &str) -> bool {
+    matches!(
+        source_kind,
+        "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+    )
+}
+
+fn source_kind_has_native_folder_browsing(source_kind: &str) -> bool {
+    matches!(
+        source_kind,
+        LOCAL_PROVIDER_ID | "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
+    )
+}

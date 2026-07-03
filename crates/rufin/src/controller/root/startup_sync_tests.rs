@@ -2035,6 +2035,23 @@ pub(in crate::controller) fn startup_store_cache() {
     assert_eq!(snapshot.cached_album_count, FakeScale::Small.album_count());
     assert_eq!(snapshot.cached_track_count, FakeScale::Small.track_count());
 }
+
+#[test]
+pub(in crate::controller) fn startup_fake_playlists_are_store_owned() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let playlist = snapshot.playlists.first().expect("fake playlist");
+
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.playlist_owner(&server_id, &playlist.id))
+            .expect("playlist owner"),
+        Some(SourceFeatureOwner::Store)
+    );
+}
+
 #[test]
 pub(in crate::controller) fn startup_sync_total() {
     assert!(!sync_page_finished(500, 0, 500));
