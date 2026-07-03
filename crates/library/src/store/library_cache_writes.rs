@@ -917,6 +917,11 @@ impl Store {
                 &local_stress_tracks,
                 generation,
             )?;
+            let track_ids = tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>();
+            refresh_playlists_for_track_ids_on_connection(connection, server_id, &track_ids)?;
             Ok(())
         })
     }
@@ -1559,14 +1564,29 @@ impl Store {
         playlists: &[Playlist],
         generation: i64,
     ) -> StoreResult<()> {
+        self.upsert_playlists_with_mode(
+            server_id,
+            playlists,
+            PlaylistWriteMode::NativeSync { generation },
+        )
+    }
+
+    pub fn upsert_playlists_with_mode(
+        &self,
+        server_id: &ServerId,
+        playlists: &[Playlist],
+        mode: PlaylistWriteMode,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let owner = mode.owner();
+            let generation = mode.sync_generation();
             let mut statement = connection.prepare(
                 "
                 INSERT INTO playlists (
                     server_id, playlist_id, name, track_count, duration_seconds,
-                    top_genres_json, image_item_id, image_tag, image_origin, sync_generation
+                    top_genres_json, image_item_id, image_tag, image_origin, owner, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 ON CONFLICT(server_id, playlist_id) DO UPDATE SET
                     name = excluded.name,
                     track_count = CASE
@@ -1600,6 +1620,7 @@ impl Store {
                     image_tag = excluded.image_tag,
                     image_origin = excluded.image_origin,
                     sync_generation = excluded.sync_generation
+                WHERE playlists.owner = excluded.owner
                 ",
             )?;
             let mut delete_fts = connection.prepare(
@@ -1615,7 +1636,7 @@ impl Store {
             for playlist in playlists {
                 let (image_item_id, image_tag) = image_ref_parts(playlist.image_ref.as_ref());
                 let image_origin = image_origin_for_source_ref(playlist.image_ref.as_ref());
-                statement.execute(params![
+                let changed = statement.execute(params![
                     server_id.as_str(),
                     playlist.id.as_str(),
                     playlist.name,
@@ -1625,8 +1646,16 @@ impl Store {
                     image_item_id,
                     image_tag,
                     image_origin,
+                    playlist_owner_to_str(owner),
                     generation,
                 ])?;
+                if changed == 0 {
+                    return Err(StoreError::InvalidPlaylistOwner(format!(
+                        "playlist {} is not owned by {}",
+                        playlist.id.as_str(),
+                        playlist_owner_to_str(owner)
+                    )));
+                }
                 let cover_refs = if playlist.image_refs.is_empty() {
                     playlist.image_ref.iter().cloned().collect::<Vec<_>>()
                 } else {
@@ -1665,6 +1694,7 @@ impl Store {
                     SELECT playlist_id
                     FROM playlists
                     WHERE server_id = ?1
+                      AND owner = 'native'
                     ",
                 )?;
                 collect_rows(
@@ -1687,7 +1717,7 @@ impl Store {
                 connection.execute(
                     "
                     DELETE FROM playlists
-                    WHERE server_id = ?1 AND playlist_id = ?2
+                    WHERE server_id = ?1 AND playlist_id = ?2 AND owner = 'native'
                     ",
                     params![server_id.as_str(), playlist_id.as_str()],
                 )?;
@@ -2027,14 +2057,30 @@ impl Store {
         )?;
         delta.genres.deleted =
             self.stale_ids(server_id, "genres", "genre_id", generation, GenreId::new)?;
-        delta.playlists.deleted = self.stale_ids(
-            server_id,
-            "playlists",
-            "playlist_id",
-            generation,
-            PlaylistId::new,
-        )?;
+        delta.playlists.deleted = self.stale_native_playlist_ids(server_id, generation)?;
         Ok(delta)
+    }
+
+    fn stale_native_playlist_ids(
+        &self,
+        server_id: &ServerId,
+        generation: i64,
+    ) -> StoreResult<Vec<PlaylistId>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT playlist_id
+            FROM playlists
+            WHERE server_id = ?1
+              AND sync_generation < ?2
+              AND owner = 'native'
+            ORDER BY playlist_id
+            ",
+        )?;
+        collect_rows(
+            statement.query_map(params![server_id.as_str(), generation], |row| {
+                row.get::<_, String>(0).map(PlaylistId::new)
+            })?,
+        )
     }
 
     fn stale_ids<Id>(
@@ -2080,6 +2126,54 @@ fn playlist_summary_matches(left: &Playlist, right: &Playlist) -> bool {
         && left.duration_seconds == right.duration_seconds
         && left.image_refs == right.image_refs
         && left.image_ref == right.image_ref
+}
+
+fn refresh_playlists_for_track_ids_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    track_ids: &[TrackId],
+) -> StoreResult<()> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    let mut playlist_ids = Vec::<PlaylistId>::new();
+    let mut seen = HashSet::<PlaylistId>::new();
+    for chunk in track_ids.chunks(500) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT DISTINCT playlist_id
+            FROM playlist_tracks
+            WHERE server_id = ?
+              AND track_id IN ({placeholders})
+            ORDER BY playlist_id
+            "
+        );
+        let mut values = Vec::with_capacity(chunk.len() + 1);
+        values.push(server_id.as_str());
+        values.extend(chunk.iter().map(TrackId::as_str));
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values), |row| {
+            row.get::<_, String>(0).map(PlaylistId::new)
+        })?;
+        for row in rows {
+            let playlist_id = row?;
+            if seen.insert(playlist_id.clone()) {
+                playlist_ids.push(playlist_id);
+            }
+        }
+    }
+    for playlist_id in playlist_ids {
+        super::library_auxiliary_cache::refresh_playlist_stats(
+            connection,
+            server_id,
+            &playlist_id,
+        )?;
+        super::library_auxiliary_cache::refresh_playlist_refs(connection, server_id, &playlist_id)?;
+    }
+    Ok(())
 }
 
 fn album_links_changed(left: &Album, right: &Album) -> bool {

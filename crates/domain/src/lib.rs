@@ -50,5 +50,7 @@ pub use source::{
     GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
     LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
     PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderSession,
-    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
+    RandomTrackRequest, SavedProviderSession, SearchResults, SourceCapabilities,
+    SourceFeatureOwner, SourceFeatureSupport, SourcePlaylistCapabilities, StreamDescriptor,
+    StreamRequest,
 };

@@ -1692,6 +1692,7 @@ fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGa
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
     crate::controller::LibrarySnapshot {
         server: None,
+        source_capabilities: domain::SourceCapabilities::default(),
         servers: Vec::new(),
         selected_source: None,
         local_folders: Vec::new(),

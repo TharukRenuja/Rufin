@@ -695,6 +695,17 @@ impl Shell {
             .take();
     }
 
+    pub(in crate::ui) fn playlist_creation_supported(&self) -> bool {
+        self.state
+            .library
+            .borrow()
+            .source_capabilities
+            .playlists
+            .create
+            .owner()
+            .is_some()
+    }
+
     pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
         let track_index = track_index_for(&snapshot.tracks);
         *self.state.library.borrow_mut() = snapshot;

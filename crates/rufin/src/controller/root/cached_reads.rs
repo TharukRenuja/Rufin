@@ -241,7 +241,11 @@ pub(in crate::controller) fn seed_fake_cache(
             store.upsert_artists(&server.id, &album_artists.items, true, generation)?;
             store.refresh_library_counts(&server.id)?;
             store.upsert_genres(&server.id, &genres.items, generation)?;
-            store.upsert_playlists(&server.id, &playlists.items, generation)?;
+            store.upsert_playlists_with_mode(
+                &server.id,
+                &playlists.items,
+                PlaylistWriteMode::StoreOwned,
+            )?;
             store.upsert_home_sections(&server.id, &home_sections, generation)?;
             info!(
                 ?scale,

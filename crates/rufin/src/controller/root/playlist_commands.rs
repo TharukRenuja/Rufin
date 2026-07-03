@@ -20,13 +20,18 @@ impl AppController {
                 .iter()
                 .map(|track| track.id.clone())
                 .collect::<Vec<_>>();
-            let playlist_id = if saved.server.provider == "fake" {
-                PlaylistId::new(format!(
-                    "fake:playlist:{}",
-                    unique_millis().unwrap_or(tracks.len() as u128)
-                ))
-            } else {
-                match provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+            let capabilities = source_capabilities_for_saved(&saved);
+            let Some(create_owner) = capabilities.playlists.create.owner() else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Playlist creation is not supported by the active source.".to_string(),
+                ));
+                return;
+            };
+            let playlist_id = match create_owner {
+                SourceFeatureOwner::Native => match provider_for_saved(
+                    &store, &runtime, &secrets, &saved,
+                )
+                .and_then(|provider| {
                     runtime
                         .block_on(
                             provider
@@ -40,7 +45,11 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                }
+                },
+                SourceFeatureOwner::Store => PlaylistId::new(format!(
+                    "rufin:playlist:{}",
+                    unique_millis().unwrap_or(tracks.len() as u128)
+                )),
             };
             let playlist = Playlist {
                 id: playlist_id.clone(),
@@ -53,10 +62,13 @@ impl AppController {
             };
             let entries = playlist_entries_for_tracks(&playlist_id, &tracks);
             let result = store.with_store(|store| {
-                store.upsert_playlists(&saved.server.id, &[playlist], 0)?;
-                store.upsert_tracks(&saved.server.id, &tracks, 0)?;
-                store.upsert_playlist_entries(&saved.server.id, &playlist_id, &entries, 0)?;
-                Ok(())
+                write_playlist_snapshot_for_owner(
+                    store,
+                    &saved.server.id,
+                    &playlist,
+                    &entries,
+                    create_owner,
+                )
             });
             emit_snapshot_result(&store, &events, result);
         });
@@ -76,7 +88,14 @@ impl AppController {
                 ));
                 return;
             };
-            if saved.server.provider != "fake" && saved.server.provider != "local" {
+            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+                return;
+            };
+            let capabilities = source_capabilities_for_saved(&saved);
+            if !playlist_mutation_supported(owner, capabilities, &events) {
+                return;
+            }
+            if owner == SourceFeatureOwner::Native {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
@@ -93,7 +112,12 @@ impl AppController {
                 }
             }
             let result = store.with_store(|store| {
-                store.rename_playlist(&saved.server.id, &playlist_id, name.trim())?;
+                store.rename_playlist_with_owner(
+                    &saved.server.id,
+                    &playlist_id,
+                    name.trim(),
+                    owner,
+                )?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -114,7 +138,14 @@ impl AppController {
                 ));
                 return;
             };
-            if saved.server.provider != "fake" && saved.server.provider != "local" {
+            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+                return;
+            };
+            let capabilities = source_capabilities_for_saved(&saved);
+            if !playlist_mutation_supported(owner, capabilities, &events) {
+                return;
+            }
+            if owner == SourceFeatureOwner::Native {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
@@ -127,7 +158,7 @@ impl AppController {
                 }
             }
             let result = store.with_store(|store| {
-                store.delete_playlist(&saved.server.id, &playlist_id)?;
+                store.delete_playlist_with_owner(&saved.server.id, &playlist_id, owner)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -327,7 +358,14 @@ impl AppController {
                 }
             };
             let mut after = mutate(before.clone());
-            if saved.server.provider != "fake" {
+            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+                return;
+            };
+            let capabilities = source_capabilities_for_saved(&saved);
+            if !playlist_mutation_supported(owner, capabilities, &events) {
+                return;
+            }
+            if owner == SourceFeatureOwner::Native {
                 match sync_playlist_mutation(&store, &runtime, &secrets, &saved, &before, &after) {
                     Ok(Some(fresh)) => after = fresh,
                     Ok(None) => {}
@@ -359,17 +397,84 @@ impl AppController {
                 ..after.playlist.clone()
             };
             let result = store.with_store(|store| {
-                store.upsert_playlists(&saved.server.id, &[playlist], 0)?;
-                store.upsert_tracks(&saved.server.id, &after.tracks, 0)?;
-                store.upsert_playlist_entries(
+                write_playlist_snapshot_for_owner(
+                    store,
                     &saved.server.id,
-                    &after.playlist.id,
+                    &playlist,
                     &after.entries,
-                    0,
-                )?;
-                Ok(())
+                    owner,
+                )
             });
             emit_playlist_changed_result(&store, &events, after.playlist.id.clone(), result);
         });
+    }
+}
+
+fn write_playlist_snapshot_for_owner(
+    store: &Store,
+    server_id: &ServerId,
+    playlist: &Playlist,
+    entries: &[PlaylistEntry],
+    owner: SourceFeatureOwner,
+) -> StoreResult<()> {
+    let mode = playlist_write_mode_for_owner(store, server_id, owner)?;
+    store.upsert_playlists_with_mode(server_id, std::slice::from_ref(playlist), mode)?;
+    store.upsert_playlist_entries_with_mode(server_id, &playlist.id, entries, mode)?;
+    Ok(())
+}
+
+fn playlist_write_mode_for_owner(
+    store: &Store,
+    server_id: &ServerId,
+    owner: SourceFeatureOwner,
+) -> StoreResult<PlaylistWriteMode> {
+    match owner {
+        SourceFeatureOwner::Native => Ok(PlaylistWriteMode::NativeSync {
+            generation: store.sync_state(server_id)?.generation,
+        }),
+        SourceFeatureOwner::Store => Ok(PlaylistWriteMode::StoreOwned),
+    }
+}
+
+fn cached_playlist_owner(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    saved: &SavedServer,
+    playlist_id: &PlaylistId,
+) -> Option<SourceFeatureOwner> {
+    match store.with_store(|store| store.playlist_owner(&saved.server.id, playlist_id)) {
+        Ok(Some(owner)) => Some(owner),
+        Ok(None) => {
+            let _sent = events.send(ControllerEvent::Error(
+                "The selected cached playlist was not found.".to_string(),
+            ));
+            None
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+            None
+        }
+    }
+}
+
+fn playlist_mutation_supported(
+    owner: SourceFeatureOwner,
+    capabilities: SourceCapabilities,
+    events: &Sender<ControllerEvent>,
+) -> bool {
+    let unsupported = match owner {
+        SourceFeatureOwner::Native if !capabilities.playlists.mutate_native => {
+            Some("Native playlist mutation is not supported by the active source.")
+        }
+        SourceFeatureOwner::Store if !capabilities.playlists.mutate_store => {
+            Some("Store-owned playlist mutation is not supported by the active source.")
+        }
+        _ => None,
+    };
+    if let Some(message) = unsupported {
+        let _sent = events.send(ControllerEvent::Error(message.to_string()));
+        false
+    } else {
+        true
     }
 }

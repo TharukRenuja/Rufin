@@ -23,13 +23,15 @@ use domain::{
     QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
     SecretStorageMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor,
-    SourceOrder, StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor,
-    TrackSortKey, TrackTableSettings,
+    SourceCapabilities, SourceFeatureOwner, SourceFeatureSupport, SourceOrder,
+    SourcePlaylistCapabilities, StreamDescriptor, StreamQuality, Track, TrackId,
+    TrackSortDescriptor, TrackSortKey, TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
-    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, SavedServer, ServerLocalAccess, Store,
-    StoreBackedSourceItem, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
+    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, PlaylistWriteMode, SavedServer,
+    ServerLocalAccess, Store, StoreBackedSourceItem, StoreBackedSourceWindow, StoreError,
+    StoreResult, SyncState,
 };
 use playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -103,6 +105,7 @@ mod server_cache_commands;
 mod server_lifecycle_commands;
 mod server_local_access_commands;
 mod settings_controller;
+mod source_capabilities;
 mod source_image_policy;
 mod source_presentation;
 mod source_readiness;
@@ -140,6 +143,7 @@ pub(in crate::controller) use playback_waveforms::{
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
 use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watcher};
 pub(crate) use server_local_access_commands::ServerSettingsInput;
+pub(in crate::controller) use source_capabilities::source_capabilities_for_saved;
 use source_image_policy::{
     is_local_album_id, is_local_artist_id, is_local_provider_image_ref, is_local_track_id,
     scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
@@ -186,6 +190,7 @@ pub(in crate::controller) const LOCAL_SOURCE_SERVER_ID: &str = "local:server:lib
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
+    pub source_capabilities: SourceCapabilities,
     pub servers: Vec<ServerIdentity>,
     pub selected_source: Option<LibrarySourceSelection>,
     pub local_folders: Vec<LocalLibraryFolder>,
@@ -324,6 +329,7 @@ impl LibrarySnapshot {
     fn first_run() -> Self {
         Self {
             server: None,
+            source_capabilities: SourceCapabilities::default(),
             servers: Vec::new(),
             selected_source: None,
             local_folders: Vec::new(),

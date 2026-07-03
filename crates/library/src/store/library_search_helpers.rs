@@ -604,14 +604,36 @@ impl Store {
                 "track_artist_links",
                 "server_music_folders",
                 "track_music_folders",
-                "playlists",
-                "playlist_tracks",
                 "home_section_items",
             ] {
                 let sql =
                     format!("DELETE FROM {table} WHERE server_id = ?1 AND sync_generation < ?2");
                 connection.execute(&sql, params![server_id.as_str(), generation])?;
             }
+            connection.execute(
+                "
+                DELETE FROM playlist_tracks
+                WHERE server_id = ?1
+                  AND sync_generation < ?2
+                  AND playlist_id IN (
+                      SELECT playlist_id
+                      FROM playlists
+                      WHERE server_id = ?1
+                        AND owner = 'native'
+                  )
+                ",
+                params![server_id.as_str(), generation],
+            )?;
+            connection.execute(
+                "
+                DELETE FROM playlists
+                WHERE server_id = ?1
+                  AND sync_generation < ?2
+                  AND owner = 'native'
+                ",
+                params![server_id.as_str(), generation],
+            )?;
+            prune_dangling_playlist_tracks(connection, server_id)?;
             prune_missing_entity_rows(connection, server_id)?;
 
             connection.execute(
@@ -706,6 +728,59 @@ impl Store {
             }
         }
     }
+}
+
+fn prune_dangling_playlist_tracks(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    let mut statement = connection.prepare(
+        "
+        SELECT DISTINCT playlist_id
+        FROM playlist_tracks pt
+        WHERE pt.server_id = ?1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tracks t
+              WHERE t.server_id = pt.server_id
+                AND t.track_id = pt.track_id
+          )
+        ",
+    )?;
+    let playlist_ids = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+        row.get::<_, String>(0).map(PlaylistId::new)
+    })?)?;
+    if playlist_ids.is_empty() {
+        return Ok(());
+    }
+    connection.execute(
+        "
+        DELETE FROM playlist_tracks
+        WHERE server_id = ?1
+          AND playlist_id IN (
+              SELECT playlist_id
+              FROM playlists
+              WHERE server_id = ?1
+                AND owner = 'native'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tracks t
+              WHERE t.server_id = playlist_tracks.server_id
+                AND t.track_id = playlist_tracks.track_id
+          )
+        ",
+        params![server_id.as_str()],
+    )?;
+    for playlist_id in playlist_ids {
+        super::library_auxiliary_cache::refresh_playlist_stats(
+            connection,
+            server_id,
+            &playlist_id,
+        )?;
+        super::library_auxiliary_cache::refresh_playlist_refs(connection, server_id, &playlist_id)?;
+    }
+    Ok(())
 }
 
 fn prune_missing_entity_rows(connection: &Connection, server_id: &ServerId) -> StoreResult<()> {

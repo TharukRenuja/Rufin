@@ -399,8 +399,10 @@ fn load_active_source_snapshot(
         .unwrap_or_else(|| "Cached library ready".to_string());
     let last_error = sync_state.and_then(|state| state.last_error);
 
+    let source_capabilities = source_capabilities_for_saved(&saved);
     Ok(LibrarySnapshot {
         server: Some(saved.server),
+        source_capabilities,
         servers,
         selected_source: Some(selected_source),
         local_folders: source_settings.sources.local_folders,

@@ -3,17 +3,17 @@ use std::{collections::BTreeSet, fs, path::PathBuf};
 use super::servers::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 use crate::{
-    CueTrackSourceObject, LocalFileSourceObject, LocalLibraryDelta, StoreError,
+    CueTrackSourceObject, LocalFileSourceObject, LocalLibraryDelta, PlaylistWriteMode, StoreError,
     local_file_source_object_id,
 };
 use domain::{
     AlbumId, ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, ServerId, TrackId,
+    LocalManifestCoverKind, LocalManifestEntry, ServerId, SourceFeatureOwner, TrackId,
 };
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -89,6 +89,12 @@ fn current_schema_initializes_empty_database() {
             .table_has_column("playlists", "top_genres_json")
             .expect("column lookup"),
         "playlists.top_genres_json should exist"
+    );
+    assert!(
+        store
+            .table_has_column("playlists", "owner")
+            .expect("column lookup"),
+        "playlists.owner should exist"
     );
     for table in [
         "albums",
@@ -383,7 +389,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -435,7 +441,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -461,7 +467,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -525,7 +531,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -552,6 +558,60 @@ fn schema_upgrade_servers() {
 }
 
 #[test]
+fn schema_twenty_local_playlists_migrate_to_store_owner() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "playlist-owner-migration"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let mut local = saved_server_with_id("local:server:test");
+    local.server.provider = "local".to_string();
+    let remote = saved_server_with_id("jellyfin:server:test");
+    let local_playlist = playlist(1, None);
+    let remote_playlist = playlist(2, None);
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_server(&local).expect("save local");
+        store.save_server(&remote).expect("save remote");
+        store
+            .upsert_playlists(&local.server.id, std::slice::from_ref(&local_playlist), 1)
+            .expect("upsert pre-migration local playlist");
+        store
+            .upsert_playlists(&remote.server.id, std::slice::from_ref(&remote_playlist), 1)
+            .expect("upsert pre-migration remote playlist");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    connection
+        .execute_batch(
+            "
+            ALTER TABLE playlists DROP COLUMN owner;
+            PRAGMA user_version = 20;
+            ",
+        )
+        .expect("simulate schema twenty");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(
+        store
+            .playlist_owner(&local.server.id, &local_playlist.id)
+            .expect("local playlist owner"),
+        Some(SourceFeatureOwner::Store)
+    );
+    assert_eq!(
+        store
+            .playlist_owner(&remote.server.id, &remote_playlist.id)
+            .expect("remote playlist owner"),
+        Some(SourceFeatureOwner::Native)
+    );
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
 fn schema_seventeen_resets() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
@@ -571,7 +631,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -594,12 +654,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 21)
+        .pragma_update(None, "user_version", 22)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -634,11 +694,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 20);
+        assert_eq!(store.schema_version().expect("schema version"), 21);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 20);
+    assert_eq!(store.schema_version().expect("schema version"), 21);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -2464,6 +2524,175 @@ fn schema_stale_sync() {
         None
     );
 }
+
+#[test]
+fn schema_store_playlist_survives_native_sync_prune() {
+    let case = StoreCase::open();
+    let native = playlist(1, None);
+    let store_owned = playlist(2, None);
+
+    let first_generation = case.start_sync("begin sync");
+    case.upsert_playlists(&case.id, std::slice::from_ref(&native), first_generation)
+        .expect("upsert native playlist");
+    case.finish_sync(first_generation, "complete first sync");
+    case.upsert_playlists_with_mode(
+        &case.id,
+        std::slice::from_ref(&store_owned),
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist");
+
+    let second_generation = case.start_sync("begin next sync");
+    case.finish_sync(second_generation, "complete second sync");
+
+    let playlists = case
+        .load_playlists(&case.id, 0, 10)
+        .expect("load playlists")
+        .items;
+    assert_eq!(playlists.len(), 1);
+    assert_eq!(playlists[0], store_owned);
+    assert_eq!(
+        case.playlist_owner(&case.id, &playlists[0].id)
+            .expect("playlist owner"),
+        Some(SourceFeatureOwner::Store)
+    );
+}
+
+#[test]
+fn schema_store_playlist_rehydrates_entries_for_returning_tracks() {
+    let case = StoreCase::open();
+    let album = album(1);
+    let first = track(1, &album);
+    let second = track(2, &album);
+    let store_owned = playlist(1, None);
+    let entries = schema_track_test(&store_owned.id, &[first.clone(), second.clone()]);
+    let first_generation = case.start_sync("begin sync");
+    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], first_generation)
+        .expect("upsert tracks");
+    case.finish_sync(first_generation, "complete first sync");
+    case.upsert_playlists_with_mode(
+        &case.id,
+        std::slice::from_ref(&store_owned),
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist");
+    case.upsert_playlist_entries_with_mode(
+        &case.id,
+        &store_owned.id,
+        &entries,
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist entries");
+
+    let second_generation = case.start_sync("begin next sync");
+    case.upsert_tracks(&case.id, std::slice::from_ref(&first), second_generation)
+        .expect("upsert remaining track");
+    case.finish_sync(second_generation, "complete second sync");
+
+    let detail = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load playlist")
+        .expect("playlist");
+    assert_eq!(detail.entries.len(), 1);
+    assert_eq!(detail.entries[0].track.id, first.id);
+    assert_eq!(detail.playlist.track_count, 1);
+    assert_eq!(detail.playlist.duration_seconds, first.duration_seconds);
+
+    let third_generation = case.start_sync("begin reload sync");
+    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], third_generation)
+        .expect("reload tracks");
+    case.finish_sync(third_generation, "complete reload sync");
+
+    let reloaded = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load reloaded playlist")
+        .expect("playlist");
+    assert_eq!(reloaded.entries.len(), 2);
+    assert_eq!(reloaded.entries[0].track.id, first.id);
+    assert_eq!(reloaded.entries[1].track.id, second.id);
+    assert_eq!(reloaded.playlist.track_count, 2);
+}
+
+#[test]
+fn schema_clear_library_cache_preserves_store_playlist_membership() {
+    let case = StoreCase::open();
+    let album = album(1);
+    let track = track(1, &album);
+    let store_owned = playlist(1, None);
+    let entries = schema_track_test(&store_owned.id, std::slice::from_ref(&track));
+    let first_generation = case.start_sync("begin sync");
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
+        .expect("upsert track");
+    case.finish_sync(first_generation, "complete first sync");
+    case.upsert_playlists_with_mode(
+        &case.id,
+        std::slice::from_ref(&store_owned),
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist");
+    case.upsert_playlist_entries_with_mode(
+        &case.id,
+        &store_owned.id,
+        &entries,
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist entries");
+
+    case.clear_library_cache(&case.id)
+        .expect("clear library cache");
+    let cleared = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load cleared playlist")
+        .expect("playlist preserved");
+    assert!(cleared.entries.is_empty());
+    assert_eq!(cleared.playlist.track_count, 0);
+    assert_eq!(
+        case.playlist_owner(&case.id, &store_owned.id)
+            .expect("playlist owner"),
+        Some(SourceFeatureOwner::Store)
+    );
+
+    let second_generation = case.start_sync("begin reload sync");
+    case.upsert_tracks(&case.id, std::slice::from_ref(&track), second_generation)
+        .expect("reload track");
+    case.finish_sync(second_generation, "complete reload sync");
+    let reloaded = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load reloaded playlist")
+        .expect("playlist preserved");
+    assert_eq!(reloaded.entries.len(), 1);
+    assert_eq!(reloaded.entries[0].track.id, track.id);
+    assert_eq!(reloaded.playlist.track_count, 1);
+}
+
+#[test]
+fn schema_native_playlist_upsert_rejects_store_owned_collision() {
+    let case = StoreCase::open();
+    let store_owned = playlist(1, None);
+    case.upsert_playlists_with_mode(
+        &case.id,
+        std::slice::from_ref(&store_owned),
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist");
+
+    let mut native = store_owned.clone();
+    native.name = "Native Collision".to_string();
+    let error = case
+        .upsert_playlists(&case.id, std::slice::from_ref(&native), 1)
+        .expect_err("native upsert should reject store owner collision");
+
+    assert!(matches!(error, StoreError::InvalidPlaylistOwner(_)));
+    assert_eq!(
+        case.load_playlist_detail(&case.id, &store_owned.id)
+            .expect("load playlist")
+            .expect("playlist")
+            .playlist
+            .name,
+        store_owned.name
+    );
+}
+
 #[test]
 fn schema_trip_page() {
     let case = StoreCase::open();

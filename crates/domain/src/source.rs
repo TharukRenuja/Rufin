@@ -15,6 +15,60 @@ pub enum PlayedFilter {
     Played,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum SourceFeatureOwner {
+    Native,
+    Store,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum SourceFeatureSupport {
+    #[default]
+    Unsupported,
+    Supported(SourceFeatureOwner),
+}
+
+impl SourceFeatureSupport {
+    pub const fn native() -> Self {
+        Self::Supported(SourceFeatureOwner::Native)
+    }
+
+    pub const fn store() -> Self {
+        Self::Supported(SourceFeatureOwner::Store)
+    }
+
+    pub const fn owner(self) -> Option<SourceFeatureOwner> {
+        match self {
+            Self::Supported(owner) => Some(owner),
+            Self::Unsupported => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourcePlaylistCapabilities {
+    pub read_native: bool,
+    pub read_store: bool,
+    pub create: SourceFeatureSupport,
+    pub mutate_native: bool,
+    pub mutate_store: bool,
+}
+
+/// App-facing feature contract for one configured source.
+///
+/// Source capabilities describe what Rufin should offer for the active library
+/// source and which owner is authoritative for each operation. They may include
+/// native adapter behavior and Rufin store-owned behavior in the same source.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourceCapabilities {
+    pub playlists: SourcePlaylistCapabilities,
+    pub smart_playlists: SourceFeatureSupport,
+    pub favorites: SourceFeatureSupport,
+    pub favorite_mutations: SourceFeatureSupport,
+    pub music_folders: SourceFeatureSupport,
+    pub folder_browsing: SourceFeatureSupport,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RandomTrackRequest {
     pub limit: usize,

@@ -1572,12 +1572,31 @@ pub(super) fn clear_library_cache_on_connection(
     server_id: &ServerId,
 ) -> StoreResult<()> {
     clear_local_manifest_on_connection(connection, server_id)?;
+    connection.execute(
+        "
+        DELETE FROM playlist_tracks
+        WHERE server_id = ?1
+          AND playlist_id IN (
+              SELECT playlist_id
+              FROM playlists
+              WHERE server_id = ?1
+                AND owner = 'native'
+          )
+        ",
+        params![server_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM playlists
+        WHERE server_id = ?1
+          AND owner = 'native'
+        ",
+        params![server_id.as_str()],
+    )?;
     for table in [
         "collection_cover_refs",
         "home_section_prefetch_items",
         "home_section_items",
-        "playlist_tracks",
-        "playlists",
         "genres",
         "track_genres",
         "track_music_folders",
@@ -1607,6 +1626,43 @@ pub(super) fn clear_library_cache_on_connection(
     }
     connection.execute(
         "DELETE FROM library_fts WHERE server_id = ?1",
+        params![server_id.as_str()],
+    )?;
+    refresh_store_playlist_cache_after_source_clear(connection, server_id)?;
+    Ok(())
+}
+
+fn refresh_store_playlist_cache_after_source_clear(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    let mut statement = connection.prepare(
+        "
+        SELECT playlist_id
+        FROM playlists
+        WHERE server_id = ?1
+          AND owner = 'store'
+        ",
+    )?;
+    let playlist_ids = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+        row.get::<_, String>(0).map(PlaylistId::new)
+    })?)?;
+    for playlist_id in playlist_ids {
+        super::library_auxiliary_cache::refresh_playlist_stats(
+            connection,
+            server_id,
+            &playlist_id,
+        )?;
+        super::library_auxiliary_cache::refresh_playlist_refs(connection, server_id, &playlist_id)?;
+    }
+    connection.execute(
+        "
+        INSERT INTO library_fts (server_id, item_type, item_id, title, subtitle)
+        SELECT server_id, 'playlist', playlist_id, name, ''
+        FROM playlists
+        WHERE server_id = ?1
+          AND owner = 'store'
+        ",
         params![server_id.as_str()],
     )?;
     Ok(())

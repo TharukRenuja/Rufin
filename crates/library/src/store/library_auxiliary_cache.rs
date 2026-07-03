@@ -371,7 +371,25 @@ impl Store {
         entries: &[PlaylistEntry],
         generation: i64,
     ) -> StoreResult<()> {
+        self.upsert_playlist_entries_with_mode(
+            server_id,
+            playlist_id,
+            entries,
+            PlaylistWriteMode::NativeSync { generation },
+        )
+    }
+
+    pub fn upsert_playlist_entries_with_mode(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        entries: &[PlaylistEntry],
+        mode: PlaylistWriteMode,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let owner = mode.owner();
+            let generation = mode.sync_generation();
+            ensure_playlist_owner(connection, server_id, playlist_id, owner)?;
             connection.execute(
                 "DELETE FROM playlist_tracks WHERE server_id = ?1 AND playlist_id = ?2",
                 params![server_id.as_str(), playlist_id.as_str()],
@@ -493,6 +511,14 @@ impl Store {
                 .push((entry_id, track_id));
         }
         Ok(keys)
+    }
+
+    pub fn playlist_owner(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Option<SourceFeatureOwner>> {
+        playlist_owner_on_connection(&self.connection, server_id, playlist_id)
     }
 
     pub fn load_playlist_detail(
@@ -866,10 +892,32 @@ impl Store {
         playlist_id: &PlaylistId,
         name: &str,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "UPDATE playlists SET name = ?3 WHERE server_id = ?1 AND playlist_id = ?2",
-            params![server_id.as_str(), playlist_id.as_str(), name],
+        self.rename_playlist_with_owner(server_id, playlist_id, name, SourceFeatureOwner::Native)
+    }
+
+    pub fn rename_playlist_with_owner(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        name: &str,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        let changed = self.connection.execute(
+            "UPDATE playlists SET name = ?3 WHERE server_id = ?1 AND playlist_id = ?2 AND owner = ?4",
+            params![
+                server_id.as_str(),
+                playlist_id.as_str(),
+                name,
+                playlist_owner_to_str(owner),
+            ],
         )?;
+        if changed == 0 {
+            return Err(StoreError::InvalidPlaylistOwner(format!(
+                "playlist {} is not owned by {}",
+                playlist_id.as_str(),
+                playlist_owner_to_str(owner)
+            )));
+        }
         self.connection.execute(
             "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
             params![server_id.as_str(), playlist_id.as_str()],
@@ -881,18 +929,33 @@ impl Store {
         )?;
         Ok(())
     }
+
     pub fn delete_playlist(
         &self,
         server_id: &ServerId,
         playlist_id: &PlaylistId,
     ) -> StoreResult<()> {
+        self.delete_playlist_with_owner(server_id, playlist_id, SourceFeatureOwner::Native)
+    }
+
+    pub fn delete_playlist_with_owner(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        owner: SourceFeatureOwner,
+    ) -> StoreResult<()> {
+        ensure_playlist_owner(&self.connection, server_id, playlist_id, owner)?;
         self.connection.execute(
             "DELETE FROM playlist_tracks WHERE server_id = ?1 AND playlist_id = ?2",
             params![server_id.as_str(), playlist_id.as_str()],
         )?;
         self.connection.execute(
-            "DELETE FROM playlists WHERE server_id = ?1 AND playlist_id = ?2",
-            params![server_id.as_str(), playlist_id.as_str()],
+            "DELETE FROM playlists WHERE server_id = ?1 AND playlist_id = ?2 AND owner = ?3",
+            params![
+                server_id.as_str(),
+                playlist_id.as_str(),
+                playlist_owner_to_str(owner),
+            ],
         )?;
         self.connection.execute(
             "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
@@ -2237,8 +2300,10 @@ pub(super) fn refresh_playlist_stats(
         UPDATE playlists
         SET track_count = (
                 SELECT COUNT(*)
-                FROM playlist_tracks
-                WHERE server_id = ?1 AND playlist_id = ?2
+                FROM playlist_tracks pt
+                JOIN tracks t
+                    ON t.server_id = pt.server_id AND t.track_id = pt.track_id
+                WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
             ),
             duration_seconds = (
                 SELECT COALESCE(SUM(t.duration_seconds), 0)
@@ -2254,6 +2319,48 @@ pub(super) fn refresh_playlist_stats(
     )?;
     Ok(())
 }
+
+fn playlist_owner_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    playlist_id: &PlaylistId,
+) -> StoreResult<Option<SourceFeatureOwner>> {
+    connection
+        .query_row(
+            "
+            SELECT owner
+            FROM playlists
+            WHERE server_id = ?1 AND playlist_id = ?2
+            ",
+            params![server_id.as_str(), playlist_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|owner| playlist_owner_from_str(&owner))
+        .transpose()
+}
+
+fn ensure_playlist_owner(
+    connection: &Connection,
+    server_id: &ServerId,
+    playlist_id: &PlaylistId,
+    owner: SourceFeatureOwner,
+) -> StoreResult<()> {
+    match playlist_owner_on_connection(connection, server_id, playlist_id)? {
+        Some(current) if current == owner => Ok(()),
+        Some(current) => Err(StoreError::InvalidPlaylistOwner(format!(
+            "playlist {} is owned by {}, not {}",
+            playlist_id.as_str(),
+            playlist_owner_to_str(current),
+            playlist_owner_to_str(owner)
+        ))),
+        None => Err(StoreError::InvalidPlaylistOwner(format!(
+            "playlist {} was not found",
+            playlist_id.as_str()
+        ))),
+    }
+}
+
 fn playlist_top_genres_json(
     connection: &Connection,
     server_id: &ServerId,
