@@ -102,7 +102,11 @@ impl AppController {
             }
             emit_snapshot(&store, &events);
             if select_local {
-                start_sync_thread_with_snapshots(sync_context.clone(), saved);
+                start_sync_thread_with_snapshots(
+                    sync_context.clone(),
+                    saved,
+                    SyncPresentation::UserVisible,
+                );
             }
             refresh_local_library_watcher(sync_context, local_library_watcher);
         });
@@ -232,9 +236,13 @@ impl AppController {
             }
             if !no_local_folders {
                 if selected_local {
-                    start_sync_thread_with_snapshots(sync_context.clone(), saved);
+                    start_sync_thread_with_snapshots(
+                        sync_context.clone(),
+                        saved,
+                        SyncPresentation::Silent,
+                    );
                 } else {
-                    start_sync_thread(sync_context.clone(), saved);
+                    start_silent_sync_thread(sync_context.clone(), saved);
                 }
             }
             refresh_local_library_watcher(sync_context, local_library_watcher);

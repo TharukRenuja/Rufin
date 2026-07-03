@@ -1118,6 +1118,21 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         }
                     }
                 }
+                ControllerEvent::SourceSelectionChanged { selected_source } => {
+                    {
+                        let mut library = shell.state.library.borrow_mut();
+                        library.selected_source = Some(selected_source);
+                        library.music_folders.clear();
+                        library.selected_music_folder_id = None;
+                    }
+                    shell.state.source_switch_preparing.set(true);
+                    shell.state.startup_route_render_pending.set(false);
+                    shell.state.startup_route_revealed.set(false);
+                    shell.state.startup_route_content_prepared.set(false);
+                    shell.update_server_selector();
+                    shell.render_startup_loading_view();
+                    continue;
+                }
                 ControllerEvent::LibrarySyncStatus(status) => {
                     let event_started = Instant::now();
                     let sync_status = status.sync_status.clone();

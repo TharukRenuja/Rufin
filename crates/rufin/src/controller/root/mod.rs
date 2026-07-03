@@ -359,6 +359,9 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    SourceSelectionChanged {
+        selected_source: LibrarySourceSelection,
+    },
     LibrarySyncStatus(Box<LibrarySyncStatus>),
     LibraryDelta(Box<LibraryDelta>),
     HomeSectionsUpdated {
@@ -464,6 +467,7 @@ pub struct AppController {
     secret_switch: Arc<SwitchableSecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    source_selection_generation: Arc<AtomicU64>,
     play_activation_generation: Arc<AtomicU64>,
     queue_persist_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,

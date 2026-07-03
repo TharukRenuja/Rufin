@@ -97,6 +97,10 @@ pub(in crate::controller) fn startup_activate_source() {
     }];
     controller.save_settings(&settings).expect("save settings");
     controller.select_source(LibrarySourceSelection::Local);
+    assert_eq!(
+        wait_for_source_selection(&events),
+        LibrarySourceSelection::Local
+    );
     let local_queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(local_queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
     assert!(local_queue.entries.is_empty());
@@ -112,6 +116,10 @@ pub(in crate::controller) fn startup_activate_source() {
         Some(LibrarySourceSelection::Local)
     );
     controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+    assert_eq!(
+        wait_for_source_selection(&events),
+        LibrarySourceSelection::Server(server_id.clone())
+    );
     let restored_queue = wait_for_queue(&events).expect("restored server queue");
     assert_eq!(restored_queue.server_id, server_id);
     assert_eq!(restored_queue.entries[0].track_id, first.id);
@@ -667,6 +675,10 @@ pub(in crate::controller) fn startup_start_refresh() {
 
     controller.select_source(LibrarySourceSelection::Local);
 
+    assert_eq!(
+        wait_for_source_selection(&events),
+        LibrarySourceSelection::Local
+    );
     let queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
     let snapshot = wait_for_snapshot(&events);
@@ -674,14 +686,7 @@ pub(in crate::controller) fn startup_start_refresh() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Local)
     );
-    assert_eq!(snapshot.sync_status, "Syncing library...");
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
-    let completed_snapshot = wait_for_snapshot(&events);
-    assert_eq!(
-        completed_snapshot.selected_source,
-        Some(LibrarySourceSelection::Local)
-    );
-    assert_eq!(completed_snapshot.sync_status, "Cached library ready");
+    assert_eq!(snapshot.sync_status, "Cached library ready");
     let state = controller
         .store
         .with_store(|store| store.sync_state(&local.server.id))
@@ -1256,6 +1261,7 @@ pub(in crate::controller) fn startup_cached_local_status_reports_noop_and_delta(
 
         controller.start_sync(local);
 
+        assert_eq!(wait_for_status(&events), "Syncing Local library...");
         let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
         if changed {
             assert!(!status.delta.tracks.added.is_empty(), "{label}");
@@ -1777,7 +1783,6 @@ pub(in crate::controller) fn startup_removing_cache() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Server(remote.server.id.clone()))
     );
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let total = controller
@@ -1898,6 +1903,7 @@ fn wait_for_sync_status_without_snapshot(
             }
             ControllerEvent::Snapshot(_) => panic!("cached same-source sync emitted snapshot"),
             ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::SourceSelectionChanged { .. }
             | ControllerEvent::LibraryDelta(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
