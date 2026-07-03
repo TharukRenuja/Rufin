@@ -30,6 +30,7 @@ pub(super) struct ServerSelector {
     normal_popover: RefCell<Option<gtk::Popover>>,
     normal_click_handler: RefCell<Option<glib::SignalHandlerId>>,
     normal_hover_controller: RefCell<Option<gtk::EventControllerMotion>>,
+    normal_unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
     pub compact_button: gtk::Button,
     pub compact_icon: gtk::Image,
     pub compact_name: gtk::Label,
@@ -37,6 +38,7 @@ pub(super) struct ServerSelector {
     compact_popover: RefCell<Option<gtk::Popover>>,
     compact_click_handler: RefCell<Option<glib::SignalHandlerId>>,
     compact_hover_controller: RefCell<Option<gtk::EventControllerMotion>>,
+    compact_unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 struct ServerSelectorContent {
@@ -134,6 +136,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
         normal_popover: RefCell::new(None),
         normal_click_handler: RefCell::new(None),
         normal_hover_controller: RefCell::new(None),
+        normal_unmap_handler: RefCell::new(None),
         compact_button,
         compact_icon,
         compact_name,
@@ -141,6 +144,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
         compact_popover: RefCell::new(None),
         compact_click_handler: RefCell::new(None),
         compact_hover_controller: RefCell::new(None),
+        compact_unmap_handler: RefCell::new(None),
     }
 }
 
@@ -164,6 +168,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.normal_popover,
         &selector.normal_click_handler,
         &selector.normal_hover_controller,
+        &selector.normal_unmap_handler,
         server_selection_popover(shell, &content),
     );
 
@@ -179,6 +184,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.compact_popover,
         &selector.compact_click_handler,
         &selector.compact_hover_controller,
+        &selector.compact_unmap_handler,
         server_selection_popover(shell, &content),
     );
 }
@@ -214,9 +220,13 @@ fn update_selector_popover(
     popover_slot: &RefCell<Option<gtk::Popover>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     hover_controller_slot: &RefCell<Option<gtk::EventControllerMotion>>,
+    unmap_handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     popover: gtk::Popover,
 ) {
     if let Some(handler) = handler_slot.borrow_mut().take() {
+        button.disconnect(handler);
+    }
+    if let Some(handler) = unmap_handler_slot.borrow_mut().take() {
         button.disconnect(handler);
     }
     if let Some(controller) = hover_controller_slot.borrow_mut().take() {
@@ -276,8 +286,13 @@ fn update_selector_popover(
         );
     });
     button.add_controller(hover.clone());
+    let unmap_popover = popover.clone();
+    let unmap_handler = button.connect_unmap(move |_| {
+        unmap_popover.popdown();
+    });
     *handler_slot.borrow_mut() = Some(handler);
     *hover_controller_slot.borrow_mut() = Some(hover);
+    *unmap_handler_slot.borrow_mut() = Some(unmap_handler);
 }
 
 fn popup_server_selection(button: &gtk::Button, popover: &gtk::Popover) {
@@ -352,7 +367,7 @@ fn provider_icon_name(provider: &str) -> &'static str {
 
 fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) -> gtk::Popover {
     let popover = gtk::Popover::new();
-    popover.set_autohide(true);
+    popover.set_autohide(false);
     popover.set_position(gtk::PositionType::Right);
     let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
     wrapper.add_css_class("server-selector-popover");
