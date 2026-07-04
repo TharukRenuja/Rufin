@@ -272,22 +272,23 @@ impl Store {
         let Some(migrations) = schema_migration_path_from(version) else {
             return Err(StoreError::UnsupportedSchemaVersion(version));
         };
-        if !migrations.is_empty() {
-            self.connection.execute_batch("BEGIN IMMEDIATE")?;
-            let migration_result = (|| {
-                for migration in migrations {
-                    (migration.run)(self)?;
-                    self.connection
-                        .pragma_update(None, "user_version", migration.to_version())?;
-                }
-                Ok(())
-            })();
-            if let Err(error) = migration_result {
-                let _rollback_result = self.connection.execute_batch("ROLLBACK");
-                return Err(error);
-            }
-            self.connection.execute_batch("COMMIT")?;
+        if migrations.is_empty() {
+            return Ok(());
         }
+        self.connection.execute_batch("BEGIN IMMEDIATE")?;
+        let migration_result = (|| {
+            for migration in migrations {
+                (migration.run)(self)?;
+                self.connection
+                    .pragma_update(None, "user_version", migration.to_version())?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = migration_result {
+            let _rollback_result = self.connection.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+        self.connection.execute_batch("COMMIT")?;
         self.initialize_schema()
     }
     pub(super) fn open_file(path: &Path) -> StoreResult<Self> {

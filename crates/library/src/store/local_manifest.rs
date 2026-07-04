@@ -510,8 +510,9 @@ impl Store {
             return Ok(());
         }
         self.write_batch(|connection| {
+            let affected_playlist_ids =
+                delete_native_playlist_track_ids(connection, server_id, track_ids)?;
             for table in [
-                "playlist_tracks",
                 "track_music_folders",
                 "track_genres",
                 "track_artist_links",
@@ -524,6 +525,18 @@ impl Store {
             }
             delete_track_entity_rows(connection, server_id, track_ids)?;
             delete_track_fts_rows(connection, server_id, track_ids)?;
+            for playlist_id in affected_playlist_ids {
+                super::library_auxiliary_cache::refresh_playlist_stats(
+                    connection,
+                    server_id,
+                    &playlist_id,
+                )?;
+                super::library_auxiliary_cache::refresh_playlist_refs(
+                    connection,
+                    server_id,
+                    &playlist_id,
+                )?;
+            }
             Ok(())
         })
     }
@@ -687,7 +700,6 @@ impl Store {
             self.upsert_genres(server_id, &delta.dirty_genres, generation)?;
             self.upsert_home_sections(server_id, &delta.home_sections, generation)?;
             prune_stale_local_aggregate_rows(connection, server_id, &delta)?;
-            self.materialize_favorite_overrides(server_id)?;
             let pruned_cover_entries = self.complete_local_sync(server_id, generation)?;
             self.replace_local_manifest(server_id, generation, &delta.manifest_entries)?;
             for cue_source in &delta.cue_track_sources {
@@ -992,6 +1004,64 @@ fn delete_track_ids(
         connection.execute(&sql, params_from_iter(values))?;
     }
     Ok(())
+}
+
+fn delete_native_playlist_track_ids(
+    connection: &Connection,
+    server_id: &ServerId,
+    track_ids: &[TrackId],
+) -> StoreResult<Vec<PlaylistId>> {
+    let mut affected_playlist_ids = Vec::<PlaylistId>::new();
+    for chunk in track_ids.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut values = vec![Value::Text(server_id.as_str().to_string())];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
+        let sql = format!(
+            "
+            SELECT DISTINCT playlist_id
+            FROM playlist_tracks
+            WHERE server_id = ?
+              AND track_id IN ({placeholders})
+            "
+        );
+        let mut statement = connection.prepare(&sql)?;
+        for playlist_id in collect_rows(statement.query_map(params_from_iter(values), |row| {
+            row.get::<_, String>(0).map(PlaylistId::new)
+        })?)? {
+            if !affected_playlist_ids.contains(&playlist_id) {
+                affected_playlist_ids.push(playlist_id);
+            }
+        }
+
+        let sql = format!(
+            "
+            DELETE FROM playlist_tracks
+            WHERE server_id = ?
+              AND track_id IN ({placeholders})
+              AND playlist_id IN (
+                  SELECT playlist_id
+                  FROM playlists
+                  WHERE server_id = ?
+                    AND owner = 'native'
+              )
+            "
+        );
+        let mut values = vec![Value::Text(server_id.as_str().to_string())];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
+        values.push(Value::Text(server_id.as_str().to_string()));
+        connection.execute(&sql, params_from_iter(values))?;
+    }
+    Ok(affected_playlist_ids)
 }
 
 fn delete_home_track_ids(

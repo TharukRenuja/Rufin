@@ -24,8 +24,9 @@ use domain::{
     SecretStorageMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor,
     SourceCapabilities, SourceFeatureOwner, SourceFeatureSupport, SourceOrder,
-    SourcePlaylistCapabilities, StreamDescriptor, StreamQuality, Track, TrackId,
-    TrackSortDescriptor, TrackSortKey, TrackTableSettings,
+    SourcePlaylistCapabilities, SourcePlaylistOperation, SourcePlaylistOperationSupport,
+    StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey,
+    TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
@@ -393,7 +394,7 @@ pub enum ControllerEvent {
     },
     FavoriteChangeFailed {
         item_id: FavoriteItemId,
-        favorite: bool,
+        previous_favorite: bool,
         error: String,
     },
     Queue(Box<Option<QueueSnapshot>>),

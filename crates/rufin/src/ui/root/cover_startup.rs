@@ -1313,10 +1313,17 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::FavoriteChangeFailed {
                     item_id,
-                    favorite,
+                    previous_favorite,
                     error,
                 } => {
-                    shell.apply_favorite_change_failed(item_id, favorite, error);
+                    shell.restore_failed_favorite_change(&item_id, previous_favorite);
+                    if !controller_error_is_user_visible(&error) {
+                        debug!(%error, "suppressed controller error");
+                        continue;
+                    }
+                    warn!(%error, "controller error");
+                    shell.dismiss_library_sync_toast();
+                    shell.show_preferences_toast(&error);
                 }
                 ControllerEvent::Queue(queue) => {
                     let next_queue = *queue;

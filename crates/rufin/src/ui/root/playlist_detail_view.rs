@@ -315,6 +315,18 @@ impl Shell {
             detail.playlist.track_count,
             detail.playlist.duration_seconds,
         );
+        let can_rename =
+            self.playlist_operation_supported(&detail.playlist, SourcePlaylistOperation::Rename);
+        let can_delete =
+            self.playlist_operation_supported(&detail.playlist, SourcePlaylistOperation::Delete);
+        let can_add_tracks =
+            self.playlist_operation_supported(&detail.playlist, SourcePlaylistOperation::AddTracks);
+        let can_remove_entries = self
+            .playlist_operation_supported(&detail.playlist, SourcePlaylistOperation::RemoveEntries);
+        let can_reorder_entries = self.playlist_operation_supported(
+            &detail.playlist,
+            SourcePlaylistOperation::ReorderEntries,
+        );
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
         let play = detail_primary_action_button(PLAY_ICON, "Play");
@@ -356,60 +368,66 @@ impl Shell {
             }
         });
         actions.append(&play);
-        let rename = detail_action_button(EDIT_ICON, "Rename");
-        let shell = Rc::clone(self);
-        let playlist_id_for_rename = detail.playlist.id.clone();
-        let current_name = detail.playlist.name.clone();
-        rename.connect_clicked(move |_| {
-            shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
-        });
-        actions.append(&rename);
-        let add_current = detail_action_button(ADD_ICON, "Add current");
-        let current_track = self
-            .state
-            .player
-            .borrow()
-            .current
-            .as_ref()
-            .and_then(|entry| {
-                let track_id = entry.track_id.clone();
-                let index = self.state.track_index.borrow().get(&track_id).copied()?;
-                let library = self.state.library.borrow();
-                let track = library.tracks.get(index)?;
-                (track.id == track_id).then(|| track.clone())
+        if can_rename {
+            let rename = detail_action_button(EDIT_ICON, "Rename");
+            let shell = Rc::clone(self);
+            let playlist_id_for_rename = detail.playlist.id.clone();
+            let current_name = detail.playlist.name.clone();
+            rename.connect_clicked(move |_| {
+                shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
             });
-        add_current.set_sensitive(current_track.is_some());
-        let controller = self.controller.clone();
-        let playlist_id_for_add = detail.playlist.id.clone();
-        add_current.connect_clicked(move |_| {
-            if let Some(track) = current_track.clone() {
-                controller.add_tracks_to_playlist(playlist_id_for_add.clone(), vec![track]);
-            }
-        });
-        actions.append(&add_current);
-        let delete = detail_delete_button("Delete");
-        let controller = self.controller.clone();
-        let window = self.window.clone();
-        let playlist_id_for_delete = detail.playlist.id.clone();
-        let playlist_name = detail.playlist.name.clone();
-        delete.connect_clicked(move |_| {
-            let dialog = adw::AlertDialog::builder()
-                .heading(tr("Delete Playlist"))
-                .body(format!("Delete \"{playlist_name}\"?"))
-                .build();
-            dialog.add_response("cancel", &tr("Cancel"));
-            dialog.add_response("delete", &tr("Delete"));
-            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-            let controller = controller.clone();
-            let playlist_id = playlist_id_for_delete.clone();
-            dialog.connect_response(None, move |_, response| {
-                if response == "delete" {
-                    controller.delete_playlist(playlist_id.clone());
+            actions.append(&rename);
+        }
+        if can_add_tracks {
+            let add_current = detail_action_button(ADD_ICON, "Add current");
+            let current_track = self
+                .state
+                .player
+                .borrow()
+                .current
+                .as_ref()
+                .and_then(|entry| {
+                    let track_id = entry.track_id.clone();
+                    let index = self.state.track_index.borrow().get(&track_id).copied()?;
+                    let library = self.state.library.borrow();
+                    let track = library.tracks.get(index)?;
+                    (track.id == track_id).then(|| track.clone())
+                });
+            add_current.set_sensitive(current_track.is_some());
+            let controller = self.controller.clone();
+            let playlist_id_for_add = detail.playlist.id.clone();
+            add_current.connect_clicked(move |_| {
+                if let Some(track) = current_track.clone() {
+                    controller.add_tracks_to_playlist(playlist_id_for_add.clone(), vec![track]);
                 }
             });
-            present_light_dismiss_dialog(&dialog, &window);
-        });
-        actions.append(&delete);
+            actions.append(&add_current);
+        }
+        if can_delete {
+            let delete = detail_delete_button("Delete");
+            let controller = self.controller.clone();
+            let window = self.window.clone();
+            let playlist_id_for_delete = detail.playlist.id.clone();
+            let playlist_name = detail.playlist.name.clone();
+            delete.connect_clicked(move |_| {
+                let dialog = adw::AlertDialog::builder()
+                    .heading(tr("Delete Playlist"))
+                    .body(format!("Delete \"{playlist_name}\"?"))
+                    .build();
+                dialog.add_response("cancel", &tr("Cancel"));
+                dialog.add_response("delete", &tr("Delete"));
+                dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                let controller = controller.clone();
+                let playlist_id = playlist_id_for_delete.clone();
+                dialog.connect_response(None, move |_, response| {
+                    if response == "delete" {
+                        controller.delete_playlist(playlist_id.clone());
+                    }
+                });
+                present_light_dismiss_dialog(&dialog, &window);
+            });
+            actions.append(&delete);
+        }
         let showcase = playlist_detail_showcase(
             self,
             PlaylistDetailShowcase {
@@ -430,7 +448,12 @@ impl Shell {
                 self.placeholder_view("Tracks", "No cached tracks are linked here yet.");
             wrapper.append(&library_route_inset(placeholder));
         } else {
-            let entries = self.playlist_entries_view(&detail, Some(entry_selection));
+            let entries = self.playlist_entries_view(
+                &detail,
+                Some(entry_selection),
+                can_remove_entries,
+                can_reorder_entries,
+            );
             wrapper.append(&entries);
         }
         wrapper.upcast()
@@ -461,6 +484,8 @@ impl Shell {
         self: &Rc<Self>,
         detail: &source::PlaylistDetail,
         selection_handle: Option<PlaylistEntrySelectionHandle>,
+        can_remove_entries: bool,
+        can_reorder_entries: bool,
     ) -> gtk::Widget {
         let entries = Rc::new(detail.entries.clone());
         let state = Rc::new(RefCell::new(PlaylistEntryListState::default()));
@@ -507,6 +532,8 @@ impl Shell {
             detail.playlist.id.clone(),
             PRIMARY_ROUTE_HORIZONTAL_INSET,
             selection_handle,
+            can_remove_entries,
+            can_reorder_entries,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());
         self.refresh_current_route_now_playing_selections();
@@ -694,6 +721,7 @@ mod tests {
         Playlist {
             id: PlaylistId::fake(index),
             name: format!("Playlist {index}"),
+            owner: None,
             track_count: 0,
             duration_seconds: 0,
             top_genres: Vec::new(),

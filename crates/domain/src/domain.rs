@@ -506,6 +506,8 @@ pub struct Mood {
 pub struct Playlist {
     pub id: PlaylistId,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<crate::source::SourceFeatureOwner>,
     pub track_count: u32,
     pub duration_seconds: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

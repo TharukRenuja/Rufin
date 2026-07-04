@@ -1116,21 +1116,23 @@ impl Store {
         } else {
             "artists"
         };
-        let artist_filter = artist_list_filter(album_artist);
+        let artist_filter = artist_list_filter_for_alias(album_artist, "a");
         let sql = format!(
             "
-            SELECT artist_id, name, album_count, track_count, favorite,
-                   last_played, play_count, user_rating, image_item_id, image_tag
-            FROM {table}
-            WHERE server_id = ?1
+            SELECT a.artist_id, a.name, a.album_count, a.track_count,
+                   {favorite} AS favorite, a.last_played, a.play_count,
+                   a.user_rating, a.image_item_id, a.image_tag
+            FROM {table} a
+            WHERE a.server_id = ?1
               AND (
-                  image_item_id IS NULL
-                  OR image_item_id LIKE 'external:%'
+                  a.image_item_id IS NULL
+                  OR a.image_item_id LIKE 'external:%'
               )
               {artist_filter}
-            ORDER BY name COLLATE NOCASE
+            ORDER BY a.name COLLATE NOCASE
             LIMIT ?2 OFFSET ?3
-            "
+            ",
+            favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
         collect_rows(statement.query_map(

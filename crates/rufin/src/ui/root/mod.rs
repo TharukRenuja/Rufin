@@ -85,8 +85,9 @@ use domain::{
     RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
-    TrackSortKey, TrackTableSettings, format_duration, sanitized_window_size,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField,
+    SourcePlaylistOperation, Track, TrackId, TrackSortKey, TrackTableSettings, format_duration,
+    sanitized_window_size,
 };
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,
@@ -468,6 +469,7 @@ pub(in crate::ui) struct AppState {
     decoded_cover_bytes: Cell<usize>,
     decoded_cover_touch: Cell<u64>,
     favorite_controls: FavoriteControls,
+    pending_favorite_intents: RefCell<HashMap<FavoriteItemId, bool>>,
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
     search_request_generation: Cell<u64>,
@@ -706,14 +708,16 @@ impl Shell {
             .is_some()
     }
 
-    pub(in crate::ui) fn favorite_mutation_supported(&self) -> bool {
-        self.state
-            .library
-            .borrow()
-            .source_capabilities
-            .favorite_mutations
-            .owner()
-            .is_some()
+    pub(in crate::ui) fn playlist_operation_supported(
+        &self,
+        playlist: &Playlist,
+        operation: SourcePlaylistOperation,
+    ) -> bool {
+        let capabilities = self.state.library.borrow().source_capabilities.playlists;
+        match playlist.owner {
+            Some(owner) => capabilities.operation_supported_for_owner(operation, owner),
+            None => false,
+        }
     }
 
     pub(in crate::ui) fn replace_library_snapshot(&self, snapshot: LibrarySnapshot) {
@@ -906,6 +910,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         decoded_cover_bytes: Cell::new(0),
         decoded_cover_touch: Cell::new(0),
         favorite_controls: FavoriteControls::default(),
+        pending_favorite_intents: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),
         search_request_generation: Cell::new(0),

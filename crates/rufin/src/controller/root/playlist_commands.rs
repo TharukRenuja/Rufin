@@ -54,6 +54,7 @@ impl AppController {
             let playlist = Playlist {
                 id: playlist_id.clone(),
                 name: name.trim().to_string(),
+                owner: Some(create_owner),
                 track_count: tracks.len() as u32,
                 duration_seconds: tracks.iter().map(|track| track.duration_seconds).sum(),
                 top_genres: Vec::new(),
@@ -92,7 +93,12 @@ impl AppController {
                 return;
             };
             let capabilities = source_capabilities_for_saved(&saved);
-            if !playlist_mutation_supported(owner, capabilities, &events) {
+            if !playlist_operation_supported(
+                owner,
+                SourcePlaylistOperation::Rename,
+                capabilities,
+                &events,
+            ) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
@@ -142,7 +148,12 @@ impl AppController {
                 return;
             };
             let capabilities = source_capabilities_for_saved(&saved);
-            if !playlist_mutation_supported(owner, capabilities, &events) {
+            if !playlist_operation_supported(
+                owner,
+                SourcePlaylistOperation::Delete,
+                capabilities,
+                &events,
+            ) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
@@ -284,48 +295,61 @@ impl AppController {
         });
     }
     pub fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>) {
-        self.mutate_playlist_entries(playlist_id, move |mut detail| {
-            let mut entries = detail.entries;
-            entries.extend(playlist_entries_for_tracks(&detail.playlist.id, &tracks));
-            detail.tracks.extend(tracks);
-            detail.entries = entries;
-            detail
-        });
+        self.mutate_playlist_entries(
+            playlist_id,
+            SourcePlaylistOperation::AddTracks,
+            move |mut detail| {
+                let mut entries = detail.entries;
+                entries.extend(playlist_entries_for_tracks(&detail.playlist.id, &tracks));
+                detail.tracks.extend(tracks);
+                detail.entries = entries;
+                detail
+            },
+        );
     }
     pub fn remove_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String) {
-        self.mutate_playlist_entries(playlist_id, move |mut detail| {
-            detail.entries.retain(|entry| entry.entry_id != entry_id);
-            detail.tracks = detail
-                .entries
-                .iter()
-                .map(|entry| entry.track.clone())
-                .collect();
-            detail
-        });
-    }
-    pub fn move_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String, new_index: usize) {
-        self.mutate_playlist_entries(playlist_id, move |mut detail| {
-            if let Some(old_index) = detail
-                .entries
-                .iter()
-                .position(|entry| entry.entry_id == entry_id)
-            {
-                let entry = detail.entries.remove(old_index);
-                detail
-                    .entries
-                    .insert(new_index.min(detail.entries.len()), entry);
+        self.mutate_playlist_entries(
+            playlist_id,
+            SourcePlaylistOperation::RemoveEntries,
+            move |mut detail| {
+                detail.entries.retain(|entry| entry.entry_id != entry_id);
                 detail.tracks = detail
                     .entries
                     .iter()
                     .map(|entry| entry.track.clone())
                     .collect();
-            }
-            detail
-        });
+                detail
+            },
+        );
+    }
+    pub fn move_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String, new_index: usize) {
+        self.mutate_playlist_entries(
+            playlist_id,
+            SourcePlaylistOperation::ReorderEntries,
+            move |mut detail| {
+                if let Some(old_index) = detail
+                    .entries
+                    .iter()
+                    .position(|entry| entry.entry_id == entry_id)
+                {
+                    let entry = detail.entries.remove(old_index);
+                    detail
+                        .entries
+                        .insert(new_index.min(detail.entries.len()), entry);
+                    detail.tracks = detail
+                        .entries
+                        .iter()
+                        .map(|entry| entry.track.clone())
+                        .collect();
+                }
+                detail
+            },
+        );
     }
     pub(in crate::controller) fn mutate_playlist_entries(
         &self,
         playlist_id: PlaylistId,
+        operation: SourcePlaylistOperation,
         mutate: impl FnOnce(source::PlaylistDetail) -> source::PlaylistDetail + Send + 'static,
     ) {
         let store = self.store.clone();
@@ -362,7 +386,7 @@ impl AppController {
                 return;
             };
             let capabilities = source_capabilities_for_saved(&saved);
-            if !playlist_mutation_supported(owner, capabilities, &events) {
+            if !playlist_operation_supported(owner, operation, capabilities, &events) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
@@ -457,24 +481,41 @@ fn cached_playlist_owner(
     }
 }
 
-fn playlist_mutation_supported(
+fn playlist_operation_supported(
     owner: SourceFeatureOwner,
+    operation: SourcePlaylistOperation,
     capabilities: SourceCapabilities,
     events: &Sender<ControllerEvent>,
 ) -> bool {
-    let unsupported = match owner {
-        SourceFeatureOwner::Native if !capabilities.playlists.mutate_native => {
-            Some("Native playlist mutation is not supported by the active source.")
-        }
-        SourceFeatureOwner::Store if !capabilities.playlists.mutate_store => {
-            Some("Store-owned playlist mutation is not supported by the active source.")
-        }
-        _ => None,
-    };
-    if let Some(message) = unsupported {
+    if !capabilities
+        .playlists
+        .operation_supported_for_owner(operation, owner)
+    {
+        let message = format!(
+            "{} is not supported for {} playlists by the active source.",
+            playlist_operation_label(operation),
+            playlist_owner_label(owner)
+        );
         let _sent = events.send(ControllerEvent::Error(message.to_string()));
         false
     } else {
         true
+    }
+}
+
+fn playlist_operation_label(operation: SourcePlaylistOperation) -> &'static str {
+    match operation {
+        SourcePlaylistOperation::Rename => "Playlist rename",
+        SourcePlaylistOperation::Delete => "Playlist deletion",
+        SourcePlaylistOperation::AddTracks => "Adding tracks",
+        SourcePlaylistOperation::RemoveEntries => "Removing playlist entries",
+        SourcePlaylistOperation::ReorderEntries => "Reordering playlist entries",
+    }
+}
+
+fn playlist_owner_label(owner: SourceFeatureOwner) -> &'static str {
+    match owner {
+        SourceFeatureOwner::Native => "native",
+        SourceFeatureOwner::Store => "store-owned",
     }
 }

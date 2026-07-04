@@ -24,9 +24,9 @@ impl AppController {
             else {
                 emit_favorite_change_failed(
                     &events,
-                    item_id,
-                    favorite,
-                    "No active music server is saved.".to_string(),
+                    &item_id,
+                    !favorite,
+                    "No active music server is saved.",
                 );
                 return;
             };
@@ -35,9 +35,9 @@ impl AppController {
             let Some(owner) = capabilities.favorite_mutations.owner() else {
                 emit_favorite_change_failed(
                     &events,
-                    item_id,
-                    favorite,
-                    "Favorite changes are not supported by the active source.".to_string(),
+                    &item_id,
+                    !favorite,
+                    "Favorite changes are not supported by the active source.",
                 );
                 return;
             };
@@ -54,7 +54,7 @@ impl AppController {
                                 .map_err(|error| error.to_string())
                         });
                     if let Err(error) = result {
-                        emit_favorite_change_failed(&events, item_id, favorite, error);
+                        emit_favorite_change_failed(&events, &item_id, !favorite, error);
                         return;
                     }
                 }
@@ -91,7 +91,7 @@ impl AppController {
                 Ok(())
             });
             if let Err(error) = result {
-                emit_favorite_change_failed(&events, item_id, favorite, error);
+                emit_favorite_change_failed(&events, &item_id, !favorite, error);
                 return;
             }
 
@@ -131,13 +131,13 @@ impl AppController {
 
 fn emit_favorite_change_failed(
     events: &Sender<ControllerEvent>,
-    item_id: FavoriteItemId,
-    favorite: bool,
-    error: String,
+    item_id: &FavoriteItemId,
+    previous_favorite: bool,
+    error: impl Into<String>,
 ) {
     let _sent = events.send(ControllerEvent::FavoriteChangeFailed {
-        item_id,
-        favorite,
-        error,
+        item_id: item_id.clone(),
+        previous_favorite,
+        error: error.into(),
     });
 }

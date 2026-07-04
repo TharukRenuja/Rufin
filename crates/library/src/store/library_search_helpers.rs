@@ -22,11 +22,12 @@ impl Store {
     ) -> StoreResult<PagedResponse<Track>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
-                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.play_count, t.user_rating, t.duration_seconds,
+                       {favorite} AS favorite,
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
@@ -44,7 +45,9 @@ impl Store {
                 ORDER BY bm25(library_fts)
                 LIMIT ?3 OFFSET ?4
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
                     server_id.as_str(),
@@ -56,11 +59,12 @@ impl Store {
                 track_from_row,
             )?)?
         } else {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
-                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.play_count, t.user_rating, t.duration_seconds,
+                       {favorite} AS favorite,
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
@@ -71,7 +75,9 @@ impl Store {
                 ORDER BY bm25(library_fts)
                 LIMIT ?3 OFFSET ?4
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![server_id.as_str(), query, limit as i64, offset as i64],
                 track_from_row,
@@ -92,7 +98,8 @@ impl Store {
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
-                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.play_count, t.user_rating, t.duration_seconds,
+                       {favorite} AS favorite,
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
@@ -109,7 +116,8 @@ impl Store {
                   )
                 ORDER BY {order_by}
                 LIMIT ?3 OFFSET ?4
-                "
+                ",
+                favorite = effective_track_favorite_sql("t"),
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
@@ -127,7 +135,8 @@ impl Store {
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
-                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.play_count, t.user_rating, t.duration_seconds,
+                       {favorite} AS favorite,
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
@@ -137,7 +146,8 @@ impl Store {
                   AND library_fts MATCH ?2
                 ORDER BY {order_by}
                 LIMIT ?3 OFFSET ?4
-                "
+                ",
+                favorite = effective_track_favorite_sql("t"),
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
@@ -232,11 +242,12 @@ impl Store {
             )?
         };
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
                 WHERE t.server_id = ?1
                   AND (
@@ -255,7 +266,9 @@ impl Store {
                 ORDER BY t.title COLLATE NOCASE
                 LIMIT ?3 OFFSET ?4
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
                     server_id.as_str(),
@@ -267,23 +280,26 @@ impl Store {
                 track_from_row,
             )?)?
         } else {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
-                SELECT track_id, album_id, title, artist, artist_id, album, year,
-                       release_date, date_added, last_played, play_count, user_rating,
-                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-                FROM tracks
-                WHERE server_id = ?1
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
                   AND (
-                      LOWER(title) LIKE ?2 ESCAPE '\\'
-                      OR LOWER(artist) LIKE ?2 ESCAPE '\\'
-                      OR LOWER(album) LIKE ?2 ESCAPE '\\'
-                      OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
+                      LOWER(t.title) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.album) LIKE ?2 ESCAPE '\\'
+                      OR CAST(t.year AS TEXT) LIKE ?2 ESCAPE '\\'
                   )
-                ORDER BY title COLLATE NOCASE
+                ORDER BY t.title COLLATE NOCASE
                 LIMIT ?3 OFFSET ?4
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![server_id.as_str(), pattern, limit as i64, offset as i64],
                 track_from_row,
@@ -348,7 +364,8 @@ impl Store {
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
                 WHERE t.server_id = ?1
                   AND (
@@ -366,7 +383,8 @@ impl Store {
                   )
                 ORDER BY {order_by}
                 LIMIT ?3 OFFSET ?4
-                "
+                ",
+                favorite = effective_track_favorite_sql("t"),
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
@@ -384,7 +402,8 @@ impl Store {
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
                 WHERE t.server_id = ?1
                   AND (
@@ -395,7 +414,8 @@ impl Store {
                   )
                 ORDER BY {order_by}
                 LIMIT ?3 OFFSET ?4
-                "
+                ",
+                favorite = effective_track_favorite_sql("t"),
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
@@ -439,8 +459,9 @@ impl Store {
         let artist_filter = artist_list_filter_for_alias(album_artist, "a");
         let sql = format!(
             "
-            SELECT a.artist_id, a.name, a.album_count, a.track_count, a.favorite,
-                   a.last_played, a.play_count, a.user_rating, a.image_item_id, a.image_tag
+            SELECT a.artist_id, a.name, a.album_count, a.track_count,
+                   {favorite} AS favorite, a.last_played, a.play_count,
+                   a.user_rating, a.image_item_id, a.image_tag
             FROM library_fts f
             JOIN {table} a
                 ON a.server_id = f.server_id AND a.artist_id = f.item_id
@@ -450,7 +471,8 @@ impl Store {
               {artist_filter}
             ORDER BY bm25(library_fts)
             LIMIT ?4 OFFSET ?5
-            "
+            ",
+            favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
         let items = collect_rows(statement.query_map(
@@ -493,17 +515,20 @@ impl Store {
                 .query_row(&total_sql, params![server_id.as_str(), pattern], |row| {
                     row.get::<_, i64>(0)
                 })?;
+        let aliased_artist_filter = artist_list_filter_for_alias(album_artist, "a");
         let sql = format!(
             "
-            SELECT artist_id, name, album_count, track_count, favorite,
-                   last_played, play_count, user_rating, image_item_id, image_tag
-            FROM {table}
-            WHERE server_id = ?1
-              AND LOWER(name) LIKE ?2 ESCAPE '\\'
-              {artist_filter}
-            ORDER BY name COLLATE NOCASE
+            SELECT a.artist_id, a.name, a.album_count, a.track_count,
+                   {favorite} AS favorite, a.last_played, a.play_count,
+                   a.user_rating, a.image_item_id, a.image_tag
+            FROM {table} a
+            WHERE a.server_id = ?1
+              AND LOWER(a.name) LIKE ?2 ESCAPE '\\'
+              {aliased_artist_filter}
+            ORDER BY a.name COLLATE NOCASE
             LIMIT ?3 OFFSET ?4
-            "
+            ",
+            favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
         let items = collect_rows(statement.query_map(
@@ -532,7 +557,7 @@ impl Store {
         let mut statement = self.connection.prepare(
             "
             SELECT p.playlist_id, p.name, p.track_count, p.duration_seconds,
-                   p.top_genres_json, p.image_item_id, p.image_tag
+                   p.top_genres_json, p.owner, p.image_item_id, p.image_tag
             FROM library_fts f
             JOIN playlists p
                 ON p.server_id = f.server_id AND p.playlist_id = f.item_id
@@ -570,7 +595,7 @@ impl Store {
         let mut statement = self.connection.prepare(
             "
             SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                   image_item_id, image_tag
+                   owner, image_item_id, image_tag
             FROM playlists
             WHERE server_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'

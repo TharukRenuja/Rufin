@@ -504,7 +504,8 @@ impl Store {
             "
             SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                    t.release_date, t.date_added, {last_played} AS last_played,
-                   {play_count} AS play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   {play_count} AS play_count, t.user_rating, t.duration_seconds,
+                   {favorite} AS favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag,
                    t.local_path, t.source_format, t.comment, {skip_count} AS skip_count, t.bpm
             {from}
@@ -514,6 +515,7 @@ impl Store {
             ",
             last_played = smart_last_played_expr(),
             play_count = smart_play_count_expr(),
+            favorite = effective_track_favorite_sql("t"),
             skip_count = smart_skip_count_expr(),
             from = query.from,
             where_clause = query.where_clause,
@@ -766,7 +768,9 @@ fn compile_rule(rule: &SmartPlaylistRule) -> SmartSql {
         SmartPlaylistRuleField::Bpm => compile_number_rule("t.bpm", true, rule),
         SmartPlaylistRuleField::Rating => compile_number_rule("t.user_rating", true, rule),
         SmartPlaylistRuleField::Year => compile_number_rule("t.year", false, rule),
-        SmartPlaylistRuleField::Favorite => compile_bool_rule("t.favorite", rule),
+        SmartPlaylistRuleField::Favorite => {
+            compile_bool_rule(&effective_track_favorite_sql("t"), rule)
+        }
         SmartPlaylistRuleField::Played => compile_played_rule(rule),
         SmartPlaylistRuleField::PlayCount => {
             compile_number_rule(&smart_play_count_expr(), false, rule)

@@ -4732,6 +4732,7 @@ pub(in crate::controller) fn playlist_refresh_replace() {
     let stale_playlist = Playlist {
         id: PlaylistId::new("fake:playlist:stale"),
         name: "Old Playlist".to_string(),
+        owner: None,
         track_count: 1,
         duration_seconds: stale_track.duration_seconds,
         top_genres: Vec::new(),

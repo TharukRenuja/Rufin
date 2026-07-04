@@ -19,6 +19,10 @@ pub(in crate::controller) fn source_capabilities_for_saved(
     let native_music_folders = source_kind_has_native_music_folders(source_kind);
     let native_folder_browsing = source_kind_has_native_folder_browsing(source_kind);
 
+    let playlist_mutations = SourcePlaylistOperationSupport {
+        native: native_playlist_mutations,
+        store: true,
+    };
     SourceCapabilities {
         playlists: SourcePlaylistCapabilities {
             read_native: native_playlists,
@@ -28,23 +32,22 @@ pub(in crate::controller) fn source_capabilities_for_saved(
             } else {
                 SourceFeatureSupport::store()
             },
-            mutate_native: native_playlist_mutations,
-            mutate_store: true,
+            rename: playlist_mutations,
+            delete: playlist_mutations,
+            add_tracks: playlist_mutations,
+            remove_entries: playlist_mutations,
+            reorder_entries: playlist_mutations,
         },
         smart_playlists: SourceFeatureSupport::store(),
-        favorites: if source_kind == "fake" || source_kind == LOCAL_SOURCE_ID {
-            SourceFeatureSupport::store()
-        } else if native_favorites {
+        favorites: if native_favorites {
             SourceFeatureSupport::native()
         } else {
-            SourceFeatureSupport::Unsupported
+            SourceFeatureSupport::store()
         },
-        favorite_mutations: if source_kind == "fake" || source_kind == LOCAL_SOURCE_ID {
-            SourceFeatureSupport::store()
-        } else if native_favorite_mutations {
+        favorite_mutations: if native_favorite_mutations {
             SourceFeatureSupport::native()
         } else {
-            SourceFeatureSupport::Unsupported
+            SourceFeatureSupport::store()
         },
         music_folders: if native_music_folders {
             SourceFeatureSupport::native()

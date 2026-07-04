@@ -792,6 +792,7 @@ fn test_playlist_with_refs(
     Playlist {
         id: PlaylistId::fake(id),
         name: name.to_string(),
+        owner: None,
         track_count: 1,
         duration_seconds: 180,
         top_genres: Vec::new(),
