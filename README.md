@@ -198,6 +198,20 @@ You can combine multiple `RUST_LOG` flags with `,`, for example `rufin=debug,pla
 
 For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_RESIZE_DEBUG=1`.
 
+# Project scope
+
+## Not in scope
+
+- **Integration with sources that are hostile to third party clients:** Not in scope due to technical and philosophical reasons. These easily make up the majority of known music apps. Support for these would allow a larger user base, but it would be a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take more than a day to deploy. The other point is, I don't want this app to have anything to do with services that dictate their users what to do with their music.
+
+- **Built-in full metadata editor:** A simple metadata editor is a convenience to have in a music client and some simple editing functionality can be considered, but it will always be inferior to full metadata editors that can support custom user scripts, which just can't be bundled inside the app. An integration like "Open on Picard" could be possible in the future, but it will wait until we have more information on [flatpak-next](https://blog.sebastianwick.net/posts/flatpak-happenings/) to see if it can be done easily. 
+
+- **Changing the operational performance significantly:** Rufin is meant to be a fast and visual client. Visual here refers to overall aesthethic; pages are meant to have covers here and there. The app keeps these covers in memory, up to a limit, to do less work of decoding again. Therefore it takes advantage of memory at all times. So far, it usually remains at 370~ MiB on a library with few thousand tracks, and it should not meaningfully go so much beyond on larger libraries. This is inline with other native clients with similar features, and significantly less than Electron-based clients that can easily use 1-1.5 GB. Therefore it can be `lightweight` in the sense that it tries to offer what these heavier apps do natively, though it is not lightweight like plenty of QT-based clients that can run with <100~ MiB memory usage. 
+
+## In scope
+
+- **Almost anything that doesn't collide with 3 points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
+
 # Contributing
 
 To contribute code, please see [CONTRIBUTING.md](CONTRIBUTING.md). 
