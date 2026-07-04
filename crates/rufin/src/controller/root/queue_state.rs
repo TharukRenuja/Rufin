@@ -77,31 +77,31 @@ impl AppController {
             .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot))
     }
     pub fn cached_track_local_path(&self, track_id: &TrackId) -> Option<String> {
-        let server_id = self
+        let source_id = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()
-            .map(|saved| saved.server.id)?;
+            .map(|saved| saved.source.id)?;
         self.store
             .with_store(|store| {
-                if let Some(path) = store.track_local_path(&server_id, track_id)? {
+                if let Some(path) = store.track_local_path(&source_id, track_id)? {
                     return Ok(Some(path));
                 }
-                store.track_local_match_path(&server_id, track_id)
+                store.track_local_match_path(&source_id, track_id)
             })
             .ok()
             .flatten()
     }
     pub fn cached_track_source_format(&self, track_id: &TrackId) -> Option<String> {
-        let server_id = self
+        let source_id = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()
-            .map(|saved| saved.server.id)?;
+            .map(|saved| saved.source.id)?;
         self.store
-            .with_store(|store| store.track_source_format(&server_id, track_id))
+            .with_store(|store| store.track_source_format(&source_id, track_id))
             .ok()
             .flatten()
     }
@@ -169,7 +169,7 @@ pub(in crate::controller) fn sync_queue_metadata(
         },
     );
     if current_matches {
-        snapshot.current_server_id = Some(queue.server_id().clone());
+        snapshot.current_source_id = Some(queue.source_id().clone());
         snapshot.current = queue.current().cloned();
         snapshot.position_seconds = queue.progress_seconds();
         snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
@@ -192,7 +192,7 @@ pub(in crate::controller) fn sync_queue_snapshot(
     let Ok(mut snapshot) = playback_snapshot.lock() else {
         return;
     };
-    snapshot.current_server_id = queue.map(|queue| queue.server_id().clone());
+    snapshot.current_source_id = queue.map(|queue| queue.source_id().clone());
     snapshot.current = queue.and_then(|queue| queue.current().cloned());
     snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
     snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
@@ -213,7 +213,7 @@ pub(in crate::controller) fn sync_queue_snapshot(
         .unwrap_or_default();
     set_waveform_cache_key(&mut snapshot, waveform_cache_key_for_queue(queue));
     if snapshot.current.is_none() {
-        snapshot.current_server_id = None;
+        snapshot.current_source_id = None;
         snapshot.state = PlaybackState::Stopped;
         snapshot.last_error = None;
         snapshot.buffering_percent = None;

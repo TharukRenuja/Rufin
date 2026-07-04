@@ -1,5 +1,5 @@
 use super::library_track_sort::*;
-use super::servers::*;
+use super::sources::*;
 use super::*;
 
 struct SortedTrackSearchPage<'a> {
@@ -14,13 +14,13 @@ struct SortedTrackSearchPage<'a> {
 impl Store {
     pub(super) fn search_tracks_page(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         offset: usize,
         limit: usize,
         total: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
                 "
@@ -31,14 +31,14 @@ impl Store {
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
-                    ON t.server_id = f.server_id AND t.track_id = f.item_id
-                WHERE f.server_id = ?1
+                    ON t.source_id = f.source_id AND t.track_id = f.item_id
+                WHERE f.source_id = ?1
                   AND f.item_type = 'track'
                   AND library_fts MATCH ?2
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?5
                   )
@@ -50,7 +50,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     query,
                     limit as i64,
                     offset as i64,
@@ -68,8 +68,8 @@ impl Store {
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
-                    ON t.server_id = f.server_id AND t.track_id = f.item_id
-                WHERE f.server_id = ?1
+                    ON t.source_id = f.source_id AND t.track_id = f.item_id
+                WHERE f.source_id = ?1
                   AND f.item_type = 'track'
                   AND library_fts MATCH ?2
                 ORDER BY bm25(library_fts)
@@ -79,19 +79,19 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), query, limit as i64, offset as i64],
+                params![source_id.as_str(), query, limit as i64, offset as i64],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total))
     }
     fn search_tracks_page_sorted(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         page: SortedTrackSearchPage<'_>,
     ) -> StoreResult<PagedResponse<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let order_by = track_order_by_sql("t", page.sort_key, page.descending);
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
@@ -103,14 +103,14 @@ impl Store {
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
-                    ON t.server_id = f.server_id AND t.track_id = f.item_id
-                WHERE f.server_id = ?1
+                    ON t.source_id = f.source_id AND t.track_id = f.item_id
+                WHERE f.source_id = ?1
                   AND f.item_type = 'track'
                   AND library_fts MATCH ?2
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?5
                   )
@@ -122,7 +122,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     page.query,
                     page.limit as i64,
                     page.offset as i64,
@@ -140,8 +140,8 @@ impl Store {
                        t.disc_number, t.track_number, t.image_item_id, t.image_tag
                 FROM library_fts f
                 JOIN tracks t
-                    ON t.server_id = f.server_id AND t.track_id = f.item_id
-                WHERE f.server_id = ?1
+                    ON t.source_id = f.source_id AND t.track_id = f.item_id
+                WHERE f.source_id = ?1
                   AND f.item_type = 'track'
                   AND library_fts MATCH ?2
                 ORDER BY {order_by}
@@ -152,7 +152,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     page.query,
                     page.limit as i64,
                     page.offset as i64
@@ -160,12 +160,12 @@ impl Store {
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, page.total))
     }
     pub fn load_tracks_matching_sorted(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         sort_key: LibraryField,
         descending: bool,
@@ -173,13 +173,13 @@ impl Store {
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
         let Some(pattern) = like_pattern(query) else {
-            return self.load_tracks_sorted(server_id, sort_key, descending, offset, limit);
+            return self.load_tracks_sorted(source_id, sort_key, descending, offset, limit);
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_track_fts_matches(server_id, &query)?;
+            let total = self.count_track_fts_matches(source_id, &query)?;
             if total > 0 {
                 return self.search_tracks_page_sorted(
-                    server_id,
+                    source_id,
                     SortedTrackSearchPage {
                         query: &query,
                         sort_key,
@@ -191,22 +191,22 @@ impl Store {
                 );
             }
         }
-        self.load_tracks_like_sorted(server_id, &pattern, sort_key, descending, offset, limit)
+        self.load_tracks_like_sorted(source_id, &pattern, sort_key, descending, offset, limit)
     }
     pub(super) fn load_tracks_like(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         pattern: &str,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
             self.connection.query_row(
                 "
                 SELECT COUNT(*)
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -216,12 +216,12 @@ impl Store {
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?3
                   )
                 ",
-                params![server_id.as_str(), pattern, folder_id.as_str()],
+                params![source_id.as_str(), pattern, folder_id.as_str()],
                 |row| row.get::<_, i64>(0),
             )?
         } else {
@@ -229,7 +229,7 @@ impl Store {
                 "
                 SELECT COUNT(*)
                 FROM tracks
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND (
                       LOWER(title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(artist) LIKE ?2 ESCAPE '\\'
@@ -237,7 +237,7 @@ impl Store {
                       OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
                   )
                 ",
-                params![server_id.as_str(), pattern],
+                params![source_id.as_str(), pattern],
                 |row| row.get::<_, i64>(0),
             )?
         };
@@ -249,7 +249,7 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -259,7 +259,7 @@ impl Store {
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?5
                   )
@@ -271,7 +271,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     pattern,
                     limit as i64,
                     offset as i64,
@@ -287,7 +287,7 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -301,29 +301,29 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), pattern, limit as i64, offset as i64],
+                params![source_id.as_str(), pattern, limit as i64, offset as i64],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
     pub(super) fn load_tracks_like_sorted(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         pattern: &str,
         sort_key: LibraryField,
         descending: bool,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
             self.connection.query_row(
                 "
                 SELECT COUNT(*)
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -333,12 +333,12 @@ impl Store {
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?3
                   )
                 ",
-                params![server_id.as_str(), pattern, folder_id.as_str()],
+                params![source_id.as_str(), pattern, folder_id.as_str()],
                 |row| row.get::<_, i64>(0),
             )?
         } else {
@@ -346,7 +346,7 @@ impl Store {
                 "
                 SELECT COUNT(*)
                 FROM tracks
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND (
                       LOWER(title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(artist) LIKE ?2 ESCAPE '\\'
@@ -354,7 +354,7 @@ impl Store {
                       OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
                   )
                 ",
-                params![server_id.as_str(), pattern],
+                params![source_id.as_str(), pattern],
                 |row| row.get::<_, i64>(0),
             )?
         };
@@ -367,7 +367,7 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -377,7 +377,7 @@ impl Store {
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?5
                   )
@@ -389,7 +389,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     pattern,
                     limit as i64,
                     offset as i64,
@@ -405,7 +405,7 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND (
                       LOWER(t.title) LIKE ?2 ESCAPE '\\'
                       OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
@@ -419,27 +419,27 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), pattern, limit as i64, offset as i64],
+                params![source_id.as_str(), pattern, limit as i64, offset as i64],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
     pub(super) fn search_artists(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Artist>> {
-        self.search_artists_page(server_id, false, query, 0, limit, limit)
+        self.search_artists_page(source_id, false, query, 0, limit, limit)
             .map(|page| page.items)
     }
 }
 impl Store {
     pub(super) fn search_artists_page(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_artist: bool,
         query: &str,
         offset: usize,
@@ -464,8 +464,8 @@ impl Store {
                    a.user_rating, a.image_item_id, a.image_tag
             FROM library_fts f
             JOIN {table} a
-                ON a.server_id = f.server_id AND a.artist_id = f.item_id
-            WHERE f.server_id = ?1
+                ON a.source_id = f.source_id AND a.artist_id = f.item_id
+            WHERE f.source_id = ?1
               AND f.item_type = ?2
               AND library_fts MATCH ?3
               {artist_filter}
@@ -477,7 +477,7 @@ impl Store {
         let mut statement = self.connection.prepare(&sql)?;
         let items = collect_rows(statement.query_map(
             params![
-                server_id.as_str(),
+                source_id.as_str(),
                 item_type,
                 query,
                 limit as i64,
@@ -489,7 +489,7 @@ impl Store {
     }
     pub(super) fn load_artists_like(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_artist: bool,
         pattern: &str,
         offset: usize,
@@ -505,14 +505,14 @@ impl Store {
             "
             SELECT COUNT(*)
             FROM {table}
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'
               {artist_filter}
             "
         );
         let total =
             self.connection
-                .query_row(&total_sql, params![server_id.as_str(), pattern], |row| {
+                .query_row(&total_sql, params![source_id.as_str(), pattern], |row| {
                     row.get::<_, i64>(0)
                 })?;
         let aliased_artist_filter = artist_list_filter_for_alias(album_artist, "a");
@@ -522,7 +522,7 @@ impl Store {
                    {favorite} AS favorite, a.last_played, a.play_count,
                    a.user_rating, a.image_item_id, a.image_tag
             FROM {table} a
-            WHERE a.server_id = ?1
+            WHERE a.source_id = ?1
               AND LOWER(a.name) LIKE ?2 ESCAPE '\\'
               {aliased_artist_filter}
             ORDER BY a.name COLLATE NOCASE
@@ -532,23 +532,23 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let items = collect_rows(statement.query_map(
-            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            params![source_id.as_str(), pattern, limit as i64, offset as i64],
             artist_from_row,
         )?)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn search_playlists(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Playlist>> {
-        self.search_playlists_page(server_id, query, 0, limit, limit)
+        self.search_playlists_page(source_id, query, 0, limit, limit)
             .map(|page| page.items)
     }
     pub(super) fn search_playlists_page(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         offset: usize,
         limit: usize,
@@ -560,8 +560,8 @@ impl Store {
                    p.top_genres_json, p.owner, p.image_item_id, p.image_tag
             FROM library_fts f
             JOIN playlists p
-                ON p.server_id = f.server_id AND p.playlist_id = f.item_id
-            WHERE f.server_id = ?1
+                ON p.source_id = f.source_id AND p.playlist_id = f.item_id
+            WHERE f.source_id = ?1
               AND f.item_type = 'playlist'
               AND library_fts MATCH ?2
             ORDER BY bm25(library_fts)
@@ -569,15 +569,15 @@ impl Store {
             ",
         )?;
         let mut items = collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64, offset as i64],
+            params![source_id.as_str(), query, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
-        self.attach_playlist_cover_image_refs(server_id, &mut items)?;
+        self.attach_playlist_cover_image_refs(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn load_playlists_like(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         pattern: &str,
         offset: usize,
         limit: usize,
@@ -586,10 +586,10 @@ impl Store {
             "
             SELECT COUNT(*)
             FROM playlists
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'
             ",
-            params![server_id.as_str(), pattern],
+            params![source_id.as_str(), pattern],
             |row| row.get::<_, i64>(0),
         )?;
         let mut statement = self.connection.prepare(
@@ -597,22 +597,22 @@ impl Store {
             SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
                    owner, image_item_id, image_tag
             FROM playlists
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'
             ORDER BY name COLLATE NOCASE
             LIMIT ?3 OFFSET ?4
             ",
         )?;
         let mut items = collect_rows(statement.query_map(
-            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            params![source_id.as_str(), pattern, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
-        self.attach_playlist_cover_image_refs(server_id, &mut items)?;
+        self.attach_playlist_cover_image_refs(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn prune_missing_items(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
@@ -627,101 +627,101 @@ impl Store {
                 "track_moods",
                 "album_artist_links",
                 "track_artist_links",
-                "server_music_folders",
+                "source_music_folders",
                 "track_music_folders",
                 "home_section_items",
             ] {
                 let sql =
-                    format!("DELETE FROM {table} WHERE server_id = ?1 AND sync_generation < ?2");
-                connection.execute(&sql, params![server_id.as_str(), generation])?;
+                    format!("DELETE FROM {table} WHERE source_id = ?1 AND sync_generation < ?2");
+                connection.execute(&sql, params![source_id.as_str(), generation])?;
             }
             connection.execute(
                 "
                 DELETE FROM playlist_tracks
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND sync_generation < ?2
                   AND playlist_id IN (
                       SELECT playlist_id
                       FROM playlists
-                      WHERE server_id = ?1
+                      WHERE source_id = ?1
                         AND owner = 'native'
                   )
                 ",
-                params![server_id.as_str(), generation],
+                params![source_id.as_str(), generation],
             )?;
             connection.execute(
                 "
                 DELETE FROM playlists
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND sync_generation < ?2
                   AND owner = 'native'
                 ",
-                params![server_id.as_str(), generation],
+                params![source_id.as_str(), generation],
             )?;
-            prune_dangling_playlist_tracks(connection, server_id)?;
-            prune_missing_entity_rows(connection, server_id)?;
+            prune_dangling_playlist_tracks(connection, source_id)?;
+            prune_missing_entity_rows(connection, source_id)?;
 
             connection.execute(
                 "
-                UPDATE server_library_preferences
+                UPDATE source_library_preferences
                 SET selected_music_folder_id = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND selected_music_folder_id IS NOT NULL
                   AND selected_music_folder_id NOT IN (
                       SELECT folder_id
-                      FROM server_music_folders
-                      WHERE server_id = ?1
+                      FROM source_music_folders
+                      WHERE source_id = ?1
                   )
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
             )?;
 
             connection.execute(
                 "
                 DELETE FROM library_fts
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND item_type = 'album'
                   AND item_id NOT IN (
-                    SELECT album_id FROM albums WHERE server_id = ?1
+                    SELECT album_id FROM albums WHERE source_id = ?1
                   )
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
             )?;
             connection.execute(
                 "
                 DELETE FROM library_fts
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND item_type = 'track'
                   AND item_id NOT IN (
-                    SELECT track_id FROM tracks WHERE server_id = ?1
+                    SELECT track_id FROM tracks WHERE source_id = ?1
                   )
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
             )?;
             connection.execute(
                 "
                 DELETE FROM library_fts
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND item_type IN ('artist', 'album_artist')
                   AND item_id NOT IN (
-                    SELECT artist_id FROM artists WHERE server_id = ?1
+                    SELECT artist_id FROM artists WHERE source_id = ?1
                     UNION
-                    SELECT artist_id FROM album_artists WHERE server_id = ?1
+                    SELECT artist_id FROM album_artists WHERE source_id = ?1
                   )
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
             )?;
             connection.execute(
                 "
                 DELETE FROM library_fts
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND item_type = 'playlist'
                   AND item_id NOT IN (
-                    SELECT playlist_id FROM playlists WHERE server_id = ?1
+                    SELECT playlist_id FROM playlists WHERE source_id = ?1
                   )
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
             )?;
             Ok(())
         })
@@ -757,22 +757,22 @@ impl Store {
 
 fn prune_dangling_playlist_tracks(
     connection: &Connection,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> StoreResult<()> {
     let mut statement = connection.prepare(
         "
         SELECT DISTINCT playlist_id
         FROM playlist_tracks pt
-        WHERE pt.server_id = ?1
+        WHERE pt.source_id = ?1
           AND NOT EXISTS (
               SELECT 1
               FROM tracks t
-              WHERE t.server_id = pt.server_id
+              WHERE t.source_id = pt.source_id
                 AND t.track_id = pt.track_id
           )
         ",
     )?;
-    let playlist_ids = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+    let playlist_ids = collect_rows(statement.query_map(params![source_id.as_str()], |row| {
         row.get::<_, String>(0).map(PlaylistId::new)
     })?)?;
     if playlist_ids.is_empty() {
@@ -781,34 +781,34 @@ fn prune_dangling_playlist_tracks(
     connection.execute(
         "
         DELETE FROM playlist_tracks
-        WHERE server_id = ?1
+        WHERE source_id = ?1
           AND playlist_id IN (
               SELECT playlist_id
               FROM playlists
-              WHERE server_id = ?1
+              WHERE source_id = ?1
                 AND owner = 'native'
           )
           AND NOT EXISTS (
               SELECT 1
               FROM tracks t
-              WHERE t.server_id = playlist_tracks.server_id
+              WHERE t.source_id = playlist_tracks.source_id
                 AND t.track_id = playlist_tracks.track_id
           )
         ",
-        params![server_id.as_str()],
+        params![source_id.as_str()],
     )?;
     for playlist_id in playlist_ids {
         super::library_auxiliary_cache::refresh_playlist_stats(
             connection,
-            server_id,
+            source_id,
             &playlist_id,
         )?;
-        super::library_auxiliary_cache::refresh_playlist_refs(connection, server_id, &playlist_id)?;
+        super::library_auxiliary_cache::refresh_playlist_refs(connection, source_id, &playlist_id)?;
     }
     Ok(())
 }
 
-fn prune_missing_entity_rows(connection: &Connection, server_id: &ServerId) -> StoreResult<()> {
+fn prune_missing_entity_rows(connection: &Connection, source_id: &SourceId) -> StoreResult<()> {
     for (entity_kind, table, id_column) in [
         ("track", "tracks", "track_id"),
         ("album", "albums", "album_id"),
@@ -826,17 +826,17 @@ fn prune_missing_entity_rows(connection: &Connection, server_id: &ServerId) -> S
             let sql = format!(
                 "
                 DELETE FROM {entity_table}
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND entity_kind = ?2
                   AND NOT EXISTS (
                       SELECT 1
                       FROM {table}
-                      WHERE {table}.server_id = {entity_table}.server_id
+                      WHERE {table}.source_id = {entity_table}.source_id
                         AND {table}.{id_column} = {entity_table}.entity_id
                   )
                 "
             );
-            connection.execute(&sql, params![server_id.as_str(), entity_kind])?;
+            connection.execute(&sql, params![source_id.as_str(), entity_kind])?;
         }
     }
     Ok(())

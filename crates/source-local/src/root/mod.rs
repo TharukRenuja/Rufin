@@ -3,8 +3,7 @@ use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
     HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalCueTrackSource,
     LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
-    LocalManifestScan, LocalScanCounters, Playlist, PlaylistId, ServerId, ServerIdentity, Track,
-    TrackId,
+    LocalManifestScan, LocalScanCounters, Playlist, PlaylistId, SourceId, Track, TrackId,
 };
 use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
@@ -152,31 +151,31 @@ pub struct LocalScanProgress {
 impl LocalSource {
     pub fn from_root(root: PathBuf) -> SourceResult<Self> {
         let root = normalize_root(root)?;
-        let server = identity_for_root(&root);
-        Self::from_roots_with_identity(vec![root], server)
+        let source = identity_for_root(&root);
+        Self::from_roots_with_identity(vec![root], source)
     }
 
     pub fn from_roots(roots: Vec<PathBuf>) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
-        let server = identity_for_roots(&roots);
-        Self::from_normalized_roots_with_identity(roots, server)
+        let source = identity_for_roots(&roots);
+        Self::from_normalized_roots_with_identity(roots, source)
     }
 
     pub fn from_roots_with_identity(
         roots: Vec<PathBuf>,
-        server: ServerIdentity,
+        source: SourceIdentity,
     ) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
-        Self::from_normalized_roots_with_identity(roots, server)
+        Self::from_normalized_roots_with_identity(roots, source)
     }
 
     fn from_normalized_roots_with_identity(
         roots: Vec<PathBuf>,
-        server: ServerIdentity,
+        source: SourceIdentity,
     ) -> SourceResult<Self> {
         let (library, manifest_scan) = scan_library(&roots, Vec::new(), None);
         Ok(Self {
-            identity: SourceIdentity { server },
+            identity: source,
             library,
             manifest_scan,
         })
@@ -184,32 +183,32 @@ impl LocalSource {
 
     pub fn from_roots_with_manifest_cache(
         roots: Vec<PathBuf>,
-        server: ServerIdentity,
+        source: SourceIdentity,
         cache: Vec<LocalManifestEntry>,
     ) -> SourceResult<Self> {
-        Self::from_roots_with_manifest_cache_and_progress(roots, server, cache, |_| {})
+        Self::from_roots_with_manifest_cache_and_progress(roots, source, cache, |_| {})
     }
 
     pub fn from_roots_with_manifest_cache_and_progress(
         roots: Vec<PathBuf>,
-        server: ServerIdentity,
+        source: SourceIdentity,
         cache: Vec<LocalManifestEntry>,
         mut progress: impl FnMut(LocalScanProgress),
     ) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
         let (library, manifest_scan) = scan_library(&roots, cache, Some(&mut progress));
         Ok(Self {
-            identity: SourceIdentity { server },
+            identity: source,
             library,
             manifest_scan,
         })
     }
 
-    pub fn from_server(server: ServerIdentity) -> SourceResult<Self> {
-        let root = normalize_root(PathBuf::from(&server.base_url))?;
+    pub fn from_source(source: SourceIdentity) -> SourceResult<Self> {
+        let root = normalize_root(PathBuf::from(&source.base_url))?;
         let (library, manifest_scan) = scan_library(&[root], Vec::new(), None);
         Ok(Self {
-            identity: SourceIdentity { server },
+            identity: source,
             library,
             manifest_scan,
         })
@@ -219,7 +218,7 @@ impl LocalSource {
         &self.manifest_scan
     }
 
-    pub fn identity_for_root(root: impl AsRef<Path>) -> SourceResult<ServerIdentity> {
+    pub fn identity_for_root(root: impl AsRef<Path>) -> SourceResult<SourceIdentity> {
         let root = normalize_root(root.as_ref().to_path_buf())?;
         Ok(identity_for_root(&root))
     }
@@ -799,7 +798,7 @@ fn normalize_roots(roots: Vec<PathBuf>) -> SourceResult<Vec<PathBuf>> {
     }
     Ok(normalized)
 }
-fn identity_for_root(root: &Path) -> ServerIdentity {
+fn identity_for_root(root: &Path) -> SourceIdentity {
     let root_text = root.to_string_lossy().into_owned();
     let name = root
         .file_name()
@@ -807,14 +806,14 @@ fn identity_for_root(root: &Path) -> ServerIdentity {
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("Local")
         .to_string();
-    ServerIdentity {
-        id: ServerId::new(format!("local:server:{:016x}", stable_hash(&root_text))),
-        provider: LOCAL_SOURCE_ID.to_string(),
+    SourceIdentity {
+        id: SourceId::new(format!("local:server:{:016x}", stable_hash(&root_text))),
+        kind: LOCAL_SOURCE_ID.to_string(),
         name,
         base_url: root_text,
     }
 }
-fn identity_for_roots(roots: &[PathBuf]) -> ServerIdentity {
+fn identity_for_roots(roots: &[PathBuf]) -> SourceIdentity {
     if roots.len() == 1 {
         return identity_for_root(&roots[0]);
     }
@@ -823,9 +822,9 @@ fn identity_for_roots(roots: &[PathBuf]) -> ServerIdentity {
         .map(|root| root.to_string_lossy())
         .collect::<Vec<_>>()
         .join("\n");
-    ServerIdentity {
-        id: ServerId::new(format!("local:server:{:016x}", stable_hash(&joined))),
-        provider: LOCAL_SOURCE_ID.to_string(),
+    SourceIdentity {
+        id: SourceId::new(format!("local:server:{:016x}", stable_hash(&joined))),
+        kind: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         base_url: joined,
     }

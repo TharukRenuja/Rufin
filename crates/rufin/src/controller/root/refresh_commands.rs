@@ -6,13 +6,13 @@ impl AppController {
     pub fn start_background_sync_for_active(&self) {
         let active = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None);
         if let Some(saved) = active {
             if saved_server_needs_auth(&self.secrets, &saved) {
                 debug!(
-                    server_id = %saved.server.id,
-                    provider = %saved.server.provider,
+                    source_id = %saved.source.id,
+                    source_kind = %saved.source.kind,
                     "skipping background sync until server sign-in completes"
                 );
                 return;
@@ -21,10 +21,10 @@ impl AppController {
         }
     }
     #[cfg(test)]
-    pub fn resync_active_server(&self) {
+    pub fn resync_active_source(&self) {
         let active = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None);
         if let Some(saved) = active {
             self.start_sync(saved);
@@ -34,14 +34,14 @@ impl AppController {
             ));
         }
     }
-    pub fn resync_server(&self, server_id: ServerId) {
+    pub fn resync_server(&self, source_id: SourceId) {
         let saved = self
             .store
             .with_store(|store| {
                 Ok(store
-                    .list_servers()?
+                    .list_sources()?
                     .into_iter()
-                    .find(|saved| saved.server.id == server_id))
+                    .find(|saved| saved.source.id == source_id))
             })
             .unwrap_or(None);
         if let Some(saved) = saved {
@@ -53,12 +53,12 @@ impl AppController {
         }
     }
     pub fn resync_local_library(&self) {
-        self.resync_server(ServerId::new(LOCAL_SOURCE_SERVER_ID));
+        self.resync_server(SourceId::new(LOCAL_SOURCE_IDENTITY_ID));
     }
     pub fn refresh_home_section_for_active(&self, kind: HomeSectionKind) {
         let active = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None);
         if let Some(saved) = active {
             if saved_server_needs_auth(&self.secrets, &saved) {
@@ -70,7 +70,7 @@ impl AppController {
     pub fn prefetch_explore_for_active(&self) {
         let active = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None);
         if let Some(saved) = active {
             if saved_server_needs_auth(&self.secrets, &saved) {
@@ -85,7 +85,7 @@ impl AppController {
         }
         let active = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None);
         let Some(saved) = active else {
             return;
@@ -93,11 +93,11 @@ impl AppController {
         start_home_promotion(
             self.store.clone(),
             self.events.clone(),
-            saved.server.id,
+            saved.source.id,
             section,
         );
     }
-    pub(in crate::controller) fn start_explore_prefetch_for_saved(&self, saved: SavedServer) {
+    pub(in crate::controller) fn start_explore_prefetch_for_saved(&self, saved: SavedSource) {
         start_explore_prefetch_thread(
             ExplorePrefetchContext {
                 store: self.store.clone(),
@@ -112,7 +112,7 @@ impl AppController {
     }
     pub(in crate::controller) fn start_home_refresh_for_saved(
         &self,
-        saved: SavedServer,
+        saved: SavedSource,
         target: HomeRefreshTarget,
     ) {
         start_home_refresh_thread(
@@ -148,21 +148,21 @@ impl AppController {
     pub fn startup_sync_delay_ms(&self) -> Option<u64> {
         let saved = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()?;
         if saved_server_needs_auth(&self.secrets, &saved) {
             debug!(
-                server_id = %saved.server.id,
-                provider = %saved.server.provider,
+                source_id = %saved.source.id,
+                source_kind = %saved.source.kind,
                 "skipping startup sync until server sign-in completes"
             );
             return None;
         }
-        let readiness = active_source_startup_readiness(&self.store, &saved.server.id).ok()?;
+        let readiness = active_source_startup_readiness(&self.store, &saved.source.id).ok()?;
         debug!(
-            server_id = %saved.server.id,
-            provider = %saved.server.provider,
+            source_id = %saved.source.id,
+            source_kind = %saved.source.kind,
             metadata_fresh = readiness.metadata_fresh,
             artwork_fresh = readiness.artwork_fresh,
             sync_required_reason = ?readiness.sync_required_reason,
@@ -170,15 +170,15 @@ impl AppController {
             startup_delay_ms = ?readiness.startup_delay_ms,
             "evaluated active source readiness"
         );
-        let local_source_configured = saved.server.provider != LOCAL_SOURCE_ID
+        let local_source_configured = saved.source.kind != LOCAL_SOURCE_ID
             || !load_settings_from_store(&self.store)
                 .sources
                 .local_folders
                 .is_empty();
         if local_source_configured
-            && cached_library_exists(&self.store, &saved.server.id)
+            && cached_library_exists(&self.store, &saved.source.id)
             && readiness.sync_required_reason.is_none()
-            && (saved.server.provider == LOCAL_SOURCE_ID
+            && (saved.source.kind == LOCAL_SOURCE_ID
                 || active_source_reconciliation_supported(&saved))
         {
             Some(ACTIVE_SOURCE_RECONCILIATION_DELAY_MS)

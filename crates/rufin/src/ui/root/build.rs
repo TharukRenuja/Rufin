@@ -14,7 +14,7 @@ pub(in crate::ui) fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u
     sizes
 }
 pub(in crate::ui) fn playback_artwork_cache_keys(
-    server_id: &ServerId,
+    source_id: &SourceId,
     image_ref: &ImageRef,
     preferred_size: u32,
 ) -> Vec<String> {
@@ -22,7 +22,7 @@ pub(in crate::ui) fn playback_artwork_cache_keys(
         .into_iter()
         .map(|size| {
             image_cache_key(
-                server_id,
+                source_id,
                 &image_ref.item_id,
                 image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
                 size,
@@ -38,12 +38,12 @@ pub(in crate::ui) struct PlaybackArtworkLookup {
     pub(in crate::ui) memory_path: Option<PathBuf>,
 }
 pub(in crate::ui) fn playback_artwork_path_from_lookup(
-    server_id: &ServerId,
+    source_id: &SourceId,
     image_ref: &ImageRef,
     preferred_size: u32,
     mut lookup: impl FnMut(&str) -> Option<PathBuf>,
 ) -> Option<PlaybackArtworkPath> {
-    playback_artwork_cache_keys(server_id, image_ref, preferred_size)
+    playback_artwork_cache_keys(source_id, image_ref, preferred_size)
         .into_iter()
         .find_map(|key| lookup(&key).map(|path| PlaybackArtworkPath { key, path }))
 }
@@ -61,12 +61,12 @@ pub(in crate::ui) fn playback_artwork_path_from_lookup_context(
     })
 }
 pub(in crate::ui) fn playback_artwork_key_matches(
-    server_id: &ServerId,
+    source_id: &SourceId,
     image_ref: &ImageRef,
     preferred_size: u32,
     key: &str,
 ) -> bool {
-    playback_artwork_cache_keys(server_id, image_ref, preferred_size)
+    playback_artwork_cache_keys(source_id, image_ref, preferred_size)
         .iter()
         .any(|candidate| candidate == key)
 }
@@ -169,7 +169,7 @@ pub(in crate::ui) fn prefetched_explore_from_snapshot(
     snapshot: &LibrarySnapshot,
 ) -> Option<PrefetchedHomeSection> {
     Some(PrefetchedHomeSection {
-        server_id: snapshot.server.as_ref()?.id.clone(),
+        source_id: snapshot.source.as_ref()?.id.clone(),
         section: snapshot.prefetched_explore.clone()?,
     })
 }

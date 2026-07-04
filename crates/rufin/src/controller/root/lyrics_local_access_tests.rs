@@ -127,11 +127,11 @@ pub(in crate::controller) fn local_playlist_commands_use_store_owner() {
     store
         .with_store(|store| {
             store.upsert_tracks(
-                &saved.server.id,
+                &saved.source.id,
                 &[first.clone(), second.clone()],
                 generation,
             )?;
-            store.complete_sync(&saved.server.id, generation)
+            store.complete_sync(&saved.source.id, generation)
         })
         .expect("seed local tracks");
     let (controller, events) = controller_from_store_for_test(store.clone());
@@ -146,7 +146,7 @@ pub(in crate::controller) fn local_playlist_commands_use_store_owner() {
         .clone();
     assert_eq!(
         store
-            .with_store(|store| store.playlist_owner(&saved.server.id, &playlist.id))
+            .with_store(|store| store.playlist_owner(&saved.source.id, &playlist.id))
             .expect("playlist owner"),
         Some(SourceFeatureOwner::Store)
     );
@@ -178,12 +178,12 @@ pub(in crate::controller) fn lyrics_local_lookup() {
     let mut track = restored_track();
     track.id = TrackId::new("local:track:lyrics");
     track.local_path = None;
-    let mut queue = QueueEngine::new(saved.server.id.clone());
+    let mut queue = QueueEngine::new(saved.source.id.clone());
     queue.play_now(&track);
     store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)?;
             store.save_queue_snapshot(&queue.snapshot())?;
             Ok(())
         })
@@ -202,7 +202,7 @@ pub(in crate::controller) fn lyrics_local_capability() {
     let root = self::unique_test_dir("local-provider-lyrics-capability");
     fs::create_dir_all(&root).expect("create local root");
     let provider = LoadedSource::Local(
-        LocalSource::from_roots_with_identity(vec![root.clone()], local_source_saved().server)
+        LocalSource::from_roots_with_identity(vec![root.clone()], local_source_saved().source)
             .expect("local provider"),
     );
     let runtime = Runtime::new().expect("runtime");
@@ -225,12 +225,12 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let server_id = controller
+    let source_id = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("load active server")
         .expect("active server")
-        .server
+        .source
         .id;
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -243,7 +243,7 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
     };
     controller
         .store
-        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
         .expect("save remote lyrics");
     controller.request_track_server_lyrics(track.id);
     assert!(wait_for_lyrics(&events).is_none());
@@ -255,12 +255,12 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let server_id = controller
+    let source_id = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("load active server")
         .expect("active server")
-        .server
+        .source
         .id;
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -273,7 +273,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     };
     controller
         .store
-        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
         .expect("save remote lyrics");
 
     controller.request_track_lyrics(track.id.clone());
@@ -284,7 +284,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     assert_eq!(
         controller
             .store
-            .with_store(|store| store.load_lyrics(&server_id, &track.id))
+            .with_store(|store| store.load_lyrics(&source_id, &track.id))
             .expect("load lyrics"),
         None
     );
@@ -296,12 +296,12 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let server_id = controller
+    let source_id = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("load active server")
         .expect("active server")
-        .server
+        .source
         .id;
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -314,7 +314,7 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
     };
     controller
         .store
-        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
         .expect("save remote lyrics");
 
     controller.request_track_auto_lyrics(track.id.clone());
@@ -328,12 +328,12 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let server_id = controller
+    let source_id = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("load active server")
         .expect("active server")
-        .server
+        .source
         .id;
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -352,7 +352,7 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
     };
     controller
         .store
-        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
         .expect("save remote lyrics");
 
     controller.request_track_lyrics(track.id.clone());
@@ -361,7 +361,7 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
     assert_eq!(
         controller
             .store
-            .with_store(|store| store.load_lyrics(&server_id, &track.id))
+            .with_store(|store| store.load_lyrics(&source_id, &track.id))
             .expect("load lyrics"),
         None
     );
@@ -373,12 +373,12 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let server_id = controller
+    let source_id = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("load active server")
         .expect("active server")
-        .server
+        .source
         .id;
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -391,7 +391,7 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
     };
     controller
         .store
-        .with_store(|store| store.save_lyrics(&server_id, &server_lyrics))
+        .with_store(|store| store.save_lyrics(&source_id, &server_lyrics))
         .expect("save server lyrics");
 
     controller.clear_remote_lyrics_for_current();
@@ -402,10 +402,10 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
 #[test]
 pub(in crate::controller) fn lyrics_emit_current() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:lyrics"),
-            provider: "jellyfin".to_string(),
+    let saved = SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new("jellyfin:server:lyrics"),
+            kind: "jellyfin".to_string(),
             name: "Lyrics Server".to_string(),
             base_url: "https://music.example".to_string(),
         },
@@ -415,7 +415,7 @@ pub(in crate::controller) fn lyrics_emit_current() {
         use_jellyfin_instant_mix: false,
     };
     let track = restored_track();
-    let mut queue = QueueEngine::new(saved.server.id.clone());
+    let mut queue = QueueEngine::new(saved.source.id.clone());
     queue.play_now(&track);
     queue.set_progress_seconds(12);
     let lyrics = Lyrics {
@@ -429,10 +429,10 @@ pub(in crate::controller) fn lyrics_emit_current() {
     };
     store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)?;
             store.save_queue_snapshot(&queue.snapshot())?;
-            store.save_lyrics(&saved.server.id, &lyrics)?;
+            store.save_lyrics(&saved.source.id, &lyrics)?;
             Ok(())
         })
         .expect("seed restored state");
@@ -443,10 +443,10 @@ pub(in crate::controller) fn lyrics_emit_current() {
 #[test]
 pub(in crate::controller) fn lyrics_skip_stale_track_request() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:lyrics"),
-            provider: "jellyfin".to_string(),
+    let saved = SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new("jellyfin:server:lyrics"),
+            kind: "jellyfin".to_string(),
             name: "Lyrics Server".to_string(),
             base_url: "https://music.example".to_string(),
         },
@@ -456,12 +456,12 @@ pub(in crate::controller) fn lyrics_skip_stale_track_request() {
         use_jellyfin_instant_mix: false,
     };
     let track = restored_track();
-    let mut queue = QueueEngine::new(saved.server.id.clone());
+    let mut queue = QueueEngine::new(saved.source.id.clone());
     queue.play_now(&track);
     store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&saved.server.id)?;
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)?;
             store.save_queue_snapshot(&queue.snapshot())?;
             Ok(())
         })
@@ -519,7 +519,7 @@ pub(in crate::controller) fn lyrics_use_path() {
         plain_lyrics: None,
     };
     let (saved_path, lyrics) = super::save_lrclib_result(
-        &ServerId::new("jellyfin:server:lyrics"),
+        &SourceId::new("jellyfin:server:lyrics"),
         &entry,
         &result,
         output.clone(),
@@ -554,7 +554,7 @@ pub(in crate::controller) fn lyrics_save_rejects_netease_placeholder() {
     };
 
     let saved = super::save_lrclib_result(
-        &ServerId::new("jellyfin:server:lyrics"),
+        &SourceId::new("jellyfin:server:lyrics"),
         &entry,
         &result,
         output.clone(),
@@ -586,14 +586,14 @@ fn lyrics_save_entry(track_id: &str, dir: &std::path::Path) -> domain::QueueEntr
 #[test]
 pub(in crate::controller) fn lyrics_use_file() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let dir = self::unique_test_dir("local-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: dir.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(dir.to_string_lossy().into_owned()),
@@ -606,10 +606,10 @@ pub(in crate::controller) fn lyrics_use_file() {
     let mut track = restored_track();
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.server.id, &track.id).expect("sidecar lyrics");
+        super::local_sidecar_lyrics(&store, &saved.source.id, &track.id).expect("sidecar lyrics");
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "line one");
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
@@ -619,14 +619,14 @@ pub(in crate::controller) fn lyrics_use_file() {
 #[test]
 pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let dir = self::unique_test_dir("title-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: dir.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(dir.to_string_lossy().into_owned()),
@@ -640,11 +640,11 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks
     track.title = "Apple".to_string();
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
 
     let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.server.id, &track.id).expect("sidecar lyrics");
+        super::local_sidecar_lyrics(&store, &saved.source.id, &track.id).expect("sidecar lyrics");
 
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "apple line");
@@ -654,9 +654,9 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks
 #[test]
 pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let mut saved = self::saved_server();
-    saved.server.id = ServerId::new("local:server:library");
-    saved.server.provider = LOCAL_SOURCE_ID.to_string();
+    let mut saved = self::saved_source();
+    saved.source.id = SourceId::new("local:server:library");
+    saved.source.kind = LOCAL_SOURCE_ID.to_string();
     let dir = self::unique_test_dir("cue-sidecar");
     fs::create_dir_all(&dir).expect("create dir");
     let audio = dir.join("fruits.flac");
@@ -672,11 +672,11 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            let generation = store.begin_sync(&saved.server.id)?;
-            store.upsert_tracks(&saved.server.id, &[track.clone()], generation)?;
+            store.save_source(&saved)?;
+            let generation = store.begin_sync(&saved.source.id)?;
+            store.upsert_tracks(&saved.source.id, &[track.clone()], generation)?;
             let parent_id = store.upsert_local_file_source_object(
-                &saved.server.id,
+                &saved.source.id,
                 &library::LocalFileSourceObject {
                     source_path: audio.to_string_lossy().into_owned(),
                     root_path: dir.to_string_lossy().into_owned(),
@@ -685,7 +685,7 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
                 },
             )?;
             store.upsert_cue_track_source_object(
-                &saved.server.id,
+                &saved.source.id,
                 &library::CueTrackSourceObject {
                     source_object_id: "local:cue:track:one".to_string(),
                     track_id: track_id.clone(),
@@ -703,7 +703,7 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
         .expect("cue source");
 
     let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.server.id, &track_id).expect("sidecar lyrics");
+        super::local_sidecar_lyrics(&store, &saved.source.id, &track_id).expect("sidecar lyrics");
 
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "apple line");
@@ -763,14 +763,14 @@ pub(in crate::controller) fn lyrics_cache_respects_external_provider_selection()
 #[test]
 pub(in crate::controller) fn lyrics_ignore_files() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let dir = self::unique_test_dir("local-sidecar-large");
     fs::create_dir_all(&dir).expect("create dir");
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: dir.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(dir.to_string_lossy().into_owned()),
@@ -785,10 +785,10 @@ pub(in crate::controller) fn lyrics_ignore_files() {
     let mut track = restored_track();
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
 
-    let lyrics = super::local_sidecar_lyrics(&store, &saved.server.id, &track.id);
+    let lyrics = super::local_sidecar_lyrics(&store, &saved.source.id, &track.id);
 
     assert_eq!(lyrics, None);
     let _cleanup = fs::remove_dir_all(dir);
@@ -796,12 +796,12 @@ pub(in crate::controller) fn lyrics_ignore_files() {
 #[test]
 pub(in crate::controller) fn lyrics_use_replacement() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let generation = store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
+            store.save_source(&saved)?;
+            store.save_source_local_access(&SourceLocalAccess {
+                source_id: saved.source.id.clone(),
                 root_path: "/unused".to_string(),
                 path_replace_from: Some("/server/music".to_string()),
                 path_replace_to: Some(
@@ -810,11 +810,11 @@ pub(in crate::controller) fn lyrics_use_replacement() {
                         .into_owned(),
                 ),
             })?;
-            store.begin_sync(&saved.server.id)
+            store.begin_sync(&saved.source.id)
         })
         .expect("begin sync");
     let root = store
-        .with_store(|store| store.server_local_access(&saved.server.id))
+        .with_store(|store| store.source_local_access(&saved.source.id))
         .expect("access")
         .expect("access")
         .path_replace_to
@@ -826,9 +826,9 @@ pub(in crate::controller) fn lyrics_use_replacement() {
     let mut track = restored_track();
     track.local_path = Some("/server/music/Album/Track.flac".to_string());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id)
+    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id)
         .expect("mapped path");
     assert_eq!(mapped, audio);
     let _cleanup = fs::remove_dir_all(root);
@@ -836,7 +836,7 @@ pub(in crate::controller) fn lyrics_use_replacement() {
 #[test]
 pub(in crate::controller) fn lyrics_require_access() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let generation = begin_active_sync(&store, &saved);
     let dir = self::unique_test_dir("remote-no-local-access");
     fs::create_dir_all(&dir).expect("create dir");
@@ -845,16 +845,16 @@ pub(in crate::controller) fn lyrics_require_access() {
     let mut track = restored_track();
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id);
+    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id);
     assert_eq!(mapped, None);
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
 pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let root = self::unique_test_dir("local-playback-stream");
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
@@ -862,8 +862,8 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: Some("/server/music".to_string()),
             path_replace_to: Some(root.to_string_lossy().into_owned()),
@@ -872,19 +872,19 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let mut track = restored_track();
     track.local_path = Some("/server/music/Album/Track.flac".to_string());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets = Arc::new(MemorySecretStore::new());
     secrets
-        .save_token(&saved.server.id, "test-token")
+        .save_token(&saved.source.id, "test-token")
         .expect("save token");
     let secrets: Arc<dyn SecretStore> = secrets;
     let stream = super::resolve_stream(
         &store,
         &runtime,
         &secrets,
-        &saved.server.id,
+        &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
@@ -899,10 +899,10 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
 #[test]
 pub(in crate::controller) fn lyrics_change_source() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let playback_server = SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("fake:server:playback"),
-            provider: "fake".to_string(),
+    let playback_server = SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new("fake:server:playback"),
+            kind: "fake".to_string(),
             name: "Playback Server".to_string(),
             base_url: "https://playback.example.test".to_string(),
         },
@@ -914,9 +914,9 @@ pub(in crate::controller) fn lyrics_change_source() {
     let local = local_source_saved();
     store
         .with_store(|store| {
-            store.save_server(&playback_server)?;
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)
+            store.save_source(&playback_server)?;
+            store.save_source(&local)?;
+            store.set_active_source(&local.source.id)
         })
         .expect("seed servers");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
@@ -927,7 +927,7 @@ pub(in crate::controller) fn lyrics_change_source() {
         &store,
         &runtime,
         &secrets,
-        &playback_server.server.id,
+        &playback_server.source.id,
         &track_id,
         &PlaybackSettings::default(),
     )
@@ -948,7 +948,7 @@ pub(in crate::controller) fn lyrics_use_source() {
     track.id = TrackId::new("local:track:stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
@@ -957,7 +957,7 @@ pub(in crate::controller) fn lyrics_use_source() {
         &store,
         &runtime,
         &secrets,
-        &saved.server.id,
+        &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
@@ -981,7 +981,7 @@ pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
     track.id = TrackId::new("local:track:stale-stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     fs::remove_file(&audio).expect("remove audio");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
@@ -991,7 +991,7 @@ pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
         &store,
         &runtime,
         &secrets,
-        &saved.server.id,
+        &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
@@ -1009,10 +1009,10 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("local:server:no-rescan"),
-            provider: LOCAL_SOURCE_ID.to_string(),
+    let saved = SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new("local:server:no-rescan"),
+            kind: LOCAL_SOURCE_ID.to_string(),
             name: "Local".to_string(),
             base_url: root.to_string_lossy().into_owned(),
         },
@@ -1022,7 +1022,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         use_jellyfin_instant_mix: false,
     };
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], saved.server.clone())
+    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], saved.source.clone())
         .expect("local provider");
     let mut track = runtime
         .block_on(provider.tracks(source::PagedRequest::new(0, 1)))
@@ -1034,7 +1034,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
     track.local_path = None;
     let generation = begin_active_sync(&store, &saved);
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
 
@@ -1042,7 +1042,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         &store,
         &runtime,
         &secrets,
-        &saved.server.id,
+        &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
@@ -1055,7 +1055,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
 #[test]
 pub(in crate::controller) fn lyrics_match_path() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let root = self::unique_test_dir("cached-local-match-stream");
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
@@ -1063,8 +1063,8 @@ pub(in crate::controller) fn lyrics_match_path() {
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(root.to_string_lossy().into_owned()),
@@ -1073,9 +1073,9 @@ pub(in crate::controller) fn lyrics_match_path() {
     let track = restored_track();
     store
         .with_store(|store| {
-            store.upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)?;
+            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
             store.replace_track_local_matches(
-                &saved.server.id,
+                &saved.source.id,
                 &[(
                     track.id.clone(),
                     audio.to_string_lossy().into_owned(),
@@ -1090,7 +1090,7 @@ pub(in crate::controller) fn lyrics_match_path() {
         &store,
         &runtime,
         &secrets,
-        &saved.server.id,
+        &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
@@ -1102,7 +1102,7 @@ pub(in crate::controller) fn lyrics_match_path() {
 #[test]
 pub(in crate::controller) fn lyrics_use_prefix() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let scan_root = self::unique_test_dir("relative-scan-root");
     let local_root = self::unique_test_dir("relative-local-prefix");
     let audio = local_root.join("Album/Track.flac");
@@ -1111,8 +1111,8 @@ pub(in crate::controller) fn lyrics_use_prefix() {
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: scan_root.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(local_root.to_string_lossy().into_owned()),
@@ -1121,9 +1121,9 @@ pub(in crate::controller) fn lyrics_use_prefix() {
     let mut track = restored_track();
     track.local_path = Some("Album/Track.flac".to_string());
     store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id)
+    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id)
         .expect("mapped path");
     assert_eq!(mapped, audio);
     let _cleanup = fs::remove_dir_all(scan_root);
@@ -1132,7 +1132,7 @@ pub(in crate::controller) fn lyrics_use_prefix() {
 #[test]
 pub(in crate::controller) fn access_match_use() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let root = self::unique_test_dir("local-access-manifest");
     let audio = root.join("Album/Filename Fallback.mp3");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
@@ -1140,8 +1140,8 @@ pub(in crate::controller) fn access_match_use() {
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(root.to_string_lossy().into_owned()),
@@ -1168,8 +1168,8 @@ pub(in crate::controller) fn access_match_use() {
     };
     store
         .with_store(|store| {
-            store.upsert_tracks(&saved.server.id, &[remote.clone()], generation)?;
-            store.replace_local_manifest(&saved.server.id, generation, &[manifest])
+            store.upsert_tracks(&saved.source.id, &[remote.clone()], generation)?;
+            store.replace_local_manifest(&saved.source.id, generation, &[manifest])
         })
         .expect("seed tracks and manifest");
     let runtime = Runtime::new().expect("runtime");
@@ -1177,7 +1177,7 @@ pub(in crate::controller) fn access_match_use() {
     let count = runtime
         .block_on(super::refresh_local_track_matches(
             &store,
-            &saved.server.id,
+            &saved.source.id,
             Some(generation),
             None,
         ))
@@ -1186,7 +1186,7 @@ pub(in crate::controller) fn access_match_use() {
     assert_eq!(count, 1);
     assert_eq!(
         store
-            .with_store(|store| store.track_local_match_path(&saved.server.id, &remote.id))
+            .with_store(|store| store.track_local_match_path(&saved.source.id, &remote.id))
             .expect("match path"),
         Some(audio.to_string_lossy().into_owned())
     );
@@ -1195,7 +1195,7 @@ pub(in crate::controller) fn access_match_use() {
 #[test]
 pub(in crate::controller) fn lyrics_local_access_status() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
+    let saved = self::saved_source();
     let root = self::unique_test_dir("local-access-status");
     let local_prefix = root.join("mapped");
     let direct_audio = root.join("Direct.flac");
@@ -1208,8 +1208,8 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     let generation = begin_sync_with_access(
         &store,
         &saved,
-        &ServerLocalAccess {
-            server_id: saved.server.id.clone(),
+        &SourceLocalAccess {
+            source_id: saved.source.id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: Some("/server/music".to_string()),
             path_replace_to: Some(local_prefix.to_string_lossy().into_owned()),
@@ -1233,12 +1233,12 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     store
         .with_store(|store| {
             store.upsert_tracks(
-                &saved.server.id,
+                &saved.source.id,
                 &[direct, prefix, metadata.clone(), unmatched],
                 generation,
             )?;
             store.replace_track_local_matches(
-                &saved.server.id,
+                &saved.source.id,
                 &[(
                     metadata.id.clone(),
                     metadata_audio.to_string_lossy().into_owned(),
@@ -1253,7 +1253,7 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     assert_eq!(snapshot.local_access_status.prefix_match_count, 2);
     assert_eq!(snapshot.local_access_status.metadata_match_count, 1);
     assert_eq!(snapshot.local_access_status.unmatched_count, 0);
-    assert!(snapshot.local_access_status.sample_server_path.is_some());
+    assert!(snapshot.local_access_status.sample_source_path.is_some());
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -1287,18 +1287,18 @@ pub(in crate::controller) fn lyrics_match_duration() {
 #[test]
 pub(in crate::controller) fn lyrics_include_access() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_server();
-    let access = ServerLocalAccess {
-        server_id: saved.server.id.clone(),
+    let saved = self::saved_source();
+    let access = SourceLocalAccess {
+        source_id: saved.source.id.clone(),
         root_path: "/home/demo/Music".to_string(),
         path_replace_from: Some("/server/music".to_string()),
         path_replace_to: Some("/home/demo/Music".to_string()),
     };
     store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.save_server_local_access(&access)?;
-            store.set_active_server(&saved.server.id)
+            store.save_source(&saved)?;
+            store.save_source_local_access(&access)?;
+            store.set_active_source(&saved.source.id)
         })
         .expect("save server");
     let snapshot = super::load_snapshot(&store).expect("load snapshot");
@@ -1411,7 +1411,7 @@ pub(in crate::controller) fn lyrics_keep_netease_content_after_credit() {
 pub(in crate::controller) fn preview_lrclib_result() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("active server").id;
+    let source_id = snapshot.source.expect("active server").id;
     let track = snapshot.tracks[0].clone();
     let result = super::LyricsSearchResult {
         provider: ExternalLyricsProvider::Lrclib,
@@ -1431,7 +1431,7 @@ pub(in crate::controller) fn preview_lrclib_result() {
     let lyrics = wait_for_lyrics(&events).expect("lyrics");
     let cached = controller
         .store
-        .with_store(|store| store.load_lyrics(&server_id, &track.id))
+        .with_store(|store| store.load_lyrics(&source_id, &track.id))
         .expect("load cached lyrics")
         .expect("cached lyrics");
     assert_eq!(cached, lyrics);

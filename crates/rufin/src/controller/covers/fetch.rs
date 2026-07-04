@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use domain::ImageRef;
 use gdk_pixbuf::{InterpType, Pixbuf};
-use library::{CoverCacheEntry, SavedServer, Store, StoreResult, image_cache_key};
+use library::{CoverCacheEntry, SavedSource, Store, StoreResult, image_cache_key};
 use secrets::SecretStore;
 use source::{ImageKind, ImageRequest, MusicSource};
 use source_local::{LOCAL_SOURCE_ID, LocalSource};
@@ -39,7 +39,7 @@ pub(super) fn fetch_and_cache_cover(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<PathBuf, String> {
@@ -52,7 +52,7 @@ pub(super) fn fetch_and_cache_cover(
             external_metadata::fetch_album_cover(&art, size, settings.lastfm_api_key.trim())?;
         return save_cover_bytes(store, saved, image_ref, size, bytes);
     }
-    if saved.server.provider == LOCAL_SOURCE_ID && image_ref.item_id.starts_with("local:cover:") {
+    if saved.source.kind == LOCAL_SOURCE_ID && image_ref.item_id.starts_with("local:cover:") {
         let settings = load_settings_from_store(store);
         let image =
             LocalSource::cover_item_bytes(&image_ref.item_id, local_folder_paths(&settings))
@@ -76,26 +76,25 @@ pub(super) fn fetch_and_cache_cover(
 pub(super) fn fetch_and_cache_source_cover(
     store: &StoreHandle,
     runtime: &Runtime,
-    saved: &SavedServer,
-    provider: &dyn MusicSource,
+    saved: &SavedSource,
+    source: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<PathBuf, String> {
-    fetch_and_cache_source_cover_timed(store, runtime, saved, provider, image_ref, size)
+    fetch_and_cache_source_cover_timed(store, runtime, saved, source, image_ref, size)
         .map(|result| result.path)
 }
 
 pub(super) fn fetch_and_cache_source_cover_timed(
     store: &StoreHandle,
     runtime: &Runtime,
-    saved: &SavedServer,
-    provider: &dyn MusicSource,
+    saved: &SavedSource,
+    source: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<CoverFetchResult, String> {
     let total_started = Instant::now();
-    let (image_bytes, mut timing) =
-        fetch_provider_cover_image(runtime, provider, &image_ref, size)?;
+    let (image_bytes, mut timing) = fetch_provider_cover_image(runtime, source, &image_ref, size)?;
     let path = save_cover_bytes_timed(store, saved, image_ref, size, image_bytes, &mut timing)?;
     timing.total_ms = elapsed_ms(total_started);
     Ok(CoverFetchResult { path, timing })
@@ -104,14 +103,13 @@ pub(super) fn fetch_and_cache_source_cover_timed(
 pub(super) fn fetch_and_cache_source_cover_timed_with_store(
     cache_store: &Store,
     runtime: &Runtime,
-    saved: &SavedServer,
-    provider: &dyn MusicSource,
+    saved: &SavedSource,
+    source: &dyn MusicSource,
     image_ref: ImageRef,
     size: u32,
 ) -> Result<CoverFetchResult, String> {
     let total_started = Instant::now();
-    let (image_bytes, mut timing) =
-        fetch_provider_cover_image(runtime, provider, &image_ref, size)?;
+    let (image_bytes, mut timing) = fetch_provider_cover_image(runtime, source, &image_ref, size)?;
     let path = save_cover_bytes_timed_with_store(
         cache_store,
         saved,
@@ -126,13 +124,13 @@ pub(super) fn fetch_and_cache_source_cover_timed_with_store(
 
 fn fetch_provider_cover_image(
     runtime: &Runtime,
-    provider: &dyn MusicSource,
+    source: &dyn MusicSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<(Vec<u8>, CoverFetchTiming), String> {
     let fetch_started = Instant::now();
     let image = runtime
-        .block_on(provider.image_bytes(ImageRequest {
+        .block_on(source.image_bytes(ImageRequest {
             item_id: image_ref.item_id.clone(),
             kind: provider_image_kind(image_ref),
             tag: image_ref.tag.clone(),
@@ -152,7 +150,7 @@ fn fetch_provider_cover_image(
 
 fn save_cover_bytes(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: ImageRef,
     size: u32,
     bytes: Vec<u8>,
@@ -169,7 +167,7 @@ fn save_cover_bytes(
 
 fn save_cover_bytes_timed(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: ImageRef,
     size: u32,
     bytes: Vec<u8>,
@@ -192,7 +190,7 @@ fn save_cover_bytes_timed(
 
 fn save_cover_bytes_timed_with_store(
     cache_store: &Store,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: ImageRef,
     size: u32,
     bytes: Vec<u8>,
@@ -214,7 +212,7 @@ fn save_cover_bytes_timed_with_store(
 }
 
 fn write_cover_cache_file(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: ImageRef,
     size: u32,
     bytes: Vec<u8>,
@@ -224,7 +222,7 @@ fn write_cover_cache_file(
         .tag
         .clone()
         .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
-    let key = image_cache_key(&saved.server.id, &image_ref.item_id, &tag, size);
+    let key = image_cache_key(&saved.source.id, &image_ref.item_id, &tag, size);
     let path = cover_cache_path_for_key(&key)
         .ok_or_else(|| "cache directory is unavailable".to_string())?;
     if let Some(parent) = path.parent() {
@@ -244,7 +242,7 @@ fn write_cover_cache_file(
     Ok((
         path,
         CoverCacheEntry {
-            server_id: saved.server.id.clone(),
+            source_id: saved.source.id.clone(),
             item_id,
             image_tag: tag,
             size,

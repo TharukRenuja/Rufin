@@ -10,16 +10,16 @@ use domain::{
     ImageRef, LibraryField, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
     LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, Mood, MoodId, MusicFolder,
     MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    QueueEntryId, QueueSnapshot, SearchResults, ServerId, ServerIdentity, SmartPlaylist,
-    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceFeatureOwner,
-    Track, TrackId, normalize_release_types,
+    QueueEntryId, QueueSnapshot, SearchResults, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
+    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceFeatureOwner, SourceId,
+    SourceIdentity, Track, TrackId, normalize_release_types,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 22;
+const SCHEMA_VERSION: i64 = 23;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
@@ -93,7 +93,7 @@ pub(super) fn effective_artist_favorite_sql(alias: &str, album_artist: bool) -> 
 fn effective_item_favorite_sql(alias: &str, kind: &str, id_column: &str) -> String {
     format!(
         "COALESCE((SELECT o.favorite FROM item_favorite_overrides o \
-         WHERE o.server_id = {alias}.server_id \
+         WHERE o.source_id = {alias}.source_id \
            AND o.item_kind = '{kind}' \
            AND o.item_id = {alias}.{id_column}), {alias}.favorite)"
     )
@@ -124,8 +124,8 @@ impl PlaylistWriteMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SavedServer {
-    pub server: ServerIdentity,
+pub struct SavedSource {
+    pub source: SourceIdentity,
     pub user_id: String,
     pub username: String,
     pub trust_invalid_cert: bool,
@@ -133,8 +133,8 @@ pub struct SavedServer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ServerLocalAccess {
-    pub server_id: ServerId,
+pub struct SourceLocalAccess {
+    pub source_id: SourceId,
     pub root_path: String,
     pub path_replace_from: Option<String>,
     pub path_replace_to: Option<String>,
@@ -142,7 +142,7 @@ pub struct ServerLocalAccess {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalAccessStatusFacts {
-    pub sample_server_path: Option<String>,
+    pub sample_source_path: Option<String>,
     pub sample_metadata_path: Option<String>,
     pub direct_match_count: usize,
     pub prefix_match_count: usize,
@@ -153,7 +153,7 @@ pub struct LocalAccessStatusFacts {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SyncState {
-    pub server_id: ServerId,
+    pub source_id: SourceId,
     pub generation: i64,
     pub status: String,
     pub last_started_at: Option<String>,
@@ -163,7 +163,7 @@ pub struct SyncState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CoverCacheEntry {
-    pub server_id: ServerId,
+    pub source_id: SourceId,
     pub item_id: String,
     pub image_tag: String,
     pub size: u32,
@@ -175,7 +175,7 @@ pub struct SourceObject {
     pub source_object_id: String,
     pub entity_kind: Option<String>,
     pub entity_id: Option<String>,
-    pub source_kind: String,
+    pub source_object_kind: String,
     pub source_path: Option<String>,
     pub parent_source_object_id: Option<String>,
     pub cue_path: Option<String>,
@@ -468,14 +468,14 @@ mod library_metadata;
 mod library_search_helpers;
 mod library_track_sort;
 mod local_manifest;
-mod servers;
 mod smart_playlists;
 mod source_windows;
+mod sources;
 mod store_lifecycle_schema;
 
 pub use identity::local_file_source_object_id;
 pub use local_manifest::LocalLibraryDelta;
-pub use servers::{image_cache_key, lyrics_cache_key};
+pub use sources::{image_cache_key, lyrics_cache_key};
 
 #[cfg(test)]
 mod library_relationship_tests;

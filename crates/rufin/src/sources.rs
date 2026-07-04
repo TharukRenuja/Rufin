@@ -126,12 +126,12 @@ pub async fn login_source(
 }
 
 pub fn source_from_saved(session: SavedSourceSession) -> SourceResult<LoadedSource> {
-    match StreamingSource::from_source_id(&session.server.provider) {
+    match StreamingSource::from_source_id(&session.source.kind) {
         Some(StreamingSource::Jellyfin) => {
             JellyfinSource::from_saved_session(session).map(LoadedSource::Jellyfin)
         }
         Some(StreamingSource::Local) => {
-            LocalSource::from_server(session.server).map(LoadedSource::Local)
+            LocalSource::from_source(session.source).map(LoadedSource::Local)
         }
         Some(StreamingSource::Navidrome | StreamingSource::Subsonic) => {
             SubsonicSource::from_saved_session(session).map(LoadedSource::Subsonic)

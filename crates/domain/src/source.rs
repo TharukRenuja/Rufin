@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Album, AlbumId, Artist, ArtistId, ExternalLyricsProvider, Folder, FolderId, Genre, GenreId,
-    Playlist, PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
+    Playlist, PlaylistId, SourceIdentity, StreamQuality, Track, TrackId,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ pub enum SourcePlaylistOperation {
     ReorderEntries,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourcePlaylistCapabilities {
     pub read_native: bool,
     pub read_store: bool,
@@ -89,12 +89,27 @@ pub struct SourcePlaylistCapabilities {
     ///
     /// edits to existing playlists use the per-row operation fields below,
     /// because native and store-owned playlists can coexist for one source.
-    pub create: SourceFeatureSupport,
+    pub create: SourceFeatureOwner,
     pub rename: SourcePlaylistOperationSupport,
     pub delete: SourcePlaylistOperationSupport,
     pub add_tracks: SourcePlaylistOperationSupport,
     pub remove_entries: SourcePlaylistOperationSupport,
     pub reorder_entries: SourcePlaylistOperationSupport,
+}
+
+impl Default for SourcePlaylistCapabilities {
+    fn default() -> Self {
+        Self {
+            read_native: false,
+            read_store: true,
+            create: SourceFeatureOwner::Store,
+            rename: SourcePlaylistOperationSupport::default(),
+            delete: SourcePlaylistOperationSupport::default(),
+            add_tracks: SourcePlaylistOperationSupport::default(),
+            remove_entries: SourcePlaylistOperationSupport::default(),
+            reorder_entries: SourcePlaylistOperationSupport::default(),
+        }
+    }
 }
 
 impl SourcePlaylistCapabilities {
@@ -133,14 +148,27 @@ impl SourcePlaylistCapabilities {
 /// UI/controller code needs to decide whether an operation, a page, or an edit
 /// is available, or when the app must choose between `Native` and `Store` for
 /// the operation. plain metadata belongs on cached entities/projections instead.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceCapabilities {
     pub playlists: SourcePlaylistCapabilities,
     pub smart_playlists: SourceFeatureSupport,
     pub favorites: SourceFeatureSupport,
-    pub favorite_mutations: SourceFeatureSupport,
+    pub favorite_mutations: SourceFeatureOwner,
     pub music_folders: SourceFeatureSupport,
     pub folder_browsing: SourceFeatureSupport,
+}
+
+impl Default for SourceCapabilities {
+    fn default() -> Self {
+        Self {
+            playlists: SourcePlaylistCapabilities::default(),
+            smart_playlists: SourceFeatureSupport::store(),
+            favorites: SourceFeatureSupport::store(),
+            favorite_mutations: SourceFeatureOwner::Store,
+            music_folders: SourceFeatureSupport::Unsupported,
+            folder_browsing: SourceFeatureSupport::Unsupported,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -275,7 +303,7 @@ pub struct LoginRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceSession {
-    pub server: ServerIdentity,
+    pub source: SourceIdentity,
     pub user_id: String,
     pub username: String,
     pub access_token: String,
@@ -285,7 +313,7 @@ pub struct SourceSession {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SavedSourceSession {
-    pub server: ServerIdentity,
+    pub source: SourceIdentity,
     pub user_id: String,
     pub username: String,
     pub trust_invalid_cert: bool,

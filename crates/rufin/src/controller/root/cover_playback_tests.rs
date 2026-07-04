@@ -25,14 +25,14 @@ fn enable_auto_dj_for_test(controller: &AppController, events: &Receiver<Control
 pub(in crate::controller) fn cover_use_states() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("server").id;
+    let source_id = snapshot.source.expect("server").id;
     assert_eq!(controller.startup_sync_delay_ms(), None);
     controller
         .store
-        .with_store(|store| store.fail_sync(&server_id, "previous sync failed"))
+        .with_store(|store| store.fail_sync(&source_id, "previous sync failed"))
         .expect("mark sync failed");
     assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
-    controller.clear_active_server_cache();
+    controller.clear_active_source_cache();
     let _snapshot = wait_for_snapshot(&events);
     assert_eq!(controller.startup_sync_delay_ms(), Some(500));
 }
@@ -71,12 +71,12 @@ pub(in crate::controller) fn cover_fetch_missing() {
         .expect("save settings");
 
     let saved = local_source_saved();
-    let server_id = saved.server.id.clone();
+    let source_id = saved.source.id.clone();
     controller
         .store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)
         })
         .expect("seed local server");
     let provider = source_for_saved(
@@ -90,13 +90,13 @@ pub(in crate::controller) fn cover_fetch_missing() {
         .runtime
         .block_on(sync_source(
             &controller.store,
-            &server_id,
+            &source_id,
             provider.as_music_source(),
         ))
         .expect("sync local provider");
     let image_ref = controller
         .store
-        .with_store(|store| store.load_albums(&server_id, 0, 1))
+        .with_store(|store| store.load_albums(&source_id, 0, 1))
         .expect("load albums")
         .items
         .into_iter()
@@ -312,20 +312,20 @@ pub(in crate::controller) fn cover_read_lookup() {
     let path = test_cover_path("missing-cached");
     let _cleanup = fs::remove_file(&path);
     let image_ref = provider_cover_ref();
-    let server_id = seed_cover_cache(&controller, &image_ref, 256, &path);
+    let source_id = seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(controller.cached_cover_path(&image_ref, 256), None);
     assert_eq!(
         controller
             .store
             .with_store(|store| store.load_cover_cache_entry(
-                &server_id,
+                &source_id,
                 &image_ref.item_id,
                 "tag-one",
                 256
             ))
             .expect("load cover cache"),
         Some(CoverCacheEntry {
-            server_id,
+            source_id,
             item_id: image_ref.item_id,
             image_tag: "tag-one".to_string(),
             size: 256,
@@ -340,7 +340,7 @@ pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
         AppController::bootstrap_memory_for_test();
     let path = test_cover_path("external-content-local");
     fs::write(&path, [1_u8, 2, 3]).expect("write cover");
-    let remote = saved_server();
+    let remote = saved_source();
     let local = local_source_saved();
     let image_ref = ImageRef::new(
         "external:mb-release-group:group-one",
@@ -349,16 +349,16 @@ pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
     controller
         .store
         .with_store(|store| {
-            store.save_server(&remote)?;
-            store.save_server(&local)?;
+            store.save_source(&remote)?;
+            store.save_source(&local)?;
             store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: remote.server.id.clone(),
+                source_id: remote.source.id.clone(),
                 item_id: image_ref.item_id.clone(),
                 image_tag: image_ref.tag.clone().expect("external tag"),
                 size: 256,
                 path: path.to_string_lossy().to_string(),
             })?;
-            store.set_active_server(&local.server.id)
+            store.set_active_source(&local.source.id)
         })
         .expect("seed external cache");
 
@@ -373,67 +373,67 @@ pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
 pub(in crate::controller) fn cover_delete_token() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("server").id;
+    let source_id = snapshot.source.expect("server").id;
     controller
         .secrets
-        .save_token(&server_id, "token")
+        .save_token(&source_id, "token")
         .expect("save token");
-    controller.forget_active_server();
+    controller.forget_active_source();
     let snapshot = wait_for_snapshot(&events);
     assert!(snapshot.first_run);
-    wait_for_token_deleted(&controller.secrets, &server_id);
+    wait_for_token_deleted(&controller.secrets, &source_id);
 }
 #[test]
 pub(in crate::controller) fn cover_emit_run() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("server").id;
+    let source_id = snapshot.source.expect("server").id;
     controller
         .secrets
-        .save_token(&server_id, "token")
+        .save_token(&source_id, "token")
         .expect("save token");
     let permit = controller
         .sync_in_flight
-        .acquire(server_id.clone())
+        .acquire(source_id.clone())
         .expect("sync guard")
         .expect("sync permit");
 
-    controller.forget_server(server_id.clone());
+    controller.forget_source(source_id.clone());
 
     let snapshot = wait_for_snapshot(&events);
     assert!(snapshot.first_run);
-    assert!(snapshot.server.is_none());
-    assert!(snapshot.servers.is_empty());
+    assert!(snapshot.source.is_none());
+    assert!(snapshot.sources.is_empty());
     assert_eq!(
         controller
             .store
-            .with_store(|store| store.list_servers())
+            .with_store(|store| store.list_sources())
             .expect("servers"),
         Vec::new()
     );
-    assert!(controller.sync_in_flight.contains_or_blocked(&server_id));
-    assert!(controller.sync_in_flight.cancellation_requested(&server_id));
+    assert!(controller.sync_in_flight.contains_or_blocked(&source_id));
+    assert!(controller.sync_in_flight.cancellation_requested(&source_id));
     drop(permit);
-    assert!(!controller.sync_in_flight.contains_or_blocked(&server_id));
-    wait_for_token_deleted(&controller.secrets, &server_id);
+    assert!(!controller.sync_in_flight.contains_or_blocked(&source_id));
+    wait_for_token_deleted(&controller.secrets, &source_id);
 }
 #[test]
 pub(in crate::controller) fn cover_delete_fails() {
     let (mut controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("server").id;
+    let source_id = snapshot.source.expect("server").id;
     controller.secrets = Arc::new(DeleteFailingSecretStore);
 
-    controller.forget_server(server_id);
+    controller.forget_source(source_id);
 
     let snapshot = wait_for_snapshot(&events);
     assert!(snapshot.first_run);
-    assert!(snapshot.server.is_none());
-    assert!(snapshot.servers.is_empty());
+    assert!(snapshot.source.is_none());
+    assert!(snapshot.sources.is_empty());
     assert_eq!(
         controller
             .store
-            .with_store(|store| store.list_servers())
+            .with_store(|store| store.list_sources())
             .expect("servers"),
         Vec::new()
     );
@@ -442,13 +442,13 @@ pub(in crate::controller) fn cover_delete_fails() {
 pub(in crate::controller) fn cover_start_sync() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.expect("server").id;
+    let source_id = snapshot.source.expect("server").id;
     let _permit = controller
         .sync_in_flight
-        .acquire(server_id)
+        .acquire(source_id)
         .expect("sync guard")
         .expect("sync permit");
-    controller.resync_active_server();
+    controller.resync_active_source();
     assert_eq!(wait_for_status(&events), "Sync already running.");
 }
 #[test]
@@ -463,7 +463,7 @@ pub(in crate::controller) fn cover_persist_queue() {
     assert_eq!(
         controller
             .store
-            .with_store(|store| store.load_queue_snapshot(&queue.server_id))
+            .with_store(|store| store.load_queue_snapshot(&queue.source_id))
             .expect("store")
             .expect("snapshot")
             .entries
@@ -784,7 +784,7 @@ pub(in crate::controller) fn cover_change_backend() {
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -797,8 +797,8 @@ pub(in crate::controller) fn cover_change_backend() {
     commands.lock().expect("commands").clear();
     let root = unique_test_dir("reprepare-local-access");
     fs::create_dir_all(&root).expect("create root");
-    controller.save_server_local_access(
-        server_id.clone(),
+    controller.save_source_local_access(
+        source_id.clone(),
         root.clone(),
         Some("/server/music".to_string()),
         Some(root.to_string_lossy().into_owned()),
@@ -811,7 +811,7 @@ pub(in crate::controller) fn cover_change_backend() {
     };
     assert_eq!(item.track.id, second.id);
     commands.lock().expect("commands").clear();
-    controller.clear_server_local_access(server_id);
+    controller.clear_source_local_access(source_id);
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PrepareNext(Some(_)))
     });
@@ -825,10 +825,10 @@ pub(in crate::controller) fn cover_change_backend() {
 pub(in crate::controller) fn prepared_send_reject() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let repeated = snapshot.tracks[1].clone();
-    let mut engine = QueueEngine::new(server_id);
+    let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     let initial_next_entry_id = engine.append(&repeated);
     let replacement_next_entry_id = engine.append(&repeated);
@@ -869,9 +869,9 @@ pub(in crate::controller) fn prepared_send_reject() {
 pub(in crate::controller) fn prepared_skip_current_repeat() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let track = snapshot.tracks[0].clone();
-    let mut engine = QueueEngine::new(server_id);
+    let mut engine = QueueEngine::new(source_id);
     engine.play_now(&track);
     let queue = Arc::new(Mutex::new(Some(engine)));
 
@@ -881,11 +881,11 @@ pub(in crate::controller) fn prepared_skip_current_repeat() {
 pub(in crate::controller) fn prepared_uses_shuffled_next() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     let third = snapshot.tracks[2].clone();
-    let mut engine = QueueEngine::new(server_id);
+    let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     engine.append(&second);
     engine.append(&third);
@@ -904,10 +904,10 @@ pub(in crate::controller) fn prepared_uses_shuffled_next() {
 pub(in crate::controller) fn prepared_uses_appended_next() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
-    let mut engine = QueueEngine::new(server_id);
+    let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     let appended = engine.append(&second);
     let queue = Arc::new(Mutex::new(Some(engine)));
@@ -921,10 +921,10 @@ pub(in crate::controller) fn prepared_uses_appended_next() {
 pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     let (controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
-    let mut engine = QueueEngine::new(server_id);
+    let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     engine.append(&second);
     let queue = Arc::new(Mutex::new(Some(engine)));
@@ -992,9 +992,9 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
 pub(in crate::controller) fn cover_reject_switch() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let track = snapshot.tracks[0].clone();
-    let mut engine = QueueEngine::new(server_id.clone());
+    let mut engine = QueueEngine::new(source_id.clone());
     engine.play_now(&track);
     let entry = engine.current().expect("current").clone();
     let queue = Arc::new(Mutex::new(Some(engine)));
@@ -1004,16 +1004,16 @@ pub(in crate::controller) fn cover_reject_switch() {
         &playback_request_generation,
         1,
         &queue,
-        &server_id,
+        &source_id,
         &entry
     ));
 
-    *queue.lock().expect("queue") = Some(QueueEngine::new(ServerId::new("server:other")));
+    *queue.lock().expect("queue") = Some(QueueEngine::new(SourceId::new("server:other")));
     assert!(!request_generation_match(
         &playback_request_generation,
         1,
         &queue,
-        &server_id,
+        &source_id,
         &entry
     ));
 }
@@ -1021,12 +1021,12 @@ pub(in crate::controller) fn cover_reject_switch() {
 pub(in crate::controller) fn playback_request_reject() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let source_id = snapshot.source.as_ref().expect("server").id.clone();
     let track = snapshot.tracks[0].clone();
-    let mut engine = QueueEngine::new(server_id.clone());
+    let mut engine = QueueEngine::new(source_id.clone());
     engine.play_now(&track);
     let stale_entry = engine.current().expect("current").clone();
-    let mut replacement = QueueEngine::new(server_id.clone());
+    let mut replacement = QueueEngine::new(source_id.clone());
     replacement.play_now(&track);
     let queue = Arc::new(Mutex::new(Some(replacement)));
     let playback_request_generation = Arc::new(AtomicU64::new(1));
@@ -1036,7 +1036,7 @@ pub(in crate::controller) fn playback_request_reject() {
         &playback_request_generation,
         1,
         &queue,
-        &server_id,
+        &source_id,
         &stale_entry
     ));
 }
@@ -1352,7 +1352,7 @@ pub(in crate::controller) fn random_play_now() {
         .expect("album image ref");
     let saved = controller
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .expect("active server")
         .expect("saved server");
     let mut tracks_without_track_art = snapshot.tracks.clone();
@@ -1361,7 +1361,7 @@ pub(in crate::controller) fn random_play_now() {
     }
     controller
         .store
-        .with_store(|store| store.upsert_tracks(&saved.server.id, &tracks_without_track_art, 0))
+        .with_store(|store| store.upsert_tracks(&saved.source.id, &tracks_without_track_art, 0))
         .expect("strip track image refs");
     controller.play_random_tracks(random_request(RandomPlayAction::PlayNow, 3));
     let queue = wait_for_queue(&events).expect("random queue");

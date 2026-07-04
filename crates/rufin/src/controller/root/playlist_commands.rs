@@ -8,11 +8,11 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
@@ -21,12 +21,7 @@ impl AppController {
                 .map(|track| track.id.clone())
                 .collect::<Vec<_>>();
             let capabilities = source_capabilities_for_saved(&saved);
-            let Some(create_owner) = capabilities.playlists.create.owner() else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "Playlist creation is not supported by the active source.".to_string(),
-                ));
-                return;
-            };
+            let create_owner = capabilities.playlists.create;
             let playlist_id = match create_owner {
                 SourceFeatureOwner::Native => match source_for_saved(
                     &store, &runtime, &secrets, &saved,
@@ -65,7 +60,7 @@ impl AppController {
             let result = store.with_store(|store| {
                 write_playlist_snapshot_for_owner(
                     store,
-                    &saved.server.id,
+                    &saved.source.id,
                     &playlist,
                     &entries,
                     create_owner,
@@ -81,11 +76,11 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
@@ -119,7 +114,7 @@ impl AppController {
             }
             let result = store.with_store(|store| {
                 store.rename_playlist_with_owner(
-                    &saved.server.id,
+                    &saved.source.id,
                     &playlist_id,
                     name.trim(),
                     owner,
@@ -136,11 +131,11 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
@@ -169,7 +164,7 @@ impl AppController {
                 }
             }
             let result = store.with_store(|store| {
-                store.delete_playlist_with_owner(&saved.server.id, &playlist_id, owner)?;
+                store.delete_playlist_with_owner(&saved.source.id, &playlist_id, owner)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -180,16 +175,16 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
             let result = store.with_store(|store| {
-                store.delete_smart_playlist(&saved.server.id, &smart_playlist_id)?;
+                store.delete_smart_playlist(&saved.source.id, &smart_playlist_id)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -200,16 +195,16 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
             let result = store.with_store(|store| {
-                store.restore_builtin_smart_playlist(&saved.server.id, builtin)?;
+                store.restore_builtin_smart_playlist(&saved.source.id, builtin)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -225,16 +220,16 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
             let result = store.with_store(|store| {
-                store.reorder_smart_playlist(&saved.server.id, &dragged_id, &target_id, after)?;
+                store.reorder_smart_playlist(&saved.source.id, &dragged_id, &target_id, after)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -245,11 +240,11 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
@@ -258,7 +253,7 @@ impl AppController {
                 unique_millis().unwrap_or(name.len() as u128)
             ));
             let result = store.with_store(|store| {
-                store.save_smart_playlist(&saved.server.id, &id, &name, &definition)?;
+                store.save_smart_playlist(&saved.source.id, &id, &name, &definition)?;
                 Ok(())
             });
             emit_smart_playlist_changed_result(&store, &events, id, result);
@@ -274,17 +269,17 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
             let result = store.with_store(|store| {
                 store.save_smart_playlist(
-                    &saved.server.id,
+                    &saved.source.id,
                     &smart_playlist_id,
                     &name,
                     &definition,
@@ -358,16 +353,16 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
+                    "No active music source is saved.".to_string(),
                 ));
                 return;
             };
             let before = match store
-                .with_store(|store| store.load_playlist_detail(&saved.server.id, &playlist_id))
+                .with_store(|store| store.load_playlist_detail(&saved.source.id, &playlist_id))
             {
                 Ok(Some(detail)) => detail,
                 Ok(None) => {
@@ -423,7 +418,7 @@ impl AppController {
             let result = store.with_store(|store| {
                 write_playlist_snapshot_for_owner(
                     store,
-                    &saved.server.id,
+                    &saved.source.id,
                     &playlist,
                     &after.entries,
                     owner,
@@ -436,25 +431,25 @@ impl AppController {
 
 fn write_playlist_snapshot_for_owner(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     playlist: &Playlist,
     entries: &[PlaylistEntry],
     owner: SourceFeatureOwner,
 ) -> StoreResult<()> {
-    let mode = playlist_write_mode_for_owner(store, server_id, owner)?;
-    store.upsert_playlists_with_mode(server_id, std::slice::from_ref(playlist), mode)?;
-    store.upsert_playlist_entries_with_mode(server_id, &playlist.id, entries, mode)?;
+    let mode = playlist_write_mode_for_owner(store, source_id, owner)?;
+    store.upsert_playlists_with_mode(source_id, std::slice::from_ref(playlist), mode)?;
+    store.upsert_playlist_entries_with_mode(source_id, &playlist.id, entries, mode)?;
     Ok(())
 }
 
 fn playlist_write_mode_for_owner(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     owner: SourceFeatureOwner,
 ) -> StoreResult<PlaylistWriteMode> {
     match owner {
         SourceFeatureOwner::Native => Ok(PlaylistWriteMode::NativeSync {
-            generation: store.sync_state(server_id)?.generation,
+            generation: store.sync_state(source_id)?.generation,
         }),
         SourceFeatureOwner::Store => Ok(PlaylistWriteMode::StoreOwned),
     }
@@ -463,10 +458,10 @@ fn playlist_write_mode_for_owner(
 fn cached_playlist_owner(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
-    saved: &SavedServer,
+    saved: &SavedSource,
     playlist_id: &PlaylistId,
 ) -> Option<SourceFeatureOwner> {
-    match store.with_store(|store| store.playlist_owner(&saved.server.id, playlist_id)) {
+    match store.with_store(|store| store.playlist_owner(&saved.source.id, playlist_id)) {
         Ok(Some(owner)) => Some(owner),
         Ok(None) => {
             let _sent = events.send(ControllerEvent::Error(

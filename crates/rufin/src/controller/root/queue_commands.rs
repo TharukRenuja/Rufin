@@ -120,12 +120,12 @@ impl AppController {
                 return;
             }
             match resolved {
-                Ok((server_id, mut activation)) => {
+                Ok((source_id, mut activation)) => {
                     if shuffle_start {
                         activation = activation.shuffled_start();
                     }
                     controller
-                        .finish_store_backed_source_activation(&server_id, activation, generation);
+                        .finish_store_backed_source_activation(&source_id, activation, generation);
                 }
                 Err(error) => {
                     if controller.play_activation_generation_matches(generation) {
@@ -140,15 +140,15 @@ impl AppController {
         &self,
         source_key: PlaySourceKey,
         anchor: PlayAnchor,
-    ) -> Result<(ServerId, PlayActivation), String> {
+    ) -> Result<(SourceId, PlayActivation), String> {
         let saved = self
             .store
-            .with_store(|store| store.active_server())?
+            .with_store(|store| store.active_source())?
             .ok_or_else(|| "No active music server is saved.".to_string())?;
         let settings = load_settings_for_saved(&self.store, &saved);
         let anchor_rank = self.store.with_store(|store| {
             store.track_rank_for_source(
-                &saved.server.id,
+                &saved.source.id,
                 &source_key,
                 &anchor.track_id,
                 anchor.source_item_id.as_deref(),
@@ -159,7 +159,7 @@ impl AppController {
         };
         let total = self
             .store
-            .with_store(|store| store.count_tracks_for_source(&saved.server.id, &source_key))?;
+            .with_store(|store| store.count_tracks_for_source(&saved.source.id, &source_key))?;
         if total == 0 {
             return Err("No tracks are available to play.".to_string());
         }
@@ -167,7 +167,7 @@ impl AppController {
         let (before, after) = store_backed_window_extents(total, anchor_rank);
         let mut window = self.store.with_store(|store| {
             store.tracks_window_for_source(
-                &saved.server.id,
+                &saved.source.id,
                 &source_key,
                 anchor_rank,
                 before,
@@ -176,37 +176,37 @@ impl AppController {
         })?;
         normalize_store_backed_window_tracks(&self.store, &saved, &settings, &mut window)?;
         let activation = store_backed_window_play_activation(source_key, window, anchor_rank)?;
-        Ok((saved.server.id, activation))
+        Ok((saved.source.id, activation))
     }
 
     fn finish_store_backed_source_activation(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         activation: PlayActivation,
         generation: u64,
     ) {
         if !self.play_activation_generation_matches(generation)
-            || !self.active_server_and_queue_match(server_id)
+            || !self.active_source_and_queue_match(source_id)
         {
             return;
         }
         self.finish_resolved_play_activation(activation);
     }
 
-    fn active_server_and_queue_match(&self, server_id: &ServerId) -> bool {
-        let active_server_matches = self
+    fn active_source_and_queue_match(&self, source_id: &SourceId) -> bool {
+        let active_source_matches = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()
-            .is_some_and(|saved| saved.server.id == *server_id);
-        if !active_server_matches {
+            .is_some_and(|saved| saved.source.id == *source_id);
+        if !active_source_matches {
             return false;
         }
         self.queue.lock().ok().is_some_and(|queue| {
             queue
                 .as_ref()
-                .map(|queue| queue.snapshot().server_id == *server_id)
+                .map(|queue| queue.snapshot().source_id == *source_id)
                 .unwrap_or(true)
         })
     }
@@ -620,10 +620,10 @@ impl AppController {
     fn active_music_folder(store: &StoreHandle) -> Option<MusicFolderId> {
         store
             .with_store(|store| {
-                let Some(saved) = store.active_server()? else {
+                let Some(saved) = store.active_source()? else {
                     return Ok(None);
                 };
-                store.selected_music_folder_id(&saved.server.id)
+                store.selected_music_folder_id(&saved.source.id)
             })
             .ok()
             .flatten()
@@ -1008,7 +1008,7 @@ fn loaded_tracks_window_activation(
 
 fn normalize_store_backed_window_tracks(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     window: &mut StoreBackedSourceWindow,
 ) -> Result<(), String> {
@@ -1073,7 +1073,7 @@ fn store_backed_window_play_activation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{AlbumId, Playlist, PlaylistEntrySortDescriptor, ServerIdentity};
+    use domain::{AlbumId, Playlist, PlaylistEntrySortDescriptor, SourceIdentity};
     use source::PlaylistEntry;
 
     struct RecordingPlaybackBackend {
@@ -1155,10 +1155,10 @@ mod tests {
     #[test]
     fn queue_replace_occurrence() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
-        let saved = SavedServer {
-            server: ServerIdentity {
-                id: ServerId::new("fake:server:queue"),
-                provider: "fake".to_string(),
+        let saved = SavedSource {
+            source: SourceIdentity {
+                id: SourceId::new("fake:server:queue"),
+                kind: "fake".to_string(),
                 name: "Queue Test".to_string(),
                 base_url: "https://music.example".to_string(),
             },
@@ -1197,30 +1197,30 @@ mod tests {
         controller
             .store
             .with_store(|store| {
-                store.save_server(&saved)?;
-                store.set_active_server(&saved.server.id)?;
-                let generation = store.begin_sync(&saved.server.id)?;
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)?;
+                let generation = store.begin_sync(&saved.source.id)?;
                 store.upsert_tracks(
-                    &saved.server.id,
+                    &saved.source.id,
                     &[repeated_track.clone(), other_track],
                     generation,
                 )?;
                 store.upsert_playlists(
-                    &saved.server.id,
+                    &saved.source.id,
                     std::slice::from_ref(&playlist),
                     generation,
                 )?;
                 store.upsert_playlist_entries(
-                    &saved.server.id,
+                    &saved.source.id,
                     &playlist.id,
                     &entries,
                     generation,
                 )?;
-                store.complete_sync(&saved.server.id, generation)?;
+                store.complete_sync(&saved.source.id, generation)?;
                 Ok(())
             })
             .expect("seed store");
-        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.server.id.clone()));
+        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
@@ -1558,10 +1558,10 @@ mod tests {
     #[test]
     fn queue_clear_activation() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
-        let saved = SavedServer {
-            server: ServerIdentity {
-                id: ServerId::new("fake:server:stale-activation"),
-                provider: "fake".to_string(),
+        let saved = SavedSource {
+            source: SourceIdentity {
+                id: SourceId::new("fake:server:stale-activation"),
+                kind: "fake".to_string(),
                 name: "Queue Test".to_string(),
                 base_url: "https://music.example".to_string(),
             },
@@ -1573,14 +1573,14 @@ mod tests {
         controller
             .store
             .with_store(|store| {
-                store.save_server(&saved)?;
-                store.set_active_server(&saved.server.id)?;
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)?;
                 Ok(())
             })
             .expect("seed store");
         let current = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
         let stale = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
-        let mut queue = QueueEngine::new(saved.server.id.clone());
+        let mut queue = QueueEngine::new(saved.source.id.clone());
         queue.append(&current);
         *controller.queue.lock().expect("queue") = Some(queue);
 
@@ -1615,7 +1615,7 @@ mod tests {
         assert_eq!(queue.entries[0].track_id, current.id);
 
         controller.finish_store_backed_source_activation(
-            &saved.server.id,
+            &saved.source.id,
             stale_activation,
             generation,
         );
@@ -1633,7 +1633,7 @@ mod tests {
         controller.playback = Arc::new(Mutex::new(Box::new(RecordingPlaybackBackend {
             commands: Arc::clone(&commands),
         })));
-        let saved = snapshot.server.expect("server");
+        let saved = snapshot.source.expect("server");
         let current = snapshot.tracks[0].clone();
         let next = snapshot.tracks[1].clone();
         let mut queue = QueueEngine::new(saved.id);
@@ -1676,7 +1676,7 @@ mod tests {
     fn queue_store_activation() {
         let (controller, events, snapshot, ..) =
             AppController::bootstrap_with_fake(FakeScale::Small);
-        let saved = snapshot.server.expect("server");
+        let saved = snapshot.source.expect("server");
         let current = snapshot.tracks[0].clone();
         let stale = snapshot.tracks[1].clone();
         let mut queue = QueueEngine::new(saved.id.clone());

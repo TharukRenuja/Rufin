@@ -162,7 +162,7 @@ pub(in crate::controller) fn source_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> Result<LoadedSource, String> {
     source_for_saved_with_local_scan_progress(store, runtime, secrets, saved, None)
 }
@@ -171,18 +171,17 @@ pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
     mut local_scan_progress: Option<&mut dyn FnMut(LocalScanProgress)>,
 ) -> Result<LoadedSource, String> {
     let _unused = runtime;
-    if saved.server.provider == LOCAL_SOURCE_ID
-        && saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
+    if saved.source.kind == LOCAL_SOURCE_ID && saved.source.id.as_str() == LOCAL_SOURCE_IDENTITY_ID
     {
         let settings = load_settings_from_store(store);
-        let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
+        let manifest_cache = load_local_manifest_cache(store, &saved.source.id)?;
         return LocalSource::from_roots_with_manifest_cache_and_progress(
             local_folder_paths(&settings),
-            saved.server.clone(),
+            saved.source.clone(),
             manifest_cache,
             |progress| {
                 if let Some(callback) = local_scan_progress.as_deref_mut() {
@@ -193,11 +192,11 @@ pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
         .map(LoadedSource::Local)
         .map_err(|error| error.to_string());
     }
-    if saved.server.provider == LOCAL_SOURCE_ID {
-        let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
+    if saved.source.kind == LOCAL_SOURCE_ID {
+        let manifest_cache = load_local_manifest_cache(store, &saved.source.id)?;
         return LocalSource::from_roots_with_manifest_cache_and_progress(
-            vec![PathBuf::from(&saved.server.base_url)],
-            saved.server.clone(),
+            vec![PathBuf::from(&saved.source.base_url)],
+            saved.source.clone(),
             manifest_cache,
             |progress| {
                 if let Some(callback) = local_scan_progress.as_deref_mut() {
@@ -208,17 +207,17 @@ pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
         .map(LoadedSource::Local)
         .map_err(|error| error.to_string());
     }
-    let device_id = if saved.server.provider == "jellyfin" {
+    let device_id = if saved.source.kind == "jellyfin" {
         Some(ensure_jellyfin_device_id(store)?)
     } else {
         None
     };
     let token = secrets
-        .load_token(&saved.server.id)
+        .load_token(&saved.source.id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No saved token found for the active server.".to_string())?;
     let session = SavedSourceSession {
-        server: saved.server.clone(),
+        source: saved.source.clone(),
         user_id: saved.user_id.clone(),
         username: saved.username.clone(),
         trust_invalid_cert: saved.trust_invalid_cert,
@@ -229,9 +228,9 @@ pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
 }
 fn load_local_manifest_cache(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> Result<Vec<LocalManifestEntry>, String> {
-    store.with_store(|store| store.load_local_manifest(server_id))
+    store.with_store(|store| store.load_local_manifest(source_id))
 }
 
 pub(in crate::controller) fn ensure_jellyfin_device_id(
@@ -282,10 +281,10 @@ pub(in crate::controller) fn load_folder_detail(
     path: &[FolderPathItem],
 ) -> Result<FolderDetail, String> {
     let saved = store
-        .with_store(|store| store.active_server())?
+        .with_store(|store| store.active_source())?
         .ok_or_else(|| "No active server.".to_string())?;
     let selected_music_folder_id =
-        store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
+        store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
     let settings = load_settings_for_saved(store, &saved);
     let capabilities = source_capabilities_for_saved(&saved);
     if capabilities.folder_browsing.owner().is_none() {
@@ -305,7 +304,7 @@ pub(in crate::controller) fn sync_playlist_mutation(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
     before: &source::PlaylistDetail,
     after: &source::PlaylistDetail,
 ) -> Result<Option<source::PlaylistDetail>, String> {
@@ -387,18 +386,18 @@ pub(in crate::controller) fn report_playback_async(
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     _events: Sender<ControllerEvent>,
-    server_id: ServerId,
+    source_id: SourceId,
     report: PlaybackReport,
 ) {
     thread::spawn(move || {
         let Some(saved) = store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None)
-            .filter(|saved| saved.server.id == server_id)
+            .filter(|saved| saved.source.id == source_id)
         else {
             return;
         };
-        if saved.server.provider == "fake" || saved.server.provider == "local" {
+        if saved.source.kind == "fake" || saved.source.kind == "local" {
             return;
         }
         let result = source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
@@ -613,14 +612,14 @@ pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Res
 }
 
 #[track_caller]
-pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
-    let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(server_id.as_str())))
+pub(in crate::controller) fn clear_disk_cover_cache(source_id: &SourceId) -> Result<(), String> {
+    let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(source_id.as_str())))
     else {
         return Ok(());
     };
     let caller = std::panic::Location::caller();
     info!(
-        server_id = %server_id,
+        source_id = %source_id,
         path = %path.display(),
         caller_file = caller.file(),
         caller_line = caller.line(),
@@ -632,12 +631,12 @@ pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Res
 #[track_caller]
 pub(in crate::controller) fn clear_store_disk_cover_cache(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> Result<(), String> {
     if !store.uses_disk_storage() {
         return Ok(());
     }
-    clear_disk_cover_cache(server_id)
+    clear_disk_cover_cache(source_id)
 }
 
 pub(in crate::controller) fn prune_disk_cover_cache_entries(entries: &[CoverCacheEntry]) {
@@ -679,7 +678,7 @@ fn prune_disk_covers(entries: &[CoverCacheEntry], root: &Path) {
 
 fn stale_cover_cache_file_path(entry: &CoverCacheEntry, root: &Path) -> Option<PathBuf> {
     let key = library::image_cache_key(
-        &entry.server_id,
+        &entry.source_id,
         &entry.item_id,
         &entry.image_tag,
         entry.size,
@@ -710,15 +709,15 @@ fn remove_safe_cover_cache_file(path: &Path, root: &Path) -> Result<bool, String
 }
 
 #[track_caller]
-pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> Result<(), String> {
+pub(in crate::controller) fn clear_disk_waveform_cache(source_id: &SourceId) -> Result<(), String> {
     let Some(path) =
-        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(server_id.as_str())))
+        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(source_id.as_str())))
     else {
         return Ok(());
     };
     let caller = std::panic::Location::caller();
     info!(
-        server_id = %server_id,
+        source_id = %source_id,
         path = %path.display(),
         caller_file = caller.file(),
         caller_line = caller.line(),
@@ -730,23 +729,23 @@ pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> 
 #[track_caller]
 pub(in crate::controller) fn clear_store_disk_waveform_cache(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> Result<(), String> {
     if !store.uses_disk_storage() {
         return Ok(());
     }
-    clear_disk_waveform_cache(server_id)
+    clear_disk_waveform_cache(source_id)
 }
 
 pub(in crate::controller) fn prune_disk_waveform_cache_entries(
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_ids: &[TrackId],
 ) {
     if track_ids.is_empty() {
         return;
     }
     let Some(root) =
-        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(server_id.as_str())))
+        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(source_id.as_str())))
     else {
         return;
     };
@@ -805,17 +804,17 @@ fn prune_disk_waveforms(track_ids: &[TrackId], root: &Path) {
 }
 
 pub(in crate::controller) fn sync_is_running(
-    sync_in_flight: &InFlightGuards<ServerId>,
-    server_id: &ServerId,
+    sync_in_flight: &InFlightGuards<SourceId>,
+    source_id: &SourceId,
 ) -> bool {
-    sync_in_flight.contains_or_blocked(server_id)
+    sync_in_flight.contains_or_blocked(source_id)
 }
 
 pub(in crate::controller) fn cancel_sync_if_running(
-    sync_in_flight: &InFlightGuards<ServerId>,
-    server_id: &ServerId,
+    sync_in_flight: &InFlightGuards<SourceId>,
+    source_id: &SourceId,
 ) -> Result<bool, String> {
-    sync_in_flight.cancel(server_id)
+    sync_in_flight.cancel(source_id)
 }
 
 pub(in crate::controller) fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
@@ -852,8 +851,8 @@ mod tests {
         fs::create_dir_all(&root).expect("cover root");
         fs::create_dir_all(outside.parent().expect("outside parent")).expect("outside root");
 
-        let server_id = ServerId::new("local-source".to_string());
-        let expected_key = library::image_cache_key(&server_id, "album-one", "old-tag", 256);
+        let source_id = SourceId::new("local-source".to_string());
+        let expected_key = library::image_cache_key(&source_id, "album-one", "old-tag", 256);
         let expected_path = root.join(&expected_key);
         fs::create_dir_all(expected_path.parent().expect("expected parent"))
             .expect("expected parent dir");
@@ -867,21 +866,21 @@ mod tests {
 
         let entries = vec![
             CoverCacheEntry {
-                server_id: server_id.clone(),
+                source_id: source_id.clone(),
                 item_id: "album-one".to_string(),
                 image_tag: "old-tag".to_string(),
                 size: 256,
                 path: expected_path.to_string_lossy().into_owned(),
             },
             CoverCacheEntry {
-                server_id: server_id.clone(),
+                source_id: source_id.clone(),
                 item_id: "album-two".to_string(),
                 image_tag: "old-tag".to_string(),
                 size: 256,
                 path: mismatched_path.to_string_lossy().into_owned(),
             },
             CoverCacheEntry {
-                server_id,
+                source_id,
                 item_id: "album-three".to_string(),
                 image_tag: "old-tag".to_string(),
                 size: 256,

@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use domain::{
     Album, Artist, FolderId, Genre, GenreId, HomeSection, HomeSectionKind, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, ServerIdentity, Track, TrackId,
+    MusicFolderId, Playlist, PlaylistId, Track, TrackId,
 };
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod remote_http;
@@ -13,13 +12,9 @@ pub use domain::{
     GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
     LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
     PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, RandomTrackRequest,
-    SavedSourceSession, SearchResults, SourceSession, StreamDescriptor, StreamRequest,
+    SavedSourceSession, SearchResults, SourceIdentity, SourceSession, StreamDescriptor,
+    StreamRequest,
 };
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SourceIdentity {
-    pub server: ServerIdentity,
-}
 
 #[derive(Debug, Error)]
 pub enum SourceError {

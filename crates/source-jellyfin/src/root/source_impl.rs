@@ -36,7 +36,7 @@ pub(super) struct AuthenticateByNameRequest {
 #[serde(rename_all = "PascalCase")]
 pub(super) struct AuthenticationResult {
     pub(super) access_token: String,
-    pub(super) server_id: Option<String>,
+    pub(super) source_id: Option<String>,
     pub(super) user: JellyfinUser,
 }
 #[derive(Clone, Debug, Deserialize)]

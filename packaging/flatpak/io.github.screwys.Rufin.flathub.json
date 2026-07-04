@@ -86,9 +86,9 @@
         "test -f /app/share/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.external.lastfm.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.external.musicbrainz.png",
-        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.jellyfin.png",
-        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.navidrome.png",
-        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.opensubsonic.png",
+        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.jellyfin.png",
+        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.navidrome.png",
+        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.opensubsonic.png",
         "gtk4-update-icon-cache -f -t /app/share/icons/hicolor || true",
         "for po_file in locales/*.po; do if [ -f \"$po_file\" ]; then lang=\"$(basename \"$po_file\" .po)\"; mkdir -p \"/app/share/locale/$lang/LC_MESSAGES\"; msgfmt \"$po_file\" -o \"/app/share/locale/$lang/LC_MESSAGES/rufin.mo\"; fi; done"
       ],

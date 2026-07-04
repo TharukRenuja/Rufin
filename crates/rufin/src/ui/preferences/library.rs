@@ -2,10 +2,10 @@ use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{LibrarySourceSelection, ServerIdentity};
+use domain::{LibrarySourceSelection, SourceIdentity};
 use gtk::gio;
 
-use crate::controller::ServerLocalAccessSnapshot;
+use crate::controller::SourceLocalAccessSnapshot;
 use crate::i18n::tr;
 
 use super::super::{album_count_text, track_count_text};
@@ -49,35 +49,35 @@ fn library_sources_page(
     let servers_group = adw::PreferencesGroup::builder()
         .title(tr("Servers"))
         .description(tr(
-            "Configure saved music servers and local playback mappings.",
+            "Configure saved music sources and local playback mappings.",
         ))
         .build();
 
-    if library.servers.is_empty() {
+    if library.sources.is_empty() {
         let row = adw::ActionRow::builder()
-            .title(tr("No servers configured"))
+            .title(tr("No remote sources configured"))
             .subtitle(tr(
                 "Add a server to use Jellyfin, Subsonic, or OpenSubsonic.",
             ))
             .build();
         servers_group.add(&row);
     } else {
-        for server in &library.servers {
+        for server in &library.sources {
             let selected = matches!(
                 &library.selected_source,
-                Some(LibrarySourceSelection::Server(server_id))
-                    if server_id.as_str() == server.id.as_str()
+                Some(LibrarySourceSelection::Source(source_id))
+                    if source_id.as_str() == server.id.as_str()
             );
             let summary = library
-                .server_local_access
+                .source_local_access
                 .iter()
-                .find(|summary| summary.server_id == server.id);
+                .find(|summary| summary.source_id == server.id);
             let row = adw::ActionRow::builder()
-                .title(server_display_name(server))
-                .subtitle(server_source_subtitle(server, summary))
+                .title(source_identity_display_name(server))
+                .subtitle(source_summary_subtitle(server, summary))
                 .subtitle_lines(4)
                 .build();
-            let icon = gtk::Image::from_icon_name(provider_icon_name(&server.provider));
+            let icon = gtk::Image::from_icon_name(source_kind_icon_name(&server.kind));
             icon.set_pixel_size(SERVER_PROVIDER_ICON_SIZE);
             icon.set_size_request(SERVER_PROVIDER_ICON_SIZE, SERVER_PROVIDER_ICON_SIZE);
             icon.set_valign(gtk::Align::Center);
@@ -263,11 +263,10 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
     );
 }
 
-fn server_source_subtitle(
-    server: &ServerIdentity,
-    summary: Option<&ServerLocalAccessSnapshot>,
+fn source_summary_subtitle(
+    server: &SourceIdentity,
+    summary: Option<&SourceLocalAccessSnapshot>,
 ) -> String {
-    let provider = source_display_name(&server.provider);
     let address = if server.base_url.trim().is_empty() {
         String::new()
     } else {
@@ -287,8 +286,8 @@ fn server_source_subtitle(
         })
         .map(|username| format!("{}: {}", tr("User"), username))
         .unwrap_or_default();
-    let cache = summary.map(server_cache_line).unwrap_or_default();
-    let provider_line = metadata_line([provider, address]);
+    let cache = summary.map(source_cache_line).unwrap_or_default();
+    let provider_line = metadata_line([source_display_name(&server.kind), address]);
     let folder_line = metadata_line([account, format!("{}: {}", tr("Music Folder"), folder)]);
     let cache_line = metadata_line([cache, mapping]);
     [provider_line, folder_line, cache_line]
@@ -306,7 +305,7 @@ fn metadata_line(parts: impl IntoIterator<Item = String>) -> String {
         .join(" - ")
 }
 
-fn server_cache_line(summary: &ServerLocalAccessSnapshot) -> String {
+fn source_cache_line(summary: &SourceLocalAccessSnapshot) -> String {
     format!(
         "{}: {}, {}",
         tr("Cached"),
@@ -315,7 +314,7 @@ fn server_cache_line(summary: &ServerLocalAccessSnapshot) -> String {
     )
 }
 
-fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {
+fn local_mapping_status(summary: Option<&SourceLocalAccessSnapshot>) -> String {
     let Some(summary) = summary else {
         return tr("No local playback mapping");
     };
@@ -336,30 +335,30 @@ fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {
     )
 }
 
-fn server_display_name(server: &ServerIdentity) -> String {
+fn source_identity_display_name(server: &SourceIdentity) -> String {
     let name = server.name.trim();
     if name.is_empty() {
-        source_display_name(&server.provider)
+        source_display_name(&server.kind)
     } else {
         name.to_string()
     }
 }
 
-fn source_display_name(provider: &str) -> String {
-    match provider {
+fn source_display_name(kind: &str) -> String {
+    match kind {
         "jellyfin" => tr("Jellyfin"),
         "navidrome" => tr("Navidrome"),
         "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
         "local" | "fake" => tr("Local"),
-        provider => provider.to_string(),
+        other => other.to_string(),
     }
 }
 
-fn provider_icon_name(provider: &str) -> &'static str {
-    match provider {
-        "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
-        "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
-        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
+fn source_kind_icon_name(kind: &str) -> &'static str {
+    match kind {
+        "jellyfin" => "io.github.screwys.Rufin.source.jellyfin",
+        "navidrome" => "io.github.screwys.Rufin.source.navidrome",
+        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.source.opensubsonic",
         "local" | "fake" => "rufin-route-folders-symbolic",
         _ => "network-server-symbolic",
     }

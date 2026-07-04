@@ -3,55 +3,55 @@ use std::time::Instant;
 
 pub(in crate::controller) fn promote_prefetched_home_section(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     section: &HomeSection,
 ) -> Result<(), String> {
     let generation =
-        store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
-    cache_home_section(store, server_id, section, generation)?;
-    store.with_store(|store| store.clear_home_section_prefetch(server_id, section.kind))?;
+        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
+    cache_home_section(store, source_id, section, generation)?;
+    store.with_store(|store| store.clear_home_section_prefetch(source_id, section.kind))?;
     Ok(())
 }
 #[cfg(test)]
 pub(in crate::controller) fn cache_home_sections(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     sections: &[HomeSection],
     generation: i64,
 ) -> Result<(), String> {
     for section in sections {
-        cache_home_section_items(store, server_id, section, generation)?;
+        cache_home_section_items(store, source_id, section, generation)?;
     }
-    store.with_store(|store| store.upsert_home_sections(server_id, sections, generation))?;
+    store.with_store(|store| store.upsert_home_sections(source_id, sections, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     section: &HomeSection,
     generation: i64,
 ) -> Result<(), String> {
-    let section = source_scoped_home_section(server_id, section);
-    cache_home_section_items(store, server_id, &section, generation)?;
-    store.with_store(|store| store.upsert_home_section(server_id, &section, generation))?;
+    let section = source_scoped_home_section(source_id, section);
+    cache_home_section_items(store, source_id, &section, generation)?;
+    store.with_store(|store| store.upsert_home_section(source_id, &section, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section_items(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     section: &HomeSection,
     generation: i64,
 ) -> Result<(), String> {
     if !section.albums.is_empty() {
-        store.with_store(|store| store.upsert_albums(server_id, &section.albums, generation))?;
+        store.with_store(|store| store.upsert_albums(source_id, &section.albums, generation))?;
     }
     if !section.tracks.is_empty() {
-        store.with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
+        store.with_store(|store| store.upsert_tracks(source_id, &section.tracks, generation))?;
     }
     Ok(())
 }
-fn source_scoped_home_section(server_id: &ServerId, section: &HomeSection) -> HomeSection {
-    if server_id.as_str() != LOCAL_SOURCE_SERVER_ID {
+fn source_scoped_home_section(source_id: &SourceId, section: &HomeSection) -> HomeSection {
+    if source_id.as_str() != LOCAL_SOURCE_IDENTITY_ID {
         return section.clone();
     }
     let mut section = section.clone();
@@ -90,39 +90,39 @@ pub(in crate::controller) fn normalize_artist_detail_image_refs(
 }
 pub(in crate::controller) fn cached_library_exists(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> bool {
     store
         .with_store(|store| {
-            let albums = store.load_albums(server_id, 0, 1)?.total;
-            let tracks = store.load_tracks(server_id, 0, 1)?.total;
+            let albums = store.load_albums(source_id, 0, 1)?.total;
+            let tracks = store.load_tracks(source_id, 0, 1)?.total;
             Ok(albums.saturating_add(tracks) > 0)
         })
         .unwrap_or(false)
 }
 pub(in crate::controller) fn load_library_counts(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> Result<LibraryCounts, String> {
     store.with_store(|store| {
         Ok(LibraryCounts {
-            albums: store.load_albums(server_id, 0, 0)?.total,
-            tracks: store.load_tracks(server_id, 0, 0)?.total,
-            artists: store.load_artists(server_id, false, 0, 0)?.total,
-            album_artists: store.load_artists(server_id, true, 0, 0)?.total,
-            genres: store.load_genres(server_id, 0, 0)?.total,
-            playlists: store.load_playlists(server_id, 0, 0)?.total,
+            albums: store.load_albums(source_id, 0, 0)?.total,
+            tracks: store.load_tracks(source_id, 0, 0)?.total,
+            artists: store.load_artists(source_id, false, 0, 0)?.total,
+            album_artists: store.load_artists(source_id, true, 0, 0)?.total,
+            genres: store.load_genres(source_id, 0, 0)?.total,
+            playlists: store.load_playlists(source_id, 0, 0)?.total,
         })
     })
 }
 pub(in crate::controller) fn load_home_update(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> Result<LibraryHomeUpdate, String> {
-    store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
-    let mut sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
+    store.with_store(|store| store.ensure_collection_cover_refs(&saved.source.id))?;
+    let mut sections = store.with_store(|store| store.load_home_sections(&saved.source.id))?;
     let mut prefetched_explore = store.with_store(|store| {
-        store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+        store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)
     })?;
     for section in &mut sections {
         home_image_refs(store, saved, section)?;
@@ -149,17 +149,17 @@ pub(in crate::controller) fn seed_fake_cache(
         elapsed_ms = started.elapsed().as_millis() as u64,
         "generated fake library"
     );
-    let server = source.identity().server.clone();
-    let saved = SavedServer {
-        server: server.clone(),
+    let server = source.identity().clone();
+    let saved = SavedSource {
+        source: server.clone(),
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
         use_jellyfin_instant_mix: false,
     };
     store.with_store(|store| {
-        store.save_server(&saved)?;
-        store.set_active_server(&server.id)?;
+        store.save_source(&saved)?;
+        store.set_active_source(&server.id)?;
         Ok(())
     })?;
     let generation = store.with_store(|store| store.begin_sync(&server.id))?;
@@ -276,11 +276,11 @@ pub(in crate::controller) fn seed_fake_cache(
 }
 pub(in crate::controller) fn restore_queue(
     store: &StoreHandle,
-    server: Option<&ServerIdentity>,
+    server: Option<&SourceIdentity>,
 ) -> Option<QueueEngine> {
     let server = server?;
-    let saved = SavedServer {
-        server: server.clone(),
+    let saved = SavedSource {
+        source: server.clone(),
         user_id: String::new(),
         username: String::new(),
         trust_invalid_cert: false,
@@ -338,34 +338,34 @@ pub(in crate::controller) struct LoginActivationRequest<'a> {
 pub(in crate::controller) fn activate_logged_in_server(
     context: &LoginActivationContext<'_>,
     request: LoginActivationRequest<'_>,
-) -> Result<SavedServer, String> {
+) -> Result<SavedSource, String> {
     let session = request.session;
-    let mut server = session.server.clone();
+    let mut server = session.source.clone();
     if let Some(name) = trimmed_optional(request.server_name) {
         server.name = name;
     }
-    let saved = SavedServer {
-        server,
+    let saved = SavedSource {
+        source: server,
         user_id: session.user_id.clone(),
         username: session.username.clone(),
         trust_invalid_cert: request.trust_invalid_cert,
         use_jellyfin_instant_mix: request.use_jellyfin_instant_mix,
     };
     context.store.with_store(|store| {
-        store.save_server(&saved)?;
+        store.save_source(&saved)?;
         if let Some(root) = request.local_access_root.and_then(Path::to_str) {
-            store.save_server_local_access(&ServerLocalAccess {
-                server_id: saved.server.id.clone(),
+            store.save_source_local_access(&SourceLocalAccess {
+                source_id: saved.source.id.clone(),
                 root_path: root.to_string(),
                 path_replace_from: trimmed_optional(request.path_replace_from),
                 path_replace_to: Some(root.to_string()),
             })?;
         }
-        store.set_active_server(&saved.server.id)?;
+        store.set_active_source(&saved.source.id)?;
         Ok(())
     })?;
     let mut settings = load_settings_from_store(context.store);
-    settings.sources.selected = Some(LibrarySourceSelection::Server(saved.server.id.clone()));
+    settings.sources.selected = Some(LibrarySourceSelection::Source(saved.source.id.clone()));
     settings.migrate_defaults();
     context.store.save_settings(&settings)?;
 
@@ -381,18 +381,18 @@ pub(in crate::controller) fn activate_with_token(
     context: &LoginActivationContext<'_>,
     secrets: &Arc<dyn SecretStore>,
     request: LoginActivationRequest<'_>,
-) -> Result<SavedServer, String> {
+) -> Result<SavedSource, String> {
     let session = request.session;
     secrets
-        .save_token(&session.server.id, &session.access_token)
+        .save_token(&session.source.id, &session.access_token)
         .map_err(|error| error.to_string())?;
     match activate_logged_in_server(context, request) {
         Ok(saved) => Ok(saved),
         Err(error) => {
-            if let Err(delete_error) = secrets.delete_token(&session.server.id) {
+            if let Err(delete_error) = secrets.delete_token(&session.source.id) {
                 warn!(
                     %delete_error,
-                    server_id = %session.server.id,
+                    source_id = %session.source.id,
                     "failed to delete token after login activation failed"
                 );
             }
@@ -402,7 +402,7 @@ pub(in crate::controller) fn activate_with_token(
 }
 pub(in crate::controller) fn activate_saved_queue(
     context: &QueueActivationContext<'_>,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> Result<(), String> {
     let Some(activation) = prepare_saved_queue_activation(context, saved)? else {
         return Ok(());
@@ -410,27 +410,27 @@ pub(in crate::controller) fn activate_saved_queue(
     apply_prepared_queue_activation(context, activation)
 }
 pub(in crate::controller) struct PreparedQueueActivation {
-    server_id: ServerId,
+    source_id: SourceId,
     queue: QueueEngine,
     queue_snapshot: QueueSnapshot,
     playback_snapshot: PlaybackSnapshot,
 }
 pub(in crate::controller) fn prepare_saved_queue_activation(
     context: &QueueActivationContext<'_>,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> Result<Option<PreparedQueueActivation>, String> {
-    let current_server_id = context
+    let current_source_id = context
         .queue
         .lock()
         .map_err(|_| "queue lock was poisoned".to_string())?
         .as_ref()
-        .map(|queue| queue.server_id().clone());
-    if current_server_id.as_ref() == Some(&saved.server.id) {
+        .map(|queue| queue.source_id().clone());
+    if current_source_id.as_ref() == Some(&saved.source.id) {
         return Ok(None);
     }
 
-    let restored = restore_queue(context.store, Some(&saved.server))
-        .unwrap_or_else(|| QueueEngine::new(saved.server.id.clone()));
+    let restored = restore_queue(context.store, Some(&saved.source))
+        .unwrap_or_else(|| QueueEngine::new(saved.source.id.clone()));
     let queue_snapshot = restored.snapshot();
     let auto_dj_enabled = context
         .auto_dj_enabled
@@ -444,7 +444,7 @@ pub(in crate::controller) fn prepare_saved_queue_activation(
     );
 
     Ok(Some(PreparedQueueActivation {
-        server_id: saved.server.id.clone(),
+        source_id: saved.source.id.clone(),
         queue: restored,
         queue_snapshot,
         playback_snapshot,
@@ -455,7 +455,7 @@ pub(in crate::controller) fn apply_prepared_queue_activation(
     activation: PreparedQueueActivation,
 ) -> Result<(), String> {
     let PreparedQueueActivation {
-        server_id,
+        source_id,
         queue: restored,
         queue_snapshot,
         playback_snapshot: player,
@@ -465,8 +465,8 @@ pub(in crate::controller) fn apply_prepared_queue_activation(
         .queue
         .lock()
         .map_err(|_| "queue lock was poisoned".to_string())?;
-    let current_server_id = queue.as_ref().map(|queue| queue.server_id().clone());
-    if current_server_id.as_ref() == Some(&server_id) {
+    let current_source_id = queue.as_ref().map(|queue| queue.source_id().clone());
+    if current_source_id.as_ref() == Some(&source_id) {
         return Ok(());
     }
     *queue = Some(restored);
@@ -579,17 +579,17 @@ pub(in crate::controller) fn local_folder_paths(settings: &AppSettings) -> Vec<P
         .map(|folder| PathBuf::from(&folder.path))
         .collect()
 }
-pub(in crate::controller) fn local_source_server() -> ServerIdentity {
-    ServerIdentity {
-        id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
-        provider: LOCAL_SOURCE_ID.to_string(),
+pub(in crate::controller) fn local_source_server() -> SourceIdentity {
+    SourceIdentity {
+        id: SourceId::new(LOCAL_SOURCE_IDENTITY_ID),
+        kind: LOCAL_SOURCE_ID.to_string(),
         name: "Local".to_string(),
         base_url: String::new(),
     }
 }
-pub(in crate::controller) fn local_source_saved() -> SavedServer {
-    SavedServer {
-        server: local_source_server(),
+pub(in crate::controller) fn local_source_saved() -> SavedSource {
+    SavedSource {
+        source: local_source_server(),
         user_id: "local".to_string(),
         username: "Local".to_string(),
         trust_invalid_cert: false,
@@ -598,30 +598,30 @@ pub(in crate::controller) fn local_source_saved() -> SavedServer {
 }
 pub(in crate::controller) fn ensure_local_source_server(
     store: &StoreHandle,
-) -> Result<SavedServer, String> {
+) -> Result<SavedSource, String> {
     let saved = local_source_saved();
-    store.with_store(|store| store.save_server(&saved))?;
+    store.with_store(|store| store.save_source(&saved))?;
     Ok(saved)
 }
-pub(in crate::controller) fn load_settings_for_active_server(store: &StoreHandle) -> AppSettings {
+pub(in crate::controller) fn load_settings_for_active_source(store: &StoreHandle) -> AppSettings {
     let settings = load_settings_from_store(store);
-    match store.with_store(|store| store.active_server()) {
-        Ok(Some(saved)) => settings_for_server(settings, &saved.server),
+    match store.with_store(|store| store.active_source()) {
+        Ok(Some(saved)) => settings_for_server(settings, &saved.source),
         _ => settings,
     }
 }
 pub(in crate::controller) fn load_settings_for_saved(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> AppSettings {
-    settings_for_server(load_settings_from_store(store), &saved.server)
+    settings_for_server(load_settings_from_store(store), &saved.source)
 }
 pub(in crate::controller) fn prune_successful_sync_image_cache(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     mut pruned_entries: Vec<CoverCacheEntry>,
 ) {
-    match stale_external_images(store, server_id) {
+    match stale_external_images(store, source_id) {
         Ok(mut entries) => pruned_entries.append(&mut entries),
         Err(error) => warn!(%error, "failed to prune generated external image cache entries"),
     }
@@ -630,9 +630,9 @@ pub(in crate::controller) fn prune_successful_sync_image_cache(
 
 fn stale_external_images(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> Result<Vec<CoverCacheEntry>, String> {
-    let saved = store.with_store(|store| store.saved_server(server_id))?;
+    let saved = store.with_store(|store| store.saved_source(source_id))?;
     let settings = saved
         .as_ref()
         .map(|saved| load_settings_for_saved(store, saved))
@@ -641,18 +641,18 @@ fn stale_external_images(
     let live_refs = if prune_all_external {
         Vec::new()
     } else {
-        generated_external_image_refs(store, server_id, &settings)?
+        generated_external_image_refs(store, source_id, &settings)?
     };
-    store.with_store(|store| store.prune_external_images(server_id, &live_refs, prune_all_external))
+    store.with_store(|store| store.prune_external_images(source_id, &live_refs, prune_all_external))
 }
 
 fn generated_external_image_refs(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     settings: &AppSettings,
 ) -> Result<Vec<ImageRef>, String> {
-    let mut albums = external_prune_albums(store, server_id)?;
-    let mut tracks = external_prune_tracks(store, server_id)?;
+    let mut albums = external_prune_albums(store, source_id)?;
+    let mut tracks = external_prune_tracks(store, source_id)?;
     cover_art_policy::bind_albums(&mut albums, settings);
     cover_art_policy::bind_tracks(&mut tracks, settings);
     let mut seen = HashSet::<(String, Option<String>)>::new();
@@ -672,11 +672,11 @@ fn generated_external_image_refs(
     Ok(refs)
 }
 
-fn external_prune_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Album>, String> {
+fn external_prune_albums(store: &StoreHandle, source_id: &SourceId) -> Result<Vec<Album>, String> {
     let mut albums = Vec::new();
     let mut offset = 0;
     loop {
-        let page = store.with_store(|store| store.load_albums(server_id, offset, PAGE_SIZE))?;
+        let page = store.with_store(|store| store.load_albums(source_id, offset, PAGE_SIZE))?;
         let item_count = page.items.len();
         albums.extend(page.items);
         offset += item_count;
@@ -686,11 +686,11 @@ fn external_prune_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Ve
     }
 }
 
-fn external_prune_tracks(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Track>, String> {
+fn external_prune_tracks(store: &StoreHandle, source_id: &SourceId) -> Result<Vec<Track>, String> {
     let mut tracks = Vec::new();
     let mut offset = 0;
     loop {
-        let page = store.with_store(|store| store.load_tracks(server_id, offset, PAGE_SIZE))?;
+        let page = store.with_store(|store| store.load_tracks(source_id, offset, PAGE_SIZE))?;
         let item_count = page.items.len();
         tracks.extend(page.items);
         offset += item_count;
@@ -702,64 +702,64 @@ fn external_prune_tracks(store: &StoreHandle, server_id: &ServerId) -> Result<Ve
 
 pub(in crate::controller) fn settings_for_server(
     mut settings: AppSettings,
-    server: &ServerIdentity,
+    server: &SourceIdentity,
 ) -> AppSettings {
-    if server.provider == "fake" {
+    if server.kind == "fake" {
         settings.external_metadata_enabled = false;
     }
     settings
 }
 pub(in crate::controller) fn local_initial_cover_cache_required(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> bool {
-    local_cover_cache_missing(store, server_id, true)
+    local_cover_cache_missing(store, source_id, true)
 }
 pub(in crate::controller) fn local_cover_cache_missing(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     missing_library_requires_prefetch: bool,
 ) -> bool {
-    if server_id.as_str() != LOCAL_SOURCE_SERVER_ID {
+    if source_id.as_str() != LOCAL_SOURCE_IDENTITY_ID {
         return false;
     }
     store
         .with_store(|store| {
-            let album_count = store.load_albums(server_id, 0, 1)?.total;
-            let track_count = store.load_tracks(server_id, 0, 1)?.total;
+            let album_count = store.load_albums(source_id, 0, 1)?.total;
+            let track_count = store.load_tracks(source_id, 0, 1)?.total;
             if album_count == 0 && track_count == 0 {
                 return Ok(missing_library_requires_prefetch);
             }
-            missing_source_refs(store, server_id)
+            missing_source_refs(store, source_id)
         })
         .unwrap_or(true)
 }
-fn missing_source_refs(store: &Store, server_id: &ServerId) -> Result<bool, StoreError> {
+fn missing_source_refs(store: &Store, source_id: &SourceId) -> Result<bool, StoreError> {
     let mut seen = HashSet::new();
-    if local_album_cover_refs_missing(store, server_id, &mut seen)? {
+    if local_album_cover_refs_missing(store, source_id, &mut seen)? {
         return Ok(true);
     }
-    if local_track_cover_refs_missing(store, server_id, &mut seen)? {
+    if local_track_cover_refs_missing(store, source_id, &mut seen)? {
         return Ok(true);
     }
-    if local_artist_cover_refs_missing(store, server_id, false, &mut seen)? {
+    if local_artist_cover_refs_missing(store, source_id, false, &mut seen)? {
         return Ok(true);
     }
-    local_artist_cover_refs_missing(store, server_id, true, &mut seen)
+    local_artist_cover_refs_missing(store, source_id, true, &mut seen)
 }
 fn local_album_cover_refs_missing(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     seen: &mut HashSet<(String, String)>,
 ) -> Result<bool, StoreError> {
     let mut offset = 0;
     loop {
-        let page = store.load_albums(server_id, offset, PAGE_SIZE)?;
+        let page = store.load_albums(source_id, offset, PAGE_SIZE)?;
         for album in &page.items {
             if !is_local_album_id(&album.id) {
                 return Ok(true);
             }
-            if local_image_ref_cache_missing(store, server_id, album.image_ref.as_ref(), seen)? {
+            if local_image_ref_cache_missing(store, source_id, album.image_ref.as_ref(), seen)? {
                 return Ok(true);
             }
         }
@@ -771,18 +771,18 @@ fn local_album_cover_refs_missing(
 }
 fn local_track_cover_refs_missing(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     seen: &mut HashSet<(String, String)>,
 ) -> Result<bool, StoreError> {
     let mut offset = 0;
     loop {
-        let page = store.load_tracks(server_id, offset, PAGE_SIZE)?;
+        let page = store.load_tracks(source_id, offset, PAGE_SIZE)?;
         let album_ids = page
             .items
             .iter()
             .map(|track| track.album_id.clone())
             .collect::<Vec<_>>();
-        let album_image_refs = store.load_album_image_refs(server_id, &album_ids)?;
+        let album_image_refs = store.load_album_image_refs(source_id, &album_ids)?;
         for track in &page.items {
             if !is_local_track_id(&track.id) || !is_local_album_id(&track.album_id) {
                 return Ok(true);
@@ -790,7 +790,7 @@ fn local_track_cover_refs_missing(
             let image_ref = album_image_refs
                 .get(&track.album_id)
                 .or(track.image_ref.as_ref());
-            if local_image_ref_cache_missing(store, server_id, image_ref, seen)? {
+            if local_image_ref_cache_missing(store, source_id, image_ref, seen)? {
                 return Ok(true);
             }
         }
@@ -802,18 +802,18 @@ fn local_track_cover_refs_missing(
 }
 fn local_artist_cover_refs_missing(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     album_artist: bool,
     seen: &mut HashSet<(String, String)>,
 ) -> Result<bool, StoreError> {
     let mut offset = 0;
     loop {
-        let page = store.load_artists(server_id, album_artist, offset, PAGE_SIZE)?;
+        let page = store.load_artists(source_id, album_artist, offset, PAGE_SIZE)?;
         for artist in &page.items {
             if !is_local_artist_id(&artist.id) {
                 return Ok(true);
             }
-            if local_image_ref_cache_missing(store, server_id, artist.image_ref.as_ref(), seen)? {
+            if local_image_ref_cache_missing(store, source_id, artist.image_ref.as_ref(), seen)? {
                 return Ok(true);
             }
         }
@@ -825,7 +825,7 @@ fn local_artist_cover_refs_missing(
 }
 fn local_image_ref_cache_missing(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     image_ref: Option<&ImageRef>,
     seen: &mut HashSet<(String, String)>,
 ) -> Result<bool, StoreError> {
@@ -844,7 +844,7 @@ fn local_image_ref_cache_missing(
         return Ok(false);
     }
     for size in [256, 512] {
-        if cover_cache_entry_exists(store, server_id, image_ref, &tag, size)? {
+        if cover_cache_entry_exists(store, source_id, image_ref, &tag, size)? {
             return Ok(false);
         }
     }
@@ -852,16 +852,16 @@ fn local_image_ref_cache_missing(
 }
 fn cover_cache_entry_exists(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     image_ref: &ImageRef,
     tag: &str,
     size: u32,
 ) -> Result<bool, StoreError> {
-    let key = library::image_cache_key(server_id, &image_ref.item_id, tag, size);
+    let key = library::image_cache_key(source_id, &image_ref.item_id, tag, size);
     if cover_cache_path_for_key(&key).is_some_and(|path| path.exists()) {
         return Ok(true);
     }
-    let Some(entry) = store.load_cover_cache_entry(server_id, &image_ref.item_id, tag, size)?
+    let Some(entry) = store.load_cover_cache_entry(source_id, &image_ref.item_id, tag, size)?
     else {
         return Ok(false);
     };
@@ -884,7 +884,7 @@ pub(in crate::controller) fn playback_snapshot_from_queue(
                 .and_then(|key| cached_waveform_peaks(key, duration_seconds));
 
             PlaybackSnapshot {
-                current_server_id: Some(queue.server_id().clone()),
+                current_source_id: Some(queue.source_id().clone()),
                 current: queue.current().cloned(),
                 state: PlaybackState::Stopped,
                 position_seconds: queue.progress_seconds(),
@@ -916,13 +916,13 @@ pub(in crate::controller) fn next_queue_entry_after_current(
 
 pub(in crate::controller) fn current_request_match(
     queue: Option<&QueueEngine>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
 ) -> bool {
     let Some(queue) = queue else {
         return false;
     };
-    if queue.server_id() != server_id {
+    if queue.source_id() != source_id {
         return false;
     }
     queue
@@ -931,23 +931,23 @@ pub(in crate::controller) fn current_request_match(
 }
 pub(in crate::controller) fn current_request_valid(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
 ) -> bool {
     queue
         .lock()
         .ok()
-        .is_some_and(|queue| current_request_match(queue.as_ref(), server_id, entry))
+        .is_some_and(|queue| current_request_match(queue.as_ref(), source_id, entry))
 }
 pub(in crate::controller) fn request_generation_match(
     playback_request_generation: &Arc<AtomicU64>,
     request_generation: u64,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
 ) -> bool {
     playback_request_generation_matches(playback_request_generation, request_generation)
-        && current_request_valid(queue, server_id, entry)
+        && current_request_valid(queue, source_id, entry)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -958,7 +958,7 @@ pub(in crate::controller) struct NextPreloadState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::controller) struct NextPreloadRequest {
-    pub(in crate::controller) server_id: ServerId,
+    pub(in crate::controller) source_id: SourceId,
     pub(in crate::controller) current_entry_id: QueueEntryId,
     pub(in crate::controller) next_entry_id: QueueEntryId,
     pub(in crate::controller) next_entry: QueueEntry,
@@ -975,7 +975,7 @@ fn preload_request_match(queue: Option<&QueueEngine>, request: &NextPreloadReque
     let Some(queue) = queue else {
         return false;
     };
-    if queue.server_id() != &request.server_id {
+    if queue.source_id() != &request.source_id {
         return false;
     }
     let Some(current) = queue.current() else {
@@ -1066,22 +1066,22 @@ fn system_keyring_secret_store(_scope_id: &str) -> Arc<dyn SecretStore> {
 }
 pub(in crate::controller) fn saved_server_needs_auth(
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> bool {
-    if saved.server.provider == LOCAL_SOURCE_ID || saved.server.provider == "fake" {
+    if saved.source.kind == LOCAL_SOURCE_ID || saved.source.kind == "fake" {
         return false;
     }
-    !config_token_available(secrets, &saved.server.id)
+    !config_token_available(secrets, &saved.source.id)
 }
 pub(in crate::controller) fn config_token_available(
     secrets: &Arc<dyn SecretStore>,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) -> bool {
-    match secrets.load_token(server_id) {
+    match secrets.load_token(source_id) {
         Ok(Some(_)) => true,
         Ok(None) => false,
         Err(error) => {
-            warn!(%error, server_id = %server_id, "failed to load saved token");
+            warn!(%error, source_id = %source_id, "failed to load saved token");
             false
         }
     }
@@ -1120,7 +1120,7 @@ pub(in crate::controller) fn resolve_prepared_item(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
     playback_settings: &PlaybackSettings,
 ) -> Result<PreparedPlaybackItem, String> {
@@ -1128,7 +1128,7 @@ pub(in crate::controller) fn resolve_prepared_item(
         store,
         runtime,
         secrets,
-        server_id,
+        source_id,
         &entry.track_id,
         playback_settings,
     )?;
@@ -1198,7 +1198,7 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
             &store,
             &runtime,
             &secrets,
-            &ticket.request.server_id,
+            &ticket.request.source_id,
             &ticket.request.next_entry,
             &playback_settings,
         ) {
@@ -1238,7 +1238,7 @@ pub(in crate::controller) fn next_preload_request_from_queue(
 ) -> Option<NextPreloadRequest> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
-        let server_id = queue.server_id().clone();
+        let source_id = queue.source_id().clone();
         let current_entry_id = queue.current()?.id.clone();
         let next_entry = next_queue_entry_after_current(queue)?;
         let next_entry_id = next_entry.id.clone();
@@ -1246,7 +1246,7 @@ pub(in crate::controller) fn next_preload_request_from_queue(
             return None;
         }
         Some(NextPreloadRequest {
-            server_id,
+            source_id,
             current_entry_id,
             next_entry_id,
             next_entry,

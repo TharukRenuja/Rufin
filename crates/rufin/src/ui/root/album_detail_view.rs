@@ -26,29 +26,29 @@ impl Shell {
                 Some((album, tracks))
             });
         let Some((album, tracks)) = detail else {
-            let active_server_id = self
+            let active_source_id = self
                 .state
                 .library
                 .borrow()
-                .server
+                .source
                 .as_ref()
                 .map(|server| server.id.to_string());
-            let queue_server_id = self
+            let queue_source_id = self
                 .state
                 .queue
                 .borrow()
                 .as_ref()
-                .map(|queue| queue.server_id.to_string());
-            let player_server_id = self
+                .map(|queue| queue.source_id.to_string());
+            let player_source_id = self
                 .state
                 .player
                 .borrow()
-                .current_server_id
+                .current_source_id
                 .as_ref()
                 .map(ToString::to_string);
             warn!(
                 album_id = album_id.as_str(),
-                active_server_id, queue_server_id, player_server_id, "cached album route missing"
+                active_source_id, queue_source_id, player_source_id, "cached album route missing"
             );
             return self.placeholder_view("Album", "The selected cached album was not found.");
         };

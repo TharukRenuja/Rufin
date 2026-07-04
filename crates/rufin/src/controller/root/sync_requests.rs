@@ -14,7 +14,7 @@ pub(in crate::controller) fn resolve_stream(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
     playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
@@ -23,8 +23,8 @@ pub(in crate::controller) fn resolve_stream(
         saved,
         cue_source,
         local_path,
-    } = playback_stream_lookup(store, server_id, track_id)?;
-    if saved.server.provider == "fake" {
+    } = playback_stream_lookup(store, source_id, track_id)?;
+    if saved.source.kind == "fake" {
         return Ok(StreamDescriptor::new(format!(
             "fake://local/stream/{}",
             track_id.as_str()
@@ -43,27 +43,27 @@ pub(in crate::controller) fn resolve_stream(
             )
         })?;
         debug!(
-            server_id = %server_id,
-            provider = %saved.server.provider,
+            source_id = %source_id,
+            source_kind = %saved.source.kind,
             track_id = %track_id.as_str(),
             path = %local_path.display(),
             "resolved track to local playback file"
         );
         return Ok(StreamDescriptor::new(url.to_string()));
     }
-    if saved.server.provider == LOCAL_SOURCE_ID {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         return Err(format!(
             "Cached local source is missing for track {}. Resync the local library.",
             track_id.as_str()
         ));
     }
 
-    if saved.server.provider == "jellyfin" {
+    if saved.source.kind == "jellyfin" {
         let stream =
             jellyfin_stream_descriptor(store, secrets, &saved, track_id, playback_settings)?;
         debug!(
-            server_id = %server_id,
-            provider = %saved.server.provider,
+            source_id = %source_id,
+            source_kind = %saved.source.kind,
             track_id = %track_id.as_str(),
             elapsed_ms = started.elapsed().as_millis(),
             "resolved direct Jellyfin playback descriptor"
@@ -87,7 +87,7 @@ pub(in crate::controller) fn resolve_stream(
 fn jellyfin_stream_descriptor(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
+    saved: &SavedSource,
     track_id: &TrackId,
     playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
@@ -96,22 +96,22 @@ fn jellyfin_stream_descriptor(
     log_slow_stream_stage(
         "jellyfin-device-id",
         stage_started.elapsed(),
-        &saved.server.id,
+        &saved.source.id,
         track_id,
     );
     let stage_started = Instant::now();
     let token = secrets
-        .load_token(&saved.server.id)
+        .load_token(&saved.source.id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No saved token found for the active server.".to_string())?;
     log_slow_stream_stage(
         "jellyfin-token",
         stage_started.elapsed(),
-        &saved.server.id,
+        &saved.source.id,
         track_id,
     );
     let session = SavedSourceSession {
-        server: saved.server.clone(),
+        source: saved.source.clone(),
         user_id: saved.user_id.clone(),
         username: saved.username.clone(),
         trust_invalid_cert: saved.trust_invalid_cert,
@@ -125,13 +125,13 @@ fn jellyfin_stream_descriptor(
     .map_err(|error| error.to_string())
 }
 
-fn log_slow_stream_stage(stage: &str, elapsed: Duration, server_id: &ServerId, track_id: &TrackId) {
+fn log_slow_stream_stage(stage: &str, elapsed: Duration, source_id: &SourceId, track_id: &TrackId) {
     let elapsed_ms = elapsed.as_millis();
     if elapsed_ms > SLOW_STREAM_RESOLVE_STAGE_MS {
         info!(
             stage,
             elapsed_ms,
-            server_id = %server_id,
+            source_id = %source_id,
             track_id = %track_id.as_str(),
             "slow playback stream resolve stage"
         );
@@ -139,30 +139,30 @@ fn log_slow_stream_stage(stage: &str, elapsed: Duration, server_id: &ServerId, t
 }
 
 struct PlaybackStreamLookup {
-    saved: SavedServer,
+    saved: SavedSource,
     cue_source: Option<SourceObject>,
     local_path: Option<PathBuf>,
 }
 
 fn playback_stream_lookup(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> Result<PlaybackStreamLookup, String> {
     let stage_started = Instant::now();
     let lookup = store
         .with_store_fast(|store| {
-            let Some(saved) = store.saved_server(server_id)? else {
+            let Some(saved) = store.saved_source(source_id)? else {
                 return Ok(None);
             };
-            let cue_source = if saved.server.provider == LOCAL_SOURCE_ID {
+            let cue_source = if saved.source.kind == LOCAL_SOURCE_ID {
                 store
-                    .load_track_source_object(server_id, track_id)?
-                    .filter(|source| source.source_kind == "cue_track")
+                    .load_track_source_object(source_id, track_id)?
+                    .filter(|source| source.source_object_kind == "cue_track")
             } else {
                 None
             };
-            let local_path = playback_audio_path(store, &saved.server, server_id, track_id)?;
+            let local_path = playback_audio_path(store, &saved.source, source_id, track_id)?;
             Ok(Some(PlaybackStreamLookup {
                 saved,
                 cue_source,
@@ -173,7 +173,7 @@ fn playback_stream_lookup(
     log_slow_stream_stage(
         "cached-playback-source",
         stage_started.elapsed(),
-        server_id,
+        source_id,
         track_id,
     );
     Ok(lookup)
@@ -435,10 +435,10 @@ impl LyricsLookup {
 }
 fn lyrics_lookup_for_entry(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
 ) -> LyricsLookup {
-    let track = match store.with_store(|store| store.load_track(server_id, &entry.track_id)) {
+    let track = match store.with_store(|store| store.load_track(source_id, &entry.track_id)) {
         Ok(track) => track,
         Err(error) => {
             debug!(
@@ -534,11 +534,11 @@ pub(in crate::controller) fn external_lyrics_search(
 }
 pub(in crate::controller) fn external_best_lyrics(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
     providers: &[ExternalLyricsProvider],
 ) -> Result<Option<Lyrics>, String> {
-    let lookup = lyrics_lookup_for_entry(store, server_id, entry);
+    let lookup = lyrics_lookup_for_entry(store, source_id, entry);
     let mut results = Vec::new();
     let mut errors = Vec::new();
     let mut had_success = false;
@@ -1430,7 +1430,7 @@ fn result_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 pub(in crate::controller) fn save_lrclib_result(
-    server_id: &ServerId,
+    source_id: &SourceId,
     entry: &QueueEntry,
     result: &LyricsSearchResult,
     output_path: PathBuf,
@@ -1449,7 +1449,7 @@ pub(in crate::controller) fn save_lrclib_result(
     };
     let path = output_path;
     fs::write(&path, &content).map_err(|error| error.to_string())?;
-    debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
+    debug!(source_id = %source_id, path = %path.display(), "saved lyric file");
     Ok(Some((path, lyrics)))
 }
 pub(in crate::controller) fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
@@ -1466,12 +1466,12 @@ pub(in crate::controller) fn lyrics_result_content(result: &LyricsSearchResult) 
 }
 pub(in crate::controller) fn local_sidecar_lyrics(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> Option<Lyrics> {
-    let audio_path = local_audio_path_for_track(store, server_id, track_id)?;
-    let cue_track = track_has_cue_source(store, server_id, track_id);
-    let title = local_track_title(store, server_id, track_id);
+    let audio_path = local_audio_path_for_track(store, source_id, track_id)?;
+    let cue_track = track_has_cue_source(store, source_id, track_id);
+    let title = local_track_title(store, source_id, track_id);
     for path in local_sidecar_candidates(&audio_path, title.as_deref(), cue_track) {
         if let Some(lyrics) = lyrics_from_sidecar_file(track_id, &path) {
             return Some(lyrics);
@@ -1542,37 +1542,37 @@ fn normalized_lyrics_name(value: &str) -> String {
 }
 fn local_track_title(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> Option<String> {
     store
-        .with_store(|store| store.load_track(server_id, track_id))
+        .with_store(|store| store.load_track(source_id, track_id))
         .ok()
         .flatten()
         .map(|track| track.title)
 }
 pub(in crate::controller) fn track_has_cue_source(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> bool {
     store
-        .with_store(|store| store.load_track_source_object(server_id, track_id))
+        .with_store(|store| store.load_track_source_object(source_id, track_id))
         .ok()
         .flatten()
-        .is_some_and(|source| source.source_kind == "cue_track")
+        .is_some_and(|source| source.source_object_kind == "cue_track")
 }
 pub(in crate::controller) fn local_audio_path_for_track(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> Option<PathBuf> {
     let lookup = store
         .with_store(|store| {
-            let Some(saved) = store.saved_server(server_id)? else {
+            let Some(saved) = store.saved_source(source_id)? else {
                 return Ok(None);
             };
-            local_audio_path_lookup(store, &saved.server, server_id, track_id)
+            local_audio_path_lookup(store, &saved.source, source_id, track_id)
         })
         .ok()
         .flatten()?;
@@ -1580,33 +1580,33 @@ pub(in crate::controller) fn local_audio_path_for_track(
 }
 fn playback_audio_path(
     store: &Store,
-    server: &ServerIdentity,
-    server_id: &ServerId,
+    server: &SourceIdentity,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> StoreResult<Option<PathBuf>> {
-    if server.provider == LOCAL_SOURCE_ID {
+    if server.kind == LOCAL_SOURCE_ID {
         return Ok(store
-            .track_local_path(server_id, track_id)?
+            .track_local_path(source_id, track_id)?
             .map(PathBuf::from));
     }
     Ok(store
-        .track_local_match_path(server_id, track_id)?
+        .track_local_match_path(source_id, track_id)?
         .map(PathBuf::from))
 }
 struct LocalAudioPathLookup {
     provider_is_local: bool,
     raw_path: Option<String>,
-    access: Option<ServerLocalAccess>,
+    access: Option<SourceLocalAccess>,
     matched_path: Option<String>,
 }
 fn local_audio_path_lookup(
     store: &Store,
-    server: &ServerIdentity,
-    server_id: &ServerId,
+    server: &SourceIdentity,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> StoreResult<Option<LocalAudioPathLookup>> {
-    let raw_path = store.track_local_path(server_id, track_id)?;
-    if server.provider == LOCAL_SOURCE_ID {
+    let raw_path = store.track_local_path(source_id, track_id)?;
+    if server.kind == LOCAL_SOURCE_ID {
         return Ok(Some(LocalAudioPathLookup {
             provider_is_local: true,
             raw_path,
@@ -1614,10 +1614,10 @@ fn local_audio_path_lookup(
             matched_path: None,
         }));
     }
-    let Some(access) = store.server_local_access(server_id)? else {
+    let Some(access) = store.source_local_access(source_id)? else {
         return Ok(None);
     };
-    let matched_path = store.track_local_match_path(server_id, track_id)?;
+    let matched_path = store.track_local_match_path(source_id, track_id)?;
     Ok(Some(LocalAudioPathLookup {
         provider_is_local: false,
         raw_path,
@@ -1708,7 +1708,7 @@ fn bytes_to_mib(bytes: usize) -> usize {
 }
 pub(in crate::controller) fn map_server_path_to_local(
     raw: &str,
-    access: &ServerLocalAccess,
+    access: &SourceLocalAccess,
 ) -> Option<PathBuf> {
     let replace_to = access
         .path_replace_to

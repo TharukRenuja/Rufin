@@ -24,18 +24,18 @@ impl Shell {
         let Some(prefetched) = self.state.prefetched_explore.borrow_mut().take() else {
             return false;
         };
-        let Some(server_id) = self
+        let Some(source_id) = self
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
             .map(|server| server.id.clone())
         else {
             *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
             return false;
         };
-        if prefetched.server_id != server_id {
+        if prefetched.source_id != source_id {
             *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
             return false;
         }
@@ -89,17 +89,17 @@ impl Shell {
         prefetched: PrefetchedHomeSection,
         render_current_route: bool,
     ) -> bool {
-        let Some(server_id) = self
+        let Some(source_id) = self
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
             .map(|server| server.id.clone())
         else {
             return false;
         };
-        if prefetched.server_id != server_id {
+        if prefetched.source_id != source_id {
             *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
             return false;
         }
@@ -128,7 +128,7 @@ impl Shell {
     }
     pub(in crate::ui) fn update_prefetched_explore_from_snapshot(
         &self,
-        server_id: Option<domain::ServerId>,
+        source_id: Option<domain::SourceId>,
         prefetched: Option<PrefetchedHomeSection>,
         sections: &[HomeSection],
     ) {
@@ -140,9 +140,9 @@ impl Shell {
         let keep_current = {
             let current = self.state.prefetched_explore.borrow();
             current.as_ref().is_some_and(|current| {
-                server_id
+                source_id
                     .as_ref()
-                    .is_some_and(|server_id| &current.server_id == server_id)
+                    .is_some_and(|source_id| &current.source_id == source_id)
                     && !sections.iter().any(|section| {
                         section.kind == HomeSectionKind::Explore && section == &current.section
                     })

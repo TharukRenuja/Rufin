@@ -91,10 +91,10 @@ impl AppController {
     pub fn cover_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
         let server = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()?
-            .server;
+            .source;
         Some(image_cache_key(
             &server.id,
             &image_ref.item_id,
@@ -106,7 +106,7 @@ impl AppController {
     pub fn cached_cover_path(&self, image_ref: &ImageRef, size: u32) -> Option<PathBuf> {
         let saved = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()?;
         cached_cover_path_for_saved(&self.store, &saved, image_ref, size)
@@ -129,7 +129,7 @@ impl AppController {
         }
         let Some(saved) = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .ok()
             .flatten()
         else {
@@ -144,7 +144,7 @@ impl AppController {
     }
 
     pub fn retry_external_cover_lookups(&self) -> Result<(), String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+        let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(());
         };
         let retry_generation = {
@@ -160,7 +160,7 @@ impl AppController {
             retry_generation
         };
         self.store
-            .with_store(|store| store.clear_external_image_lookup_misses(&saved.server.id))?;
+            .with_store(|store| store.clear_external_image_lookup_misses(&saved.source.id))?;
         start_cover_prefetch(ExternalCoverPrefetchRequest {
             store: self.store.clone(),
             runtime: Arc::clone(&self.runtime),
@@ -180,12 +180,12 @@ impl AppController {
     pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
         let Some(saved) = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.active_source())
             .unwrap_or(None)
         else {
             return;
         };
-        if saved.server.provider == "fake" {
+        if saved.source.kind == "fake" {
             return;
         }
         if let Some(path) = self.cached_cover_path(&image_ref, size) {
@@ -198,7 +198,7 @@ impl AppController {
             .tag
             .clone()
             .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
-        let key = image_cache_key(&saved.server.id, &image_ref.item_id, &tag, size);
+        let key = image_cache_key(&saved.source.id, &image_ref.item_id, &tag, size);
         let retry_generation = self.external_cover_retry_generation.load(Ordering::SeqCst);
         if !mark_cover_in_flight(&self.cover_in_flight, &key, retry_generation) {
             return;
@@ -260,17 +260,17 @@ impl AppController {
                     });
                 }
 
-                let Some(saved) = store.with_store(|store| store.active_server())? else {
+                let Some(saved) = store.with_store(|store| store.active_source())? else {
                     return Ok(CoverRequestOutcome::Deferred);
                 };
-                if saved.server.provider == "fake" {
+                if saved.source.kind == "fake" {
                     return Ok(CoverRequestOutcome::TerminalMissing {
                         external_retry_generation: None,
                     });
                 }
 
                 let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-                let expected_key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+                let expected_key = image_cache_key(&saved.source.id, &image_ref.item_id, tag, size);
                 if expected_key != key {
                     return Ok(CoverRequestOutcome::Deferred);
                 }
@@ -304,7 +304,7 @@ impl AppController {
                         Ok(path) => Ok(CoverRequestOutcome::Ready(path)),
                         Err(error)
                             if cover_error_is_terminal(
-                                &saved.server.provider,
+                                &saved.source.kind,
                                 is_external_cover,
                                 &error,
                             ) =>
@@ -323,7 +323,7 @@ impl AppController {
                                 }
                                 let _saved_miss = store.with_store(|store| {
                                     store.save_external_image_lookup_miss(
-                                        &saved.server.id,
+                                        &saved.source.id,
                                         &miss_item_id,
                                         &miss_image_tag,
                                         size,
@@ -405,12 +405,12 @@ fn emit_cover_outcome(
     }
 }
 
-fn cover_error_is_terminal(provider: &str, is_external_cover: bool, error: &str) -> bool {
+fn cover_error_is_terminal(kind: &str, is_external_cover: bool, error: &str) -> bool {
     is_source_not_found_error(error)
         || error == "cover response was empty"
         || error.contains("No such file or directory")
         || error.contains("os error 2")
-        || (provider == source_local::LOCAL_SOURCE_ID
+        || (kind == source_local::LOCAL_SOURCE_ID
             && (error.contains("local cover exceeded")
                 || error.contains("embedded cover exceeded")
                 || error.contains("no pictures")

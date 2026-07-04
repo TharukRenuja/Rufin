@@ -19,28 +19,20 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 emit_favorite_change_failed(
                     &events,
                     &item_id,
                     !favorite,
-                    "No active music server is saved.",
+                    "No active music source is saved.",
                 );
                 return;
             };
 
             let capabilities = source_capabilities_for_saved(&saved);
-            let Some(owner) = capabilities.favorite_mutations.owner() else {
-                emit_favorite_change_failed(
-                    &events,
-                    &item_id,
-                    !favorite,
-                    "Favorite changes are not supported by the active source.",
-                );
-                return;
-            };
+            let owner = capabilities.favorite_mutations;
             match owner {
                 SourceFeatureOwner::Native => {
                     let result =
@@ -65,7 +57,7 @@ impl AppController {
                 match &item_id {
                     FavoriteItemId::Album(album_id) => {
                         store.set_album_favorite_for_owner(
-                            &saved.server.id,
+                            &saved.source.id,
                             album_id,
                             favorite,
                             owner,
@@ -73,7 +65,7 @@ impl AppController {
                     }
                     FavoriteItemId::Track(track_id) => {
                         store.set_track_favorite_for_owner(
-                            &saved.server.id,
+                            &saved.source.id,
                             track_id,
                             favorite,
                             owner,
@@ -81,7 +73,7 @@ impl AppController {
                     }
                     FavoriteItemId::Artist(artist_id) => {
                         store.set_artist_favorite_for_owner(
-                            &saved.server.id,
+                            &saved.source.id,
                             artist_id,
                             favorite,
                             owner,

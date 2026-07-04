@@ -11,7 +11,7 @@ pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: b
         }
         LibraryField::Artist => format!("{alias}.artist COLLATE NOCASE"),
         LibraryField::AlbumArtist => format!(
-            "COALESCE((SELECT aal.name FROM album_artist_links aal WHERE aal.server_id = {alias}.server_id AND aal.album_id = {alias}.album_id ORDER BY aal.position LIMIT 1), {alias}.artist) COLLATE NOCASE"
+            "COALESCE((SELECT aal.name FROM album_artist_links aal WHERE aal.source_id = {alias}.source_id AND aal.album_id = {alias}.album_id ORDER BY aal.position LIMIT 1), {alias}.artist) COLLATE NOCASE"
         ),
         LibraryField::Album => format!("{alias}.album COLLATE NOCASE"),
         LibraryField::Year => format!("{alias}.year"),
@@ -21,7 +21,7 @@ pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: b
         LibraryField::PlayCount => format!("{alias}.play_count"),
         LibraryField::UserRating => format!("{alias}.user_rating"),
         LibraryField::Genre => format!(
-            "(SELECT tg.genre_name FROM track_genres tg WHERE tg.server_id = {alias}.server_id AND tg.track_id = {alias}.track_id ORDER BY tg.genre_name COLLATE NOCASE LIMIT 1) COLLATE NOCASE"
+            "(SELECT tg.genre_name FROM track_genres tg WHERE tg.source_id = {alias}.source_id AND tg.track_id = {alias}.track_id ORDER BY tg.genre_name COLLATE NOCASE LIMIT 1) COLLATE NOCASE"
         ),
         LibraryField::Duration => format!("{alias}.duration_seconds"),
         LibraryField::Favorite => effective_track_favorite_sql(alias),

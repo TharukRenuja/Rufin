@@ -24,7 +24,7 @@ pub(in crate::ui) fn fullscreen_playback_refresh(
     previous: &PlaybackSnapshot,
     next: &PlaybackSnapshot,
 ) -> FullscreenPlaybackRefresh {
-    if previous.current_server_id != next.current_server_id || previous.current != next.current {
+    if previous.current_source_id != next.current_source_id || previous.current != next.current {
         FullscreenPlaybackRefresh::Static
     } else if previous.state != next.state {
         FullscreenPlaybackRefresh::Visualizer
@@ -152,12 +152,12 @@ pub(in crate::ui) enum AutoLyricsRequest {
 }
 pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<String> {
     let status = status.trim();
-    if let Some(provider) = status
+    if let Some(kind) = status
         .strip_prefix("Checking ")
         .and_then(|status| status.strip_suffix(" server..."))
         .filter(|provider| !provider.trim().is_empty())
     {
-        let provider = status_provider_label(provider);
+        let provider = status_provider_label(kind);
         return Some(tr_with(
             "Checking {provider} server...",
             &[("provider", provider.as_str())],
@@ -234,12 +234,12 @@ fn library_sync_progress_detail(status: &str) -> bool {
 
 pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
     let status = status.trim();
-    if let Some(provider) = status
+    if let Some(kind) = status
         .strip_prefix("Syncing ")
         .and_then(|status| status.strip_suffix(" library..."))
         .filter(|provider| !provider.trim().is_empty())
     {
-        let provider = status_provider_label(provider);
+        let provider = status_provider_label(kind);
         return tr_with(
             "Syncing {provider} library...",
             &[("provider", provider.as_str())],
@@ -264,11 +264,11 @@ pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
     }
 }
 
-fn status_provider_label(provider: &str) -> String {
-    if provider == "Music Server" {
+fn status_provider_label(kind: &str) -> String {
+    if kind == "Music Server" {
         tr("Music Server")
     } else {
-        provider.to_string()
+        kind.to_string()
     }
 }
 
@@ -363,9 +363,9 @@ pub(in crate::ui) fn local_source_snapshot_is_syncing(sync_status: &str) -> bool
 }
 pub(in crate::ui) fn queue_source_waits_for_snapshot(
     queue: Option<&QueueSnapshot>,
-    active_server_id: Option<&domain::ServerId>,
+    active_source_id: Option<&domain::SourceId>,
 ) -> bool {
-    queue.is_some_and(|queue| active_server_id != Some(&queue.server_id))
+    queue.is_some_and(|queue| active_source_id != Some(&queue.source_id))
 }
 pub(in crate::ui) fn queue_source_matches_library(
     queue: Option<&QueueSnapshot>,
@@ -375,9 +375,9 @@ pub(in crate::ui) fn queue_source_matches_library(
         return false;
     };
     library
-        .server
+        .source
         .as_ref()
-        .is_some_and(|server| server.id == queue.server_id)
+        .is_some_and(|server| server.id == queue.source_id)
 }
 pub(in crate::ui) fn auto_lyrics_request_for_settings(
     settings: &AppSettings,
@@ -885,10 +885,10 @@ pub(in crate::ui) fn apply_library_sync_status(
     library: &mut LibrarySnapshot,
     status: LibrarySyncStatus,
 ) -> bool {
-    let Some(server_id) = library.server.as_ref().map(|server| server.id.clone()) else {
+    let Some(source_id) = library.source.as_ref().map(|server| server.id.clone()) else {
         return false;
     };
-    if server_id != status.server_id {
+    if source_id != status.source_id {
         return false;
     }
 
@@ -909,9 +909,9 @@ pub(in crate::ui) fn apply_library_sync_status(
         library.prefetched_explore = home.prefetched_explore;
     }
     if let Some(source) = library
-        .server_local_access
+        .source_local_access
         .iter_mut()
-        .find(|source| source.server_id == server_id)
+        .find(|source| source.source_id == source_id)
     {
         source.sync_status = library.sync_status.clone();
         source.cached_album_count = library.cached_album_count;
@@ -1020,7 +1020,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     };
                     let local_snapshot_syncing =
                         local_source_snapshot_is_syncing(&snapshot.sync_status);
-                    let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
+                    let source_id = snapshot.source.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let sections = snapshot.home_sections.clone();
                     shell.replace_library_snapshot(*snapshot);
@@ -1032,13 +1032,13 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             ServerDiscoveryStatus::Idle;
                     }
                     shell.update_prefetched_explore_from_snapshot(
-                        server_id,
+                        source_id,
                         prefetched_explore,
                         &sections,
                     );
                     refresh_context_playlist_picker(&shell);
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     match local_gate_action {
                         LocalSourceCacheGateAction::Enter => {
                             shell.state.local_source_preparing.set(true);
@@ -1129,7 +1129,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.state.startup_route_render_pending.set(false);
                     shell.state.startup_route_revealed.set(false);
                     shell.state.startup_route_content_prepared.set(false);
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     shell.render_startup_loading_view();
                     continue;
                 }
@@ -1158,7 +1158,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.state.first_run_connection_ready.set(true);
                     }
                     let selector_started = Instant::now();
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     let selector_ms = selector_started.elapsed().as_millis() as u64;
                     if let Some(error) = last_error {
                         warn!(%error, "library sync update reported an error");
@@ -1225,20 +1225,20 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     include_explore,
                 } => {
                     let previous_sections = shell.state.library.borrow().home_sections.clone();
-                    let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
+                    let source_id = snapshot.source.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let snapshot = *snapshot;
                     let sections = snapshot.home_sections.clone();
                     shell.replace_library_snapshot(snapshot);
                     shell.update_prefetched_explore_from_snapshot(
-                        server_id,
+                        source_id,
                         prefetched_explore,
                         &sections,
                     );
                     if !include_explore {
                         shell.promote_cached_prefetched_explore();
                     }
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     if matches!(shell.state.routes.borrow().current(), Route::Home)
                         && !shell.state.startup_route_revealed.get()
                     {
@@ -1252,16 +1252,16 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         include_explore,
                     );
                 }
-                ControllerEvent::HomeSectionPrefetched { server_id, section } => {
-                    let active_server_id = shell
+                ControllerEvent::HomeSectionPrefetched { source_id, section } => {
+                    let active_source_id = shell
                         .state
                         .library
                         .borrow()
-                        .server
+                        .source
                         .as_ref()
                         .map(|server| server.id.clone());
-                    if active_server_id.as_ref() == Some(&server_id) {
-                        let prefetched = PrefetchedHomeSection { server_id, section };
+                    if active_source_id.as_ref() == Some(&source_id) {
+                        let prefetched = PrefetchedHomeSection { source_id, section };
                         *shell.state.prefetched_explore.borrow_mut() = Some(prefetched);
                         if matches!(shell.state.routes.borrow().current(), Route::Home)
                             && !shell.state.startup_route_revealed.get()
@@ -1277,7 +1277,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     snapshot,
                 } => {
                     shell.replace_library_snapshot(*snapshot);
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     refresh_context_playlist_picker(&shell);
                     let route = shell.state.routes.borrow().current().clone();
                     let playlist_route_changed = matches!(route, Route::Playlists)
@@ -1293,7 +1293,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.replace_library_snapshot(*snapshot);
                     shell.state.smart_playlists.borrow_mut().clear();
                     shell.state.smart_playlists_loaded.set(false);
-                    shell.update_server_selector();
+                    shell.update_source_selector();
                     let route = shell.state.routes.borrow().current().clone();
                     if matches!(route, Route::SmartPlaylists) {
                         shell.navigate(Route::SmartPlaylistDetail(smart_playlist_id));
@@ -1333,7 +1333,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         let library = shell.state.library.borrow();
                         queue_source_waits_for_snapshot(
                             next_queue.as_ref(),
-                            library.server.as_ref().map(|server| &server.id),
+                            library.source.as_ref().map(|server| &server.id),
                         )
                     };
                     *shell.state.queue.borrow_mut() = next_queue;

@@ -1282,7 +1282,7 @@ fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
 mod tests {
     use super::super::layout::MIN_APP_WINDOW_WIDTH;
     use super::*;
-    use domain::{QueueSnapshot, RepeatMode, ServerId, ShuffleState, TrackId};
+    use domain::{QueueSnapshot, RepeatMode, ShuffleState, SourceId, TrackId};
 
     fn queue_entry(number: usize, title: &str) -> QueueEntry {
         QueueEntry {
@@ -1305,7 +1305,7 @@ mod tests {
 
     fn queue_snapshot(entries: Vec<QueueEntry>) -> Option<QueueSnapshot> {
         Some(QueueSnapshot {
-            server_id: ServerId::fake(1),
+            source_id: SourceId::fake(1),
             entries,
             current_index: Some(0),
             repeat_mode: RepeatMode::All,

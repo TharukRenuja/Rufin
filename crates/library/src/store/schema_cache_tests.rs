@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-use super::servers::COLLECTION_COVER_GENRE;
+use super::sources::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 use crate::{
     CueTrackSourceObject, LocalFileSourceObject, LocalLibraryDelta, PlaylistWriteMode, StoreError,
@@ -8,12 +8,128 @@ use crate::{
 };
 use domain::{
     AlbumId, ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, ServerId, SourceFeatureOwner, TrackId,
+    LocalManifestCoverKind, LocalManifestEntry, SourceFeatureOwner, SourceId, TrackId,
 };
+
+const OLD_SOURCE_ID_COLUMN_TABLES: &[&str] = &[
+    "queue_snapshots",
+    "sources",
+    "source_local_access",
+    "source_music_folders",
+    "track_music_folders",
+    "track_local_matches",
+    "track_activity",
+    "source_library_preferences",
+    "active_source",
+    "sync_state",
+    "albums",
+    "tracks",
+    "artists",
+    "album_artists",
+    "genres",
+    "playlists",
+    "smart_playlists",
+    "smart_playlist_seed_state",
+    "album_genres",
+    "track_genres",
+    "track_moods",
+    "album_artist_links",
+    "track_artist_links",
+    "playlist_tracks",
+    "item_favorite_overrides",
+    "home_section_items",
+    "home_section_prefetch_items",
+    "lyrics_cache",
+    "cover_cache",
+    "external_image_lookup_misses",
+    "collection_cover_refs",
+    "local_file_manifest",
+    "local_track_manifest_data",
+    "local_artwork_manifest",
+    "source_objects",
+    "entities",
+    "entity_identity_keys",
+    "entity_grouping_keys",
+    "entity_facts",
+    "entity_resolver_state",
+    "entity_content_refs",
+    "entity_links",
+];
+
+fn simulate_pre_source_identity_schema(connection: &rusqlite::Connection) {
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE sources RENAME TO servers;
+            ALTER TABLE servers RENAME COLUMN kind TO provider;
+            ALTER TABLE source_local_access RENAME TO server_local_access;
+            ALTER TABLE source_music_folders RENAME TO server_music_folders;
+            ALTER TABLE source_library_preferences RENAME TO server_library_preferences;
+            ALTER TABLE active_source RENAME TO active_server;
+            ALTER TABLE source_objects RENAME COLUMN source_object_kind TO source_kind;
+            UPDATE entities SET source = 'provider' WHERE source = 'source';
+            UPDATE entity_identity_keys SET source = 'provider' WHERE source = 'source';
+            UPDATE entity_grouping_keys SET source = 'provider' WHERE source = 'source';
+            UPDATE entity_facts SET source = 'provider' WHERE source = 'source';
+            UPDATE entity_content_refs SET source = 'provider' WHERE source = 'source';
+            UPDATE content_cache_entries SET source = 'provider' WHERE source = 'source';
+            ",
+        )
+        .expect("simulate pre-source-identity schema");
+    for table in OLD_SOURCE_ID_COLUMN_TABLES {
+        rename_column_if_exists(
+            connection,
+            table_before_source_identity(table),
+            "source_id",
+            "server_id",
+        );
+    }
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("finish pre-source-identity schema simulation");
+}
+
+fn table_before_source_identity(table: &str) -> &str {
+    match table {
+        "sources" => "servers",
+        "source_local_access" => "server_local_access",
+        "source_music_folders" => "server_music_folders",
+        "source_library_preferences" => "server_library_preferences",
+        "active_source" => "active_server",
+        _ => table,
+    }
+}
+
+fn rename_column_if_exists(connection: &rusqlite::Connection, table: &str, from: &str, to: &str) {
+    if table_has_column(connection, table, from) && !table_has_column(connection, table, to) {
+        connection
+            .execute(
+                &format!("ALTER TABLE {table} RENAME COLUMN {from} TO {to}"),
+                [],
+            )
+            .expect("rename schema column");
+    }
+}
+
+fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str) -> bool {
+    let Ok(mut statement) = connection.prepare(&format!("PRAGMA table_info({table})")) else {
+        return false;
+    };
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query table info");
+    columns
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect columns")
+        .iter()
+        .any(|name| name == column)
+}
+
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -128,19 +244,19 @@ fn current_schema_initializes_empty_database() {
 fn schema_create_indexes() {
     let store = Store::open_memory().expect("open store");
     for (table, index) in [
-        ("albums", "albums_server_title_nocase_idx"),
-        ("albums", "albums_server_artist_idx"),
-        ("tracks", "tracks_server_artist_idx"),
-        ("artists", "artists_server_name_nocase_idx"),
-        ("album_artists", "album_artists_server_name_nocase_idx"),
-        ("genres", "genres_server_name_nocase_idx"),
-        ("playlists", "playlists_server_name_nocase_idx"),
+        ("albums", "albums_source_title_nocase_idx"),
+        ("albums", "albums_source_artist_idx"),
+        ("tracks", "tracks_source_artist_idx"),
+        ("artists", "artists_source_name_nocase_idx"),
+        ("album_artists", "album_artists_source_name_nocase_idx"),
+        ("genres", "genres_source_name_nocase_idx"),
+        ("playlists", "playlists_source_name_nocase_idx"),
         ("playlist_tracks", "playlist_tracks_order_idx"),
-        ("album_genres", "album_genres_server_genre_idx"),
-        ("track_genres", "track_genres_server_genre_idx"),
+        ("album_genres", "album_genres_source_genre_idx"),
+        ("track_genres", "track_genres_source_genre_idx"),
         ("collection_cover_refs", "collection_cover_refs_lookup_idx"),
-        ("album_artist_links", "album_artist_links_server_artist_idx"),
-        ("track_artist_links", "track_artist_links_server_artist_idx"),
+        ("album_artist_links", "album_artist_links_source_artist_idx"),
+        ("track_artist_links", "track_artist_links_source_artist_idx"),
         ("track_music_folders", "track_music_folders_folder_idx"),
         ("track_music_folders", "track_music_folders_track_idx"),
         ("track_local_matches", "track_local_matches_track_idx"),
@@ -190,7 +306,7 @@ fn local_manifest_entry() -> LocalManifestEntry {
 
 fn entity_key_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     namespace: &str,
     value: &str,
@@ -201,12 +317,12 @@ fn entity_key_count(
             "
             SELECT COUNT(*)
             FROM entity_identity_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND namespace = ?3
               AND value = ?4
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, namespace, value],
+            rusqlite::params![source_id.as_str(), entity_kind, namespace, value],
             |row| row.get(0),
         )
         .expect("count identity keys")
@@ -214,7 +330,7 @@ fn entity_key_count(
 
 fn grouping_key_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     namespace: &str,
     value: &str,
@@ -225,12 +341,12 @@ fn grouping_key_count(
             "
             SELECT COUNT(*)
             FROM entity_grouping_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND namespace = ?3
               AND value = ?4
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, namespace, value],
+            rusqlite::params![source_id.as_str(), entity_kind, namespace, value],
             |row| row.get(0),
         )
         .expect("count grouping keys")
@@ -238,7 +354,7 @@ fn grouping_key_count(
 
 fn entity_fact_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     entity_id: &str,
     fact_key: &str,
@@ -249,12 +365,12 @@ fn entity_fact_count(
             "
             SELECT COUNT(*)
             FROM entity_facts
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND entity_id = ?3
               AND fact_key = ?4
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, entity_id, fact_key],
+            rusqlite::params![source_id.as_str(), entity_kind, entity_id, fact_key],
             |row| row.get(0),
         )
         .expect("count entity facts")
@@ -262,7 +378,7 @@ fn entity_fact_count(
 
 fn entity_row_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     entity_id: &str,
 ) -> i64 {
@@ -272,11 +388,11 @@ fn entity_row_count(
             "
             SELECT COUNT(*)
             FROM entities
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND entity_id = ?3
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, entity_id],
+            rusqlite::params![source_id.as_str(), entity_kind, entity_id],
             |row| row.get(0),
         )
         .expect("count entities")
@@ -284,7 +400,7 @@ fn entity_row_count(
 
 fn content_ref_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     entity_id: &str,
     content_kind: &str,
@@ -295,12 +411,12 @@ fn content_ref_count(
             "
             SELECT COUNT(*)
             FROM entity_content_refs
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND entity_id = ?3
               AND content_kind = ?4
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, entity_id, content_kind],
+            rusqlite::params![source_id.as_str(), entity_kind, entity_id, content_kind],
             |row| row.get(0),
         )
         .expect("count content refs")
@@ -308,7 +424,7 @@ fn content_ref_count(
 
 fn entity_link_count(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     entity_kind: &str,
     entity_id: &str,
     namespace: &str,
@@ -319,12 +435,12 @@ fn entity_link_count(
             "
             SELECT COUNT(*)
             FROM entity_links
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = ?2
               AND entity_id = ?3
               AND namespace = ?4
             ",
-            rusqlite::params![server_id.as_str(), entity_kind, entity_id, namespace],
+            rusqlite::params![source_id.as_str(), entity_kind, entity_id, namespace],
             |row| row.get(0),
         )
         .expect("count entity links")
@@ -332,7 +448,7 @@ fn entity_link_count(
 
 fn selected_image_origin(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     table: &str,
     id_column: &str,
     id: &str,
@@ -344,10 +460,10 @@ fn selected_image_origin(
                 "
                 SELECT image_origin
                 FROM {table}
-                WHERE server_id = ?1 AND {id_column} = ?2
+                WHERE source_id = ?1 AND {id_column} = ?2
                 "
             ),
-            rusqlite::params![server_id.as_str(), id],
+            rusqlite::params![source_id.as_str(), id],
             |row| row.get(0),
         )
         .expect("selected image origin")
@@ -395,7 +511,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -404,8 +520,8 @@ fn file_store_reset() {
             .expect("table lookup")
     );
     assert!(!store.table_exists("stale_cache").expect("table lookup"));
-    assert!(store.table_exists("servers").expect("table lookup"));
-    assert!(store.list_servers().expect("list servers").is_empty());
+    assert!(store.table_exists("sources").expect("table lookup"));
+    assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -447,9 +563,9 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     assert!(store.table_exists("tracks").expect("table lookup"));
-    assert!(store.list_servers().expect("list servers").is_empty());
+    assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -463,22 +579,22 @@ fn schema_reopen_servers() {
         "preserve-current"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_server();
+    let saved = saved_source();
     {
         let store = Store::open(&path).expect("open store");
-        store.save_server(&saved).expect("save server");
+        store.save_source(&saved).expect("save server");
         store
-            .set_active_server(&saved.server.id)
+            .set_active_source(&saved.source.id)
             .expect("set active server");
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     assert_eq!(
-        store.list_servers().expect("list servers"),
+        store.list_sources().expect("list sources"),
         vec![saved.clone()]
     );
-    assert_eq!(store.active_server().expect("active server"), Some(saved));
+    assert_eq!(store.active_source().expect("active server"), Some(saved));
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -492,15 +608,15 @@ fn schema_upgrade_servers() {
         "v18-upgrade"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_server();
+    let saved = saved_source();
     let genre_name = "Genre 1".to_string();
     {
         let store = Store::open(&path).expect("open current store");
-        store.save_server(&saved).expect("save server");
+        store.save_source(&saved).expect("save server");
         store
-            .set_active_server(&saved.server.id)
+            .set_active_source(&saved.source.id)
             .expect("set active server");
-        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let mut album = album(1);
         album.genres = vec![genre_name.clone()];
         let mut first_track = track(1, &album);
@@ -513,19 +629,20 @@ fn schema_upgrade_servers() {
         cached_genre.name = genre_name.clone();
         cached_genre.duration_seconds = 0;
         store
-            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
             .expect("upsert album");
         store
-            .upsert_tracks(&saved.server.id, &[first_track, second_track], generation)
+            .upsert_tracks(&saved.source.id, &[first_track, second_track], generation)
             .expect("upsert tracks");
         store
-            .upsert_genres(&saved.server.id, &[cached_genre], generation)
+            .upsert_genres(&saved.source.id, &[cached_genre], generation)
             .expect("upsert genre");
         store
-            .complete_sync(&saved.server.id, generation)
+            .complete_sync(&saved.source.id, generation)
             .expect("complete sync");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    simulate_pre_source_identity_schema(&connection);
     connection
         .execute_batch(
             "
@@ -537,13 +654,13 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     assert_eq!(
-        store.list_servers().expect("list servers"),
+        store.list_sources().expect("list sources"),
         vec![saved.clone()]
     );
     assert_eq!(
-        store.active_server().expect("active server"),
+        store.active_source().expect("active server"),
         Some(saved.clone())
     );
     assert!(
@@ -553,10 +670,129 @@ fn schema_upgrade_servers() {
         "genres.duration_seconds should exist after migration"
     );
     let genres = store
-        .load_genres(&saved.server.id, 0, 10)
+        .load_genres(&saved.source.id, 0, 10)
         .expect("load genres")
         .items;
     assert_eq!(genres[0].duration_seconds, 420);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn schema_upgrade_preserves_queue_snapshot_json() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "queue-snapshot-source-identity"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = saved_source();
+    let track = track(1, &album(1));
+    let mut queue = QueueEngine::new(saved.source.id.clone());
+    queue.append(&track);
+    let snapshot = queue.snapshot();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+        store
+            .save_queue_snapshot(&snapshot)
+            .expect("save queue snapshot");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    simulate_pre_source_identity_schema(&connection);
+    let mut legacy_value = serde_json::to_value(&snapshot).expect("serialize queue snapshot");
+    let legacy_object = legacy_value.as_object_mut().expect("queue snapshot object");
+    let source_id = legacy_object.remove("source_id").expect("source_id field");
+    legacy_object.insert("server_id".to_string(), source_id);
+    connection
+        .execute(
+            "UPDATE queue_snapshots SET value = ?1 WHERE server_id = ?2",
+            rusqlite::params![legacy_value.to_string(), saved.source.id.as_str()],
+        )
+        .expect("write legacy queue snapshot value");
+    connection
+        .execute_batch("PRAGMA user_version = 22;")
+        .expect("simulate previous schema");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    let snapshot = store
+        .load_queue_snapshot(&saved.source.id)
+        .expect("load upgraded queue")
+        .expect("queue snapshot");
+    assert_eq!(snapshot.source_id, saved.source.id);
+    assert_eq!(snapshot.entries.len(), 1);
+    assert_eq!(snapshot.entries[0].track_id, track.id);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn schema_upgrade_collapses_provider_content_ref_duplicates() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "content-ref-provenance-duplicates"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = saved_source();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    simulate_pre_source_identity_schema(&connection);
+    connection
+        .execute(
+            "
+            INSERT INTO entity_content_refs (
+                server_id, entity_kind, entity_id, content_kind, content_key, source
+            )
+            VALUES (?1, 'album', 'album-1', 'cover', 'cover-key', 'provider')
+            ",
+            rusqlite::params![saved.source.id.as_str()],
+        )
+        .expect("insert provider content ref");
+    connection
+        .execute(
+            "
+            INSERT INTO entity_content_refs (
+                server_id, entity_kind, entity_id, content_kind, content_key, source
+            )
+            VALUES (?1, 'album', 'album-1', 'cover', 'cover-key', 'source')
+            ",
+            rusqlite::params![saved.source.id.as_str()],
+        )
+        .expect("insert source content ref");
+    connection
+        .execute_batch("PRAGMA user_version = 22;")
+        .expect("simulate previous schema");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(store.schema_version().expect("schema version"), 23);
+    let rows = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_content_refs
+            WHERE source_id = ?1
+              AND entity_kind = 'album'
+              AND entity_id = 'album-1'
+              AND content_kind = 'cover'
+              AND content_key = 'cover-key'
+              AND source = 'source'
+            ",
+            rusqlite::params![saved.source.id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("content ref count");
+    assert_eq!(rows, 1);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -571,23 +807,24 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
         "playlist-owner-migration"
     ));
     let _cleanup = fs::remove_file(&path);
-    let mut local = saved_server_with_id("local:server:test");
-    local.server.provider = "local".to_string();
-    let remote = saved_server_with_id("jellyfin:server:test");
+    let mut local = saved_source_with_id("local:server:test");
+    local.source.kind = "local".to_string();
+    let remote = saved_source_with_id("jellyfin:server:test");
     let local_playlist = playlist(1, None);
     let remote_playlist = playlist(2, None);
     {
         let store = Store::open(&path).expect("open current store");
-        store.save_server(&local).expect("save local");
-        store.save_server(&remote).expect("save remote");
+        store.save_source(&local).expect("save local");
+        store.save_source(&remote).expect("save remote");
         store
-            .upsert_playlists(&local.server.id, std::slice::from_ref(&local_playlist), 1)
+            .upsert_playlists(&local.source.id, std::slice::from_ref(&local_playlist), 1)
             .expect("upsert pre-migration local playlist");
         store
-            .upsert_playlists(&remote.server.id, std::slice::from_ref(&remote_playlist), 1)
+            .upsert_playlists(&remote.source.id, std::slice::from_ref(&remote_playlist), 1)
             .expect("upsert pre-migration remote playlist");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    simulate_pre_source_identity_schema(&connection);
     connection
         .execute_batch(
             "
@@ -601,13 +838,13 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
     let store = Store::open(&path).expect("open upgraded store");
     assert_eq!(
         store
-            .playlist_owner(&local.server.id, &local_playlist.id)
+            .playlist_owner(&local.source.id, &local_playlist.id)
             .expect("local playlist owner"),
         Some(SourceFeatureOwner::Store)
     );
     assert_eq!(
         store
-            .playlist_owner(&remote.server.id, &remote_playlist.id)
+            .playlist_owner(&remote.source.id, &remote_playlist.id)
             .expect("remote playlist owner"),
         Some(SourceFeatureOwner::Native)
     );
@@ -625,9 +862,9 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
         "favorite-override-migration"
     ));
     let _cleanup = fs::remove_file(&path);
-    let mut local = saved_server_with_id("local:server:favorites");
-    local.server.provider = "local".to_string();
-    let remote = saved_server_with_id("jellyfin:server:favorites");
+    let mut local = saved_source_with_id("local:server:favorites");
+    local.source.kind = "local".to_string();
+    let remote = saved_source_with_id("jellyfin:server:favorites");
     let mut local_album = album(1);
     local_album.favorite = true;
     let mut remote_album = album(2);
@@ -642,23 +879,23 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     remote_artist.favorite = true;
     {
         let store = Store::open(&path).expect("open current store");
-        store.save_server(&local).expect("save local");
-        store.save_server(&remote).expect("save remote");
+        store.save_source(&local).expect("save local");
+        store.save_source(&remote).expect("save remote");
         store
-            .upsert_albums(&local.server.id, std::slice::from_ref(&local_album), 1)
+            .upsert_albums(&local.source.id, std::slice::from_ref(&local_album), 1)
             .expect("upsert local album");
         store
-            .upsert_albums(&remote.server.id, std::slice::from_ref(&remote_album), 1)
+            .upsert_albums(&remote.source.id, std::slice::from_ref(&remote_album), 1)
             .expect("upsert remote album");
         store
-            .upsert_tracks(&local.server.id, std::slice::from_ref(&local_track), 1)
+            .upsert_tracks(&local.source.id, std::slice::from_ref(&local_track), 1)
             .expect("upsert local track");
         store
-            .upsert_tracks(&remote.server.id, std::slice::from_ref(&remote_track), 1)
+            .upsert_tracks(&remote.source.id, std::slice::from_ref(&remote_track), 1)
             .expect("upsert remote track");
         store
             .upsert_artists(
-                &local.server.id,
+                &local.source.id,
                 std::slice::from_ref(&local_artist),
                 false,
                 1,
@@ -666,7 +903,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             .expect("upsert local artist");
         store
             .upsert_artists(
-                &remote.server.id,
+                &remote.source.id,
                 std::slice::from_ref(&remote_artist),
                 false,
                 1,
@@ -674,6 +911,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             .expect("upsert remote artist");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    simulate_pre_source_identity_schema(&connection);
     connection
         .execute_batch(
             "
@@ -685,16 +923,16 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     let local_override_count = store
         .connection
         .query_row(
             "
             SELECT COUNT(*)
             FROM item_favorite_overrides
-            WHERE server_id = ?1
+            WHERE source_id = ?1
             ",
-            rusqlite::params![local.server.id.as_str()],
+            rusqlite::params![local.source.id.as_str()],
             |row| row.get::<_, i64>(0),
         )
         .expect("local override count");
@@ -704,9 +942,9 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             "
             SELECT COUNT(*)
             FROM item_favorite_overrides
-            WHERE server_id = ?1
+            WHERE source_id = ?1
             ",
-            rusqlite::params![remote.server.id.as_str()],
+            rusqlite::params![remote.source.id.as_str()],
             |row| row.get::<_, i64>(0),
         )
         .expect("remote override count");
@@ -726,10 +964,10 @@ fn schema_seventeen_resets() {
         "v17-reset"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_server();
+    let saved = saved_source();
     {
         let store = Store::open(&path).expect("open current store");
-        store.save_server(&saved).expect("save server");
+        store.save_source(&saved).expect("save server");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
     connection
@@ -738,8 +976,8 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
-    assert!(store.list_servers().expect("list servers").is_empty());
+    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -754,20 +992,20 @@ fn future_user_version() {
         "future"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_server();
+    let saved = saved_source();
     {
         let store = Store::open(&path).expect("open store");
-        store.save_server(&saved).expect("save server");
+        store.save_source(&saved).expect("save server");
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 23)
+        .pragma_update(None, "user_version", 24)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
-    assert!(store.list_servers().expect("list servers").is_empty());
+    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -801,11 +1039,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 22);
+        assert_eq!(store.schema_version().expect("schema version"), 23);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -821,7 +1059,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 22);
+        assert_eq!(store.schema_version().expect("schema version"), 23);
     }
 
     let store = Store::open_file(&path).expect("open current store");
@@ -830,7 +1068,7 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 22);
+    assert_eq!(store.schema_version().expect("schema version"), 23);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -839,21 +1077,21 @@ fn current_schema_migrate_is_read_only() {
 #[test]
 fn schema_trip_server() {
     let store = Store::open_memory().expect("open store");
-    let server_id = ServerId::fake(1);
-    let mut queue = QueueEngine::new(server_id.clone());
+    let source_id = SourceId::fake(1);
+    let mut queue = QueueEngine::new(source_id.clone());
     queue.append(&track(1, &album(1)));
     store
         .save_queue_snapshot(&queue.snapshot())
         .expect("save queue snapshot");
     assert_eq!(
         store
-            .load_queue_snapshot(&server_id)
+            .load_queue_snapshot(&source_id)
             .expect("load queue snapshot"),
         Some(queue.snapshot())
     );
     assert_eq!(
         store
-            .load_queue_snapshot(&ServerId::fake(2))
+            .load_queue_snapshot(&SourceId::fake(2))
             .expect("load queue snapshot"),
         None
     );
@@ -862,8 +1100,8 @@ fn schema_trip_server() {
 #[test]
 fn queue_progress_updates_saved_current_entry() {
     let store = Store::open_memory().expect("open store");
-    let server_id = ServerId::fake(1);
-    let mut queue = QueueEngine::new(server_id.clone());
+    let source_id = SourceId::fake(1);
+    let mut queue = QueueEngine::new(source_id.clone());
     queue.append(&track(1, &album(1)));
     queue.append(&track(2, &album(2)));
     queue.next_track();
@@ -874,12 +1112,12 @@ fn queue_progress_updates_saved_current_entry() {
     let current = queue.current().expect("current entry");
     assert!(
         store
-            .save_queue_progress(&server_id, &current.id, &current.track_id, 73)
+            .save_queue_progress(&source_id, &current.id, &current.track_id, 73)
             .expect("save queue progress")
     );
 
     let saved = store
-        .load_queue_snapshot(&server_id)
+        .load_queue_snapshot(&source_id)
         .expect("load queue snapshot")
         .expect("saved queue");
     assert_eq!(saved.entries, queue.snapshot().entries);
@@ -889,7 +1127,7 @@ fn queue_progress_updates_saved_current_entry() {
     assert!(
         !store
             .save_queue_progress(
-                &server_id,
+                &source_id,
                 &queue.entries()[0].id,
                 &queue.entries()[0].track_id,
                 99
@@ -898,7 +1136,7 @@ fn queue_progress_updates_saved_current_entry() {
     );
     assert_eq!(
         store
-            .load_queue_snapshot(&server_id)
+            .load_queue_snapshot(&source_id)
             .expect("load queue snapshot")
             .expect("saved queue")
             .progress_seconds,
@@ -909,34 +1147,34 @@ fn queue_progress_updates_saved_current_entry() {
 #[test]
 fn schema_trip_token() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_server();
-    store.save_server(&saved).expect("save server");
+    let saved = saved_source();
+    store.save_source(&saved).expect("save server");
     store
-        .set_active_server(&saved.server.id)
+        .set_active_source(&saved.source.id)
         .expect("set active server");
-    assert_eq!(store.active_server().expect("active server"), Some(saved));
+    assert_eq!(store.active_source().expect("active server"), Some(saved));
 }
 #[test]
 fn schema_load_source() {
     let store = Store::open_memory().expect("open store");
-    let playback = saved_server_with_id("server:playback");
-    let active = saved_server_with_id("server:active");
-    store.save_server(&playback).expect("save playback server");
-    store.save_server(&active).expect("save active server");
+    let playback = saved_source_with_id("server:playback");
+    let active = saved_source_with_id("server:active");
+    store.save_source(&playback).expect("save playback server");
+    store.save_source(&active).expect("save active server");
     store
-        .set_active_server(&active.server.id)
+        .set_active_source(&active.source.id)
         .expect("set active server");
 
     assert_eq!(
         store
-            .saved_server(&playback.server.id)
+            .saved_source(&playback.source.id)
             .expect("load requested server"),
         Some(playback)
     );
 }
 #[test]
 fn schema_clear_lifecycle() {
-    let case = StoreCase::with_server_id("local:server:manifest");
+    let case = StoreCase::with_source_id("local:server:manifest");
     let entry = local_manifest_entry();
 
     case.replace_local_manifest(&case.id, 1, std::slice::from_ref(&entry))
@@ -957,7 +1195,7 @@ fn schema_clear_lifecycle() {
 
     case.replace_local_manifest(&case.id, 2, std::slice::from_ref(&entry))
         .expect("replace manifest again");
-    case.forget_server(&case.id).expect("forget server");
+    case.forget_source(&case.id).expect("forget server");
     assert!(
         case.load_local_manifest(&case.id)
             .expect("load forgotten manifest")
@@ -966,7 +1204,7 @@ fn schema_clear_lifecycle() {
 }
 #[test]
 fn schema_track_commit() {
-    let case = StoreCase::with_server_id("local:server:rollback");
+    let case = StoreCase::with_source_id("local:server:rollback");
     let album = album(1);
     let mut kept = track(1, &album);
     kept.local_path = Some("/music/Album/kept.mp3".to_string());
@@ -1027,7 +1265,7 @@ fn schema_track_commit() {
 
 #[test]
 fn schema_local_delta_applies_favorite_overrides() {
-    let case = StoreCase::with_server_id("local:server:favorites");
+    let case = StoreCase::with_source_id("local:server:favorites");
     let mut album = album(1);
     album.favorite = false;
     let mut changed_track = track(10, &album);
@@ -1408,31 +1646,31 @@ fn schema_update_id() {
     );
 }
 
-fn library_fts_rowid(store: &Store, server_id: &ServerId, track_id: &TrackId) -> i64 {
+fn library_fts_rowid(store: &Store, source_id: &SourceId, track_id: &TrackId) -> i64 {
     store
         .connection
         .query_row(
             "
             SELECT rowid
             FROM library_fts
-            WHERE server_id = ?1 AND item_type = 'track' AND item_id = ?2
+            WHERE source_id = ?1 AND item_type = 'track' AND item_id = ?2
             ",
-            rusqlite::params![server_id.as_str(), track_id.as_str()],
+            rusqlite::params![source_id.as_str(), track_id.as_str()],
             |row| row.get(0),
         )
         .expect("library fts rowid")
 }
 
-fn track_genre_rowid(store: &Store, server_id: &ServerId, track_id: &TrackId, genre: &str) -> i64 {
+fn track_genre_rowid(store: &Store, source_id: &SourceId, track_id: &TrackId, genre: &str) -> i64 {
     store
         .connection
         .query_row(
             "
             SELECT rowid
             FROM track_genres
-            WHERE server_id = ?1 AND track_id = ?2 AND genre_name = ?3
+            WHERE source_id = ?1 AND track_id = ?2 AND genre_name = ?3
             ",
-            rusqlite::params![server_id.as_str(), track_id.as_str(), genre],
+            rusqlite::params![source_id.as_str(), track_id.as_str(), genre],
             |row| row.get(0),
         )
         .expect("track genre rowid")
@@ -1440,7 +1678,7 @@ fn track_genre_rowid(store: &Store, server_id: &ServerId, track_id: &TrackId, ge
 
 fn track_artist_link_rowid(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
     artist_id: &ArtistId,
 ) -> i64 {
@@ -1450,9 +1688,9 @@ fn track_artist_link_rowid(
             "
             SELECT rowid
             FROM track_artist_links
-            WHERE server_id = ?1 AND track_id = ?2 AND artist_id = ?3
+            WHERE source_id = ?1 AND track_id = ?2 AND artist_id = ?3
             ",
-            rusqlite::params![server_id.as_str(), track_id.as_str(), artist_id.as_str()],
+            rusqlite::params![source_id.as_str(), track_id.as_str(), artist_id.as_str()],
             |row| row.get(0),
         )
         .expect("track artist link rowid")
@@ -1460,7 +1698,7 @@ fn track_artist_link_rowid(
 
 fn track_artist_link_album_id(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
     artist_id: &ArtistId,
 ) -> AlbumId {
@@ -1470,9 +1708,9 @@ fn track_artist_link_album_id(
             "
             SELECT album_id
             FROM track_artist_links
-            WHERE server_id = ?1 AND track_id = ?2 AND artist_id = ?3
+            WHERE source_id = ?1 AND track_id = ?2 AND artist_id = ?3
             ",
-            rusqlite::params![server_id.as_str(), track_id.as_str(), artist_id.as_str()],
+            rusqlite::params![source_id.as_str(), track_id.as_str(), artist_id.as_str()],
             |row| row.get::<_, String>(0).map(AlbumId::new),
         )
         .expect("track artist link album id")
@@ -1481,7 +1719,7 @@ fn track_artist_link_album_id(
 fn track_table_generation(
     store: &Store,
     table: &str,
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
 ) -> i64 {
     store
@@ -1491,30 +1729,30 @@ fn track_table_generation(
                 "
                 SELECT sync_generation
                 FROM {table}
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND track_id = ?2
                 LIMIT 1
                 "
             ),
-            rusqlite::params![server_id.as_str(), track_id.as_str()],
+            rusqlite::params![source_id.as_str(), track_id.as_str()],
             |row| row.get(0),
         )
         .expect("track table generation")
 }
 
 #[test]
-fn server_local_access_round_trips() {
+fn source_local_access_round_trips() {
     let case = StoreCase::open();
-    let access = ServerLocalAccess {
-        server_id: case.id.clone(),
+    let access = SourceLocalAccess {
+        source_id: case.id.clone(),
         root_path: "/home/me/Music".to_string(),
         path_replace_from: Some("/media/music".to_string()),
         path_replace_to: Some("/home/me/Music".to_string()),
     };
-    case.save_server_local_access(&access)
+    case.save_source_local_access(&access)
         .expect("save local access");
     assert_eq!(
-        case.server_local_access(&case.id)
+        case.source_local_access(&case.id)
             .expect("load local access"),
         Some(access)
     );
@@ -1523,13 +1761,13 @@ fn server_local_access_round_trips() {
 #[test]
 fn local_access_status_counts_cached_mapping() {
     let case = StoreCase::open();
-    let access = ServerLocalAccess {
-        server_id: case.id.clone(),
+    let access = SourceLocalAccess {
+        source_id: case.id.clone(),
         root_path: "/home/demo/Music".to_string(),
         path_replace_from: Some("/server/music".to_string()),
         path_replace_to: Some("/home/demo/Music".to_string()),
     };
-    case.save_server_local_access(&access)
+    case.save_source_local_access(&access)
         .expect("save local access");
     let generation = case.start_sync("begin sync");
     let album = album(1);
@@ -1568,7 +1806,7 @@ fn local_access_status_counts_cached_mapping() {
     assert_eq!(status.metadata_match_count, 1);
     assert_eq!(status.unmatched_count, 1);
     assert_eq!(
-        status.sample_server_path.as_deref(),
+        status.sample_source_path.as_deref(),
         Some("/server/music/Album/metadata.flac")
     );
     assert_eq!(
@@ -1963,7 +2201,7 @@ fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
             "
             SELECT COUNT(DISTINCT artist_id)
             FROM album_artist_links
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND LOWER(TRIM(name)) = LOWER(TRIM('Shared Name'))
             ",
             rusqlite::params![case.id.as_str()],
@@ -2035,7 +2273,7 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
             "
             SELECT entity_id
             FROM entity_identity_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'album_artist'
               AND namespace = 'source:artist_id'
               AND value = ?2
@@ -2050,7 +2288,7 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
             "
             SELECT COUNT(*)
             FROM entity_identity_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'album_artist'
               AND namespace = 'musicbrainz:artist'
               AND entity_id = ?2
@@ -2066,7 +2304,7 @@ fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() 
             "
             SELECT COUNT(*)
             FROM album_artists
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND artist_id = ?2
             ",
             rusqlite::params![case.id.as_str(), page_id.as_str()],
@@ -2119,7 +2357,7 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             "
             SELECT entity_id
             FROM entity_identity_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'album_artist'
               AND namespace = 'source:artist_id'
               AND value = ?2
@@ -2134,7 +2372,7 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             "
             SELECT COUNT(*)
             FROM entity_identity_keys
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'album_artist'
               AND namespace = 'musicbrainz:artist'
               AND entity_id = ?2
@@ -2149,7 +2387,7 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             "
             SELECT COUNT(*)
             FROM album_artist_links
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND artist_id = ?2
             ",
             rusqlite::params![case.id.as_str(), alias_id.as_str()],
@@ -2162,7 +2400,7 @@ fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
             "
             SELECT COUNT(*)
             FROM album_artist_links
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND artist_id = ?2
             ",
             rusqlite::params![case.id.as_str(), primary_id.as_str()],
@@ -2411,7 +2649,7 @@ fn schema_replace_local() {
             "
             UPDATE track_local_matches
             SET updated_at = '2000-01-01 00:00:00'
-            WHERE server_id = ?1 AND track_id = ?2
+            WHERE source_id = ?1 AND track_id = ?2
             ",
             rusqlite::params![case.id.as_str(), track_id.as_str()],
         )
@@ -2431,7 +2669,7 @@ fn schema_replace_local() {
             "
             SELECT updated_at
             FROM track_local_matches
-            WHERE server_id = ?1 AND track_id = ?2
+            WHERE source_id = ?1 AND track_id = ?2
             ",
             rusqlite::params![case.id.as_str(), track_id.as_str()],
             |row| row.get::<_, String>(0),
@@ -3255,7 +3493,7 @@ fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
         .execute(
             "
             INSERT INTO entity_links (
-                server_id, entity_kind, entity_id, namespace, url, label, source, status
+                source_id, entity_kind, entity_id, namespace, url, label, source, status
             )
             VALUES (?1, 'album', ?2, 'lastfm:album', ?3, 'Last.fm', 'lastfm', 'resolved')
             ",
@@ -3439,7 +3677,7 @@ fn local_manifest_writes_physical_file_source_objects() {
         .load_source_object(&case.id, &source_object_id)
         .expect("load source object")
         .expect("source object");
-    assert_eq!(source.source_kind, "local_file");
+    assert_eq!(source.source_object_kind, "local_file");
     assert_eq!(source.entity_kind, None);
     assert_eq!(source.entity_id, None);
     assert_eq!(
@@ -3453,7 +3691,7 @@ fn local_manifest_writes_physical_file_source_objects() {
             "
             SELECT source_object_id
             FROM entities
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
@@ -3497,7 +3735,7 @@ fn typed_source_object_api_writes_cue_segment_shape() {
         .load_source_object(&case.id, &parent_id)
         .expect("load file source object")
         .expect("file source object");
-    assert_eq!(file_source.source_kind, "local_file");
+    assert_eq!(file_source.source_object_kind, "local_file");
     assert_eq!(file_source.entity_kind, None);
     assert_eq!(file_source.entity_id, None);
 
@@ -3505,7 +3743,7 @@ fn typed_source_object_api_writes_cue_segment_shape() {
         .load_source_object(&case.id, &cue.source_object_id)
         .expect("load cue source object")
         .expect("cue source object");
-    assert_eq!(cue_source.source_kind, "cue_track");
+    assert_eq!(cue_source.source_object_kind, "cue_track");
     assert_eq!(cue_source.entity_kind.as_deref(), Some("track"));
     assert_eq!(cue_source.entity_id.as_deref(), Some("track-cue-1"));
     assert_eq!(
@@ -3524,7 +3762,7 @@ fn typed_source_object_api_writes_cue_segment_shape() {
             "
             SELECT source_object_id
             FROM entities
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
@@ -3574,7 +3812,7 @@ fn local_delta_commit_writes_cue_track_source_objects() {
         .load_track_source_object(&case.id, &track.id)
         .expect("load track source object")
         .expect("source object");
-    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(source.source_object_kind, "cue_track");
     assert_eq!(source.source_object_id, cue_source.source_object_id);
     assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
     assert_eq!(source.segment_start_ms, Some(12345));
@@ -3625,7 +3863,7 @@ fn local_delta_commit_writes_stress_cue_track_source_objects() {
         .load_track_source_object(&case.id, &stress_track.id)
         .expect("load stress track source object")
         .expect("stress source object");
-    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(source.source_object_kind, "cue_track");
     assert_eq!(
         source.source_object_id,
         format!(
@@ -3688,7 +3926,7 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
             "
             UPDATE entities
             SET source_object_id = ?3
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND entity_kind = 'track'
               AND entity_id = ?2
             ",
@@ -3701,7 +3939,7 @@ fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
         .expect("load source")
         .expect("source");
 
-    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(source.source_object_kind, "cue_track");
     assert_eq!(source.segment_start_ms, Some(12345));
     assert_eq!(source.segment_end_ms, Some(67890));
 }
@@ -3934,7 +4172,7 @@ fn schema_repair_genre() {
         .execute(
             "
             DELETE FROM collection_cover_refs
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND collection_type = ?2
               AND collection_id = ?3
             ",
@@ -4093,7 +4331,7 @@ fn remote_track_selected_art_prefers_album_cover() {
                 "
                 SELECT content_key
                 FROM entity_content_refs
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND entity_kind = 'track'
                   AND entity_id = ?2
                   AND content_kind = 'cover'
@@ -4108,7 +4346,7 @@ fn remote_track_selected_art_prefers_album_cover() {
         std::env::temp_dir().join(format!("rufin-provider-cover-{}", std::process::id()));
     fs::write(&cover_path, [1_u8]).expect("write provider cover");
     case.save_cover_cache_entry(&CoverCacheEntry {
-        server_id: case.id.clone(),
+        source_id: case.id.clone(),
         item_id: "provider-album-cover".to_string(),
         image_tag: "album-tag".to_string(),
         size: 256,
@@ -4184,7 +4422,7 @@ fn fallback_artist_image_does_not_seed_album_fallback() {
             SET image_item_id = 'derived-artist-cover',
                 image_tag = 'derived-artist-tag',
                 image_origin = 'fallback'
-            WHERE server_id = ?1 AND artist_id = ?2
+            WHERE source_id = ?1 AND artist_id = ?2
             ",
             rusqlite::params![case.id.as_str(), artist.id.as_str()],
         )
@@ -4199,7 +4437,7 @@ fn fallback_artist_image_does_not_seed_album_fallback() {
             "
             SELECT image_item_id
             FROM albums
-            WHERE server_id = ?1 AND album_id = ?2
+            WHERE source_id = ?1 AND album_id = ?2
             ",
             rusqlite::params![case.id.as_str(), album.id.as_str()],
             |row| row.get(0),
@@ -4230,7 +4468,7 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
             SET image_item_id = 'derived-track-cover',
                 image_tag = 'derived-track-tag',
                 image_origin = 'fallback'
-            WHERE server_id = ?1 AND track_id = ?2
+            WHERE source_id = ?1 AND track_id = ?2
             ",
             rusqlite::params![case.id.as_str(), track.id.as_str()],
         )
@@ -4245,7 +4483,7 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
             "
             SELECT image_item_id
             FROM albums
-            WHERE server_id = ?1 AND album_id = ?2
+            WHERE source_id = ?1 AND album_id = ?2
             ",
             rusqlite::params![case.id.as_str(), album.id.as_str()],
             |row| row.get(0),
@@ -4257,7 +4495,7 @@ fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
             "
             SELECT image_item_id
             FROM artists
-            WHERE server_id = ?1 AND artist_id = ?2
+            WHERE source_id = ?1 AND artist_id = ?2
             ",
             rusqlite::params![case.id.as_str(), artist.id.as_str()],
             |row| row.get(0),

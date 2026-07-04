@@ -271,12 +271,12 @@ mod tests {
 
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
         LibrarySnapshot {
-            server: None,
+            source: None,
             source_capabilities: domain::SourceCapabilities::default(),
-            servers: Vec::new(),
+            sources: Vec::new(),
             selected_source: None,
             local_folders: Vec::new(),
-            server_local_access: Vec::new(),
+            source_local_access: Vec::new(),
             local_access: None,
             local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),

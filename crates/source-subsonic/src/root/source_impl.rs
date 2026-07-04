@@ -73,7 +73,7 @@ pub(super) fn random_salt() -> String {
     }
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-pub(super) fn stable_server_id(source_id: &str, base_url: &str, username: &str) -> String {
+pub(super) fn stable_source_id(source_id: &str, base_url: &str, username: &str) -> String {
     format!(
         "{:016x}",
         stable_hash(&format!("{source_id}:{base_url}:{username}"))

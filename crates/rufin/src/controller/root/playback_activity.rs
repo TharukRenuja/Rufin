@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub(in crate::controller) struct PlaybackActivityEntry {
-    server_id: ServerId,
+    source_id: SourceId,
     track_id: TrackId,
     entry_id: QueueEntryId,
     duration_seconds: u32,
@@ -21,18 +21,18 @@ pub(in crate::controller) struct PlaybackActivityState {
 impl AppController {
     pub(in crate::controller) fn start_playback_activity(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         entry: &QueueEntry,
         position_seconds: u32,
     ) {
         let session_key = format!(
             "{}:{}:{}",
-            server_id.as_str(),
+            source_id.as_str(),
             entry.id.as_str(),
             unique_millis().unwrap_or(0)
         );
         let activity = PlaybackActivityEntry {
-            server_id: server_id.clone(),
+            source_id: source_id.clone(),
             track_id: entry.track_id.clone(),
             entry_id: entry.id.clone(),
             duration_seconds: entry.duration_seconds,
@@ -147,14 +147,14 @@ fn record_local_play_now(
     activity: PlaybackActivityEntry,
 ) {
     let result = store.with_store(|store| {
-        let Some(saved) = store.saved_server(&activity.server_id)? else {
+        let Some(saved) = store.saved_source(&activity.source_id)? else {
             return Ok(false);
         };
-        if saved.server.provider != LOCAL_SOURCE_ID {
+        if saved.source.kind != LOCAL_SOURCE_ID {
             return Ok(false);
         }
         store.record_local_track_played(
-            &activity.server_id,
+            &activity.source_id,
             &activity.track_id,
             &activity.session_key,
         )
@@ -168,7 +168,7 @@ fn record_local_play_now(
         Err(error) => {
             warn!(
                 %error,
-                server_id = %activity.server_id,
+                source_id = %activity.source_id,
                 track_id = %activity.track_id,
                 entry_id = activity.entry_id.as_str(),
                 "failed to update local play count"
@@ -183,7 +183,7 @@ fn record_local_skip_now(
     activity: PlaybackActivityEntry,
 ) {
     match store.with_store(|store| {
-        store.increment_track_skip_count(&activity.server_id, &activity.track_id)
+        store.increment_track_skip_count(&activity.source_id, &activity.track_id)
     }) {
         Ok(()) => emit_skip_activity_delta(&events, activity.track_id),
         Err(error) if playback_activity_error_is_transient(&error) => {
@@ -192,7 +192,7 @@ fn record_local_skip_now(
         Err(error) => {
             warn!(
                 %error,
-                server_id = %activity.server_id,
+                source_id = %activity.source_id,
                 track_id = %activity.track_id,
                 "failed to update local skip count"
             );
@@ -258,11 +258,11 @@ mod tests {
     fn playback_record_threshold() {
         let (controller, _events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();
-        let server_id = ServerId::new("local:server:test");
-        let saved = SavedServer {
-            server: ServerIdentity {
-                id: server_id.clone(),
-                provider: LOCAL_SOURCE_ID.to_string(),
+        let source_id = SourceId::new("local:server:test");
+        let saved = SavedSource {
+            source: SourceIdentity {
+                id: source_id.clone(),
+                kind: LOCAL_SOURCE_ID.to_string(),
                 name: "Local".to_string(),
                 base_url: String::new(),
             },
@@ -275,22 +275,22 @@ mod tests {
         controller
             .store
             .with_store(|store| {
-                store.save_server(&saved)?;
-                store.set_active_server(&server_id)?;
-                store.upsert_tracks(&server_id, std::slice::from_ref(&track), 1)?;
+                store.save_source(&saved)?;
+                store.set_active_source(&source_id)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)?;
                 Ok(())
             })
             .expect("seed local server");
-        let mut queue = QueueEngine::new(server_id.clone());
+        let mut queue = QueueEngine::new(source_id.clone());
         queue.play_now(&track);
         let entry = queue.current().expect("current").clone();
         *controller.queue.lock().expect("queue") = Some(queue);
 
-        controller.start_playback_activity(&server_id, &entry, 0);
+        controller.start_playback_activity(&source_id, &entry, 0);
         controller.record_playback_activity_progress(90);
         controller.record_playback_activity_progress(120);
 
-        let detail = smart_detail_named(&controller, &server_id, "Most Played");
+        let detail = smart_detail_named(&controller, &source_id, "Most Played");
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, track.id);
         assert_eq!(detail.tracks[0].play_count, Some(1));
@@ -300,7 +300,7 @@ mod tests {
     fn playback_manual_count() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
-        let server_id = snapshot.server.as_ref().expect("server").id.clone();
+        let source_id = snapshot.source.as_ref().expect("server").id.clone();
         let first = snapshot.tracks[0].clone();
         let second = snapshot.tracks[1].clone();
         controller.play_tracks_now(vec![first.clone(), second]);
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(delta.tracks.skip_stats, vec![first.id.clone()]);
         let _queue = wait_for_queue(&events).expect("next queue");
 
-        let detail = smart_detail_named(&controller, &server_id, "Most Skipped");
+        let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, first.id);
         assert_eq!(detail.tracks[0].skip_count, Some(1));
@@ -322,7 +322,7 @@ mod tests {
     fn playback_manual_skip() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
-        let server_id = snapshot.server.as_ref().expect("server").id.clone();
+        let source_id = snapshot.source.as_ref().expect("server").id.clone();
         let first = snapshot.tracks[0].clone();
         let second = snapshot.tracks[1].clone();
         let seek_seconds = play_threshold_seconds(first.duration_seconds);
@@ -340,7 +340,7 @@ mod tests {
         controller.next_track();
         let _queue = wait_for_queue(&events).expect("next queue");
 
-        let detail = smart_detail_named(&controller, &server_id, "Most Skipped");
+        let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert!(detail.tracks.is_empty());
     }
 
@@ -348,7 +348,7 @@ mod tests {
     fn playback_eos_count() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
-        let server_id = snapshot.server.as_ref().expect("server").id.clone();
+        let source_id = snapshot.source.as_ref().expect("server").id.clone();
         let first = snapshot.tracks[0].clone();
         let second = snapshot.tracks[1].clone();
         controller.play_tracks_now(vec![first.clone(), second]);
@@ -361,26 +361,26 @@ mod tests {
         });
         controller.poll_playback_events();
 
-        let detail = smart_detail_named(&controller, &server_id, "Most Skipped");
+        let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert!(detail.tracks.is_empty());
     }
 
     fn smart_detail_named(
         controller: &AppController,
-        server_id: &ServerId,
+        source_id: &SourceId,
         name: &str,
     ) -> SmartPlaylistDetail {
         controller
             .store
             .with_store(|store| {
-                let page = store.load_smart_playlists(server_id, 0, 20)?;
+                let page = store.load_smart_playlists(source_id, 0, 20)?;
                 let playlist = page
                     .items
                     .into_iter()
                     .find(|playlist| playlist.name == name)
                     .expect("smart playlist");
                 store
-                    .load_smart_playlist_detail(server_id, &playlist.id)
+                    .load_smart_playlist_detail(source_id, &playlist.id)
                     .map(|detail| detail.expect("smart playlist detail"))
             })
             .expect("smart detail")

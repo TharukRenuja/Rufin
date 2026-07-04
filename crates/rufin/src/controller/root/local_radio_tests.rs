@@ -186,7 +186,7 @@ pub(in crate::controller) fn local_auto_dj_preserves_cached_track_paths() {
         .collect::<Vec<_>>();
     seed_cached_library(&store, &local, &[], &tracks, &[]);
     let (controller, _events) = controller_from_store_for_test(store.clone());
-    let mut queue = QueueEngine::new(local.server.id.clone());
+    let mut queue = QueueEngine::new(local.source.id.clone());
     queue.play_now(&tracks[0]);
     *controller.queue.lock().expect("queue") = Some(queue);
     *controller.auto_dj_enabled.lock().expect("auto dj") = true;
@@ -195,10 +195,10 @@ pub(in crate::controller) fn local_auto_dj_preserves_cached_track_paths() {
 
     for track in &tracks {
         let local_path = store
-            .with_store(|store| store.track_local_path(&local.server.id, &track.id))
+            .with_store(|store| store.track_local_path(&local.source.id, &track.id))
             .expect("local path");
         let source_format = store
-            .with_store(|store| store.track_source_format(&local.server.id, &track.id))
+            .with_store(|store| store.track_source_format(&local.source.id, &track.id))
             .expect("source format");
         assert_eq!(local_path, track.local_path);
         assert_eq!(source_format, track.source_format);

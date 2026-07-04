@@ -1,4 +1,4 @@
-use super::servers::{
+use super::sources::{
     COLLECTION_COVER_SMART_PLAYLIST, bool_to_i64, collect_rows, replace_collection_refs,
     track_from_row, u32_from_i64,
 };
@@ -34,47 +34,47 @@ struct SmartTrackQuery {
 }
 
 impl Store {
-    pub fn ensure_smart_playlist_defaults_seeded(&self, server_id: &ServerId) -> StoreResult<()> {
-        self.delete_retired_builtin_smart_playlists(server_id)?;
+    pub fn ensure_smart_playlist_defaults_seeded(&self, source_id: &SourceId) -> StoreResult<()> {
+        self.delete_retired_builtin_smart_playlists(source_id)?;
         let seeded = self.connection.query_row(
             "
             SELECT EXISTS(
                 SELECT 1
                 FROM smart_playlist_seed_state
-                WHERE server_id = ?1
+                WHERE source_id = ?1
             )
             ",
-            params![server_id.as_str()],
+            params![source_id.as_str()],
             |row| row.get::<_, bool>(0),
         )?;
         if seeded {
             return Ok(());
         }
         for (position, builtin) in SmartPlaylistBuiltin::all().into_iter().enumerate() {
-            self.insert_builtin_smart_playlist(server_id, builtin, position as i64)?;
+            self.insert_builtin_smart_playlist(source_id, builtin, position as i64)?;
         }
         self.connection.execute(
             "
-            INSERT INTO smart_playlist_seed_state (server_id)
+            INSERT INTO smart_playlist_seed_state (source_id)
             VALUES (?1)
-            ON CONFLICT(server_id) DO NOTHING
+            ON CONFLICT(source_id) DO NOTHING
             ",
-            params![server_id.as_str()],
+            params![source_id.as_str()],
         )?;
         Ok(())
     }
 
-    fn delete_retired_builtin_smart_playlists(&self, server_id: &ServerId) -> StoreResult<()> {
+    fn delete_retired_builtin_smart_playlists(&self, source_id: &SourceId) -> StoreResult<()> {
         for key in RETIRED_SMART_PLAYLIST_BUILTIN_KEYS {
             let exists = self.connection.query_row(
                 "
                 SELECT EXISTS(
                     SELECT 1
                     FROM smart_playlists
-                    WHERE server_id = ?1 AND builtin_key = ?2
+                    WHERE source_id = ?1 AND builtin_key = ?2
                 )
                 ",
-                params![server_id.as_str(), key],
+                params![source_id.as_str(), key],
                 |row| row.get::<_, bool>(0),
             )?;
             if !exists {
@@ -83,9 +83,9 @@ impl Store {
             self.connection.execute(
                 "
                 DELETE FROM smart_playlists
-                WHERE server_id = ?1 AND builtin_key = ?2
+                WHERE source_id = ?1 AND builtin_key = ?2
                 ",
-                params![server_id.as_str(), key],
+                params![source_id.as_str(), key],
             )?;
         }
         Ok(())
@@ -93,54 +93,54 @@ impl Store {
 
     pub fn load_smart_playlists(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<SmartPlaylist>> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let total = self.connection.query_row(
-            "SELECT COUNT(*) FROM smart_playlists WHERE server_id = ?1",
-            params![server_id.as_str()],
+            "SELECT COUNT(*) FROM smart_playlists WHERE source_id = ?1",
+            params![source_id.as_str()],
             |row| row.get::<_, i64>(0),
         )?;
         let mut statement = self.connection.prepare(
             "
             SELECT smart_playlist_id, name, builtin_key, definition_json, position
             FROM smart_playlists
-            WHERE server_id = ?1
+            WHERE source_id = ?1
             ORDER BY position, name COLLATE NOCASE, smart_playlist_id
             LIMIT ?2 OFFSET ?3
             ",
         )?;
         let rows = collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
+            params![source_id.as_str(), limit as i64, offset as i64],
             smart_playlist_row_from_row,
         )?)?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            items.push(self.smart_playlist_from_record(server_id, row)?);
+            items.push(self.smart_playlist_from_record(source_id, row)?);
         }
         Ok(PagedResponse::new(items, u32_from_i64(total) as usize))
     }
 
     pub fn load_smart_playlist_detail(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<Option<SmartPlaylistDetail>> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
-        let Some(row) = self.load_smart_playlist_row(server_id, smart_playlist_id)? else {
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
+        let Some(row) = self.load_smart_playlist_row(source_id, smart_playlist_id)? else {
             return Ok(None);
         };
-        let smart_playlist = self.smart_playlist_from_record(server_id, row)?;
+        let smart_playlist = self.smart_playlist_from_record(source_id, row)?;
         let limit = smart_playlist
             .definition
             .limit
             .unwrap_or(SMART_TRACK_DEFAULT_LIMIT);
         let mut tracks = self
-            .query_smart_playlist_tracks(server_id, &smart_playlist.definition, 0, limit)?
+            .query_smart_playlist_tracks(source_id, &smart_playlist.definition, 0, limit)?
             .items;
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(Some(SmartPlaylistDetail {
             smart_playlist,
             tracks,
@@ -149,43 +149,43 @@ impl Store {
 
     pub fn load_smart_playlist_tracks_page(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
         offset: usize,
         limit: usize,
     ) -> StoreResult<Option<PagedResponse<Track>>> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
-        let Some(row) = self.load_smart_playlist_row(server_id, smart_playlist_id)? else {
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
+        let Some(row) = self.load_smart_playlist_row(source_id, smart_playlist_id)? else {
             return Ok(None);
         };
         let mut page =
-            self.query_smart_playlist_tracks(server_id, &row.definition, offset, limit)?;
-        self.attach_track_metadata(server_id, &mut page.items)?;
+            self.query_smart_playlist_tracks(source_id, &row.definition, offset, limit)?;
+        self.attach_track_metadata(source_id, &mut page.items)?;
         Ok(Some(page))
     }
 
     pub fn save_smart_playlist(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
         name: &str,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<()> {
-        let position = self.next_smart_playlist_position(server_id)?;
+        let position = self.next_smart_playlist_position(source_id)?;
         let definition_json = serde_json::to_string(definition)?;
         self.connection.execute(
             "
             INSERT INTO smart_playlists (
-                server_id, smart_playlist_id, name, builtin_key, definition_json, position
+                source_id, smart_playlist_id, name, builtin_key, definition_json, position
             )
             VALUES (?1, ?2, ?3, NULL, ?4, ?5)
-            ON CONFLICT(server_id, smart_playlist_id) DO UPDATE SET
+            ON CONFLICT(source_id, smart_playlist_id) DO UPDATE SET
                 name = excluded.name,
                 definition_json = excluded.definition_json,
                 updated_at = CURRENT_TIMESTAMP
             ",
             params![
-                server_id.as_str(),
+                source_id.as_str(),
                 smart_playlist_id.as_str(),
                 name.trim(),
                 definition_json,
@@ -197,26 +197,26 @@ impl Store {
 
     pub fn delete_smart_playlist(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
             connection.execute(
                 "
                 DELETE FROM smart_playlists
-                WHERE server_id = ?1 AND smart_playlist_id = ?2
+                WHERE source_id = ?1 AND smart_playlist_id = ?2
                 ",
-                params![server_id.as_str(), smart_playlist_id.as_str()],
+                params![source_id.as_str(), smart_playlist_id.as_str()],
             )?;
             connection.execute(
                 "
                 DELETE FROM collection_cover_refs
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND collection_type = ?2
                   AND collection_id = ?3
                 ",
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     COLLECTION_COVER_SMART_PLAYLIST,
                     smart_playlist_id.as_str(),
                 ],
@@ -228,21 +228,21 @@ impl Store {
 
     pub fn reorder_smart_playlist(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         dragged_id: &SmartPlaylistId,
         target_id: &SmartPlaylistId,
         after: bool,
     ) -> StoreResult<bool> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT smart_playlist_id
             FROM smart_playlists
-            WHERE server_id = ?1
+            WHERE source_id = ?1
             ORDER BY position, name COLLATE NOCASE, smart_playlist_id
             ",
         )?;
-        let ids = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+        let ids = collect_rows(statement.query_map(params![source_id.as_str()], |row| {
             row.get::<_, String>(0).map(SmartPlaylistId::new)
         })?)?;
         let Some(ids) = reorder_smart_playlist_ids(&ids, dragged_id, target_id, after) else {
@@ -256,9 +256,9 @@ impl Store {
                     UPDATE smart_playlists
                     SET position = ?1,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE server_id = ?2 AND smart_playlist_id = ?3
+                    WHERE source_id = ?2 AND smart_playlist_id = ?3
                     ",
-                    params![position as i64, server_id.as_str(), id.as_str()],
+                    params![position as i64, source_id.as_str(), id.as_str()],
                 )?;
             }
             Ok(true)
@@ -267,18 +267,18 @@ impl Store {
 
     pub fn missing_builtin_smart_playlists(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
     ) -> StoreResult<Vec<SmartPlaylistBuiltin>> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT builtin_key
             FROM smart_playlists
-            WHERE server_id = ?1 AND builtin_key IS NOT NULL
+            WHERE source_id = ?1 AND builtin_key IS NOT NULL
             ",
         )?;
         let existing = collect_rows(
-            statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?,
+            statement.query_map(params![source_id.as_str()], |row| row.get::<_, String>(0))?,
         )?;
         Ok(SmartPlaylistBuiltin::all()
             .into_iter()
@@ -288,28 +288,28 @@ impl Store {
 
     pub fn restore_builtin_smart_playlist(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         builtin: SmartPlaylistBuiltin,
     ) -> StoreResult<SmartPlaylistId> {
-        let position = self.next_smart_playlist_position(server_id)?;
-        self.insert_builtin_smart_playlist(server_id, builtin, position)?;
+        let position = self.next_smart_playlist_position(source_id)?;
+        self.insert_builtin_smart_playlist(source_id, builtin, position)?;
         Ok(smart_builtin_id(builtin))
     }
 
     pub fn record_local_track_played(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_id: &TrackId,
         session_key: &str,
     ) -> StoreResult<bool> {
         let changed = self.connection.execute(
             "
             INSERT INTO track_activity (
-                server_id, track_id, play_count, last_played, skip_count,
+                source_id, track_id, play_count, last_played, skip_count,
                 play_recorded_session, updated_at
             )
             VALUES (?1, ?2, 1, CURRENT_TIMESTAMP, 0, ?3, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_id, track_id) DO UPDATE SET
+            ON CONFLICT(source_id, track_id) DO UPDATE SET
                 play_count = CASE
                     WHEN play_recorded_session = excluded.play_recorded_session
                     THEN play_count
@@ -325,34 +325,34 @@ impl Store {
             WHERE play_recorded_session IS NULL
                OR play_recorded_session != excluded.play_recorded_session
             ",
-            params![server_id.as_str(), track_id.as_str(), session_key],
+            params![source_id.as_str(), track_id.as_str(), session_key],
         )?;
         Ok(changed > 0)
     }
 
     pub fn increment_track_skip_count(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_id: &TrackId,
     ) -> StoreResult<()> {
         self.connection.execute(
             "
             INSERT INTO track_activity (
-                server_id, track_id, play_count, last_played, skip_count, updated_at
+                source_id, track_id, play_count, last_played, skip_count, updated_at
             )
             VALUES (?1, ?2, 0, NULL, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_id, track_id) DO UPDATE SET
+            ON CONFLICT(source_id, track_id) DO UPDATE SET
                 skip_count = skip_count + 1,
                 updated_at = CURRENT_TIMESTAMP
             ",
-            params![server_id.as_str(), track_id.as_str()],
+            params![source_id.as_str(), track_id.as_str()],
         )?;
         Ok(())
     }
 
     fn load_smart_playlist_row(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<Option<SmartPlaylistRow>> {
         self.connection
@@ -360,9 +360,9 @@ impl Store {
                 "
                 SELECT smart_playlist_id, name, builtin_key, definition_json, position
                 FROM smart_playlists
-                WHERE server_id = ?1 AND smart_playlist_id = ?2
+                WHERE source_id = ?1 AND smart_playlist_id = ?2
                 ",
-                params![server_id.as_str(), smart_playlist_id.as_str()],
+                params![source_id.as_str(), smart_playlist_id.as_str()],
                 smart_playlist_row_from_row,
             )
             .optional()
@@ -371,18 +371,18 @@ impl Store {
 
     fn smart_playlist_from_record(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         row: SmartPlaylistRow,
     ) -> StoreResult<SmartPlaylist> {
         let (track_count, duration_seconds) =
-            self.smart_playlist_stats(server_id, &row.definition)?;
+            self.smart_playlist_stats(source_id, &row.definition)?;
         let mut image_refs = self.load_collection_cover_refs(
-            server_id,
+            source_id,
             COLLECTION_COVER_SMART_PLAYLIST,
             row.id.as_str(),
         )?;
         if image_refs.is_empty() {
-            image_refs = self.smart_playlist_cover_image_refs(server_id, &row.definition)?;
+            image_refs = self.smart_playlist_cover_image_refs(source_id, &row.definition)?;
         }
         Ok(SmartPlaylist {
             id: row.id,
@@ -399,30 +399,30 @@ impl Store {
 
     fn smart_playlist_stats(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<(u32, u32)> {
-        let total = self.count_smart_playlist_tracks(server_id, definition)?;
+        let total = self.count_smart_playlist_tracks(source_id, definition)?;
         let duration_seconds = if let Some(limit) = definition.limit {
-            self.query_smart_playlist_tracks(server_id, definition, 0, limit)?
+            self.query_smart_playlist_tracks(source_id, definition, 0, limit)?
                 .items
                 .iter()
                 .map(|track| track.duration_seconds)
                 .sum()
         } else {
-            self.sum_smart_playlist_duration(server_id, definition)?
+            self.sum_smart_playlist_duration(source_id, definition)?
         };
         Ok((total.min(u32::MAX as usize) as u32, duration_seconds))
     }
 
     fn smart_playlist_cover_image_refs(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<Vec<ImageRef>> {
         Ok(first_track_image_refs(
             self.query_smart_playlist_tracks(
-                server_id,
+                source_id,
                 definition,
                 0,
                 definition.limit.map_or(4, |limit| limit.min(4)),
@@ -433,42 +433,42 @@ impl Store {
 
     pub(super) fn refresh_smart_playlist_cover_refs(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
     ) -> StoreResult<()> {
-        self.ensure_smart_playlist_defaults_seeded(server_id)?;
+        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let rows = {
             let mut statement = self.connection.prepare(
                 "
                 SELECT smart_playlist_id, name, builtin_key, definition_json, position
                 FROM smart_playlists
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                 ORDER BY position, name COLLATE NOCASE, smart_playlist_id
                 ",
             )?;
             collect_rows(
-                statement.query_map(params![server_id.as_str()], smart_playlist_row_from_row)?,
+                statement.query_map(params![source_id.as_str()], smart_playlist_row_from_row)?,
             )?
         };
         let mut cover_refs = Vec::with_capacity(rows.len());
         for row in rows {
             cover_refs.push((
                 row.id,
-                self.smart_playlist_cover_image_refs(server_id, &row.definition)?,
+                self.smart_playlist_cover_image_refs(source_id, &row.definition)?,
             ));
         }
         self.write_batch(|connection| {
             connection.execute(
                 "
                 DELETE FROM collection_cover_refs
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                   AND collection_type = ?2
                 ",
-                params![server_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
+                params![source_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
             )?;
             for (smart_playlist_id, image_refs) in cover_refs {
                 replace_collection_refs(
                     connection,
-                    server_id,
+                    source_id,
                     COLLECTION_COVER_SMART_PLAYLIST,
                     smart_playlist_id.as_str(),
                     &image_refs,
@@ -480,12 +480,12 @@ impl Store {
 
     fn query_smart_playlist_tracks(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let total = self.count_smart_playlist_tracks(server_id, definition)?;
+        let total = self.count_smart_playlist_tracks(source_id, definition)?;
         if definition
             .limit
             .is_some_and(|definition_limit| offset >= definition_limit)
@@ -496,7 +496,7 @@ impl Store {
             .limit
             .map(|definition_limit| limit.min(definition_limit.saturating_sub(offset)))
             .unwrap_or(limit);
-        let query = self.smart_track_query(server_id, definition)?;
+        let query = self.smart_track_query(source_id, definition)?;
         let mut values = query.where_params;
         values.push(Value::from(limit as i64));
         values.push(Value::from(offset as i64));
@@ -524,16 +524,16 @@ impl Store {
         let mut statement = self.connection.prepare(&sql)?;
         let mut tracks =
             collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)?;
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total))
     }
 
     fn count_smart_playlist_tracks(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<usize> {
-        let query = self.smart_track_query(server_id, definition)?;
+        let query = self.smart_track_query(source_id, definition)?;
         let sql = format!(
             "
             SELECT COUNT(*)
@@ -557,10 +557,10 @@ impl Store {
 
     fn sum_smart_playlist_duration(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<u32> {
-        let query = self.smart_track_query(server_id, definition)?;
+        let query = self.smart_track_query(source_id, definition)?;
         let sql = format!(
             "
             SELECT COALESCE(SUM(t.duration_seconds), 0)
@@ -580,22 +580,22 @@ impl Store {
 
     fn smart_track_query(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<SmartTrackQuery> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let compiled = compile_group(&definition.root);
         let mut params = Vec::with_capacity(compiled.params.len() + 2);
-        params.push(Value::from(server_id.as_str().to_string()));
+        params.push(Value::from(source_id.as_str().to_string()));
         params.extend(compiled.params);
-        let mut where_clause = format!("t.server_id = ? AND ({})", compiled.clause);
+        let mut where_clause = format!("t.source_id = ? AND ({})", compiled.clause);
         if let Some(folder_id) = selected_folder {
             where_clause.push_str(
                 "
                 AND EXISTS (
                     SELECT 1
                     FROM track_music_folders tmf
-                    WHERE tmf.server_id = t.server_id
+                    WHERE tmf.source_id = t.source_id
                       AND tmf.track_id = t.track_id
                       AND tmf.folder_id = ?
                 )
@@ -606,9 +606,9 @@ impl Store {
         Ok(SmartTrackQuery {
             from: "
                 FROM tracks t
-                JOIN servers s ON s.server_id = t.server_id
+                JOIN sources s ON s.source_id = t.source_id
                 LEFT JOIN track_activity ta
-                  ON ta.server_id = t.server_id AND ta.track_id = t.track_id
+                  ON ta.source_id = t.source_id AND ta.track_id = t.track_id
             "
             .to_string(),
             where_clause,
@@ -617,15 +617,15 @@ impl Store {
         })
     }
 
-    fn next_smart_playlist_position(&self, server_id: &ServerId) -> StoreResult<i64> {
+    fn next_smart_playlist_position(&self, source_id: &SourceId) -> StoreResult<i64> {
         self.connection
             .query_row(
                 "
                 SELECT COALESCE(MAX(position), -1) + 1
                 FROM smart_playlists
-                WHERE server_id = ?1
+                WHERE source_id = ?1
                 ",
-                params![server_id.as_str()],
+                params![source_id.as_str()],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(StoreError::from)
@@ -633,7 +633,7 @@ impl Store {
 
     fn insert_builtin_smart_playlist(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         builtin: SmartPlaylistBuiltin,
         position: i64,
     ) -> StoreResult<()> {
@@ -643,10 +643,10 @@ impl Store {
         self.connection.execute(
             "
             INSERT INTO smart_playlists (
-                server_id, smart_playlist_id, name, builtin_key, definition_json, position
+                source_id, smart_playlist_id, name, builtin_key, definition_json, position
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(server_id, smart_playlist_id) DO UPDATE SET
+            ON CONFLICT(source_id, smart_playlist_id) DO UPDATE SET
                 name = excluded.name,
                 builtin_key = excluded.builtin_key,
                 definition_json = excluded.definition_json,
@@ -654,7 +654,7 @@ impl Store {
                 updated_at = CURRENT_TIMESTAMP
             ",
             params![
-                server_id.as_str(),
+                source_id.as_str(),
                 smart_playlist_id.as_str(),
                 builtin.title(),
                 builtin.key(),
@@ -871,7 +871,7 @@ fn compile_linked_text_rule(
         EXISTS (
             SELECT 1
             FROM {table} {alias}
-            WHERE {alias}.server_id = t.server_id
+            WHERE {alias}.source_id = t.source_id
               AND {alias}.track_id = t.track_id
               AND {comparison}
         )
@@ -1057,11 +1057,12 @@ fn escape_like(value: &str) -> String {
 }
 
 fn smart_play_count_expr() -> String {
-    "CASE WHEN s.provider = 'local' THEN COALESCE(ta.play_count, t.play_count, 0) ELSE COALESCE(t.play_count, 0) END".to_string()
+    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.play_count, t.play_count, 0) ELSE COALESCE(t.play_count, 0) END".to_string()
 }
 
 fn smart_last_played_expr() -> String {
-    "CASE WHEN s.provider = 'local' THEN COALESCE(ta.last_played, t.last_played) ELSE t.last_played END".to_string()
+    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.last_played, t.last_played) ELSE t.last_played END"
+        .to_string()
 }
 
 fn smart_skip_count_expr() -> String {
@@ -1104,39 +1105,39 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_support::{album, album_with_image, saved_server, track};
+    use crate::store::test_support::{album, album_with_image, saved_source, track};
     use domain::SmartPlaylistRuleValue;
 
     #[test]
     fn smart_playlist_restored() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("defaults");
         assert_eq!(page.total, 3);
 
         let most_played = smart_builtin_id(SmartPlaylistBuiltin::MostPlayed);
         store
-            .delete_smart_playlist(&saved.server.id, &most_played)
+            .delete_smart_playlist(&saved.source.id, &most_played)
             .expect("delete");
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("after delete");
         assert_eq!(page.total, 2);
         assert_eq!(
             store
-                .missing_builtin_smart_playlists(&saved.server.id)
+                .missing_builtin_smart_playlists(&saved.source.id)
                 .expect("missing"),
             vec![SmartPlaylistBuiltin::MostPlayed]
         );
 
         store
-            .restore_builtin_smart_playlist(&saved.server.id, SmartPlaylistBuiltin::MostPlayed)
+            .restore_builtin_smart_playlist(&saved.source.id, SmartPlaylistBuiltin::MostPlayed)
             .expect("restore");
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("after restore");
         assert_eq!(page.total, 3);
     }
@@ -1144,10 +1145,10 @@ mod tests {
     #[test]
     fn smart_persist_position() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("defaults");
         let ids = page
             .items
@@ -1157,11 +1158,11 @@ mod tests {
 
         assert!(
             store
-                .reorder_smart_playlist(&saved.server.id, &ids[2], &ids[0], false)
+                .reorder_smart_playlist(&saved.source.id, &ids[2], &ids[0], false)
                 .expect("move before first")
         );
         let moved = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("after move")
             .items
             .into_iter()
@@ -1174,24 +1175,24 @@ mod tests {
     #[test]
     fn smart_track_image() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let album = album_with_image(1);
         let album_image = album.image_ref.clone();
         let mut track = track(1, &album);
         track.play_count = Some(1);
         store
-            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), 1)
+            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), 1)
             .expect("album");
         store
-            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), 1)
+            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), 1)
             .expect("track");
         store
-            .complete_sync(&saved.server.id, 1)
+            .complete_sync(&saved.source.id, 1)
             .expect("complete sync");
 
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("smart playlist index");
         let most_played = page
             .items
@@ -1207,7 +1208,7 @@ mod tests {
         );
 
         let detail = store
-            .load_smart_playlist_detail(&saved.server.id, &most_played.id)
+            .load_smart_playlist_detail(&saved.source.id, &most_played.id)
             .expect("smart playlist detail")
             .expect("smart playlist detail");
         assert_eq!(detail.smart_playlist.track_count, 1);
@@ -1225,10 +1226,10 @@ mod tests {
     #[test]
     fn smart_retired_sources() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("seed defaults");
         let definition = serde_json::to_string(&smart_policy::builtin_definition(
             SmartPlaylistBuiltin::MostPlayed,
@@ -1241,12 +1242,12 @@ mod tests {
                 .execute(
                     "
                     INSERT INTO smart_playlists (
-                        server_id, smart_playlist_id, name, builtin_key, definition_json, position
+                        source_id, smart_playlist_id, name, builtin_key, definition_json, position
                     )
                     VALUES (?1, ?2, ?3, ?3, ?4, 100)
                     ",
                     params![
-                        saved.server.id.as_str(),
+                        saved.source.id.as_str(),
                         retired_id,
                         key,
                         definition.as_str()
@@ -1256,7 +1257,7 @@ mod tests {
         }
 
         let page = store
-            .load_smart_playlists(&saved.server.id, 0, 20)
+            .load_smart_playlists(&saved.source.id, 0, 20)
             .expect("load after prune");
 
         assert_eq!(page.total, 3);
@@ -1271,8 +1272,8 @@ mod tests {
     #[test]
     fn smart_filter_activity() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Signal One".to_string();
@@ -1283,13 +1284,13 @@ mod tests {
         second.comment = Some("morning".to_string());
         second.genres = vec!["Noise".to_string()];
         store
-            .upsert_albums(&saved.server.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], 1)
             .expect("album");
         store
-            .upsert_tracks(&saved.server.id, &[first.clone(), second], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second], 1)
             .expect("tracks");
         store
-            .increment_track_skip_count(&saved.server.id, &first.id)
+            .increment_track_skip_count(&saved.source.id, &first.id)
             .expect("skip");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1328,10 +1329,10 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:night");
         store
-            .save_smart_playlist(&saved.server.id, &smart_id, "Night", &definition)
+            .save_smart_playlist(&saved.source.id, &smart_id, "Night", &definition)
             .expect("save smart");
         let detail = store
-            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source.id, &smart_id)
             .expect("detail")
             .expect("detail");
         assert_eq!(detail.tracks.len(), 1);
@@ -1342,18 +1343,18 @@ mod tests {
     #[test]
     fn smart_filter_range() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let album = album(1);
         let mut first = track(1, &album);
         first.date_added = Some("2024-02-14".to_string());
         let mut second = track(2, &album);
         second.date_added = Some("2024-05-20".to_string());
         store
-            .upsert_albums(&saved.server.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], 1)
             .expect("album");
         store
-            .upsert_tracks(&saved.server.id, &[first.clone(), second], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second], 1)
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1373,11 +1374,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:date-range");
         store
-            .save_smart_playlist(&saved.server.id, &smart_id, "Date Range", &definition)
+            .save_smart_playlist(&saved.source.id, &smart_id, "Date Range", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source.id, &smart_id)
             .expect("detail")
             .expect("detail");
 
@@ -1388,8 +1389,8 @@ mod tests {
     #[test]
     fn smart_filter_genre() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Range Match".to_string();
@@ -1404,10 +1405,10 @@ mod tests {
         third.year = 2005;
         third.genres = vec!["Rock".to_string()];
         store
-            .upsert_albums(&saved.server.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], 1)
             .expect("album");
         store
-            .upsert_tracks(&saved.server.id, &[first.clone(), second, third], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second, third], 1)
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1434,11 +1435,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:year-genre");
         store
-            .save_smart_playlist(&saved.server.id, &smart_id, "Year Genre", &definition)
+            .save_smart_playlist(&saved.source.id, &smart_id, "Year Genre", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source.id, &smart_id)
             .expect("detail")
             .expect("detail");
 
@@ -1449,8 +1450,8 @@ mod tests {
     #[test]
     fn smart_filter_mood_and_bpm() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_server();
-        store.save_server(&saved).expect("save server");
+        let saved = saved_source();
+        store.save_source(&saved).expect("save server");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Fast Focus".to_string();
@@ -1465,10 +1466,10 @@ mod tests {
         third.bpm = Some(130);
         third.moods = vec!["Calm".to_string()];
         store
-            .upsert_albums(&saved.server.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], 1)
             .expect("album");
         store
-            .upsert_tracks(&saved.server.id, &[first.clone(), second, third], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second, third], 1)
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1492,11 +1493,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:mood-bpm");
         store
-            .save_smart_playlist(&saved.server.id, &smart_id, "Mood BPM", &definition)
+            .save_smart_playlist(&saved.source.id, &smart_id, "Mood BPM", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source.id, &smart_id)
             .expect("detail")
             .expect("detail");
 

@@ -2,7 +2,7 @@ use super::*;
 
 impl AppController {
     #[cfg(test)]
-    pub fn forget_active_server(&self) {
+    pub fn forget_active_source(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
@@ -15,7 +15,7 @@ impl AppController {
         let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Snapshot(Box::new(
@@ -23,19 +23,19 @@ impl AppController {
                 )));
                 return;
             };
-            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.server.id) {
+            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.source.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
             let result = store.with_store(|store| {
-                store.forget_server(&saved.server.id)?;
+                store.forget_source(&saved.source.id)?;
                 Ok(())
             });
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
+            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
@@ -51,10 +51,10 @@ impl AppController {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
-            delete_token_after_forget(secrets, saved.server.id);
+            delete_token_after_forget(secrets, saved.source.id);
         });
     }
-    pub fn forget_server(&self, server_id: ServerId) {
+    pub fn forget_source(&self, source_id: SourceId) {
         let store = self.store.clone();
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
@@ -67,11 +67,11 @@ impl AppController {
         let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let saved = match store.with_store(|store| {
-                let active_id = store.active_server()?.map(|saved| saved.server.id);
+                let active_id = store.active_source()?.map(|saved| saved.source.id);
                 let saved = store
-                    .list_servers()?
+                    .list_sources()?
                     .into_iter()
-                    .find(|saved| saved.server.id == server_id);
+                    .find(|saved| saved.source.id == source_id);
                 Ok((saved, active_id))
             }) {
                 Ok((Some(saved), active_id)) => (saved, active_id),
@@ -87,13 +87,13 @@ impl AppController {
                 }
             };
             let (saved, active_id) = saved;
-            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.server.id) {
+            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.source.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
             let mut settings = load_settings_from_store(&store);
             if settings.sources.selected
-                == Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+                == Some(LibrarySourceSelection::Source(saved.source.id.clone()))
             {
                 settings.sources.selected = None;
                 if let Err(error) = store.save_settings(&settings) {
@@ -102,18 +102,18 @@ impl AppController {
                 }
             }
             let result = store.with_store(|store| {
-                store.forget_server(&saved.server.id)?;
+                store.forget_source(&saved.source.id)?;
                 Ok(())
             });
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
+            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if active_id.as_ref() == Some(&saved.server.id) {
+            if active_id.as_ref() == Some(&saved.source.id) {
                 clear_queue_and_stop_playback(
                     &queue,
                     &playback_request_generation,
@@ -125,7 +125,7 @@ impl AppController {
                 );
             }
             emit_runtime_snapshot(&store, &secrets, &events);
-            delete_token_after_forget(secrets, saved.server.id);
+            delete_token_after_forget(secrets, saved.source.id);
         });
     }
     #[instrument(skip(self, request), fields(source = request.source.source_id(), server_url = %request.server_url, username = %request.username, trust_invalid_cert = request.trust_invalid_cert))]
@@ -220,11 +220,11 @@ impl AppController {
 
 pub(in crate::controller) fn delete_token_after_forget(
     secrets: Arc<dyn SecretStore>,
-    server_id: ServerId,
+    source_id: SourceId,
 ) {
     thread::spawn(move || {
-        if let Err(error) = secrets.delete_token(&server_id) {
-            warn!(%error, server_id = %server_id, "failed to delete forgotten server token");
+        if let Err(error) = secrets.delete_token(&source_id) {
+            warn!(%error, source_id = %source_id, "failed to delete forgotten server token");
         }
     });
 }

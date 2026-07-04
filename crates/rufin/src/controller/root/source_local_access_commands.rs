@@ -1,9 +1,9 @@
 use super::*;
 
 impl AppController {
-    pub fn save_server_local_access(
+    pub fn save_source_local_access(
         &self,
-        server_id: ServerId,
+        source_id: SourceId,
         root_path: PathBuf,
         path_replace_from: Option<String>,
         path_replace_to: Option<String>,
@@ -24,10 +24,10 @@ impl AppController {
             };
             let path_replace_to =
                 trimmed_optional(path_replace_to.as_deref()).unwrap_or_else(|| root_path.clone());
-            let matched_server_id = server_id.clone();
+            let matched_source_id = source_id.clone();
             let result = store.with_store(|store| {
-                store.save_server_local_access(&ServerLocalAccess {
-                    server_id,
+                store.save_source_local_access(&SourceLocalAccess {
+                    source_id,
                     root_path: root_path.clone(),
                     path_replace_from: trimmed_optional(path_replace_from.as_deref()),
                     path_replace_to: Some(path_replace_to),
@@ -39,7 +39,7 @@ impl AppController {
             }
             if let Err(error) = runtime.block_on(refresh_local_track_matches(
                 &store,
-                &matched_server_id,
+                &matched_source_id,
                 None,
                 None,
             )) {
@@ -65,8 +65,8 @@ impl AppController {
             }
         });
     }
-    pub fn update_server_settings(&self, input: ServerSettingsInput) {
-        let server_id = input.server_id.clone();
+    pub fn update_source_settings(&self, input: SourceSettingsInput) {
+        let source_id = input.source_id.clone();
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let runtime = Arc::clone(&sync_context.runtime);
@@ -79,8 +79,8 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
-            let result = update_server_settings_with_login(&store, &secrets, input, |request| {
-                if sync_is_running(&sync_context.sync_in_flight, &server_id) {
+            let result = update_source_settings_with_login(&store, &secrets, input, |request| {
+                if sync_is_running(&sync_context.sync_in_flight, &source_id) {
                     return Err(
                         "Wait for the current library sync to finish before editing server credentials."
                             .to_string(),
@@ -108,12 +108,12 @@ impl AppController {
             });
             match result {
                 Ok(outcome) if outcome.changed && outcome.identity_changed => {
-                    let status = server_settings_status_for_outcome(&outcome);
+                    let status = source_settings_status_for_outcome(&outcome);
                     let Some(saved) = outcome.saved else {
                         emit_snapshot(&store, &events);
                         return;
                     };
-                    if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
+                    if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
@@ -134,20 +134,20 @@ impl AppController {
                         return;
                     }
                     let _sent = events.send(ControllerEvent::LoginStatus(
-                        server_settings_status_message(status).to_string(),
+                        source_settings_status_message(status).to_string(),
                     ));
                     start_sync_thread_with_snapshots(sync_context, saved, SyncPresentation::Silent);
                 }
                 Ok(outcome) if outcome.changed => {
-                    if server_settings_status_for_outcome(&outcome)
-                        == ServerSettingsStatus::Resyncing
+                    if source_settings_status_for_outcome(&outcome)
+                        == SourceSettingsStatus::Resyncing
                     {
                         let Some(saved) = outcome.saved else {
                             emit_snapshot(&store, &events);
                             return;
                         };
                         let _sent = events.send(ControllerEvent::LoginStatus(
-                            server_settings_status_message(ServerSettingsStatus::Resyncing)
+                            source_settings_status_message(SourceSettingsStatus::Resyncing)
                                 .to_string(),
                         ));
                         start_sync_thread_with_snapshots(
@@ -158,13 +158,13 @@ impl AppController {
                         return;
                     }
                     let _sent = events.send(ControllerEvent::LoginStatus(
-                        server_settings_status_message(ServerSettingsStatus::Saved).to_string(),
+                        source_settings_status_message(SourceSettingsStatus::Saved).to_string(),
                     ));
                     emit_snapshot(&store, &events);
                 }
                 Ok(_) => {
                     let _sent = events.send(ControllerEvent::LoginStatus(
-                        server_settings_status_message(ServerSettingsStatus::Unchanged).to_string(),
+                        source_settings_status_message(SourceSettingsStatus::Unchanged).to_string(),
                     ));
                 }
                 Err(error) => {
@@ -173,7 +173,7 @@ impl AppController {
             }
         });
     }
-    pub fn clear_server_local_access(&self, server_id: ServerId) {
+    pub fn clear_source_local_access(&self, source_id: SourceId) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -183,8 +183,8 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             if let Err(error) = store.with_store(|store| {
-                store.delete_server_local_access(&server_id)?;
-                store.delete_track_local_matches(&server_id)
+                store.delete_source_local_access(&source_id)?;
+                store.delete_track_local_matches(&source_id)
             }) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
@@ -212,8 +212,8 @@ impl AppController {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ServerSettingsInput {
-    pub(crate) server_id: ServerId,
+pub(crate) struct SourceSettingsInput {
+    pub(crate) source_id: SourceId,
     pub(crate) name: String,
     pub(crate) base_url: String,
     pub(crate) username: String,
@@ -223,7 +223,7 @@ pub(crate) struct ServerSettingsInput {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ServerSettingsReauthRequest {
+struct SourceSettingsReauthRequest {
     source: StreamingSource,
     base_url: String,
     username: String,
@@ -232,73 +232,73 @@ struct ServerSettingsReauthRequest {
 }
 
 #[derive(Clone, Debug)]
-struct PreparedServerSettingsUpdate {
-    saved: SavedServer,
+struct PreparedSourceSettingsUpdate {
+    saved: SavedSource,
     next_name: String,
     next_base_url: String,
     next_username: String,
     next_trust_invalid_cert: bool,
     next_use_jellyfin_instant_mix: bool,
-    reauth: Option<ServerSettingsReauthRequest>,
+    reauth: Option<SourceSettingsReauthRequest>,
 }
 
 #[derive(Clone, Debug)]
-struct ServerSettingsUpdateOutcome {
+struct SourceSettingsUpdateOutcome {
     changed: bool,
     identity_changed: bool,
     reauthenticated: bool,
-    saved: Option<SavedServer>,
+    saved: Option<SavedSource>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ServerSettingsStatus {
+enum SourceSettingsStatus {
     Saved,
     Resyncing,
     Unchanged,
 }
 
-fn server_settings_status_for_outcome(
-    outcome: &ServerSettingsUpdateOutcome,
-) -> ServerSettingsStatus {
+fn source_settings_status_for_outcome(
+    outcome: &SourceSettingsUpdateOutcome,
+) -> SourceSettingsStatus {
     if !outcome.changed {
-        ServerSettingsStatus::Unchanged
+        SourceSettingsStatus::Unchanged
     } else if outcome.identity_changed || outcome.reauthenticated {
-        ServerSettingsStatus::Resyncing
+        SourceSettingsStatus::Resyncing
     } else {
-        ServerSettingsStatus::Saved
+        SourceSettingsStatus::Saved
     }
 }
 
-fn server_settings_status_message(status: ServerSettingsStatus) -> &'static str {
+fn source_settings_status_message(status: SourceSettingsStatus) -> &'static str {
     match status {
-        ServerSettingsStatus::Saved => "Server settings saved.",
-        ServerSettingsStatus::Resyncing => "Server settings saved.",
-        ServerSettingsStatus::Unchanged => "No changes to save.",
+        SourceSettingsStatus::Saved => "Source settings saved.",
+        SourceSettingsStatus::Resyncing => "Source settings saved.",
+        SourceSettingsStatus::Unchanged => "No changes to save.",
     }
 }
 
-fn update_server_settings_with_login(
+fn update_source_settings_with_login(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    input: ServerSettingsInput,
-    login: impl FnOnce(ServerSettingsReauthRequest) -> Result<SourceSession, String>,
-) -> Result<ServerSettingsUpdateOutcome, String> {
+    input: SourceSettingsInput,
+    login: impl FnOnce(SourceSettingsReauthRequest) -> Result<SourceSession, String>,
+) -> Result<SourceSettingsUpdateOutcome, String> {
     let saved = store.with_store(|store| {
         Ok(store
-            .list_servers()?
+            .list_sources()?
             .into_iter()
-            .find(|saved| saved.server.id == input.server_id))
+            .find(|saved| saved.source.id == input.source_id))
     })?;
     let Some(saved) = saved else {
-        return Ok(ServerSettingsUpdateOutcome {
+        return Ok(SourceSettingsUpdateOutcome {
             changed: false,
             identity_changed: false,
             reauthenticated: false,
             saved: None,
         });
     };
-    let Some(prepared) = prepare_server_settings_update(saved, input)? else {
-        return Ok(ServerSettingsUpdateOutcome {
+    let Some(prepared) = prepare_source_settings_update(saved, input)? else {
+        return Ok(SourceSettingsUpdateOutcome {
             changed: false,
             identity_changed: false,
             reauthenticated: false,
@@ -309,19 +309,19 @@ fn update_server_settings_with_login(
         Some(request) => Some(login(request)?),
         None => None,
     };
-    persist_prepared_server_settings_update(store, secrets, &prepared, session.as_ref())
+    persist_prepared_source_settings_update(store, secrets, &prepared, session.as_ref())
 }
 
-fn prepare_server_settings_update(
-    saved: SavedServer,
-    input: ServerSettingsInput,
-) -> Result<Option<PreparedServerSettingsUpdate>, String> {
-    let remote = saved.server.provider != LOCAL_SOURCE_ID;
+fn prepare_source_settings_update(
+    saved: SavedSource,
+    input: SourceSettingsInput,
+) -> Result<Option<PreparedSourceSettingsUpdate>, String> {
+    let remote = saved.source.kind != LOCAL_SOURCE_ID;
     let next_name = input.name.trim().to_string();
     let next_base_url = if remote {
         input.base_url.trim().to_string()
     } else {
-        saved.server.base_url.clone()
+        saved.source.base_url.clone()
     };
     let next_username = if remote {
         input.username.trim().to_string()
@@ -333,7 +333,7 @@ fn prepare_server_settings_update(
     } else {
         saved.trust_invalid_cert
     };
-    let next_use_jellyfin_instant_mix = if saved.server.provider == "jellyfin" {
+    let next_use_jellyfin_instant_mix = if saved.source.kind == "jellyfin" {
         input.use_jellyfin_instant_mix
     } else {
         false
@@ -348,15 +348,15 @@ fn prepare_server_settings_update(
 
     let password_entered = remote && !input.password.is_empty();
     let auth_sensitive = remote
-        && (saved.server.base_url != next_base_url
+        && (saved.source.base_url != next_base_url
             || saved.username != next_username
             || password_entered);
     if auth_sensitive && input.password.is_empty() {
         return Err("Enter the server password to save address or username changes.".to_string());
     }
 
-    let changed = saved.server.name != next_name
-        || saved.server.base_url != next_base_url
+    let changed = saved.source.name != next_name
+        || saved.source.base_url != next_base_url
         || saved.username != next_username
         || saved.trust_invalid_cert != next_trust_invalid_cert
         || saved.use_jellyfin_instant_mix != next_use_jellyfin_instant_mix
@@ -366,9 +366,9 @@ fn prepare_server_settings_update(
     }
 
     let reauth = if auth_sensitive {
-        let source = StreamingSource::from_source_id(&saved.server.provider)
+        let source = StreamingSource::from_source_id(&saved.source.kind)
             .ok_or_else(|| "Saved server source is no longer supported.".to_string())?;
-        Some(ServerSettingsReauthRequest {
+        Some(SourceSettingsReauthRequest {
             source,
             base_url: next_base_url.clone(),
             username: next_username.clone(),
@@ -379,7 +379,7 @@ fn prepare_server_settings_update(
         None
     };
 
-    Ok(Some(PreparedServerSettingsUpdate {
+    Ok(Some(PreparedSourceSettingsUpdate {
         saved,
         next_name,
         next_base_url,
@@ -390,14 +390,14 @@ fn prepare_server_settings_update(
     }))
 }
 
-fn persist_prepared_server_settings_update(
+fn persist_prepared_source_settings_update(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    prepared: &PreparedServerSettingsUpdate,
+    prepared: &PreparedSourceSettingsUpdate,
     session: Option<&SourceSession>,
-) -> Result<ServerSettingsUpdateOutcome, String> {
+) -> Result<SourceSettingsUpdateOutcome, String> {
     if let Some(session) = session
-        && session.server.provider != prepared.saved.server.provider
+        && session.source.kind != prepared.saved.source.kind
     {
         return Err("Authenticated source did not match the saved server.".to_string());
     }
@@ -407,10 +407,10 @@ fn persist_prepared_server_settings_update(
     let next_saved = next_saved_server(prepared, session);
     let previous_token = if let Some(session) = session {
         let previous = secrets
-            .load_token(&prepared.saved.server.id)
+            .load_token(&prepared.saved.source.id)
             .map_err(|error| error.to_string())?;
         secrets
-            .save_token(&prepared.saved.server.id, &session.access_token)
+            .save_token(&prepared.saved.source.id, &session.access_token)
             .map_err(|error| error.to_string())?;
         Some(previous)
     } else {
@@ -418,24 +418,24 @@ fn persist_prepared_server_settings_update(
     };
 
     let result = store.with_store(|store| {
-        store.save_server_settings_update(&next_saved, identity_changed)?;
+        store.save_source_settings_update(&next_saved, identity_changed)?;
         Ok(())
     });
     if let Err(error) = result {
         if let Some(previous_token) = previous_token
             && let Err(restore_error) =
-                restore_server_token(secrets, &prepared.saved.server.id, previous_token)
+                restore_server_token(secrets, &prepared.saved.source.id, previous_token)
         {
             warn!(
                 %restore_error,
-                server_id = %prepared.saved.server.id,
+                source_id = %prepared.saved.source.id,
                 "failed to restore server token after settings update failed"
             );
         }
         return Err(error);
     }
 
-    Ok(ServerSettingsUpdateOutcome {
+    Ok(SourceSettingsUpdateOutcome {
         changed: true,
         identity_changed,
         reauthenticated: session.is_some(),
@@ -444,13 +444,13 @@ fn persist_prepared_server_settings_update(
 }
 
 fn next_saved_server(
-    prepared: &PreparedServerSettingsUpdate,
+    prepared: &PreparedSourceSettingsUpdate,
     session: Option<&SourceSession>,
-) -> SavedServer {
+) -> SavedSource {
     let mut saved = prepared.saved.clone();
-    saved.server.name = prepared.next_name.clone();
-    saved.server.base_url = session
-        .map(|session| session.server.base_url.clone())
+    saved.source.name = prepared.next_name.clone();
+    saved.source.base_url = session
+        .map(|session| session.source.base_url.clone())
         .unwrap_or_else(|| prepared.next_base_url.clone());
     saved.username = session
         .map(|session| session.username.clone())
@@ -463,36 +463,36 @@ fn next_saved_server(
     saved
 }
 
-fn authenticated_identity_changed(saved: &SavedServer, session: &SourceSession) -> bool {
-    saved.server.provider != session.server.provider
-        || saved.server.id != session.server.id
+fn authenticated_identity_changed(saved: &SavedSource, session: &SourceSession) -> bool {
+    saved.source.kind != session.source.kind
+        || saved.source.id != session.source.id
         || saved.user_id != session.user_id
 }
 
 fn restore_server_token(
     secrets: &Arc<dyn SecretStore>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     previous: Option<String>,
 ) -> Result<(), String> {
     match previous {
-        Some(token) => secrets.save_token(server_id, &token),
-        None => secrets.delete_token(server_id),
+        Some(token) => secrets.save_token(source_id, &token),
+        None => secrets.delete_token(source_id),
     }
     .map_err(|error| error.to_string())
 }
 
 fn reset_identity_queue(
     context: &QueueActivationContext<'_>,
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> Result<(), String> {
     let active_id = context
         .store
-        .with_store(|store| Ok(store.active_server()?.map(|saved| saved.server.id)))?;
-    if active_id.as_ref() != Some(&saved.server.id) {
+        .with_store(|store| Ok(store.active_source()?.map(|saved| saved.source.id)))?;
+    if active_id.as_ref() != Some(&saved.source.id) {
         return Ok(());
     }
 
-    let restored = QueueEngine::new(saved.server.id.clone());
+    let restored = QueueEngine::new(saved.source.id.clone());
     let queue_snapshot = restored.snapshot();
     let auto_dj_enabled = context
         .auto_dj_enabled
@@ -526,11 +526,11 @@ fn reset_identity_queue(
 mod tests {
     use super::*;
 
-    fn saved_server_for_settings() -> SavedServer {
-        SavedServer {
-            server: ServerIdentity {
-                id: ServerId::new("jellyfin:server:settings"),
-                provider: "jellyfin".to_string(),
+    fn saved_server_for_settings() -> SavedSource {
+        SavedSource {
+            source: SourceIdentity {
+                id: SourceId::new("jellyfin:server:settings"),
+                kind: "jellyfin".to_string(),
                 name: "Old Server".to_string(),
                 base_url: "https://music.example.test".to_string(),
             },
@@ -542,16 +542,16 @@ mod tests {
     }
 
     fn server_settings_input(
-        saved: &SavedServer,
+        saved: &SavedSource,
         name: &str,
         base_url: &str,
         username: &str,
         password: &str,
         trust_invalid_cert: bool,
         use_jellyfin_instant_mix: bool,
-    ) -> ServerSettingsInput {
-        ServerSettingsInput {
-            server_id: saved.server.id.clone(),
+    ) -> SourceSettingsInput {
+        SourceSettingsInput {
+            source_id: saved.source.id.clone(),
             name: name.to_string(),
             base_url: base_url.to_string(),
             username: username.to_string(),
@@ -562,17 +562,17 @@ mod tests {
     }
 
     fn provider_session(
-        saved: &SavedServer,
-        server_id: ServerId,
+        saved: &SavedSource,
+        source_id: SourceId,
         base_url: &str,
         user_id: &str,
         username: &str,
         token: &str,
     ) -> SourceSession {
         SourceSession {
-            server: ServerIdentity {
-                id: server_id,
-                provider: saved.server.provider.clone(),
+            source: SourceIdentity {
+                id: source_id,
+                kind: saved.source.kind.clone(),
                 name: "Jellyfin".to_string(),
                 base_url: base_url.to_string(),
             },
@@ -583,42 +583,42 @@ mod tests {
         }
     }
 
-    fn seed_server_cache(store: &StoreHandle, saved: &SavedServer) {
+    fn seed_source_cache(store: &StoreHandle, saved: &SavedSource) {
         store
             .with_store(|store| {
-                store.save_server(saved)?;
-                let generation = store.begin_sync(&saved.server.id)?;
+                store.save_source(saved)?;
+                let generation = store.begin_sync(&saved.source.id)?;
                 let album = library_album(1, "Example Artist", "Example Album", None);
-                store.upsert_albums(&saved.server.id, &[album], generation)?;
-                store.complete_sync(&saved.server.id, generation)?;
-                let queue = QueueEngine::new(saved.server.id.clone());
+                store.upsert_albums(&saved.source.id, &[album], generation)?;
+                store.complete_sync(&saved.source.id, generation)?;
+                let queue = QueueEngine::new(saved.source.id.clone());
                 store.save_queue_snapshot(&queue.snapshot())?;
                 Ok(())
             })
-            .expect("seed server cache");
+            .expect("seed source cache");
     }
 
-    fn saved_server(store: &StoreHandle, server_id: &ServerId) -> SavedServer {
+    fn saved_source(store: &StoreHandle, source_id: &SourceId) -> SavedSource {
         store
             .with_store(|store| {
                 Ok(store
-                    .list_servers()?
+                    .list_sources()?
                     .into_iter()
-                    .find(|saved| saved.server.id == *server_id))
+                    .find(|saved| saved.source.id == *source_id))
             })
             .expect("load saved server")
             .expect("saved server")
     }
 
-    fn cached_album_count(store: &StoreHandle, server_id: &ServerId) -> usize {
+    fn cached_album_count(store: &StoreHandle, source_id: &SourceId) -> usize {
         store
-            .with_store(|store| store.load_albums(server_id, 0, 1).map(|page| page.total))
+            .with_store(|store| store.load_albums(source_id, 0, 1).map(|page| page.total))
             .expect("load albums")
     }
 
-    fn queue_snapshot_saved(store: &StoreHandle, server_id: &ServerId) -> bool {
+    fn queue_snapshot_saved(store: &StoreHandle, source_id: &SourceId) -> bool {
         store
-            .with_store(|store| store.load_queue_snapshot(server_id))
+            .with_store(|store| store.load_queue_snapshot(source_id))
             .expect("load queue snapshot")
             .is_some()
     }
@@ -628,18 +628,18 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
-        seed_server_cache(&store, &saved);
+        seed_source_cache(&store, &saved);
         secrets
-            .save_token(&saved.server.id, "old-token")
+            .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_server_settings_with_login(
+        let outcome = update_source_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
                 &saved,
                 "Renamed Server",
-                &saved.server.base_url,
+                &saved.source.base_url,
                 &saved.username,
                 "",
                 true,
@@ -651,17 +651,17 @@ mod tests {
 
         assert!(outcome.changed);
         assert!(!outcome.identity_changed);
-        let edited = saved_server(&store, &saved.server.id);
-        assert_eq!(edited.server.name, "Renamed Server");
-        assert_eq!(edited.server.base_url, saved.server.base_url);
+        let edited = saved_source(&store, &saved.source.id);
+        assert_eq!(edited.source.name, "Renamed Server");
+        assert_eq!(edited.source.base_url, saved.source.base_url);
         assert_eq!(edited.username, saved.username);
         assert!(edited.trust_invalid_cert);
         assert_eq!(
-            secrets.load_token(&saved.server.id).expect("load token"),
+            secrets.load_token(&saved.source.id).expect("load token"),
             Some("old-token".to_string())
         );
-        assert_eq!(cached_album_count(&store, &saved.server.id), 1);
-        assert!(queue_snapshot_saved(&store, &saved.server.id));
+        assert_eq!(cached_album_count(&store, &saved.source.id), 1);
+        assert!(queue_snapshot_saved(&store, &saved.source.id));
     }
 
     #[test]
@@ -669,17 +669,17 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
-        seed_server_cache(&store, &saved);
+        seed_source_cache(&store, &saved);
         secrets
-            .save_token(&saved.server.id, "old-token")
+            .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_server_settings_with_login(
+        let outcome = update_source_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
                 &saved,
-                &saved.server.name,
+                &saved.source.name,
                 "https://music-lan.example.test",
                 &saved.username,
                 "updated-password",
@@ -691,7 +691,7 @@ mod tests {
                 assert_eq!(request.username, "listener");
                 Ok(provider_session(
                     &saved,
-                    saved.server.id.clone(),
+                    saved.source.id.clone(),
                     "https://music-lan.example.test",
                     &saved.user_id,
                     &saved.username,
@@ -705,22 +705,22 @@ mod tests {
         assert!(!outcome.identity_changed);
         assert!(outcome.reauthenticated);
         assert_eq!(
-            server_settings_status_for_outcome(&outcome),
-            ServerSettingsStatus::Resyncing
+            source_settings_status_for_outcome(&outcome),
+            SourceSettingsStatus::Resyncing
         );
         assert_eq!(
-            server_settings_status_message(server_settings_status_for_outcome(&outcome)),
-            "Server settings saved."
+            source_settings_status_message(source_settings_status_for_outcome(&outcome)),
+            "Source settings saved."
         );
-        let edited = saved_server(&store, &saved.server.id);
-        assert_eq!(edited.server.base_url, "https://music-lan.example.test");
+        let edited = saved_source(&store, &saved.source.id);
+        assert_eq!(edited.source.base_url, "https://music-lan.example.test");
         assert_eq!(edited.user_id, saved.user_id);
         assert_eq!(
-            secrets.load_token(&saved.server.id).expect("load token"),
+            secrets.load_token(&saved.source.id).expect("load token"),
             Some("new-token".to_string())
         );
-        assert_eq!(cached_album_count(&store, &saved.server.id), 1);
-        assert!(queue_snapshot_saved(&store, &saved.server.id));
+        assert_eq!(cached_album_count(&store, &saved.source.id), 1);
+        assert!(queue_snapshot_saved(&store, &saved.source.id));
     }
 
     #[test]
@@ -728,18 +728,18 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
-        seed_server_cache(&store, &saved);
+        seed_source_cache(&store, &saved);
         secrets
-            .save_token(&saved.server.id, "old-token")
+            .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let error = update_server_settings_with_login(
+        let error = update_source_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
                 &saved,
                 "Renamed Server",
-                &saved.server.base_url,
+                &saved.source.base_url,
                 "alternate",
                 "updated-password",
                 false,
@@ -750,14 +750,14 @@ mod tests {
         .expect_err("auth failure");
 
         assert_eq!(error, "Authentication failed");
-        let current = saved_server(&store, &saved.server.id);
+        let current = saved_source(&store, &saved.source.id);
         assert_eq!(current, saved);
         assert_eq!(
-            secrets.load_token(&saved.server.id).expect("load token"),
+            secrets.load_token(&saved.source.id).expect("load token"),
             Some("old-token".to_string())
         );
-        assert_eq!(cached_album_count(&store, &saved.server.id), 1);
-        assert!(queue_snapshot_saved(&store, &saved.server.id));
+        assert_eq!(cached_album_count(&store, &saved.source.id), 1);
+        assert!(queue_snapshot_saved(&store, &saved.source.id));
     }
 
     #[test]
@@ -765,18 +765,18 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
-        seed_server_cache(&store, &saved);
+        seed_source_cache(&store, &saved);
         secrets
-            .save_token(&saved.server.id, "old-token")
+            .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_server_settings_with_login(
+        let outcome = update_source_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
                 &saved,
-                &saved.server.name,
-                &saved.server.base_url,
+                &saved.source.name,
+                &saved.source.base_url,
                 "alternate",
                 "updated-password",
                 false,
@@ -785,8 +785,8 @@ mod tests {
             |_request| {
                 Ok(provider_session(
                     &saved,
-                    ServerId::new("jellyfin:server:other"),
-                    &saved.server.base_url,
+                    SourceId::new("jellyfin:server:other"),
+                    &saved.source.base_url,
                     "alternate-id",
                     "alternate",
                     "new-token",
@@ -797,15 +797,15 @@ mod tests {
 
         assert!(outcome.changed);
         assert!(outcome.identity_changed);
-        let edited = saved_server(&store, &saved.server.id);
-        assert_eq!(edited.server.id, saved.server.id);
+        let edited = saved_source(&store, &saved.source.id);
+        assert_eq!(edited.source.id, saved.source.id);
         assert_eq!(edited.user_id, "alternate-id");
         assert_eq!(edited.username, "alternate");
         assert_eq!(
-            secrets.load_token(&saved.server.id).expect("load token"),
+            secrets.load_token(&saved.source.id).expect("load token"),
             Some("new-token".to_string())
         );
-        assert_eq!(cached_album_count(&store, &saved.server.id), 0);
-        assert!(!queue_snapshot_saved(&store, &saved.server.id));
+        assert_eq!(cached_album_count(&store, &saved.source.id), 0);
+        assert!(!queue_snapshot_saved(&store, &saved.source.id));
     }
 }

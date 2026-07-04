@@ -9,9 +9,9 @@ use super::*;
 /// `Native` means the source owns this operation and Rufin supports it. `Store`
 /// means Rufin owns the feature for that source.
 pub(in crate::controller) fn source_capabilities_for_saved(
-    saved: &SavedServer,
+    saved: &SavedSource,
 ) -> SourceCapabilities {
-    let source_kind = saved.server.provider.as_str();
+    let source_kind = saved.source.kind.as_str();
     let native_playlists = source_kind_has_native_playlists(source_kind);
     let native_playlist_mutations = source_kind_has_native_playlist_mutations(source_kind);
     let native_favorites = source_kind_has_native_favorites(source_kind);
@@ -28,9 +28,9 @@ pub(in crate::controller) fn source_capabilities_for_saved(
             read_native: native_playlists,
             read_store: true,
             create: if native_playlist_mutations {
-                SourceFeatureSupport::native()
+                SourceFeatureOwner::Native
             } else {
-                SourceFeatureSupport::store()
+                SourceFeatureOwner::Store
             },
             rename: playlist_mutations,
             delete: playlist_mutations,
@@ -45,9 +45,9 @@ pub(in crate::controller) fn source_capabilities_for_saved(
             SourceFeatureSupport::store()
         },
         favorite_mutations: if native_favorite_mutations {
-            SourceFeatureSupport::native()
+            SourceFeatureOwner::Native
         } else {
-            SourceFeatureSupport::store()
+            SourceFeatureOwner::Store
         },
         music_folders: if native_music_folders {
             SourceFeatureSupport::native()

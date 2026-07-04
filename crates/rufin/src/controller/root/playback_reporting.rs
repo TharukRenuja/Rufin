@@ -2,14 +2,14 @@ use super::*;
 
 impl AppController {
     pub(in crate::controller) fn persist_progress_if_needed(&self, seconds: u32) {
-        let Some((server_id, current, _position)) = self.current_playback_entry() else {
+        let Some((source_id, current, _position)) = self.current_playback_entry() else {
             return;
         };
         let current_matches = self.queue.lock().ok().is_some_and(|queue| {
             let Some(queue) = queue.as_ref() else {
                 return false;
             };
-            queue.server_id() == &server_id
+            queue.source_id() == &source_id
                 && queue.current().is_some_and(|entry| {
                     entry.id == current.id && entry.track_id == current.track_id
                 })
@@ -21,18 +21,18 @@ impl AppController {
         let already_saved = self
             .last_progress_snapshot
             .lock()
-            .map(|last| last.as_ref() == Some(&(server_id.clone(), bucket)))
+            .map(|last| last.as_ref() == Some(&(source_id.clone(), bucket)))
             .unwrap_or(true);
         if already_saved {
             return;
         }
         if self.store.uses_disk_storage() {
             if let Ok(mut last) = self.last_progress_snapshot.lock() {
-                *last = Some((server_id.clone(), bucket));
+                *last = Some((source_id.clone(), bucket));
             }
             persist_queue_progress_async(
                 self.store.clone(),
-                server_id,
+                source_id,
                 current.id,
                 current.track_id,
                 seconds,
@@ -42,11 +42,11 @@ impl AppController {
         let saved = self
             .store
             .with_store(|store| {
-                store.save_queue_progress(&server_id, &current.id, &current.track_id, seconds)
+                store.save_queue_progress(&source_id, &current.id, &current.track_id, seconds)
             })
             .unwrap_or(false);
         if saved && let Ok(mut last) = self.last_progress_snapshot.lock() {
-            *last = Some((server_id, bucket));
+            *last = Some((source_id, bucket));
         }
     }
     pub(in crate::controller) fn report_playback_progress_if_needed(&self, seconds: u32) {
@@ -82,7 +82,7 @@ impl AppController {
         let Some(current) = snapshot.current.clone() else {
             return;
         };
-        let Some(server_id) = snapshot.current_server_id.clone() else {
+        let Some(source_id) = snapshot.current_source_id.clone() else {
             return;
         };
         let settings = self.load_settings_with_scrobbling_secrets();
@@ -114,7 +114,7 @@ impl AppController {
             Arc::clone(&self.runtime),
             Arc::clone(&self.secrets),
             self.events.clone(),
-            server_id,
+            source_id,
             report,
         );
     }
@@ -122,14 +122,14 @@ impl AppController {
 
 fn persist_queue_progress_async(
     store: StoreHandle,
-    server_id: ServerId,
+    source_id: SourceId,
     entry_id: QueueEntryId,
     track_id: TrackId,
     seconds: u32,
 ) {
     thread::spawn(move || {
         if let Err(error) = store.with_store(|store| {
-            store.save_queue_progress(&server_id, &entry_id, &track_id, seconds)
+            store.save_queue_progress(&source_id, &entry_id, &track_id, seconds)
         }) {
             debug!(%error, "failed to persist playback progress");
         }

@@ -78,7 +78,7 @@ enum AutoDjCompletion {
 
 #[derive(Clone, Debug)]
 struct AutoDjQueueState {
-    server_id: ServerId,
+    source_id: SourceId,
     current: QueueEntry,
     queued_entries: HashSet<(QueueEntryId, TrackId)>,
     queued_track_ids: HashSet<TrackId>,
@@ -97,7 +97,7 @@ fn auto_dj_should_schedule(controller: &AppController) -> bool {
     let Some(state) = auto_dj_state(&controller.queue) else {
         return false;
     };
-    let Ok(Some(saved)) = saved_server_for_generated_queue(controller, &state.server_id) else {
+    let Ok(Some(saved)) = saved_server_for_generated_queue(controller, &state.source_id) else {
         return false;
     };
     let settings = load_settings_for_saved(&controller.store, &saved);
@@ -116,7 +116,7 @@ fn auto_dj_handles(controller: &AppController) -> Result<bool, String> {
     let Some(state) = auto_dj_state(&controller.queue) else {
         return Ok(false);
     };
-    let Some(saved) = saved_server_for_generated_queue(controller, &state.server_id)? else {
+    let Some(saved) = saved_server_for_generated_queue(controller, &state.source_id)? else {
         return Ok(false);
     };
     let settings = load_settings_for_saved(&controller.store, &saved);
@@ -188,7 +188,7 @@ fn auto_dj_continue_after_end(controller: &AppController) -> bool {
 
 fn auto_dj_candidate_tracks(
     controller: &AppController,
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     state: &AutoDjQueueState,
 ) -> Result<Vec<Track>, String> {
@@ -239,17 +239,17 @@ fn collect_auto_dj_candidates(
 
 fn auto_dj_random_fallback_tracks(
     controller: &AppController,
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     state: &AutoDjQueueState,
 ) -> Result<Vec<Track>, String> {
     let genre_name = auto_dj_current_genre(controller, state)?;
     let should_spread_cached_tracks =
-        saved.server.provider == "fake" || saved.server.provider == LOCAL_SOURCE_ID;
+        saved.source.kind == "fake" || saved.source.kind == LOCAL_SOURCE_ID;
     let mut tracks = if should_spread_cached_tracks {
         auto_dj_random_fallback_tracks_from_cache(
             controller,
-            &saved.server.id,
+            &saved.source.id,
             genre_name.as_deref(),
         )?
     } else {
@@ -275,7 +275,7 @@ fn auto_dj_random_fallback_tracks(
             )
             .map_err(|error| error.to_string())?
     };
-    if saved.server.provider == LOCAL_SOURCE_ID {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         prepare_cached_tracks(controller, saved, settings, &mut tracks)?;
     } else {
         prepare_source_tracks(controller, saved, settings, &mut tracks)?;
@@ -295,7 +295,7 @@ fn auto_dj_current_genre(
 ) -> Result<Option<String>, String> {
     let track = controller
         .store
-        .with_store(|store| store.load_track(&state.server_id, &state.current.track_id))?;
+        .with_store(|store| store.load_track(&state.source_id, &state.current.track_id))?;
     Ok(track.and_then(|track| {
         track
             .genres
@@ -306,17 +306,17 @@ fn auto_dj_current_genre(
 
 fn auto_dj_random_fallback_tracks_from_cache(
     controller: &AppController,
-    server_id: &ServerId,
+    source_id: &SourceId,
     genre_name: Option<&str>,
 ) -> Result<Vec<Track>, String> {
     let tracks = if let Some(genre_name) = genre_name {
         controller.store.with_store(|store| {
-            store.load_tracks_by_genre_name(server_id, genre_name, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT)
+            store.load_tracks_by_genre_name(source_id, genre_name, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT)
         })?
     } else {
         controller
             .store
-            .with_store(|store| store.load_tracks(server_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
+            .with_store(|store| store.load_tracks(source_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
             .items
     };
     Ok(tracks)
@@ -340,7 +340,7 @@ fn auto_dj_state(queue: &Arc<Mutex<Option<QueueEngine>>>) -> Option<AutoDjQueueS
             .map(|entry| (entry.id.clone(), entry.track_id.clone()))
             .collect::<HashSet<_>>();
         Some(AutoDjQueueState {
-            server_id: queue.server_id().clone(),
+            source_id: queue.source_id().clone(),
             current,
             queued_entries,
             queued_track_ids: queued,
@@ -364,7 +364,7 @@ fn append_auto_dj(
     let Some(current) = queue.current() else {
         return Ok(false);
     };
-    if queue.server_id() != &state.server_id || !same_auto_dj_queue(queue, state) {
+    if queue.source_id() != &state.source_id || !same_auto_dj_queue(queue, state) {
         return Ok(false);
     }
     let current_matches_trigger =
@@ -427,11 +427,11 @@ mod tests {
 
     #[test]
     fn auto_dj_append_allows_moved_cursor() {
-        let server_id = ServerId::fake(1);
+        let source_id = SourceId::fake(1);
         let first = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
         let second = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
         let third = library_track(3, None, AlbumId::fake(1), "Artist", &[]);
-        let mut engine = QueueEngine::new(server_id);
+        let mut engine = QueueEngine::new(source_id);
         engine.play_now(&first);
         engine.append(&second);
         let queue = Arc::new(Mutex::new(Some(engine)));
@@ -453,17 +453,17 @@ mod tests {
 
     #[test]
     fn auto_dj_append_rejects_replaced_queue() {
-        let server_id = ServerId::fake(1);
+        let source_id = SourceId::fake(1);
         let first = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
         let second = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
         let third = library_track(3, None, AlbumId::fake(1), "Artist", &[]);
         let replacement = library_track(4, None, AlbumId::fake(1), "Artist", &[]);
-        let mut engine = QueueEngine::new(server_id.clone());
+        let mut engine = QueueEngine::new(source_id.clone());
         engine.play_now(&first);
         engine.append(&second);
         let queue = Arc::new(Mutex::new(Some(engine)));
         let state = auto_dj_state(&queue).expect("auto dj state");
-        let mut engine = QueueEngine::new(server_id);
+        let mut engine = QueueEngine::new(source_id);
         engine.play_now(&replacement);
         engine.append(&second);
         *queue.lock().expect("queue") = Some(engine);

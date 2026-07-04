@@ -1,12 +1,12 @@
 use super::*;
 
 impl AppController {
-    pub fn set_selected_music_folder(&self, server_id: ServerId, folder_id: Option<MusicFolderId>) {
+    pub fn set_selected_music_folder(&self, source_id: SourceId, folder_id: Option<MusicFolderId>) {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
             if let Err(error) = store.with_store(|store| {
-                store.set_selected_music_folder_id(&server_id, folder_id.as_ref())
+                store.set_selected_music_folder_id(&source_id, folder_id.as_ref())
             }) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
@@ -50,23 +50,23 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
-            let settings = load_settings_for_active_server(&store);
+            let settings = load_settings_for_active_source(&store);
             let query = expected.query.clone();
             let kind = expected.kind.clone();
             let (key, mut results) = match store.with_store(|store| {
-                let Some(saved) = store.active_server()? else {
+                let Some(saved) = store.active_source()? else {
                     return Ok((expected.clone(), SearchResults::default()));
                 };
-                let server_id = saved.server.id.clone();
-                let selected_music_folder_id = store.selected_music_folder_id(&server_id)?;
+                let source_id = saved.source.id.clone();
+                let selected_music_folder_id = store.selected_music_folder_id(&source_id)?;
                 let key = SearchRequestKey {
                     request_id: expected.request_id,
                     query: query.clone(),
                     kind: kind.clone(),
-                    server_id: Some(server_id.clone()),
+                    source_id: Some(source_id.clone()),
                     selected_music_folder_id,
                 };
-                let results = store.search_library(&server_id, &query, 50)?;
+                let results = store.search_library(&source_id, &query, 50)?;
                 Ok((key, results))
             }) {
                 Ok(result) => result,

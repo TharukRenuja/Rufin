@@ -31,9 +31,9 @@ async fn login_map_session() {
     .await
     .expect("login");
 
-    assert!(session.server.id.as_str().starts_with("navidrome:server:"));
-    assert_eq!(session.server.provider, "navidrome");
-    assert_eq!(session.server.name, "Navidrome");
+    assert!(session.source.id.as_str().starts_with("navidrome:server:"));
+    assert_eq!(session.source.kind, "navidrome");
+    assert_eq!(session.source.name, "Navidrome");
     assert_eq!(session.username, "demo");
     assert!(session.access_token.contains(':'));
     assert!(!session.access_token.contains("pw"));
@@ -705,9 +705,9 @@ async fn folder_track_folders() {
 }
 fn provider(server: &MockServer) -> SubsonicSource {
     SubsonicSource::from_saved_session(SavedSourceSession {
-        server: ServerIdentity {
-            id: ServerId::new("subsonic:server:test"),
-            provider: "subsonic".to_string(),
+        source: SourceIdentity {
+            id: SourceId::new("subsonic:server:test"),
+            kind: "subsonic".to_string(),
             name: "Subsonic".to_string(),
             base_url: server.uri(),
         },

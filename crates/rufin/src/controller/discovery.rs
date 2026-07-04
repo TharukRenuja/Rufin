@@ -8,7 +8,7 @@ const SERVER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1_800);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveredServer {
-    pub provider: String,
+    pub kind: String,
     pub name: String,
     pub address: String,
     pub id: Option<String>,
@@ -26,7 +26,7 @@ pub enum ServerDiscoveryStatus {
 impl From<DiscoveredJellyfinServer> for DiscoveredServer {
     fn from(server: DiscoveredJellyfinServer) -> Self {
         Self {
-            provider: "Jellyfin".to_string(),
+            kind: "Jellyfin".to_string(),
             name: server.name,
             address: server.address,
             id: server.id,

@@ -149,7 +149,7 @@ mod tests {
         for selector in [
             ".muted",
             ".seeded-gradient-showcase .muted",
-            ".server-section-label",
+            ".source-section-label",
         ] {
             assert_eq!(
                 selector_color(APP_STYLE, selector),

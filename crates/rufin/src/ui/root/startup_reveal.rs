@@ -121,14 +121,14 @@ pub(in crate::ui) fn install_startup_main_loop_stall_monitor(shell: &Rc<Shell>) 
 }
 
 pub(in crate::ui) fn take_pending_warm(
-    pending: &mut Option<(ServerId, u64)>,
-    server_id: &ServerId,
+    pending: &mut Option<(SourceId, u64)>,
+    source_id: &SourceId,
     token: u64,
 ) -> bool {
     if pending
         .as_ref()
-        .is_some_and(|(pending_server_id, pending_token)| {
-            pending_server_id == server_id && *pending_token == token
+        .is_some_and(|(pending_source_id, pending_token)| {
+            pending_source_id == source_id && *pending_token == token
         })
     {
         pending.take();
@@ -363,11 +363,11 @@ impl Shell {
         });
     }
     pub(in crate::ui) fn queue_settled_warm(self: &Rc<Self>) {
-        let Some(server_id) = self
+        let Some(source_id) = self
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
             .map(|server| server.id.clone())
         else {
@@ -378,7 +378,7 @@ impl Shell {
             .cover_warm_pending
             .borrow()
             .as_ref()
-            .is_some_and(|(pending_server_id, _)| pending_server_id == &server_id)
+            .is_some_and(|(pending_source_id, _)| pending_source_id == &source_id)
         {
             return;
         }
@@ -387,32 +387,32 @@ impl Shell {
             .cover_warm_started
             .borrow()
             .as_ref()
-            .is_some_and(|started_server_id| started_server_id == &server_id)
+            .is_some_and(|started_source_id| started_source_id == &source_id)
         {
             return;
         }
 
         let token = self.state.cover_warm_token.get().saturating_add(1);
         self.state.cover_warm_token.set(token);
-        *self.state.cover_warm_pending.borrow_mut() = Some((server_id.clone(), token));
+        *self.state.cover_warm_pending.borrow_mut() = Some((source_id.clone(), token));
 
         let shell = Rc::clone(self);
         glib::timeout_add_local_once(Duration::from_millis(cover_warm_delay()), move || {
             if !take_pending_warm(
                 &mut shell.state.cover_warm_pending.borrow_mut(),
-                &server_id,
+                &source_id,
                 token,
             ) {
                 return;
             }
-            let active_server_id = shell
+            let active_source_id = shell
                 .state
                 .library
                 .borrow()
-                .server
+                .source
                 .as_ref()
                 .map(|server| server.id.clone());
-            if active_server_id.as_ref() != Some(&server_id)
+            if active_source_id.as_ref() != Some(&source_id)
                 || !shell.state.startup_route_revealed.get()
                 || shell.state.startup_route_render_pending.get()
             {
@@ -436,14 +436,14 @@ impl Shell {
             } else {
                 None
             };
-            let active_server_id = shell
+            let active_source_id = shell
                 .state
                 .library
                 .borrow()
-                .server
+                .source
                 .as_ref()
                 .map(|server| server.id.clone());
-            if active_server_id.as_ref() != Some(&server_id) {
+            if active_source_id.as_ref() != Some(&source_id) {
                 return;
             }
             if let Some(smart_playlists) = smart_playlists.as_ref() {
@@ -457,7 +457,7 @@ impl Shell {
                 &shell.state.settings.borrow(),
                 shell.source_route_initial_cover_metrics(),
             );
-            *shell.state.cover_warm_started.borrow_mut() = Some(server_id.clone());
+            *shell.state.cover_warm_started.borrow_mut() = Some(source_id.clone());
             if target_count > 0 {
                 debug!(
                     targets = target_count,
