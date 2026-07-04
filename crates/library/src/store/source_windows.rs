@@ -4,28 +4,6 @@ use rusqlite::{OptionalExtension, Row, params_from_iter, types::Value};
 use super::servers::{collect_rows, like_pattern, track_from_row_at, u32_from_i64};
 use super::*;
 
-const PLAYLIST_SOURCE_COLUMNS: &str = "
-    pt.entry_id AS entry_id,
-    t.track_id AS track_id,
-    t.album_id AS album_id,
-    t.title AS title,
-    t.artist AS artist,
-    t.artist_id AS artist_id,
-    t.album AS album,
-    t.year AS year,
-    t.release_date AS release_date,
-    t.date_added AS date_added,
-    t.last_played AS last_played,
-    t.play_count AS play_count,
-    t.user_rating AS user_rating,
-    t.duration_seconds AS duration_seconds,
-    t.favorite AS favorite,
-    t.disc_number AS disc_number,
-    t.track_number AS track_number,
-    t.image_item_id AS image_item_id,
-    t.image_tag AS image_tag
-";
-
 const PLAYLIST_SOURCE_OUTPUT_COLUMNS: &str = "
     entry_id,
     track_id,
@@ -183,7 +161,7 @@ impl Store {
             ORDER BY source_index
             ",
             source_query.order_by,
-            PLAYLIST_SOURCE_COLUMNS,
+            playlist_source_columns(),
             playlist_query_filter(source_query.query_pattern.is_some()),
             PLAYLIST_SOURCE_OUTPUT_COLUMNS
         );
@@ -205,6 +183,33 @@ impl Store {
             items,
         })
     }
+}
+
+fn playlist_source_columns() -> String {
+    format!(
+        "
+    pt.entry_id AS entry_id,
+    t.track_id AS track_id,
+    t.album_id AS album_id,
+    t.title AS title,
+    t.artist AS artist,
+    t.artist_id AS artist_id,
+    t.album AS album,
+    t.year AS year,
+    t.release_date AS release_date,
+    t.date_added AS date_added,
+    t.last_played AS last_played,
+    t.play_count AS play_count,
+    t.user_rating AS user_rating,
+    t.duration_seconds AS duration_seconds,
+    {} AS favorite,
+    t.disc_number AS disc_number,
+    t.track_number AS track_number,
+    t.image_item_id AS image_item_id,
+    t.image_tag AS image_tag
+",
+        effective_track_favorite_sql("t")
+    )
 }
 
 fn playlist_source_query(source: &PlaySourceKey) -> StoreResult<PlaylistSourceQuery<'_>> {

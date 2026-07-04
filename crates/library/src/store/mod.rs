@@ -73,6 +73,32 @@ fn favorite_item_kind_to_table(kind: &str) -> StoreResult<(&'static str, &'stati
     }
 }
 
+pub(super) fn effective_album_favorite_sql(alias: &str) -> String {
+    effective_item_favorite_sql(alias, "album", "album_id")
+}
+
+pub(super) fn effective_track_favorite_sql(alias: &str) -> String {
+    effective_item_favorite_sql(alias, "track", "track_id")
+}
+
+pub(super) fn effective_artist_favorite_sql(alias: &str, album_artist: bool) -> String {
+    let kind = if album_artist {
+        "album_artist"
+    } else {
+        "artist"
+    };
+    effective_item_favorite_sql(alias, kind, "artist_id")
+}
+
+fn effective_item_favorite_sql(alias: &str, kind: &str, id_column: &str) -> String {
+    format!(
+        "COALESCE((SELECT o.favorite FROM item_favorite_overrides o \
+         WHERE o.server_id = {alias}.server_id \
+           AND o.item_kind = '{kind}' \
+           AND o.item_id = {alias}.{id_column}), {alias}.favorite)"
+    )
+}
+
 const STORE_OWNED_PLAYLIST_SYNC_GENERATION: i64 = -1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

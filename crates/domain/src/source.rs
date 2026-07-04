@@ -58,12 +58,66 @@ impl SourceFeatureSupport {
 /// after a playlist exists, edits follow that playlist's owner, either by source
 /// API or store edits.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SourcePlaylistOperationSupport {
+    pub native: bool,
+    pub store: bool,
+}
+
+impl SourcePlaylistOperationSupport {
+    pub const fn supported_for_owner(self, owner: SourceFeatureOwner) -> bool {
+        match owner {
+            SourceFeatureOwner::Native => self.native,
+            SourceFeatureOwner::Store => self.store,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum SourcePlaylistOperation {
+    Rename,
+    Delete,
+    AddTracks,
+    RemoveEntries,
+    ReorderEntries,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourcePlaylistCapabilities {
     pub read_native: bool,
     pub read_store: bool,
+    /// owner Rufin uses for the single create-playlist action.
+    ///
+    /// edits to existing playlists use the per-row operation fields below,
+    /// because native and store-owned playlists can coexist for one source.
     pub create: SourceFeatureSupport,
-    pub mutate_native: bool,
-    pub mutate_store: bool,
+    pub rename: SourcePlaylistOperationSupport,
+    pub delete: SourcePlaylistOperationSupport,
+    pub add_tracks: SourcePlaylistOperationSupport,
+    pub remove_entries: SourcePlaylistOperationSupport,
+    pub reorder_entries: SourcePlaylistOperationSupport,
+}
+
+impl SourcePlaylistCapabilities {
+    pub const fn operation_support(
+        self,
+        operation: SourcePlaylistOperation,
+    ) -> SourcePlaylistOperationSupport {
+        match operation {
+            SourcePlaylistOperation::Rename => self.rename,
+            SourcePlaylistOperation::Delete => self.delete,
+            SourcePlaylistOperation::AddTracks => self.add_tracks,
+            SourcePlaylistOperation::RemoveEntries => self.remove_entries,
+            SourcePlaylistOperation::ReorderEntries => self.reorder_entries,
+        }
+    }
+
+    pub const fn operation_supported_for_owner(
+        self,
+        operation: SourcePlaylistOperation,
+        owner: SourceFeatureOwner,
+    ) -> bool {
+        self.operation_support(operation).supported_for_owner(owner)
+    }
 }
 
 /// contract for what configured sources can do.
@@ -156,7 +210,7 @@ impl<T> PagedResponse<T> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum FavoriteItemId {
     Album(AlbumId),
     Track(TrackId),

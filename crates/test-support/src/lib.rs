@@ -475,6 +475,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
         .map(|(index, name)| Playlist {
             id: PlaylistId::fake(index + 1),
             name: (*name).to_string(),
+            owner: None,
             track_count: 25 + index as u32,
             duration_seconds: 4_500 + index as u32 * 300,
             top_genres: Vec::new(),

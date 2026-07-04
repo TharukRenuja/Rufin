@@ -1750,6 +1750,7 @@ pub(in crate::ui) fn test_playlist(name: &str, image_ref: ImageRef) -> Playlist 
     Playlist {
         id: PlaylistId::fake(1),
         name: name.to_string(),
+        owner: None,
         track_count: 1,
         duration_seconds: 180,
         top_genres: Vec::new(),

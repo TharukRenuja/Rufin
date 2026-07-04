@@ -183,11 +183,11 @@ impl Store {
         genre_name: &str,
         limit: usize,
     ) -> StoreResult<Vec<Track>> {
-        let mut statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
-                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag,
                    t.local_path, t.source_format
             FROM track_genres tg
@@ -198,7 +198,9 @@ impl Store {
                      t.title COLLATE NOCASE
             LIMIT ?3
             ",
-        )?;
+            favorite = effective_track_favorite_sql("t"),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(statement.query_map(
             params![server_id.as_str(), genre_name, limit as i64],
             track_from_row,
@@ -315,7 +317,7 @@ impl Store {
         let mut statement = self.connection.prepare(
             "
             SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                   image_item_id, image_tag
+                   owner, image_item_id, image_tag
             FROM playlists
             WHERE server_id = ?1
             ORDER BY name COLLATE NOCASE
@@ -531,7 +533,7 @@ impl Store {
             .query_row(
                 "
                 SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                       image_item_id, image_tag
+                       owner, image_item_id, image_tag
                 FROM playlists
                 WHERE server_id = ?1 AND playlist_id = ?2
                 ",
@@ -542,12 +544,12 @@ impl Store {
         let Some(mut playlist) = playlist else {
             return Ok(None);
         };
-        let mut statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT pt.entry_id,
                    t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
-                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag
             FROM playlist_tracks pt
             JOIN tracks t
@@ -555,7 +557,9 @@ impl Store {
             WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
             ORDER BY pt.position
             ",
-        )?;
+            favorite = effective_track_favorite_sql("t"),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut entries = collect_rows(statement.query_map(
             params![server_id.as_str(), playlist_id.as_str()],
             playlist_entry_from_row,
@@ -604,11 +608,11 @@ impl Store {
         let Some(mut genre) = genre else {
             return Ok(None);
         };
-        let mut albums_statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
                    a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
                    a.image_item_id, a.image_tag
             FROM albums a
             WHERE a.server_id = ?1
@@ -632,17 +636,19 @@ impl Store {
               )
             ORDER BY a.title COLLATE NOCASE
             ",
-        )?;
+            favorite = effective_album_favorite_sql("a"),
+        );
+        let mut albums_statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(albums_statement.query_map(
             params![server_id.as_str(), genre.name.as_str()],
             album_from_row,
         )?)?;
         self.attach_album_metadata(server_id, &mut albums)?;
-        let mut tracks_statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
-                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag
             FROM track_genres tg
             JOIN tracks t
@@ -651,7 +657,9 @@ impl Store {
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
                      t.title COLLATE NOCASE
             ",
-        )?;
+            favorite = effective_track_favorite_sql("t"),
+        );
+        let mut tracks_statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(tracks_statement.query_map(
             params![server_id.as_str(), genre.name.as_str()],
             track_from_row,
@@ -705,11 +713,11 @@ impl Store {
         let Some(mut mood) = mood else {
             return Ok(None);
         };
-        let mut albums_statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
                    a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
                    a.image_item_id, a.image_tag
             FROM albums a
             JOIN tracks t
@@ -720,17 +728,19 @@ impl Store {
               AND tm.mood_name = ?2
             ORDER BY a.title COLLATE NOCASE
             ",
-        )?;
+            favorite = effective_album_favorite_sql("a"),
+        );
+        let mut albums_statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(albums_statement.query_map(
             params![server_id.as_str(), mood.name.as_str()],
             album_from_row,
         )?)?;
         self.attach_album_metadata(server_id, &mut albums)?;
-        let mut tracks_statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
-                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag
             FROM track_moods tm
             JOIN tracks t
@@ -739,7 +749,9 @@ impl Store {
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
                      t.title COLLATE NOCASE
             ",
-        )?;
+            favorite = effective_track_favorite_sql("t"),
+        );
+        let mut tracks_statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(tracks_statement.query_map(
             params![server_id.as_str(), mood.name.as_str()],
             track_from_row,
@@ -800,39 +812,45 @@ impl Store {
     pub fn load_favorite_tracks(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
                 WHERE t.server_id = ?1
-                  AND t.favorite = 1
+                  AND {favorite} = 1
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
                       WHERE tmf.server_id = t.server_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?2
-                  )
+                )
                 ORDER BY t.title COLLATE NOCASE
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![server_id.as_str(), folder_id.as_str()],
                 track_from_row,
             )?)?
         } else {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
-                SELECT track_id, album_id, title, artist, artist_id, album, year,
-                       release_date, date_added, last_played, play_count, user_rating,
-                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-                FROM tracks
-                WHERE server_id = ?1 AND favorite = 1
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
+                       t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1 AND {favorite} = 1
                 ORDER BY title COLLATE NOCASE
                 ",
-            )?;
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?
         };
         self.attach_track_metadata(server_id, &mut tracks)?;
@@ -1023,35 +1041,6 @@ impl Store {
             ),
             params![server_id.as_str(), item_id, bool_to_i64(favorite)],
         )?;
-        Ok(())
-    }
-    pub fn materialize_favorite_overrides(&self, server_id: &ServerId) -> StoreResult<()> {
-        for kind in ["album", "track", "artist", "album_artist"] {
-            let (table, id_column) = favorite_item_kind_to_table(kind)?;
-            self.connection.execute(
-                &format!(
-                    "
-                    UPDATE {table}
-                    SET favorite = (
-                        SELECT o.favorite
-                        FROM item_favorite_overrides o
-                        WHERE o.server_id = {table}.server_id
-                          AND o.item_kind = ?2
-                          AND o.item_id = {table}.{id_column}
-                    )
-                    WHERE server_id = ?1
-                      AND EXISTS (
-                          SELECT 1
-                          FROM item_favorite_overrides o
-                          WHERE o.server_id = {table}.server_id
-                            AND o.item_kind = ?2
-                            AND o.item_id = {table}.{id_column}
-                      )
-                    "
-                ),
-                params![server_id.as_str(), kind],
-            )?;
-        }
         Ok(())
     }
     pub fn rename_playlist(
@@ -1878,11 +1867,11 @@ impl Store {
     ) -> StoreResult<PagedResponse<Album>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
         let folder_id = selected_folder.as_ref().map(|folder_id| folder_id.as_str());
-        let mut statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
                    a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
                    a.image_item_id, a.image_tag
             FROM library_fts f
             JOIN albums a
@@ -1904,7 +1893,9 @@ impl Store {
             ORDER BY bm25(library_fts)
             LIMIT ?3 OFFSET ?4
             ",
-        )?;
+            favorite = effective_album_favorite_sql("a"),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(statement.query_map(
             params![
                 server_id.as_str(),
@@ -1959,11 +1950,11 @@ impl Store {
             params![server_id.as_str(), pattern, folder_id],
             |row| row.get::<_, i64>(0),
         )?;
-        let mut statement = self.connection.prepare(
+        let sql = format!(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
                    a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
                    a.image_item_id, a.image_tag
             FROM albums a
             WHERE a.server_id = ?1
@@ -1993,7 +1984,9 @@ impl Store {
             ORDER BY a.title COLLATE NOCASE
             LIMIT ?3 OFFSET ?4
             ",
-        )?;
+            favorite = effective_album_favorite_sql("a"),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(statement.query_map(
             params![
                 server_id.as_str(),

@@ -23,15 +23,33 @@ impl Shell {
         let key = favorite_control_key(item_id);
         update_favorite_controls(&self.state.favorite_controls, &key, favorite);
     }
+    pub(in crate::ui) fn restore_failed_favorite_change(
+        &self,
+        item_id: &FavoriteItemId,
+        favorite: bool,
+    ) {
+        if !self.favorite_response_matches_pending(item_id, !favorite) {
+            return;
+        }
+        self.update_visible_favorite_buttons(item_id, favorite);
+        if let FavoriteItemId::Track(track_id) = item_id
+            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
+            && current.track_id == *track_id
+        {
+            current.favorite = favorite;
+            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+        }
+    }
     pub(in crate::ui) fn set_favorite_with_feedback(
         self: &Rc<Self>,
         item_id: FavoriteItemId,
         favorite: bool,
         button: Option<&gtk::Button>,
     ) {
-        if !self.favorite_mutation_supported() {
-            return;
-        }
+        self.state
+            .pending_favorite_intents
+            .borrow_mut()
+            .insert(item_id.clone(), favorite);
         if let Some(button) = button {
             set_favorite_button_active(button, favorite);
         }
@@ -67,6 +85,9 @@ impl Shell {
         favorite: bool,
         snapshot: LibrarySnapshot,
     ) {
+        if !self.favorite_response_matches_pending(&item_id, favorite) {
+            return;
+        }
         let route = self.state.routes.borrow().current().clone();
         {
             let mut library = self.state.library.borrow_mut();
@@ -93,25 +114,16 @@ impl Shell {
             self.render_current_route_preserving_scroll();
         }
     }
-    pub(in crate::ui) fn apply_favorite_change_failed(
-        self: &Rc<Self>,
-        item_id: FavoriteItemId,
-        attempted_favorite: bool,
-        error: String,
-    ) {
-        let favorite = !attempted_favorite;
-        if let FavoriteItemId::Track(track_id) = &item_id
-            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
-            && current.track_id == *track_id
-        {
-            current.favorite = favorite;
-            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+
+    fn favorite_response_matches_pending(&self, item_id: &FavoriteItemId, favorite: bool) -> bool {
+        let mut pending = self.state.pending_favorite_intents.borrow_mut();
+        match pending.get(item_id).copied() {
+            Some(intent) if intent == favorite => {
+                pending.remove(item_id);
+                true
+            }
+            Some(_) => false,
+            None => true,
         }
-        self.update_visible_favorite_buttons(&item_id, favorite);
-        if matches!(item_id, FavoriteItemId::Track(_)) {
-            self.invalidate_queue_panel_render_state();
-            self.render_queue_panel();
-        }
-        self.show_preferences_toast(&error);
     }
 }

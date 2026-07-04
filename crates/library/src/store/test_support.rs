@@ -1,7 +1,8 @@
 pub(super) use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, LyricLine, Lyrics, LyricsSource, MusicFolder, MusicFolderId, Playlist,
-    PlaylistEntry, PlaylistId, QueueEngine, ServerId, ServerIdentity, Track, TrackId,
+    PlaylistEntry, PlaylistId, QueueEngine, ServerId, ServerIdentity, SourceFeatureOwner, Track,
+    TrackId,
 };
 
 pub(super) use super::{
@@ -152,6 +153,7 @@ pub(super) fn playlist(number: u32, image_ref: Option<ImageRef>) -> Playlist {
     Playlist {
         id: PlaylistId::fake(number),
         name: format!("Playlist {number}"),
+        owner: Some(SourceFeatureOwner::Native),
         track_count: 2,
         duration_seconds: 360,
         top_genres: Vec::new(),

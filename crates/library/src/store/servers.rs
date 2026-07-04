@@ -794,14 +794,19 @@ pub(super) fn mood_from_row(row: &Row<'_>) -> rusqlite::Result<Mood> {
     })
 }
 pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
+    let owner = row.get::<_, String>(5)?;
+    let owner = playlist_owner_from_str(&owner).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     Ok(Playlist {
         id: PlaylistId::new(row.get::<_, String>(0)?),
         name: row.get(1)?,
+        owner: Some(owner),
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
         top_genres: string_vec_from_json(row.get(4)?, 4)?,
         image_refs: Vec::new(),
-        image_ref: image_ref_from_row(row, 5, 6)?,
+        image_ref: image_ref_from_row(row, 6, 7)?,
     })
 }
 pub(super) fn stable_seed(value: &str) -> u32 {

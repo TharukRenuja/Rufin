@@ -2006,7 +2006,7 @@ impl Store {
             .query_row(
                 "
                 SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                       image_item_id, image_tag
+                       owner, image_item_id, image_tag
                 FROM playlists
                 WHERE server_id = ?1 AND playlist_id = ?2
                 ",

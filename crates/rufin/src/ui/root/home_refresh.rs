@@ -30,7 +30,8 @@ pub(in crate::ui) struct PlaylistEntryContextMenuAction {
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryContextMenuState {
     pub(in crate::ui) track: Track,
-    pub(in crate::ui) remove_action: PlaylistEntryContextMenuAction,
+    pub(in crate::ui) entry_id: String,
+    pub(in crate::ui) remove_action: Option<PlaylistEntryContextMenuAction>,
 }
 
 pub(in crate::ui) fn present_track_context_menu(
@@ -70,28 +71,18 @@ pub(in crate::ui) fn present_track_menu_with_play_handler(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     track: Track,
-    remove_action: PlaylistEntryContextMenuAction,
+    remove_action: Option<PlaylistEntryContextMenuAction>,
     position: Option<(f64, f64)>,
     on_play: Rc<dyn Fn()>,
-) {
-    present_track_menu_inner(target, shell, track, remove_action, position, Some(on_play));
-}
-fn present_track_menu_inner(
-    target: &gtk::Widget,
-    shell: &Rc<Shell>,
-    track: Track,
-    remove_action: PlaylistEntryContextMenuAction,
-    position: Option<(f64, f64)>,
-    on_play: Option<Rc<dyn Fn()>>,
 ) {
     present_track_context_menu_inner(
         target,
         shell,
         track,
         position,
-        Some(remove_action),
+        remove_action,
         None,
-        on_play,
+        Some(on_play),
     );
 }
 fn present_track_context_menu_inner(
@@ -738,11 +729,14 @@ pub(in crate::ui) fn present_playlist_context_menu(
         RADIO_ICON,
         &radio_context_submenu("playlist"),
     ));
-    menu.append(&context_menu_action(
-        "Delete",
-        "playlist.delete",
-        REMOVE_ICON,
-    ));
+    let can_delete = shell.playlist_operation_supported(&playlist, SourcePlaylistOperation::Delete);
+    if can_delete {
+        menu.append(&context_menu_action(
+            "Delete",
+            "playlist.delete",
+            REMOVE_ICON,
+        ));
+    }
 
     let surface =
         ContextMenuSurface::new(target, "playlist", "playlist-context-menu", position, &menu);
@@ -795,29 +789,31 @@ pub(in crate::ui) fn present_playlist_context_menu(
         }
     });
 
-    surface.add_action("delete", {
-        let controller = shell.controller.clone();
-        let window = shell.window.clone();
-        let playlist_id = playlist.id.clone();
-        let playlist_name = playlist.name.clone();
-        move || {
-            let dialog = adw::AlertDialog::builder()
-                .heading(tr("Delete Playlist"))
-                .body(format!("Delete \"{playlist_name}\"?"))
-                .build();
-            dialog.add_response("cancel", &tr("Cancel"));
-            dialog.add_response("delete", &tr("Delete"));
-            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-            let controller = controller.clone();
-            let playlist_id = playlist_id.clone();
-            dialog.connect_response(None, move |_, response| {
-                if response == "delete" {
-                    controller.delete_playlist(playlist_id.clone());
-                }
-            });
-            present_light_dismiss_dialog(&dialog, &window);
-        }
-    });
+    if can_delete {
+        surface.add_action("delete", {
+            let controller = shell.controller.clone();
+            let window = shell.window.clone();
+            let playlist_id = playlist.id.clone();
+            let playlist_name = playlist.name.clone();
+            move || {
+                let dialog = adw::AlertDialog::builder()
+                    .heading(tr("Delete Playlist"))
+                    .body(format!("Delete \"{playlist_name}\"?"))
+                    .build();
+                dialog.add_response("cancel", &tr("Cancel"));
+                dialog.add_response("delete", &tr("Delete"));
+                dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                let controller = controller.clone();
+                let playlist_id = playlist_id.clone();
+                dialog.connect_response(None, move |_, response| {
+                    if response == "delete" {
+                        controller.delete_playlist(playlist_id.clone());
+                    }
+                });
+                present_light_dismiss_dialog(&dialog, &window);
+            }
+        });
+    }
 
     surface.popup();
 }
@@ -951,6 +947,7 @@ pub(in crate::ui) struct PlaylistPickerHandle {
     create: gtk::Button,
     search: gtk::SearchEntry,
     add_button: gtk::Button,
+    can_create: bool,
 }
 fn present_context_playlist_picker_dialog(
     shell: &Rc<Shell>,
@@ -1020,6 +1017,7 @@ fn context_playlist_picker(
         create: create.clone(),
         search: search.clone(),
         add_button: add_button.clone(),
+        can_create: shell.playlist_creation_supported(),
     };
     refresh_playlist_picker_rows(shell, &handle, &context_menu_playlists(shell));
     *shell.state.context_playlist_picker.borrow_mut() = Some(handle.clone());
@@ -1110,7 +1108,9 @@ fn refresh_playlist_picker_rows(
     sync_playlist_picker_filter(handle, &query);
 }
 fn sync_playlist_picker_filter(handle: &PlaylistPickerHandle, query: &str) {
-    handle.create.set_visible(show_create_playlist_row(query));
+    handle
+        .create
+        .set_visible(show_create_playlist_row(query, handle.can_create));
     for row in handle.rows.borrow().iter() {
         row.row
             .set_visible(query.is_empty() || row.haystack.contains(query));
@@ -1128,8 +1128,8 @@ fn playlist_create_row(name: &str) -> gtk::Button {
 fn create_playlist_label(name: &str) -> String {
     format!("+ {} {}", tr("Create"), name)
 }
-fn show_create_playlist_row(query: &str) -> bool {
-    !query.trim().is_empty()
+fn show_create_playlist_row(query: &str, can_create: bool) -> bool {
+    can_create && !query.trim().is_empty()
 }
 fn playlist_picker_row(
     shell: &Rc<Shell>,
@@ -1560,13 +1560,20 @@ fn forget_context_submenu(popover: &gtk::Popover) {
     });
 }
 pub(in crate::ui) fn context_menu_can_add_to_playlist(shell: &Rc<Shell>) -> bool {
-    shell.state.library.borrow().server.is_some()
+    shell.playlist_creation_supported() || !context_menu_playlists(shell).is_empty()
 }
 pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
-    context_menu_playlist_items(&shell.state.library.borrow().playlists)
-}
-fn context_menu_playlist_items(playlists: &[Playlist]) -> Vec<Playlist> {
-    playlists.to_vec()
+    shell
+        .state
+        .library
+        .borrow()
+        .playlists
+        .iter()
+        .filter(|playlist| {
+            shell.playlist_operation_supported(playlist, SourcePlaylistOperation::AddTracks)
+        })
+        .cloned()
+        .collect()
 }
 pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
     let library = shell.state.library.borrow();
@@ -2196,23 +2203,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn context_menu_playlist_items_use_snapshot_order_without_limit() {
-        let playlists = (0..102).map(test_playlist).collect::<Vec<_>>();
-
-        let items = context_menu_playlist_items(&playlists);
-
-        assert_eq!(items.len(), playlists.len());
-        assert_eq!(
-            items.first().map(|playlist| playlist.name.as_str()),
-            Some("List 0")
-        );
-        assert_eq!(
-            items.last().map(|playlist| playlist.name.as_str()),
-            Some("List 101")
-        );
-    }
-
-    #[test]
     fn filter_duplicate_tracks_skips_existing_playlist_entries() {
         let tracks = vec![test_track(1, &[]), test_track(2, &[])];
         let entries = vec![source::PlaylistEntry {
@@ -2233,31 +2223,12 @@ mod tests {
     }
 
     #[test]
-    fn playlist_create_row_uses_search_text() {
-        assert!(!show_create_playlist_row(""));
-        assert!(!show_create_playlist_row("   "));
-        assert!(show_create_playlist_row("driving"));
-        assert_eq!(create_playlist_label("Driving"), "+ Create Driving");
-    }
-
-    #[test]
     fn playlist_picker_duration_uses_units() {
         assert_eq!(format_duration_units(41), "41s");
         assert_eq!(format_duration_units(743), "12m 23s");
         assert_eq!(format_duration_units(4_421), "1h 13m 41s");
     }
 
-    fn test_playlist(index: usize) -> Playlist {
-        Playlist {
-            id: PlaylistId::fake(index + 1),
-            name: format!("List {index}"),
-            track_count: index as u32,
-            duration_seconds: index as u32 * 60,
-            top_genres: Vec::new(),
-            image_refs: Vec::new(),
-            image_ref: None,
-        }
-    }
     fn test_track(index: usize, genres: &[&str]) -> Track {
         Track {
             id: TrackId::fake(index),

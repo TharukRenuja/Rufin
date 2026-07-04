@@ -812,6 +812,31 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
+fn current_schema_migrate_is_read_only() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "current-migrate-read-only"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    {
+        let store = Store::open(&path).expect("open file store");
+        assert_eq!(store.schema_version().expect("schema version"), 22);
+    }
+
+    let store = Store::open_file(&path).expect("open current store");
+    store
+        .connection
+        .pragma_update(None, "query_only", true)
+        .expect("enable query-only mode");
+    store.migrate().expect("migrate current store");
+    assert_eq!(store.schema_version().expect("schema version"), 22);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+#[test]
 fn schema_trip_server() {
     let store = Store::open_memory().expect("open store");
     let server_id = ServerId::fake(1);
@@ -2656,7 +2681,8 @@ fn schema_stale_sync() {
 fn schema_store_playlist_survives_native_sync_prune() {
     let case = StoreCase::open();
     let native = playlist(1, None);
-    let store_owned = playlist(2, None);
+    let mut store_owned = playlist(2, None);
+    store_owned.owner = Some(SourceFeatureOwner::Store);
 
     let first_generation = case.start_sync("begin sync");
     case.upsert_playlists(&case.id, std::slice::from_ref(&native), first_generation)
@@ -2729,6 +2755,80 @@ fn schema_store_playlist_rehydrates_entries_for_returning_tracks() {
     case.upsert_tracks(&case.id, &[first.clone(), second.clone()], third_generation)
         .expect("reload tracks");
     case.finish_sync(third_generation, "complete reload sync");
+
+    let reloaded = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load reloaded playlist")
+        .expect("playlist");
+    assert_eq!(reloaded.entries.len(), 2);
+    assert_eq!(reloaded.entries[0].track.id, first.id);
+    assert_eq!(reloaded.entries[1].track.id, second.id);
+    assert_eq!(reloaded.playlist.track_count, 2);
+}
+
+#[test]
+fn schema_local_delta_preserves_store_playlist_membership_for_returning_tracks() {
+    let case = StoreCase::open();
+    let album = album(1);
+    let first = track(1, &album);
+    let second = track(2, &album);
+    let store_owned = playlist(1, None);
+    let entries = schema_track_test(&store_owned.id, &[first.clone(), second.clone()]);
+    let first_generation = case.start_sync("begin sync");
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], first_generation)
+        .expect("upsert tracks");
+    case.finish_sync(first_generation, "complete first sync");
+    case.upsert_playlists_with_mode(
+        &case.id,
+        std::slice::from_ref(&store_owned),
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist");
+    case.upsert_playlist_entries_with_mode(
+        &case.id,
+        &store_owned.id,
+        &entries,
+        PlaylistWriteMode::StoreOwned,
+    )
+    .expect("upsert store playlist entries");
+
+    let second_generation = case.start_sync("begin local delete sync");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        LocalLibraryDelta {
+            deleted_track_ids: vec![second.id.clone()],
+            current_track_ids: vec![first.id.clone()],
+            current_album_ids: vec![album.id.clone()],
+            dirty_albums: vec![album.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit local delete");
+
+    let detail = case
+        .load_playlist_detail(&case.id, &store_owned.id)
+        .expect("load playlist")
+        .expect("playlist");
+    assert_eq!(detail.entries.len(), 1);
+    assert_eq!(detail.entries[0].track.id, first.id);
+    assert_eq!(detail.playlist.track_count, 1);
+
+    let third_generation = case.start_sync("begin local return sync");
+    case.commit_local_library_delta(
+        &case.id,
+        third_generation,
+        LocalLibraryDelta {
+            changed_tracks: vec![second.clone()],
+            current_track_ids: vec![first.id.clone(), second.id.clone()],
+            current_album_ids: vec![album.id.clone()],
+            dirty_albums: vec![album.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit local return");
 
     let reloaded = case
         .load_playlist_detail(&case.id, &store_owned.id)

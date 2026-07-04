@@ -1101,6 +1101,7 @@ mod tests {
             playlist: Playlist {
                 id: PlaylistId::fake(1),
                 name: "Playlist".to_string(),
+                owner: None,
                 track_count: tracks.len() as u32,
                 duration_seconds: 360,
                 top_genres: Vec::new(),
@@ -1172,6 +1173,7 @@ mod tests {
         let playlist = Playlist {
             id: PlaylistId::fake(1),
             name: "Playlist".to_string(),
+            owner: None,
             track_count: 3,
             duration_seconds: 540,
             top_genres: Vec::new(),

@@ -312,6 +312,7 @@ pub(super) fn playlist_from_item(item: JellyfinItem) -> Playlist {
     Playlist {
         id: PlaylistId::new(jellyfin_id("playlist", &item.id)),
         name: item.name.unwrap_or_else(|| "Untitled Playlist".to_string()),
+        owner: None,
         track_count: u32_from_option(item.child_count),
         duration_seconds: duration_seconds(item.run_time_ticks),
         top_genres: Vec::new(),

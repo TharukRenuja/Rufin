@@ -51,6 +51,6 @@ pub use source::{
     LoginRequest, LyricLine, Lyrics, LyricsSource, PagedRequest, PagedResponse, PlaybackReport,
     PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, RandomTrackRequest,
     SavedSourceSession, SearchResults, SourceCapabilities, SourceFeatureOwner,
-    SourceFeatureSupport, SourcePlaylistCapabilities, SourceSession, StreamDescriptor,
-    StreamRequest,
+    SourceFeatureSupport, SourcePlaylistCapabilities, SourcePlaylistOperation,
+    SourcePlaylistOperationSupport, SourceSession, StreamDescriptor, StreamRequest,
 };

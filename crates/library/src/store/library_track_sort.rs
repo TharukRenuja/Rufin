@@ -24,7 +24,7 @@ pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: b
             "(SELECT tg.genre_name FROM track_genres tg WHERE tg.server_id = {alias}.server_id AND tg.track_id = {alias}.track_id ORDER BY tg.genre_name COLLATE NOCASE LIMIT 1) COLLATE NOCASE"
         ),
         LibraryField::Duration => format!("{alias}.duration_seconds"),
-        LibraryField::Favorite => format!("{alias}.favorite"),
+        LibraryField::Favorite => effective_track_favorite_sql(alias),
         LibraryField::RowIndex
         | LibraryField::Image
         | LibraryField::Title

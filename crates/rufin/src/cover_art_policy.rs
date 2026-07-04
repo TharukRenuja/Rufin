@@ -737,6 +737,7 @@ mod tests {
         Playlist {
             id: PlaylistId::fake(1),
             name: "Example Playlist".to_string(),
+            owner: None,
             track_count: 2,
             duration_seconds: 120,
             top_genres: Vec::new(),
