@@ -212,6 +212,8 @@ For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_
 
 - **Almost anything that doesn't collide with 3 points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
 
+- **Basic hardening for privacy and security:** See [SECURITY.md](SECURITY.md).
+
 # Contributing
 
 To contribute code, please see [CONTRIBUTING.md](CONTRIBUTING.md). 
