@@ -23,12 +23,17 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 22,
         run: migrate_to_source_identity_schema,
     },
+    SchemaMigration {
+        from_version: 23,
+        run: migrate_to_artist_relation_backfill_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
 const TRACK_MOOD_BPM_SCHEMA_VERSION: i64 = 20;
 const PLAYLIST_OWNER_SCHEMA_VERSION: i64 = 21;
 const FAVORITE_OVERRIDE_SCHEMA_VERSION: i64 = 22;
+const SOURCE_IDENTITY_SCHEMA_VERSION: i64 = 23;
 const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "sources",
@@ -432,6 +437,29 @@ fn migrate_to_source_identity_schema(store: &Store) -> StoreResult<()> {
     Ok(())
 }
 
+fn migrate_to_artist_relation_backfill_schema(store: &Store) -> StoreResult<()> {
+    let mut statement = store.connection.prepare(
+        "
+        SELECT s.source_id, COALESCE(st.generation, 0)
+        FROM sources s
+        LEFT JOIN sync_state st
+          ON st.source_id = s.source_id
+        ORDER BY s.source_id
+        ",
+    )?;
+    let sources = collect_rows(statement.query_map([], |row| {
+        Ok((
+            SourceId::new(row.get::<_, String>(0)?),
+            row.get::<_, i64>(1)?,
+        ))
+    })?)?;
+    drop(statement);
+    for (source_id, generation) in sources {
+        repair_linked_artists(&store.connection, &source_id, generation)?;
+    }
+    Ok(())
+}
+
 fn collapse_provider_provenance_duplicates(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
@@ -612,6 +640,9 @@ impl Store {
                 SUPPORTED_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], FAVORITE_OVERRIDE_SCHEMA_COLUMNS)?),
+            SOURCE_IDENTITY_SCHEMA_VERSION => Ok(self
+                .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
+                && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),

@@ -3,6 +3,50 @@ use domain::{
     MoodId, PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder,
 };
 
+fn track_artist_link_count(
+    store: &Store,
+    source_id: &SourceId,
+    track_id: &TrackId,
+    artist_id: &ArtistId,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM track_artist_links
+            WHERE source_id = ?1
+              AND track_id = ?2
+              AND artist_id = ?3
+            ",
+            rusqlite::params![source_id.as_str(), track_id.as_str(), artist_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("track artist link count")
+}
+
+fn album_artist_link_count(
+    store: &Store,
+    source_id: &SourceId,
+    album_id: &AlbumId,
+    artist_id: &ArtistId,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM album_artist_links
+            WHERE source_id = ?1
+              AND album_id = ?2
+              AND artist_id = ?3
+            ",
+            rusqlite::params![source_id.as_str(), album_id.as_str(), artist_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("album artist link count")
+}
+
 #[test]
 fn relation_keep_id() {
     let store = Store::open_memory().expect("open store");
@@ -1032,14 +1076,25 @@ fn nonprimary_appearance() {
             generation,
         )
         .expect("upsert artist");
+    store
+        .refresh_library_counts(&saved.source.id)
+        .expect("repair artist links");
+    assert_eq!(
+        track_artist_link_count(&store, &saved.source.id, &track.id, &artist.id),
+        1
+    );
     let detail = store
         .load_artist_detail(&saved.source.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
-    assert_eq!(detail.artist, artist);
+    assert_eq!(detail.artist.id, artist.id);
+    assert_eq!(detail.artist.name, artist.name);
+    assert_eq!(detail.artist.album_count, 1);
+    assert_eq!(detail.artist.track_count, 1);
     assert!(detail.albums.is_empty());
     assert_eq!(detail.appears_on, vec![album]);
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.tracks.len(), 1);
+    assert_eq!(detail.tracks[0].id, track.id);
 }
 #[test]
 fn relation_use_missing() {
@@ -1076,13 +1131,23 @@ fn relation_use_missing() {
             generation,
         )
         .expect("upsert artist");
+    store
+        .refresh_library_counts(&saved.source.id)
+        .expect("repair artist links");
+    assert_eq!(
+        album_artist_link_count(&store, &saved.source.id, &album.id, &artist.id),
+        1
+    );
     let detail = store
         .load_artist_detail(&saved.source.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
-    assert_eq!(detail.albums, vec![album]);
+    assert_eq!(detail.albums.len(), 1);
+    assert_eq!(detail.albums[0].id, album.id);
+    assert_eq!(detail.albums[0].album_artist_credits[0].id, artist.id);
     assert!(detail.appears_on.is_empty());
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.tracks.len(), 1);
+    assert_eq!(detail.tracks[0].id, track.id);
 }
 #[test]
 fn matched_track_appearance() {
@@ -1122,13 +1187,27 @@ fn matched_track_appearance() {
             generation,
         )
         .expect("upsert artist");
+    store
+        .refresh_library_counts(&saved.source.id)
+        .expect("repair artist links");
+    assert_eq!(
+        track_artist_link_count(&store, &saved.source.id, &track.id, &artist.id),
+        1
+    );
     let detail = store
         .load_artist_detail(&saved.source.id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
     assert!(detail.albums.is_empty());
     assert_eq!(detail.appears_on, vec![album]);
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.tracks.len(), 1);
+    assert_eq!(detail.tracks[0].id, track.id);
+    assert!(
+        detail.tracks[0]
+            .artist_credits
+            .iter()
+            .any(|credit| credit.id == artist.id)
+    );
 }
 #[test]
 fn track_artist_appearance() {

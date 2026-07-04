@@ -1341,10 +1341,6 @@ impl Store {
                     WHERE albums.source_id = album_artists.source_id
                       AND (
                           albums.artist_id = album_artists.artist_id
-                          OR (
-                              TRIM(album_artists.name) != ''
-                              AND LOWER(albums.artist) = LOWER(album_artists.name)
-                          )
                           OR EXISTS (
                               SELECT 1
                               FROM album_artist_links aal
@@ -1360,10 +1356,6 @@ impl Store {
                     WHERE albums.source_id = album_artists.source_id
                       AND (
                           albums.artist_id = album_artists.artist_id
-                          OR (
-                              TRIM(album_artists.name) != ''
-                              AND LOWER(albums.artist) = LOWER(album_artists.name)
-                          )
                           OR EXISTS (
                               SELECT 1
                               FROM album_artist_links aal

@@ -477,11 +477,6 @@ impl Store {
                 )
                 .optional()?,
         };
-        let artist_name_lower = artist
-            .as_ref()
-            .map(|artist| artist.name.trim())
-            .filter(|name| !name.is_empty())
-            .map(str::to_lowercase);
         let sql = format!(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year, a.release_date,
@@ -499,10 +494,6 @@ impl Store {
                         AND aal.album_id = a.album_id
                         AND aal.artist_id = ?2
                   )
-                  OR (
-                      ?3 IS NOT NULL
-                      AND LOWER(a.artist) = ?3
-                  )
               )
             ORDER BY a.year, a.title COLLATE NOCASE
             ",
@@ -510,11 +501,7 @@ impl Store {
         );
         let mut albums_statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(albums_statement.query_map(
-            params![
-                source_id.as_str(),
-                artist_id.as_str(),
-                artist_name_lower.as_deref()
-            ],
+            params![source_id.as_str(), artist_id.as_str()],
             album_from_row,
         )?)?;
         self.attach_album_metadata(source_id, &mut albums)?;
@@ -545,13 +532,6 @@ impl Store {
                         AND aal.album_id = t.album_id
                         AND aal.artist_id = ?2
                   )
-                  OR (
-                      ?3 IS NOT NULL
-                      AND (
-                          LOWER(t.artist) = ?3
-                          OR LOWER(a.artist) = ?3
-                      )
-                  )
               )
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
                      t.title COLLATE NOCASE
@@ -560,21 +540,11 @@ impl Store {
         );
         let mut tracks_statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(tracks_statement.query_map(
-            params![
-                source_id.as_str(),
-                artist_id.as_str(),
-                artist_name_lower.as_deref()
-            ],
+            params![source_id.as_str(), artist_id.as_str()],
             track_from_row,
         )?)?;
         self.attach_track_metadata(source_id, &mut tracks)?;
-        let appears_on = self.artist_appears_on_albums(
-            source_id,
-            artist_id,
-            artist_name_lower.as_deref(),
-            &albums,
-            &tracks,
-        )?;
+        let appears_on = self.artist_appears_on_albums(source_id, artist_id, &albums, &tracks)?;
         let artist = match artist {
             Some(artist) => artist,
             None if albums.is_empty() && tracks.is_empty() => return Ok(None),
@@ -591,7 +561,6 @@ impl Store {
         &self,
         source_id: &SourceId,
         artist_id: &ArtistId,
-        artist_name_lower: Option<&str>,
         albums: &[Album],
         tracks: &[Track],
     ) -> StoreResult<Vec<Album>> {
@@ -617,7 +586,7 @@ impl Store {
         }
         for track in tracks
             .iter()
-            .filter(|track| track_matches_artist(track, artist_id, artist_name_lower))
+            .filter(|track| track_matches_artist(track, artist_id))
         {
             if albums.iter().any(|album| album.id == track.album_id)
                 || album_ids.contains(&track.album_id)

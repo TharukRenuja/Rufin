@@ -570,6 +570,19 @@ pub(super) fn canonical_album_for_write(
     album: &Album,
 ) -> StoreResult<Album> {
     let mut album = canonical_album_for_delta(connection, source_id, album)?;
+    if !album.artist.trim().is_empty()
+        && !album.album_artist_credits.iter().any(|credit| {
+            credit.name.trim().eq_ignore_ascii_case(album.artist.trim())
+                || album.artist_id.as_ref() == Some(&credit.id)
+        })
+        && let Some(artist_id) = unique_album_artist_for_name(connection, source_id, &album.artist)?
+    {
+        album.album_artist_credits.push(ArtistCredit {
+            id: artist_id,
+            name: album.artist.trim().to_string(),
+            musicbrainz_artist_id: None,
+        });
+    }
     for credit in &mut album.album_artist_credits {
         if let Some(entity_id) = album_artist_alias_target(connection, source_id, &credit.id)?
             && entity_id != credit.id
@@ -598,6 +611,37 @@ pub(super) fn canonical_album_for_write(
         album.artist_id = Some(entity_id);
     }
     Ok(album)
+}
+
+fn unique_album_artist_for_name(
+    connection: &Connection,
+    source_id: &SourceId,
+    name: &str,
+) -> StoreResult<Option<ArtistId>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT artist_id
+        FROM (
+            SELECT DISTINCT artist_id
+            FROM album_artists
+            WHERE source_id = ?1
+              AND LOWER(TRIM(name)) = LOWER(TRIM(?2))
+            UNION
+            SELECT DISTINCT artist_id
+            FROM artists
+            WHERE source_id = ?1
+              AND LOWER(TRIM(name)) = LOWER(TRIM(?2))
+        ) candidates
+        ORDER BY artist_id
+        LIMIT 2
+        ",
+    )?;
+    let ids = collect_rows(
+        statement.query_map(params![source_id.as_str(), name], |row| {
+            row.get::<_, String>(0).map(ArtistId::new)
+        })?,
+    )?;
+    Ok((ids.len() == 1).then(|| ids[0].clone()))
 }
 pub(super) fn artist_credits_or_scalar(
     credits: &[ArtistCredit],
@@ -696,11 +740,7 @@ pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track])
         musicbrainz_release_group_id: None,
     }
 }
-pub(super) fn track_matches_artist(
-    track: &Track,
-    artist_id: &ArtistId,
-    artist_name_lower: Option<&str>,
-) -> bool {
+pub(super) fn track_matches_artist(track: &Track, artist_id: &ArtistId) -> bool {
     if track.artist_id.as_ref() == Some(artist_id) {
         return true;
     }
@@ -711,11 +751,7 @@ pub(super) fn track_matches_artist(
     {
         return true;
     }
-
-    track.artist_id.is_none()
-        && artist_name_lower
-            .map(|artist_name| track.artist.to_lowercase() == artist_name)
-            .unwrap_or(false)
+    false
 }
 pub(super) fn artist_fallback_image_ref(
     albums: &[Album],
@@ -821,6 +857,7 @@ pub(super) fn repair_linked_artists(
 ) -> StoreResult<()> {
     let album_artist_aliases =
         normalize_compound_album_artist_links(connection, source_id, generation)?;
+    repair_artist_label_links(connection, source_id, generation)?;
     connection.execute(
         "
         INSERT INTO artists (
@@ -946,6 +983,115 @@ pub(super) fn repair_linked_artists(
     }
     refresh_artist_fts(connection, source_id, "artists", "artist")?;
     refresh_artist_fts(connection, source_id, "album_artists", "album_artist")?;
+    Ok(())
+}
+
+pub(super) fn repair_artist_label_links(
+    connection: &Connection,
+    source_id: &SourceId,
+    generation: i64,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        WITH artist_targets AS (
+            SELECT source_id,
+                   LOWER(TRIM(name)) AS name_key,
+                   MIN(artist_id) AS artist_id
+            FROM artists
+            WHERE source_id = ?1
+              AND TRIM(name) <> ''
+            GROUP BY source_id, LOWER(TRIM(name))
+            HAVING COUNT(DISTINCT artist_id) = 1
+        )
+        INSERT INTO track_artist_links (
+            source_id, track_id, album_id, artist_id, name, position, sync_generation
+        )
+        SELECT t.source_id,
+               t.track_id,
+               t.album_id,
+               target.artist_id,
+               TRIM(t.artist),
+               COALESCE((
+                   SELECT MAX(existing.position) + 1
+                   FROM track_artist_links existing
+                   WHERE existing.source_id = t.source_id
+                     AND existing.track_id = t.track_id
+               ), 0),
+               ?2
+        FROM tracks t
+        JOIN artist_targets target
+          ON target.source_id = t.source_id
+         AND target.name_key = LOWER(TRIM(t.artist))
+        WHERE t.source_id = ?1
+          AND TRIM(t.artist) <> ''
+          AND NOT EXISTS (
+              SELECT 1
+              FROM track_artist_links existing
+              WHERE existing.source_id = t.source_id
+                AND existing.track_id = t.track_id
+                AND existing.artist_id = target.artist_id
+          )
+        ON CONFLICT(source_id, track_id, artist_id) DO UPDATE SET
+            album_id = excluded.album_id,
+            name = excluded.name,
+            position = excluded.position,
+            sync_generation = excluded.sync_generation
+        ",
+        params![source_id.as_str(), generation],
+    )?;
+    connection.execute(
+        "
+        WITH album_artist_targets AS (
+            SELECT source_id,
+                   LOWER(TRIM(name)) AS name_key,
+                   MIN(artist_id) AS artist_id
+            FROM (
+                SELECT source_id, artist_id, name
+                FROM album_artists
+                WHERE source_id = ?1
+                UNION
+                SELECT source_id, artist_id, name
+                FROM artists
+                WHERE source_id = ?1
+            ) candidates
+            WHERE TRIM(name) <> ''
+            GROUP BY source_id, LOWER(TRIM(name))
+            HAVING COUNT(DISTINCT artist_id) = 1
+        )
+        INSERT INTO album_artist_links (
+            source_id, album_id, artist_id, name, position, sync_generation
+        )
+        SELECT a.source_id,
+               a.album_id,
+               target.artist_id,
+               TRIM(a.artist),
+               COALESCE((
+                   SELECT MAX(existing.position) + 1
+                   FROM album_artist_links existing
+                   WHERE existing.source_id = a.source_id
+                     AND existing.album_id = a.album_id
+               ), 0),
+               ?2
+        FROM albums a
+        JOIN album_artist_targets target
+          ON target.source_id = a.source_id
+         AND target.name_key = LOWER(TRIM(a.artist))
+        WHERE a.source_id = ?1
+          AND TRIM(a.artist) <> ''
+          AND NOT EXISTS (
+              SELECT 1
+              FROM album_artist_links existing
+              WHERE existing.source_id = a.source_id
+                AND existing.album_id = a.album_id
+                AND existing.artist_id = target.artist_id
+          )
+        ON CONFLICT(source_id, album_id, artist_id) DO UPDATE SET
+            name = excluded.name,
+            position = excluded.position,
+            sync_generation = excluded.sync_generation
+        ",
+        params![source_id.as_str(), generation],
+    )?;
     Ok(())
 }
 
