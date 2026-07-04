@@ -129,7 +129,7 @@ fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -511,7 +511,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -563,7 +563,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
@@ -589,7 +589,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -654,7 +654,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -774,7 +774,7 @@ fn schema_upgrade_collapses_provider_content_ref_duplicates() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     let rows = store
         .connection
         .query_row(
@@ -793,6 +793,103 @@ fn schema_upgrade_collapses_provider_content_ref_duplicates() {
         )
         .expect("content ref count");
     assert_eq!(rows, 1);
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn schema_upgrade_backfills_artist_label_links() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "artist-label-link-backfill"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = saved_source();
+    let mut album = album(4);
+    album.artist_id = None;
+    let mut track = track(1, &album);
+    track.artist = album.artist.clone();
+    track.artist_id = None;
+    let mut artist = artist(1, None);
+    artist.name = album.artist.clone();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        store
+            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.source.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+        store
+            .complete_sync(&saved.source.id, generation)
+            .expect("complete sync");
+        store
+            .connection
+            .execute_batch("PRAGMA user_version = 23;")
+            .expect("simulate previous schema");
+    }
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(store.schema_version().expect("schema version"), 24);
+    let track_link_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM track_artist_links
+            WHERE source_id = ?1
+              AND track_id = ?2
+              AND artist_id = ?3
+            ",
+            rusqlite::params![
+                saved.source.id.as_str(),
+                track.id.as_str(),
+                artist.id.as_str()
+            ],
+            |row| row.get(0),
+        )
+        .expect("track artist link count");
+    let album_link_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM album_artist_links
+            WHERE source_id = ?1
+              AND album_id = ?2
+              AND artist_id = ?3
+            ",
+            rusqlite::params![
+                saved.source.id.as_str(),
+                album.id.as_str(),
+                artist.id.as_str()
+            ],
+            |row| row.get(0),
+        )
+        .expect("album artist link count");
+    assert_eq!(track_link_count, 1);
+    assert_eq!(album_link_count, 1);
+    let detail = store
+        .load_artist_detail(&saved.source.id, &artist.id)
+        .expect("load artist detail")
+        .expect("artist detail");
+    assert_eq!(detail.albums.len(), 1);
+    assert_eq!(detail.albums[0].id, album.id);
+    assert_eq!(detail.tracks.len(), 1);
+    assert_eq!(detail.tracks[0].id, track.id);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -923,7 +1020,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     let local_override_count = store
         .connection
         .query_row(
@@ -976,7 +1073,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -999,12 +1096,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 24)
+        .pragma_update(None, "user_version", 25)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1039,11 +1136,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 23);
+        assert_eq!(store.schema_version().expect("schema version"), 24);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1059,7 +1156,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 23);
+        assert_eq!(store.schema_version().expect("schema version"), 24);
     }
 
     let store = Store::open_file(&path).expect("open current store");
@@ -1068,7 +1165,7 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 23);
+    assert_eq!(store.schema_version().expect("schema version"), 24);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));

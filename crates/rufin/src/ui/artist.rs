@@ -401,7 +401,6 @@ impl Shell {
                     .chain(library.album_artists.iter())
                     .find(|artist| artist.id.as_str() == artist_id.as_str())
                     .cloned()?;
-                let artist_name_lower = artist_name_lower(&artist.name);
                 let albums = library
                     .albums
                     .iter()
@@ -411,11 +410,6 @@ impl Shell {
                                 .album_artist_credits
                                 .iter()
                                 .any(|artist| artist.id.as_str() == artist_id.as_str())
-                            || (album.artist_id.is_none()
-                                && artist_name_lower
-                                    .as_deref()
-                                    .map(|name| album.artist.to_lowercase() == name)
-                                    .unwrap_or(false))
                     })
                     .cloned()
                     .collect::<Vec<_>>();
@@ -423,18 +417,13 @@ impl Shell {
                     .tracks
                     .iter()
                     .filter(|track| {
-                        track_matches_artist(track, artist_id, artist_name_lower.as_deref())
+                        track_matches_artist(track, artist_id)
                             || albums.iter().any(|album| album.id == track.album_id)
                     })
                     .cloned()
                     .collect::<Vec<_>>();
-                let appears_on = artist_appears_on_from_tracks(
-                    &library.albums,
-                    &albums,
-                    &tracks,
-                    artist_id,
-                    artist_name_lower.as_deref(),
-                );
+                let appears_on =
+                    artist_appears_on_from_tracks(&library.albums, &albums, &tracks, artist_id);
                 Some(CachedArtistDetail {
                     artist,
                     albums,
@@ -554,13 +543,12 @@ fn artist_appears_on_from_tracks(
     albums: &[Album],
     tracks: &[Track],
     artist_id: &ArtistId,
-    artist_name_lower: Option<&str>,
 ) -> Vec<Album> {
     let mut appears_on = Vec::new();
     let mut seen_album_ids = Vec::new();
     for track in tracks
         .iter()
-        .filter(|track| track_matches_artist(track, artist_id, artist_name_lower))
+        .filter(|track| track_matches_artist(track, artist_id))
     {
         if albums.iter().any(|album| album.id == track.album_id)
             || seen_album_ids.contains(&track.album_id)
@@ -620,11 +608,7 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Option<
     })
 }
 
-fn track_matches_artist(
-    track: &Track,
-    artist_id: &ArtistId,
-    artist_name_lower: Option<&str>,
-) -> bool {
+fn track_matches_artist(track: &Track, artist_id: &ArtistId) -> bool {
     if track.artist_id.as_ref() == Some(artist_id) {
         return true;
     }
@@ -635,16 +619,7 @@ fn track_matches_artist(
     {
         return true;
     }
-
-    track.artist_id.is_none()
-        && artist_name_lower
-            .map(|artist_name| track.artist.to_lowercase() == artist_name)
-            .unwrap_or(false)
-}
-
-fn artist_name_lower(name: &str) -> Option<String> {
-    let name = name.trim();
-    (!name.is_empty()).then(|| name.to_lowercase())
+    false
 }
 
 #[cfg(test)]
@@ -680,14 +655,13 @@ mod tests {
                 &[primary],
                 &[primary_track, featured_track],
                 &artist_id,
-                Some("artist"),
             ),
             vec![appears_on]
         );
     }
 
     #[test]
-    fn artist_use_missing() {
+    fn artist_label_without_relation_is_not_appearance() {
         let artist_id = ArtistId::fake(7);
         let appears_on = test_album("Other Artist", Some(ArtistId::fake(8)));
         let mut featured_track = test_track("Artist", None);
@@ -700,9 +674,8 @@ mod tests {
                 &[],
                 &[featured_track],
                 &artist_id,
-                Some("artist"),
             ),
-            vec![appears_on]
+            Vec::<Album>::new()
         );
     }
 
