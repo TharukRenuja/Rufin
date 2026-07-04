@@ -159,10 +159,10 @@ impl Shell {
         entry: &QueueEntry,
         preferred_size: u32,
     ) -> Option<PlaybackArtworkPath> {
-        let server_id = self.current_playback_server_id()?;
+        let source_id = self.current_playback_source_id()?;
         let image_ref = entry.image_ref.as_ref()?;
         let cache = self.state.cover_path_cache.borrow();
-        playback_artwork_path_from_lookup(&server_id, image_ref, preferred_size, |key| {
+        playback_artwork_path_from_lookup(&source_id, image_ref, preferred_size, |key| {
             cache.get(key).cloned()
         })
     }
@@ -171,15 +171,15 @@ impl Shell {
         entry: &QueueEntry,
         preferred_size: u32,
     ) -> Option<PlaybackArtworkLookup> {
-        let server_id = self.current_playback_server_id()?;
+        let source_id = self.current_playback_source_id()?;
         let image_ref = entry.image_ref.as_ref()?;
         if self
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
-            .is_some_and(|server| server.provider == "fake")
+            .is_some_and(|server| server.kind == "fake")
         {
             return None;
         }
@@ -188,7 +188,7 @@ impl Shell {
         {
             return None;
         }
-        let candidate_keys = playback_artwork_cache_keys(&server_id, image_ref, preferred_size);
+        let candidate_keys = playback_artwork_cache_keys(&source_id, image_ref, preferred_size);
         let cache = self.state.cover_path_cache.borrow();
         let memory_path = candidate_keys
             .iter()
@@ -206,7 +206,7 @@ impl Shell {
         key: &str,
         preferred_size: u32,
     ) -> bool {
-        let Some(server_id) = self.current_playback_server_id() else {
+        let Some(source_id) = self.current_playback_source_id() else {
             return false;
         };
         self.state
@@ -216,29 +216,29 @@ impl Shell {
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
             .is_some_and(|image_ref| {
-                playback_artwork_key_matches(&server_id, image_ref, preferred_size, key)
+                playback_artwork_key_matches(&source_id, image_ref, preferred_size, key)
             })
     }
 
-    fn current_playback_server_id(&self) -> Option<ServerId> {
+    fn current_playback_source_id(&self) -> Option<SourceId> {
         self.state
             .queue
             .borrow()
             .as_ref()
-            .map(|queue| queue.server_id.clone())
+            .map(|queue| queue.source_id.clone())
             .or_else(|| {
                 self.state
                     .library
                     .borrow()
-                    .server
+                    .source
                     .as_ref()
                     .map(|server| server.id.clone())
             })
     }
 
     pub(in crate::ui) fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
-        let server = self.state.library.borrow().server.clone()?;
-        if server.provider == "fake" {
+        let server = self.state.library.borrow().source.clone()?;
+        if server.kind == "fake" {
             return None;
         }
         if external_metadata::is_external_image_ref(image_ref)
@@ -258,14 +258,14 @@ impl Shell {
         image_ref: &ImageRef,
         size: u32,
     ) -> Option<String> {
-        let server_id = self.current_playback_server_id()?;
+        let source_id = self.current_playback_source_id()?;
         if self
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
-            .is_some_and(|server| server.provider == "fake")
+            .is_some_and(|server| server.kind == "fake")
         {
             return None;
         }
@@ -275,7 +275,7 @@ impl Shell {
             return None;
         }
         Some(image_cache_key(
-            &server_id,
+            &source_id,
             &image_ref.item_id,
             image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
             size,
@@ -499,9 +499,9 @@ impl Shell {
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
-            .map(|server| server.provider.clone());
+            .map(|server| server.kind.clone());
         let unavailable = self.state.cover_unavailable.borrow().contains(key);
         visible_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
             == VisibleCoverCacheMissAction::Fetch
@@ -511,9 +511,9 @@ impl Shell {
             .state
             .library
             .borrow()
-            .server
+            .source
             .as_ref()
-            .map(|server| server.provider.clone());
+            .map(|server| server.kind.clone());
         let unavailable = self.state.cover_unavailable.borrow().contains(key);
         warm_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
             == VisibleCoverCacheMissAction::Fetch
@@ -791,7 +791,7 @@ pub(in crate::ui) enum VisibleCoverCacheMissAction {
 }
 
 pub(in crate::ui) fn visible_cover_cache_miss_action(
-    provider: Option<&str>,
+    kind: Option<&str>,
     image_ref: &ImageRef,
     unavailable: bool,
     external_known_missing: bool,
@@ -800,7 +800,7 @@ pub(in crate::ui) fn visible_cover_cache_miss_action(
         return VisibleCoverCacheMissAction::FinalMissing;
     }
     if image_ref.item_id.starts_with("local:cover:") {
-        return if provider == Some(source_local::LOCAL_SOURCE_ID) {
+        return if kind == Some(source_local::LOCAL_SOURCE_ID) {
             VisibleCoverCacheMissAction::Fetch
         } else {
             VisibleCoverCacheMissAction::FinalMissing
@@ -810,7 +810,7 @@ pub(in crate::ui) fn visible_cover_cache_miss_action(
 }
 
 pub(in crate::ui) fn warm_cover_cache_miss_action(
-    provider: Option<&str>,
+    kind: Option<&str>,
     image_ref: &ImageRef,
     unavailable: bool,
     external_known_missing: bool,
@@ -818,7 +818,7 @@ pub(in crate::ui) fn warm_cover_cache_miss_action(
     if external_metadata::is_external_image_ref(image_ref) {
         return VisibleCoverCacheMissAction::FinalMissing;
     }
-    visible_cover_cache_miss_action(provider, image_ref, unavailable, external_known_missing)
+    visible_cover_cache_miss_action(kind, image_ref, unavailable, external_known_missing)
 }
 
 pub(in crate::ui) fn cached_cover_candidate_path(

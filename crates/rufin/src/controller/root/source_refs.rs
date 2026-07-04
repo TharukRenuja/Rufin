@@ -23,7 +23,7 @@ pub(crate) fn track_cover_refs_for_items(tracks: &[Track]) -> Vec<ImageRef> {
 
 pub(in crate::controller) fn track_album_refs(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     tracks: &mut [Track],
     albums: &[Album],
 ) -> Result<(), String> {
@@ -36,7 +36,7 @@ pub(in crate::controller) fn track_album_refs(
 
 pub(in crate::controller) fn track_album_refs_with_settings(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     tracks: &mut [Track],
     albums: &[Album],
@@ -64,7 +64,7 @@ pub(in crate::controller) fn track_album_refs_with_settings(
         });
     if !missing_album_ids.is_empty() {
         let mut loaded = store.with_store_fast(|store| {
-            store.load_album_image_refs(&saved.server.id, &missing_album_ids)
+            store.load_album_image_refs(&saved.source.id, &missing_album_ids)
         })?;
         loaded.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
         image_refs.extend(loaded);
@@ -81,7 +81,7 @@ pub(in crate::controller) fn track_album_refs_with_settings(
         });
     if !missing_album_ids.is_empty() {
         let mut loaded = store.with_store_fast(|store| {
-            store.load_albums_by_ids(&saved.server.id, &missing_album_ids)
+            store.load_albums_by_ids(&saved.source.id, &missing_album_ids)
         })?;
         for album in &mut loaded {
             scrub_source_image_ref(saved, &mut album.image_ref);
@@ -101,10 +101,10 @@ pub(in crate::controller) fn track_album_refs_with_settings(
 
 pub(in crate::controller) fn album_track_refs(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     albums: &mut [Album],
 ) -> Result<(), String> {
-    if saved.server.provider != LOCAL_SOURCE_ID || albums.is_empty() {
+    if saved.source.kind != LOCAL_SOURCE_ID || albums.is_empty() {
         return Ok(());
     }
     let album_ids = albums.iter().map(|album| album.id.clone()).fold(
@@ -120,7 +120,7 @@ pub(in crate::controller) fn album_track_refs(
         return Ok(());
     }
     let mut image_refs =
-        store.with_store(|store| store.load_album_image_refs(&saved.server.id, &album_ids))?;
+        store.with_store(|store| store.load_album_image_refs(&saved.source.id, &album_ids))?;
     image_refs.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
     for album in albums {
         if let Some(image_ref) = image_refs.get(&album.id) {
@@ -132,7 +132,7 @@ pub(in crate::controller) fn album_track_refs(
 
 pub(in crate::controller) fn home_image_refs(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     section: &mut HomeSection,
 ) -> Result<(), String> {
     let metadata_settings = load_settings_for_saved(store, saved);
@@ -144,7 +144,7 @@ pub(in crate::controller) fn home_image_refs(
 
 pub(in crate::controller) fn home_local_refs(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     section: &mut HomeSection,
 ) -> Result<(), String> {
     album_track_refs(store, saved, &mut section.albums)?;
@@ -154,7 +154,7 @@ pub(in crate::controller) fn home_local_refs(
 
 pub(in crate::controller) fn queue_track_refs(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     entries: &mut [QueueEntry],
 ) -> Result<bool, String> {
@@ -176,7 +176,7 @@ pub(in crate::controller) fn queue_track_refs(
     let mut tracks = store.with_store_fast(|store| {
         let mut tracks = Vec::new();
         for track_id in &track_ids {
-            if let Some(track) = store.load_track(&saved.server.id, track_id)? {
+            if let Some(track) = store.load_track(&saved.source.id, track_id)? {
                 tracks.push(track);
             }
         }

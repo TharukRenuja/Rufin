@@ -9,7 +9,7 @@ fn local_root_identity() {
     let second = LocalSource::identity_for_root(dir.path()).expect("identity");
 
     assert_eq!(first, second);
-    assert_eq!(first.provider, LOCAL_SOURCE_ID);
+    assert_eq!(first.kind, LOCAL_SOURCE_ID);
 }
 #[tokio::test]
 async fn local_stream_uses_file_uri() {
@@ -668,9 +668,7 @@ async fn local_use_bytes() {
         },
     );
     let provider = LocalSource {
-        identity: SourceIdentity {
-            server: identity_for_root(dir.path()),
-        },
+        identity: identity_for_root(dir.path()),
         library: LocalLibrary {
             covers,
             ..LocalLibrary::default()
@@ -707,9 +705,7 @@ async fn local_reject_file() {
         },
     );
     let provider = LocalSource {
-        identity: SourceIdentity {
-            server: identity_for_root(dir.path()),
-        },
+        identity: identity_for_root(dir.path()),
         library: LocalLibrary {
             covers,
             ..LocalLibrary::default()

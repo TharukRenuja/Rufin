@@ -9,7 +9,7 @@ const SUBSONIC_FRESHNESS_INTERVAL: Duration = Duration::from_secs(5 * 60);
 type PendingJellyfinChange = Arc<Mutex<Option<JellyfinLibraryChange>>>;
 
 pub(in crate::controller) struct RemoteLibraryWatcher {
-    server_id: ServerId,
+    source_id: SourceId,
     cancellation: CancellationToken,
 }
 
@@ -36,7 +36,7 @@ pub(in crate::controller) fn refresh_remote_library_watcher(
     };
     if current
         .as_ref()
-        .is_some_and(|watcher| watcher.server_id == saved.server.id)
+        .is_some_and(|watcher| watcher.source_id == saved.source.id)
     {
         return;
     }
@@ -44,14 +44,14 @@ pub(in crate::controller) fn refresh_remote_library_watcher(
 }
 
 impl RemoteLibraryWatcher {
-    fn start(context: SyncContext, saved: SavedServer) -> Self {
+    fn start(context: SyncContext, saved: SavedSource) -> Self {
         let cancellation = CancellationToken::new();
         let thread_cancellation = cancellation.clone();
         let pending = Arc::new(Mutex::new(None));
         let pending_waiter = Arc::new(AtomicBool::new(false));
-        let server_id = saved.server.id.clone();
+        let source_id = saved.source.id.clone();
         thread::spawn(move || {
-            if saved.server.provider == "jellyfin" {
+            if saved.source.kind == "jellyfin" {
                 watch_jellyfin_library(
                     context,
                     saved,
@@ -64,7 +64,7 @@ impl RemoteLibraryWatcher {
             }
         });
         Self {
-            server_id,
+            source_id,
             cancellation,
         }
     }
@@ -78,14 +78,14 @@ impl Drop for RemoteLibraryWatcher {
 
 fn watch_jellyfin_library(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     cancellation: CancellationToken,
     pending: PendingJellyfinChange,
     pending_waiter: Arc<AtomicBool>,
 ) {
     let mut retry_delay = RETRY_INITIAL_DELAY;
     info!(
-        server_id = %saved.server.id.as_str(),
+        source_id = %saved.source.id.as_str(),
         "started Jellyfin library watcher"
     );
     while !cancellation.cancelled() && remote_freshness_target_is_active(&context, &saved) {
@@ -122,7 +122,7 @@ fn watch_jellyfin_library(
         if let Err(error) = result {
             warn!(
                 %error,
-                server_id = %saved.server.id.as_str(),
+                source_id = %saved.source.id.as_str(),
                 retry_delay_ms = retry_delay.as_millis() as u64,
                 "Jellyfin library watcher disconnected"
             );
@@ -133,19 +133,19 @@ fn watch_jellyfin_library(
         retry_delay = retry_delay.saturating_mul(2).min(RETRY_MAX_DELAY);
     }
     info!(
-        server_id = %saved.server.id.as_str(),
+        source_id = %saved.source.id.as_str(),
         "stopped Jellyfin library watcher"
     );
 }
 
 fn poll_subsonic_library(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     cancellation: CancellationToken,
 ) {
     info!(
-        server_id = %saved.server.id.as_str(),
-        source = %saved.server.provider,
+        source_id = %saved.source.id.as_str(),
+        source = %saved.source.kind,
         interval_ms = SUBSONIC_FRESHNESS_INTERVAL.as_millis() as u64,
         "started remote library freshness poller"
     );
@@ -155,22 +155,22 @@ fn poll_subsonic_library(
         start_background_sync_thread(context.clone(), saved.clone());
     }
     info!(
-        server_id = %saved.server.id.as_str(),
-        source = %saved.server.provider,
+        source_id = %saved.source.id.as_str(),
+        source = %saved.source.kind,
         "stopped remote library freshness poller"
     );
 }
 
 fn queue_jellyfin_library_change(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     change: JellyfinLibraryChange,
     pending: PendingJellyfinChange,
     pending_waiter: Arc<AtomicBool>,
     watcher_cancellation: CancellationToken,
 ) {
-    let server_id = saved.server.id.clone();
-    if !cached_library_exists(&context.store, &server_id) {
+    let source_id = saved.source.id.clone();
+    if !cached_library_exists(&context.store, &source_id) {
         merge_pending_change(&pending, change);
         start_pending_waiter(
             context,
@@ -181,7 +181,7 @@ fn queue_jellyfin_library_change(
         );
         return;
     }
-    let permit = match context.sync_in_flight.acquire(server_id.clone()) {
+    let permit = match context.sync_in_flight.acquire(source_id.clone()) {
         Ok(Some(permit)) => permit,
         Ok(None) => {
             merge_pending_change(&pending, change);
@@ -197,7 +197,7 @@ fn queue_jellyfin_library_change(
         Err(error) => {
             warn!(
                 %error,
-                server_id = %server_id.as_str(),
+                source_id = %source_id.as_str(),
                 "failed to queue Jellyfin library event reconciliation"
             );
             return;
@@ -216,18 +216,18 @@ fn queue_jellyfin_library_change(
 
 fn start_jellyfin_library_change_reconciliation_thread(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     change: JellyfinLibraryChange,
-    permit: InFlightPermit<ServerId>,
+    permit: InFlightPermit<SourceId>,
     pending: PendingJellyfinChange,
     pending_waiter: Arc<AtomicBool>,
     watcher_cancellation: CancellationToken,
 ) {
-    let server_id = saved.server.id.clone();
+    let source_id = saved.source.id.clone();
     let cancellation = permit.cancellation_token();
     let generation = context
         .store
-        .with_store(|store| store.sync_state(&server_id).map(|state| state.generation))
+        .with_store(|store| store.sync_state(&source_id).map(|state| state.generation))
         .unwrap_or(0);
     thread::spawn(move || {
         let permit = permit;
@@ -240,7 +240,7 @@ fn start_jellyfin_library_change_reconciliation_thread(
                 LoadedSource::Jellyfin(source) => {
                     context.runtime.block_on(reconcile_jellyfin_library_change(
                         &context.store,
-                        &server_id,
+                        &source_id,
                         &source,
                         change,
                         generation,
@@ -258,19 +258,19 @@ fn start_jellyfin_library_change_reconciliation_thread(
                 warn!(
                     %error,
                     generation,
-                    server_id = %server_id.as_str(),
+                    source_id = %source_id.as_str(),
                     total_elapsed_ms = started.elapsed().as_millis() as u64,
                     "failed Jellyfin library event reconciliation"
                 );
                 return;
             }
         };
-        if !sync_target_is_current(&context.store, &server_id) {
+        if !sync_target_is_current(&context.store, &source_id) {
             return;
         }
         info!(
             generation,
-            server_id = %server_id.as_str(),
+            source_id = %source_id.as_str(),
             items_added,
             items_updated,
             items_removed,
@@ -304,7 +304,7 @@ fn start_jellyfin_library_change_reconciliation_thread(
 
 fn start_pending_waiter(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     pending: PendingJellyfinChange,
     pending_waiter: Arc<AtomicBool>,
     watcher_cancellation: CancellationToken,
@@ -325,13 +325,13 @@ fn start_pending_waiter(
                 pending_waiter.store(false, Ordering::Release);
                 return;
             };
-            if !cached_library_exists(&context.store, &saved.server.id) {
+            if !cached_library_exists(&context.store, &saved.source.id) {
                 merge_pending_change(&pending, change);
                 thread::sleep(RETRY_POLL);
                 continue;
             }
-            let server_id = saved.server.id.clone();
-            match context.sync_in_flight.acquire(server_id) {
+            let source_id = saved.source.id.clone();
+            match context.sync_in_flight.acquire(source_id) {
                 Ok(Some(permit)) => {
                     pending_waiter.store(false, Ordering::Release);
                     start_jellyfin_library_change_reconciliation_thread(
@@ -352,7 +352,7 @@ fn start_pending_waiter(
                 Err(error) => {
                     warn!(
                         %error,
-                        server_id = %saved.server.id.as_str(),
+                        source_id = %saved.source.id.as_str(),
                         "failed to retry Jellyfin library event reconciliation"
                     );
                     merge_pending_change(&pending, change);
@@ -384,7 +384,7 @@ fn pending_has_change(pending: &PendingJellyfinChange) -> bool {
 
 async fn reconcile_jellyfin_library_change(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     source: &source_jellyfin::JellyfinSource,
     change: JellyfinLibraryChange,
     generation: i64,
@@ -398,7 +398,7 @@ async fn reconcile_jellyfin_library_change(
         if !tracks.is_empty() {
             collector.merge(
                 store.with_store(|store| {
-                    store.upsert_tracks_delta(server_id, &tracks, generation)
+                    store.upsert_tracks_delta(source_id, &tracks, generation)
                 })?,
             );
         }
@@ -407,14 +407,14 @@ async fn reconcile_jellyfin_library_change(
     let removed_track_ids = change.removed_track_ids();
     if !removed_track_ids.is_empty() {
         collector.merge(
-            store.with_store(|store| store.delete_tracks_delta(server_id, &removed_track_ids))?,
+            store.with_store(|store| store.delete_tracks_delta(source_id, &removed_track_ids))?,
         );
     }
 
     let delta = collector.finish();
     if !delta.is_empty() {
-        store.with_store(|store| store.refresh_library_counts(server_id))?;
-        prune_disk_waveform_cache_entries(server_id, &delta.tracks.deleted);
+        store.with_store(|store| store.refresh_library_counts(source_id))?;
+        prune_disk_waveform_cache_entries(source_id, &delta.tracks.deleted);
     }
     Ok(delta)
 }
@@ -432,23 +432,23 @@ fn sleep_until_retry(cancellation: &CancellationToken, delay: Duration) -> bool 
     !cancellation.cancelled()
 }
 
-fn active_remote_freshness_target(context: &SyncContext) -> Option<SavedServer> {
+fn active_remote_freshness_target(context: &SyncContext) -> Option<SavedSource> {
     let saved = context
         .store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .ok()
         .flatten()?;
     if !active_source_reconciliation_supported(&saved)
         || saved_server_needs_auth(&context.secrets, &saved)
-        || !sync_target_is_current(&context.store, &saved.server.id)
+        || !sync_target_is_current(&context.store, &saved.source.id)
     {
         return None;
     }
     Some(saved)
 }
 
-fn remote_freshness_target_is_active(context: &SyncContext, saved: &SavedServer) -> bool {
+fn remote_freshness_target_is_active(context: &SyncContext, saved: &SavedSource) -> bool {
     active_remote_freshness_target(context)
         .as_ref()
-        .is_some_and(|active| active.server.id == saved.server.id)
+        .is_some_and(|active| active.source.id == saved.source.id)
 }

@@ -11,7 +11,7 @@ pub(super) const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
 
 pub(super) struct LocalStressSnapshot<'a> {
     pub(super) store: &'a StoreHandle,
-    pub(super) server_id: &'a ServerId,
+    pub(super) source_id: &'a SourceId,
     pub(super) scan: &'a LocalManifestScan,
     pub(super) tracks: &'a mut Vec<Track>,
     pub(super) albums: &'a mut Vec<Album>,
@@ -68,11 +68,11 @@ pub(super) fn apply_local_library_stress_multiplier(
 ) -> Result<LocalStressDelta, String> {
     let stress_multiplier = stress_multiplier.clamp(1, LOCAL_STRESS_MULTIPLIER_MAX);
     let existing_stress_ids = snapshot.store.with_store(|store| {
-        store.load_track_ids_with_prefix(snapshot.server_id, LOCAL_STRESS_TRACK_ID_PREFIX)
+        store.load_track_ids_with_prefix(snapshot.source_id, LOCAL_STRESS_TRACK_ID_PREFIX)
     })?;
     let existing_graph_needs_rewrite = snapshot.store.with_store(|store| {
         store.tracks_with_prefix_have_album_prefix_mismatch(
-            snapshot.server_id,
+            snapshot.source_id,
             LOCAL_STRESS_TRACK_ID_PREFIX,
             LOCAL_STRESS_ALBUM_ID_PREFIX,
         )
@@ -84,7 +84,7 @@ pub(super) fn apply_local_library_stress_multiplier(
         if !delta.deleted_track_ids.is_empty() {
             mark_all_snapshot_aggregates_dirty(&snapshot, &mut delta);
             info!(
-                server_id = %snapshot.server_id,
+                source_id = %snapshot.source_id,
                 removed_tracks = delta.deleted_track_ids.len(),
                 "removing local stress library tracks"
             );
@@ -206,7 +206,7 @@ pub(super) fn apply_local_library_stress_multiplier(
     );
     if !delta.is_empty() {
         info!(
-            server_id = %snapshot.server_id,
+            source_id = %snapshot.source_id,
             multiplier = stress_multiplier,
             base_albums = base_albums.len(),
             total_albums = snapshot.albums.len(),

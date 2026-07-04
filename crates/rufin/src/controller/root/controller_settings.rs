@@ -31,8 +31,8 @@ impl AppController {
         }
 
         if settings.secret_storage_mode == SecretStorageMode::ConfigFile {
-            let saved_servers = self.store.with_store(|store| store.list_servers())?;
-            delete_current_secrets(&self.secrets, &saved_servers)?;
+            let saved_sources = self.store.with_store(|store| store.list_sources())?;
+            delete_current_secrets(&self.secrets, &saved_sources)?;
         }
         settings.secret_storage_mode = mode;
         settings.secret_scope_id = new_secret_scope_id();
@@ -56,11 +56,11 @@ fn clear_scrobbling_secret_fields(settings: &mut AppSettings) {
 
 fn delete_current_secrets(
     secrets: &Arc<dyn SecretStore>,
-    saved_servers: &[SavedServer],
+    saved_sources: &[SavedSource],
 ) -> Result<(), String> {
-    for saved in saved_servers {
+    for saved in saved_sources {
         secrets
-            .delete_token(&saved.server.id)
+            .delete_token(&saved.source.id)
             .map_err(|error| error.to_string())?;
     }
 
@@ -120,14 +120,14 @@ mod tests {
 
     #[test]
     fn secret_backend_change_deletes_current_secrets() {
-        let first = saved_server_with_id("server:first");
-        let second = saved_server_with_id("server:second");
+        let first = saved_source_with_id("server:first");
+        let second = saved_source_with_id("server:second");
         let secrets = Arc::new(MemorySecretStore::new());
         secrets
-            .save_token(&first.server.id, "first-token")
+            .save_token(&first.source.id, "first-token")
             .expect("save first token");
         secrets
-            .save_token(&second.server.id, "second-token")
+            .save_token(&second.source.id, "second-token")
             .expect("save second token");
         secrets
             .save_secret(&SecretKey::LastFmApiSecret, "lastfm-api-secret")
@@ -147,11 +147,11 @@ mod tests {
             .expect("delete current secrets");
 
         assert_eq!(
-            secrets.load_token(&first.server.id).expect("load first"),
+            secrets.load_token(&first.source.id).expect("load first"),
             None
         );
         assert_eq!(
-            secrets.load_token(&second.server.id).expect("load second"),
+            secrets.load_token(&second.source.id).expect("load second"),
             None
         );
         assert_eq!(
@@ -231,11 +231,11 @@ mod tests {
         );
     }
 
-    fn saved_server_with_id(id: &str) -> SavedServer {
-        SavedServer {
-            server: ServerIdentity {
-                id: ServerId::new(id),
-                provider: "test".to_string(),
+    fn saved_source_with_id(id: &str) -> SavedSource {
+        SavedSource {
+            source: SourceIdentity {
+                id: SourceId::new(id),
+                kind: "test".to_string(),
                 name: "Test".to_string(),
                 base_url: "https://example.invalid".to_string(),
             },

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::controller) fn scrub_source_album_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     albums: &mut [Album],
 ) {
     for album in albums {
@@ -10,7 +10,7 @@ pub(in crate::controller) fn scrub_source_album_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_album_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     albums: &mut [Album],
 ) {
@@ -19,7 +19,7 @@ pub(in crate::controller) fn scrub_selected_album_image_refs(
 }
 
 pub(in crate::controller) fn scrub_source_track_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     tracks: &mut [Track],
 ) {
     for track in tracks {
@@ -28,7 +28,7 @@ pub(in crate::controller) fn scrub_source_track_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_track_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     tracks: &mut [Track],
 ) {
@@ -37,7 +37,7 @@ pub(in crate::controller) fn scrub_selected_track_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_artist_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     artists: &mut [Artist],
 ) {
@@ -46,7 +46,7 @@ pub(in crate::controller) fn scrub_selected_artist_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_genre_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     genres: &mut [Genre],
 ) {
@@ -55,7 +55,7 @@ pub(in crate::controller) fn scrub_selected_genre_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_mood_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     moods: &mut [Mood],
 ) {
@@ -64,7 +64,7 @@ pub(in crate::controller) fn scrub_selected_mood_image_refs(
 }
 
 pub(in crate::controller) fn scrub_selected_playlist_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     settings: &AppSettings,
     playlists: &mut [Playlist],
 ) {
@@ -73,7 +73,7 @@ pub(in crate::controller) fn scrub_selected_playlist_image_refs(
 }
 
 pub(in crate::controller) fn scrub_smart_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     playlists: &mut [SmartPlaylist],
 ) {
     for playlist in playlists {
@@ -82,8 +82,8 @@ pub(in crate::controller) fn scrub_smart_refs(
     }
 }
 
-pub(in crate::controller) fn scrub_home_refs(saved: &SavedServer, section: &mut HomeSection) {
-    if saved.server.provider == LOCAL_SOURCE_ID {
+pub(in crate::controller) fn scrub_home_refs(saved: &SavedSource, section: &mut HomeSection) {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         section.albums.retain(|album| is_local_album_id(&album.id));
         section.tracks.retain(|track| is_local_track_id(&track.id));
     }
@@ -108,11 +108,11 @@ pub(in crate::controller) fn snapshot_external_ref_policy(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_home_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     section: &mut HomeSection,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
-    if saved.server.provider == LOCAL_SOURCE_ID {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         section.albums.retain(|album| is_local_album_id(&album.id));
         section.tracks.retain(|track| is_local_track_id(&track.id));
     }
@@ -121,7 +121,7 @@ pub(in crate::controller::root) fn scrub_snapshot_home_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_album_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     albums: &mut [Album],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -131,7 +131,7 @@ pub(in crate::controller::root) fn scrub_snapshot_album_image_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_track_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     tracks: &mut [Track],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -141,7 +141,7 @@ pub(in crate::controller::root) fn scrub_snapshot_track_image_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_artist_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     artists: &mut [Artist],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -151,7 +151,7 @@ pub(in crate::controller::root) fn scrub_snapshot_artist_image_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_genre_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     genres: &mut [Genre],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -162,7 +162,7 @@ pub(in crate::controller::root) fn scrub_snapshot_genre_image_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_mood_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     moods: &mut [Mood],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -173,7 +173,7 @@ pub(in crate::controller::root) fn scrub_snapshot_mood_image_refs(
 }
 
 pub(in crate::controller::root) fn scrub_snapshot_playlist_image_refs(
-    saved: &SavedServer,
+    saved: &SavedSource,
     playlists: &mut [Playlist],
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -184,7 +184,7 @@ pub(in crate::controller::root) fn scrub_snapshot_playlist_image_refs(
 }
 
 fn scrub_snapshot_image_ref(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &mut Option<ImageRef>,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -198,7 +198,7 @@ fn scrub_snapshot_image_ref(
 }
 
 fn scrub_snapshot_image_ref_vec(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_refs: &mut Vec<ImageRef>,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
@@ -207,7 +207,7 @@ fn scrub_snapshot_image_ref_vec(
 }
 
 fn snapshot_image_ref_allowed(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) -> bool {
@@ -224,7 +224,7 @@ fn external_identity_image_ref(image_ref: &ImageRef) -> bool {
 }
 
 pub(in crate::controller) fn scrub_source_image_ref(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &mut Option<ImageRef>,
 ) {
     let Some(ref_value) = image_ref else {
@@ -236,22 +236,22 @@ pub(in crate::controller) fn scrub_source_image_ref(
     *image_ref = None;
 }
 
-fn scrub_source_image_ref_vec(saved: &SavedServer, image_refs: &mut Vec<ImageRef>) {
+fn scrub_source_image_ref_vec(saved: &SavedSource, image_refs: &mut Vec<ImageRef>) {
     image_refs.retain(|image_ref| source_image_ref_allowed(saved, image_ref));
 }
 
 pub(in crate::controller) fn source_image_ref_allowed(
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
 ) -> bool {
-    image_ref_allowed(&saved.server, image_ref)
+    image_ref_allowed(&saved.source, image_ref)
 }
 
 pub(in crate::controller) fn image_ref_allowed(
-    server: &ServerIdentity,
+    server: &SourceIdentity,
     image_ref: &ImageRef,
 ) -> bool {
-    if server.provider == LOCAL_SOURCE_ID {
+    if server.kind == LOCAL_SOURCE_ID {
         return is_local_source_image_ref(image_ref);
     }
     !is_local_source_image_ref(image_ref)

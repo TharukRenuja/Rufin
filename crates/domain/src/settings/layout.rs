@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::sidebar::*;
 use crate::{
-    domain::{HomeBlockKind, HomeSectionKind, ServerId},
+    domain::{HomeBlockKind, HomeSectionKind, SourceId},
     msgid,
 };
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
@@ -285,7 +285,8 @@ fn insert_sidebar_route_item_in_default_order(
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum LibrarySourceSelection {
     Local,
-    Server(ServerId),
+    #[serde(alias = "Server")]
+    Source(SourceId),
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalLibraryFolder {

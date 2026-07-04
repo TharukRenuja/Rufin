@@ -67,8 +67,8 @@ impl AppController {
             snapshot.buffering_percent = None;
             snapshot.last_error = None;
         });
-        if let Some((server_id, entry, position_seconds)) = self.current_queue_entry() {
-            self.start_playback_activity(&server_id, &entry, position_seconds);
+        if let Some((source_id, entry, position_seconds)) = self.current_queue_entry() {
+            self.start_playback_activity(&source_id, &entry, position_seconds);
         }
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);

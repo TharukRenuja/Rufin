@@ -9,7 +9,7 @@ use crate::controller::{LoginRequest, ServerDiscoveryStatus};
 use crate::i18n::{tr, tr_with};
 use crate::sources::StreamingSource;
 use adw::prelude::*;
-use domain::ServerId;
+use domain::SourceId;
 
 use super::{
     AddServerDialogHandle, Shell,
@@ -28,7 +28,7 @@ const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.
 
 #[derive(Clone)]
 struct ServerFormPreset {
-    server_id: ServerId,
+    source_id: SourceId,
     source: StreamingSource,
     name: String,
     url: String,
@@ -476,7 +476,7 @@ impl Shell {
             return;
         };
         let mut shown = self.state.reconnect_toasts_shown.borrow_mut();
-        if shown.insert(preset.server_id) {
+        if shown.insert(preset.source_id) {
             self.quick_toast_overlay
                 .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
         }
@@ -487,23 +487,23 @@ impl Shell {
         if !library.first_run {
             return None;
         }
-        let server = library.server.as_ref()?;
-        let source = StreamingSource::from_source_id(&server.provider)?;
+        let server = library.source.as_ref()?;
+        let source = StreamingSource::from_source_id(&server.kind)?;
         if source == StreamingSource::Local {
             return None;
         }
         let trust_invalid_cert = library
-            .server_local_access
+            .source_local_access
             .iter()
-            .find(|status| status.server_id == server.id)
+            .find(|status| status.source_id == server.id)
             .is_some_and(|status| status.trust_invalid_cert);
         let use_jellyfin_instant_mix = library
-            .server_local_access
+            .source_local_access
             .iter()
-            .find(|status| status.server_id == server.id)
+            .find(|status| status.source_id == server.id)
             .is_some_and(|status| status.use_jellyfin_instant_mix);
         Some(ServerFormPreset {
-            server_id: server.id.clone(),
+            source_id: server.id.clone(),
             source,
             name: server.name.clone(),
             url: server.base_url.clone(),
@@ -655,13 +655,13 @@ impl Shell {
         } else {
             for server in servers {
                 let server_name = server.name;
-                let subtitle = format!("{} - {}", server.provider, server.address);
+                let subtitle = format!("{} - {}", server.kind, server.address);
                 let row = adw::ActionRow::builder()
                     .title(server_name.clone())
                     .subtitle(subtitle)
                     .build();
                 row.add_prefix(&gtk::Image::from_icon_name(
-                    "io.github.screwys.Rufin.provider.jellyfin",
+                    "io.github.screwys.Rufin.source.jellyfin",
                 ));
                 row.set_activatable(true);
                 let selected_source = Rc::clone(selected_source);
@@ -804,9 +804,9 @@ fn source_choice_title(source: StreamingSource) -> String {
 
 fn source_choice_icon_name(source: StreamingSource) -> &'static str {
     match source {
-        StreamingSource::Jellyfin => "io.github.screwys.Rufin.provider.jellyfin",
-        StreamingSource::Navidrome => "io.github.screwys.Rufin.provider.navidrome",
-        StreamingSource::Subsonic => "io.github.screwys.Rufin.provider.opensubsonic",
+        StreamingSource::Jellyfin => "io.github.screwys.Rufin.source.jellyfin",
+        StreamingSource::Navidrome => "io.github.screwys.Rufin.source.navidrome",
+        StreamingSource::Subsonic => "io.github.screwys.Rufin.source.opensubsonic",
         StreamingSource::Local => "rufin-route-folders-symbolic",
     }
 }

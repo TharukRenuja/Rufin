@@ -70,18 +70,18 @@ pub(in crate::ui::root::cover) fn source_warm_targets(
         settings,
         route_metrics.home_showcase_seed,
     );
-    let Some(server_id) = library.server.as_ref().map(|server| &server.id) else {
+    let Some(source_id) = library.source.as_ref().map(|server| &server.id) else {
         return targets;
     };
     push_source_route_warm_targets(
         &mut targets,
-        server_id,
+        source_id,
         library,
         smart_playlists,
         settings,
         route_metrics,
     );
-    dedupe_warm_targets(&mut targets, server_id);
+    dedupe_warm_targets(&mut targets, source_id);
     targets
 }
 pub(in crate::ui::root::cover) fn startup_home_cover_prime_targets(
@@ -181,7 +181,7 @@ pub(in crate::ui::root) fn push_startup_cover_target(
 }
 fn push_source_route_warm_targets(
     targets: &mut Vec<CoverWarmTarget>,
-    server_id: &ServerId,
+    source_id: &SourceId,
     library: &LibrarySnapshot,
     smart_playlists: &[SmartPlaylist],
     settings: &AppSettings,
@@ -272,7 +272,7 @@ fn push_source_route_warm_targets(
         );
     }
     push_source_background_warm_targets(targets, library, smart_playlists, settings, route_metrics);
-    dedupe_warm_targets(targets, server_id);
+    dedupe_warm_targets(targets, source_id);
 }
 fn push_track_source_warm_targets(
     targets: &mut Vec<CoverWarmTarget>,
@@ -649,11 +649,11 @@ fn source_collection_route_cover_size(settings: &LibraryListSettings) -> Option<
         LibraryLayout::Row => None,
     }
 }
-fn dedupe_warm_targets(targets: &mut Vec<CoverWarmTarget>, server_id: &ServerId) {
+fn dedupe_warm_targets(targets: &mut Vec<CoverWarmTarget>, source_id: &SourceId) {
     let mut positions = HashMap::<String, usize>::new();
     let mut deduped = Vec::<CoverWarmTarget>::new();
     for target in targets.drain(..) {
-        let key = warm_dedupe_key(server_id, &target.image_ref);
+        let key = warm_dedupe_key(source_id, &target.image_ref);
         if let Some(index) = positions.get(&key).copied() {
             let existing = &mut deduped[index];
             let existing_decode_size = cover_decode_size(existing.size, existing.fetch_size);
@@ -670,10 +670,10 @@ fn dedupe_warm_targets(targets: &mut Vec<CoverWarmTarget>, server_id: &ServerId)
     }
     *targets = deduped;
 }
-fn warm_dedupe_key(server_id: &ServerId, image_ref: &ImageRef) -> String {
+fn warm_dedupe_key(source_id: &SourceId, image_ref: &ImageRef) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}",
-        server_id.as_str(),
+        source_id.as_str(),
         image_ref.item_id,
         image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
     )
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn source_warm_includes_route_matrix_once() {
         let mut library = test_library_snapshot();
-        library.server = Some(test_server("source"));
+        library.source = Some(test_server("source"));
         let first_track_ref = test_image_ref("track-a");
         let mut first_track = test_track("Route Artist", Some(ArtistId::fake(1)));
         first_track.title = "A route track".to_string();
@@ -799,7 +799,7 @@ mod tests {
         let shared = test_image_ref("shared-art");
         let genre_only = test_image_ref("genre-only");
         let mut library = test_library_snapshot();
-        library.server = Some(test_server("source"));
+        library.source = Some(test_server("source"));
         let mut track = test_track("Route Artist", Some(ArtistId::fake(1)));
         track.image_ref = Some(shared.clone());
         library.tracks = vec![track];
@@ -835,7 +835,7 @@ mod tests {
         let playlist_ref = test_image_ref("playlist-group");
         let smart_ref = test_image_ref("smart-group");
         let mut library = test_library_snapshot();
-        library.server = Some(test_server("source"));
+        library.source = Some(test_server("source"));
         library.playlists = vec![test_playlist("Regular", playlist_ref.clone())];
         let smart_playlists = vec![test_smart_playlist("Smart", smart_ref.clone())];
 
@@ -858,7 +858,7 @@ mod tests {
     #[test]
     fn source_warm_includes_background_refs() {
         let mut library = test_library_snapshot();
-        library.server = Some(test_server("source"));
+        library.source = Some(test_server("source"));
         let background_ref = test_image_ref("background-album");
         library.albums = (0..24)
             .map(|index| {
@@ -916,7 +916,7 @@ mod tests {
         let genre_ref = test_image_ref("hidden-genre");
         let playlist_ref = test_image_ref("hidden-playlist");
         let mut library = test_library_snapshot();
-        library.server = Some(test_server("source"));
+        library.source = Some(test_server("source"));
         library.genres = vec![Genre {
             id: GenreId::fake(1),
             name: "Genre".to_string(),

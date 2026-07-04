@@ -1,31 +1,31 @@
 pub(super) use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, LyricLine, Lyrics, LyricsSource, MusicFolder, MusicFolderId, Playlist,
-    PlaylistEntry, PlaylistId, QueueEngine, ServerId, ServerIdentity, SourceFeatureOwner, Track,
+    PlaylistEntry, PlaylistId, QueueEngine, SourceFeatureOwner, SourceId, SourceIdentity, Track,
     TrackId,
 };
 
 pub(super) use super::{
-    CoverCacheEntry, SavedServer, ServerLocalAccess, Store, image_cache_key, lyrics_cache_key,
+    CoverCacheEntry, SavedSource, SourceLocalAccess, Store, image_cache_key, lyrics_cache_key,
 };
 
 pub(super) fn sqlite_sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
-    super::servers::sqlite_sidecar_path(path, suffix)
+    super::sources::sqlite_sidecar_path(path, suffix)
 }
 
 pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
-    super::servers::synthesize_album_from_tracks(album_id, tracks)
+    super::sources::synthesize_album_from_tracks(album_id, tracks)
 }
 
-pub(super) fn saved_server() -> SavedServer {
-    saved_server_with_id("jellyfin:server:test")
+pub(super) fn saved_source() -> SavedSource {
+    saved_source_with_id("jellyfin:server:test")
 }
 
-pub(super) fn saved_server_with_id(server_id: &str) -> SavedServer {
-    SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new(server_id),
-            provider: "jellyfin".to_string(),
+pub(super) fn saved_source_with_id(source_id: &str) -> SavedSource {
+    SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new(source_id),
+            kind: "jellyfin".to_string(),
             name: "Test Server".to_string(),
             base_url: "https://music.example".to_string(),
         },
@@ -38,16 +38,16 @@ pub(super) fn saved_server_with_id(server_id: &str) -> SavedServer {
 
 pub(super) struct StoreCase {
     pub(super) store: Store,
-    pub(super) id: ServerId,
+    pub(super) id: SourceId,
 }
 
 impl StoreCase {
     pub(super) fn open() -> Self {
-        Self::with_server(saved_server())
+        Self::with_server(saved_source())
     }
 
-    pub(super) fn with_server_id(server_id: &str) -> Self {
-        Self::with_server(saved_server_with_id(server_id))
+    pub(super) fn with_source_id(source_id: &str) -> Self {
+        Self::with_server(saved_source_with_id(source_id))
     }
 
     pub(super) fn start_sync(&self, label: &str) -> i64 {
@@ -58,12 +58,12 @@ impl StoreCase {
         self.store.complete_sync(&self.id, generation).expect(label);
     }
 
-    fn with_server(saved: SavedServer) -> Self {
+    fn with_server(saved: SavedSource) -> Self {
         let store = Store::open_memory().expect("open store");
-        store.save_server(&saved).expect("save server");
+        store.save_source(&saved).expect("save server");
         Self {
             store,
-            id: saved.server.id,
+            id: saved.source.id,
         }
     }
 }
@@ -181,24 +181,24 @@ pub(super) fn index_exists(store: &Store, table: &str, index: &str) -> bool {
         .any(|name| name == index)
 }
 
-pub(super) fn seed_cached_library(store: &Store, server_id: &ServerId) {
-    let generation = store.begin_sync(server_id).expect("begin sync");
+pub(super) fn seed_cached_library(store: &Store, source_id: &SourceId) {
+    let generation = store.begin_sync(source_id).expect("begin sync");
     let album = album(1);
     let track = track(1, &album);
     store
-        .upsert_albums(server_id, std::slice::from_ref(&album), generation)
+        .upsert_albums(source_id, std::slice::from_ref(&album), generation)
         .expect("upsert albums");
     store
-        .upsert_tracks(server_id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(source_id, std::slice::from_ref(&track), generation)
         .expect("upsert tracks");
     store
-        .complete_sync(server_id, generation)
+        .complete_sync(source_id, generation)
         .expect("complete sync");
 }
 
-pub(super) fn cover_entry(server_id: &ServerId) -> CoverCacheEntry {
+pub(super) fn cover_entry(source_id: &SourceId) -> CoverCacheEntry {
     CoverCacheEntry {
-        server_id: server_id.clone(),
+        source_id: source_id.clone(),
         item_id: "album-one".to_string(),
         image_tag: "tag-one".to_string(),
         size: 256,

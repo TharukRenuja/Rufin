@@ -49,7 +49,7 @@ impl WaveformGenerationKind {
 
 #[derive(Clone)]
 struct WaveformWarmRequest {
-    server_id: ServerId,
+    source_id: SourceId,
     track_id: TrackId,
     duration_seconds: u32,
     source_format: Option<String>,
@@ -125,11 +125,11 @@ impl AppController {
             return;
         }
         self.cancel_waveform_warm();
-        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
             return;
         };
         let playback_settings = self.load_settings().playback;
-        let cache_key = waveform_cache_key(&server_id, &entry.track_id, entry.duration_seconds);
+        let cache_key = waveform_cache_key(&source_id, &entry.track_id, entry.duration_seconds);
         self.update_playback_snapshot(|snapshot| {
             set_waveform_cache_key(snapshot, Some(cache_key.clone()));
         });
@@ -156,7 +156,7 @@ impl AppController {
         thread::spawn(move || {
             let _permit = permit;
             let request = WaveformWarmRequest {
-                server_id,
+                source_id,
                 track_id: entry.track_id,
                 duration_seconds: entry.duration_seconds,
                 source_format: entry.source_format,
@@ -222,11 +222,11 @@ impl AppController {
 pub(in crate::controller) fn request_waveform_for_prepared_item(
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     events: Sender<ControllerEvent>,
-    server_id: ServerId,
+    source_id: SourceId,
     entry: QueueEntry,
     item: PreparedPlaybackItem,
 ) {
-    let cache_key = waveform_cache_key(&server_id, &entry.track_id, entry.duration_seconds);
+    let cache_key = waveform_cache_key(&source_id, &entry.track_id, entry.duration_seconds);
     if publish_cached_waveform(
         &playback_snapshot,
         &events,
@@ -353,7 +353,7 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmReque
         return;
     }
     let cache_key = waveform_cache_key(
-        &request.server_id,
+        &request.source_id,
         &request.track_id,
         request.duration_seconds,
     );
@@ -412,7 +412,7 @@ fn waveform_source_for_track(
         store,
         runtime,
         secrets,
-        &request.server_id,
+        &request.source_id,
         &request.track_id,
         &request.playback_settings,
     )
@@ -453,7 +453,7 @@ fn waveform_warm_requests(
         .take(limit)
         .filter(|entry| entry.duration_seconds > 0)
         .map(|entry| WaveformWarmRequest {
-            server_id: snapshot.server_id.clone(),
+            source_id: snapshot.source_id.clone(),
             track_id: entry.track_id.clone(),
             duration_seconds: entry.duration_seconds,
             source_format: entry.source_format.clone(),
@@ -548,14 +548,14 @@ fn publish_waveform_peaks(
 }
 
 pub(in crate::controller) fn waveform_cache_key(
-    server_id: &ServerId,
+    source_id: &SourceId,
     track_id: &TrackId,
     duration_seconds: u32,
 ) -> String {
     let track_hash = format!("{:x}", md5::compute(track_id.as_str()));
     format!(
         "{}/{}-{}.json",
-        encode_key_part(server_id.as_str()),
+        encode_key_part(source_id.as_str()),
         track_hash,
         duration_seconds
     )
@@ -568,7 +568,7 @@ pub(in crate::controller) fn waveform_cache_key_for_queue(
     let snapshot = queue.snapshot();
     let entry = queue.current()?;
     Some(waveform_cache_key(
-        &snapshot.server_id,
+        &snapshot.source_id,
         &entry.track_id,
         entry.duration_seconds,
     ))
@@ -654,10 +654,10 @@ mod tests {
 
     #[test]
     fn playback_waveform_scoped() {
-        let server_id = ServerId::new("server/one");
+        let source_id = SourceId::new("server/one");
         let track_id = TrackId::new("album/track:one");
 
-        let key = waveform_cache_key(&server_id, &track_id, 123);
+        let key = waveform_cache_key(&source_id, &track_id, 123);
 
         assert!(key.starts_with("server_one/"));
         assert!(key.ends_with("-123.json"));
@@ -730,10 +730,10 @@ mod tests {
 
     #[test]
     fn playback_waveform_cancel_after_generation_skips_cache_and_publish() {
-        let server_id = ServerId::new("test-waveform-cancel");
+        let source_id = SourceId::new("test-waveform-cancel");
         let track_id = TrackId::new("track-cancel");
         let duration_seconds = 42;
-        let cache_key = waveform_cache_key(&server_id, &track_id, duration_seconds);
+        let cache_key = waveform_cache_key(&source_id, &track_id, duration_seconds);
         let cache_path = waveform_cache_path_for_key(&cache_key).expect("waveform cache path");
         let _removed = fs::remove_file(&cache_path);
         let playback_snapshot = Arc::new(Mutex::new(PlaybackSnapshot {
@@ -778,9 +778,9 @@ mod tests {
 
     #[test]
     fn playback_cap_current() {
-        let server_id = ServerId::new("server-one");
+        let source_id = SourceId::new("server-one");
         let snapshot = QueueSnapshot {
-            server_id: server_id.clone(),
+            source_id: source_id.clone(),
             entries: (1..=5)
                 .map(|number| QueueEntry {
                     id: QueueEntryId::new(format!("queue-{number}")),
@@ -809,7 +809,7 @@ mod tests {
         let requests = waveform_warm_requests(&snapshot, &PlaybackSettings::default(), 2);
 
         assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].server_id, server_id);
+        assert_eq!(requests[0].source_id, source_id);
         assert_eq!(requests[0].track_id, TrackId::new("track-4"));
         assert_eq!(requests[0].source_format.as_deref(), Some("flac"));
         assert_eq!(requests[1].track_id, TrackId::new("track-5"));

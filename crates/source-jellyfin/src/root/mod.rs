@@ -7,8 +7,7 @@ use crate::item::{
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity,
-    Track, TrackId,
+    HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, SourceId, Track, TrackId,
 };
 #[cfg(test)]
 use domain::{ArtistCredit, ArtistId, ImageRef};
@@ -114,15 +113,15 @@ impl JellyfinSource {
         let server_name = public_server_name(&client, &base_url, &config)
             .await
             .unwrap_or_else(|| "Jellyfin".to_string());
-        let server_id = response
-            .server_id
+        let source_id = response
+            .source_id
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| stable_server_id(base_url.as_str()));
+            .unwrap_or_else(|| stable_source_id(base_url.as_str()));
 
         Ok(SourceSession {
-            server: ServerIdentity {
-                id: ServerId::new(format!("jellyfin:server:{server_id}")),
-                provider: "jellyfin".to_string(),
+            source: SourceIdentity {
+                id: SourceId::new(format!("jellyfin:server:{source_id}")),
+                kind: "jellyfin".to_string(),
                 name: server_name,
                 base_url: base_url.as_str().trim_end_matches('/').to_string(),
             },
@@ -135,7 +134,7 @@ impl JellyfinSource {
 
     pub fn from_saved_session(session: SavedSourceSession) -> SourceResult<Self> {
         let config = JellyfinClientConfig::new(
-            &session.server.base_url,
+            &session.source.base_url,
             session.trust_invalid_cert,
             session.device_id,
         );
@@ -147,9 +146,7 @@ impl JellyfinSource {
             user_id: session.user_id,
             access_token: Arc::from(session.access_token),
             device_id: Arc::from(config.device_id),
-            identity: SourceIdentity {
-                server: session.server,
-            },
+            identity: session.source,
         })
     }
 
@@ -158,7 +155,7 @@ impl JellyfinSource {
         request: &StreamRequest,
     ) -> SourceResult<StreamDescriptor> {
         let config = JellyfinClientConfig::new(
-            &session.server.base_url,
+            &session.source.base_url,
             session.trust_invalid_cert,
             session.device_id.clone(),
         );
@@ -476,7 +473,7 @@ impl JellyfinSource {
 
     async fn get_json<T: DeserializeOwned>(&self, url: Url) -> SourceResult<T> {
         let config = JellyfinClientConfig::new(
-            self.identity.server.base_url.clone(),
+            self.identity.base_url.clone(),
             false,
             Some(self.device_id.to_string()),
         );
@@ -492,7 +489,7 @@ impl JellyfinSource {
         request: reqwest::RequestBuilder,
     ) -> SourceResult<T> {
         let config = JellyfinClientConfig::new(
-            self.identity.server.base_url.clone(),
+            self.identity.base_url.clone(),
             false,
             Some(self.device_id.to_string()),
         );
@@ -505,7 +502,7 @@ impl JellyfinSource {
 
     async fn send_unit(&self, request: reqwest::RequestBuilder) -> SourceResult<()> {
         let config = JellyfinClientConfig::new(
-            self.identity.server.base_url.clone(),
+            self.identity.base_url.clone(),
             false,
             Some(self.device_id.to_string()),
         );

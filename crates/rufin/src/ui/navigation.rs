@@ -135,7 +135,7 @@ pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
     clear_box(&shell.compact_nav);
     build_normal_navigation(shell);
     build_compact_navigation(shell);
-    shell.update_server_selector();
+    shell.update_source_selector();
     update_navigation_selection(shell.as_ref());
 }
 
@@ -180,7 +180,7 @@ fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Opti
     while let Some(widget) = child {
         child = widget.next_sibling();
 
-        if !widget.has_css_class("nav-button") || widget.has_css_class("server-selector") {
+        if !widget.has_css_class("nav-button") || widget.has_css_class("source-selector") {
             continue;
         }
 

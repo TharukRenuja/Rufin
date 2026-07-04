@@ -33,15 +33,15 @@ struct RandomPlayControls {
 
 pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
     let library = shell.state.library.borrow();
-    let provider = library
-        .server
+    let source_kind = library
+        .source
         .as_ref()
-        .map(|server| server.provider.clone())
+        .map(|server| server.kind.clone())
         .unwrap_or_default();
     let genres = library.genres.clone();
     drop(library);
 
-    let played_filter_supported = provider == "jellyfin";
+    let played_filter_supported = source_kind == "jellyfin";
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     let title = adw::WindowTitle::new(&tr("Play random"), "");

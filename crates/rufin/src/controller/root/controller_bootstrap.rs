@@ -16,7 +16,7 @@ impl AppController {
             let snapshot = fake_snapshot(&store, runtime.as_ref(), scale)
                 .unwrap_or_else(|error| panic!("failed to build fake snapshot: {error}"));
             let queue = snapshot
-                .server
+                .source
                 .as_ref()
                 .map(|server| QueueEngine::new(server.id.clone()));
             (snapshot, queue)
@@ -27,7 +27,7 @@ impl AppController {
                 warn!(%error, "failed to load fake snapshot");
                 LibrarySnapshot::first_run()
             });
-            let queue = restore_queue(&store, snapshot.server.as_ref());
+            let queue = restore_queue(&store, snapshot.source.as_ref());
             (snapshot, queue)
         };
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
@@ -108,10 +108,10 @@ impl AppController {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
         });
-        let queue = if snapshot.first_run && snapshot.server.is_some() {
+        let queue = if snapshot.first_run && snapshot.source.is_some() {
             None
         } else {
-            restore_queue(&store, snapshot.server.as_ref())
+            restore_queue(&store, snapshot.source.as_ref())
         };
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
         let playback_snapshot = playback_snapshot_from_queue(
@@ -246,17 +246,17 @@ fn fake_snapshot(
 ) -> Result<LibrarySnapshot, String> {
     let started = std::time::Instant::now();
     let provider = FakeSource::new(scale);
-    let server = provider.identity().server.clone();
-    let saved = SavedServer {
-        server: server.clone(),
+    let server = provider.identity().clone();
+    let saved = SavedSource {
+        source: server.clone(),
         user_id: "fake-user".to_string(),
         username: "fake".to_string(),
         trust_invalid_cert: false,
         use_jellyfin_instant_mix: false,
     };
     store.with_store(|store| {
-        store.save_server(&saved)?;
-        store.set_active_server(&server.id)?;
+        store.save_source(&saved)?;
+        store.set_active_source(&server.id)?;
         Ok(())
     })?;
     let (
@@ -316,12 +316,12 @@ fn fake_snapshot(
         "built direct fake snapshot"
     );
     Ok(LibrarySnapshot {
-        server: Some(server.clone()),
+        source: Some(server.clone()),
         source_capabilities: source_capabilities_for_saved(&saved),
-        servers: vec![server.clone()],
-        selected_source: Some(LibrarySourceSelection::Server(server.id)),
+        sources: vec![server.clone()],
+        selected_source: Some(LibrarySourceSelection::Source(server.id)),
         local_folders: Vec::new(),
-        server_local_access: Vec::new(),
+        source_local_access: Vec::new(),
         local_access: None,
         local_access_status: LocalAccessStatus::default(),
         music_folders: Vec::new(),

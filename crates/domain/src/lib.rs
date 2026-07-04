@@ -14,11 +14,11 @@ pub use domain::{
     HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
     LocalCueTrackSource, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
     LocalManifestEntry, LocalManifestScan, LocalScanCounters, Mood, MoodId, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity, SmartPlaylist,
-    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-    SmartPlaylistSortField, Track, TrackId, format_duration, normalize_release_types,
+    MusicFolderId, Playlist, PlaylistId, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
+    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
+    SourceIdentity, Track, TrackId, format_duration, normalize_release_types,
 };
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,

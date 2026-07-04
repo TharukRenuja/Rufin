@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use domain::{AlbumId, ArtistId, GeneratedTrackSeed, ServerId, Track, TrackId};
+use domain::{AlbumId, ArtistId, GeneratedTrackSeed, SourceId, Track, TrackId};
 
 use super::AppController;
 
@@ -15,7 +15,7 @@ struct RadioCandidate {
 
 #[derive(Clone, Copy)]
 struct CandidateContext<'a> {
-    server_id: &'a ServerId,
+    source_id: &'a SourceId,
     candidate_limit: usize,
     exclude_track_id: Option<&'a TrackId>,
     exclude_album_id: Option<&'a AlbumId>,
@@ -24,7 +24,7 @@ struct CandidateContext<'a> {
 impl AppController {
     pub(super) fn local_generated_tracks_from_cache(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         seed: GeneratedTrackSeed,
         limit: usize,
     ) -> Result<Vec<Track>, String> {
@@ -37,7 +37,7 @@ impl AppController {
             GeneratedTrackSeed::Track(track_id) => {
                 let seed = self
                     .store
-                    .with_store(|store| store.load_track(server_id, &track_id))?
+                    .with_store(|store| store.load_track(source_id, &track_id))?
                     .ok_or_else(|| "The selected track is no longer available.".to_string())?;
                 (
                     seed.genres,
@@ -53,7 +53,7 @@ impl AppController {
             GeneratedTrackSeed::Album(album_id) => {
                 let (album, _tracks) = self
                     .store
-                    .with_store(|store| store.load_album_detail(server_id, &album_id))?
+                    .with_store(|store| store.load_album_detail(source_id, &album_id))?
                     .ok_or_else(|| "The selected album is no longer available.".to_string())?;
                 (
                     album.genres,
@@ -73,7 +73,7 @@ impl AppController {
             }
         };
         let context = CandidateContext {
-            server_id,
+            source_id,
             candidate_limit,
             exclude_track_id: exclude_track_id.as_ref(),
             exclude_album_id: exclude_album_id.as_ref(),
@@ -110,7 +110,7 @@ impl AppController {
     ) -> Result<(), String> {
         for genre in genres.iter().filter(|genre| !genre.trim().is_empty()) {
             let tracks = self.store.with_store(|store| {
-                store.load_tracks_by_genre_name(context.server_id, genre, context.candidate_limit)
+                store.load_tracks_by_genre_name(context.source_id, genre, context.candidate_limit)
             })?;
             append_radio_candidates(
                 tracks,
@@ -134,7 +134,7 @@ impl AppController {
         for artist_id in artist_ids {
             let detail = self
                 .store
-                .with_store(|store| store.load_artist_detail(context.server_id, artist_id))?;
+                .with_store(|store| store.load_artist_detail(context.source_id, artist_id))?;
             if let Some(detail) = detail {
                 append_radio_candidates(
                     detail.tracks,
@@ -157,7 +157,7 @@ impl AppController {
     ) -> Result<(), String> {
         let tracks = self
             .store
-            .with_store(|store| store.load_tracks(context.server_id, 0, context.candidate_limit))?
+            .with_store(|store| store.load_tracks(context.source_id, 0, context.candidate_limit))?
             .items;
         append_radio_candidates(
             tracks,

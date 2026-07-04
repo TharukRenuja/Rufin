@@ -67,7 +67,7 @@ impl AppController {
         self.start_current_track_inner(true);
     }
     fn start_current_track_inner(&self, restart: bool) {
-        let Some((server_id, entry, next_entry, position_seconds, playback_settings)) =
+        let Some((source_id, entry, next_entry, position_seconds, playback_settings)) =
             self.current_playback_request()
         else {
             let _sent = self
@@ -75,13 +75,13 @@ impl AppController {
                 .send(ControllerEvent::Error("Queue is empty.".to_string()));
             return;
         };
-        if !restart && self.current_playback_start_matches(&server_id, &entry, position_seconds) {
+        if !restart && self.current_playback_start_matches(&source_id, &entry, position_seconds) {
             return;
         }
         self.cancel_waveform_warm();
         let request_generation =
             next_playback_request_generation(&self.playback_request_generation);
-        self.commit_current_playback_start(&server_id, &entry, position_seconds);
+        self.commit_current_playback_start(&source_id, &entry, position_seconds);
         let waveform_enabled = self.load_settings().seekbar_waveform_enabled;
         let controller = self.clone();
         let store = self.store.clone();
@@ -101,7 +101,7 @@ impl AppController {
                 &playback_request_generation,
                 request_generation,
                 &queue,
-                &server_id,
+                &source_id,
                 &entry,
             ) {
                 debug!(
@@ -118,7 +118,7 @@ impl AppController {
                     &store,
                     &runtime,
                     &secrets,
-                    &server_id,
+                    &source_id,
                     &entry,
                     &playback_settings,
                 ) {
@@ -128,7 +128,7 @@ impl AppController {
                             &playback_request_generation,
                             request_generation,
                             &queue,
-                            &server_id,
+                            &source_id,
                             &entry,
                         ) && !lock_retried
                             && playback_resolve_error_is_transient(&error)
@@ -142,7 +142,7 @@ impl AppController {
                             &playback_request_generation,
                             request_generation,
                             &queue,
-                            &server_id,
+                            &source_id,
                             &entry,
                         ) {
                             controller.report_playback(PlaybackReportKind::Stopped, true);
@@ -163,7 +163,7 @@ impl AppController {
                 &playback_request_generation,
                 request_generation,
                 &queue,
-                &server_id,
+                &source_id,
                 &entry,
             ) {
                 debug!(
@@ -208,12 +208,12 @@ impl AppController {
                 &playback_request_generation,
                 request_generation,
                 &queue,
-                &server_id,
+                &source_id,
                 &entry,
             ) {
                 return;
             }
-            controller.accept_current_playback_start(&server_id, &entry, position_seconds);
+            controller.accept_current_playback_start(&source_id, &entry, position_seconds);
             info!(
                 track_id = %entry.track_id.as_str(),
                 elapsed_ms = resolve_started.elapsed().as_millis(),
@@ -234,7 +234,7 @@ impl AppController {
                 request_waveform_for_prepared_item(
                     playback_snapshot,
                     events,
-                    server_id,
+                    source_id,
                     entry,
                     waveform_item,
                 );
@@ -244,12 +244,12 @@ impl AppController {
     }
     fn commit_current_playback_start(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         entry: &QueueEntry,
         position_seconds: u32,
     ) {
         self.update_playback_snapshot(|snapshot| {
-            snapshot.current_server_id = Some(server_id.clone());
+            snapshot.current_source_id = Some(source_id.clone());
             snapshot.current = Some(entry.clone());
             snapshot.state = PlaybackState::Buffering;
             snapshot.position_seconds = position_seconds;
@@ -260,7 +260,7 @@ impl AppController {
             set_waveform_cache_key(
                 snapshot,
                 Some(waveform_cache_key(
-                    server_id,
+                    source_id,
                     &entry.track_id,
                     entry.duration_seconds,
                 )),
@@ -270,16 +270,16 @@ impl AppController {
     }
     fn accept_current_playback_start(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         entry: &QueueEntry,
         position_seconds: u32,
     ) {
-        self.start_playback_activity(server_id, entry, position_seconds);
+        self.start_playback_activity(source_id, entry, position_seconds);
         self.report_playback(PlaybackReportKind::Started, false);
     }
     fn current_playback_start_matches(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         entry: &QueueEntry,
         position_seconds: u32,
     ) -> bool {
@@ -288,33 +288,33 @@ impl AppController {
                 snapshot.state,
                 PlaybackState::Buffering | PlaybackState::Playing
             ) && snapshot.position_seconds == position_seconds
-                && snapshot.current_server_id.as_ref() == Some(server_id)
+                && snapshot.current_source_id.as_ref() == Some(source_id)
                 && snapshot.current.as_ref().is_some_and(|current| {
                     current.id == entry.id && current.track_id == entry.track_id
                 })
         })
     }
-    pub(in crate::controller) fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
+    pub(in crate::controller) fn current_queue_entry(&self) -> Option<(SourceId, QueueEntry, u32)> {
         self.queue.lock().ok().and_then(|queue| {
             let queue = queue.as_ref()?;
             let entry = queue.current()?.clone();
-            Some((queue.server_id().clone(), entry, queue.progress_seconds()))
+            Some((queue.source_id().clone(), entry, queue.progress_seconds()))
         })
     }
     pub(in crate::controller) fn current_playback_entry(
         &self,
-    ) -> Option<(ServerId, QueueEntry, u32)> {
+    ) -> Option<(SourceId, QueueEntry, u32)> {
         self.playback_snapshot.lock().ok().and_then(|snapshot| {
-            let server_id = snapshot.current_server_id.clone()?;
+            let source_id = snapshot.current_source_id.clone()?;
             let entry = snapshot.current.clone()?;
-            Some((server_id, entry, snapshot.position_seconds))
+            Some((source_id, entry, snapshot.position_seconds))
         })
     }
     pub(in crate::controller) fn set_queue_progress_for_playback_current(
         &self,
         seconds: u32,
     ) -> bool {
-        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
             return false;
         };
         self.queue
@@ -322,7 +322,7 @@ impl AppController {
             .ok()
             .and_then(|mut queue| {
                 let queue = queue.as_mut()?;
-                if !queue_current_matches(queue, &server_id, &entry) {
+                if !queue_current_matches(queue, &source_id, &entry) {
                     return None;
                 }
                 queue.set_progress_seconds(seconds);
@@ -333,7 +333,7 @@ impl AppController {
     pub(in crate::controller) fn current_playback_request(
         &self,
     ) -> Option<(
-        ServerId,
+        SourceId,
         QueueEntry,
         Option<QueueEntry>,
         u32,
@@ -345,7 +345,7 @@ impl AppController {
             let entry = queue.current()?.clone();
             let next = next_queue_entry_after_current(queue);
             Some((
-                queue.server_id().clone(),
+                queue.source_id().clone(),
                 entry,
                 next,
                 queue.progress_seconds(),
@@ -366,8 +366,8 @@ impl AppController {
     }
 }
 
-fn queue_current_matches(queue: &QueueEngine, server_id: &ServerId, entry: &QueueEntry) -> bool {
-    queue.server_id() == server_id
+fn queue_current_matches(queue: &QueueEngine, source_id: &SourceId, entry: &QueueEntry) -> bool {
+    queue.source_id() == source_id
         && queue
             .current()
             .is_some_and(|current| current.id == entry.id && current.track_id == entry.track_id)

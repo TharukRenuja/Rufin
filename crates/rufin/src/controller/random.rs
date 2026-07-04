@@ -47,12 +47,12 @@ impl AppController {
     }
 
     fn random_tracks_for_request(&self, request: &RandomPlayRequest) -> Result<Vec<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+        let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Err("No active music server is saved.".to_string());
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        let mut tracks = if saved.server.provider == "fake" {
-            self.random_tracks_from_cache(&saved.server.id, request)?
+        let mut tracks = if saved.source.kind == "fake" {
+            self.random_tracks_from_cache(&saved.source.id, request)?
         } else {
             let provider = source_for_saved(&self.store, &self.runtime, &self.secrets, &saved)?;
             self.runtime
@@ -76,12 +76,12 @@ impl AppController {
 
     fn random_tracks_from_cache(
         &self,
-        server_id: &domain::ServerId,
+        source_id: &domain::SourceId,
         request: &RandomPlayRequest,
     ) -> Result<Vec<Track>, String> {
         let mut tracks = self
             .store
-            .with_store(|store| store.load_tracks(server_id, 0, SNAPSHOT_TRACK_LIMIT))?
+            .with_store(|store| store.load_tracks(source_id, 0, SNAPSHOT_TRACK_LIMIT))?
             .items
             .into_iter()
             .filter(|track| {

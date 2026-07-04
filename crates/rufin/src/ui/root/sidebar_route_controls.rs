@@ -1,8 +1,8 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn update_server_selector(self: &Rc<Self>) {
-        source_selector::update_server_selector(self);
+    pub(in crate::ui) fn update_source_selector(self: &Rc<Self>) {
+        source_selector::update_source_selector(self);
     }
     pub(in crate::ui) fn present_library_preferences_dialog(self: &Rc<Self>) {
         present_library_preferences_dialog(self);

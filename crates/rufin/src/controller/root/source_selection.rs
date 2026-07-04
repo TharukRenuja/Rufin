@@ -33,7 +33,7 @@ impl AppController {
                 );
             };
             let previous_active = match store
-                .with_store(|store| Ok(store.active_server()?.map(|saved| saved.server.id)))
+                .with_store(|store| Ok(store.active_source()?.map(|saved| saved.source.id)))
             {
                 Ok(previous_active) => previous_active,
                 Err(error) => {
@@ -91,7 +91,7 @@ impl AppController {
                         return;
                     }
                     if let Err(error) =
-                        store.with_store(|store| store.set_active_server(&saved.server.id))
+                        store.with_store(|store| store.set_active_source(&saved.source.id))
                     {
                         emit_error(error);
                         return;
@@ -119,18 +119,18 @@ impl AppController {
                     }
                     let local_configured = !settings.sources.local_folders.is_empty();
                     let needs_sync =
-                        local_configured && active_server_needs_sync(&store, &saved.server.id);
+                        local_configured && active_source_needs_sync(&store, &saved.source.id);
                     (
                         needs_sync.then_some(saved.clone()),
                         (local_configured && !needs_sync).then_some(saved),
                     )
                 }
-                LibrarySourceSelection::Server(server_id) => {
+                LibrarySourceSelection::Source(source_id) => {
                     let saved = match store.with_store(|store| {
                         let saved = store
-                            .list_servers()?
+                            .list_sources()?
                             .into_iter()
-                            .find(|saved| saved.server.id == server_id);
+                            .find(|saved| saved.source.id == source_id);
                         Ok(saved)
                     }) {
                         Ok(Some(saved)) => saved,
@@ -156,7 +156,7 @@ impl AppController {
                         return;
                     }
                     if let Err(error) =
-                        store.with_store(|store| store.set_active_server(&server_id))
+                        store.with_store(|store| store.set_active_source(&source_id))
                     {
                         emit_error(error);
                         return;
@@ -220,7 +220,7 @@ impl AppController {
                     if !current() {
                         return;
                     }
-                    let needs_sync = active_server_needs_sync(&store, &saved.server.id);
+                    let needs_sync = active_source_needs_sync(&store, &saved.source.id);
                     (
                         needs_sync.then_some(saved.clone()),
                         (!needs_sync).then_some(saved),
@@ -232,7 +232,7 @@ impl AppController {
                 return;
             }
             if let Some(saved) = selected_saved_needing_sync {
-                if cached_library_exists(&store, &saved.server.id) {
+                if cached_library_exists(&store, &saved.source.id) {
                     if !emit_current_runtime_snapshot(
                         &store,
                         &sync_context.secrets,
@@ -319,13 +319,13 @@ fn emit_current_runtime_snapshot(
 
 fn cancel_previous_source_sync(
     sync_context: &SyncContext,
-    previous_active: Option<&ServerId>,
-    selected: &SavedServer,
+    previous_active: Option<&SourceId>,
+    selected: &SavedSource,
 ) -> Result<(), String> {
     let Some(previous_id) = previous_active else {
         return Ok(());
     };
-    if previous_id == &selected.server.id {
+    if previous_id == &selected.source.id {
         return Ok(());
     }
     cancel_sync_if_running(&sync_context.sync_in_flight, previous_id).map(|_| ())

@@ -3,14 +3,14 @@ use std::time::Instant;
 
 pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
 ) {
-    let cached_current = sync_target_is_current(&context.store, &saved.server.id)
-        && cached_library_exists(&context.store, &saved.server.id);
+    let cached_current = sync_target_is_current(&context.store, &saved.source.id)
+        && cached_library_exists(&context.store, &saved.source.id);
     if !cached_current {
         return;
     }
-    if saved.server.provider == LOCAL_SOURCE_ID {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         if !load_settings_from_store(&context.store)
             .sources
             .local_folders
@@ -25,22 +25,22 @@ pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
     }
 }
 
-pub(in crate::controller) fn active_source_reconciliation_supported(saved: &SavedServer) -> bool {
+pub(in crate::controller) fn active_source_reconciliation_supported(saved: &SavedSource) -> bool {
     matches!(
-        saved.server.provider.as_str(),
+        saved.source.kind.as_str(),
         "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
     )
 }
 
-fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved: SavedServer) {
-    let server_id = saved.server.id.clone();
-    let Ok(Some(permit)) = context.sync_in_flight.acquire(server_id.clone()) else {
+fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved: SavedSource) {
+    let source_id = saved.source.id.clone();
+    let Ok(Some(permit)) = context.sync_in_flight.acquire(source_id.clone()) else {
         return;
     };
     let cancellation = permit.cancellation_token();
     let generation = context
         .store
-        .with_store(|store| store.sync_state(&server_id).map(|state| state.generation))
+        .with_store(|store| store.sync_state(&source_id).map(|state| state.generation))
         .unwrap_or(0);
     thread::spawn(move || {
         let _permit = permit;
@@ -49,7 +49,7 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
             .and_then(|source| {
                 context.runtime.block_on(reconcile_active_source(
                     &context.store,
-                    &server_id,
+                    &source_id,
                     &source,
                     generation,
                     &cancellation,
@@ -64,19 +64,19 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
                 warn!(
                     %error,
                     generation,
-                    server_id = %server_id.as_str(),
+                    source_id = %source_id.as_str(),
                     total_elapsed_ms = started.elapsed().as_millis() as u64,
                     "failed active source reconciliation"
                 );
                 return;
             }
         };
-        if !sync_target_is_current(&context.store, &server_id) {
+        if !sync_target_is_current(&context.store, &source_id) {
             return;
         }
         info!(
             generation,
-            server_id = %server_id.as_str(),
+            source_id = %source_id.as_str(),
             total_elapsed_ms = started.elapsed().as_millis() as u64,
             library_changed = !delta.is_empty(),
             "completed active source reconciliation"
@@ -96,18 +96,18 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
 
 pub(in crate::controller) async fn reconcile_active_source(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     source: &LoadedSource,
     generation: i64,
     cancellation: &CancellationToken,
 ) -> Result<LibraryDelta, String> {
     match source {
         LoadedSource::Jellyfin(source) => {
-            reconcile_jellyfin_active_source(store, server_id, source, generation, cancellation)
+            reconcile_jellyfin_active_source(store, source_id, source, generation, cancellation)
                 .await
         }
         LoadedSource::Subsonic(source) => {
-            reconcile_subsonic_active_source(store, server_id, source, generation, cancellation)
+            reconcile_subsonic_active_source(store, source_id, source, generation, cancellation)
                 .await
         }
         LoadedSource::Local(_) => Ok(LibraryDelta::default()),
@@ -116,7 +116,7 @@ pub(in crate::controller) async fn reconcile_active_source(
 
 async fn reconcile_jellyfin_active_source(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     source: &source_jellyfin::JellyfinSource,
     generation: i64,
     cancellation: &CancellationToken,
@@ -126,19 +126,19 @@ async fn reconcile_jellyfin_active_source(
     check_sync_cancelled(cancellation)?;
     if !tracks.is_empty() {
         let delta =
-            store.with_store(|store| store.upsert_tracks_delta(server_id, &tracks, generation))?;
+            store.with_store(|store| store.upsert_tracks_delta(source_id, &tracks, generation))?;
         collector.merge(delta);
     }
     let delta = collector.finish();
     if !delta.is_empty() {
-        store.with_store(|store| store.refresh_library_counts(server_id))?;
+        store.with_store(|store| store.refresh_library_counts(source_id))?;
     }
     Ok(delta)
 }
 
 async fn reconcile_subsonic_active_source(
     store: &StoreHandle,
-    server_id: &ServerId,
+    source_id: &SourceId,
     source: &source_subsonic::SubsonicSource,
     generation: i64,
     cancellation: &CancellationToken,
@@ -153,7 +153,7 @@ async fn reconcile_subsonic_active_source(
     }
 
     let albums_needing_detail = store
-        .with_store(|store| subsonic_albums_needing_detail(store, server_id, &newest_albums))?;
+        .with_store(|store| subsonic_albums_needing_detail(store, source_id, &newest_albums))?;
     let mut detail_albums = Vec::new();
     let mut detail_tracks = Vec::new();
     for album_id in albums_needing_detail {
@@ -166,29 +166,29 @@ async fn reconcile_subsonic_active_source(
     let mut collector = LibraryDeltaCollector::new();
     collector
         .merge(store.with_store(|store| {
-            store.upsert_albums_delta(server_id, &newest_albums, generation)
+            store.upsert_albums_delta(source_id, &newest_albums, generation)
         })?);
     if !detail_albums.is_empty() {
         collector.merge(store.with_store(|store| {
-            store.upsert_albums_delta(server_id, &detail_albums, generation)
+            store.upsert_albums_delta(source_id, &detail_albums, generation)
         })?);
     }
     if !detail_tracks.is_empty() {
         collector.merge(store.with_store(|store| {
-            store.upsert_tracks_delta(server_id, &detail_tracks, generation)
+            store.upsert_tracks_delta(source_id, &detail_tracks, generation)
         })?);
     }
 
     let delta = collector.finish();
     if !delta.is_empty() {
-        store.with_store(|store| store.refresh_library_counts(server_id))?;
+        store.with_store(|store| store.refresh_library_counts(source_id))?;
     }
     Ok(delta)
 }
 
 fn subsonic_albums_needing_detail(
     store: &Store,
-    server_id: &ServerId,
+    source_id: &SourceId,
     newest_albums: &[Album],
 ) -> StoreResult<Vec<AlbumId>> {
     let album_ids = newest_albums
@@ -196,7 +196,7 @@ fn subsonic_albums_needing_detail(
         .map(|album| album.id.clone())
         .collect::<Vec<_>>();
     let cached_albums = store
-        .load_albums_by_ids(server_id, &album_ids)?
+        .load_albums_by_ids(source_id, &album_ids)?
         .into_iter()
         .map(|album| (album.id.clone(), album))
         .collect::<HashMap<_, _>>();

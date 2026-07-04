@@ -77,7 +77,7 @@ impl AppController {
             };
             if select_local
                 && let Err(error) =
-                    store.with_store(|store| store.set_active_server(&saved.server.id))
+                    store.with_store(|store| store.set_active_source(&saved.source.id))
             {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
@@ -154,10 +154,10 @@ impl AppController {
             let no_local_folders = settings.sources.local_folders.is_empty();
             let result = store.with_store(|store| {
                 if selected_local && !no_local_folders {
-                    store.set_active_server(&saved.server.id)?;
+                    store.set_active_source(&saved.source.id)?;
                 }
                 if no_local_folders {
-                    store.clear_library_cache(&saved.server.id)?;
+                    store.clear_library_cache(&saved.source.id)?;
                 }
                 Ok(())
             });
@@ -166,11 +166,11 @@ impl AppController {
                 return;
             }
             if no_local_folders {
-                if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
+                if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
                 }
-                if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.server.id) {
+                if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source.id) {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
                 }
@@ -186,7 +186,7 @@ impl AppController {
                     &events,
                 );
             } else if selected_local {
-                let restored = QueueEngine::new(saved.server.id.clone());
+                let restored = QueueEngine::new(saved.source.id.clone());
                 let queue_snapshot = restored.snapshot();
                 let auto_dj = auto_dj_enabled
                     .lock()
@@ -210,8 +210,8 @@ impl AppController {
             }
             emit_snapshot(&store, &events);
             if selected_local && no_local_folders {
-                match store.with_store(|store| store.active_server()) {
-                    Ok(Some(fallback)) if fallback.server.provider != LOCAL_SOURCE_ID => {
+                match store.with_store(|store| store.active_source()) {
+                    Ok(Some(fallback)) if fallback.source.kind != LOCAL_SOURCE_ID => {
                         if let Err(error) = activate_saved_queue(
                             &QueueActivationContext {
                                 store: &store,

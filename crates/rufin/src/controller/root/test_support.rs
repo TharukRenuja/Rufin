@@ -52,7 +52,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
         .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
     let snapshot = load_snapshot(&store).expect("load snapshot");
     let settings = load_settings_from_store(&store);
-    let queue = restore_queue(&store, snapshot.server.as_ref());
+    let queue = restore_queue(&store, snapshot.source.as_ref());
     let playback_snapshot =
         playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled, &settings.playback);
     let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
@@ -269,11 +269,11 @@ pub(in crate::controller) fn restored_track() -> Track {
     }
 }
 
-pub(in crate::controller) fn saved_server() -> SavedServer {
-    SavedServer {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:test"),
-            provider: "jellyfin".to_string(),
+pub(in crate::controller) fn saved_source() -> SavedSource {
+    SavedSource {
+        source: SourceIdentity {
+            id: SourceId::new("jellyfin:server:test"),
+            kind: "jellyfin".to_string(),
             name: "Test Server".to_string(),
             base_url: "https://music.example".to_string(),
         },
@@ -284,27 +284,27 @@ pub(in crate::controller) fn saved_server() -> SavedServer {
     }
 }
 
-pub(in crate::controller) fn begin_active_sync(store: &StoreHandle, saved: &SavedServer) -> i64 {
+pub(in crate::controller) fn begin_active_sync(store: &StoreHandle, saved: &SavedSource) -> i64 {
     store
         .with_store(|store| {
-            store.save_server(saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.begin_sync(&saved.server.id)
+            store.save_source(saved)?;
+            store.set_active_source(&saved.source.id)?;
+            store.begin_sync(&saved.source.id)
         })
         .expect("begin sync")
 }
 
 pub(in crate::controller) fn begin_sync_with_access(
     store: &StoreHandle,
-    saved: &SavedServer,
-    access: &ServerLocalAccess,
+    saved: &SavedSource,
+    access: &SourceLocalAccess,
 ) -> i64 {
     store
         .with_store(|store| {
-            store.save_server(saved)?;
-            store.set_active_server(&saved.server.id)?;
-            store.save_server_local_access(access)?;
-            store.begin_sync(&saved.server.id)
+            store.save_source(saved)?;
+            store.set_active_source(&saved.source.id)?;
+            store.save_source_local_access(access)?;
+            store.begin_sync(&saved.source.id)
         })
         .expect("begin sync")
 }
@@ -427,26 +427,26 @@ pub(in crate::controller) fn disk_store_database_path(store: &StoreHandle) -> Pa
 
 pub(in crate::controller) fn seed_cached_library(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     albums: &[Album],
     tracks: &[Track],
     home_sections: &[HomeSection],
 ) {
     store
         .with_store(|store| {
-            store.save_server(saved)?;
-            store.set_active_server(&saved.server.id)?;
-            let generation = store.begin_sync(&saved.server.id)?;
+            store.save_source(saved)?;
+            store.set_active_source(&saved.source.id)?;
+            let generation = store.begin_sync(&saved.source.id)?;
             if !albums.is_empty() {
-                store.upsert_albums(&saved.server.id, albums, generation)?;
+                store.upsert_albums(&saved.source.id, albums, generation)?;
             }
             if !tracks.is_empty() {
-                store.upsert_tracks(&saved.server.id, tracks, generation)?;
+                store.upsert_tracks(&saved.source.id, tracks, generation)?;
             }
             if !home_sections.is_empty() {
-                store.upsert_home_sections(&saved.server.id, home_sections, generation)?;
+                store.upsert_home_sections(&saved.source.id, home_sections, generation)?;
             }
-            store.complete_sync(&saved.server.id, generation)
+            store.complete_sync(&saved.source.id, generation)
         })
         .expect("seed library cache");
 }
@@ -526,9 +526,9 @@ pub(in crate::controller) fn seed_cover_cache(
     image_ref: &ImageRef,
     size: u32,
     path: &std::path::Path,
-) -> ServerId {
-    let saved = saved_server();
-    let server_id = saved.server.id.clone();
+) -> SourceId {
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
     let image_tag = image_ref
         .tag
         .as_deref()
@@ -537,10 +537,10 @@ pub(in crate::controller) fn seed_cover_cache(
     controller
         .store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)?;
             store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
+                source_id: source_id.clone(),
                 item_id: image_ref.item_id.clone(),
                 image_tag,
                 size,
@@ -548,24 +548,24 @@ pub(in crate::controller) fn seed_cover_cache(
             })
         })
         .expect("seed cover cache");
-    server_id
+    source_id
 }
 
 pub(in crate::controller) fn seed_external_cover_miss(
     controller: &AppController,
     image_ref: &ImageRef,
     size: u32,
-) -> ServerId {
-    let saved = saved_server();
-    let server_id = saved.server.id.clone();
+) -> SourceId {
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
     let image_tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     controller
         .store
         .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)?;
             store.save_external_image_lookup_miss(
-                &server_id,
+                &source_id,
                 &image_ref.item_id,
                 image_tag,
                 size,
@@ -573,7 +573,7 @@ pub(in crate::controller) fn seed_external_cover_miss(
             )
         })
         .expect("seed external miss");
-    server_id
+    source_id
 }
 
 pub(in crate::controller) fn wait_for_snapshot(
@@ -853,15 +853,15 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
 }
 pub(in crate::controller) fn wait_for_token_deleted(
     secrets: &Arc<dyn SecretStore>,
-    server_id: &ServerId,
+    source_id: &SourceId,
 ) {
     for _ in 0..100 {
-        if secrets.load_token(server_id).expect("load token").is_none() {
+        if secrets.load_token(source_id).expect("load token").is_none() {
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(secrets.load_token(server_id).expect("load token"), None);
+    assert_eq!(secrets.load_token(source_id).expect("load token"), None);
 }
 pub(in crate::controller) fn wait_for_polled_event<T>(
     controller: &AppController,

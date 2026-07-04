@@ -82,10 +82,10 @@ use domain::{
     HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
     LibraryListSettings, Mood, MusicFolderId, PlaySourceDescriptor, Playlist,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route,
-    RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
+    RouteStack, SearchKind, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
     SourcePlaylistOperation, Track, TrackId, TrackSortKey, TrackTableSettings, format_duration,
     sanitized_window_size,
 };
@@ -131,7 +131,7 @@ use queue::connect_queue_panel_controls;
 use release_kind::album_release_kind_label;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use source::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
-use source_selector::{ServerSelector, build_server_selector};
+use source_selector::{SourceSelector, build_source_selector};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -382,7 +382,7 @@ pub(in crate::ui) struct AppState {
     context_playlist_picker: RefCell<Option<PlaylistPickerHandle>>,
     preferences_dialog: RefCell<Option<adw::Dialog>>,
     fetched_release_notes: RefCell<Vec<release_notes::ReleaseNote>>,
-    reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
+    reconnect_toasts_shown: RefCell<HashSet<SourceId>>,
     library_sync_toast: RefCell<Option<adw::Toast>>,
     library_sync_toast_suppressed: Cell<bool>,
     control_feedback_generation: Rc<Cell<u64>>,
@@ -444,8 +444,8 @@ pub(in crate::ui) struct AppState {
     first_run_cover_prime_generation: Cell<u64>,
     first_run_cover_prime_pending: RefCell<HashSet<String>>,
     cover_warm_token: Cell<u64>,
-    cover_warm_pending: RefCell<Option<(ServerId, u64)>>,
-    cover_warm_started: RefCell<Option<ServerId>>,
+    cover_warm_pending: RefCell<Option<(SourceId, u64)>>,
+    cover_warm_started: RefCell<Option<SourceId>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<ServerDiscoveryStatus>,
     server_discovery_running: Cell<bool>,
@@ -536,7 +536,7 @@ pub(in crate::ui) struct HomeSectionView {
 }
 #[derive(Clone)]
 pub(in crate::ui) struct PrefetchedHomeSection {
-    server_id: domain::ServerId,
+    source_id: domain::SourceId,
     section: HomeSection,
 }
 #[derive(Clone, Default)]
@@ -586,7 +586,7 @@ pub(in crate::ui) struct Shell {
     tiny_nav_button: gtk::Button,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
-    server_selector: ServerSelector,
+    server_selector: SourceSelector,
     route_host: gtk::Box,
     current_library_toolbar_controls: RefCell<Option<glib::WeakRef<gtk::Box>>>,
     normal_main_menu: gtk::Button,
@@ -698,14 +698,7 @@ impl Shell {
     }
 
     pub(in crate::ui) fn playlist_creation_supported(&self) -> bool {
-        self.state
-            .library
-            .borrow()
-            .source_capabilities
-            .playlists
-            .create
-            .owner()
-            .is_some()
+        true
     }
 
     pub(in crate::ui) fn playlist_operation_supported(
@@ -990,7 +983,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav_handle);
     compact_nav_slot.add_css_class("sidebar-pane");
     compact_nav_slot.add_css_class("compact-rail-slot");
-    let server_selector = build_server_selector();
+    let server_selector = build_source_selector();
     let normal_main_menu = gtk::Button::new();
     let compact_main_menu = gtk::Button::new();
 
@@ -1122,7 +1115,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.install_locale_bindings();
-    shell.update_server_selector();
+    shell.update_source_selector();
     {
         let split_view = shell.split_view.clone();
         shell

@@ -301,9 +301,9 @@ fn capped_stream_from_saved_session_uses_audio_endpoint() {
 
 fn saved_session() -> SavedSourceSession {
     SavedSourceSession {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:test"),
-            provider: "jellyfin".to_string(),
+        source: SourceIdentity {
+            id: SourceId::new("jellyfin:server:test"),
+            kind: "jellyfin".to_string(),
             name: "Test".to_string(),
             base_url: "https://library.example.test".to_string(),
         },
@@ -388,9 +388,9 @@ async fn lyrics_add_limited() {
 }
 pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinSource {
     JellyfinSource::from_saved_session(SavedSourceSession {
-        server: ServerIdentity {
-            id: ServerId::new("jellyfin:server:test"),
-            provider: "jellyfin".to_string(),
+        source: SourceIdentity {
+            id: SourceId::new("jellyfin:server:test"),
+            kind: "jellyfin".to_string(),
             name: "Test".to_string(),
             base_url: server.uri(),
         },

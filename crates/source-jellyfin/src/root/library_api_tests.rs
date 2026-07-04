@@ -13,7 +13,7 @@ async fn library_map_session() {
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "AccessToken": "secret-token",
-            "ServerId": "server-one",
+            "SourceId": "server-one",
             "User": { "Id": "user-one", "Name": "demo" }
         })))
         .mount(&server)
@@ -36,8 +36,8 @@ async fn library_map_session() {
     .await
     .expect("login");
 
-    assert_eq!(session.server.id.as_str(), "jellyfin:server:server-one");
-    assert_eq!(session.server.name, "Music Box");
+    assert_eq!(session.source.id.as_str(), "jellyfin:server:server-one");
+    assert_eq!(session.source.name, "Music Box");
     assert_eq!(session.username, "demo");
     assert_eq!(session.access_token, "secret-token");
     assert_eq!(session.device_id.as_deref(), Some("rufin-install-one"));

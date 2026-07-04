@@ -5,8 +5,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use domain::{ImageRef, ServerId};
-use library::{SavedServer, Store, image_cache_key};
+use domain::{ImageRef, SourceId};
+use library::{SavedSource, Store, image_cache_key};
 use secrets::SecretStore;
 use source::MusicSource;
 use tokio::runtime::Runtime;
@@ -136,9 +136,9 @@ pub(in crate::controller) struct ExternalCoverPrefetchRequest {
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) retry_generation: u64,
-    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
+    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
-    pub(in crate::controller) saved: SavedServer,
+    pub(in crate::controller) saved: SavedSource,
 }
 
 struct CoverPrefetchContext<'a> {
@@ -151,7 +151,7 @@ struct CoverPrefetchContext<'a> {
     external_cover_retry_generation: &'a Arc<AtomicU64>,
     retry_generation: u64,
     cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
-    saved: &'a SavedServer,
+    saved: &'a SavedSource,
     cancellation: Option<&'a CancellationToken>,
 }
 
@@ -164,41 +164,41 @@ pub(in crate::controller) struct SourceCoverPrefetchRequest<'a> {
     pub(in crate::controller) external_cover_retry_generation: &'a Arc<AtomicU64>,
     pub(in crate::controller) retry_generation: u64,
     pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
-    pub(in crate::controller) saved: &'a SavedServer,
+    pub(in crate::controller) saved: &'a SavedSource,
     pub(in crate::controller) source: &'a dyn MusicSource,
     pub(in crate::controller) cancellation: Option<&'a CancellationToken>,
     pub(in crate::controller) emit_status: bool,
 }
 
 fn mark_prefetch_flight(
-    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
-    server_id: &ServerId,
+    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<SourceId, u64>>>,
+    source_id: &SourceId,
     generation: u64,
 ) -> bool {
     external_cover_prefetch_in_flight
         .lock()
         .map(|mut running| {
             if running
-                .get(server_id)
+                .get(source_id)
                 .is_some_and(|existing_generation| *existing_generation >= generation)
             {
                 return false;
             }
-            running.insert(server_id.clone(), generation);
+            running.insert(source_id.clone(), generation);
             true
         })
         .unwrap_or(false)
 }
 
 fn clear_prefetch_generation(
-    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
-    server_id: &ServerId,
+    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<SourceId, u64>>>,
+    source_id: &SourceId,
     generation: u64,
 ) {
     if let Ok(mut running) = external_cover_prefetch_in_flight.lock()
-        && running.get(server_id).copied() == Some(generation)
+        && running.get(source_id).copied() == Some(generation)
     {
-        running.remove(server_id);
+        running.remove(source_id);
     }
 }
 
@@ -231,14 +231,14 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
         cover_slots,
         saved,
     } = request;
-    if saved.server.provider == "fake" {
+    if saved.source.kind == "fake" {
         return;
     }
 
-    let server_id = saved.server.id.clone();
+    let source_id = saved.source.id.clone();
     if !mark_prefetch_flight(
         &external_cover_prefetch_in_flight,
-        &server_id,
+        &source_id,
         retry_generation,
     ) {
         return;
@@ -246,7 +246,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
 
     thread::spawn(move || {
         info!(
-            server_id = %saved.server.id,
+            source_id = %saved.source.id,
             "started synced image prefetch"
         );
         let mut stats = SyncedImagePrefetchStats::default();
@@ -267,7 +267,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
         match result {
             Ok(()) => {
                 info!(
-                    server_id = %saved.server.id,
+                    source_id = %saved.source.id,
                     album_rows = stats.album_rows,
                     album_image_refs = stats.album_image_refs,
                     artist_rows = stats.artist_rows,
@@ -286,7 +286,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
             Err(error) => {
                 warn!(
                     %error,
-                    server_id = %saved.server.id,
+                    source_id = %saved.source.id,
                     album_rows = stats.album_rows,
                     album_image_refs = stats.album_image_refs,
                     artist_rows = stats.artist_rows,
@@ -305,7 +305,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
         }
         clear_prefetch_generation(
             &external_cover_prefetch_in_flight,
-            &server_id,
+            &source_id,
             retry_generation,
         );
     });
@@ -315,7 +315,7 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
     request: SourceCoverPrefetchRequest<'_>,
 ) -> Result<(), String> {
     let saved = request.saved;
-    if saved.server.provider == "fake" {
+    if saved.source.kind == "fake" {
         return Ok(());
     }
 
@@ -339,7 +339,7 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
     })?;
     source_stats.total_elapsed_ms = elapsed_ms(started);
     info!(
-        server_id = %saved.server.id,
+        source_id = %saved.source.id,
         album_rows = source_stats.album_rows,
         album_image_refs = source_stats.album_image_refs,
         track_rows = source_stats.track_rows,
@@ -416,10 +416,10 @@ fn prefetch_synced_source_covers(
     let loop_started = Instant::now();
     for (index, image_ref) in image_refs.into_iter().enumerate() {
         check_prefetch_cancelled(context.cancellation)?;
-        if active_server_changed_in_store(cache_store, context.saved)? {
+        if active_source_changed_in_store(cache_store, context.saved)? {
             stats.cover_loop_elapsed_ms = elapsed_ms(loop_started);
             info!(
-                server_id = %context.saved.server.id,
+                source_id = %context.saved.source.id,
                 "stopped initial source cover prefetch because active server changed"
             );
             return Ok(());
@@ -450,7 +450,7 @@ fn emit_initial_cover_prefetch_status(
 
 fn synced_source_cover_refs(
     store: &Store,
-    saved: &SavedServer,
+    saved: &SavedSource,
     cancellation: Option<&CancellationToken>,
     seen: &mut HashSet<(String, String)>,
     stats: &mut SourceCoverPrefetchStats,
@@ -460,7 +460,7 @@ fn synced_source_cover_refs(
     loop {
         check_prefetch_cancelled(cancellation)?;
         let page = store
-            .load_albums(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .load_albums(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
@@ -477,7 +477,7 @@ fn synced_source_cover_refs(
     loop {
         check_prefetch_cancelled(cancellation)?;
         let page = store
-            .load_tracks(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .load_tracks(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
@@ -496,7 +496,7 @@ fn synced_source_cover_refs(
             check_prefetch_cancelled(cancellation)?;
             let page = store
                 .load_artists(
-                    &saved.server.id,
+                    &saved.source.id,
                     album_artist,
                     offset,
                     EXTERNAL_PREFETCH_PAGE_SIZE,
@@ -526,7 +526,7 @@ fn synced_source_cover_refs(
     loop {
         check_prefetch_cancelled(cancellation)?;
         let page = store
-            .load_genres(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .load_genres(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
@@ -543,7 +543,7 @@ fn synced_source_cover_refs(
     loop {
         check_prefetch_cancelled(cancellation)?;
         let page = store
-            .load_playlists(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
+            .load_playlists(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
         let item_count = page.items.len();
         if item_count == 0 {
@@ -569,7 +569,7 @@ fn prefetch_source_image_ref(
     check_prefetch_cancelled(context.cancellation)?;
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(
-        &context.saved.server.id,
+        &context.saved.source.id,
         &image_ref.item_id,
         tag,
         EXTERNAL_PREFETCH_COVER_SIZE,
@@ -630,7 +630,7 @@ fn prefetch_source_image_ref(
             stats.record_error_elapsed(elapsed_ms);
             if is_source_not_found_error(&error) {
                 debug!(
-                    server_id = %context.saved.server.id,
+                    source_id = %context.saved.source.id,
                     item_id = %image_ref.item_id,
                     image_tag = tag,
                     elapsed_ms,
@@ -640,7 +640,7 @@ fn prefetch_source_image_ref(
                 Ok(SyncedImagePrefetchOutcome::Miss)
             } else {
                 warn!(
-                    server_id = %context.saved.server.id,
+                    source_id = %context.saved.source.id,
                     item_id = %image_ref.item_id,
                     image_tag = tag,
                     elapsed_ms,
@@ -653,11 +653,11 @@ fn prefetch_source_image_ref(
     }
 }
 
-fn log_source_cover_timing(saved: &SavedServer, image_ref: &ImageRef, timing: CoverFetchTiming) {
+fn log_source_cover_timing(saved: &SavedSource, image_ref: &ImageRef, timing: CoverFetchTiming) {
     let image_tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     debug!(
-        server_id = %saved.server.id,
-        source = %saved.server.provider,
+        source_id = %saved.source.id,
+        source = %saved.source.kind,
         item_id = %image_ref.item_id,
         image_tag,
         bytes = timing.bytes,
@@ -675,8 +675,8 @@ fn log_source_cover_timing(saved: &SavedServer, image_ref: &ImageRef, timing: Co
         || timing.total_ms >= SLOW_SOURCE_COVER_TOTAL_MS
     {
         warn!(
-            server_id = %saved.server.id,
-            source = %saved.server.provider,
+            source_id = %saved.source.id,
+            source = %saved.source.kind,
             item_id = %image_ref.item_id,
             image_tag,
             bytes = timing.bytes,
@@ -703,23 +703,23 @@ fn prefetch_synced_album_covers(
         let settings = load_settings_from_store(context.store);
         if !external_metadata::enabled(&settings) {
             info!(
-                server_id = %context.saved.server.id,
+                source_id = %context.saved.source.id,
                 private_mode = settings.private_mode,
                 external_metadata_enabled = settings.external_metadata_enabled,
                 "skipped synced external album cover prefetch"
             );
             return Ok(());
         }
-        if active_server_changed(context.store, context.saved)? {
+        if active_source_changed(context.store, context.saved)? {
             info!(
-                server_id = %context.saved.server.id,
+                source_id = %context.saved.source.id,
                 "stopped synced external album cover prefetch because active server changed"
             );
             return Ok(());
         }
         let page = context.store.with_store(|store| {
             store.load_albums(
-                &context.saved.server.id,
+                &context.saved.source.id,
                 offset,
                 EXTERNAL_PREFETCH_PAGE_SIZE,
             )
@@ -733,7 +733,7 @@ fn prefetch_synced_album_covers(
         stats.album_image_refs += image_refs.len();
         for image_ref in image_refs {
             if !external_metadata::enabled(&load_settings_from_store(context.store))
-                || active_server_changed(context.store, context.saved)?
+                || active_source_changed(context.store, context.saved)?
             {
                 return Ok(());
             }
@@ -754,9 +754,9 @@ fn prefetch_synced_artist_covers(
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
-        if active_server_changed(context.store, context.saved)? {
+        if active_source_changed(context.store, context.saved)? {
             info!(
-                server_id = %context.saved.server.id,
+                source_id = %context.saved.source.id,
                 album_artist,
                 "stopped synced source artist image prefetch because active server changed"
             );
@@ -764,7 +764,7 @@ fn prefetch_synced_artist_covers(
         }
         let page = context.store.with_store(|store| {
             store.load_artists(
-                &context.saved.server.id,
+                &context.saved.source.id,
                 album_artist,
                 offset,
                 EXTERNAL_PREFETCH_PAGE_SIZE,
@@ -787,7 +787,7 @@ fn prefetch_synced_artist_covers(
             stats.artist_image_refs += image_refs.len();
         }
         for image_ref in image_refs {
-            if active_server_changed(context.store, context.saved)? {
+            if active_source_changed(context.store, context.saved)? {
                 return Ok(());
             }
             let outcome = prefetch_image_ref(context, image_ref)?;
@@ -804,7 +804,7 @@ fn prefetch_image_ref(
     let is_external_image = external_metadata::is_external_image_ref(&image_ref);
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(
-        &context.saved.server.id,
+        &context.saved.source.id,
         &image_ref.item_id,
         tag,
         EXTERNAL_PREFETCH_COVER_SIZE,
@@ -917,17 +917,17 @@ fn record_source_cover_prefetch_outcome(
     }
 }
 
-fn active_server_changed(store: &StoreHandle, saved: &SavedServer) -> Result<bool, String> {
+fn active_source_changed(store: &StoreHandle, saved: &SavedSource) -> Result<bool, String> {
     Ok(store
-        .with_store(|store| store.active_server())?
-        .is_none_or(|active| active.server.id != saved.server.id))
+        .with_store(|store| store.active_source())?
+        .is_none_or(|active| active.source.id != saved.source.id))
 }
 
-fn active_server_changed_in_store(store: &Store, saved: &SavedServer) -> Result<bool, String> {
+fn active_source_changed_in_store(store: &Store, saved: &SavedSource) -> Result<bool, String> {
     Ok(store
-        .active_server()
+        .active_source()
         .map_err(|error| error.to_string())?
-        .is_none_or(|active| active.server.id != saved.server.id))
+        .is_none_or(|active| active.source.id != saved.source.id))
 }
 
 fn check_prefetch_cancelled(cancellation: Option<&CancellationToken>) -> Result<(), String> {
@@ -940,31 +940,31 @@ fn check_prefetch_cancelled(cancellation: Option<&CancellationToken>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::{clear_prefetch_generation, mark_prefetch_flight};
-    use domain::ServerId;
+    use domain::SourceId;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     #[test]
     fn prefetch_replace_generation() {
         let in_flight = Arc::new(Mutex::new(HashMap::new()));
-        let server_id = ServerId::new("jellyfin:server:test");
+        let source_id = SourceId::new("jellyfin:server:test");
 
-        assert!(mark_prefetch_flight(&in_flight, &server_id, 1));
-        assert!(!mark_prefetch_flight(&in_flight, &server_id, 1));
-        assert!(mark_prefetch_flight(&in_flight, &server_id, 2));
-        assert!(!mark_prefetch_flight(&in_flight, &server_id, 1));
+        assert!(mark_prefetch_flight(&in_flight, &source_id, 1));
+        assert!(!mark_prefetch_flight(&in_flight, &source_id, 1));
+        assert!(mark_prefetch_flight(&in_flight, &source_id, 2));
+        assert!(!mark_prefetch_flight(&in_flight, &source_id, 1));
 
-        clear_prefetch_generation(&in_flight, &server_id, 1);
+        clear_prefetch_generation(&in_flight, &source_id, 1);
         assert_eq!(
             in_flight
                 .lock()
                 .expect("external prefetch in-flight lock")
-                .get(&server_id)
+                .get(&source_id)
                 .copied(),
             Some(2)
         );
 
-        clear_prefetch_generation(&in_flight, &server_id, 2);
+        clear_prefetch_generation(&in_flight, &source_id, 2);
         assert!(
             in_flight
                 .lock()

@@ -496,7 +496,7 @@ impl MusicSource for JellyfinSource {
             url.query_pairs_mut().append_pair("tag", tag);
         }
         let config = JellyfinClientConfig::new(
-            self.identity.server.base_url.clone(),
+            self.identity.base_url.clone(),
             false,
             Some(self.device_id.to_string()),
         );
@@ -820,7 +820,7 @@ pub(super) fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
         .map(|id| raw_item_id(id.as_str()).to_string())
         .collect()
 }
-pub(super) fn stable_server_id(input: &str) -> String {
+pub(super) fn stable_source_id(input: &str) -> String {
     format!("{:016x}", stable_hash(input))
 }
 pub(crate) fn stable_hash(input: &str) -> u64 {

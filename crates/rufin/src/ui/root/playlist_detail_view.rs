@@ -241,7 +241,7 @@ impl Shell {
         playlist_id: PlaylistId,
     ) -> gtk::Widget {
         let settings = self.state.settings.borrow().clone();
-        let server = self.state.library.borrow().server.clone();
+        let server = self.state.library.borrow().source.clone();
         let detail = server
             .as_ref()
             .and_then(|_| self.playlist_detail_from_loaded_tracks(&playlist_id))

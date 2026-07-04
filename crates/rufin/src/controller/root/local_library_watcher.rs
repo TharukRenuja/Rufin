@@ -44,12 +44,12 @@ pub(in crate::controller) fn refresh_local_library_watcher(
     *current = Some(LocalLibraryWatcher::start(roots, context, saved));
 }
 
-fn active_local_watch_target(store: &StoreHandle) -> Option<(SavedServer, Vec<PathBuf>)> {
+fn active_local_watch_target(store: &StoreHandle) -> Option<(SavedSource, Vec<PathBuf>)> {
     let saved = store
-        .with_store(|store| store.active_server())
+        .with_store(|store| store.active_source())
         .ok()
         .flatten()?;
-    if saved.server.provider != LOCAL_SOURCE_ID {
+    if saved.source.kind != LOCAL_SOURCE_ID {
         return None;
     }
     let mut roots = load_settings_from_store(store)
@@ -64,7 +64,7 @@ fn active_local_watch_target(store: &StoreHandle) -> Option<(SavedServer, Vec<Pa
 }
 
 impl LocalLibraryWatcher {
-    fn start(roots: Vec<PathBuf>, context: SyncContext, saved: SavedServer) -> Self {
+    fn start(roots: Vec<PathBuf>, context: SyncContext, saved: SavedSource) -> Self {
         let (tx, rx) = channel();
         let thread_tx = tx.clone();
         let watched_roots = roots.clone();
@@ -100,7 +100,7 @@ fn watch_local_roots(
     tx: Sender<WatchMessage>,
     roots: Vec<PathBuf>,
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     retry_scheduled: Arc<AtomicBool>,
 ) {
     let event_tx = tx.clone();
@@ -157,15 +157,15 @@ fn drain_watch_events(rx: &Receiver<WatchMessage>) -> bool {
 
 fn trigger_local_reconciliation(
     context: &SyncContext,
-    saved: &SavedServer,
+    saved: &SavedSource,
     retry_scheduled: &Arc<AtomicBool>,
 ) {
-    if !sync_target_is_current(&context.store, &saved.server.id)
+    if !sync_target_is_current(&context.store, &saved.source.id)
         || active_local_watch_target(&context.store).is_none()
     {
         return;
     }
-    if context.sync_in_flight.contains_or_blocked(&saved.server.id) {
+    if context.sync_in_flight.contains_or_blocked(&saved.source.id) {
         start_local_retry_after_in_flight(
             context.clone(),
             saved.clone(),
@@ -178,7 +178,7 @@ fn trigger_local_reconciliation(
 
 fn start_local_retry_after_in_flight(
     context: SyncContext,
-    saved: SavedServer,
+    saved: SavedSource,
     retry_scheduled: Arc<AtomicBool>,
 ) {
     if retry_scheduled.swap(true, Ordering::AcqRel) {
@@ -186,14 +186,14 @@ fn start_local_retry_after_in_flight(
     }
     thread::spawn(move || {
         while retry_scheduled.load(Ordering::Acquire)
-            && context.sync_in_flight.contains_or_blocked(&saved.server.id)
-            && sync_target_is_current(&context.store, &saved.server.id)
+            && context.sync_in_flight.contains_or_blocked(&saved.source.id)
+            && sync_target_is_current(&context.store, &saved.source.id)
             && active_local_watch_target(&context.store).is_some()
         {
             thread::sleep(RETRY_POLL);
         }
         let should_run = retry_scheduled.swap(false, Ordering::AcqRel)
-            && sync_target_is_current(&context.store, &saved.server.id)
+            && sync_target_is_current(&context.store, &saved.source.id)
             && active_local_watch_target(&context.store).is_some();
         if should_run {
             start_background_sync_thread(context, saved);

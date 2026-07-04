@@ -10,7 +10,7 @@ mod random;
 
 mod root;
 
-pub(crate) use root::ServerSettingsInput;
+pub(crate) use root::SourceSettingsInput;
 pub use root::*;
 pub(in crate::controller) use root::{
     IMAGE_TAG_UNTAGGED, SNAPSHOT_TRACK_LIMIT, StoreHandle, acquire_cover_slot,

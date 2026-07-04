@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    AlbumId, ArtistId, GenreId, ImageRef, MoodId, MusicFolderId, PlaylistId, ServerId,
-    SmartPlaylistId, Track, TrackId,
+    AlbumId, ArtistId, GenreId, ImageRef, MoodId, MusicFolderId, PlaylistId, SmartPlaylistId,
+    SourceId, Track, TrackId,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -319,7 +319,8 @@ impl QueueEntry {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct QueueSnapshot {
-    pub server_id: ServerId,
+    #[serde(alias = "server_id")]
+    pub source_id: SourceId,
     pub entries: Vec<QueueEntry>,
     pub current_index: Option<usize>,
     pub repeat_mode: RepeatMode,
@@ -331,7 +332,7 @@ pub struct QueueSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct QueueEngine {
-    server_id: ServerId,
+    source_id: SourceId,
     entries: Vec<QueueEntry>,
     current_index: Option<usize>,
     repeat_mode: RepeatMode,
@@ -343,9 +344,9 @@ pub struct QueueEngine {
 }
 
 impl QueueEngine {
-    pub fn new(server_id: ServerId) -> Self {
+    pub fn new(source_id: SourceId) -> Self {
         Self {
-            server_id,
+            source_id,
             entries: Vec::new(),
             current_index: None,
             repeat_mode: RepeatMode::All,
@@ -364,7 +365,7 @@ impl QueueEngine {
             .current_index
             .filter(|index| *index < entries.len());
         let mut engine = Self {
-            server_id: snapshot.server_id,
+            source_id: snapshot.source_id,
             next_entry_number: next_entry_number(&entries),
             entries,
             current_index,
@@ -386,7 +387,7 @@ impl QueueEngine {
 
     pub fn snapshot(&self) -> QueueSnapshot {
         QueueSnapshot {
-            server_id: self.server_id.clone(),
+            source_id: self.source_id.clone(),
             entries: self.entries.clone(),
             current_index: self.current_index,
             repeat_mode: self.repeat_mode,
@@ -404,8 +405,8 @@ impl QueueEngine {
         &self.entries
     }
 
-    pub fn server_id(&self) -> &ServerId {
-        &self.server_id
+    pub fn source_id(&self) -> &SourceId {
+        &self.source_id
     }
 
     pub fn current(&self) -> Option<&QueueEntry> {
@@ -1375,7 +1376,7 @@ mod tests {
         QueueEntryOrigin, QueueError, QueueInsertion, QueueInsertionSource, QueueItemInput,
         QueueReplacement, QueueReplacementSource, QueueSourceInput, RepeatMode, SourceOrder,
     };
-    use crate::domain::{AlbumId, ServerId, Track, TrackId};
+    use crate::domain::{AlbumId, SourceId, Track, TrackId};
 
     fn track(number: u32) -> Track {
         Track {
@@ -1438,7 +1439,7 @@ mod tests {
 
     #[test]
     fn queue_preserve_index() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let id = queue
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
@@ -1480,7 +1481,7 @@ mod tests {
 
     #[test]
     fn queue_activate_source_occurrence() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let source_key = source_key("playlist");
         let repeated = track(1);
         queue
@@ -1523,7 +1524,7 @@ mod tests {
 
     #[test]
     fn queue_reject_anchor() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(9));
         let before = queue.snapshot();
 
@@ -1544,7 +1545,7 @@ mod tests {
 
     #[test]
     fn old_snapshots_repair_missing_origins() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
 
@@ -1574,7 +1575,7 @@ mod tests {
 
     #[test]
     fn queue_track_next() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
 
@@ -1594,7 +1595,7 @@ mod tests {
 
     #[test]
     fn play_next_inserts_after_current() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(3));
         queue.play_next(&track(2));
@@ -1604,7 +1605,7 @@ mod tests {
 
     #[test]
     fn queue_play_enabled() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.append(&track(4));
@@ -1619,7 +1620,7 @@ mod tests {
 
     #[test]
     fn queue_track_id() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let mut track = track(1);
         track.album_id = AlbumId::fake(9);
         track.artist_id = Some(crate::domain::ArtistId::fake(7));
@@ -1638,7 +1639,7 @@ mod tests {
 
     #[test]
     fn queue_advance_entry() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let first = queue.append(&track(1));
         queue.append(&track(2));
 
@@ -1652,7 +1653,7 @@ mod tests {
 
     #[test]
     fn reorder_move_entry() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         let third = queue.append(&track(3));
@@ -1668,7 +1669,7 @@ mod tests {
 
     #[test]
     fn queue_peek_advancing() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.set_progress_seconds(42);
@@ -1688,7 +1689,7 @@ mod tests {
 
     #[test]
     fn queue_jump_entry() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         let second = queue.append(&track(2));
         queue.set_progress_seconds(42);
@@ -1704,7 +1705,7 @@ mod tests {
 
     #[test]
     fn queue_preserve_playback() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         let third = queue.append(&track(3));
@@ -1729,7 +1730,7 @@ mod tests {
 
     #[test]
     fn queue_move_enabled() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         let third = queue.append(&track(3));
@@ -1745,7 +1746,7 @@ mod tests {
 
     #[test]
     fn end_stream_repeat() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.set_repeat_mode(RepeatMode::One);
@@ -1760,7 +1761,7 @@ mod tests {
 
     #[test]
     fn manual_next_ignores_repeat_one() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.set_repeat_mode(RepeatMode::One);
@@ -1773,7 +1774,7 @@ mod tests {
 
     #[test]
     fn manual_previous_ignores_repeat_one() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.next_track();
@@ -1787,7 +1788,7 @@ mod tests {
 
     #[test]
     fn repeat_all_wraps_at_end() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.set_repeat_mode(RepeatMode::All);
@@ -1802,8 +1803,8 @@ mod tests {
 
     #[test]
     fn shuffle_order_is_deterministic() {
-        let mut left = QueueEngine::new(ServerId::fake(1));
-        let mut right = QueueEngine::new(ServerId::fake(1));
+        let mut left = QueueEngine::new(SourceId::fake(1));
+        let mut right = QueueEngine::new(SourceId::fake(1));
         for number in 1..=5 {
             left.append(&track(number));
             right.append(&track(number));
@@ -1837,7 +1838,7 @@ mod tests {
             },
         };
 
-        let mut first = QueueEngine::new(ServerId::fake(1));
+        let mut first = QueueEngine::new(SourceId::fake(1));
         first.append(&track(90));
         first.append(&track(91));
         first
@@ -1845,7 +1846,7 @@ mod tests {
             .expect("source queue replacement should be valid");
         first.set_shuffle(true, 77);
 
-        let mut second = QueueEngine::new(ServerId::fake(1));
+        let mut second = QueueEngine::new(SourceId::fake(1));
         second.append(&track(10));
         second
             .replace_all(replacement())
@@ -1860,7 +1861,7 @@ mod tests {
 
     #[test]
     fn queue_return_index() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
@@ -1889,7 +1890,7 @@ mod tests {
 
     #[test]
     fn queue_restored_rebuild() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.append(&track(3));
@@ -1906,7 +1907,7 @@ mod tests {
 
     #[test]
     fn enabling_shuffle_start() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.append(&track(3));
@@ -1920,7 +1921,7 @@ mod tests {
 
     #[test]
     fn shuffled_start_can_avoid_previous_track() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let first = track(1);
         let second = track(2);
         queue.append(&first);
@@ -1939,7 +1940,7 @@ mod tests {
 
     #[test]
     fn appending_exhausted_shuffled() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.append(&track(3));
@@ -1962,7 +1963,7 @@ mod tests {
 
     #[test]
     fn queue_start_traversal() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.set_shuffle(true, 19);
         queue.set_repeat_mode(RepeatMode::Off);
 
@@ -1994,7 +1995,7 @@ mod tests {
 
     #[test]
     fn trim_auto_dj_history_keeps_recent_generated_entries() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue
             .append_last(QueueInsertion {
@@ -2033,7 +2034,7 @@ mod tests {
 
     #[test]
     fn snapshot_restores_queue_state() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.next_track();
@@ -2052,7 +2053,7 @@ mod tests {
 
     #[test]
     fn snapshot_restores_shuffle_order_history() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         for number in 1..=5 {
             queue.append(&track(number));
         }
@@ -2072,7 +2073,7 @@ mod tests {
 
     #[test]
     fn clear_remove_entry() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         queue.append(&track(1));
 
         queue.clear();
@@ -2083,7 +2084,7 @@ mod tests {
 
     #[test]
     fn clear_keeps_current() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut queue = QueueEngine::new(SourceId::fake(1));
         let _first = queue.append(&track(1));
         let current = queue.append(&track(2));
         let _third = queue.append(&track(3));

@@ -92,7 +92,7 @@ impl Shell {
             request_id,
             query,
             kind,
-            server_id: library.server.as_ref().map(|server| server.id.clone()),
+            source_id: library.source.as_ref().map(|server| server.id.clone()),
             selected_music_folder_id: library.selected_music_folder_id.clone(),
         }
     }
@@ -107,7 +107,7 @@ impl Shell {
                     key,
                     query,
                     kind,
-                    library.server.as_ref().map(|server| &server.id),
+                    library.source.as_ref().map(|server| &server.id),
                     library.selected_music_folder_id.as_ref(),
                 )
             }
@@ -133,7 +133,7 @@ impl Shell {
             key,
             query,
             kind,
-            library.server.as_ref().map(|server| &server.id),
+            library.source.as_ref().map(|server| &server.id),
             library.selected_music_folder_id.as_ref(),
         )
     }
@@ -143,12 +143,12 @@ pub(in crate::ui) fn search_key_matches(
     key: &SearchRequestKey,
     query: &str,
     kind: &SearchKind,
-    server_id: Option<&ServerId>,
+    source_id: Option<&SourceId>,
     selected_music_folder_id: Option<&MusicFolderId>,
 ) -> bool {
     key.query == query
         && key.kind == *kind
-        && key.server_id.as_ref() == server_id
+        && key.source_id.as_ref() == source_id
         && key.selected_music_folder_id.as_ref() == selected_music_folder_id
 }
 
@@ -157,9 +157,9 @@ pub(in crate::ui) fn search_event_matches(
     event_key: &SearchRequestKey,
     query: &str,
     kind: &SearchKind,
-    server_id: Option<&ServerId>,
+    source_id: Option<&SourceId>,
     selected_music_folder_id: Option<&MusicFolderId>,
 ) -> bool {
     current_key.is_some_and(|current| current == event_key)
-        && search_key_matches(event_key, query, kind, server_id, selected_music_folder_id)
+        && search_key_matches(event_key, query, kind, source_id, selected_music_folder_id)
 }

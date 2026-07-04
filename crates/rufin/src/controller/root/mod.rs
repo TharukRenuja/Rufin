@@ -21,17 +21,17 @@ use domain::{
     MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion,
     QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
-    SecretStorageMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor,
-    SourceCapabilities, SourceFeatureOwner, SourceFeatureSupport, SourceOrder,
+    SecretStorageMode, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceCapabilities,
+    SourceFeatureOwner, SourceFeatureSupport, SourceId, SourceIdentity, SourceOrder,
     SourcePlaylistCapabilities, SourcePlaylistOperation, SourcePlaylistOperationSupport,
     StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey,
     TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
-    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, PlaylistWriteMode, SavedServer,
-    ServerLocalAccess, Store, StoreBackedSourceItem, StoreBackedSourceWindow, StoreError,
+    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, PlaylistWriteMode, SavedSource,
+    SourceLocalAccess, Store, StoreBackedSourceItem, StoreBackedSourceWindow, StoreError,
     StoreResult, SyncState,
 };
 use playback::{
@@ -102,12 +102,12 @@ mod queue_mutation;
 mod queue_state;
 mod refresh_commands;
 mod remote_library_watcher;
-mod server_cache_commands;
-mod server_lifecycle_commands;
-mod server_local_access_commands;
 mod settings_controller;
+mod source_cache_commands;
 mod source_capabilities;
 mod source_image_policy;
+mod source_lifecycle_commands;
+mod source_local_access_commands;
 mod source_presentation;
 mod source_readiness;
 mod source_refs;
@@ -143,7 +143,6 @@ pub(in crate::controller) use playback_waveforms::{
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
 use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watcher};
-pub(crate) use server_local_access_commands::ServerSettingsInput;
 pub(in crate::controller) use source_capabilities::source_capabilities_for_saved;
 use source_image_policy::{
     is_local_album_id, is_local_artist_id, is_local_source_image_ref, is_local_track_id,
@@ -154,12 +153,13 @@ pub(in crate::controller) use source_image_policy::{
     scrub_selected_genre_image_refs, scrub_selected_mood_image_refs,
     scrub_selected_playlist_image_refs, scrub_selected_track_image_refs, scrub_smart_refs,
 };
+pub(crate) use source_local_access_commands::SourceSettingsInput;
 use source_presentation::{load_runtime_snapshot, load_snapshot};
 #[cfg(test)]
 use source_readiness::{
     SourceSyncReadinessInput, SyncRequiredReason, active_source_readiness, source_sync_readiness,
 };
-use source_readiness::{active_server_needs_sync, active_source_startup_readiness};
+use source_readiness::{active_source_needs_sync, active_source_startup_readiness};
 pub(in crate::controller) use source_refs::track_album_refs_with_settings;
 use source_refs::{
     album_track_refs, home_image_refs, home_local_refs, queue_track_refs, sync_status_text,
@@ -187,16 +187,16 @@ const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
 const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
 const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
 const TMP_CACHE_DIR_NAME: &str = "tmp";
-pub(in crate::controller) const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
+pub(in crate::controller) const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
-    pub server: Option<ServerIdentity>,
+    pub source: Option<SourceIdentity>,
     pub source_capabilities: SourceCapabilities,
-    pub servers: Vec<ServerIdentity>,
+    pub sources: Vec<SourceIdentity>,
     pub selected_source: Option<LibrarySourceSelection>,
     pub local_folders: Vec<LocalLibraryFolder>,
-    pub server_local_access: Vec<ServerLocalAccessSnapshot>,
-    pub local_access: Option<ServerLocalAccess>,
+    pub source_local_access: Vec<SourceLocalAccessSnapshot>,
+    pub local_access: Option<SourceLocalAccess>,
     pub local_access_status: LocalAccessStatus,
     pub music_folders: Vec<MusicFolder>,
     pub selected_music_folder_id: Option<MusicFolderId>,
@@ -238,7 +238,7 @@ pub struct LibraryHomeUpdate {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LibrarySyncStatus {
-    pub server_id: ServerId,
+    pub source_id: SourceId,
     pub sync_status: String,
     pub last_error: Option<String>,
     pub counts: LibraryCounts,
@@ -250,13 +250,13 @@ pub struct SearchRequestKey {
     pub request_id: u64,
     pub query: String,
     pub kind: SearchKind,
-    pub server_id: Option<ServerId>,
+    pub source_id: Option<SourceId>,
     pub selected_music_folder_id: Option<MusicFolderId>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ServerLocalAccessSnapshot {
-    pub server_id: ServerId,
-    pub access: Option<ServerLocalAccess>,
+pub struct SourceLocalAccessSnapshot {
+    pub source_id: SourceId,
+    pub access: Option<SourceLocalAccess>,
     pub status: LocalAccessStatus,
     pub selected_music_folder_name: Option<String>,
     pub username: Option<String>,
@@ -268,7 +268,7 @@ pub struct ServerLocalAccessSnapshot {
 }
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalAccessStatus {
-    pub sample_server_path: Option<String>,
+    pub sample_source_path: Option<String>,
     pub sample_local_path: Option<String>,
     pub direct_match_count: usize,
     pub prefix_match_count: usize,
@@ -278,7 +278,7 @@ pub struct LocalAccessStatus {
 }
 #[derive(Clone, Debug)]
 pub struct PlaybackSnapshot {
-    pub current_server_id: Option<ServerId>,
+    pub current_source_id: Option<SourceId>,
     pub current: Option<QueueEntry>,
     pub state: PlaybackState,
     pub position_seconds: u32,
@@ -308,7 +308,7 @@ pub struct LyricsSearchResult {
 impl Default for PlaybackSnapshot {
     fn default() -> Self {
         Self {
-            current_server_id: None,
+            current_source_id: None,
             current: None,
             state: PlaybackState::Stopped,
             position_seconds: 0,
@@ -329,12 +329,12 @@ impl Default for PlaybackSnapshot {
 impl LibrarySnapshot {
     fn first_run() -> Self {
         Self {
-            server: None,
+            source: None,
             source_capabilities: SourceCapabilities::default(),
-            servers: Vec::new(),
+            sources: Vec::new(),
             selected_source: None,
             local_folders: Vec::new(),
-            server_local_access: Vec::new(),
+            source_local_access: Vec::new(),
             local_access: None,
             local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),
@@ -376,7 +376,7 @@ pub enum ControllerEvent {
         include_explore: bool,
     },
     HomeSectionPrefetched {
-        server_id: ServerId,
+        source_id: SourceId,
         section: HomeSection,
     },
     PlaylistChanged {
@@ -489,18 +489,18 @@ pub struct AppController {
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     playback_activity: Arc<Mutex<PlaybackActivityState>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
-    last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
+    last_progress_snapshot: Arc<Mutex<Option<(SourceId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
     local_library_watcher: Arc<Mutex<Option<LocalLibraryWatcher>>>,
     remote_library_watcher: Arc<Mutex<Option<RemoteLibraryWatcher>>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<ServerId>,
-    home_refresh_in_flight: InFlightGuards<ServerId>,
-    explore_prefetch_in_flight: InFlightGuards<ServerId>,
+    sync_in_flight: InFlightGuards<SourceId>,
+    home_refresh_in_flight: InFlightGuards<SourceId>,
+    explore_prefetch_in_flight: InFlightGuards<SourceId>,
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
-    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
+    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
@@ -681,8 +681,8 @@ pub(in crate::controller) struct HomeRefreshContext {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<ServerId>,
-    home_refresh_in_flight: InFlightGuards<ServerId>,
+    sync_in_flight: InFlightGuards<SourceId>,
+    home_refresh_in_flight: InFlightGuards<SourceId>,
 }
 #[derive(Clone)]
 pub(in crate::controller) struct SyncContext {
@@ -694,10 +694,10 @@ pub(in crate::controller) struct SyncContext {
     queue_persist_generation: Arc<AtomicU64>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
-    sync_in_flight: InFlightGuards<ServerId>,
+    sync_in_flight: InFlightGuards<SourceId>,
     cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     external_cover_retry_generation: Arc<AtomicU64>,
-    external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
+    external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 pub(in crate::controller) struct ExplorePrefetchContext {
@@ -705,8 +705,8 @@ pub(in crate::controller) struct ExplorePrefetchContext {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<ServerId>,
-    explore_prefetch_in_flight: InFlightGuards<ServerId>,
+    sync_in_flight: InFlightGuards<SourceId>,
+    explore_prefetch_in_flight: InFlightGuards<SourceId>,
 }
 #[derive(Clone, Copy, Debug)]
 pub(in crate::controller) enum HomeRefreshTarget {

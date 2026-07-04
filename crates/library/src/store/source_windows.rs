@@ -1,7 +1,7 @@
 use domain::{PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder};
 use rusqlite::{OptionalExtension, Row, params_from_iter, types::Value};
 
-use super::servers::{collect_rows, like_pattern, track_from_row_at, u32_from_i64};
+use super::sources::{collect_rows, like_pattern, track_from_row_at, u32_from_i64};
 use super::*;
 
 const PLAYLIST_SOURCE_OUTPUT_COLUMNS: &str = "
@@ -35,19 +35,19 @@ struct PlaylistSourceQuery<'a> {
 impl Store {
     pub fn count_tracks_for_source(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         source: &PlaySourceKey,
     ) -> StoreResult<usize> {
         let source = playlist_source_query(source)?;
         let mut values =
-            playlist_source_params(server_id, source.playlist_id, &source.query_pattern);
+            playlist_source_params(source_id, source.playlist_id, &source.query_pattern);
         let sql = format!(
             "
             SELECT COUNT(*)
             FROM playlist_tracks pt
             JOIN tracks t
-                ON t.server_id = pt.server_id AND t.track_id = pt.track_id
-            WHERE pt.server_id = ? AND pt.playlist_id = ?
+                ON t.source_id = pt.source_id AND t.track_id = pt.track_id
+            WHERE pt.source_id = ? AND pt.playlist_id = ?
             {}
             ",
             playlist_query_filter(source.query_pattern.is_some())
@@ -62,14 +62,14 @@ impl Store {
 
     pub fn track_rank_for_source(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         source: &PlaySourceKey,
         track_id: &TrackId,
         source_item_id: Option<&str>,
     ) -> StoreResult<Option<usize>> {
         let source = playlist_source_query(source)?;
         let mut values =
-            playlist_source_params(server_id, source.playlist_id, &source.query_pattern);
+            playlist_source_params(source_id, source.playlist_id, &source.query_pattern);
         values.push(Value::Text(track_id.as_str().to_string()));
         let entry_filter = if let Some(source_item_id) = source_item_id {
             values.push(Value::Text(source_item_id.to_string()));
@@ -86,8 +86,8 @@ impl Store {
                     pt.track_id AS track_id
                 FROM playlist_tracks pt
                 JOIN tracks t
-                    ON t.server_id = pt.server_id AND t.track_id = pt.track_id
-                WHERE pt.server_id = ? AND pt.playlist_id = ?
+                    ON t.source_id = pt.source_id AND t.track_id = pt.track_id
+                WHERE pt.source_id = ? AND pt.playlist_id = ?
                 {}
             )
             SELECT source_index
@@ -110,14 +110,14 @@ impl Store {
 
     pub fn tracks_window_for_source(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         source: &PlaySourceKey,
         anchor_rank: usize,
         before: usize,
         after: usize,
     ) -> StoreResult<StoreBackedSourceWindow> {
         let source_query = playlist_source_query(source)?;
-        let total_source_items = self.count_tracks_for_source(server_id, source)?;
+        let total_source_items = self.count_tracks_for_source(source_id, source)?;
         let requested_len = before.saturating_add(after).saturating_add(1);
         let mut start_rank = anchor_rank.saturating_sub(before).min(total_source_items);
         let end_rank = anchor_rank
@@ -137,7 +137,7 @@ impl Store {
         }
 
         let mut values = playlist_source_params(
-            server_id,
+            source_id,
             source_query.playlist_id,
             &source_query.query_pattern,
         );
@@ -151,8 +151,8 @@ impl Store {
                     {}
                 FROM playlist_tracks pt
                 JOIN tracks t
-                    ON t.server_id = pt.server_id AND t.track_id = pt.track_id
-                WHERE pt.server_id = ? AND pt.playlist_id = ?
+                    ON t.source_id = pt.source_id AND t.track_id = pt.track_id
+                WHERE pt.source_id = ? AND pt.playlist_id = ?
                 {}
             )
             SELECT source_index, {}
@@ -173,7 +173,7 @@ impl Store {
             .iter()
             .map(|item| item.track.clone())
             .collect::<Vec<_>>();
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         for (item, track) in items.iter_mut().zip(tracks) {
             item.track = track;
         }
@@ -231,12 +231,12 @@ fn playlist_source_query(source: &PlaySourceKey) -> StoreResult<PlaylistSourceQu
 }
 
 fn playlist_source_params(
-    server_id: &ServerId,
+    source_id: &SourceId,
     playlist_id: &PlaylistId,
     query_pattern: &Option<String>,
 ) -> Vec<Value> {
     let mut values = vec![
-        Value::Text(server_id.as_str().to_string()),
+        Value::Text(source_id.as_str().to_string()),
         Value::Text(playlist_id.as_str().to_string()),
     ];
     if let Some(query_pattern) = query_pattern {

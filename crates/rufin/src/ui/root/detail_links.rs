@@ -1,4 +1,4 @@
-use domain::ServerIdentity;
+use domain::SourceIdentity;
 
 use crate::i18n::msgid;
 
@@ -15,12 +15,12 @@ pub(in crate::ui) struct DetailExternalLink {
 }
 
 pub(in crate::ui) fn server_entity_link(
-    server: &ServerIdentity,
+    server: &SourceIdentity,
     kind: DetailEntityKind,
     entity_id: &str,
 ) -> Option<DetailExternalLink> {
     let base_url = clean_base_url(&server.base_url)?;
-    match server.provider.as_str() {
+    match server.kind.as_str() {
         "jellyfin" => jellyfin_entity_link(base_url, kind, entity_id),
         "navidrome" => navidrome_entity_link(base_url, kind, entity_id),
         _ => None,
@@ -35,7 +35,7 @@ fn jellyfin_entity_link(
     let item_id = raw_entity_id(entity_id, "jellyfin", kind)?;
     Some(DetailExternalLink {
         label: msgid("Open on Jellyfin"),
-        icon_name: "io.github.screwys.Rufin.provider.jellyfin",
+        icon_name: "io.github.screwys.Rufin.source.jellyfin",
         url: format!("{base_url}/web/index.html#!/details?id={item_id}"),
     })
 }
@@ -52,7 +52,7 @@ fn navidrome_entity_link(
     };
     Some(DetailExternalLink {
         label: msgid("Open on Navidrome"),
-        icon_name: "io.github.screwys.Rufin.provider.navidrome",
+        icon_name: "io.github.screwys.Rufin.source.navidrome",
         url: format!(
             "{base_url}/app/#/{route}/{}/show",
             percent_encode_path_segment(item_id)
@@ -62,14 +62,14 @@ fn navidrome_entity_link(
 
 fn raw_entity_id<'a>(
     entity_id: &'a str,
-    provider: &str,
+    source_kind: &str,
     kind: DetailEntityKind,
 ) -> Option<&'a str> {
     let prefix = match kind {
         DetailEntityKind::Album => "album",
         DetailEntityKind::Artist => "artist",
     };
-    let raw_id = entity_id.strip_prefix(&format!("{provider}:{prefix}:"))?;
+    let raw_id = entity_id.strip_prefix(&format!("{source_kind}:{prefix}:"))?;
     let raw_id = raw_id.trim();
     (!raw_id.is_empty()).then_some(raw_id)
 }
@@ -97,14 +97,14 @@ fn percent_encode_path_segment(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use domain::{ServerId, ServerIdentity};
+    use domain::{SourceId, SourceIdentity};
 
     use super::*;
 
-    fn server(provider: &str, base_url: &str) -> ServerIdentity {
-        ServerIdentity {
-            id: ServerId::new("test:server"),
-            provider: provider.to_string(),
+    fn server(kind: &str, base_url: &str) -> SourceIdentity {
+        SourceIdentity {
+            id: SourceId::new("test:server"),
+            kind: kind.to_string(),
             name: "Test".to_string(),
             base_url: base_url.to_string(),
         }

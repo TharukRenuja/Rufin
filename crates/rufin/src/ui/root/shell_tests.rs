@@ -39,9 +39,9 @@ use domain::ExternalLyricsProvider;
 use domain::{
     Album, AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
     LibraryLayout, LibrarySourceSelection, MusicFolderId, Playlist, PlaylistId, QueueEntry,
-    QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, ServerIdentity,
-    SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode,
-    SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId, TrackSortKey,
+    QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, SmartPlaylist,
+    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
+    SmartPlaylistSortField, SourceId, SourceIdentity, Track, TrackId, TrackSortKey,
     TrackTableSettings,
 };
 use gdk_pixbuf::{Colorspace, Pixbuf};
@@ -93,10 +93,10 @@ pub(in crate::ui) fn shell_reuse_cover() {
 }
 #[test]
 pub(in crate::ui) fn shell_use_thumbnail() {
-    let server_id = ServerId::new("server:one");
+    let source_id = SourceId::new("server:one");
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
     let grid_key = library::image_cache_key(
-        &server_id,
+        &source_id,
         &image_ref.item_id,
         image_ref.tag.as_deref().expect("tag"),
         super::GRID_COVER_SIZE,
@@ -104,7 +104,7 @@ pub(in crate::ui) fn shell_use_thumbnail() {
     let grid_path = PathBuf::from("/tmp/rufin-grid-cover.jpg");
 
     let artwork = super::playback_artwork_path_from_lookup(
-        &server_id,
+        &source_id,
         &image_ref,
         super::THUMB_COVER_SIZE,
         |key| (key == grid_key).then(|| grid_path.clone()),
@@ -161,29 +161,29 @@ pub(in crate::ui) fn shell_now_playing_artwork_prefers_memory_cache() {
 
 #[test]
 pub(in crate::ui) fn shell_accept_size() {
-    let server_id = ServerId::new("server:one");
+    let source_id = SourceId::new("server:one");
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
     let grid_key = library::image_cache_key(
-        &server_id,
+        &source_id,
         &image_ref.item_id,
         image_ref.tag.as_deref().expect("tag"),
         super::GRID_COVER_SIZE,
     );
     let other_key = library::image_cache_key(
-        &ServerId::new("server:two"),
+        &SourceId::new("server:two"),
         &image_ref.item_id,
         image_ref.tag.as_deref().expect("tag"),
         super::GRID_COVER_SIZE,
     );
 
     assert!(super::playback_artwork_key_matches(
-        &server_id,
+        &source_id,
         &image_ref,
         super::THUMB_COVER_SIZE,
         &grid_key,
     ));
     assert!(!super::playback_artwork_key_matches(
-        &server_id,
+        &source_id,
         &image_ref,
         super::THUMB_COVER_SIZE,
         &other_key,
@@ -389,14 +389,14 @@ pub(in crate::ui) fn shell_apply_sync_status() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
     library.first_run = true;
-    library.server = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.source = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
     library.cached_track_count = 2;
 
     let applied = super::apply_library_sync_status(
         &mut library,
         LibrarySyncStatus {
-            server_id: server.id.clone(),
+            source_id: server.id.clone(),
             sync_status: "Cached library ready".to_string(),
             last_error: None,
             counts: LibraryCounts {
@@ -423,8 +423,8 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
         tracks: Vec::new(),
     };
     let track = test_track("Track", Some(ArtistId::fake(1)));
-    library.server = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.source = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
     library.tracks = vec![track.clone()];
     library.favorites = vec![track.clone()];
     library.search = SearchResults {
@@ -435,7 +435,7 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
     let applied = super::apply_library_sync_status(
         &mut library,
         LibrarySyncStatus {
-            server_id: server.id.clone(),
+            source_id: server.id.clone(),
             sync_status: "Cached library ready".to_string(),
             last_error: None,
             counts: LibraryCounts {
@@ -469,13 +469,13 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
 
 #[test]
 pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() {
-    let server_id = ServerId::new("server:active");
+    let source_id = SourceId::new("server:active");
     let folder_id = MusicFolderId::new("folder:music");
     let current = SearchRequestKey {
         request_id: 2,
         query: "needle".to_string(),
         kind: SearchKind::All,
-        server_id: Some(server_id.clone()),
+        source_id: Some(source_id.clone()),
         selected_music_folder_id: Some(folder_id.clone()),
     };
 
@@ -484,7 +484,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &current,
         "needle",
         &SearchKind::All,
-        Some(&server_id),
+        Some(&source_id),
         Some(&folder_id),
     ));
 
@@ -497,7 +497,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &stale_request,
         "needle",
         &SearchKind::All,
-        Some(&server_id),
+        Some(&source_id),
         Some(&folder_id),
     ));
     assert!(!super::search_route_state::search_event_matches(
@@ -505,7 +505,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &current,
         "other",
         &SearchKind::All,
-        Some(&server_id),
+        Some(&source_id),
         Some(&folder_id),
     ));
     assert!(!super::search_route_state::search_event_matches(
@@ -513,7 +513,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &current,
         "needle",
         &SearchKind::Tracks,
-        Some(&server_id),
+        Some(&source_id),
         Some(&folder_id),
     ));
     assert!(!super::search_route_state::search_event_matches(
@@ -521,7 +521,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &current,
         "needle",
         &SearchKind::All,
-        Some(&ServerId::new("server:other")),
+        Some(&SourceId::new("server:other")),
         Some(&folder_id),
     ));
     assert!(!super::search_route_state::search_event_matches(
@@ -529,7 +529,7 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
         &current,
         "needle",
         &SearchKind::All,
-        Some(&server_id),
+        Some(&source_id),
         Some(&MusicFolderId::new("folder:other")),
     ));
 }
@@ -539,14 +539,14 @@ pub(in crate::ui) fn shell_apply_sync_playlist_entries_invalidate_playlist_page(
     let mut library = test_library_snapshot();
     let server = test_server("active");
     let playlist = test_playlist("Regular", test_image_ref("playlist"));
-    library.server = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.source = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
     library.playlists = vec![playlist.clone()];
 
     let applied = super::apply_library_sync_status(
         &mut library,
         LibrarySyncStatus {
-            server_id: server.id.clone(),
+            source_id: server.id.clone(),
             sync_status: "Cached library ready".to_string(),
             last_error: None,
             counts: LibraryCounts {
@@ -572,14 +572,14 @@ pub(in crate::ui) fn shell_apply_sync_playlist_entries_invalidate_playlist_page(
 pub(in crate::ui) fn shell_ignore_stale_sync_status() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
-    library.server = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.source = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
     library.sync_status = "Cached library ready".to_string();
 
     let applied = super::apply_library_sync_status(
         &mut library,
         LibrarySyncStatus {
-            server_id: ServerId::new("server:stale"),
+            source_id: SourceId::new("server:stale"),
             sync_status: "Sync needs attention".to_string(),
             last_error: Some("sync failed".to_string()),
             counts: LibraryCounts {
@@ -673,7 +673,7 @@ pub(in crate::ui) fn shell_map_states() {
 
 #[test]
 pub(in crate::ui) fn shell_source_local() {
-    let source = Some(LibrarySourceSelection::Server(domain::ServerId::new(
+    let source = Some(LibrarySourceSelection::Source(domain::SourceId::new(
         "jellyfin:server:test",
     )));
 
@@ -693,10 +693,10 @@ pub(in crate::ui) fn shell_source_local() {
 }
 #[test]
 pub(in crate::ui) fn shell_match_snapshot() {
-    let old_source = ServerId::new("jellyfin:server:old");
-    let next_source = ServerId::new("local:source");
+    let old_source = SourceId::new("jellyfin:server:old");
+    let next_source = SourceId::new("local:source");
     let queue = QueueSnapshot {
-        server_id: next_source.clone(),
+        source_id: next_source.clone(),
         entries: Vec::new(),
         current_index: None,
         repeat_mode: RepeatMode::All,
@@ -820,7 +820,7 @@ pub(in crate::ui) fn shell_cover_bind_keeps_same_artwork() {
 
 #[test]
 pub(in crate::ui) fn shell_cover_artwork_id_ignores_size() {
-    let image_ref = ImageRef::new("provider:album:one", Some("tag-one".to_string()));
+    let image_ref = ImageRef::new("kind:album:one", Some("tag-one".to_string()));
     let grid = "source/provider%3Aalbum%3Aone/tag-one/256";
     let detail = "source/provider%3Aalbum%3Aone/tag-one/512";
 
@@ -835,8 +835,8 @@ pub(in crate::ui) fn shell_cover_artwork_id_ignores_size() {
 }
 #[test]
 pub(in crate::ui) fn shell_clear_pending() {
-    let first = ServerId::new("source:first");
-    let second = ServerId::new("source:second");
+    let first = SourceId::new("source:first");
+    let second = SourceId::new("source:second");
     let mut pending = Some((second.clone(), 2));
 
     assert!(!take_pending_warm(&mut pending, &first, 1));
@@ -968,7 +968,7 @@ pub(in crate::ui) fn shell_use_entry() {
 #[test]
 pub(in crate::ui) fn shell_fullscreen_refresh_scopes_playback_ticks() {
     let mut previous = super::PlaybackSnapshot {
-        current_server_id: Some(ServerId::fake(1)),
+        current_source_id: Some(SourceId::fake(1)),
         current: Some(test_queue_entry("Current", test_image_ref("current"))),
         state: super::PlaybackState::Playing,
         position_seconds: 1,
@@ -997,7 +997,7 @@ pub(in crate::ui) fn shell_fullscreen_refresh_scopes_playback_ticks() {
         super::FullscreenPlaybackRefresh::Static
     );
 
-    previous.current_server_id = Some(ServerId::fake(2));
+    previous.current_source_id = Some(SourceId::fake(2));
     assert_eq!(
         super::fullscreen_playback_refresh(&position_tick, &previous),
         super::FullscreenPlaybackRefresh::Static
@@ -1691,12 +1691,12 @@ fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGa
 
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
     crate::controller::LibrarySnapshot {
-        server: None,
+        source: None,
         source_capabilities: domain::SourceCapabilities::default(),
-        servers: Vec::new(),
+        sources: Vec::new(),
         selected_source: None,
         local_folders: Vec::new(),
-        server_local_access: Vec::new(),
+        source_local_access: Vec::new(),
         local_access: None,
         local_access_status: crate::controller::LocalAccessStatus::default(),
         music_folders: Vec::new(),
@@ -1724,10 +1724,10 @@ pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapsh
         search: SearchResults::default(),
     }
 }
-pub(in crate::ui) fn test_server(suffix: &str) -> ServerIdentity {
-    ServerIdentity {
-        id: ServerId::new(format!("server:{suffix}")),
-        provider: "test".to_string(),
+pub(in crate::ui) fn test_server(suffix: &str) -> SourceIdentity {
+    SourceIdentity {
+        id: SourceId::new(format!("server:{suffix}")),
+        kind: "test".to_string(),
         name: format!("Server {suffix}"),
         base_url: "http://localhost".to_string(),
     }

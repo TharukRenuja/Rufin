@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{LibrarySourceSelection, ServerId, ServerIdentity};
+use domain::{LibrarySourceSelection, SourceId, SourceIdentity};
 use gtk::gio;
-use library::ServerLocalAccess;
+use library::SourceLocalAccess;
 
-use crate::controller::{LocalAccessStatus, ServerSettingsInput};
+use crate::controller::{LocalAccessStatus, SourceSettingsInput};
 use crate::i18n::{tr, trn_with};
 use crate::sources::StreamingSource;
 
@@ -31,7 +31,7 @@ struct ManageServerExitSlot {
 
 pub(in crate::ui) fn manage_server_navigation_page(
     shell: &Rc<Shell>,
-    server: ServerIdentity,
+    server: SourceIdentity,
     navigation: &adw::NavigationView,
     preferences_dialog: &adw::Dialog,
     on_close: Rc<dyn Fn()>,
@@ -51,23 +51,23 @@ pub(in crate::ui) fn manage_server_navigation_page(
 
 fn manage_server_content(
     shell: &Rc<Shell>,
-    server: ServerIdentity,
+    server: SourceIdentity,
     exit: ManageServerExitSlot,
     preferences_dialog: &adw::Dialog,
 ) -> gtk::Widget {
     let (access, access_status, selected) = {
         let library = shell.state.library.borrow();
         let summary = library
-            .server_local_access
+            .source_local_access
             .iter()
-            .find(|summary| summary.server_id == server.id)
+            .find(|summary| summary.source_id == server.id)
             .cloned();
         let access = summary
             .as_ref()
             .and_then(|summary| summary.access.clone())
             .or_else(|| {
                 library
-                    .server
+                    .source
                     .as_ref()
                     .filter(|active| active.id == server.id)
                     .and_then(|_| library.local_access.clone())
@@ -77,7 +77,7 @@ fn manage_server_content(
             .map(|summary| summary.status.clone())
             .or_else(|| {
                 library
-                    .server
+                    .source
                     .as_ref()
                     .filter(|active| active.id == server.id)
                     .map(|_| library.local_access_status.clone())
@@ -85,11 +85,11 @@ fn manage_server_content(
             .unwrap_or_default();
         let selected = matches!(
             &library.selected_source,
-            Some(LibrarySourceSelection::Server(server_id)) if *server_id == server.id
+            Some(LibrarySourceSelection::Source(source_id)) if *source_id == server.id
         );
         (access, status, selected)
     };
-    let remote = server.provider != "local";
+    let remote = server.kind != "local";
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
@@ -127,12 +127,12 @@ fn manage_server_content(
     let mut display_local_prefix = saved_local_prefix.clone();
     let mut display_server_prefix = saved_server_prefix.clone();
     if display_server_prefix.trim().is_empty()
-        && let (Some(server_path), Some(local_path)) = (
-            access_status.sample_server_path.as_deref(),
+        && let (Some(source_path), Some(local_path)) = (
+            access_status.sample_source_path.as_deref(),
             access_status.sample_local_path.as_deref(),
         )
         && let Some((suggested_server_prefix, suggested_local_prefix)) =
-            infer_path_prefixes(server_path, local_path)
+            infer_path_prefixes(source_path, local_path)
     {
         display_server_prefix = suggested_server_prefix;
         display_local_prefix = suggested_local_prefix;
@@ -178,7 +178,7 @@ fn manage_server_content(
     local_prefix.set_visible(remote);
 
     let sample_subtitle = access_status
-        .sample_server_path
+        .sample_source_path
         .clone()
         .unwrap_or_else(|| tr("No cached server path yet"));
     let sample_row = adw::ActionRow::builder()
@@ -190,7 +190,7 @@ fn manage_server_content(
     let preview_row = adw::ActionRow::builder()
         .title(tr("Mapped Local Path"))
         .subtitle(preview_local_path_text(
-            access_status.sample_server_path.as_deref(),
+            access_status.sample_source_path.as_deref(),
             server_prefix.text().as_str(),
             local_prefix.text().as_str(),
             folder.borrow().as_deref(),
@@ -241,7 +241,7 @@ fn manage_server_content(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
     let remove = text_button("edit-clear-symbolic", "Clear Mapping");
-    remove.set_visible(server.provider != "local" && access.is_some());
+    remove.set_visible(server.kind != "local" && access.is_some());
     let save = text_button("document-save-symbolic", "Save Mapping");
     save.add_css_class("suggested-action");
     actions.append(&remove);
@@ -284,7 +284,7 @@ fn manage_server_content(
             let local_prefix_exists = !remote || Path::new(draft.local_prefix.trim()).is_dir();
             let changed = draft != initial_draft;
             let preview = preview_local_path_preview(
-                access_status.sample_server_path.as_deref(),
+                access_status.sample_source_path.as_deref(),
                 draft.server_prefix.as_str(),
                 draft.local_prefix.as_str(),
                 draft.folder.as_deref(),
@@ -327,16 +327,16 @@ fn manage_server_content(
     });
 
     let controller = shell.controller.clone();
-    let server_id = server.id.clone();
+    let source_id = server.id.clone();
     let exit_for_remove = exit.clone();
     remove.connect_clicked(move |_| {
-        controller.clear_server_local_access(server_id.clone());
+        controller.clear_source_local_access(source_id.clone());
         close_manage_server(&exit_for_remove);
     });
 
     let controller = shell.controller.clone();
-    let server_id = server.id.clone();
-    let provider = server.provider.clone();
+    let source_id = server.id.clone();
+    let kind = server.kind.clone();
     let status_for_save = status.clone();
     let exit_for_save = exit.clone();
     let preferences_dialog_for_save = preferences_dialog.clone();
@@ -345,7 +345,7 @@ fn manage_server_content(
             status_for_save.set_text(&tr("Choose a local music folder"));
             return;
         };
-        if provider == "local" {
+        if kind == "local" {
             controller.add_local_server(root);
             preferences_dialog_for_save.close();
         } else {
@@ -354,8 +354,8 @@ fn manage_server_content(
                 status_for_save.set_text(&tr("Enter a local prefix."));
                 return;
             }
-            controller.save_server_local_access(
-                server_id.clone(),
+            controller.save_source_local_access(
+                source_id.clone(),
                 root,
                 Some(server_prefix.text().to_string()),
                 Some(local_prefix_text),
@@ -373,13 +373,13 @@ fn close_manage_server(exit: &ManageServerExitSlot) {
     (exit.on_close)();
 }
 
-fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: bool) -> gtk::Box {
+fn server_settings_group(shell: &Rc<Shell>, server: &SourceIdentity, remote: bool) -> gtk::Box {
     let (saved_username, saved_trust_invalid_cert, saved_use_jellyfin_instant_mix) = {
         let library = shell.state.library.borrow();
         let summary = library
-            .server_local_access
+            .source_local_access
             .iter()
-            .find(|summary| summary.server_id == server.id);
+            .find(|summary| summary.source_id == server.id);
         (
             summary
                 .and_then(|summary| summary.username.clone())
@@ -393,7 +393,7 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
 
     let fields_group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
-        .description(source_display_name(&server.provider))
+        .description(source_display_name(&server.kind))
         .build();
 
     let (name_address_row, name, address) =
@@ -431,7 +431,7 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
         .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
         .active(saved_use_jellyfin_instant_mix)
         .build();
-    instant_mix.set_visible(server.provider == "jellyfin");
+    instant_mix.set_visible(server.kind == "jellyfin");
     rows_group.add(&instant_mix);
 
     let save = button_row("Save Server Settings", "document-save-symbolic");
@@ -440,29 +440,29 @@ fn server_settings_group(shell: &Rc<Shell>, server: &ServerIdentity, remote: boo
     section.append(&rows_group);
 
     let controller = shell.controller.clone();
-    let server_id = server.id.clone();
-    let provider = server.provider.clone();
+    let source_id = server.id.clone();
+    let kind = server.kind.clone();
     let original_address = server.base_url.clone();
     let original_username = saved_username.clone();
     save.connect_activated(move |_| {
-        let base_url = if provider == "local" {
+        let base_url = if kind == "local" {
             original_address.clone()
         } else {
             address.text().trim().to_string()
         };
-        let username = if provider == "local" {
+        let username = if kind == "local" {
             original_username.clone()
         } else {
             username.text().trim().to_string()
         };
-        controller.update_server_settings(ServerSettingsInput {
-            server_id: server_id.clone(),
+        controller.update_source_settings(SourceSettingsInput {
+            source_id: source_id.clone(),
             name: name.text().trim().to_string(),
             base_url,
             username,
             password: password.text().to_string(),
             trust_invalid_cert: !cert_verify.is_active(),
-            use_jellyfin_instant_mix: provider == "jellyfin" && instant_mix.is_active(),
+            use_jellyfin_instant_mix: kind == "jellyfin" && instant_mix.is_active(),
         });
     });
 
@@ -505,7 +505,7 @@ fn server_name_address_row(
 
 fn server_actions_group(
     shell: &Rc<Shell>,
-    server: &ServerIdentity,
+    server: &SourceIdentity,
     selected: bool,
     exit: &ManageServerExitSlot,
     preferences_dialog: &adw::Dialog,
@@ -519,11 +519,11 @@ fn server_actions_group(
     if !selected {
         let select = row_action_button("Use This Source", "object-select-symbolic");
         let controller = shell.controller.clone();
-        let server_id = server.id.clone();
+        let source_id = server.id.clone();
         let exit = exit.clone();
         let preferences_dialog = preferences_dialog.clone();
         select.connect_clicked(move |_| {
-            controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+            controller.select_source(LibrarySourceSelection::Source(source_id.clone()));
             close_manage_server(&exit);
             preferences_dialog.close();
         });
@@ -532,34 +532,34 @@ fn server_actions_group(
 
     let resync = row_action_button("Resync Library", "view-refresh-symbolic");
     let controller = shell.controller.clone();
-    let server_id = server.id.clone();
+    let source_id = server.id.clone();
     let preferences_dialog_for_resync = preferences_dialog.clone();
     resync.connect_clicked(move |_| {
-        controller.resync_server(server_id.clone());
+        controller.resync_server(source_id.clone());
         preferences_dialog_for_resync.close();
     });
     actions.append(&resync);
 
     let clear_cache = row_action_button("Clear Cached Library", "edit-clear-symbolic");
     let clear_shell = Rc::clone(shell);
-    let server_id = server.id.clone();
+    let source_id = server.id.clone();
     let server_name = server_display_name(server);
     clear_cache.connect_clicked(move |_| {
-        confirm_clear_server_cache(&clear_shell, server_id.clone(), &server_name);
+        confirm_clear_source_cache(&clear_shell, source_id.clone(), &server_name);
     });
     actions.append(&clear_cache);
 
     let forget = row_action_button("Forget Server", "window-close-symbolic");
     forget.add_css_class("destructive-action");
     let forget_shell = Rc::clone(shell);
-    let server_id = server.id.clone();
+    let source_id = server.id.clone();
     let server_name = server_display_name(server);
     let exit = exit.clone();
     let preferences_dialog = preferences_dialog.clone();
     forget.connect_clicked(move |_| {
         confirm_forget_server(
             &forget_shell,
-            server_id.clone(),
+            source_id.clone(),
             &server_name,
             exit.clone(),
             preferences_dialog.clone(),
@@ -618,7 +618,7 @@ fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
     row
 }
 
-fn confirm_clear_server_cache(shell: &Rc<Shell>, server_id: ServerId, server_name: &str) {
+fn confirm_clear_source_cache(shell: &Rc<Shell>, source_id: SourceId, server_name: &str) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Clear Cached Library"))
         .body(format!(
@@ -639,7 +639,7 @@ fn confirm_clear_server_cache(shell: &Rc<Shell>, server_id: ServerId, server_nam
         None::<&gio::Cancellable>,
         move |response| {
             if response.as_str() == "clear" {
-                controller.clear_server_cache(server_id.clone());
+                controller.clear_source_cache(source_id.clone());
             }
         },
     );
@@ -647,7 +647,7 @@ fn confirm_clear_server_cache(shell: &Rc<Shell>, server_id: ServerId, server_nam
 
 fn confirm_forget_server(
     shell: &Rc<Shell>,
-    server_id: ServerId,
+    source_id: SourceId,
     server_name: &str,
     exit: ManageServerExitSlot,
     preferences_dialog: adw::Dialog,
@@ -672,7 +672,7 @@ fn confirm_forget_server(
         None::<&gio::Cancellable>,
         move |response| {
             if response.as_str() == "forget" {
-                controller.forget_server(server_id.clone());
+                controller.forget_source(source_id.clone());
                 close_manage_server(&exit);
                 preferences_dialog.close();
             }
@@ -680,23 +680,23 @@ fn confirm_forget_server(
     );
 }
 
-fn server_display_name(server: &ServerIdentity) -> String {
+fn server_display_name(server: &SourceIdentity) -> String {
     if server.name.trim().is_empty() {
-        StreamingSource::from_source_id(&server.provider)
+        StreamingSource::from_source_id(&server.kind)
             .map(|provider| tr(provider.title()))
-            .unwrap_or_else(|| server.provider.clone())
+            .unwrap_or_else(|| server.kind.clone())
     } else {
         server.name.clone()
     }
 }
 
-fn source_display_name(provider: &str) -> String {
-    StreamingSource::from_source_id(provider)
+fn source_display_name(kind: &str) -> String {
+    StreamingSource::from_source_id(kind)
         .map(|provider| tr(provider.title()))
-        .unwrap_or_else(|| provider.to_string())
+        .unwrap_or_else(|| kind.to_string())
 }
 
-fn local_access_display_path(access: &ServerLocalAccess) -> String {
+fn local_access_display_path(access: &SourceLocalAccess) -> String {
     access
         .path_replace_to
         .as_deref()
@@ -734,12 +734,12 @@ fn local_access_draft(
 }
 
 fn preview_local_path_text(
-    sample_server_path: Option<&str>,
+    sample_source_path: Option<&str>,
     server_prefix: &str,
     local_prefix: &str,
     folder: Option<&Path>,
 ) -> String {
-    preview_local_path_preview(sample_server_path, server_prefix, local_prefix, folder).text
+    preview_local_path_preview(sample_source_path, server_prefix, local_prefix, folder).text
 }
 
 struct LocalPathPreview {
@@ -748,12 +748,12 @@ struct LocalPathPreview {
 }
 
 fn preview_local_path_preview(
-    sample_server_path: Option<&str>,
+    sample_source_path: Option<&str>,
     server_prefix: &str,
     local_prefix: &str,
     folder: Option<&Path>,
 ) -> LocalPathPreview {
-    let Some(sample) = sample_server_path
+    let Some(sample) = sample_source_path
         .map(str::trim)
         .filter(|path| !path.is_empty())
     else {
@@ -874,14 +874,14 @@ fn local_access_status_text(
     }
 }
 
-fn infer_path_prefixes(server_path: &str, local_path: &str) -> Option<(String, String)> {
-    let server_parts = path_component_spans(server_path);
+fn infer_path_prefixes(source_path: &str, local_path: &str) -> Option<(String, String)> {
+    let server_parts = path_component_spans(source_path);
     let local_parts = path_component_spans(local_path);
     let suffix_len = common_suffix_len(&server_parts, &local_parts);
     if suffix_len == 0 || suffix_len > server_parts.len() || suffix_len > local_parts.len() {
         return None;
     }
-    let server_prefix = prefix_before_suffix(server_path, &server_parts, suffix_len)?;
+    let server_prefix = prefix_before_suffix(source_path, &server_parts, suffix_len)?;
     let local_prefix = prefix_before_suffix(local_path, &local_parts, suffix_len)?;
     Some((server_prefix, local_prefix))
 }

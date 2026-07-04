@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use domain::ImageRef;
-use library::{SavedServer, Store, StoreResult, image_cache_key};
+use library::{SavedSource, Store, StoreResult, image_cache_key};
 
 use crate::controller::{IMAGE_TAG_UNTAGGED, StoreHandle, cover_cache_path_for_key};
 use crate::external_metadata;
@@ -10,7 +10,7 @@ use super::{EXTERNAL_DETAIL_COVER_SIZE, EXTERNAL_PREFETCH_COVER_SIZE, EXTERNAL_T
 
 pub(super) fn cached_cover_path_for_saved(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<Option<PathBuf>, String> {
@@ -19,7 +19,7 @@ pub(super) fn cached_cover_path_for_saved(
 
 pub(super) fn cached_cover_path_for_saved_in_store(
     store: &Store,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> StoreResult<Option<PathBuf>> {
@@ -39,12 +39,12 @@ pub(super) fn cached_cover_path_for_saved_in_store(
 
 fn saved_cover_path(
     store: &Store,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> StoreResult<Option<PathBuf>> {
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-    let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+    let key = image_cache_key(&saved.source.id, &image_ref.item_id, tag, size);
     if external_metadata::is_external_image_ref(image_ref)
         && let Some(path) = store.load_external_cover_content_path(&image_ref.item_id, tag, size)?
     {
@@ -54,7 +54,7 @@ fn saved_cover_path(
         }
     }
     let mut entry =
-        store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)?;
+        store.load_cover_cache_entry(&saved.source.id, &image_ref.item_id, tag, size)?;
     if entry.is_none() && external_metadata::is_external_image_ref(image_ref) {
         entry = store.load_external_cover_cache_entry_by_content(&image_ref.item_id, tag, size)?;
     }
@@ -102,7 +102,7 @@ pub(super) fn external_lookup_miss_size_candidates(size: u32) -> Vec<u32> {
 
 pub(super) fn external_lookup_miss_cached(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<bool, String> {
@@ -115,7 +115,7 @@ pub(super) fn external_lookup_miss_cached(
         return Ok(true);
     }
     if store.with_store(|store| {
-        store.load_external_image_lookup_miss(&saved.server.id, &image_ref.item_id, tag, size)
+        store.load_external_image_lookup_miss(&saved.source.id, &image_ref.item_id, tag, size)
     })? {
         return Ok(true);
     }
@@ -129,7 +129,7 @@ pub(super) fn external_lookup_miss_cached(
 
 pub(super) fn save_external_lookup_miss(
     store: &StoreHandle,
-    saved: &SavedServer,
+    saved: &SavedSource,
     image_ref: &ImageRef,
     size: u32,
     reason: &str,
@@ -137,7 +137,7 @@ pub(super) fn save_external_lookup_miss(
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     store.with_store(|store| {
         store.save_external_image_lookup_miss(
-            &saved.server.id,
+            &saved.source.id,
             &image_ref.item_id,
             tag,
             size,

@@ -710,10 +710,10 @@ msgstr ""
 msgid "Servers"
 msgstr ""
 
-msgid "Configure saved music servers and local playback mappings."
+msgid "Configure saved music sources and local playback mappings."
 msgstr ""
 
-msgid "No servers configured"
+msgid "No remote sources configured"
 msgstr ""
 
 msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
@@ -1697,6 +1697,9 @@ msgid "No source"
 msgstr ""
 
 msgid "Select Source"
+msgstr ""
+
+msgid "No sources configured"
 msgstr ""
 
 msgid "Manage"

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
     HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
-    ServerId, ServerIdentity, Track, TrackId, normalize_release_types,
+    SourceId, Track, TrackId, normalize_release_types,
 };
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -79,7 +79,7 @@ pub struct SubsonicSource {
     identity: SourceIdentity,
 }
 impl SubsonicSource {
-    #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, provider = request.flavor.source_id(), trust_invalid_cert = request.trust_invalid_cert))]
+    #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, source_kind = request.flavor.source_id(), trust_invalid_cert = request.trust_invalid_cert))]
     pub async fn login(request: SubsonicLoginRequest) -> SourceResult<SourceSession> {
         let base_url = normalize_base_url(&request.base_url)?;
         let client = build_client(request.trust_invalid_cert)?;
@@ -91,17 +91,17 @@ impl SubsonicSource {
         let response = subsonic_json::<AuthenticateBody>(client.get(auth_url)).await?;
         let body = response.body;
 
-        let source_id = request.flavor.source_id();
+        let source_kind = request.flavor.source_id();
         let server_name = response
             .server_type
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| request.flavor.display_name().to_string());
-        let server_id = stable_server_id(source_id, base_url.as_str(), &request.username);
+        let source_hash = stable_source_id(source_kind, base_url.as_str(), &request.username);
 
         Ok(SourceSession {
-            server: ServerIdentity {
-                id: ServerId::new(format!("{source_id}:server:{server_id}")),
-                provider: source_id.to_string(),
+            source: SourceIdentity {
+                id: SourceId::new(format!("{source_kind}:server:{source_hash}")),
+                kind: source_kind.to_string(),
                 name: server_name,
                 base_url: base_url.as_str().trim_end_matches('/').to_string(),
             },
@@ -113,7 +113,7 @@ impl SubsonicSource {
     }
 
     pub fn from_saved_session(session: SavedSourceSession) -> SourceResult<Self> {
-        let base_url = normalize_base_url(&session.server.base_url)?;
+        let base_url = normalize_base_url(&session.source.base_url)?;
         let client = build_client(session.trust_invalid_cert)?;
         let credential = SubsonicCredential::parse(&session.access_token)?;
         Ok(Self {
@@ -121,14 +121,12 @@ impl SubsonicSource {
             base_url,
             username: session.username,
             credential: Arc::new(credential),
-            identity: SourceIdentity {
-                server: session.server,
-            },
+            identity: session.source,
         })
     }
 
     fn source_id(&self) -> &str {
-        self.identity.server.provider.as_str()
+        self.identity.kind.as_str()
     }
 
     fn id(&self, kind: &str, raw_id: &str) -> String {

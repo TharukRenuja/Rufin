@@ -1,16 +1,16 @@
 use super::library_track_sort::*;
-use super::servers::*;
+use super::sources::*;
 use super::*;
 
 impl Store {
-    pub fn load_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {
+    pub fn load_home_sections(&self, source_id: &SourceId) -> StoreResult<Vec<HomeSection>> {
         let sections = home_section_kinds()
             .into_iter()
             .map(|kind| {
                 Ok(HomeSection {
                     kind,
-                    albums: self.load_home_section_albums(server_id, kind)?,
-                    tracks: self.load_home_section_tracks(server_id, kind)?,
+                    albums: self.load_home_section_albums(source_id, kind)?,
+                    tracks: self.load_home_section_tracks(source_id, kind)?,
                 })
             })
             .collect::<StoreResult<Vec<_>>>()?;
@@ -21,19 +21,19 @@ impl Store {
     }
     pub fn load_home_section_prefetch(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         kind: HomeSectionKind,
     ) -> StoreResult<Option<HomeSection>> {
         let section = HomeSection {
             kind,
             albums: self.load_home_section_albums_from(
                 "home_section_prefetch_items",
-                server_id,
+                source_id,
                 kind,
             )?,
             tracks: self.load_home_section_tracks_from(
                 "home_section_prefetch_items",
-                server_id,
+                source_id,
                 kind,
             )?,
         };
@@ -45,15 +45,15 @@ impl Store {
     }
     pub(super) fn load_home_section_albums(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Album>> {
-        self.load_home_section_albums_from("home_section_items", server_id, kind)
+        self.load_home_section_albums_from("home_section_items", source_id, kind)
     }
     pub(super) fn load_home_section_albums_from(
         &self,
         table: &str,
-        server_id: &ServerId,
+        source_id: &SourceId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Album>> {
         let sql = format!(
@@ -64,9 +64,9 @@ impl Store {
                    a.image_item_id, a.image_tag
             FROM {table} h
             JOIN albums a
-              ON a.server_id = h.server_id
+              ON a.source_id = h.source_id
              AND a.album_id = h.item_id
-            WHERE h.server_id = ?1
+            WHERE h.source_id = ?1
               AND h.section_kind = ?2
               AND h.item_type = 'album'
             ORDER BY h.position
@@ -75,26 +75,26 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(statement.query_map(
-            params![server_id.as_str(), home_section_kind_key(kind)],
+            params![source_id.as_str(), home_section_kind_key(kind)],
             album_from_row,
         )?)?;
-        self.attach_album_metadata(server_id, &mut albums)?;
+        self.attach_album_metadata(source_id, &mut albums)?;
         Ok(albums)
     }
     pub(super) fn load_home_section_tracks(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Track>> {
-        self.load_home_section_tracks_from("home_section_items", server_id, kind)
+        self.load_home_section_tracks_from("home_section_items", source_id, kind)
     }
     pub(super) fn load_home_section_tracks_from(
         &self,
         table: &str,
-        server_id: &ServerId,
+        source_id: &SourceId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
                 "
@@ -104,15 +104,15 @@ impl Store {
                        t.image_item_id, t.image_tag, t.local_path, t.source_format
                 FROM {table} h
                 JOIN tracks t
-                  ON t.server_id = h.server_id
+                  ON t.source_id = h.source_id
                  AND t.track_id = h.item_id
-                WHERE h.server_id = ?1
+                WHERE h.source_id = ?1
                   AND h.section_kind = ?2
                   AND h.item_type = 'track'
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?3
                   )
@@ -123,7 +123,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     home_section_kind_key(kind),
                     folder_id.as_str()
                 ],
@@ -138,9 +138,9 @@ impl Store {
                        t.image_item_id, t.image_tag
                 FROM {table} h
                 JOIN tracks t
-                  ON t.server_id = h.server_id
+                  ON t.source_id = h.source_id
                  AND t.track_id = h.item_id
-                WHERE h.server_id = ?1
+                WHERE h.source_id = ?1
                   AND h.section_kind = ?2
                   AND h.item_type = 'track'
                 ORDER BY h.position
@@ -149,24 +149,24 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), home_section_kind_key(kind)],
+                params![source_id.as_str(), home_section_kind_key(kind)],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(tracks)
     }
     pub fn load_albums(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
-            self.count_albums_in_music_folder(server_id, folder_id)?
+            self.count_albums_in_music_folder(source_id, folder_id)?
         } else {
-            self.count("albums", server_id)?
+            self.count("albums", source_id)?
         };
         let mut items = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
@@ -175,13 +175,13 @@ impl Store {
                        a.last_played, a.play_count, a.user_rating, a.track_count, a.duration_seconds,
                        {favorite} AS favorite, a.color_seed, a.image_item_id, a.image_tag
                 FROM albums a
-                WHERE a.server_id = ?1
+                WHERE a.source_id = ?1
                   AND EXISTS (
                       SELECT 1
                       FROM tracks t
                       JOIN track_music_folders tmf
-                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
-                      WHERE t.server_id = a.server_id
+                        ON tmf.source_id = t.source_id AND tmf.track_id = t.track_id
+                      WHERE t.source_id = a.source_id
                         AND t.album_id = a.album_id
                         AND tmf.folder_id = ?4
                   )
@@ -193,7 +193,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     limit as i64,
                     offset as i64,
                     folder_id.as_str()
@@ -208,7 +208,7 @@ impl Store {
                        a.track_count, a.duration_seconds, {favorite} AS favorite,
                        a.color_seed, a.image_item_id, a.image_tag
                 FROM albums a
-                WHERE a.server_id = ?1
+                WHERE a.source_id = ?1
                 ORDER BY title COLLATE NOCASE
                 LIMIT ?2 OFFSET ?3
                 ",
@@ -216,16 +216,16 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), limit as i64, offset as i64],
+                params![source_id.as_str(), limit as i64, offset as i64],
                 album_from_row,
             )?)?
         };
-        self.attach_album_metadata(server_id, &mut items)?;
+        self.attach_album_metadata(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_albums_by_ids(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<Vec<Album>> {
         let mut unique_ids = Vec::<AlbumId>::new();
@@ -250,25 +250,25 @@ impl Store {
                        a.track_count, a.duration_seconds, {favorite} AS favorite,
                        a.color_seed, a.image_item_id, a.image_tag
                 FROM albums a
-                WHERE a.server_id = ?
+                WHERE a.source_id = ?
                   AND a.album_id IN ({placeholders})
                 ",
                 favorite = effective_album_favorite_sql("a"),
             );
             let mut values = Vec::with_capacity(chunk.len() + 1);
-            values.push(server_id.as_str());
+            values.push(source_id.as_str());
             values.extend(chunk.iter().map(AlbumId::as_str));
             let mut statement = self.connection.prepare(&sql)?;
             albums.extend(collect_rows(
                 statement.query_map(rusqlite::params_from_iter(values), album_from_row)?,
             )?);
         }
-        self.attach_album_metadata(server_id, &mut albums)?;
+        self.attach_album_metadata(source_id, &mut albums)?;
         Ok(albums)
     }
     pub fn load_albums_without_image_ref(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         offset: usize,
         limit: usize,
     ) -> StoreResult<Vec<Album>> {
@@ -279,7 +279,7 @@ impl Store {
                    a.track_count, a.duration_seconds, {favorite} AS favorite,
                    a.color_seed, a.image_item_id, a.image_tag
             FROM albums a
-            WHERE a.server_id = ?1
+            WHERE a.source_id = ?1
               AND a.image_item_id IS NULL
             ORDER BY a.title COLLATE NOCASE, a.album_id
             LIMIT ?2 OFFSET ?3
@@ -288,33 +288,33 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
+            params![source_id.as_str(), limit as i64, offset as i64],
             album_from_row,
         )?)?;
-        self.attach_album_metadata(server_id, &mut albums)?;
+        self.attach_album_metadata(source_id, &mut albums)?;
         Ok(albums)
     }
     pub fn load_albums_matching(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
         let Some(pattern) = like_pattern(query) else {
-            return self.load_albums(server_id, offset, limit);
+            return self.load_albums(source_id, offset, limit);
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_album_fts_matches(server_id, &query)?;
+            let total = self.count_album_fts_matches(source_id, &query)?;
             if total > 0 {
-                return self.search_albums_page(server_id, &query, offset, limit, total);
+                return self.search_albums_page(source_id, &query, offset, limit, total);
             }
         }
-        self.load_albums_like(server_id, &pattern, offset, limit)
+        self.load_albums_like(source_id, &pattern, offset, limit)
     }
     pub fn load_album_detail(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_id: &AlbumId,
     ) -> StoreResult<Option<(Album, Vec<Track>)>> {
         let album = self
@@ -327,15 +327,15 @@ impl Store {
                        a.track_count, a.duration_seconds, {} AS favorite,
                        a.color_seed, a.image_item_id, a.image_tag
                 FROM albums a
-                WHERE a.server_id = ?1 AND a.album_id = ?2
+                WHERE a.source_id = ?1 AND a.album_id = ?2
                 ",
                     effective_album_favorite_sql("a")
                 ),
-                params![server_id.as_str(), album_id.as_str()],
+                params![source_id.as_str(), album_id.as_str()],
                 album_from_row,
             )
             .optional()?;
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
                 "
@@ -344,12 +344,12 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND t.album_id = ?2
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?3
                   )
@@ -359,7 +359,7 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), album_id.as_str(), folder_id.as_str()],
+                params![source_id.as_str(), album_id.as_str(), folder_id.as_str()],
                 track_from_row,
             )?)?
         } else {
@@ -370,18 +370,18 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag, t.local_path, t.source_format
                 FROM tracks t
-                WHERE t.server_id = ?1 AND t.album_id = ?2
+                WHERE t.source_id = ?1 AND t.album_id = ?2
                 ORDER BY t.disc_number, t.track_number, t.title COLLATE NOCASE
                 ",
                 favorite = effective_track_favorite_sql("t"),
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), album_id.as_str()],
+                params![source_id.as_str(), album_id.as_str()],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         let mut album = match album {
             Some(album) => album,
             None if tracks.is_empty() => return Ok(None),
@@ -390,12 +390,12 @@ impl Store {
         if selected_folder.is_some() && tracks.is_empty() {
             return Ok(None);
         }
-        self.attach_album_metadata(server_id, std::slice::from_mut(&mut album))?;
+        self.attach_album_metadata(source_id, std::slice::from_mut(&mut album))?;
         Ok(Some((album, tracks)))
     }
     pub fn load_tracks_for_albums(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<HashMap<AlbumId, Vec<Track>>> {
         let mut by_album = HashMap::<AlbumId, Vec<Track>>::new();
@@ -413,19 +413,19 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?
+                WHERE t.source_id = ?
                   AND t.album_id IN ({placeholders})
                 ORDER BY t.album_id, t.disc_number, t.track_number, t.title COLLATE NOCASE
                 ",
                 favorite = effective_track_favorite_sql("t"),
             );
             let mut values = Vec::with_capacity(chunk.len() + 1);
-            values.push(server_id.as_str());
+            values.push(source_id.as_str());
             values.extend(chunk.iter().map(AlbumId::as_str));
             let mut statement = self.connection.prepare(&sql)?;
             let mut tracks =
                 collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)?;
-            self.attach_track_metadata(server_id, &mut tracks)?;
+            self.attach_track_metadata(source_id, &mut tracks)?;
             for track in tracks {
                 by_album
                     .entry(track.album_id.clone())
@@ -437,7 +437,7 @@ impl Store {
     }
     pub fn load_artist_detail(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         artist_id: &ArtistId,
     ) -> StoreResult<Option<CachedArtistDetail>> {
         let artist = self
@@ -449,11 +449,11 @@ impl Store {
                        {} AS favorite, a.last_played, a.play_count, a.user_rating,
                        a.image_item_id, a.image_tag
                 FROM artists a
-                WHERE a.server_id = ?1 AND a.artist_id = ?2
+                WHERE a.source_id = ?1 AND a.artist_id = ?2
                 ",
                     effective_artist_favorite_sql("a", false)
                 ),
-                params![server_id.as_str(), artist_id.as_str()],
+                params![source_id.as_str(), artist_id.as_str()],
                 artist_from_row,
             )
             .optional()?;
@@ -468,11 +468,11 @@ impl Store {
                            {} AS favorite, a.last_played, a.play_count, a.user_rating,
                            a.image_item_id, a.image_tag
                     FROM album_artists a
-                    WHERE a.server_id = ?1 AND a.artist_id = ?2
+                    WHERE a.source_id = ?1 AND a.artist_id = ?2
                     ",
                         effective_artist_favorite_sql("a", true)
                     ),
-                    params![server_id.as_str(), artist_id.as_str()],
+                    params![source_id.as_str(), artist_id.as_str()],
                     artist_from_row,
                 )
                 .optional()?,
@@ -489,13 +489,13 @@ impl Store {
                    a.track_count, a.duration_seconds, {favorite} AS favorite,
                    a.color_seed, a.image_item_id, a.image_tag
             FROM albums a
-            WHERE a.server_id = ?1
+            WHERE a.source_id = ?1
               AND (
                   a.artist_id = ?2
                   OR EXISTS (
                       SELECT 1
                       FROM album_artist_links aal
-                      WHERE aal.server_id = a.server_id
+                      WHERE aal.source_id = a.source_id
                         AND aal.album_id = a.album_id
                         AND aal.artist_id = ?2
                   )
@@ -511,13 +511,13 @@ impl Store {
         let mut albums_statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(albums_statement.query_map(
             params![
-                server_id.as_str(),
+                source_id.as_str(),
                 artist_id.as_str(),
                 artist_name_lower.as_deref()
             ],
             album_from_row,
         )?)?;
-        self.attach_album_metadata(server_id, &mut albums)?;
+        self.attach_album_metadata(source_id, &mut albums)?;
         let sql = format!(
             "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
@@ -526,14 +526,14 @@ impl Store {
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag
             FROM tracks t
             LEFT JOIN albums a
-                ON a.server_id = t.server_id AND a.album_id = t.album_id
-            WHERE t.server_id = ?1
+                ON a.source_id = t.source_id AND a.album_id = t.album_id
+            WHERE t.source_id = ?1
               AND (
                   t.artist_id = ?2
                   OR EXISTS (
                       SELECT 1
                       FROM track_artist_links tal
-                      WHERE tal.server_id = t.server_id
+                      WHERE tal.source_id = t.source_id
                         AND tal.track_id = t.track_id
                         AND tal.artist_id = ?2
                   )
@@ -541,7 +541,7 @@ impl Store {
                   OR EXISTS (
                       SELECT 1
                       FROM album_artist_links aal
-                      WHERE aal.server_id = t.server_id
+                      WHERE aal.source_id = t.source_id
                         AND aal.album_id = t.album_id
                         AND aal.artist_id = ?2
                   )
@@ -561,15 +561,15 @@ impl Store {
         let mut tracks_statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(tracks_statement.query_map(
             params![
-                server_id.as_str(),
+                source_id.as_str(),
                 artist_id.as_str(),
                 artist_name_lower.as_deref()
             ],
             track_from_row,
         )?)?;
-        self.attach_track_metadata(server_id, &mut tracks)?;
+        self.attach_track_metadata(source_id, &mut tracks)?;
         let appears_on = self.artist_appears_on_albums(
-            server_id,
+            source_id,
             artist_id,
             artist_name_lower.as_deref(),
             &albums,
@@ -589,7 +589,7 @@ impl Store {
     }
     pub(super) fn artist_appears_on_albums(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         artist_id: &ArtistId,
         artist_name_lower: Option<&str>,
         albums: &[Album],
@@ -600,12 +600,12 @@ impl Store {
             "
             SELECT DISTINCT album_id
             FROM track_artist_links
-            WHERE server_id = ?1 AND artist_id = ?2
+            WHERE source_id = ?1 AND artist_id = ?2
             ORDER BY album_id
             ",
         )?;
         let linked_album_ids = collect_rows(
-            statement.query_map(params![server_id.as_str(), artist_id.as_str()], |row| {
+            statement.query_map(params![source_id.as_str(), artist_id.as_str()], |row| {
                 row.get::<_, String>(0).map(AlbumId::new)
             })?,
         )?;
@@ -628,7 +628,7 @@ impl Store {
         }
         let mut appears_on = Vec::new();
         for album_id in album_ids {
-            let album = match self.load_album_detail(server_id, &album_id)? {
+            let album = match self.load_album_detail(source_id, &album_id)? {
                 Some((album, _tracks)) => album,
                 None => {
                     let album_tracks = tracks
@@ -650,25 +650,25 @@ impl Store {
     }
     pub fn load_tracks(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        self.load_tracks_sorted(server_id, LibraryField::Title, false, offset, limit)
+        self.load_tracks_sorted(source_id, LibraryField::Title, false, offset, limit)
     }
     pub fn load_tracks_sorted(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         sort_key: LibraryField,
         descending: bool,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
-            self.count_tracks_in_music_folder(server_id, folder_id)?
+            self.count_tracks_in_music_folder(source_id, folder_id)?
         } else {
-            self.count("tracks", server_id)?
+            self.count("tracks", source_id)?
         };
         let order_by = track_order_by_sql("t", sort_key, descending);
         let mut items = if let Some(folder_id) = selected_folder.as_ref() {
@@ -679,11 +679,11 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
                        t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                   AND EXISTS (
                       SELECT 1
                       FROM track_music_folders tmf
-                      WHERE tmf.server_id = t.server_id
+                      WHERE tmf.source_id = t.source_id
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?4
                   )
@@ -695,7 +695,7 @@ impl Store {
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
-                    server_id.as_str(),
+                    source_id.as_str(),
                     limit as i64,
                     offset as i64,
                     folder_id.as_str()
@@ -710,7 +710,7 @@ impl Store {
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
                        t.track_number, t.image_item_id, t.image_tag
                 FROM tracks t
-                WHERE t.server_id = ?1
+                WHERE t.source_id = ?1
                 ORDER BY {order_by}
                 LIMIT ?2 OFFSET ?3
                 ",
@@ -718,16 +718,16 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), limit as i64, offset as i64],
+                params![source_id.as_str(), limit as i64, offset as i64],
                 track_from_row,
             )?)?
         };
-        self.attach_track_metadata(server_id, &mut items)?;
+        self.attach_track_metadata(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_track(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_id: &TrackId,
     ) -> StoreResult<Option<Track>> {
         let mut track = self
@@ -740,42 +740,42 @@ impl Store {
                        t.duration_seconds, {} AS favorite, t.disc_number, t.track_number,
                        t.image_item_id, t.image_tag, t.local_path, t.source_format
                 FROM tracks t
-                WHERE t.server_id = ?1 AND t.track_id = ?2
+                WHERE t.source_id = ?1 AND t.track_id = ?2
                 ",
                     effective_track_favorite_sql("t")
                 ),
-                params![server_id.as_str(), track_id.as_str()],
+                params![source_id.as_str(), track_id.as_str()],
                 track_from_row,
             )
             .optional()?;
         if let Some(track) = track.as_mut() {
-            self.attach_track_metadata(server_id, std::slice::from_mut(track))?;
+            self.attach_track_metadata(source_id, std::slice::from_mut(track))?;
         }
         Ok(track)
     }
     pub fn load_track_ids_with_prefix(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         prefix: &str,
     ) -> StoreResult<Vec<TrackId>> {
         let mut statement = self.connection.prepare(
             "
             SELECT track_id
             FROM tracks
-            WHERE server_id = ?1
+            WHERE source_id = ?1
               AND track_id LIKE ?2 || '%'
             ORDER BY track_id
             ",
         )?;
         collect_rows(
-            statement.query_map(params![server_id.as_str(), prefix], |row| {
+            statement.query_map(params![source_id.as_str(), prefix], |row| {
                 row.get::<_, String>(0).map(TrackId::new)
             })?,
         )
     }
     pub fn tracks_with_prefix_have_album_prefix_mismatch(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_prefix: &str,
         album_prefix: &str,
     ) -> StoreResult<bool> {
@@ -785,19 +785,19 @@ impl Store {
                 SELECT EXISTS(
                     SELECT 1
                     FROM tracks
-                    WHERE server_id = ?1
+                    WHERE source_id = ?1
                       AND track_id LIKE ?2 || '%'
                       AND album_id NOT LIKE ?3 || '%'
                 )
                 ",
-                params![server_id.as_str(), track_prefix, album_prefix],
+                params![source_id.as_str(), track_prefix, album_prefix],
                 |row| row.get(0),
             )
             .map_err(StoreError::from)
     }
     pub fn track_local_path(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_id: &TrackId,
     ) -> StoreResult<Option<String>> {
         self.connection
@@ -805,9 +805,9 @@ impl Store {
                 "
                 SELECT local_path
                 FROM tracks
-                WHERE server_id = ?1 AND track_id = ?2
+                WHERE source_id = ?1 AND track_id = ?2
                 ",
-                params![server_id.as_str(), track_id.as_str()],
+                params![source_id.as_str(), track_id.as_str()],
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()
@@ -816,7 +816,7 @@ impl Store {
     }
     pub fn track_source_format(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         track_id: &TrackId,
     ) -> StoreResult<Option<String>> {
         self.connection
@@ -824,16 +824,16 @@ impl Store {
                 "
                 SELECT source_format
                 FROM tracks
-                WHERE server_id = ?1 AND track_id = ?2
+                WHERE source_id = ?1 AND track_id = ?2
                 ",
-                params![server_id.as_str(), track_id.as_str()],
+                params![source_id.as_str(), track_id.as_str()],
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()
             .map(|value| value.flatten())
             .map_err(StoreError::from)
     }
-    pub fn load_tracks_for_local_matching(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
+    pub fn load_tracks_for_local_matching(&self, source_id: &SourceId) -> StoreResult<Vec<Track>> {
         let sql = format!(
             "
             SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
@@ -841,35 +841,35 @@ impl Store {
                    t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
                    t.image_item_id, t.image_tag, t.local_path, t.source_format
             FROM tracks t
-            WHERE t.server_id = ?1
+            WHERE t.source_id = ?1
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number, t.title COLLATE NOCASE
             ",
             favorite = effective_track_favorite_sql("t"),
         );
         let mut statement = self.connection.prepare(&sql)?;
-        collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)
+        collect_rows(statement.query_map(params![source_id.as_str()], track_from_row)?)
     }
     pub fn load_tracks_matching(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         query: &str,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
         let Some(pattern) = like_pattern(query) else {
-            return self.load_tracks(server_id, offset, limit);
+            return self.load_tracks(source_id, offset, limit);
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_track_fts_matches(server_id, &query)?;
+            let total = self.count_track_fts_matches(source_id, &query)?;
             if total > 0 {
-                return self.search_tracks_page(server_id, &query, offset, limit, total);
+                return self.search_tracks_page(source_id, &query, offset, limit, total);
             }
         }
-        self.load_tracks_like(server_id, &pattern, offset, limit)
+        self.load_tracks_like(source_id, &pattern, offset, limit)
     }
     pub fn load_artists(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_artist: bool,
         offset: usize,
         limit: usize,
@@ -880,14 +880,14 @@ impl Store {
             "artists"
         };
         let artist_filter = artist_list_filter_for_alias(album_artist, "a");
-        let total = self.count_artists(server_id, album_artist)?;
+        let total = self.count_artists(source_id, album_artist)?;
         let sql = format!(
             "
             SELECT a.artist_id, a.name, a.album_count, a.track_count,
                    {favorite} AS favorite, a.last_played, a.play_count,
                    a.user_rating, a.image_item_id, a.image_tag
             FROM {table} a
-            WHERE a.server_id = ?1
+            WHERE a.source_id = ?1
               {artist_filter}
             ORDER BY a.name COLLATE NOCASE
             LIMIT ?2 OFFSET ?3
@@ -896,14 +896,14 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         let items = collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
+            params![source_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_artists_without_image_ref(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_artist: bool,
         offset: usize,
         limit: usize,
@@ -920,7 +920,7 @@ impl Store {
                    {favorite} AS favorite, a.last_played, a.play_count,
                    a.user_rating, a.image_item_id, a.image_tag
             FROM {table} a
-            WHERE a.server_id = ?1
+            WHERE a.source_id = ?1
               AND a.image_item_id IS NULL
               {artist_filter}
             ORDER BY a.name COLLATE NOCASE
@@ -930,20 +930,20 @@ impl Store {
         );
         let mut statement = self.connection.prepare(&sql)?;
         collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
+            params![source_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)
     }
     pub fn load_artists_matching(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         album_artist: bool,
         query: &str,
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Artist>> {
         let Some(pattern) = like_pattern(query) else {
-            return self.load_artists(server_id, album_artist, offset, limit);
+            return self.load_artists(source_id, album_artist, offset, limit);
         };
         let item_type = if album_artist {
             "album_artist"
@@ -952,10 +952,10 @@ impl Store {
         };
         if let Some(query) = fts_query(query) {
             let total =
-                self.count_artist_fts_matches(server_id, album_artist, item_type, &query)?;
+                self.count_artist_fts_matches(source_id, album_artist, item_type, &query)?;
             if total > 0 {
                 return self.search_artists_page(
-                    server_id,
+                    source_id,
                     album_artist,
                     &query,
                     offset,
@@ -964,6 +964,6 @@ impl Store {
                 );
             }
         }
-        self.load_artists_like(server_id, album_artist, &pattern, offset, limit)
+        self.load_artists_like(source_id, album_artist, &pattern, offset, limit)
     }
 }

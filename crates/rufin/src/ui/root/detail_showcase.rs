@@ -564,7 +564,7 @@ fn server_entity_url(
     entity_id: &str,
 ) -> Option<DetailExternalLink> {
     let library = shell.state.library.borrow();
-    let server = library.server.as_ref()?;
+    let server = library.source.as_ref()?;
     server_entity_link(server, kind, entity_id)
 }
 

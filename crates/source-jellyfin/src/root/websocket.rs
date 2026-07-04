@@ -105,7 +105,7 @@ impl JellyfinSource {
     async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
         let key = websocket_key()?;
         let config = JellyfinClientConfig::new(
-            self.identity.server.base_url.clone(),
+            self.identity.base_url.clone(),
             false,
             Some(self.device_id.to_string()),
         );

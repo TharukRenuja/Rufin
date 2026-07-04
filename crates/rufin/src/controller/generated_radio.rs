@@ -5,10 +5,10 @@ use std::thread;
 use std::time::Instant;
 
 use domain::{
-    Album, Artist, GeneratedTrackSeed, GeneratedTracksRequest, Genre, Playlist, ServerId, Track,
+    Album, Artist, GeneratedTrackSeed, GeneratedTracksRequest, Genre, Playlist, SourceId, Track,
     TrackId,
 };
-use library::SavedServer;
+use library::SavedSource;
 use source_local::LOCAL_SOURCE_ID;
 use tracing::info;
 
@@ -190,7 +190,7 @@ impl AppController {
             "started generated radio load"
         );
         thread::spawn(
-            move || match controller.generated_tracks_for_active_server(&request) {
+            move || match controller.generated_tracks_for_active_source(&request) {
                 Ok(tracks) => {
                     if controller.play_activation_generation_matches(generation) {
                         info!(
@@ -211,11 +211,11 @@ impl AppController {
         );
     }
 
-    fn generated_tracks_for_active_server(
+    fn generated_tracks_for_active_source(
         &self,
         request: &GeneratedRadioRequest,
     ) -> Result<Vec<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+        let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Err("No active music server is saved.".to_string());
         };
         let mut tracks =
@@ -234,16 +234,16 @@ impl AppController {
 
     pub(in crate::controller) fn generated_tracks_for_saved(
         &self,
-        saved: &SavedServer,
+        saved: &SavedSource,
         seed: GeneratedTrackSeed,
         limit: usize,
     ) -> Result<Vec<Track>, String> {
         let settings = load_settings_for_saved(&self.store, saved);
-        let mut tracks = if saved.server.provider == "fake" {
-            self.generated_tracks_from_cache(&saved.server.id, seed, limit)?
-        } else if saved.server.provider == LOCAL_SOURCE_ID {
+        let mut tracks = if saved.source.kind == "fake" {
+            self.generated_tracks_from_cache(&saved.source.id, seed, limit)?
+        } else if saved.source.kind == LOCAL_SOURCE_ID {
             let mut tracks =
-                self.local_generated_tracks_from_cache(&saved.server.id, seed, limit)?;
+                self.local_generated_tracks_from_cache(&saved.source.id, seed, limit)?;
             dedupe_tracks(&mut tracks);
             prepare_cached_tracks(self, saved, &settings, &mut tracks)?;
             return Ok(tracks);
@@ -268,19 +268,19 @@ impl AppController {
 
     fn generated_tracks_from_cache(
         &self,
-        server_id: &ServerId,
+        source_id: &SourceId,
         seed: GeneratedTrackSeed,
         limit: usize,
     ) -> Result<Vec<Track>, String> {
         let tracks = self
             .store
-            .with_store(|store| store.load_tracks(server_id, 0, SNAPSHOT_TRACK_LIMIT))?
+            .with_store(|store| store.load_tracks(source_id, 0, SNAPSHOT_TRACK_LIMIT))?
             .items;
         let mut candidates = match seed {
             GeneratedTrackSeed::Track(track_id) => {
                 let seed = self
                     .store
-                    .with_store(|store| store.load_track(server_id, &track_id))?
+                    .with_store(|store| store.load_track(source_id, &track_id))?
                     .ok_or_else(|| "The selected track is no longer available.".to_string())?;
                 tracks
                     .into_iter()
@@ -380,12 +380,12 @@ fn generated_seed_kind(seed: &GeneratedTrackSeed) -> &'static str {
 
 pub(in crate::controller) fn saved_server_for_generated_queue(
     controller: &AppController,
-    server_id: &ServerId,
-) -> Result<Option<SavedServer>, String> {
+    source_id: &SourceId,
+) -> Result<Option<SavedSource>, String> {
     let saved = controller
         .store
-        .with_store(|store| store.saved_server(server_id))?;
+        .with_store(|store| store.saved_source(source_id))?;
     Ok(saved.or_else(|| {
-        (server_id.as_str() == super::root::LOCAL_SOURCE_SERVER_ID).then(local_source_saved)
+        (source_id.as_str() == super::root::LOCAL_SOURCE_IDENTITY_ID).then(local_source_saved)
     }))
 }

@@ -222,7 +222,7 @@ fn discovered_server_from_public_info(
     Some(DiscoveredJellyfinServer {
         id: response
             .id
-            .or(response.server_id)
+            .or(response.source_id)
             .filter(|id| !id.trim().is_empty()),
         name: response
             .server_name
@@ -273,7 +273,7 @@ struct JellyfinDiscoveryResponse {
 #[serde(rename_all = "PascalCase")]
 struct JellyfinPublicSystemInfo {
     id: Option<String>,
-    server_id: Option<String>,
+    source_id: Option<String>,
     server_name: Option<String>,
     local_address: Option<String>,
 }

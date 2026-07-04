@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    HomeSectionKind, ImageRef, Playlist, PlaylistId, SourceId, Track, TrackId,
 };
 use source::{
     AlbumDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes, ImageKind,
@@ -58,12 +58,10 @@ impl FakeSource {
     pub fn new(scale: FakeScale) -> Self {
         Self {
             identity: SourceIdentity {
-                server: ServerIdentity {
-                    id: ServerId::new("fake:server:local"),
-                    provider: "fake".to_string(),
-                    name: "Fake Library".to_string(),
-                    base_url: "fake://local".to_string(),
-                },
+                id: SourceId::new("fake:server:local"),
+                kind: "fake".to_string(),
+                name: "Fake Library".to_string(),
+                base_url: "fake://local".to_string(),
             },
             library: generate_fake_library(scale),
         }

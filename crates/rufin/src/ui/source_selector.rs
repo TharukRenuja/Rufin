@@ -6,8 +6,8 @@ use std::{
 
 use adw::prelude::*;
 use domain::{
-    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, ServerId,
-    ServerIdentity,
+    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, SourceId,
+    SourceIdentity,
 };
 use gtk::glib;
 
@@ -22,9 +22,9 @@ const SERVER_OPTION_ICON_SIZE: i32 = 14;
 const SERVER_OPTION_CHECK_SIZE: i32 = 13;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 236;
 const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 148;
-const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
+const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
 
-pub(super) struct ServerSelector {
+pub(super) struct SourceSelector {
     pub normal_button: gtk::Button,
     pub normal_icon: gtk::Image,
     pub normal_name: gtk::Label,
@@ -43,19 +43,19 @@ pub(super) struct ServerSelector {
     compact_unmap_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
-struct ServerSelectorContent {
+struct SourceSelectorContent {
     name: String,
     selected_source: Option<LibrarySourceSelection>,
-    active_server: Option<ServerIdentity>,
-    servers: Vec<ServerIdentity>,
+    active_source: Option<SourceIdentity>,
+    sources: Vec<SourceIdentity>,
     local_folders: Vec<LocalLibraryFolder>,
     music_folders: Vec<MusicFolder>,
     selected_music_folder_id: Option<MusicFolderId>,
 }
 
-pub(super) fn build_server_selector() -> ServerSelector {
+pub(super) fn build_source_selector() -> SourceSelector {
     let normal_button = gtk::Button::new();
-    normal_button.add_css_class("server-selector");
+    normal_button.add_css_class("source-selector");
     normal_button.add_css_class("menu-source-button");
     normal_button.add_css_class("flat");
     normal_button.set_can_shrink(true);
@@ -96,7 +96,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
 
     let compact_button = gtk::Button::new();
     compact_button.add_css_class("flat");
-    compact_button.add_css_class("server-selector");
+    compact_button.add_css_class("source-selector");
     compact_button.add_css_class("menu-source-button");
     compact_button.set_can_shrink(true);
     compact_button.set_hexpand(true);
@@ -130,7 +130,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     compact_content.append(&compact_arrow);
     compact_button.set_child(Some(&compact_content));
 
-    ServerSelector {
+    SourceSelector {
         normal_button,
         normal_icon,
         normal_name,
@@ -150,10 +150,10 @@ pub(super) fn build_server_selector() -> ServerSelector {
     }
 }
 
-pub(super) fn update_server_selector(shell: &Rc<Shell>) {
+pub(super) fn update_source_selector(shell: &Rc<Shell>) {
     let selector = &shell.server_selector;
     let library = shell.state.library.borrow().clone();
-    let content = server_selector_content(library);
+    let content = source_selector_content(library);
     let accessible_label = format!("{}: {}", tr("Source"), content.name);
     let icon_name = source_icon_name(&content);
     let subtitle = source_summary_detail(&content);
@@ -171,7 +171,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.normal_click_handler,
         &selector.normal_hover_controller,
         &selector.normal_unmap_handler,
-        server_selection_popover(shell, &content),
+        source_selection_popover(shell, &content),
     );
 
     selector.compact_icon.set_icon_name(Some(icon_name));
@@ -187,22 +187,22 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         &selector.compact_click_handler,
         &selector.compact_hover_controller,
         &selector.compact_unmap_handler,
-        server_selection_popover(shell, &content),
+        source_selection_popover(shell, &content),
     );
 }
 
-fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
+fn source_selector_content(library: LibrarySnapshot) -> SourceSelectorContent {
     let selected_source = library.selected_source.clone();
-    let active_server = selected_source
+    let active_source = selected_source
         .as_ref()
         .and_then(|selection| selected_source_server(selection, &library))
-        .or_else(|| library.server.clone());
-    let Some(server) = active_server else {
-        return ServerSelectorContent {
+        .or_else(|| library.source.clone());
+    let Some(server) = active_source else {
+        return SourceSelectorContent {
             name: tr("No source"),
             selected_source,
-            active_server: None,
-            servers: library.servers,
+            active_source: None,
+            sources: library.sources,
             local_folders: library.local_folders,
             music_folders: Vec::new(),
             selected_music_folder_id: None,
@@ -210,7 +210,7 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     };
 
     let music_folders = if library
-        .server
+        .source
         .as_ref()
         .is_some_and(|loaded| loaded.id == server.id)
     {
@@ -223,12 +223,12 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     } else {
         library.selected_music_folder_id
     };
-    let name = server_display_name(&server);
-    ServerSelectorContent {
+    let name = source_identity_display_name(&server);
+    SourceSelectorContent {
         name,
         selected_source,
-        active_server: Some(server),
-        servers: library.servers,
+        active_source: Some(server),
+        sources: library.sources,
         local_folders: library.local_folders,
         music_folders,
         selected_music_folder_id,
@@ -238,21 +238,21 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
 fn selected_source_server(
     selected_source: &LibrarySourceSelection,
     library: &LibrarySnapshot,
-) -> Option<ServerIdentity> {
+) -> Option<SourceIdentity> {
     match selected_source {
         LibrarySourceSelection::Local => Some(local_source_identity()),
-        LibrarySourceSelection::Server(server_id) => library
-            .servers
+        LibrarySourceSelection::Source(source_id) => library
+            .sources
             .iter()
-            .find(|server| &server.id == server_id)
+            .find(|server| &server.id == source_id)
             .cloned(),
     }
 }
 
-fn local_source_identity() -> ServerIdentity {
-    ServerIdentity {
-        id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
-        provider: "local".to_string(),
+fn local_source_identity() -> SourceIdentity {
+    SourceIdentity {
+        id: SourceId::new(LOCAL_SOURCE_IDENTITY_ID),
+        kind: "local".to_string(),
         name: tr("Local"),
         base_url: String::new(),
     }
@@ -363,79 +363,79 @@ fn schedule_server_selection_popdown(
     });
 }
 
-fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
+fn source_icon_name(content: &SourceSelectorContent) -> &'static str {
     match &content.selected_source {
         Some(LibrarySourceSelection::Local) => "rufin-route-folders-symbolic",
-        Some(LibrarySourceSelection::Server(_)) => content
-            .active_server
+        Some(LibrarySourceSelection::Source(_)) => content
+            .active_source
             .as_ref()
-            .map(server_icon_name)
+            .map(source_identity_icon_name)
             .unwrap_or("network-server-symbolic"),
         None => "network-server-symbolic",
     }
 }
 
-fn server_display_name(server: &ServerIdentity) -> String {
+fn source_identity_display_name(server: &SourceIdentity) -> String {
     let name = server.name.trim();
     if name.is_empty() {
-        source_display_name(&server.provider)
+        source_kind_display_name(&server.kind)
     } else {
         name.to_string()
     }
 }
 
-fn source_display_name(provider: &str) -> String {
-    match provider {
+fn source_kind_display_name(kind: &str) -> String {
+    match kind {
         "jellyfin" => tr("Jellyfin"),
         "navidrome" => tr("Navidrome"),
         "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
         "local" | "fake" => tr("Local"),
-        provider => provider.to_string(),
+        other => other.to_string(),
     }
 }
 
-fn server_icon_name(server: &ServerIdentity) -> &'static str {
-    provider_icon_name(&server.provider)
+fn source_identity_icon_name(server: &SourceIdentity) -> &'static str {
+    source_kind_icon_name(&server.kind)
 }
 
-fn provider_icon_name(provider: &str) -> &'static str {
-    match provider {
-        "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
-        "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
-        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
+fn source_kind_icon_name(kind: &str) -> &'static str {
+    match kind {
+        "jellyfin" => "io.github.screwys.Rufin.source.jellyfin",
+        "navidrome" => "io.github.screwys.Rufin.source.navidrome",
+        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.source.opensubsonic",
         "local" | "fake" => "rufin-route-folders-symbolic",
         _ => "network-server-symbolic",
     }
 }
 
-fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) -> gtk::Popover {
+fn source_selection_popover(shell: &Rc<Shell>, content: &SourceSelectorContent) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.set_autohide(false);
     popover.set_position(gtk::PositionType::Right);
     let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    wrapper.add_css_class("server-selector-popover");
+    wrapper.add_css_class("source-selector-popover");
     wrapper.set_width_request(SERVER_SELECTOR_POPOVER_WIDTH);
 
     wrapper.append(&server_section_label(&tr("Select Source")));
-    if content.servers.is_empty() {
-        let row = server_option_row(None, &tr("No servers configured"), "", false);
+    if content.sources.is_empty() && content.local_folders.is_empty() {
+        let row = source_option_row(None, &tr("No sources configured"), "", false);
         row.set_sensitive(false);
         wrapper.append(&row);
     } else {
-        for server in &content.servers {
+        for server in &content.sources {
             let active = matches!(
                 &content.selected_source,
-                Some(LibrarySourceSelection::Server(server_id)) if *server_id == server.id
+                Some(LibrarySourceSelection::Source(source_id)) if *source_id == server.id
             );
-            let title = server_display_name(server);
-            let row = server_option_row(Some(server), &title, "", active);
+            let title = source_identity_display_name(server);
+            let row = source_option_row(Some(server), &title, "", active);
             if !active {
                 let row_popover = popover.clone();
                 let controller = shell.controller.clone();
-                let server_id = server.id.clone();
+                let source_id = server.id.clone();
                 row.connect_clicked(move |_| {
                     popdown_server_selection_stack(&row_popover);
-                    controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+                    controller.select_source(LibrarySourceSelection::Source(source_id.clone()));
                 });
             }
             wrapper.append(&row);
@@ -480,27 +480,27 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     });
     wrapper.append(&add_library);
 
-    if let Some(server) = &content.active_server
+    if let Some(server) = &content.active_source
         && matches!(
             content.selected_source,
-            Some(LibrarySourceSelection::Server(_))
+            Some(LibrarySourceSelection::Source(_))
         )
     {
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
         separator.add_css_class("server-library-separator");
         wrapper.append(&separator);
         wrapper.append(&server_section_label(&tr("Server Library")));
-        append_server_music_folder_rows(shell, &popover, &wrapper, server, content);
+        append_source_music_folder_rows(shell, &popover, &wrapper, server, content);
     }
 
     popover.set_child(Some(&wrapper));
     popover
 }
 
-fn source_summary_detail(content: &ServerSelectorContent) -> String {
+fn source_summary_detail(content: &SourceSelectorContent) -> String {
     match &content.selected_source {
         Some(LibrarySourceSelection::Local) => local_source_detail(&content.local_folders),
-        Some(LibrarySourceSelection::Server(_)) => content
+        Some(LibrarySourceSelection::Source(_)) => content
             .selected_music_folder_id
             .as_ref()
             .and_then(|selected| {
@@ -527,12 +527,12 @@ fn local_source_popup_detail(folders: &[LocalLibraryFolder]) -> String {
     folder_count_text(folders.len() as u64)
 }
 
-fn append_server_music_folder_rows(
+fn append_source_music_folder_rows(
     shell: &Rc<Shell>,
     popover: &gtk::Popover,
     wrapper: &gtk::Box,
-    server: &ServerIdentity,
-    content: &ServerSelectorContent,
+    server: &SourceIdentity,
+    content: &SourceSelectorContent,
 ) {
     let all_active = content.selected_music_folder_id.is_none();
     let all = server_action_row(
@@ -544,10 +544,10 @@ fn append_server_music_folder_rows(
     if !all_active {
         let row_popover = popover.clone();
         let controller = shell.controller.clone();
-        let server_id = server.id.clone();
+        let source_id = server.id.clone();
         all.connect_clicked(move |_| {
             popdown_server_selection_stack(&row_popover);
-            controller.set_selected_music_folder(server_id.clone(), None);
+            controller.set_selected_music_folder(source_id.clone(), None);
         });
     }
     wrapper.append(&all);
@@ -561,11 +561,11 @@ fn append_server_music_folder_rows(
         if !active {
             let row_popover = popover.clone();
             let controller = shell.controller.clone();
-            let server_id = server.id.clone();
+            let source_id = server.id.clone();
             let folder_id = folder.id.clone();
             row.connect_clicked(move |_| {
                 popdown_server_selection_stack(&row_popover);
-                controller.set_selected_music_folder(server_id.clone(), Some(folder_id.clone()));
+                controller.set_selected_music_folder(source_id.clone(), Some(folder_id.clone()));
             });
         }
         wrapper.append(&row);
@@ -583,15 +583,15 @@ fn popdown_server_selection_stack(popover: &gtk::Popover) {
     }
 }
 
-fn server_option_row(
-    server: Option<&ServerIdentity>,
+fn source_option_row(
+    server: Option<&SourceIdentity>,
     title: &str,
     detail: &str,
     active: bool,
 ) -> gtk::Button {
     let row = gtk::Button::new();
     row.add_css_class("flat");
-    row.add_css_class("server-option");
+    row.add_css_class("source-option");
 
     let row_content = gtk::Box::new(
         gtk::Orientation::Horizontal,
@@ -599,7 +599,7 @@ fn server_option_row(
     );
     row_content.set_halign(gtk::Align::Fill);
     let icon_name = server
-        .map(server_icon_name)
+        .map(source_identity_icon_name)
         .unwrap_or("network-server-symbolic");
     row_content.append(&server_row_icon(icon_name));
 
@@ -615,7 +615,7 @@ fn server_option_row(
 fn server_action_row(icon_name: &str, title: &str, detail: &str, active: bool) -> gtk::Button {
     let row = gtk::Button::new();
     row.add_css_class("flat");
-    row.add_css_class("server-option");
+    row.add_css_class("source-option");
 
     let row_content = gtk::Box::new(
         gtk::Orientation::Horizontal,
