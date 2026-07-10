@@ -1,6 +1,26 @@
 use super::*;
+use domain::LocalManifestEntry;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+
+fn active_source_for_test(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedSource,
+) -> ActiveSourceSlot {
+    let active = crate::sources::activate_configured_source(store, secrets, saved)
+        .expect("activate saved source");
+    Arc::new(std::sync::RwLock::new(Some(active)))
+}
+
+fn active_value_for_test(store: &StoreHandle, saved: &SavedSource) -> Arc<ActiveSource> {
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.source.id, "test-token")
+        .expect("save credential");
+    crate::sources::activate_configured_source(store, &secrets, saved)
+        .expect("activate saved source")
+}
 
 fn controller_with_current_track(
     saved: &SavedSource,
@@ -56,7 +76,7 @@ pub(in crate::controller) fn store_empty_playlist_has_empty_detail() {
     seed_cached_library(&store, &saved, &[], &[], &[]);
     let root = self::unique_test_dir("empty-local-playlist");
     fs::create_dir_all(&root).expect("create empty local root");
-    let mut settings = store.load_settings().expect("load settings");
+    let mut settings = store.load_settings();
     settings.sources.selected = Some(LibrarySourceSelection::Local);
     settings.sources.local_folders = vec![LocalLibraryFolder {
         path: root.to_string_lossy().into_owned(),
@@ -208,27 +228,6 @@ pub(in crate::controller) fn lyrics_local_lookup() {
 }
 
 #[test]
-pub(in crate::controller) fn lyrics_local_capability() {
-    let root = self::unique_test_dir("local-provider-lyrics-capability");
-    fs::create_dir_all(&root).expect("create local root");
-    let provider = LoadedSource::Local(
-        LocalSource::from_roots_with_identity(vec![root.clone()], local_source_saved().source)
-            .expect("local provider"),
-    );
-    let runtime = Runtime::new().expect("runtime");
-
-    let lyrics = runtime
-        .block_on(provider.lyrics_with_search(
-            &TrackId::new("local:track:no-lyrics"),
-            JellyfinLyricsSearch::ServerThenRemote,
-        ))
-        .expect("lyrics result");
-
-    assert!(lyrics.is_none());
-    let _cleanup = fs::remove_dir_all(root);
-}
-
-#[test]
 pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind lyrics server");
     let address = listener.local_addr().expect("lyrics server address");
@@ -351,7 +350,7 @@ pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
     track.artist_id = None;
     let source_id = saved.source.id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
-    let mut settings = controller.store.load_settings().expect("load settings");
+    let mut settings = controller.store.load_settings();
     settings.external_lyrics_enabled = true;
     settings.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
     controller
@@ -497,23 +496,23 @@ pub(in crate::controller) fn lyrics_search_preference() {
     };
     assert_eq!(
         super::lyrics_search_for_settings(&settings),
-        JellyfinLyricsSearch::ServerThenRemote
+        LyricsSearch::ServerThenRemote
     );
     settings.prefer_server_lyrics = false;
     assert_eq!(
         super::lyrics_search_for_settings(&settings),
-        JellyfinLyricsSearch::RemoteThenServer
+        LyricsSearch::RemoteThenServer
     );
     settings.private_mode = true;
     assert_eq!(
         super::lyrics_search_for_settings(&settings),
-        JellyfinLyricsSearch::ServerOnly
+        LyricsSearch::ServerOnly
     );
     settings.private_mode = false;
     settings.external_lyrics_enabled = false;
     assert_eq!(
         super::lyrics_search_for_settings(&settings),
-        JellyfinLyricsSearch::ServerOnly
+        LyricsSearch::ServerOnly
     );
 }
 #[test]
@@ -623,8 +622,8 @@ pub(in crate::controller) fn lyrics_use_file() {
     store
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.source.id, &track.id).expect("sidecar lyrics");
+    let active = active_value_for_test(&store, &saved);
+    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id).expect("sidecar lyrics");
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "line one");
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
@@ -658,8 +657,8 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
 
-    let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.source.id, &track.id).expect("sidecar lyrics");
+    let active = active_value_for_test(&store, &saved);
+    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id).expect("sidecar lyrics");
 
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "apple line");
@@ -717,8 +716,8 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
         })
         .expect("cue source");
 
-    let lyrics =
-        super::local_sidecar_lyrics(&store, &saved.source.id, &track_id).expect("sidecar lyrics");
+    let active = active_value_for_test(&store, &saved);
+    let lyrics = super::local_sidecar_lyrics(&store, &active, &track_id).expect("sidecar lyrics");
 
     assert_eq!(lyrics.source, LyricsSource::Local);
     assert_eq!(lyrics.lines[0].text, "apple line");
@@ -739,13 +738,13 @@ pub(in crate::controller) fn lyrics_ignore_cached_local_for_cue_tracks() {
 
     assert!(!super::cached_lyrics_allowed_for_track(
         &lyrics,
-        JellyfinLyricsSearch::RemoteThenServer,
+        LyricsSearch::RemoteThenServer,
         &domain::default_external_lyrics_providers(),
         true,
     ));
     assert!(super::cached_lyrics_allowed_for_track(
         &lyrics,
-        JellyfinLyricsSearch::RemoteThenServer,
+        LyricsSearch::RemoteThenServer,
         &domain::default_external_lyrics_providers(),
         false,
     ));
@@ -764,13 +763,13 @@ pub(in crate::controller) fn lyrics_cache_respects_external_provider_selection()
 
     assert!(super::cached_lyrics_allowed_for_track(
         &lyrics,
-        JellyfinLyricsSearch::RemoteThenServer,
+        LyricsSearch::RemoteThenServer,
         &[ExternalLyricsProvider::Genius],
         false,
     ));
     assert!(!super::cached_lyrics_allowed_for_track(
         &lyrics,
-        JellyfinLyricsSearch::RemoteThenServer,
+        LyricsSearch::RemoteThenServer,
         &[ExternalLyricsProvider::Lrclib],
         false,
     ));
@@ -803,7 +802,8 @@ pub(in crate::controller) fn lyrics_ignore_files() {
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
 
-    let lyrics = super::local_sidecar_lyrics(&store, &saved.source.id, &track.id);
+    let active = active_value_for_test(&store, &saved);
+    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id);
 
     assert_eq!(lyrics, None);
     let _cleanup = fs::remove_dir_all(dir);
@@ -843,8 +843,9 @@ pub(in crate::controller) fn lyrics_use_replacement() {
     store
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id)
-        .expect("mapped path");
+    let active = active_value_for_test(&store, &saved);
+    let mapped =
+        super::local_audio_path_for_track(&store, &active, &track.id).expect("mapped path");
     assert_eq!(mapped, audio);
     let _cleanup = fs::remove_dir_all(root);
 }
@@ -862,7 +863,8 @@ pub(in crate::controller) fn lyrics_require_access() {
     store
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id);
+    let active = active_value_for_test(&store, &saved);
+    let mapped = super::local_audio_path_for_track(&store, &active, &track.id);
     assert_eq!(mapped, None);
     let _cleanup = fs::remove_dir_all(dir);
 }
@@ -895,10 +897,11 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
         .save_token(&saved.source.id, "test-token")
         .expect("save token");
     let secrets: Arc<dyn SecretStore> = secrets;
+    let active_source = active_source_for_test(&store, &secrets, &saved);
     let stream = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
@@ -929,24 +932,20 @@ pub(in crate::controller) fn lyrics_change_source() {
         .save_token(&playback_server.source.id, "playback-token")
         .expect("save playback token");
     let secrets: Arc<dyn SecretStore> = secrets;
+    let active_source = active_source_for_test(&store, &secrets, &local);
     let track_id = restored_track().id;
 
-    let stream = super::resolve_stream(
+    let error = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &playback_server.source.id,
         &track_id,
         &PlaybackSettings::default(),
     )
-    .expect("stream");
+    .expect_err("non-selected source");
 
-    assert!(
-        stream
-            .uri()
-            .starts_with("https://music.example/Audio/lyrics/stream?")
-    );
-    assert!(stream.uri().contains("api_key=playback-token"));
+    assert!(error.contains("selected source is not active"));
 }
 #[test]
 pub(in crate::controller) fn lyrics_use_source() {
@@ -965,11 +964,12 @@ pub(in crate::controller) fn lyrics_use_source() {
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let active_source = active_source_for_test(&store, &secrets, &saved);
 
     let stream = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
@@ -982,7 +982,7 @@ pub(in crate::controller) fn lyrics_use_source() {
 }
 
 #[test]
-pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
+pub(in crate::controller) fn local_stream_resolution_rejects_stale_cached_path() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
     let root = self::unique_test_dir("local-source-stale-stream");
@@ -999,24 +999,24 @@ pub(in crate::controller) fn local_stream_resolution_trusts_cached_path() {
     fs::remove_file(&audio).expect("remove audio");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let active_source = active_source_for_test(&store, &secrets, &saved);
 
-    let stream = super::resolve_stream(
+    let error = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
-    .expect("stream");
+    .expect_err("stale cached path");
 
-    assert!(stream.uri().starts_with("file://"));
-    assert!(stream.uri().contains("Track.flac"));
+    assert!(error.contains("Cached local source is missing"));
     let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
-pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cached_path() {
+pub(in crate::controller) fn local_stream_resolution_does_not_scan_on_cache_miss() {
     let store = StoreHandle::open_memory().expect("memory store");
     let root = self::unique_test_dir("local-stream-no-rescan");
     let audio = root.join("Album/Track.flac");
@@ -1050,16 +1050,17 @@ pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cac
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let active_source = active_source_for_test(&store, &secrets, &saved);
 
     let error = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
     )
-    .expect_err("stale local source error");
+    .expect_err("missing cached path");
 
     assert!(error.contains("Cached local source is missing"));
     let _cleanup = fs::remove_dir_all(root);
@@ -1098,11 +1099,16 @@ pub(in crate::controller) fn lyrics_match_path() {
         })
         .expect("seed track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let secrets = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.source.id, "test-token")
+        .expect("save token");
+    let secrets: Arc<dyn SecretStore> = secrets;
+    let active_source = active_source_for_test(&store, &secrets, &saved);
     let stream = super::resolve_stream(
         &store,
         &runtime,
-        &secrets,
+        &active_source,
         &saved.source.id,
         &track.id,
         &PlaybackSettings::default(),
@@ -1136,8 +1142,9 @@ pub(in crate::controller) fn lyrics_use_prefix() {
     store
         .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
         .expect("upsert track");
-    let mapped = super::local_audio_path_for_track(&store, &saved.source.id, &track.id)
-        .expect("mapped path");
+    let active = active_value_for_test(&store, &saved);
+    let mapped =
+        super::local_audio_path_for_track(&store, &active, &track.id).expect("mapped path");
     assert_eq!(mapped, audio);
     let _cleanup = fs::remove_dir_all(scan_root);
     let _cleanup = fs::remove_dir_all(local_root);
@@ -1191,7 +1198,7 @@ pub(in crate::controller) fn access_match_use() {
         .block_on(super::refresh_local_track_matches(
             &store,
             &saved.source.id,
-            Some(generation),
+            generation,
             None,
         ))
         .expect("refresh local matches");

@@ -7,9 +7,9 @@ use domain::{LibrarySourceSelection, SourceId, SourceIdentity};
 use gtk::gio;
 use library::SourceLocalAccess;
 
-use crate::controller::{LocalAccessStatus, SourceSettingsInput};
+use crate::controller::{AppController, LocalAccessStatus};
 use crate::i18n::{tr, trn_with};
-use crate::sources::StreamingSource;
+use crate::sources::{CredentialHostPreset, CredentialSettingsInput, resolve_source_registration};
 
 use super::{
     Shell,
@@ -89,7 +89,6 @@ fn manage_server_content(
         );
         (access, status, selected)
     };
-    let remote = server.kind != "local";
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
@@ -108,7 +107,13 @@ fn manage_server_content(
     content.add_css_class("manage-server-content");
     content.set_hexpand(true);
     clamp.set_child(Some(&content));
-    content.append(&server_settings_group(shell, &server, remote));
+    if let Some(saved) = shell.controller.configured_source(&server.id)
+        && let Some(registration) = resolve_source_registration(&saved.source.kind)
+        && let Some(settings_group) = registration.settings_group
+    {
+        let settings = settings_group(shell, &saved);
+        content.append(&settings);
+    }
 
     let folder = Rc::new(RefCell::new(
         access
@@ -139,16 +144,8 @@ fn manage_server_content(
     }
     let initial_draft = LocalAccessDraft {
         folder: folder.borrow().clone(),
-        server_prefix: if remote {
-            saved_server_prefix.trim().to_string()
-        } else {
-            String::new()
-        },
-        local_prefix: if remote {
-            saved_local_prefix.trim().to_string()
-        } else {
-            String::new()
-        },
+        server_prefix: saved_server_prefix.trim().to_string(),
+        local_prefix: saved_local_prefix.trim().to_string(),
     };
 
     let folder_row = adw::ActionRow::builder()
@@ -169,13 +166,11 @@ fn manage_server_content(
         .title(tr("Server Prefix"))
         .text(&display_server_prefix)
         .build();
-    server_prefix.set_visible(remote);
 
     let local_prefix = adw::EntryRow::builder()
         .title(tr("Local Prefix"))
         .text(&display_local_prefix)
         .build();
-    local_prefix.set_visible(remote);
 
     let sample_subtitle = access_status
         .sample_source_path
@@ -185,7 +180,6 @@ fn manage_server_content(
         .title(tr("Server Sample"))
         .subtitle(sample_subtitle)
         .build();
-    sample_row.set_visible(remote);
 
     let preview_row = adw::ActionRow::builder()
         .title(tr("Mapped Local Path"))
@@ -196,39 +190,24 @@ fn manage_server_content(
             folder.borrow().as_deref(),
         ))
         .build();
-    preview_row.set_visible(remote);
-
-    let group_title = if remote {
-        tr("Local Playback Access")
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Local Playback Access"))
+        .build();
+    let subtitle = if access.is_some() {
+        tr("Local playback mapping configured")
     } else {
-        tr("Local Library")
+        tr("Map server tracks to local files")
     };
-    let group = adw::PreferencesGroup::builder().title(group_title).build();
-    let mapping_expander = if remote {
-        let subtitle = if access.is_some() {
-            tr("Local playback mapping configured")
-        } else {
-            tr("Map server tracks to local files")
-        };
-        let expander = adw::ExpanderRow::builder()
-            .title(tr("Local Playback Mapping"))
-            .subtitle(subtitle)
-            .build();
-        expander.add_row(&folder_row);
-        expander.add_row(&server_prefix);
-        expander.add_row(&local_prefix);
-        expander.add_row(&sample_row);
-        expander.add_row(&preview_row);
-        group.add(&expander);
-        Some(expander)
-    } else {
-        group.add(&folder_row);
-        group.add(&server_prefix);
-        group.add(&local_prefix);
-        group.add(&sample_row);
-        group.add(&preview_row);
-        None
-    };
+    let mapping_expander = adw::ExpanderRow::builder()
+        .title(tr("Local Playback Mapping"))
+        .subtitle(subtitle)
+        .build();
+    mapping_expander.add_row(&folder_row);
+    mapping_expander.add_row(&server_prefix);
+    mapping_expander.add_row(&local_prefix);
+    mapping_expander.add_row(&sample_row);
+    mapping_expander.add_row(&preview_row);
+    group.add(&mapping_expander);
     content.append(&group);
 
     let status = gtk::Label::new(None);
@@ -241,25 +220,23 @@ fn manage_server_content(
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
     let remove = text_button("edit-clear-symbolic", "Clear Mapping");
-    remove.set_visible(server.kind != "local" && access.is_some());
+    remove.set_visible(access.is_some());
     let save = text_button("document-save-symbolic", "Save Mapping");
     save.add_css_class("suggested-action");
     actions.append(&remove);
     actions.append(&save);
     content.append(&actions);
-    if let Some(expander) = mapping_expander.as_ref() {
-        status.set_visible(expander.is_expanded());
-        actions.set_visible(expander.is_expanded());
-        expander.connect_expanded_notify({
-            let status = status.clone();
-            let actions = actions.clone();
-            move |expander| {
-                let expanded = expander.is_expanded();
-                status.set_visible(expanded);
-                actions.set_visible(expanded);
-            }
-        });
-    }
+    status.set_visible(mapping_expander.is_expanded());
+    actions.set_visible(mapping_expander.is_expanded());
+    mapping_expander.connect_expanded_notify({
+        let status = status.clone();
+        let actions = actions.clone();
+        move |expander| {
+            let expanded = expander.is_expanded();
+            status.set_visible(expanded);
+            actions.set_visible(expanded);
+        }
+    });
 
     content.append(&server_actions_group(
         shell,
@@ -278,10 +255,9 @@ fn manage_server_content(
         let initial_draft = initial_draft.clone();
         let access_status = access_status.clone();
         move || {
-            let draft = local_access_draft(&folder, &server_prefix, &local_prefix, remote);
-            let has_location =
-                draft.folder.is_some() && (!remote || !draft.local_prefix.trim().is_empty());
-            let local_prefix_exists = !remote || Path::new(draft.local_prefix.trim()).is_dir();
+            let draft = local_access_draft(&folder, &server_prefix, &local_prefix, true);
+            let has_location = draft.folder.is_some() && !draft.local_prefix.trim().is_empty();
+            let local_prefix_exists = Path::new(draft.local_prefix.trim()).is_dir();
             let changed = draft != initial_draft;
             let preview = preview_local_path_preview(
                 access_status.sample_source_path.as_deref(),
@@ -289,13 +265,11 @@ fn manage_server_content(
                 draft.local_prefix.as_str(),
                 draft.folder.as_deref(),
             );
-            save.set_sensitive(
-                has_location && local_prefix_exists && changed && (!remote || preview.saveable),
-            );
+            save.set_sensitive(has_location && local_prefix_exists && changed && preview.saveable);
             preview_row.set_subtitle(&preview.text);
             status.set_text(&local_access_status_text(
                 &draft,
-                remote,
+                true,
                 changed,
                 &access_status,
             ));
@@ -310,9 +284,7 @@ fn manage_server_content(
             let local_prefix = local_prefix.clone();
             let update_state = Rc::clone(&update_state);
             move |path| {
-                if remote {
-                    local_prefix.set_text(&path.display().to_string());
-                }
+                local_prefix.set_text(&path.display().to_string());
                 update_state();
             }
         },
@@ -336,31 +308,24 @@ fn manage_server_content(
 
     let controller = shell.controller.clone();
     let source_id = server.id.clone();
-    let kind = server.kind.clone();
     let status_for_save = status.clone();
     let exit_for_save = exit.clone();
-    let preferences_dialog_for_save = preferences_dialog.clone();
     save.connect_clicked(move |_| {
         let Some(root) = folder.borrow().clone() else {
             status_for_save.set_text(&tr("Choose a local music folder"));
             return;
         };
-        if kind == "local" {
-            controller.add_local_server(root);
-            preferences_dialog_for_save.close();
-        } else {
-            let local_prefix_text = local_prefix.text().to_string();
-            if local_prefix_text.trim().is_empty() {
-                status_for_save.set_text(&tr("Enter a local prefix."));
-                return;
-            }
-            controller.save_source_local_access(
-                source_id.clone(),
-                root,
-                Some(server_prefix.text().to_string()),
-                Some(local_prefix_text),
-            );
+        let local_prefix_text = local_prefix.text().to_string();
+        if local_prefix_text.trim().is_empty() {
+            status_for_save.set_text(&tr("Enter a local prefix."));
+            return;
         }
+        controller.save_source_local_access(
+            source_id.clone(),
+            root,
+            Some(server_prefix.text().to_string()),
+            Some(local_prefix_text),
+        );
         close_manage_server(&exit_for_save);
     });
 
@@ -373,31 +338,23 @@ fn close_manage_server(exit: &ManageServerExitSlot) {
     (exit.on_close)();
 }
 
-fn server_settings_group(shell: &Rc<Shell>, server: &SourceIdentity, remote: bool) -> gtk::Box {
-    let (saved_username, saved_trust_invalid_cert, saved_use_jellyfin_instant_mix) = {
-        let library = shell.state.library.borrow();
-        let summary = library
-            .source_local_access
-            .iter()
-            .find(|summary| summary.source_id == server.id);
-        (
-            summary
-                .and_then(|summary| summary.username.clone())
-                .unwrap_or_default(),
-            summary.is_some_and(|summary| summary.trust_invalid_cert),
-            summary.is_some_and(|summary| summary.use_jellyfin_instant_mix),
-        )
-    };
-
+pub(crate) fn credential_source_settings_group(
+    shell: &Rc<Shell>,
+    source_id: SourceId,
+    preset: CredentialHostPreset,
+    source_title: &'static str,
+    extra: Option<adw::SwitchRow>,
+    submit: impl Fn(&AppController, CredentialSettingsInput) + 'static,
+) -> gtk::Widget {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
 
     let fields_group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
-        .description(source_display_name(&server.kind))
+        .description(tr(source_title))
         .build();
 
     let (name_address_row, name, address) =
-        server_name_address_row(&server.name, &server.base_url, remote);
+        server_name_address_row(&preset.server_name, &preset.server_url, true);
     fields_group.add(&name_address_row);
     section.append(&fields_group);
 
@@ -405,34 +362,26 @@ fn server_settings_group(shell: &Rc<Shell>, server: &SourceIdentity, remote: boo
 
     let username = adw::EntryRow::builder()
         .title(tr("Username"))
-        .text(&saved_username)
+        .text(&preset.username)
         .build();
     style_compact_field_row(&username);
-    username.set_visible(remote);
     rows_group.add(&username);
 
     let password = adw::PasswordEntryRow::builder()
         .title(tr("Password"))
         .build();
     style_compact_field_row(&password);
-    password.set_visible(remote);
     rows_group.add(&password);
 
     let cert_verify = adw::SwitchRow::builder()
         .title(tr("Verify server certificate"))
         .subtitle(tr("Off only for a server you control"))
-        .active(!saved_trust_invalid_cert)
+        .active(!preset.trust_invalid_cert)
         .build();
-    cert_verify.set_visible(remote);
     rows_group.add(&cert_verify);
-
-    let instant_mix = adw::SwitchRow::builder()
-        .title(tr("Use Jellyfin Instant Mix for recommendations"))
-        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
-        .active(saved_use_jellyfin_instant_mix)
-        .build();
-    instant_mix.set_visible(server.kind == "jellyfin");
-    rows_group.add(&instant_mix);
+    if let Some(extra) = extra.as_ref() {
+        rows_group.add(extra);
+    }
 
     let save = button_row("Save Server Settings", "document-save-symbolic");
     save.add_css_class("suggested-action");
@@ -440,33 +389,21 @@ fn server_settings_group(shell: &Rc<Shell>, server: &SourceIdentity, remote: boo
     section.append(&rows_group);
 
     let controller = shell.controller.clone();
-    let source_id = server.id.clone();
-    let kind = server.kind.clone();
-    let original_address = server.base_url.clone();
-    let original_username = saved_username.clone();
     save.connect_activated(move |_| {
-        let base_url = if kind == "local" {
-            original_address.clone()
-        } else {
-            address.text().trim().to_string()
-        };
-        let username = if kind == "local" {
-            original_username.clone()
-        } else {
-            username.text().trim().to_string()
-        };
-        controller.update_source_settings(SourceSettingsInput {
-            source_id: source_id.clone(),
-            name: name.text().trim().to_string(),
-            base_url,
-            username,
-            password: password.text().to_string(),
-            trust_invalid_cert: !cert_verify.is_active(),
-            use_jellyfin_instant_mix: kind == "jellyfin" && instant_mix.is_active(),
-        });
+        submit(
+            &controller,
+            CredentialSettingsInput {
+                source_id: source_id.clone(),
+                name: name.text().trim().to_string(),
+                base_url: address.text().trim().to_string(),
+                username: username.text().trim().to_string(),
+                password: password.text().to_string(),
+                trust_invalid_cert: !cert_verify.is_active(),
+            },
+        );
     });
 
-    section
+    section.upcast()
 }
 
 fn server_name_address_row(
@@ -557,12 +494,18 @@ fn server_actions_group(
     let exit = exit.clone();
     let preferences_dialog = preferences_dialog.clone();
     forget.connect_clicked(move |_| {
-        confirm_forget_server(
+        confirm_forget_source(
             &forget_shell,
             source_id.clone(),
             &server_name,
-            exit.clone(),
-            preferences_dialog.clone(),
+            Rc::new({
+                let exit = exit.clone();
+                let preferences_dialog = preferences_dialog.clone();
+                move || {
+                    close_manage_server(&exit);
+                    preferences_dialog.close();
+                }
+            }),
         );
     });
     actions.append(&forget);
@@ -645,12 +588,11 @@ fn confirm_clear_source_cache(shell: &Rc<Shell>, source_id: SourceId, server_nam
     );
 }
 
-fn confirm_forget_server(
+pub(in crate::ui) fn confirm_forget_source(
     shell: &Rc<Shell>,
     source_id: SourceId,
     server_name: &str,
-    exit: ManageServerExitSlot,
-    preferences_dialog: adw::Dialog,
+    after_forget: Rc<dyn Fn()>,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Forget Server"))
@@ -673,8 +615,7 @@ fn confirm_forget_server(
         move |response| {
             if response.as_str() == "forget" {
                 controller.forget_source(source_id.clone());
-                close_manage_server(&exit);
-                preferences_dialog.close();
+                after_forget();
             }
         },
     );
@@ -682,18 +623,12 @@ fn confirm_forget_server(
 
 fn server_display_name(server: &SourceIdentity) -> String {
     if server.name.trim().is_empty() {
-        StreamingSource::from_source_id(&server.kind)
-            .map(|provider| tr(provider.title()))
+        resolve_source_registration(&server.kind)
+            .map(|registration| tr(registration.picker.title))
             .unwrap_or_else(|| server.kind.clone())
     } else {
         server.name.clone()
     }
-}
-
-fn source_display_name(kind: &str) -> String {
-    StreamingSource::from_source_id(kind)
-        .map(|provider| tr(provider.title()))
-        .unwrap_or_else(|| kind.to_string())
 }
 
 fn local_access_display_path(access: &SourceLocalAccess) -> String {

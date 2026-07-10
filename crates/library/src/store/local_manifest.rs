@@ -30,6 +30,20 @@ pub struct LocalLibraryDelta {
 }
 
 impl Store {
+    pub fn commit_local_access_scan(
+        &self,
+        source_id: &SourceId,
+        generation: i64,
+        matches: &[(TrackId, String, String)],
+        manifest: &[LocalManifestEntry],
+    ) -> StoreResult<()> {
+        self.write_batch(|_| {
+            self.require_current_sync_generation(source_id, generation)?;
+            self.replace_track_local_matches(source_id, matches)?;
+            self.replace_local_manifest(source_id, generation, manifest)
+        })
+    }
+
     pub fn load_raw_track_image_refs(
         &self,
         source_id: &SourceId,
@@ -212,6 +226,7 @@ impl Store {
         entries: &[LocalManifestEntry],
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             clear_local_manifest_on_connection(connection, source_id)?;
             let mut insert_file = connection.prepare(
                 "
@@ -551,6 +566,7 @@ impl Store {
             return Ok(());
         }
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let mut update_track = connection.prepare(
                 "
                 UPDATE tracks
@@ -587,6 +603,7 @@ impl Store {
             return Ok(());
         }
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let mut missing_tracks = Vec::new();
             {
                 let mut update_track = connection.prepare(
@@ -666,7 +683,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<Vec<CoverCacheEntry>> {
         self.write_batch(|_| {
-            let previous_generation = generation.saturating_sub(1);
+            self.require_current_sync_generation(source_id, generation)?;
             self.connection.execute(
                 "
                 UPDATE sync_state
@@ -676,7 +693,7 @@ impl Store {
                     last_error = NULL
                 WHERE source_id = ?1
                 ",
-                params![source_id.as_str(), previous_generation],
+                params![source_id.as_str(), generation],
             )?;
             self.prune_stale_image_cache_entries(source_id)
         })
@@ -689,6 +706,7 @@ impl Store {
         delta: LocalLibraryDelta,
     ) -> StoreResult<Vec<CoverCacheEntry>> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             self.upsert_tracks(source_id, &delta.changed_tracks, generation)?;
             self.update_local_track_metadata_rows(source_id, &delta.metadata_tracks, generation)?;
             self.update_local_track_image_refs(source_id, &delta.artwork_tracks, generation)?;

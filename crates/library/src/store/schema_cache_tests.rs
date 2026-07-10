@@ -913,11 +913,25 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&local).expect("save local");
         store.save_source(&remote).expect("save remote");
+        let local_generation = store
+            .begin_sync(&local.source.id)
+            .expect("begin local sync");
+        let remote_generation = store
+            .begin_sync(&remote.source.id)
+            .expect("begin remote sync");
         store
-            .upsert_playlists(&local.source.id, std::slice::from_ref(&local_playlist), 1)
+            .upsert_playlists(
+                &local.source.id,
+                std::slice::from_ref(&local_playlist),
+                local_generation,
+            )
             .expect("upsert pre-migration local playlist");
         store
-            .upsert_playlists(&remote.source.id, std::slice::from_ref(&remote_playlist), 1)
+            .upsert_playlists(
+                &remote.source.id,
+                std::slice::from_ref(&remote_playlist),
+                remote_generation,
+            )
             .expect("upsert pre-migration remote playlist");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
@@ -978,24 +992,46 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&local).expect("save local");
         store.save_source(&remote).expect("save remote");
+        let local_generation = store
+            .begin_sync(&local.source.id)
+            .expect("begin local sync");
+        let remote_generation = store
+            .begin_sync(&remote.source.id)
+            .expect("begin remote sync");
         store
-            .upsert_albums(&local.source.id, std::slice::from_ref(&local_album), 1)
+            .upsert_albums(
+                &local.source.id,
+                std::slice::from_ref(&local_album),
+                local_generation,
+            )
             .expect("upsert local album");
         store
-            .upsert_albums(&remote.source.id, std::slice::from_ref(&remote_album), 1)
+            .upsert_albums(
+                &remote.source.id,
+                std::slice::from_ref(&remote_album),
+                remote_generation,
+            )
             .expect("upsert remote album");
         store
-            .upsert_tracks(&local.source.id, std::slice::from_ref(&local_track), 1)
+            .upsert_tracks(
+                &local.source.id,
+                std::slice::from_ref(&local_track),
+                local_generation,
+            )
             .expect("upsert local track");
         store
-            .upsert_tracks(&remote.source.id, std::slice::from_ref(&remote_track), 1)
+            .upsert_tracks(
+                &remote.source.id,
+                std::slice::from_ref(&remote_track),
+                remote_generation,
+            )
             .expect("upsert remote track");
         store
             .upsert_artists(
                 &local.source.id,
                 std::slice::from_ref(&local_artist),
                 false,
-                1,
+                local_generation,
             )
             .expect("upsert local artist");
         store
@@ -1003,7 +1039,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
                 &remote.source.id,
                 std::slice::from_ref(&remote_artist),
                 false,
-                1,
+                remote_generation,
             )
             .expect("upsert remote artist");
     }
@@ -1273,8 +1309,9 @@ fn schema_load_source() {
 fn schema_clear_lifecycle() {
     let case = StoreCase::with_source_id("local:server:manifest");
     let entry = local_manifest_entry();
+    let first_generation = case.start_sync("begin first sync");
 
-    case.replace_local_manifest(&case.id, 1, std::slice::from_ref(&entry))
+    case.replace_local_manifest(&case.id, first_generation, std::slice::from_ref(&entry))
         .expect("replace manifest");
 
     assert_eq!(
@@ -1290,7 +1327,8 @@ fn schema_clear_lifecycle() {
             .is_empty()
     );
 
-    case.replace_local_manifest(&case.id, 2, std::slice::from_ref(&entry))
+    let second_generation = case.start_sync("begin second sync");
+    case.replace_local_manifest(&case.id, second_generation, std::slice::from_ref(&entry))
         .expect("replace manifest again");
     case.forget_source(&case.id).expect("forget server");
     assert!(
@@ -1299,6 +1337,62 @@ fn schema_clear_lifecycle() {
             .is_empty()
     );
 }
+
+#[test]
+fn stale_local_access_scan_changes_neither_matches_nor_manifest() {
+    let case = StoreCase::with_source_id("server:local-access-generation");
+    let first_generation = case.start_sync("begin first sync");
+    let old_match = (
+        TrackId::new("remote:track:old"),
+        "/music/old.flac".to_string(),
+        "metadata".to_string(),
+    );
+    let old_manifest = local_manifest_entry();
+    case.commit_local_access_scan(
+        &case.id,
+        first_generation,
+        std::slice::from_ref(&old_match),
+        std::slice::from_ref(&old_manifest),
+    )
+    .expect("commit first local access scan");
+    case.finish_sync(first_generation, "complete first sync");
+    let _current_generation = case.start_sync("begin newer sync");
+
+    let new_match = (
+        TrackId::new("remote:track:new"),
+        "/music/new.flac".to_string(),
+        "metadata".to_string(),
+    );
+    let mut new_manifest = old_manifest.clone();
+    new_manifest.track.id = TrackId::new("local:track:new");
+    new_manifest.facts.path = PathBuf::from("/music/new.flac");
+    new_manifest.facts.relative_path = "new.flac".to_string();
+    let error = case
+        .commit_local_access_scan(
+            &case.id,
+            first_generation,
+            std::slice::from_ref(&new_match),
+            std::slice::from_ref(&new_manifest),
+        )
+        .expect_err("reject stale local access scan");
+
+    assert!(matches!(error, StoreError::StaleSyncGeneration { .. }));
+    assert_eq!(
+        case.track_local_match_path(&case.id, &old_match.0)
+            .expect("load old match"),
+        Some(old_match.1)
+    );
+    assert_eq!(
+        case.track_local_match_path(&case.id, &new_match.0)
+            .expect("load new match"),
+        None
+    );
+    assert_eq!(
+        case.load_local_manifest(&case.id).expect("load manifest"),
+        vec![old_manifest]
+    );
+}
+
 #[test]
 fn schema_track_commit() {
     let case = StoreCase::with_source_id("local:server:rollback");
@@ -3230,6 +3324,7 @@ fn schema_clear_library_cache_preserves_store_playlist_membership() {
 #[test]
 fn schema_native_playlist_upsert_rejects_store_owned_collision() {
     let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
     let store_owned = playlist(1, None);
     case.upsert_playlists_with_mode(
         &case.id,
@@ -3241,7 +3336,7 @@ fn schema_native_playlist_upsert_rejects_store_owned_collision() {
     let mut native = store_owned.clone();
     native.name = "Native Collision".to_string();
     let error = case
-        .upsert_playlists(&case.id, std::slice::from_ref(&native), 1)
+        .upsert_playlists(&case.id, std::slice::from_ref(&native), generation)
         .expect_err("native upsert should reject store owner collision");
 
     assert!(matches!(error, StoreError::InvalidPlaylistOwner(_)));

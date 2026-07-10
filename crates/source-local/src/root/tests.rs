@@ -12,25 +12,6 @@ fn local_root_identity() {
     assert_eq!(first.kind, LOCAL_SOURCE_ID);
 }
 #[tokio::test]
-async fn local_stream_uses_file_uri() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("track.mp3");
-    fs::write(&path, []).expect("audio file");
-    let provider = LocalSource::from_root(dir.path().to_path_buf()).expect("provider");
-    let track = provider
-        .tracks(PagedRequest::new(0, 1))
-        .await
-        .expect("tracks")
-        .items
-        .into_iter()
-        .next()
-        .expect("track");
-
-    let stream = provider.stream(&track.id).await.expect("stream");
-
-    assert!(stream.uri().starts_with("file://"));
-}
-#[tokio::test]
 async fn local_provider_scans_multiple_roots() {
     let first = tempfile::tempdir().expect("first root");
     let second = tempfile::tempdir().expect("second root");
@@ -334,8 +315,6 @@ fn manifest_sync_stores_projected_embedded_cover() {
     let path = PathBuf::from("/tmp/rufin-projected-embedded.flac");
     let cover = LocalCover::Embedded {
         path: path.clone(),
-        bytes: Arc::from([1_u8, 2, 3]),
-        content_type: Some("image/png".to_string()),
         revision: Some("embedded:projected".to_string()),
     };
     let image_ref = ImageRef::new(cover_id(&cover), cover_revision(&cover));
@@ -603,14 +582,10 @@ fn local_share_ref() {
     let album_id = AlbumId::new("local:album:test");
     let first_cover = LocalCover::Embedded {
         path: dir.path().join("first.flac"),
-        bytes: Arc::from([1_u8, 2, 3]),
-        content_type: Some("image/jpeg".to_string()),
         revision: Some("embedded:first".to_string()),
     };
     let second_cover = LocalCover::Embedded {
         path: dir.path().join("second.flac"),
-        bytes: Arc::from([4_u8, 5, 6]),
-        content_type: Some("image/jpeg".to_string()),
         revision: Some("embedded:second".to_string()),
     };
 
@@ -625,7 +600,6 @@ fn local_share_ref() {
     );
 
     assert_eq!(library.albums.len(), 1);
-    assert_eq!(library.covers.len(), 1);
     let album_cover = library.albums[0].image_ref.clone().expect("album cover");
     assert!(
         library
@@ -654,73 +628,19 @@ fn local_repairs_album_ref_from_retained_track_ref() {
     );
 }
 
-#[tokio::test]
-async fn local_use_bytes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let mut covers = HashMap::new();
-    covers.insert(
-        "cover-one".to_string(),
-        LocalCover::Embedded {
-            path: dir.path().join("track.flac"),
-            bytes: Arc::from([1_u8, 2, 3]),
-            content_type: Some("image/png".to_string()),
-            revision: Some("embedded:test".to_string()),
-        },
-    );
-    let provider = LocalSource {
-        identity: identity_for_root(dir.path()),
-        library: LocalLibrary {
-            covers,
-            ..LocalLibrary::default()
-        },
-        manifest_scan: LocalManifestScan::default(),
-    };
-
-    let image = provider
-        .image_bytes(ImageRequest {
-            item_id: "cover-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 512,
-        })
-        .await
-        .expect("embedded local cover");
-
-    assert_eq!(image.bytes, vec![1, 2, 3]);
-    assert_eq!(image.content_type.as_deref(), Some("image/png"));
-}
-#[tokio::test]
-async fn local_reject_file() {
+#[test]
+fn local_reject_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cover_path = dir.path().join("folder.jpg");
     let file = fs::File::create(&cover_path).expect("cover file");
     file.set_len((LOCAL_COVER_MAX_BYTES + 1) as u64)
         .expect("cover length");
-    let mut covers = HashMap::new();
-    covers.insert(
-        "cover-one".to_string(),
-        LocalCover::File {
-            path: cover_path,
-            revision: None,
-        },
-    );
-    let provider = LocalSource {
-        identity: identity_for_root(dir.path()),
-        library: LocalLibrary {
-            covers,
-            ..LocalLibrary::default()
-        },
-        manifest_scan: LocalManifestScan::default(),
-    };
+    let item_id = cover_id(&LocalCover::File {
+        path: cover_path,
+        revision: None,
+    });
 
-    let error = provider
-        .image_bytes(ImageRequest {
-            item_id: "cover-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 512,
-        })
-        .await
+    let error = LocalSource::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
         .expect_err("oversized local cover");
 
     assert!(error.to_string().contains("local cover exceeded"));
@@ -826,7 +746,6 @@ fn local_cover_artist() {
         }),
         file_revision(&artist_dir.join("artist.jpg")),
     );
-    assert_eq!(library.covers.len(), 2);
     assert_eq!(library.artists[0].image_ref.as_ref(), Some(&artist_ref));
     assert_eq!(
         library.album_artists[0].image_ref.as_ref(),

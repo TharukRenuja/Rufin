@@ -2,8 +2,67 @@ use super::queue_state::defer_queue_snapshot;
 use super::*;
 use crate::controller::generated_radio::{saved_server_for_generated_queue, spread_radio_tracks};
 use crate::controller::source_tracks::{prepare_cached_tracks, prepare_source_tracks};
+use crate::sources::{
+    AutoDjCandidateOperation, AutoDjFallbackExecutor, GeneratedTrackExecutor, RandomTrackOperation,
+    selected_active_source,
+};
 use source::{PlayedFilter, RandomTrackRequest};
-use source_local::LOCAL_SOURCE_ID;
+
+pub(crate) fn cached_auto_dj_operation(
+    source_id: SourceId,
+    generated: GeneratedTrackExecutor,
+) -> AutoDjCandidateOperation {
+    let fallback: AutoDjFallbackExecutor = Arc::new(
+        move |store, _runtime, saved, settings, genre_name, limit, current_track_id| {
+            let mut tracks = if let Some(genre_name) = genre_name.as_deref() {
+                store.with_store(|store| {
+                    store.load_tracks_by_genre_name(&source_id, genre_name, limit)
+                })?
+            } else {
+                store
+                    .with_store(|store| store.load_tracks(&source_id, 0, limit))?
+                    .items
+            };
+            prepare_cached_tracks(store, saved, settings, &mut tracks)?;
+            Ok(spread_radio_tracks(
+                &format!("auto-dj:{}", current_track_id.as_str()),
+                tracks,
+            ))
+        },
+    );
+    AutoDjCandidateOperation {
+        generated,
+        fallback,
+    }
+}
+
+pub(crate) fn native_auto_dj_operation(
+    generated: GeneratedTrackExecutor,
+    random: RandomTrackOperation,
+) -> AutoDjCandidateOperation {
+    let fallback: AutoDjFallbackExecutor = Arc::new(
+        move |store, runtime, saved, settings, genre_name, limit, _current_track_id| {
+            let request = RandomTrackRequest {
+                limit,
+                min_year: None,
+                max_year: None,
+                genre_id: None,
+                genre_name,
+                played_filter: PlayedFilter::All,
+            };
+            random.domain.validate(&request).map_err(str::to_string)?;
+            let mut tracks = runtime
+                .block_on(random.executor.random_tracks(request))
+                .map_err(|error| error.to_string())?;
+            prepare_source_tracks(store, saved, settings, &mut tracks)?;
+            Ok(tracks)
+        },
+    );
+    AutoDjCandidateOperation {
+        generated,
+        fallback,
+    }
+}
 
 impl AppController {
     #[cfg(test)]
@@ -38,6 +97,9 @@ impl AppController {
         if !auto_dj_should_schedule(self) {
             return false;
         }
+        let Some(scheduled_state) = auto_dj_state(&self.queue) else {
+            return false;
+        };
         let controller = self.clone();
         thread::spawn(move || match auto_dj_handles(&controller) {
             Ok(true) => {
@@ -49,17 +111,25 @@ impl AppController {
                 emit_auto_dj_top_up(&controller);
             }
             Ok(false) => {
-                if completion == AutoDjCompletion::ContinueAfterEnd {
+                if completion == AutoDjCompletion::ContinueAfterEnd
+                    && auto_dj_state_is_current(&controller.queue, &scheduled_state)
+                {
                     controller.stop();
                 }
             }
             Err(error) if auto_dj_error_is_transient(&error) => {
                 debug!(%error, "skipped Auto DJ top-up while store is busy");
-                if completion == AutoDjCompletion::ContinueAfterEnd {
+                if completion == AutoDjCompletion::ContinueAfterEnd
+                    && auto_dj_state_is_current(&controller.queue, &scheduled_state)
+                {
                     controller.stop();
                 }
             }
             Err(error) => {
+                if !auto_dj_state_is_current(&controller.queue, &scheduled_state) {
+                    debug!(%error, "discarded stale Auto DJ top-up error");
+                    return;
+                }
                 let _sent = controller.events.send(ControllerEvent::Error(error));
                 if completion == AutoDjCompletion::ContinueAfterEnd {
                     controller.stop();
@@ -159,7 +229,7 @@ fn emit_auto_dj_top_up(controller: &AppController) {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&controller.playback),
         Arc::clone(&controller.queue),
         Arc::clone(&controller.next_preload),
@@ -192,8 +262,12 @@ fn auto_dj_candidate_tracks(
     settings: &AppSettings,
     state: &AutoDjQueueState,
 ) -> Result<Vec<Track>, String> {
-    let tracks = controller.generated_tracks_for_saved(
+    let active = selected_active_source(&controller.active_source, &saved.source.id)?;
+    let tracks = (active.auto_dj.generated)(
+        &controller.store,
+        &controller.runtime,
         saved,
+        settings,
         GeneratedTrackSeed::Track(state.current.track_id.clone()),
         AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
     )?;
@@ -202,7 +276,16 @@ fn auto_dj_candidate_tracks(
         collect_auto_dj_candidates(tracks, &mut seen_track_ids, AUTO_DJ_ITEM_COUNT);
 
     if candidates.len() < AUTO_DJ_ITEM_COUNT {
-        match auto_dj_random_fallback_tracks(controller, saved, settings, state) {
+        let genre_name = auto_dj_current_genre(controller, state)?;
+        match (active.auto_dj.fallback)(
+            &controller.store,
+            &controller.runtime,
+            saved,
+            settings,
+            genre_name,
+            AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
+            &state.current.track_id,
+        ) {
             Ok(tracks) => {
                 let remaining = AUTO_DJ_ITEM_COUNT - candidates.len();
                 candidates.extend(collect_auto_dj_candidates(
@@ -237,56 +320,6 @@ fn collect_auto_dj_candidates(
     candidates
 }
 
-fn auto_dj_random_fallback_tracks(
-    controller: &AppController,
-    saved: &SavedSource,
-    settings: &AppSettings,
-    state: &AutoDjQueueState,
-) -> Result<Vec<Track>, String> {
-    let genre_name = auto_dj_current_genre(controller, state)?;
-    let mut tracks = if saved.source.kind == LOCAL_SOURCE_ID {
-        auto_dj_random_fallback_tracks_from_cache(
-            controller,
-            &saved.source.id,
-            genre_name.as_deref(),
-        )?
-    } else {
-        let provider = source_for_saved(
-            &controller.store,
-            &controller.runtime,
-            &controller.secrets,
-            saved,
-        )?;
-        controller
-            .runtime
-            .block_on(
-                provider
-                    .as_music_source()
-                    .random_tracks(RandomTrackRequest {
-                        limit: AUTO_DJ_PROVIDER_CANDIDATE_LIMIT,
-                        min_year: None,
-                        max_year: None,
-                        genre_id: None,
-                        genre_name,
-                        played_filter: PlayedFilter::All,
-                    }),
-            )
-            .map_err(|error| error.to_string())?
-    };
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        prepare_cached_tracks(controller, saved, settings, &mut tracks)?;
-    } else {
-        prepare_source_tracks(controller, saved, settings, &mut tracks)?;
-    }
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        tracks = spread_radio_tracks(
-            &format!("auto-dj:{}", state.current.track_id.as_str()),
-            tracks,
-        );
-    }
-    Ok(tracks)
-}
-
 fn auto_dj_current_genre(
     controller: &AppController,
     state: &AutoDjQueueState,
@@ -300,24 +333,6 @@ fn auto_dj_current_genre(
             .into_iter()
             .find(|genre| !genre.trim().is_empty())
     }))
-}
-
-fn auto_dj_random_fallback_tracks_from_cache(
-    controller: &AppController,
-    source_id: &SourceId,
-    genre_name: Option<&str>,
-) -> Result<Vec<Track>, String> {
-    let tracks = if let Some(genre_name) = genre_name {
-        controller.store.with_store(|store| {
-            store.load_tracks_by_genre_name(source_id, genre_name, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT)
-        })?
-    } else {
-        controller
-            .store
-            .with_store(|store| store.load_tracks(source_id, 0, AUTO_DJ_PROVIDER_CANDIDATE_LIMIT))?
-            .items
-    };
-    Ok(tracks)
 }
 
 fn auto_dj_state(queue: &Arc<Mutex<Option<QueueEngine>>>) -> Option<AutoDjQueueState> {
@@ -401,6 +416,25 @@ fn append_auto_dj(
         })
         .map_err(|error| format!("auto dj queue append failed: {error:?}"))?;
     Ok(true)
+}
+
+fn auto_dj_state_is_current(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    state: &AutoDjQueueState,
+) -> bool {
+    queue
+        .lock()
+        .ok()
+        .and_then(|queue| {
+            queue.as_ref().map(|queue| {
+                queue.source_id() == &state.source_id
+                    && queue.current().is_some_and(|current| {
+                        current.id == state.current.id && current.track_id == state.current.track_id
+                    })
+                    && same_auto_dj_queue(queue, state)
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn same_auto_dj_queue(queue: &QueueEngine, state: &AutoDjQueueState) -> bool {

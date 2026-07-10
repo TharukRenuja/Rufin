@@ -70,6 +70,7 @@ use crate::controller::{
 use crate::external_metadata;
 use crate::i18n::{self, tr, trn_with};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
+use crate::sources::resolve_source_registration;
 use ::library::{CachedGenreDetail, CachedMoodDetail, LibraryDelta, image_cache_key};
 use adw::prelude::*;
 use chrome::{build_content_chrome, build_main_area, window_drag_handle_with_child};
@@ -84,8 +85,8 @@ use domain::{
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
-    SourcePlaylistOperation, Track, TrackId, TrackSortKey, TrackTableSettings, format_duration,
-    sanitized_window_size,
+    SourceIdentity, SourcePlaylistOperation, Track, TrackId, TrackSortKey, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,
@@ -98,6 +99,7 @@ use fullscreen_player::{
 };
 use gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
 use gtk::gdk::prelude::GdkCairoContextExt;
+
 use gtk::gio;
 use gtk::glib;
 use layout::{
@@ -108,6 +110,11 @@ use layout::{
     detail_showcase_cover_only, detail_showcase_cover_size, home_album_content_width,
     large_popup_content_height, large_popup_content_width, resolve_layout_with_sidebar_widths,
     route_content_width, route_content_width_for_main_width,
+};
+pub(crate) use local_access_mapping::credential_source_settings_group;
+pub(crate) use login::{
+    SourceSetupFlow, new_credential_source_setup_flow, new_jellyfin_source_setup_flow,
+    new_local_source_setup_flow,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -147,6 +154,32 @@ fn album_count_text(count: u64) -> String {
         count,
         &[("count", label.as_str())],
     )
+}
+
+fn configured_source_display_name(source: &SourceIdentity) -> String {
+    let name = source.name.trim();
+    if name.is_empty() {
+        configured_source_kind_display_name(&source.kind)
+    } else {
+        name.to_string()
+    }
+}
+
+fn configured_source_kind_display_name(kind: &str) -> String {
+    resolve_source_registration(kind).map_or_else(
+        || kind.to_string(),
+        |registration| tr(registration.picker.title),
+    )
+}
+
+fn configured_source_icon_name(source: &SourceIdentity) -> &'static str {
+    configured_source_kind_icon_name(&source.kind)
+}
+
+fn configured_source_kind_icon_name(kind: &str) -> &'static str {
+    resolve_source_registration(kind).map_or("network-server-symbolic", |registration| {
+        registration.picker.icon_name
+    })
 }
 
 fn folder_count_text(count: u64) -> String {
@@ -349,7 +382,7 @@ pub(in crate::ui) enum RouteResizePolicy {
 pub(in crate::ui) struct AddServerDialogHandle {
     content: gtk::Box,
     on_connect_started: Option<Rc<dyn Fn()>>,
-    draft: Rc<RefCell<login::AddServerDraft>>,
+    flow: Rc<RefCell<Rc<dyn login::SourceSetupFlow>>>,
 }
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
@@ -559,7 +592,7 @@ pub(in crate::ui) struct GroupedDetailData {
     table_context: &'static str,
     source_descriptor: Option<PlaySourceDescriptor>,
 }
-pub(in crate::ui) struct Shell {
+pub(crate) struct Shell {
     state: AppState,
     controller: AppController,
     application: adw::Application,
@@ -691,7 +724,7 @@ impl Shell {
     }
 
     pub(in crate::ui) fn playlist_creation_supported(&self) -> bool {
-        true
+        self.controller.playlist_creation_supported()
     }
 
     pub(in crate::ui) fn playlist_operation_supported(
@@ -699,9 +732,10 @@ impl Shell {
         playlist: &Playlist,
         operation: SourcePlaylistOperation,
     ) -> bool {
-        let capabilities = self.state.library.borrow().source_capabilities.playlists;
         match playlist.owner {
-            Some(owner) => capabilities.operation_supported_for_owner(operation, owner),
+            Some(owner) => self
+                .controller
+                .playlist_operation_supported(owner, operation),
             None => false,
         }
     }

@@ -1177,18 +1177,19 @@ mod tests {
         let store = Store::open_memory().expect("store");
         let saved = saved_source();
         store.save_source(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let album = album_with_image(1);
         let album_image = album.image_ref.clone();
         let mut track = track(1, &album);
         track.play_count = Some(1);
         store
-            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), 1)
+            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), 1)
+            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
             .expect("track");
         store
-            .complete_sync(&saved.source.id, 1)
+            .complete_sync(&saved.source.id, generation)
             .expect("complete sync");
 
         let page = store
@@ -1274,6 +1275,7 @@ mod tests {
         let store = Store::open_memory().expect("store");
         let saved = saved_source();
         store.save_source(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Signal One".to_string();
@@ -1284,10 +1286,10 @@ mod tests {
         second.comment = Some("morning".to_string());
         second.genres = vec!["Noise".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second], generation)
             .expect("tracks");
         store
             .increment_track_skip_count(&saved.source.id, &first.id)
@@ -1345,16 +1347,17 @@ mod tests {
         let store = Store::open_memory().expect("store");
         let saved = saved_source();
         store.save_source(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.date_added = Some("2024-02-14".to_string());
         let mut second = track(2, &album);
         second.date_added = Some("2024-05-20".to_string());
         store
-            .upsert_albums(&saved.source.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second], 1)
+            .upsert_tracks(&saved.source.id, &[first.clone(), second], generation)
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1391,6 +1394,7 @@ mod tests {
         let store = Store::open_memory().expect("store");
         let saved = saved_source();
         store.save_source(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Range Match".to_string();
@@ -1405,10 +1409,14 @@ mod tests {
         third.year = 2005;
         third.genres = vec!["Rock".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second, third], 1)
+            .upsert_tracks(
+                &saved.source.id,
+                &[first.clone(), second, third],
+                generation,
+            )
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1452,6 +1460,7 @@ mod tests {
         let store = Store::open_memory().expect("store");
         let saved = saved_source();
         store.save_source(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Fast Focus".to_string();
@@ -1466,10 +1475,14 @@ mod tests {
         third.bpm = Some(130);
         third.moods = vec!["Calm".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], 1)
+            .upsert_albums(&saved.source.id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second, third], 1)
+            .upsert_tracks(
+                &saved.source.id,
+                &[first.clone(), second, third],
+                generation,
+            )
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {

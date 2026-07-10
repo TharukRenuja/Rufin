@@ -2,8 +2,7 @@ use super::*;
 
 use super::{
     AppController, ControllerEvent, LOCAL_SOURCE_IDENTITY_ID, LibrarySnapshot, LibrarySyncStatus,
-    LoginActivationContext, LoginActivationRequest, StoreHandle, activate_logged_in_server,
-    activate_with_token, home_refresh_completed_event, load_runtime_snapshot, load_snapshot,
+    StoreHandle, home_refresh_completed_event, load_runtime_snapshot, load_snapshot,
     promote_prefetched_home_section, sync_local_source_outcome,
     sync_local_source_outcome_with_stress_multiplier, sync_local_source_with_events,
     sync_page_finished, sync_source_outcome_with_cancellation,
@@ -19,9 +18,8 @@ use playback::PlaybackState;
 use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
 use source::{
-    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicSource,
-    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults, SourceError,
-    SourceResult, SourceSession, StreamDescriptor,
+    AlbumDetail, GenreDetail, MusicSource, PagedRequest, PagedResponse, PlaylistEntry,
+    SearchResults, SourceError, SourceResult,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -31,39 +29,55 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
-struct SaveFailingSecretStore;
-impl SecretStore for SaveFailingSecretStore {
-    fn save_secret(&self, _key: &secrets::SecretKey, _secret: &str) -> secrets::SecretResult<()> {
-        Err(secrets::SecretError::Backend("save failed".to_string()))
-    }
 
-    fn load_secret(&self, _key: &secrets::SecretKey) -> secrets::SecretResult<Option<String>> {
-        Ok(None)
-    }
-
-    fn delete_secret(&self, _key: &secrets::SecretKey) -> secrets::SecretResult<()> {
-        Ok(())
-    }
+fn active_source_for_test(store: &StoreHandle, saved: &SavedSource) -> Arc<ActiveSource> {
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.source.id, "test-salt:test-token")
+        .expect("save source credential");
+    crate::sources::activate_configured_source(store, &secrets, saved)
+        .expect("activate configured source")
 }
 
 #[test]
 pub(in crate::controller) fn startup_jellyfin_saved() {
     let store = StoreHandle::open_memory().expect("open memory store");
 
-    let first =
-        ensure_device_id(&store, || Ok("rufin-install-one".to_string())).expect("first device id");
-    let second =
-        ensure_device_id(&store, || Ok("rufin-install-two".to_string())).expect("second device id");
+    let first = crate::sources::ensure_jellyfin_device_id(&store).expect("first device id");
+    let second = crate::sources::ensure_jellyfin_device_id(&store).expect("second device id");
 
-    assert_eq!(first, "rufin-install-one");
+    assert!(first.starts_with("rufin-"));
     assert_eq!(second, first);
-    assert_eq!(
-        store
-            .load_settings()
-            .expect("load settings")
-            .jellyfin_device_id,
-        "rufin-install-one"
+    assert_eq!(store.load_settings().jellyfin_device_id, first);
+}
+
+#[test]
+pub(in crate::controller) fn selecting_jellyfin_preserves_generated_device_id() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = saved_source();
+    seed_cached_library(
+        &controller.store,
+        &saved,
+        &[remote_album_with_image_ref(provider_cover_ref())],
+        &[],
+        &[],
     );
+    controller
+        .secrets
+        .save_token(&saved.source.id, "token")
+        .expect("save token");
+
+    controller.select_source(LibrarySourceSelection::Source(saved.source.id.clone()));
+
+    assert_eq!(
+        wait_for_source_selection(&events),
+        LibrarySourceSelection::Source(saved.source.id)
+    );
+    let _queue = wait_for_queue(&events);
+    let _snapshot = wait_for_snapshot(&events);
+    let device_id = controller.load_settings().jellyfin_device_id;
+    assert!(device_id.starts_with("rufin-"));
 }
 
 #[test]
@@ -106,7 +120,7 @@ pub(in crate::controller) fn startup_activate_source() {
         .expect("save remote queue");
     let root = unique_test_dir("source-activation-local");
     fs::create_dir_all(&root).expect("create local root");
-    let mut settings = store.load_settings().expect("load settings");
+    let mut settings = store.load_settings();
     settings.sources.selected = Some(LibrarySourceSelection::Source(remote.source.id.clone()));
     settings.sources.local_folders = vec![LocalLibraryFolder {
         path: root.to_string_lossy().into_owned(),
@@ -202,7 +216,12 @@ pub(in crate::controller) fn startup_init_queue() {
     assert!(initial_queue.is_none());
     let root = unique_test_dir("first-run-local-queue");
     fs::create_dir_all(&root).expect("create root");
-    controller.add_local_server(root.clone());
+    crate::sources::configure_local_source(
+        &controller,
+        crate::sources::LocalFolderHostInput {
+            roots: vec![root.clone()],
+        },
+    );
     let queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(queue.source_id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
     let snapshot = wait_for_snapshot(&events);
@@ -233,7 +252,12 @@ pub(in crate::controller) fn startup_accept_folders() {
     let second = unique_test_dir("first-run-local-folder-two");
     fs::create_dir_all(&first).expect("create first root");
     fs::create_dir_all(&second).expect("create second root");
-    controller.add_local_server_folders(vec![first.clone(), second.clone()]);
+    crate::sources::configure_local_source(
+        &controller,
+        crate::sources::LocalFolderHostInput {
+            roots: vec![first.clone(), second.clone()],
+        },
+    );
     let queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(queue.source_id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
     let snapshot = wait_for_snapshot(&events);
@@ -254,181 +278,6 @@ pub(in crate::controller) fn startup_accept_folders() {
     );
     let _cleanup_first = fs::remove_dir_all(first);
     let _cleanup_second = fs::remove_dir_all(second);
-}
-#[test]
-pub(in crate::controller) fn startup_activate_token() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let source_id = SourceId::new("jellyfin:server:new");
-    let session = SourceSession {
-        source: SourceIdentity {
-            id: source_id.clone(),
-            kind: "jellyfin".to_string(),
-            name: "New Server".to_string(),
-            base_url: "https://library.example.test".to_string(),
-        },
-        user_id: "user-id".to_string(),
-        username: "listener".to_string(),
-        access_token: "token".to_string(),
-        device_id: Some("rufin-install-one".to_string()),
-    };
-    activate_logged_in_server(
-        &LoginActivationContext {
-            store: &controller.store,
-            queue: &controller.queue,
-            playback_request_generation: &controller.playback_request_generation,
-            next_preload: &controller.next_preload,
-            playback: &controller.playback,
-            playback_snapshot: &controller.playback_snapshot,
-            auto_dj_enabled: &controller.auto_dj_enabled,
-            events: &controller.events,
-        },
-        LoginActivationRequest {
-            session: &session,
-            server_name: None,
-            trust_invalid_cert: false,
-            use_jellyfin_instant_mix: false,
-            local_access_root: None,
-            path_replace_from: None,
-        },
-    )
-    .expect("activate logged-in server");
-    let queue = wait_for_queue(&events).expect("server queue");
-    assert_eq!(queue.source_id, source_id);
-    let snapshot = wait_for_snapshot(&events);
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Source(source_id.clone()))
-    );
-    assert_eq!(
-        snapshot.source.as_ref().map(|server| server.id.clone()),
-        Some(source_id.clone())
-    );
-    assert_eq!(
-        controller
-            .secrets
-            .load_token(&source_id)
-            .expect("load token"),
-        None
-    );
-}
-#[test]
-pub(in crate::controller) fn startup_persist_server() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let secrets: Arc<dyn SecretStore> = Arc::new(SaveFailingSecretStore);
-    let source_id = SourceId::new("jellyfin:server:new");
-    let session = SourceSession {
-        source: SourceIdentity {
-            id: source_id,
-            kind: "jellyfin".to_string(),
-            name: "New Server".to_string(),
-            base_url: "https://library.example.test".to_string(),
-        },
-        user_id: "user-id".to_string(),
-        username: "listener".to_string(),
-        access_token: "token".to_string(),
-        device_id: Some("rufin-install-one".to_string()),
-    };
-    let error = activate_with_token(
-        &LoginActivationContext {
-            store: &controller.store,
-            queue: &controller.queue,
-            playback_request_generation: &controller.playback_request_generation,
-            next_preload: &controller.next_preload,
-            playback: &controller.playback,
-            playback_snapshot: &controller.playback_snapshot,
-            auto_dj_enabled: &controller.auto_dj_enabled,
-            events: &controller.events,
-        },
-        &secrets,
-        LoginActivationRequest {
-            session: &session,
-            server_name: None,
-            trust_invalid_cert: false,
-            use_jellyfin_instant_mix: false,
-            local_access_root: None,
-            path_replace_from: None,
-        },
-    )
-    .expect_err("token save should fail");
-
-    assert!(error.contains("save failed"));
-    assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.active_source())
-            .expect("active server"),
-        None
-    );
-    assert!(
-        controller
-            .store
-            .with_store(|store| store.list_sources())
-            .expect("servers")
-            .is_empty()
-    );
-    let _error = events
-        .try_recv()
-        .expect_err("sync event should not be emitted");
-}
-
-#[test]
-pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let source_id = SourceId::new("jellyfin:server:foreground");
-    let session = SourceSession {
-        source: SourceIdentity {
-            id: source_id.clone(),
-            kind: "jellyfin".to_string(),
-            name: "Foreground Server".to_string(),
-            base_url: "https://library.example.test".to_string(),
-        },
-        user_id: "user-id".to_string(),
-        username: "listener".to_string(),
-        access_token: "token".to_string(),
-        device_id: Some("rufin-install-one".to_string()),
-    };
-
-    activate_with_token(
-        &LoginActivationContext {
-            store: &controller.store,
-            queue: &controller.queue,
-            playback_request_generation: &controller.playback_request_generation,
-            next_preload: &controller.next_preload,
-            playback: &controller.playback,
-            playback_snapshot: &controller.playback_snapshot,
-            auto_dj_enabled: &controller.auto_dj_enabled,
-            events: &controller.events,
-        },
-        &controller.secrets,
-        LoginActivationRequest {
-            session: &session,
-            server_name: Some("Living Room"),
-            trust_invalid_cert: false,
-            use_jellyfin_instant_mix: false,
-            local_access_root: None,
-            path_replace_from: None,
-        },
-    )
-    .expect("activate with token");
-
-    assert_eq!(
-        controller
-            .secrets
-            .load_token(&source_id)
-            .expect("load token"),
-        Some("token".to_string())
-    );
-    let active = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("active server")
-        .expect("active server");
-    assert_eq!(active.source.name, "Living Room");
-    let queue = wait_for_queue(&events).expect("server queue");
-    assert_eq!(queue.source_id, source_id);
 }
 #[test]
 pub(in crate::controller) fn startup_load_folders() {
@@ -454,14 +303,13 @@ pub(in crate::controller) fn startup_load_folders() {
     assert_eq!(snapshot.local_folders, settings.sources.local_folders);
     let active = store
         .with_store(|store| store.active_source())
-        .expect("active server")
         .expect("active server");
-    assert_eq!(active.source.id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
+    assert!(active.is_none());
     let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
-pub(in crate::controller) fn startup_ignores_unconfigured_local_source_selection() {
+pub(in crate::controller) fn snapshot_does_not_replace_unconfigured_local_selection() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_source();
     let local = local_source_saved();
@@ -478,24 +326,20 @@ pub(in crate::controller) fn startup_ignores_unconfigured_local_source_selection
 
     let snapshot = load_snapshot(&store).expect("load snapshot");
 
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Source(remote.source.id.clone()))
-    );
-    assert_eq!(
-        snapshot.source.as_ref().map(|server| server.id.clone()),
-        Some(remote.source.id.clone())
-    );
+    assert_eq!(snapshot.selected_source, None);
+    assert!(snapshot.source.is_none());
+    assert!(snapshot.first_run);
+    assert_eq!(snapshot.sources, vec![remote.source.clone()]);
     assert!(snapshot.local_folders.is_empty());
     let active = store
         .with_store(|store| store.active_source())
         .expect("active server")
         .expect("active server");
-    assert_eq!(active.source.id, remote.source.id);
+    assert_eq!(active.source.id, local.source.id);
 }
 
 #[test]
-pub(in crate::controller) fn startup_load_source() {
+pub(in crate::controller) fn snapshot_projects_selection_without_committing_it() {
     let store = StoreHandle::open_memory().expect("memory store");
     let active_saved = saved_source();
     let mut selected_saved = saved_source();
@@ -531,7 +375,7 @@ pub(in crate::controller) fn startup_load_source() {
         .with_store(|store| store.active_source())
         .expect("active server")
         .expect("active server");
-    assert_eq!(active_after.source.id, selected_saved.source.id);
+    assert_eq!(active_after.source.id, active_saved.source.id);
 }
 
 #[test]
@@ -613,12 +457,89 @@ pub(in crate::controller) fn startup_missing_token_reconnects_saved_remote() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Source(saved.source.id.clone()))
     );
-    assert_eq!(snapshot.username.as_deref(), Some(saved.username.as_str()));
     assert_eq!(
         snapshot.sync_status,
         "Connect once more to continue using this server."
     );
     assert!(snapshot.last_error.is_none());
+}
+
+#[test]
+pub(in crate::controller) fn startup_unknown_selected_source_remains_recoverable() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let mut saved = saved_source();
+    saved.source.id = SourceId::new("removed-provider:server");
+    saved.source.kind = "removed-provider".to_string();
+    saved.source.name = "Removed Provider".to_string();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)
+        })
+        .expect("save unsupported source");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let snapshot = load_runtime_snapshot(&store, &secrets).expect("load runtime snapshot");
+
+    assert!(snapshot.first_run);
+    assert_eq!(snapshot.sources, vec![saved.source.clone()]);
+    assert_eq!(snapshot.source, Some(saved.source.clone()));
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Source(saved.source.id))
+    );
+}
+
+#[test]
+pub(in crate::controller) fn selecting_unknown_source_restores_committed_selection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let active = saved_source();
+    let mut unsupported = saved_source();
+    unsupported.source.id = SourceId::new("removed-provider:server");
+    unsupported.source.kind = "removed-provider".to_string();
+    unsupported.source.name = "Removed Provider".to_string();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Source(active.source.id.clone()));
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_source(&active)?;
+            store.save_source(&unsupported)?;
+            store.set_active_source(&active.source.id)
+        })
+        .expect("save sources");
+    let (controller, events) = controller_from_store_for_test(store);
+    controller
+        .secrets
+        .save_token(&active.source.id, "token")
+        .expect("save active token");
+
+    controller.select_source(LibrarySourceSelection::Source(
+        unsupported.source.id.clone(),
+    ));
+
+    assert_eq!(
+        wait_for_source_selection(&events),
+        LibrarySourceSelection::Source(unsupported.source.id)
+    );
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Source(active.source.id.clone()))
+    );
+    let error = events.recv_timeout(Duration::from_secs(1)).expect("error");
+    assert!(matches!(
+        error,
+        ControllerEvent::Error(message)
+            if message == "Saved source type is no longer supported."
+    ));
+    assert_eq!(
+        current_active_source(&controller.active_source)
+            .expect("active source")
+            .identity
+            .id,
+        active.source.id
+    );
 }
 
 #[test]
@@ -754,7 +675,7 @@ pub(in crate::controller) fn startup_start_refresh() {
         .with_store(|store| store.sync_state(&local.source.id))
         .expect("sync state");
     assert_eq!(state.status, "idle");
-    assert_eq!(state.generation, generation);
+    assert_eq!(state.generation, generation + 1);
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -1292,7 +1213,7 @@ pub(in crate::controller) fn startup_advance_generation() {
         .with_store(|store| store.sync_state(&local.source.id))
         .expect("sync state");
     assert_eq!(state.status, "idle");
-    assert_eq!(state.generation, committed_generation);
+    assert_eq!(state.generation, committed_generation + 1);
     store
         .with_store(|store| {
             assert!(
@@ -1334,7 +1255,7 @@ pub(in crate::controller) fn startup_cached_local_status_reports_noop_and_delta(
                 .store
                 .with_store(|store| store.sync_state(&status.source_id))
                 .expect("final sync state");
-            assert_eq!(state.generation, generation, "{label}");
+            assert_eq!(state.generation, generation + 1, "{label}");
         }
         let _cleanup = fs::remove_dir_all(root);
     }
@@ -1784,6 +1705,95 @@ pub(in crate::controller) fn startup_preserve_selection() {
     assert_eq!(active.source.id, saved.source.id);
     let _cleanup = fs::remove_dir_all(root);
 }
+
+#[test]
+pub(in crate::controller) fn removing_final_selected_local_root_deactivates_source() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let remote = saved_source();
+    let root = unique_test_dir("remove-final-selected-local-root");
+    fs::create_dir_all(&root).expect("create root");
+    let path = root.to_string_lossy().into_owned();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder { path: path.clone() }];
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_source(&local)?;
+            store.save_source(&remote)?;
+            store.set_active_source(&local.source.id)
+        })
+        .expect("save local source");
+    let (controller, events) = controller_from_store_for_test(store);
+    *controller.queue.lock().expect("queue") = Some(QueueEngine::new(local.source.id.clone()));
+
+    controller.remove_local_library_folder(path);
+
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(snapshot.selected_source, None);
+    assert_eq!(snapshot.sources, vec![remote.source]);
+    assert!(snapshot.local_folders.is_empty());
+    assert!(
+        controller
+            .store
+            .with_store(|store| store.active_source())
+            .expect("active source")
+            .is_none()
+    );
+    assert!(current_active_source(&controller.active_source).is_none());
+    assert!(controller.queue.lock().expect("queue").is_none());
+    let _cleanup = fs::remove_dir_all(root);
+}
+
+#[test]
+pub(in crate::controller) fn newer_local_removal_supersedes_pending_source_selection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let remote = saved_source();
+    let root = unique_test_dir("source-transition-local-removal");
+    fs::create_dir_all(&root).expect("create root");
+    let path = root.to_string_lossy().into_owned();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder { path: path.clone() }];
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_source(&local)?;
+            store.save_source(&remote)?;
+            store.set_active_source(&local.source.id)
+        })
+        .expect("save sources");
+    let (controller, events) = controller_from_store_for_test(store);
+    controller
+        .secrets
+        .save_token(&remote.source.id, "token")
+        .expect("save token");
+
+    let transition_lock = controller
+        .source_transitions
+        .commit
+        .lock()
+        .expect("transition lock");
+    controller.select_source(LibrarySourceSelection::Source(remote.source.id.clone()));
+    controller.remove_local_library_folder(path);
+    drop(transition_lock);
+
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(snapshot.selected_source, None);
+    assert_eq!(snapshot.sources, vec![remote.source]);
+    assert!(
+        controller
+            .store
+            .with_store(|store| store.active_source())
+            .expect("active source")
+            .is_none()
+    );
+    assert!(current_active_source(&controller.active_source).is_none());
+    let _cleanup = fs::remove_dir_all(root);
+}
+
 #[test]
 pub(in crate::controller) fn startup_removing_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
@@ -1909,7 +1919,7 @@ pub(in crate::controller) fn startup_record_state() {
         if state.status == "error" {
             assert_eq!(
                 state.last_error.as_deref(),
-                Some("No saved token found for the active server.")
+                Some("Saved source type is no longer supported.")
             );
             break;
         }
@@ -2018,15 +2028,24 @@ pub(in crate::controller) fn startup_persist_field() {
             store.set_active_source(&source_id)
         })
         .expect("save server");
-    controller.update_source_settings(SourceSettingsInput {
-        source_id: source_id.clone(),
-        name: "Edited server".to_string(),
-        base_url: "http://old.example.test".to_string(),
-        username: "listener".to_string(),
-        password: String::new(),
-        trust_invalid_cert: true,
-        use_jellyfin_instant_mix: false,
-    });
+    controller
+        .secrets
+        .save_token(&source_id, "test-token")
+        .expect("save token");
+    crate::sources::update_jellyfin_settings(
+        &controller,
+        crate::sources::JellyfinSettingsInput {
+            credentials: crate::sources::CredentialSettingsInput {
+                source_id: source_id.clone(),
+                name: "Edited server".to_string(),
+                base_url: "http://old.example.test".to_string(),
+                username: "listener".to_string(),
+                password: String::new(),
+                trust_invalid_cert: true,
+            },
+            use_instant_mix: false,
+        },
+    );
     assert_eq!(wait_for_status(&events), "Source settings saved.");
     let snapshot = wait_for_snapshot(&events);
     let edited = snapshot
@@ -2068,16 +2087,24 @@ pub(in crate::controller) fn startup_emit_status() {
             store.set_active_source(&source_id)
         })
         .expect("save server");
-
-    controller.update_source_settings(SourceSettingsInput {
-        source_id,
-        name: "Saved server".to_string(),
-        base_url: "http://server.example.test".to_string(),
-        username: "listener".to_string(),
-        password: String::new(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    });
+    controller
+        .secrets
+        .save_token(&source_id, "test-token")
+        .expect("save token");
+    crate::sources::update_jellyfin_settings(
+        &controller,
+        crate::sources::JellyfinSettingsInput {
+            credentials: crate::sources::CredentialSettingsInput {
+                source_id,
+                name: "Saved server".to_string(),
+                base_url: "http://server.example.test".to_string(),
+                username: "listener".to_string(),
+                password: String::new(),
+                trust_invalid_cert: false,
+            },
+            use_instant_mix: false,
+        },
+    );
 
     assert_eq!(wait_for_status(&events), "No changes to save.");
 }
@@ -2135,7 +2162,7 @@ impl MusicSource for AlbumPageProvider {
     }
 
     async fn album_detail(&self, _album_id: &AlbumId) -> SourceResult<AlbumDetail> {
-        Err(SourceError::Unsupported("cancel test"))
+        Err(SourceError::NotFound)
     }
 
     async fn tracks(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
@@ -2146,10 +2173,6 @@ impl MusicSource for AlbumPageProvider {
         } else {
             Ok(PagedResponse::new(Vec::new(), 0))
         }
-    }
-
-    async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>> {
-        Ok(Vec::new())
     }
 
     async fn artists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<domain::Artist>> {
@@ -2167,40 +2190,16 @@ impl MusicSource for AlbumPageProvider {
         Ok(PagedResponse::new(Vec::new(), 0))
     }
 
-    async fn playlists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
-        Ok(PagedResponse::new(Vec::new(), 0))
-    }
-
-    async fn playlist_detail(&self, _playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
-        Err(SourceError::Unsupported("cancel test"))
-    }
-
     async fn genre_detail(&self, _genre_id: &GenreId) -> SourceResult<GenreDetail> {
-        Err(SourceError::Unsupported("cancel test"))
+        Err(SourceError::NotFound)
     }
 
     async fn track(&self, _track_id: &TrackId) -> SourceResult<Track> {
-        Err(SourceError::Unsupported("cancel test"))
-    }
-
-    async fn stream(&self, _track_id: &TrackId) -> SourceResult<StreamDescriptor> {
-        Err(SourceError::Unsupported("cancel test"))
+        Err(SourceError::NotFound)
     }
 
     async fn search(&self, _query: &str) -> SourceResult<SearchResults> {
-        Err(SourceError::Unsupported("cancel test"))
-    }
-
-    async fn image_metadata(
-        &self,
-        _item_id: &str,
-        _kind: ImageKind,
-    ) -> SourceResult<ImageMetadata> {
-        Err(SourceError::Unsupported("cancel test"))
-    }
-
-    async fn image_bytes(&self, _request: ImageRequest) -> SourceResult<ImageBytes> {
-        Err(SourceError::Unsupported("cancel test"))
+        Err(SourceError::InvalidRequest("unused album page search"))
     }
 }
 
@@ -2382,13 +2381,14 @@ pub(in crate::controller) fn startup_local_cache() {
         })
         .expect("seed local cache");
 
-    assert!(initial_cover_cache_required(&store, &local.source.id));
-    assert!(!active_source_needs_sync(&store, &local.source.id));
-    let readiness = active_source_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    assert!(initial_cover_cache_required(&store, &active));
+    assert!(!active_source_needs_sync(&store, &active));
+    let readiness = active_source_readiness(&store, &active).expect("readiness");
     assert!(!readiness.artwork_fresh);
     assert_eq!(
         readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::LocalArtworkMissing)
+        Some(SyncRequiredReason::ArtworkMissing)
     );
 }
 #[test]
@@ -2409,13 +2409,14 @@ pub(in crate::controller) fn startup_readiness_cache() {
         })
         .expect("seed local cache");
 
-    let readiness = active_source_startup_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
 
     assert!(readiness.metadata_fresh);
     assert!(!readiness.artwork_fresh);
     assert_eq!(
         readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::LocalArtworkMissing)
+        Some(SyncRequiredReason::ArtworkMissing)
     );
     assert_eq!(readiness.startup_delay_ms, None);
 }
@@ -2448,7 +2449,8 @@ pub(in crate::controller) fn warm_cache_schedule() {
         })
         .expect("seed local cache");
 
-    let readiness = active_source_startup_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
 
     assert_eq!(readiness.sync_required_reason, None);
     assert_eq!(readiness.startup_delay_ms, None);
@@ -2456,9 +2458,9 @@ pub(in crate::controller) fn warm_cache_schedule() {
     assert!(!readiness.artwork_fresh);
     assert_eq!(
         readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::LocalArtworkMissing)
+        Some(SyncRequiredReason::ArtworkMissing)
     );
-    assert!(!active_source_needs_sync(&store, &local.source.id));
+    assert!(!active_source_needs_sync(&store, &active));
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -2482,7 +2484,8 @@ pub(in crate::controller) fn empty_cache_schedule() {
         })
         .expect("seed empty local cache");
 
-    let readiness = active_source_startup_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
 
     assert_eq!(
         readiness.sync_required_reason,
@@ -2491,7 +2494,7 @@ pub(in crate::controller) fn empty_cache_schedule() {
     assert_eq!(readiness.startup_delay_ms, Some(500));
     assert!(!readiness.metadata_fresh);
     assert!(readiness.artwork_fresh);
-    assert!(active_source_needs_sync(&store, &local.source.id));
+    assert!(active_source_needs_sync(&store, &active));
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -2514,11 +2517,12 @@ pub(in crate::controller) fn startup_local_refresh() {
         })
         .expect("seed local cache");
 
-    let readiness = active_source_startup_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
 
     assert_eq!(readiness.sync_required_reason, None);
     assert_eq!(readiness.startup_delay_ms, None);
-    assert!(!active_source_needs_sync(&store, &local.source.id));
+    assert!(!active_source_needs_sync(&store, &active));
 }
 #[test]
 pub(in crate::controller) fn startup_local_exists() {
@@ -2552,8 +2556,9 @@ pub(in crate::controller) fn startup_local_exists() {
         })
         .expect("save local server");
 
-    assert!(!initial_cover_cache_required(&store, &local.source.id));
-    assert!(!active_source_needs_sync(&store, &local.source.id));
+    let active = active_source_for_test(&store, &local);
+    assert!(!initial_cover_cache_required(&store, &active));
+    assert!(!active_source_needs_sync(&store, &active));
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -2582,95 +2587,16 @@ pub(in crate::controller) fn startup_local_artwork() {
         })
         .expect("save local server");
 
-    assert!(initial_cover_cache_required(&store, &local.source.id));
-    assert!(!active_source_needs_sync(&store, &local.source.id));
-    let readiness = active_source_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    assert!(initial_cover_cache_required(&store, &active));
+    assert!(!active_source_needs_sync(&store, &active));
+    let readiness = active_source_readiness(&store, &active).expect("readiness");
     assert!(!readiness.artwork_fresh);
     assert_eq!(
         readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::LocalArtworkMissing)
+        Some(SyncRequiredReason::ArtworkMissing)
     );
     let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_ignore_ready() {
-    let stale_age = Some(STARTUP_CACHE_STALE_SECONDS + 60);
-
-    let local_unconfigured = source_sync_readiness(SourceSyncReadinessInput {
-        kind: LOCAL_SOURCE_ID,
-        cached_item_count: 42,
-        sync_status: Some("idle"),
-        sync_completed_age_seconds: stale_age,
-        local_library_configured: false,
-        local_artwork_missing: false,
-    });
-    assert_eq!(local_unconfigured.sync_required_reason, None);
-    assert_eq!(local_unconfigured.startup_delay_ms, None);
-    assert!(local_unconfigured.metadata_fresh);
-    assert!(local_unconfigured.artwork_fresh);
-
-    let local_stale = source_sync_readiness(SourceSyncReadinessInput {
-        kind: LOCAL_SOURCE_ID,
-        cached_item_count: 42,
-        sync_status: Some("idle"),
-        sync_completed_age_seconds: stale_age,
-        local_library_configured: true,
-        local_artwork_missing: false,
-    });
-    assert_eq!(
-        local_stale.sync_required_reason,
-        Some(SyncRequiredReason::LocalManifestRefresh)
-    );
-    assert_eq!(local_stale.startup_delay_ms, Some(8_000));
-    assert!(local_stale.metadata_fresh);
-    assert!(local_stale.artwork_fresh);
-
-    let local_running = source_sync_readiness(SourceSyncReadinessInput {
-        kind: LOCAL_SOURCE_ID,
-        cached_item_count: 42,
-        sync_status: Some("running"),
-        sync_completed_age_seconds: Some(0),
-        local_library_configured: true,
-        local_artwork_missing: false,
-    });
-    assert_eq!(
-        local_running.sync_required_reason,
-        Some(SyncRequiredReason::PreviousSyncError)
-    );
-    assert_eq!(local_running.startup_delay_ms, Some(8_000));
-    assert!(!local_running.metadata_fresh);
-    assert!(local_running.artwork_fresh);
-
-    let remote_stale = source_sync_readiness(SourceSyncReadinessInput {
-        kind: "jellyfin",
-        cached_item_count: 42,
-        sync_status: Some("idle"),
-        sync_completed_age_seconds: stale_age,
-        local_library_configured: false,
-        local_artwork_missing: false,
-    });
-    assert_eq!(
-        remote_stale.sync_required_reason,
-        Some(SyncRequiredReason::RemoteCacheStale)
-    );
-    assert_eq!(remote_stale.startup_delay_ms, Some(8_000));
-
-    let local_missing_artwork = source_sync_readiness(SourceSyncReadinessInput {
-        kind: LOCAL_SOURCE_ID,
-        cached_item_count: 42,
-        sync_status: Some("idle"),
-        sync_completed_age_seconds: stale_age,
-        local_library_configured: false,
-        local_artwork_missing: true,
-    });
-    assert_eq!(local_missing_artwork.sync_required_reason, None);
-    assert_eq!(
-        local_missing_artwork.prefetch_required_reason,
-        Some(SyncRequiredReason::LocalArtworkMissing)
-    );
-    assert_eq!(local_missing_artwork.startup_delay_ms, None);
-    assert!(local_missing_artwork.metadata_fresh);
-    assert!(!local_missing_artwork.artwork_fresh);
 }
 #[test]
 pub(in crate::controller) fn stale_remote_cache_requests_activation_sync_fallback() {
@@ -2691,13 +2617,14 @@ pub(in crate::controller) fn stale_remote_cache_requests_activation_sync_fallbac
         )
         .expect("age sync state");
 
-    let readiness = active_source_readiness(&store, &saved.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &saved);
+    let readiness = active_source_readiness(&store, &active).expect("readiness");
 
     assert_eq!(
         readiness.sync_required_reason,
-        Some(SyncRequiredReason::RemoteCacheStale)
+        Some(SyncRequiredReason::CacheStale)
     );
-    assert!(active_source_needs_sync(&store, &saved.source.id));
+    assert!(active_source_needs_sync(&store, &active));
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -2713,13 +2640,17 @@ pub(in crate::controller) fn ready_subsonic_remotes_schedule_active_reconciliati
         let (controller, _events) = controller_from_store_for_test(store);
         controller
             .secrets
-            .save_token(&saved.source.id, "token")
+            .save_token(&saved.source.id, "test-salt:test-token")
             .expect("save token");
-
-        assert!(!active_source_needs_sync(
+        let active = crate::sources::activate_configured_source(
             &controller.store,
-            &saved.source.id
-        ));
+            &controller.secrets,
+            &saved,
+        )
+        .expect("activate source");
+        *controller.active_source.write().expect("active source") = Some(Arc::clone(&active));
+
+        assert!(!active_source_needs_sync(&controller.store, &active));
         assert_eq!(
             controller.startup_sync_delay_ms(),
             Some(2_000),
@@ -2762,14 +2693,16 @@ pub(in crate::controller) fn stale_local_cache_requests_activation_sync_fallback
         )
         .expect("age sync state");
 
-    let readiness = active_source_readiness(&store, &local.source.id).expect("readiness");
+    let active = active_source_for_test(&store, &local);
+    let readiness = active_source_readiness(&store, &active).expect("readiness");
 
     assert_eq!(
         readiness.sync_required_reason,
-        Some(SyncRequiredReason::LocalManifestRefresh)
+        Some(SyncRequiredReason::FullRefresh)
     );
-    assert!(active_source_needs_sync(&store, &local.source.id));
+    assert!(active_source_needs_sync(&store, &active));
     let (controller, _events) = controller_from_store_for_test(store);
+    *controller.active_source.write().expect("active source") = Some(active);
     assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
     let _cleanup_cache = fs::remove_dir_all(cache_root);
     let _cleanup_music = fs::remove_dir_all(root);
@@ -2794,48 +2727,6 @@ pub(in crate::controller) fn active_local_reconciliation_updates_manifest_delta(
         .items;
     assert_eq!(tracks.len(), 2);
     let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_local_source() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let local_image_ref = ImageRef::new("local:cover:file%3A%2F%2Fsection-cover", None);
-    let remote_image_ref = ImageRef::new("jellyfin:album:remote", None);
-    let local_album = local_album_with_image_ref(local_image_ref.clone());
-    let mut remote_album = local_album_with_image_ref(remote_image_ref);
-    remote_album.id = AlbumId::new("jellyfin:album:remote");
-    let generation = store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.begin_sync(&local.source.id)
-        })
-        .expect("begin sync");
-
-    cache_home_section(
-        &store,
-        &local.source.id,
-        &HomeSection {
-            kind: HomeSectionKind::Explore,
-            albums: vec![remote_album, local_album],
-            tracks: Vec::new(),
-        },
-        generation,
-    )
-    .expect("cache home section");
-
-    let sections = store
-        .with_store(|store| store.load_home_sections(&local.source.id))
-        .expect("load home sections");
-    assert_eq!(sections.len(), 1);
-    assert_eq!(sections[0].albums.len(), 1);
-    assert_eq!(sections[0].albums[0].id.as_str(), "local:album:one");
-    assert_eq!(
-        sections[0].albums[0]
-            .image_ref
-            .as_ref()
-            .map(|image_ref| image_ref.item_id.as_str()),
-        Some(local_image_ref.item_id.as_str())
-    );
 }
 #[test]
 pub(in crate::controller) fn snapshot_reuse_album() {
@@ -4589,7 +4480,8 @@ pub(in crate::controller) fn startup_remote_cache() {
     assert_eq!(albums.total, 1);
     assert_eq!(cached_album.id, album.id);
     assert_eq!(cached_album.image_ref.as_ref(), album.image_ref.as_ref());
-    assert!(initial_cover_cache_required(&store, &saved.source.id));
+    let active = active_source_for_test(&store, &saved);
+    assert!(initial_cover_cache_required(&store, &active));
 }
 
 #[test]
@@ -5005,6 +4897,27 @@ pub(in crate::controller) fn startup_suppress_release() {
             .expect("guard lock after release")
             .is_some()
     );
+}
+
+#[test]
+pub(in crate::controller) fn cancelled_guard_can_be_replaced_without_old_drop_releasing_it() {
+    let guards = InFlightGuards::new("Test");
+    let source_id = SourceId::new("test-server");
+    let old = guards
+        .acquire(source_id.clone())
+        .expect("guard lock")
+        .expect("old permit");
+    assert!(guards.cancel(&source_id).expect("cancel old permit"));
+
+    let replacement = guards
+        .acquire(source_id.clone())
+        .expect("replacement guard lock")
+        .expect("replacement permit");
+    drop(old);
+
+    assert!(guards.contains_or_blocked(&source_id));
+    drop(replacement);
+    assert!(!guards.contains_or_blocked(&source_id));
 }
 #[test]
 pub(in crate::controller) fn startup_keep_blocking() {

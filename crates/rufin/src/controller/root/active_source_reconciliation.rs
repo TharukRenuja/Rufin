@@ -1,5 +1,62 @@
 use super::*;
+use crate::sources::{active_source_instance_is_current, with_active_source_instance};
 use std::time::Instant;
+
+type ReconcileActiveSource = Arc<
+    dyn Fn(
+            &SyncContext,
+            &SourceId,
+            &Arc<ActiveSource>,
+            i64,
+            &CancellationToken,
+        ) -> Result<LibraryDelta, String>
+        + Send
+        + Sync,
+>;
+
+impl AppController {
+    pub fn refresh_source_freshness_watcher(&self) {
+        refresh_source_freshness_watcher(
+            self.sync_context(),
+            Arc::clone(&self.source_freshness_watcher),
+        );
+    }
+}
+
+/// Watch only the selected source, not sources being synced manually
+pub(in crate::controller) fn refresh_source_freshness_watcher(
+    context: SyncContext,
+    slot: Arc<Mutex<Option<Box<dyn crate::sources::FreshnessWatcher>>>>,
+) {
+    let target = context
+        .store
+        .with_store(|store| store.active_source())
+        .ok()
+        .flatten()
+        .and_then(|saved| {
+            selected_active_source(&context.active_source, &saved.source.id)
+                .ok()
+                .map(|active| (saved, active))
+        });
+    let Ok(mut current) = slot.lock() else {
+        return;
+    };
+    let Some((saved, active)) = target else {
+        *current = None;
+        return;
+    };
+    if current
+        .as_ref()
+        .is_some_and(|watcher| Arc::ptr_eq(watcher.active(), &active))
+    {
+        return;
+    }
+    let start_watcher = active
+        .freshness
+        .as_ref()
+        .map(|freshness| Arc::clone(&freshness.start_watcher));
+    *current = start_watcher.and_then(|start| start(context, saved, active));
+}
 
 pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
     context: SyncContext,
@@ -10,29 +67,25 @@ pub(in crate::controller) fn start_cached_active_source_reconciliation_thread(
     if !cached_current {
         return;
     }
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        if !load_settings_from_store(&context.store)
-            .sources
-            .local_folders
-            .is_empty()
-        {
-            start_silent_sync_thread(context, saved);
-        }
+    let Ok(active) = selected_active_source(&context.active_source, &saved.source.id) else {
         return;
-    }
-    if active_source_reconciliation_supported(&saved) {
-        start_remote_active_source_reconciliation_thread(context, saved);
-    }
+    };
+    let Some(reconcile_cached) = active
+        .freshness
+        .as_ref()
+        .map(|freshness| Arc::clone(&freshness.reconcile_cached))
+    else {
+        return;
+    };
+    reconcile_cached(context, saved, active);
 }
 
-pub(in crate::controller) fn active_source_reconciliation_supported(saved: &SavedSource) -> bool {
-    matches!(
-        saved.source.kind.as_str(),
-        "jellyfin" | "navidrome" | "subsonic" | "opensubsonic"
-    )
-}
-
-fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved: SavedSource) {
+fn start_incremental_reconciliation_thread(
+    context: SyncContext,
+    saved: SavedSource,
+    active: Arc<ActiveSource>,
+    reconcile: ReconcileActiveSource,
+) {
     let source_id = saved.source.id.clone();
     let Ok(Some(permit)) = context.sync_in_flight.acquire(source_id.clone()) else {
         return;
@@ -45,16 +98,10 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
     thread::spawn(move || {
         let _permit = permit;
         let started = Instant::now();
-        let result = source_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
-            .and_then(|source| {
-                context.runtime.block_on(reconcile_active_source(
-                    &context.store,
-                    &source_id,
-                    &source,
-                    generation,
-                    &cancellation,
-                ))
-            });
+        if !active_reconciliation_target_is_current(&context, &source_id, &active) {
+            return;
+        }
+        let result = reconcile(&context, &source_id, &active, generation, &cancellation);
         if cancellation.cancelled() {
             return;
         }
@@ -71,7 +118,7 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
                 return;
             }
         };
-        if !sync_target_is_current(&context.store, &source_id) {
+        if !active_reconciliation_target_is_current(&context, &source_id, &active) {
             return;
         }
         info!(
@@ -94,99 +141,158 @@ fn start_remote_active_source_reconciliation_thread(context: SyncContext, saved:
     });
 }
 
-pub(in crate::controller) async fn reconcile_active_source(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &LoadedSource,
-    generation: i64,
-    cancellation: &CancellationToken,
-) -> Result<LibraryDelta, String> {
-    match source {
-        LoadedSource::Jellyfin(source) => {
-            reconcile_jellyfin_active_source(store, source_id, source, generation, cancellation)
-                .await
-        }
-        LoadedSource::Subsonic(source) => {
-            reconcile_subsonic_active_source(store, source_id, source, generation, cancellation)
-                .await
-        }
-        LoadedSource::Local(_) => Ok(LibraryDelta::default()),
-    }
+pub(crate) fn full_ingest_cached_reconciliation() -> crate::sources::CachedReconciliation {
+    Arc::new(|context, saved, _active| start_silent_sync_thread(context, saved))
 }
 
-async fn reconcile_jellyfin_active_source(
+pub(crate) fn recent_tracks_cached_reconciliation(
+    source: crate::sources::RecentTracks,
+    limit: usize,
+) -> crate::sources::CachedReconciliation {
+    let reconcile: ReconcileActiveSource = Arc::new(
+        move |context, source_id, active, generation, cancellation| {
+            context.runtime.block_on(reconcile_recent_tracks(
+                &context.store,
+                source_id,
+                source.as_ref(),
+                limit,
+                generation,
+                cancellation,
+                &context.active_source,
+                active,
+            ))
+        },
+    );
+    Arc::new(move |context, saved, active| {
+        start_incremental_reconciliation_thread(context, saved, active, Arc::clone(&reconcile));
+    })
+}
+
+pub(crate) fn recent_albums_cached_reconciliation(
+    core: crate::sources::LibraryCore,
+    source: crate::sources::RecentAlbums,
+    limit: usize,
+) -> crate::sources::CachedReconciliation {
+    let reconcile: ReconcileActiveSource = Arc::new(
+        move |context, source_id, active, generation, cancellation| {
+            context.runtime.block_on(reconcile_recent_albums(
+                &context.store,
+                source_id,
+                core.as_ref(),
+                source.as_ref(),
+                limit,
+                generation,
+                cancellation,
+                &context.active_source,
+                active,
+            ))
+        },
+    );
+    Arc::new(move |context, saved, active| {
+        start_incremental_reconciliation_thread(context, saved, active, Arc::clone(&reconcile));
+    })
+}
+
+async fn reconcile_recent_tracks(
     store: &StoreHandle,
     source_id: &SourceId,
-    source: &source_jellyfin::JellyfinSource,
+    source: &(dyn source::RecentTrackProvider + Send + Sync),
+    limit: usize,
     generation: i64,
     cancellation: &CancellationToken,
+    active_source: &ActiveSourceSlot,
+    expected: &Arc<ActiveSource>,
 ) -> Result<LibraryDelta, String> {
     let mut collector = LibraryDeltaCollector::new();
-    let tracks = await_source(cancellation, source.recently_added_tracks(50)).await?;
+    let tracks = await_source(cancellation, source.recent_tracks(limit)).await?;
     check_sync_cancelled(cancellation)?;
-    if !tracks.is_empty() {
-        let delta =
-            store.with_store(|store| store.upsert_tracks_delta(source_id, &tracks, generation))?;
-        collector.merge(delta);
-    }
-    let delta = collector.finish();
-    if !delta.is_empty() {
-        store.with_store(|store| store.refresh_library_counts(source_id))?;
-    }
-    Ok(delta)
+    with_active_source_instance(active_source, expected, || {
+        if !tracks.is_empty() {
+            let delta = store
+                .with_store(|store| store.upsert_tracks_delta(source_id, &tracks, generation))?;
+            collector.merge(delta);
+        }
+        let delta = collector.finish();
+        if !delta.is_empty() {
+            store.with_store(|store| store.refresh_library_counts(source_id))?;
+        }
+        Ok(delta)
+    })
 }
 
-async fn reconcile_subsonic_active_source(
+async fn reconcile_recent_albums(
     store: &StoreHandle,
     source_id: &SourceId,
-    source: &source_subsonic::SubsonicSource,
+    core: &(dyn MusicSource + Send + Sync),
+    source: &(dyn source::RecentAlbumProvider + Send + Sync),
+    limit: usize,
     generation: i64,
     cancellation: &CancellationToken,
+    active_source: &ActiveSourceSlot,
+    expected: &Arc<ActiveSource>,
 ) -> Result<LibraryDelta, String> {
-    const NEWEST_ALBUM_LIMIT: usize = 20;
-
-    let newest_albums =
-        await_source(cancellation, source.newest_albums(NEWEST_ALBUM_LIMIT)).await?;
+    let newest_albums = await_source(cancellation, source.recent_albums(limit)).await?;
     check_sync_cancelled(cancellation)?;
+    ensure_active_instance(active_source, expected)?;
     if newest_albums.is_empty() {
         return Ok(LibraryDelta::default());
     }
 
-    let albums_needing_detail = store
-        .with_store(|store| subsonic_albums_needing_detail(store, source_id, &newest_albums))?;
+    let albums_needing_detail =
+        store.with_store(|store| albums_needing_detail(store, source_id, &newest_albums))?;
     let mut detail_albums = Vec::new();
     let mut detail_tracks = Vec::new();
     for album_id in albums_needing_detail {
-        let detail = await_source(cancellation, source.album_detail(&album_id)).await?;
+        let detail = await_source(cancellation, core.album_detail(&album_id)).await?;
         check_sync_cancelled(cancellation)?;
+        ensure_active_instance(active_source, expected)?;
         detail_albums.push(detail.album);
         detail_tracks.extend(detail.tracks);
     }
 
-    let mut collector = LibraryDeltaCollector::new();
-    collector
-        .merge(store.with_store(|store| {
+    with_active_source_instance(active_source, expected, || {
+        let mut collector = LibraryDeltaCollector::new();
+        collector.merge(store.with_store(|store| {
             store.upsert_albums_delta(source_id, &newest_albums, generation)
         })?);
-    if !detail_albums.is_empty() {
-        collector.merge(store.with_store(|store| {
-            store.upsert_albums_delta(source_id, &detail_albums, generation)
-        })?);
-    }
-    if !detail_tracks.is_empty() {
-        collector.merge(store.with_store(|store| {
-            store.upsert_tracks_delta(source_id, &detail_tracks, generation)
-        })?);
-    }
+        if !detail_albums.is_empty() {
+            collector.merge(store.with_store(|store| {
+                store.upsert_albums_delta(source_id, &detail_albums, generation)
+            })?);
+        }
+        if !detail_tracks.is_empty() {
+            collector.merge(store.with_store(|store| {
+                store.upsert_tracks_delta(source_id, &detail_tracks, generation)
+            })?);
+        }
 
-    let delta = collector.finish();
-    if !delta.is_empty() {
-        store.with_store(|store| store.refresh_library_counts(source_id))?;
-    }
-    Ok(delta)
+        let delta = collector.finish();
+        if !delta.is_empty() {
+            store.with_store(|store| store.refresh_library_counts(source_id))?;
+        }
+        Ok(delta)
+    })
 }
 
-fn subsonic_albums_needing_detail(
+fn active_reconciliation_target_is_current(
+    context: &SyncContext,
+    source_id: &SourceId,
+    expected: &Arc<ActiveSource>,
+) -> bool {
+    sync_target_is_current(&context.store, source_id)
+        && active_source_instance_is_current(&context.active_source, expected)
+}
+
+fn ensure_active_instance(
+    slot: &ActiveSourceSlot,
+    expected: &Arc<ActiveSource>,
+) -> Result<(), String> {
+    active_source_instance_is_current(slot, expected)
+        .then_some(())
+        .ok_or_else(|| "The selected source changed during reconciliation.".to_string())
+}
+
+fn albums_needing_detail(
     store: &Store,
     source_id: &SourceId,
     newest_albums: &[Album],
@@ -206,12 +312,12 @@ fn subsonic_albums_needing_detail(
         .filter(|album| {
             cached_albums
                 .get(&album.id)
-                .is_none_or(|cached| subsonic_album_detail_needed(cached, album))
+                .is_none_or(|cached| album_detail_needed(cached, album))
         })
         .map(|album| album.id.clone())
         .collect())
 }
 
-fn subsonic_album_detail_needed(cached: &Album, newest: &Album) -> bool {
+fn album_detail_needed(cached: &Album, newest: &Album) -> bool {
     cached.track_count != newest.track_count || cached.duration_seconds != newest.duration_seconds
 }

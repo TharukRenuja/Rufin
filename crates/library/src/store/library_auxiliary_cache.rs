@@ -389,6 +389,9 @@ impl Store {
         mode: PlaylistWriteMode,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            if let PlaylistWriteMode::NativeSync { generation } = mode {
+                self.require_current_sync_generation(source_id, generation)?;
+            }
             let owner = mode.owner();
             let generation = mode.sync_generation();
             ensure_playlist_owner(connection, source_id, playlist_id, owner)?;

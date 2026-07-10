@@ -18,6 +18,7 @@ name = "rufin"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 directories.workspace = true
 gdk-pixbuf.workspace = true
@@ -42,7 +43,6 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
-async-trait.workspace = true
 rusqlite.workspace = true
 
 [target.'cfg(unix)'.dependencies]

@@ -1,7 +1,4 @@
 use super::*;
-use std::fmt::Write as _;
-
-const JELLYFIN_DEVICE_ID_RANDOM_BYTES: usize = 16;
 const NETEASE_INSTRUMENTAL_TEXT: &str = "纯音乐，请欣赏";
 const NETEASE_NO_TEXT_LYRICS_MARKER: &str = "暂无文本歌词";
 const NETEASE_CREDIT_LABELS: &[&str] = &["作词", "作曲", "编曲", "制作人"];
@@ -119,28 +116,26 @@ pub(in crate::controller) fn fraction_to_millis(fraction: &str) -> Option<u64> {
     Some(millis)
 }
 
-pub(in crate::controller) fn lyrics_search_for_settings(
-    settings: &AppSettings,
-) -> JellyfinLyricsSearch {
+pub(in crate::controller) fn lyrics_search_for_settings(settings: &AppSettings) -> LyricsSearch {
     if !crate::external_activity::external_lyrics_lookup(settings) {
-        JellyfinLyricsSearch::ServerOnly
+        LyricsSearch::ServerOnly
     } else if settings.prefer_server_lyrics {
-        JellyfinLyricsSearch::ServerThenRemote
+        LyricsSearch::ServerThenRemote
     } else {
-        JellyfinLyricsSearch::RemoteThenServer
+        LyricsSearch::RemoteThenServer
     }
 }
 
 pub(in crate::controller) fn cached_lyrics_allowed(
     lyrics: &Lyrics,
-    search: JellyfinLyricsSearch,
+    search: LyricsSearch,
     external_providers: &[ExternalLyricsProvider],
 ) -> bool {
     match lyrics.source {
         source::LyricsSource::Local => true,
         source::LyricsSource::Server => true,
         source::LyricsSource::Remote => {
-            !matches!(search, JellyfinLyricsSearch::ServerOnly)
+            !matches!(search, LyricsSearch::ServerOnly)
                 && lyrics
                     .external_provider
                     .is_none_or(|provider| external_providers.contains(&provider))
@@ -150,7 +145,7 @@ pub(in crate::controller) fn cached_lyrics_allowed(
 
 pub(in crate::controller) fn cached_lyrics_allowed_for_track(
     lyrics: &Lyrics,
-    search: JellyfinLyricsSearch,
+    search: LyricsSearch,
     external_providers: &[ExternalLyricsProvider],
     cue_track: bool,
 ) -> bool {
@@ -158,126 +153,10 @@ pub(in crate::controller) fn cached_lyrics_allowed_for_track(
         && !(cue_track && lyrics.source == source::LyricsSource::Local)
 }
 
-pub(in crate::controller) fn source_for_saved(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedSource,
-) -> Result<LoadedSource, String> {
-    source_for_saved_with_local_scan_progress(store, runtime, secrets, saved, None)
-}
-
-pub(in crate::controller) fn source_for_saved_with_local_scan_progress(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedSource,
-    mut local_scan_progress: Option<&mut dyn FnMut(LocalScanProgress)>,
-) -> Result<LoadedSource, String> {
-    let _unused = runtime;
-    if saved.source.kind == LOCAL_SOURCE_ID && saved.source.id.as_str() == LOCAL_SOURCE_IDENTITY_ID
-    {
-        let settings = load_settings_from_store(store);
-        let manifest_cache = load_local_manifest_cache(store, &saved.source.id)?;
-        return LocalSource::from_roots_with_manifest_cache_and_progress(
-            local_folder_paths(&settings),
-            saved.source.clone(),
-            manifest_cache,
-            |progress| {
-                if let Some(callback) = local_scan_progress.as_deref_mut() {
-                    callback(progress);
-                }
-            },
-        )
-        .map(LoadedSource::Local)
-        .map_err(|error| error.to_string());
-    }
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        let manifest_cache = load_local_manifest_cache(store, &saved.source.id)?;
-        return LocalSource::from_roots_with_manifest_cache_and_progress(
-            vec![PathBuf::from(&saved.source.base_url)],
-            saved.source.clone(),
-            manifest_cache,
-            |progress| {
-                if let Some(callback) = local_scan_progress.as_deref_mut() {
-                    callback(progress);
-                }
-            },
-        )
-        .map(LoadedSource::Local)
-        .map_err(|error| error.to_string());
-    }
-    let device_id = if saved.source.kind == "jellyfin" {
-        Some(ensure_jellyfin_device_id(store)?)
-    } else {
-        None
-    };
-    let token = secrets
-        .load_token(&saved.source.id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
-    let session = SavedSourceSession {
-        source: saved.source.clone(),
-        user_id: saved.user_id.clone(),
-        username: saved.username.clone(),
-        trust_invalid_cert: saved.trust_invalid_cert,
-        access_token: token,
-        device_id,
-    };
-    source_from_saved(session).map_err(|error| error.to_string())
-}
-fn load_local_manifest_cache(
-    store: &StoreHandle,
-    source_id: &SourceId,
-) -> Result<Vec<LocalManifestEntry>, String> {
-    store.with_store(|store| store.load_local_manifest(source_id))
-}
-
-pub(in crate::controller) fn ensure_jellyfin_device_id(
-    store: &StoreHandle,
-) -> Result<String, String> {
-    ensure_device_id(store, generate_jellyfin_device_id)
-}
-
-pub(in crate::controller) fn ensure_device_id(
-    store: &StoreHandle,
-    generate: impl FnOnce() -> Result<String, String>,
-) -> Result<String, String> {
-    let mut settings = load_settings_from_store(store);
-    if let Some(device_id) = normalized_jellyfin_device_id(&settings.jellyfin_device_id) {
-        return Ok(device_id);
-    }
-
-    let device_id = normalized_jellyfin_device_id(&generate()?)
-        .ok_or_else(|| "generated Jellyfin device id was empty".to_string())?;
-    settings.jellyfin_device_id = device_id.clone();
-    settings.migrate_defaults();
-    store.save_settings(&settings)?;
-    Ok(device_id)
-}
-
-fn normalized_jellyfin_device_id(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn generate_jellyfin_device_id() -> Result<String, String> {
-    let mut bytes = [0_u8; JELLYFIN_DEVICE_ID_RANDOM_BYTES];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| format!("failed to generate Jellyfin device id: {error}"))?;
-    let mut value = String::with_capacity("rufin-".len() + bytes.len() * 2);
-    value.push_str("rufin-");
-    for byte in bytes {
-        write!(&mut value, "{byte:02x}")
-            .map_err(|error| format!("failed to format Jellyfin device id: {error}"))?;
-    }
-    Ok(value)
-}
-
 pub(in crate::controller) fn load_folder_detail(
     store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
+    active_source: &ActiveSourceSlot,
     path: &[FolderPathItem],
 ) -> Result<FolderDetail, String> {
     let saved = store
@@ -286,125 +165,144 @@ pub(in crate::controller) fn load_folder_detail(
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
     let settings = load_settings_from_store(store);
-    let capabilities = source_capabilities_for_saved(&saved);
-    if capabilities.folder_browsing.owner().is_none() {
-        return Err("Folder browsing is not supported by the active source.".to_string());
-    }
-    let provider = source_for_saved(store, runtime, secrets, &saved)?;
-    let music_provider = provider.as_music_source();
+    let active = selected_active_source(active_source, &saved.source.id)?;
+    let browser = active
+        .folders
+        .as_ref()
+        .ok_or_else(|| "Folder browsing is not supported by the active source.".to_string())?;
     let folder_id = path.last().map(|entry| &entry.id);
     let mut detail = runtime
-        .block_on(music_provider.folder(folder_id, selected_music_folder_id.as_ref()))
+        .block_on(browser.folder(folder_id, selected_music_folder_id.as_ref()))
         .map_err(|error| error.to_string())?;
     cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
     Ok(detail)
 }
 
 pub(in crate::controller) fn sync_playlist_mutation(
-    store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedSource,
+    active: &ActiveSource,
+    operation: SourcePlaylistOperation,
     before: &source::PlaylistDetail,
     after: &source::PlaylistDetail,
-) -> Result<Option<source::PlaylistDetail>, String> {
-    let provider = source_for_saved(store, runtime, secrets, saved)?;
-    let before_ids = before
-        .entries
-        .iter()
-        .map(|entry| entry.entry_id.as_str())
-        .collect::<HashSet<_>>();
-    let after_ids = after
-        .entries
-        .iter()
-        .map(|entry| entry.entry_id.as_str())
-        .collect::<HashSet<_>>();
-
-    let removed = before
-        .entries
-        .iter()
-        .filter(|entry| !after_ids.contains(entry.entry_id.as_str()))
-        .map(|entry| entry.entry_id.clone())
-        .collect::<Vec<_>>();
-    if !removed.is_empty() {
-        runtime
-            .block_on(
-                provider
-                    .as_music_source()
-                    .remove_playlist_entries(&before.playlist.id, &removed),
-            )
-            .map_err(|error| error.to_string())?;
-    }
-
-    let added = after
-        .entries
-        .iter()
-        .filter(|entry| !before_ids.contains(entry.entry_id.as_str()))
-        .map(|entry| entry.track.id.clone())
-        .collect::<Vec<_>>();
-    if !added.is_empty() {
-        runtime
-            .block_on(
-                provider
-                    .as_music_source()
-                    .add_playlist_tracks(&before.playlist.id, &added),
-            )
-            .map_err(|error| error.to_string())?;
-    }
-
-    for (new_index, entry) in after.entries.iter().enumerate() {
-        let Some(old_index) = before
-            .entries
-            .iter()
-            .position(|candidate| candidate.entry_id == entry.entry_id)
-        else {
-            continue;
-        };
-        if old_index != new_index && before_ids.contains(entry.entry_id.as_str()) {
-            runtime
-                .block_on(provider.as_music_source().move_playlist_entry(
-                    &before.playlist.id,
-                    &entry.entry_id,
-                    new_index,
-                ))
-                .map_err(|error| error.to_string())?;
+) -> Result<source::PlaylistDetail, String> {
+    let reader = match operation {
+        SourcePlaylistOperation::AddTracks => {
+            let operation = active.playlist_rows.add_tracks.as_ref().ok_or_else(|| {
+                "Adding tracks is not supported for native playlists by the active source."
+                    .to_string()
+            })?;
+            let before_ids = before
+                .entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<HashSet<_>>();
+            let added = after
+                .entries
+                .iter()
+                .filter(|entry| !before_ids.contains(entry.entry_id.as_str()))
+                .map(|entry| entry.track.id.clone())
+                .collect::<Vec<_>>();
+            if !added.is_empty() {
+                runtime
+                    .block_on(
+                        operation
+                            .executor
+                            .add_playlist_tracks(&before.playlist.id, &added),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            &operation.readback
         }
-    }
-
+        SourcePlaylistOperation::RemoveEntries => {
+            let operation = active
+                .playlist_rows
+                .remove_entries
+                .as_ref()
+                .ok_or_else(|| {
+                    "Removing entries is not supported for native playlists by the active source."
+                        .to_string()
+                })?;
+            let after_ids = after
+                .entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<HashSet<_>>();
+            let removed = before
+                .entries
+                .iter()
+                .filter(|entry| !after_ids.contains(entry.entry_id.as_str()))
+                .map(|entry| entry.entry_id.clone())
+                .collect::<Vec<_>>();
+            if !removed.is_empty() {
+                runtime
+                    .block_on(
+                        operation
+                            .executor
+                            .remove_playlist_entries(&before.playlist.id, &removed),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            &operation.readback
+        }
+        SourcePlaylistOperation::ReorderEntries => {
+            let operation = active.playlist_rows.move_entry.as_ref().ok_or_else(|| {
+                "Reordering entries is not supported for native playlists by the active source."
+                    .to_string()
+            })?;
+            for (new_index, entry) in after.entries.iter().enumerate() {
+                let Some(old_index) = before
+                    .entries
+                    .iter()
+                    .position(|candidate| candidate.entry_id == entry.entry_id)
+                else {
+                    continue;
+                };
+                if old_index != new_index {
+                    runtime
+                        .block_on(operation.executor.move_playlist_entry(
+                            &before.playlist.id,
+                            &entry.entry_id,
+                            new_index,
+                        ))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            &operation.readback
+        }
+        SourcePlaylistOperation::Rename | SourcePlaylistOperation::Delete => {
+            return Err("The requested operation does not mutate playlist entries.".to_string());
+        }
+    };
     runtime
-        .block_on(
-            provider
-                .as_music_source()
-                .playlist_detail(&before.playlist.id),
-        )
-        .map(Some)
+        .block_on(reader.playlist_detail(&before.playlist.id))
         .map_err(|error| error.to_string())
 }
 
 pub(in crate::controller) fn report_playback_async(
     store: StoreHandle,
     runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    active_source: ActiveSourceSlot,
     _events: Sender<ControllerEvent>,
     source_id: SourceId,
     report: PlaybackReport,
 ) {
     thread::spawn(move || {
-        let Some(saved) = store
+        let Some(_saved) = store
             .with_store(|store| store.active_source())
             .unwrap_or(None)
             .filter(|saved| saved.source.id == source_id)
         else {
             return;
         };
-        if saved.source.kind == "local" {
+        let Ok(active) = selected_active_source(&active_source, &source_id) else {
             return;
-        }
-        let result = source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-            runtime
-                .block_on(provider.as_music_source().report_playback(report))
-                .map_err(|error| error.to_string())
-        });
+        };
+        let Some(reporter) = active.reporter.as_ref() else {
+            return;
+        };
+        let result = runtime
+            .block_on(reporter.report_playback(report))
+            .map_err(|error| error.to_string());
         if let Err(error) = result {
             warn!(%error, "failed to report playback to source");
         }

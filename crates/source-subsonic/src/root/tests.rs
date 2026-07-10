@@ -1,5 +1,8 @@
 use super::*;
-use source::MusicSource;
+use source::{
+    FolderBrowser, GeneratedTrackProvider, ImageProvider, MusicFolderProvider, MusicSource,
+    PlaylistDeleter, RandomTrackProvider, StreamResolver,
+};
 use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -35,8 +38,8 @@ async fn login_map_session() {
     assert_eq!(session.source.kind, "navidrome");
     assert_eq!(session.source.name, "Navidrome");
     assert_eq!(session.username, "demo");
-    assert!(session.access_token.contains(':'));
-    assert!(!session.access_token.contains("pw"));
+    assert!(session.credential.contains(':'));
+    assert!(!session.credential.contains("pw"));
 }
 #[tokio::test]
 async fn albums_map_subsonic_album_list() {
@@ -225,7 +228,7 @@ async fn random_filter_subsonic() {
         .await
         .expect_err("unsupported played filter");
 
-    assert!(matches!(error, SourceError::Unsupported(_)));
+    assert!(matches!(error, SourceError::InvalidRequest(_)));
 }
 
 #[tokio::test]
@@ -384,7 +387,9 @@ async fn stream_url_redacts_subsonic_credentials() {
     let provider = provider(&server);
 
     let stream = provider
-        .stream(&TrackId::new("subsonic:track:track-one"))
+        .resolve_stream(&StreamRequest::original(TrackId::new(
+            "subsonic:track:track-one",
+        )))
         .await
         .expect("stream");
 
@@ -398,7 +403,7 @@ async fn stream_include_limited() {
     let provider = provider(&server);
 
     let stream = provider
-        .stream_with_request(&source::StreamRequest::new(
+        .resolve_stream(&StreamRequest::new(
             TrackId::new("subsonic:track:track-one"),
             domain::StreamQuality::MaxBitrateKbps(192),
         ))
@@ -426,12 +431,7 @@ async fn image_bytes_fetch_cover_art() {
     let provider = provider(&server);
 
     let image = provider
-        .image_bytes(ImageRequest {
-            item_id: "subsonic:cover:cover-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 256,
-        })
+        .image_bytes(&ImageRef::new("subsonic:cover:cover-one", None), 256)
         .await
         .expect("image bytes");
 
@@ -474,12 +474,7 @@ async fn image_bytes_rejects_oversized_response() {
     let provider = provider(&server);
 
     let error = provider
-        .image_bytes(ImageRequest {
-            item_id: "subsonic:cover:cover-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 256,
-        })
+        .image_bytes(&ImageRef::new("subsonic:cover:cover-one", None), 256)
         .await
         .expect_err("oversized image");
 
@@ -704,18 +699,16 @@ async fn folder_track_folders() {
     assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-two");
 }
 fn provider(server: &MockServer) -> SubsonicSource {
-    SubsonicSource::from_saved_session(SavedSourceSession {
+    SubsonicSource::from_configured_session(SubsonicConfiguredSession {
         source: SourceIdentity {
             id: SourceId::new("subsonic:server:test"),
             kind: "subsonic".to_string(),
             name: "Subsonic".to_string(),
             base_url: server.uri(),
         },
-        user_id: "demo".to_string(),
         username: "demo".to_string(),
         trust_invalid_cert: false,
-        access_token: "salt:token".to_string(),
-        device_id: None,
+        credential: "salt:token".to_string(),
     })
     .expect("provider")
 }

@@ -38,10 +38,16 @@ fn sync_result_was_cancelled(
 fn sync_source_label(server: &SourceIdentity) -> String {
     let name = server.name.trim();
     if name.is_empty() {
-        source_display_name(&server.kind).to_string()
+        source_kind_title(&server.kind).to_string()
     } else {
         name.to_string()
     }
+}
+
+fn source_kind_title(kind: &str) -> &'static str {
+    crate::sources::resolve_source_registration(kind)
+        .map(|registration| registration.picker.title)
+        .unwrap_or("Music Server")
 }
 
 fn mark_sync_cancelled(store: &StoreHandle, source_id: &SourceId, generation: i64) {
@@ -99,7 +105,10 @@ pub(in crate::controller) fn start_background_sync_thread(
     context: SyncContext,
     saved: SavedSource,
 ) {
-    if active_source_needs_sync(&context.store, &saved.source.id) {
+    let Ok(active) = selected_active_source(&context.active_source, &saved.source.id) else {
+        return;
+    };
+    if active_source_needs_sync(&context.store, &active) {
         start_silent_sync_thread(context, saved);
     } else {
         start_cached_active_source_reconciliation_thread(context, saved);
@@ -129,6 +138,7 @@ pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved
         let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Cached library ready".to_string(),
         ));
+        start_background_sync_thread(context, saved);
         return;
     }
     start_sync_thread_inner(context, saved, false, true, SyncPresentation::UserVisible);
@@ -184,7 +194,6 @@ pub(in crate::controller) fn start_sync_thread_inner(
     };
     let cancellation = permit.cancellation_token();
 
-    let prefetch_initial_covers = initial_cover_cache_required(&context.store, &source_id);
     let generation = match context
         .store
         .with_store(|store| store.begin_sync(&source_id))
@@ -216,15 +225,7 @@ pub(in crate::controller) fn start_sync_thread_inner(
         let sync_result = if cancellation.cancelled() {
             Err(SYNC_CANCELLED_ERROR.to_string())
         } else {
-            run_sync_job(
-                &context,
-                &saved,
-                generation,
-                prefetch_initial_covers,
-                skip_sync_snapshots,
-                presentation,
-                &cancellation,
-            )
+            run_sync_job(&context, &saved, generation, presentation, &cancellation)
         };
         if sync_result_was_cancelled(&sync_result, &cancellation) {
             mark_sync_cancelled(&context.store, &source_id, generation);
@@ -242,24 +243,32 @@ pub(in crate::controller) fn start_sync_thread_inner(
                 if outcome.post_sync_work {
                     refresh_queue_refs(&context, &saved);
                     start_album_identity_lookup(&context, &saved);
-                    covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
-                        store: context.store.clone(),
-                        runtime: Arc::clone(&context.runtime),
-                        secrets: Arc::clone(&context.secrets),
-                        events: context.events.clone(),
-                        cover_in_flight: Arc::clone(&context.cover_in_flight),
-                        external_cover_retry_generation: Arc::clone(
-                            &context.external_cover_retry_generation,
-                        ),
-                        retry_generation: context
-                            .external_cover_retry_generation
-                            .load(Ordering::SeqCst),
-                        external_cover_prefetch_in_flight: Arc::clone(
-                            &context.external_cover_prefetch_in_flight,
-                        ),
-                        cover_slots: Arc::clone(&context.cover_slots),
-                        saved: saved.clone(),
-                    });
+                    match crate::sources::selected_active_source(&context.active_source, &source_id)
+                    {
+                        Ok(active) => {
+                            covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
+                                store: context.store.clone(),
+                                runtime: Arc::clone(&context.runtime),
+                                images: Arc::clone(&active.images),
+                                events: context.events.clone(),
+                                cover_in_flight: Arc::clone(&context.cover_in_flight),
+                                external_cover_retry_generation: Arc::clone(
+                                    &context.external_cover_retry_generation,
+                                ),
+                                retry_generation: context
+                                    .external_cover_retry_generation
+                                    .load(Ordering::SeqCst),
+                                external_cover_prefetch_in_flight: Arc::clone(
+                                    &context.external_cover_prefetch_in_flight,
+                                ),
+                                cover_slots: Arc::clone(&context.cover_slots),
+                                saved: saved.clone(),
+                            });
+                        }
+                        Err(error) => {
+                            warn!(%error, source_id = %source_id, "skipped cover prefetch without active source");
+                        }
+                    }
                 }
                 if skip_sync_snapshots {
                     send_library_sync_status(
@@ -275,11 +284,11 @@ pub(in crate::controller) fn start_sync_thread_inner(
                 }
             }
             Err(error) => {
-                let _failed = context.store.with_store(|store| {
-                    store.fail_sync(&saved.source.id, &error)?;
-                    Ok(())
-                });
-                if !sync_target_is_current(&context.store, &source_id) {
+                let failed_current = context
+                    .store
+                    .with_store(|store| store.fail_sync(&saved.source.id, generation, &error))
+                    .unwrap_or(false);
+                if !failed_current || !sync_target_is_current(&context.store, &source_id) {
                     return;
                 }
                 send_sync_error(
@@ -295,7 +304,7 @@ pub(in crate::controller) fn start_sync_thread_inner(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::controller) struct SyncJobOutcome {
+pub(crate) struct SyncJobOutcome {
     pub(in crate::controller) delta: LibraryDelta,
     pub(in crate::controller) post_sync_work: bool,
 }
@@ -626,6 +635,9 @@ pub(in crate::controller) fn start_home_refresh_thread(
     target: HomeRefreshTarget,
 ) {
     let source_id = saved.source.id.clone();
+    let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
+        return;
+    };
     if sync_is_running(&context.sync_in_flight, &source_id) {
         return;
     }
@@ -640,11 +652,11 @@ pub(in crate::controller) fn start_home_refresh_thread(
 
     thread::spawn(move || {
         let result = match target {
-            HomeRefreshTarget::Section(kind) => refresh_home_section_for_saved(
+            HomeRefreshTarget::Section(kind) => refresh_home_section_for_active(
                 &context.store,
                 &context.runtime,
-                &context.secrets,
-                &saved,
+                &context.active_source,
+                &active,
                 kind,
             ),
         }
@@ -676,6 +688,9 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
     saved: SavedSource,
 ) {
     let source_id = saved.source.id.clone();
+    let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
+        return;
+    };
     if sync_is_running(&context.sync_in_flight, &source_id) {
         return;
     }
@@ -692,10 +707,11 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
     };
 
     thread::spawn(move || {
-        let result = prefetch_home_section_for_saved(
+        let result = prefetch_home_section_for_active(
             &context.store,
             &context.runtime,
-            &context.secrets,
+            &context.active_source,
+            &active,
             &saved,
             HomeSectionKind::Explore,
         );
@@ -737,55 +753,31 @@ pub(in crate::controller) fn start_home_promotion(
 
 pub(in crate::controller) fn initial_cover_cache_required(
     store: &StoreHandle,
-    source_id: &SourceId,
+    active: &ActiveSource,
 ) -> bool {
-    if source_id.as_str() == LOCAL_SOURCE_IDENTITY_ID {
-        return local_initial_cover_cache_required(store, source_id);
-    }
-    source_initial_cover_cache_required(store, source_id)
-}
-
-fn source_initial_cover_cache_required(store: &StoreHandle, source_id: &SourceId) -> bool {
-    store
-        .with_store(|store| store.selected_source_cover_cache_missing(source_id))
-        .unwrap_or(true)
+    (active.initial_cover_cache_required)(store)
 }
 
 pub(in crate::controller) fn run_sync_job(
     context: &SyncContext,
     saved: &SavedSource,
     generation: i64,
-    prefetch_initial_covers: bool,
-    detect_unchanged: bool,
     presentation: SyncPresentation,
     cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
     check_sync_cancelled(cancellation)?;
     let emit_progress = presentation.emits_progress();
     let events = emit_progress.then(|| context.events.clone());
-    let mut progress = SyncProgressReporter::new(
+    let progress = SyncProgressReporter::new(
         events,
         saved.source.name.clone(),
-        source_display_name(&saved.source.kind).to_string(),
+        source_kind_title(&saved.source.kind).to_string(),
     );
-    let mut local_scan_progress = |scan| progress.local_scan_progress(scan);
-    let source = source_for_saved_with_local_scan_progress(
-        &context.store,
-        &context.runtime,
-        &context.secrets,
-        saved,
-        Some(&mut local_scan_progress),
-    )?;
+    let active =
+        crate::sources::activate_configured_source(&context.store, &context.secrets, saved)?;
     check_sync_cancelled(cancellation)?;
-    let outcome = sync_loaded_source_generation(
-        context,
-        saved,
-        generation,
-        &source,
-        progress,
-        detect_unchanged,
-        cancellation,
-    )?;
+    let prefetch_initial_covers = initial_cover_cache_required(&context.store, &active);
+    let outcome = (active.ingest)(context, generation, progress, cancellation)?;
     if prefetch_initial_covers {
         check_sync_cancelled(cancellation)?;
         if emit_progress {
@@ -796,7 +788,6 @@ pub(in crate::controller) fn run_sync_job(
         covers::prefetch_initial_source_cover_cache(covers::SourceCoverPrefetchRequest {
             store: &context.store,
             runtime: &context.runtime,
-            secrets: &context.secrets,
             events: &context.events,
             cover_in_flight: &context.cover_in_flight,
             external_cover_retry_generation: &context.external_cover_retry_generation,
@@ -805,41 +796,52 @@ pub(in crate::controller) fn run_sync_job(
                 .load(Ordering::SeqCst),
             cover_slots: &context.cover_slots,
             saved,
-            source: source.as_music_source(),
+            images: active.images.as_ref(),
             cancellation: Some(cancellation),
             emit_status: emit_progress,
         })?;
     }
     Ok(outcome)
 }
-fn sync_loaded_source_generation(
-    context: &SyncContext,
-    saved: &SavedSource,
-    generation: i64,
-    source: &LoadedSource,
-    progress: SyncProgressReporter,
-    detect_unchanged: bool,
-    cancellation: &CancellationToken,
-) -> Result<SyncJobOutcome, String> {
-    match source {
-        LoadedSource::Local(local) => sync_local_source_generation(
+
+pub(crate) fn local_ingest_operation(
+    source_id: SourceId,
+    load: crate::sources::LocalLoader,
+) -> crate::sources::FullIngest {
+    Arc::new(move |context, generation, mut progress, cancellation| {
+        let source = {
+            let mut report = |scan| progress.local_scan_progress(scan);
+            load(&mut report).map_err(|error| error.to_string())?
+        };
+        sync_local_source_generation(
             context,
-            &saved.source.id,
-            local,
+            &source_id,
+            &source,
             generation,
             progress,
             cancellation,
-        ),
-        _ => context.runtime.block_on(sync_source_generation(
+        )
+    })
+}
+
+pub(crate) fn paged_ingest_operation(
+    source_id: SourceId,
+    core: crate::sources::LibraryCore,
+    music_folders: Option<crate::sources::MusicFolders>,
+    playlists: Option<crate::sources::PlaylistReads>,
+) -> crate::sources::FullIngest {
+    Arc::new(move |context, generation, progress, cancellation| {
+        context.runtime.block_on(sync_source_generation(
             &context.store,
-            &saved.source.id,
-            source.as_music_source(),
+            &source_id,
+            core.as_ref(),
+            music_folders.as_deref(),
+            playlists.as_deref(),
             generation,
             progress,
-            detect_unchanged,
             cancellation,
-        )),
-    }
+        ))
+    })
 }
 fn sync_local_source_generation(
     context: &SyncContext,
@@ -1293,35 +1295,38 @@ fn local_library_delta(
         cue_track_sources: scan.cue_track_sources.clone(),
     }
 }
-pub(in crate::controller) fn refresh_home_section_for_saved(
+pub(in crate::controller) fn refresh_home_section_for_active(
     store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedSource,
+    active_source: &ActiveSourceSlot,
+    active: &Arc<ActiveSource>,
     kind: HomeSectionKind,
 ) -> Result<(), String> {
-    let source = source_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(refresh_home_section(
-        store,
-        &saved.source.id,
-        source.as_music_source(),
-        kind,
-    ))
+    let source_id = &active.identity.id;
+    let generation =
+        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
+    let section = (active.home_section)(store, runtime, kind)?;
+    crate::sources::with_active_source_instance(active_source, active, || {
+        cache_home_section(store, source_id, &section, generation)
+    })
 }
-pub(in crate::controller) fn prefetch_home_section_for_saved(
+pub(in crate::controller) fn prefetch_home_section_for_active(
     store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
+    active_source: &ActiveSourceSlot,
+    active: &Arc<ActiveSource>,
     saved: &SavedSource,
     kind: HomeSectionKind,
 ) -> Result<HomeSection, String> {
-    let source = source_for_saved(store, runtime, secrets, saved)?;
-    let mut section = runtime.block_on(prefetch_home_section(
-        store,
-        &saved.source.id,
-        source.as_music_source(),
-        kind,
-    ))?;
+    let source_id = &active.identity.id;
+    let generation =
+        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
+    let mut section = (active.home_section)(store, runtime, kind)?;
+    crate::sources::with_active_source_instance(active_source, active, || {
+        cache_home_section_items(store, source_id, &section, generation)?;
+        store
+            .with_store(|store| store.upsert_home_section_prefetch(source_id, &section, generation))
+    })?;
     home_image_refs(store, saved, &mut section)?;
     Ok(section)
 }
@@ -1338,9 +1343,10 @@ pub(in crate::controller) async fn sync_source(
         store,
         source_id,
         source,
+        None,
+        None,
         generation,
         SyncProgressReporter::silent(source),
-        false,
         &cancellation,
     )
     .await
@@ -1358,9 +1364,10 @@ pub(in crate::controller) async fn sync_source_outcome_with_cancellation(
         store,
         source_id,
         source,
+        None,
+        None,
         generation,
         SyncProgressReporter::silent(source),
-        true,
         cancellation,
     )
     .await
@@ -1424,21 +1431,21 @@ pub(in crate::controller) async fn sync_local_source_outcome_with_stress_multipl
     .await
 }
 
-#[instrument(skip(store, source, progress), fields(source_id = %source_id.as_str(), generation))]
+#[instrument(
+    skip(store, source, music_folders, playlists, progress),
+    fields(source_id = %source_id.as_str(), generation)
+)]
 async fn sync_source_generation(
     store: &StoreHandle,
     source_id: &SourceId,
     source: &(impl MusicSource + ?Sized),
+    music_folders: Option<&(dyn MusicFolderProvider + Send + Sync)>,
+    playlists: Option<&(dyn PlaylistReader + Send + Sync)>,
     generation: i64,
     mut progress: SyncProgressReporter,
-    _detect_unchanged: bool,
     cancellation: &CancellationToken,
 ) -> Result<SyncJobOutcome, String> {
     check_sync_cancelled(cancellation)?;
-    let saved = store
-        .with_store(|store| store.saved_source(source_id))?
-        .ok_or_else(|| "No saved source found for sync.".to_string())?;
-    let source_capabilities = source_capabilities_for_saved(&saved);
     let mut collector = LibraryDeltaCollector::new();
     info!(generation, "started source cache sync");
     sync_album_pages(
@@ -1464,15 +1471,8 @@ async fn sync_source_generation(
     .await?;
     check_sync_cancelled(cancellation)?;
     progress.collection_started(SyncCollection::MusicFolders);
-    let folders_changed = sync_music_folders(
-        store,
-        source_id,
-        source,
-        source_capabilities,
-        generation,
-        cancellation,
-    )
-    .await?;
+    let folders_changed =
+        sync_music_folders(store, source_id, music_folders, generation, cancellation).await?;
     if folders_changed {
         collector.merge(LibraryDelta {
             folders_changed: true,
@@ -1519,8 +1519,7 @@ async fn sync_source_generation(
     sync_playlist_pages(
         store,
         source_id,
-        source,
-        source_capabilities,
+        playlists,
         generation,
         &mut collector,
         cancellation,
@@ -1539,8 +1538,7 @@ async fn sync_source_generation(
     prune_successful_sync_image_cache(store, source_id, completion.pruned_cover_entries);
     let finalize_elapsed = finalize_started.elapsed();
     progress.finished();
-    match refresh_local_track_matches(store, source_id, Some(generation), Some(cancellation)).await
-    {
+    match refresh_local_track_matches(store, source_id, generation, Some(cancellation)).await {
         Ok(_) => {}
         Err(error) if error == SYNC_CANCELLED_ERROR => return Err(error),
         Err(error) => warn!(%error, "failed to refresh local track matches"),
@@ -1596,7 +1594,7 @@ pub(in crate::controller) struct SyncPageProgress {
     pub(in crate::controller) fetch_elapsed: Duration,
     pub(in crate::controller) write_elapsed: Duration,
 }
-pub(in crate::controller) struct SyncProgressReporter {
+pub(crate) struct SyncProgressReporter {
     events: Option<Sender<ControllerEvent>>,
     source_name: String,
     source_kind: String,
@@ -1631,7 +1629,7 @@ impl SyncProgressReporter {
         Self::new(
             events,
             server.name.clone(),
-            source_display_name(&server.kind).to_string(),
+            source_kind_title(&server.kind).to_string(),
         )
     }
 
@@ -1967,14 +1965,13 @@ async fn sync_track_pages(
 async fn sync_music_folders(
     store: &StoreHandle,
     source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-    source_capabilities: SourceCapabilities,
+    source: Option<&(dyn MusicFolderProvider + Send + Sync)>,
     generation: i64,
     cancellation: &CancellationToken,
 ) -> Result<bool, String> {
-    if source_capabilities.music_folders.owner().is_none() {
+    let Some(source) = source else {
         return Ok(false);
-    }
+    };
     check_sync_cancelled(cancellation)?;
     let before = store.with_store(|store| store.list_music_folders(source_id))?;
     let folders = await_source(cancellation, source.music_folders()).await?;
@@ -2014,26 +2011,13 @@ async fn sync_music_folders(
 pub(in crate::controller) async fn refresh_local_track_matches(
     store: &StoreHandle,
     source_id: &SourceId,
-    manifest_generation: Option<i64>,
+    generation: i64,
     cancellation: Option<&CancellationToken>,
 ) -> Result<usize, String> {
     check_optional_sync_cancelled(cancellation)?;
     let Some(access) = store.with_store(|store| store.source_local_access(source_id))? else {
         return Ok(0);
     };
-    check_optional_sync_cancelled(cancellation)?;
-    let saved = store
-        .with_store(|store| {
-            store.list_sources().map(|servers| {
-                servers
-                    .into_iter()
-                    .find(|saved| saved.source.id == *source_id)
-            })
-        })?
-        .ok_or_else(|| "The server is no longer saved.".to_string())?;
-    if saved.source.kind == "local" {
-        return Ok(0);
-    }
     check_optional_sync_cancelled(cancellation)?;
     let remote_tracks =
         store.with_store(|store| store.load_tracks_for_local_matching(source_id))?;
@@ -2067,12 +2051,11 @@ pub(in crate::controller) async fn refresh_local_track_matches(
     let matches = conservative_local_matches(&remote_tracks, &local_tracks);
     let count = matches.len();
     check_optional_sync_cancelled(cancellation)?;
-    store.with_store(|store| store.replace_track_local_matches(source_id, &matches))?;
-    check_optional_sync_cancelled(cancellation)?;
     store.with_store(|store| {
-        store.replace_local_manifest(
+        store.commit_local_access_scan(
             source_id,
-            manifest_generation.unwrap_or_default(),
+            generation,
+            &matches,
             &local_source.manifest_scan().entries,
         )
     })?;
@@ -2103,16 +2086,11 @@ async fn load_match_tracks(
 }
 pub(in crate::controller) fn local_access_status_for_server(
     store: &StoreHandle,
-    server: &SourceIdentity,
     access: Option<&SourceLocalAccess>,
 ) -> Result<LocalAccessStatus, String> {
     let Some(access) = access else {
         return Ok(LocalAccessStatus::default());
     };
-    if server.kind == "local" {
-        return Ok(LocalAccessStatus::default());
-    }
-
     let facts = store.with_store(|store| store.local_access_status_facts(access))?;
     let sample_local_path = facts.sample_metadata_path.clone().or_else(|| {
         facts
@@ -2279,15 +2257,14 @@ async fn sync_genre_pages(
 async fn sync_playlist_pages(
     store: &StoreHandle,
     source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-    source_capabilities: SourceCapabilities,
+    source: Option<&(dyn PlaylistReader + Send + Sync)>,
     generation: i64,
     collector: &mut LibraryDeltaCollector,
     cancellation: &CancellationToken,
 ) -> Result<(), String> {
-    if !source_capabilities.playlists.read_native {
+    let Some(source) = source else {
         return Ok(());
-    }
+    };
     let mut offset = 0;
     loop {
         check_sync_cancelled(cancellation)?;
@@ -2335,35 +2312,4 @@ async fn sync_home_sections(
     let sections = await_source(cancellation, source.home_sections()).await?;
     check_sync_cancelled(cancellation)?;
     store.with_store(|store| store.upsert_home_sections_delta(source_id, &sections, generation))
-}
-pub(in crate::controller) async fn refresh_home_section(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-    kind: HomeSectionKind,
-) -> Result<(), String> {
-    let generation =
-        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
-    let section = source
-        .home_section(kind)
-        .await
-        .map_err(|error| error.to_string())?;
-    cache_home_section(store, source_id, &section, generation)
-}
-pub(in crate::controller) async fn prefetch_home_section(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-    kind: HomeSectionKind,
-) -> Result<HomeSection, String> {
-    let generation =
-        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
-    let section = source
-        .home_section(kind)
-        .await
-        .map_err(|error| error.to_string())?;
-    cache_home_section_items(store, source_id, &section, generation)?;
-    store
-        .with_store(|store| store.upsert_home_section_prefetch(source_id, &section, generation))?;
-    Ok(section)
 }

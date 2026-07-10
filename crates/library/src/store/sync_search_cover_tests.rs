@@ -1,4 +1,5 @@
 use super::test_support::*;
+use crate::StoreError;
 
 #[test]
 fn sync_hide_artist() {
@@ -228,6 +229,53 @@ fn sync_prune_success() {
         .load_albums(&saved.source.id, 0, 10)
         .expect("load albums");
     assert_eq!(albums.total, 1);
+}
+
+#[test]
+fn stale_sync_generation_cannot_write_or_complete() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_source();
+    store.save_source(&saved).expect("save server");
+    let stale = store
+        .begin_sync(&saved.source.id)
+        .expect("begin stale sync");
+    let current = store
+        .begin_sync(&saved.source.id)
+        .expect("begin replacement sync");
+
+    let write_error = store
+        .upsert_albums(&saved.source.id, &[album(1)], stale)
+        .expect_err("stale generation write");
+    assert!(matches!(
+        write_error,
+        StoreError::StaleSyncGeneration { generation, .. } if generation == stale
+    ));
+    assert_eq!(
+        store
+            .load_albums(&saved.source.id, 0, 10)
+            .expect("load albums")
+            .total,
+        0
+    );
+
+    let complete_error = store
+        .complete_sync(&saved.source.id, stale)
+        .expect_err("stale generation completion");
+    assert!(matches!(
+        complete_error,
+        StoreError::StaleSyncGeneration { generation, .. } if generation == stale
+    ));
+    let state = store.sync_state(&saved.source.id).expect("sync state");
+    assert_eq!(state.generation, current);
+    assert_eq!(state.status, "running");
+
+    store
+        .fail_sync(&saved.source.id, stale, "stale failure")
+        .expect("ignore stale failure");
+    let state = store.sync_state(&saved.source.id).expect("sync state");
+    assert_eq!(state.generation, current);
+    assert_eq!(state.status, "running");
+    assert!(state.last_error.is_none());
 }
 #[test]
 fn sync_track_order() {

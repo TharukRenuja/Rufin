@@ -26,7 +26,7 @@ const APP_ICON_NAME: &str = APP_ID;
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "rufin",
-    about = "Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust"
+    about = "Native GTK4/libadwaita music client for Jellyfin, Navidrome, OpenSubsonic, and local libraries written in Rust"
 )]
 struct Cli {
     #[arg(long, hide = true)]

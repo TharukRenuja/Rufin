@@ -7,8 +7,7 @@ use std::time::Instant;
 
 use domain::{ImageRef, SourceId};
 use library::{SavedSource, Store, image_cache_key};
-use secrets::SecretStore;
-use source::MusicSource;
+use source::ImageProvider;
 use tokio::runtime::Runtime;
 use tracing::{debug, info, warn};
 
@@ -17,6 +16,7 @@ use crate::controller::{
     load_settings_from_store, release_cover_slot,
 };
 use crate::external_metadata;
+use crate::sources::Images;
 
 use super::cache::{
     cached_cover_path_for_key, cached_cover_path_for_saved, cached_cover_path_for_saved_in_store,
@@ -131,7 +131,7 @@ impl SourceCoverPrefetchStats {
 pub(in crate::controller) struct ExternalCoverPrefetchRequest {
     pub(in crate::controller) store: StoreHandle,
     pub(in crate::controller) runtime: Arc<Runtime>,
-    pub(in crate::controller) secrets: Arc<dyn SecretStore>,
+    pub(in crate::controller) images: Images,
     pub(in crate::controller) events: Sender<ControllerEvent>,
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
@@ -144,7 +144,7 @@ pub(in crate::controller) struct ExternalCoverPrefetchRequest {
 struct CoverPrefetchContext<'a> {
     store: &'a StoreHandle,
     runtime: &'a Runtime,
-    secrets: &'a Arc<dyn SecretStore>,
+    images: &'a dyn ImageProvider,
     events: &'a Sender<ControllerEvent>,
     emit_status: bool,
     cover_in_flight: &'a Arc<Mutex<HashMap<String, u64>>>,
@@ -158,14 +158,13 @@ struct CoverPrefetchContext<'a> {
 pub(in crate::controller) struct SourceCoverPrefetchRequest<'a> {
     pub(in crate::controller) store: &'a StoreHandle,
     pub(in crate::controller) runtime: &'a Runtime,
-    pub(in crate::controller) secrets: &'a Arc<dyn SecretStore>,
     pub(in crate::controller) events: &'a Sender<ControllerEvent>,
     pub(in crate::controller) cover_in_flight: &'a Arc<Mutex<HashMap<String, u64>>>,
     pub(in crate::controller) external_cover_retry_generation: &'a Arc<AtomicU64>,
     pub(in crate::controller) retry_generation: u64,
     pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     pub(in crate::controller) saved: &'a SavedSource,
-    pub(in crate::controller) source: &'a dyn MusicSource,
+    pub(in crate::controller) images: &'a dyn ImageProvider,
     pub(in crate::controller) cancellation: Option<&'a CancellationToken>,
     pub(in crate::controller) emit_status: bool,
 }
@@ -222,7 +221,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
     let ExternalCoverPrefetchRequest {
         store,
         runtime,
-        secrets,
+        images,
         events,
         cover_in_flight,
         external_cover_retry_generation,
@@ -249,7 +248,7 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
         let context = CoverPrefetchContext {
             store: &store,
             runtime: &runtime,
-            secrets: &secrets,
+            images: images.as_ref(),
             events: &events,
             emit_status: true,
             cover_in_flight: &cover_in_flight,
@@ -318,7 +317,7 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
         runtime: request.runtime,
         events: request.events,
         emit_status: request.emit_status,
-        secrets: request.secrets,
+        images: request.images,
         cover_in_flight: request.cover_in_flight,
         external_cover_retry_generation: request.external_cover_retry_generation,
         retry_generation: request.retry_generation,
@@ -327,7 +326,7 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
         cancellation: request.cancellation,
     };
     context.store.with_store_session(|cache_store| {
-        prefetch_synced_source_covers(&context, request.source, cache_store, &mut source_stats)
+        prefetch_synced_source_covers(&context, request.images, cache_store, &mut source_stats)
     })?;
     source_stats.total_elapsed_ms = elapsed_ms(started);
     info!(
@@ -388,7 +387,7 @@ fn prefetch_synced_images(
 
 fn prefetch_synced_source_covers(
     context: &CoverPrefetchContext<'_>,
-    source: &dyn MusicSource,
+    source: &dyn ImageProvider,
     cache_store: &Store,
     stats: &mut SourceCoverPrefetchStats,
 ) -> Result<(), String> {
@@ -553,7 +552,7 @@ fn synced_source_cover_refs(
 
 fn prefetch_source_image_ref(
     context: &CoverPrefetchContext<'_>,
-    source: &dyn MusicSource,
+    source: &dyn ImageProvider,
     cache_store: &Store,
     image_ref: ImageRef,
     stats: &mut SourceCoverPrefetchStats,
@@ -833,8 +832,8 @@ fn prefetch_image_ref(
     let result = fetch_and_cache_cover(
         context.store,
         context.runtime,
-        context.secrets,
         context.saved,
+        context.images,
         image_ref.clone(),
         EXTERNAL_PREFETCH_COVER_SIZE,
     );

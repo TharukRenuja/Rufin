@@ -6,6 +6,7 @@ use source::PlayedFilter;
 
 use crate::controller::{RandomPlayAction, RandomPlayRequest};
 use crate::i18n::tr;
+use crate::sources::RandomTrackDomain;
 
 use super::{
     PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, present_light_dismiss_dialog, text_button,
@@ -28,20 +29,17 @@ struct RandomPlayControls {
     max_year: gtk::SpinButton,
     genre: gtk::DropDown,
     played_filter: gtk::DropDown,
-    played_filter_supported: bool,
+    domain: RandomTrackDomain,
 }
 
 pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
     let library = shell.state.library.borrow();
-    let source_kind = library
-        .source
-        .as_ref()
-        .map(|server| server.kind.clone())
-        .unwrap_or_default();
     let genres = library.genres.clone();
     drop(library);
+    let Some(domain) = shell.controller.random_track_domain() else {
+        return;
+    };
 
-    let played_filter_supported = source_kind == "jellyfin";
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     let title = adw::WindowTitle::new(&tr("Play random"), "");
@@ -61,13 +59,22 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         max_year_enabled: gtk::CheckButton::new(),
         max_year: count_spinner(DEFAULT_MAX_YEAR, MIN_YEAR, MAX_YEAR),
         genre: genre_dropdown(&genres),
-        played_filter: played_filter_dropdown(played_filter_supported),
-        played_filter_supported,
+        played_filter: played_filter_dropdown(domain.played_filters()),
+        domain,
     };
     controls.min_year.set_sensitive(false);
     controls.max_year.set_sensitive(false);
-    connect_year_toggle(&controls.min_year_enabled, &controls.min_year);
-    connect_year_toggle(&controls.max_year_enabled, &controls.max_year);
+    controls
+        .min_year_enabled
+        .set_sensitive(domain.allows_year_range());
+    controls
+        .max_year_enabled
+        .set_sensitive(domain.allows_year_range());
+    controls.genre.set_sensitive(domain.allows_genre());
+    if domain.allows_year_range() {
+        connect_year_toggle(&controls.min_year_enabled, &controls.min_year);
+        connect_year_toggle(&controls.max_year_enabled, &controls.max_year);
+    }
 
     content.append(&control_row(&tr("Number of songs"), &controls.limit));
     content.append(&optional_control_row(
@@ -154,16 +161,19 @@ fn genre_dropdown(genres: &[Genre]) -> gtk::DropDown {
     dropdown
 }
 
-fn played_filter_dropdown(supported: bool) -> gtk::DropDown {
-    let labels = [
-        tr("All tracks"),
-        tr("Only unplayed tracks"),
-        tr("Only played tracks"),
-    ];
+fn played_filter_dropdown(filters: &[PlayedFilter]) -> gtk::DropDown {
+    let labels = filters
+        .iter()
+        .map(|filter| match filter {
+            PlayedFilter::All => tr("All tracks"),
+            PlayedFilter::Unplayed => tr("Only unplayed tracks"),
+            PlayedFilter::Played => tr("Only played tracks"),
+        })
+        .collect::<Vec<_>>();
     let refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
     let model = gtk::StringList::new(&refs);
     let dropdown = gtk::DropDown::new(Some(model), None::<gtk::Expression>);
-    dropdown.set_sensitive(supported);
+    dropdown.set_sensitive(filters.len() > 1);
     dropdown
 }
 
@@ -207,8 +217,10 @@ fn connect_action(
     let controls = controls.clone();
     let genres = genres.to_vec();
     button.connect_clicked(move |_| {
-        controller.play_random_tracks(request_from_controls(&controls, &genres, action));
-        dialog.close();
+        if let Some(request) = request_from_controls(&controls, &genres, action) {
+            controller.play_random_tracks(request);
+            dialog.close();
+        }
     });
 }
 
@@ -216,27 +228,44 @@ fn request_from_controls(
     controls: &RandomPlayControls,
     genres: &[Genre],
     action: RandomPlayAction,
-) -> RandomPlayRequest {
-    let (genre_id, genre_name) = selected_genre(genres, controls.genre.selected());
-    RandomPlayRequest {
+) -> Option<RandomPlayRequest> {
+    let (genre_id, genre_name) = if controls.domain.allows_genre() {
+        selected_genre(genres, controls.genre.selected())
+    } else {
+        (None, None)
+    };
+    let played_filter = controls
+        .domain
+        .played_filters()
+        .get(controls.played_filter.selected() as usize)
+        .copied()?;
+    Some(RandomPlayRequest {
         action,
         limit: controls.limit.value_as_int().clamp(1, 500) as usize,
         min_year: controls
-            .min_year_enabled
-            .is_active()
-            .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16),
+            .domain
+            .allows_year_range()
+            .then(|| {
+                controls
+                    .min_year_enabled
+                    .is_active()
+                    .then(|| controls.min_year.value_as_int().clamp(1850, 2050) as u16)
+            })
+            .flatten(),
         max_year: controls
-            .max_year_enabled
-            .is_active()
-            .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16),
+            .domain
+            .allows_year_range()
+            .then(|| {
+                controls
+                    .max_year_enabled
+                    .is_active()
+                    .then(|| controls.max_year.value_as_int().clamp(1850, 2050) as u16)
+            })
+            .flatten(),
         genre_id,
         genre_name,
-        played_filter: if controls.played_filter_supported {
-            played_filter_from_index(controls.played_filter.selected())
-        } else {
-            PlayedFilter::All
-        },
-    }
+        played_filter,
+    })
 }
 
 fn selected_genre(genres: &[Genre], selected: u32) -> (Option<GenreId>, Option<String>) {
@@ -247,12 +276,4 @@ fn selected_genre(genres: &[Genre], selected: u32) -> (Option<GenreId>, Option<S
         return (None, None);
     };
     (Some(genre.id.clone()), Some(genre.name.clone()))
-}
-
-fn played_filter_from_index(index: u32) -> PlayedFilter {
-    match index {
-        1 => PlayedFilter::Unplayed,
-        2 => PlayedFilter::Played,
-        _ => PlayedFilter::All,
-    }
 }

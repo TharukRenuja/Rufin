@@ -1,45 +1,36 @@
-use domain::{AppSettings, GeneratedTrackStrategy, Track};
+use domain::{AppSettings, Track};
 use library::SavedSource;
 
 use crate::cover_art_policy;
 
 use super::{
-    AppController,
+    StoreHandle,
     root::{scrub_selected_track_image_refs, track_album_refs_with_settings},
 };
 
 pub(in crate::controller) fn prepare_cached_tracks(
-    controller: &AppController,
+    store: &StoreHandle,
     saved: &SavedSource,
     settings: &AppSettings,
     tracks: &mut [Track],
 ) -> Result<(), String> {
     scrub_selected_track_image_refs(saved, settings, tracks);
     cover_art_policy::bind_tracks(tracks, settings);
-    track_album_refs_with_settings(&controller.store, saved, settings, tracks, &[])
+    track_album_refs_with_settings(store, saved, settings, tracks, &[])
 }
 
 pub(in crate::controller) fn prepare_source_tracks(
-    controller: &AppController,
+    store: &StoreHandle,
     saved: &SavedSource,
     settings: &AppSettings,
     tracks: &mut [Track],
 ) -> Result<(), String> {
-    prepare_cached_tracks(controller, saved, settings, tracks)?;
+    prepare_cached_tracks(store, saved, settings, tracks)?;
     if !tracks.is_empty() {
-        controller
-            .store
-            .with_store(|store| store.upsert_tracks(&saved.source.id, tracks, 0))?;
+        store.with_store(|store| {
+            let generation = store.sync_state(&saved.source.id)?.generation;
+            store.upsert_tracks(&saved.source.id, tracks, generation)
+        })?;
     }
     Ok(())
-}
-
-pub(in crate::controller) fn generated_track_strategy_for_saved(
-    saved: &SavedSource,
-) -> GeneratedTrackStrategy {
-    if saved.source.kind == "jellyfin" && saved.use_jellyfin_instant_mix {
-        GeneratedTrackStrategy::MixOnly
-    } else {
-        GeneratedTrackStrategy::SourceDefault
-    }
 }

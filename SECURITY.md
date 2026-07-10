@@ -22,7 +22,7 @@ Rufin, by design, comes with external lyric, metadata and cover lookups enabled,
 
 ### Music servers
 
-Your configured Jellyfin, Subsonic, Navidrome or OpenSubsonic server. Again, Rufin can not control your server settings that do external requests on their own. Private mode keeps this path working.
+Your configured Jellyfin, Navidrome, or OpenSubsonic server. Again, Rufin can not control your server settings that do external requests on their own. Private mode keeps this path working.
 
 ### Metadata
 

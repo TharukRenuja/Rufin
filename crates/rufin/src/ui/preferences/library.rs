@@ -8,7 +8,10 @@ use gtk::gio;
 use crate::controller::SourceLocalAccessSnapshot;
 use crate::i18n::tr;
 
-use super::super::{album_count_text, track_count_text};
+use super::super::{
+    album_count_text, configured_source_display_name, configured_source_icon_name,
+    configured_source_kind_display_name, track_count_text,
+};
 use super::{PreferencesNavigationControls, Shell, button_row};
 
 const SERVER_PROVIDER_ICON_SIZE: i32 = 28;
@@ -57,7 +60,7 @@ fn library_sources_page(
         let row = adw::ActionRow::builder()
             .title(tr("No remote sources configured"))
             .subtitle(tr(
-                "Add a server to use Jellyfin, Subsonic, or OpenSubsonic.",
+                "Add a server to use Jellyfin, Navidrome, or OpenSubsonic.",
             ))
             .build();
         servers_group.add(&row);
@@ -72,12 +75,16 @@ fn library_sources_page(
                 .source_local_access
                 .iter()
                 .find(|summary| summary.source_id == server.id);
+            let account = shell
+                .controller
+                .configured_source(&server.id)
+                .map(|saved| saved.username);
             let row = adw::ActionRow::builder()
-                .title(source_identity_display_name(server))
-                .subtitle(source_summary_subtitle(server, summary))
+                .title(configured_source_display_name(server))
+                .subtitle(source_summary_subtitle(server, summary, account.as_deref()))
                 .subtitle_lines(4)
                 .build();
-            let icon = gtk::Image::from_icon_name(source_kind_icon_name(&server.kind));
+            let icon = gtk::Image::from_icon_name(configured_source_icon_name(server));
             icon.set_pixel_size(SERVER_PROVIDER_ICON_SIZE);
             icon.set_size_request(SERVER_PROVIDER_ICON_SIZE, SERVER_PROVIDER_ICON_SIZE);
             icon.set_valign(gtk::Align::Center);
@@ -266,6 +273,7 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
 fn source_summary_subtitle(
     server: &SourceIdentity,
     summary: Option<&SourceLocalAccessSnapshot>,
+    username: Option<&str>,
 ) -> String {
     let address = if server.base_url.trim().is_empty() {
         String::new()
@@ -277,17 +285,12 @@ fn source_summary_subtitle(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| tr("All Music"));
     let mapping = local_mapping_status(summary);
-    let account = summary
-        .and_then(|summary| {
-            summary
-                .username
-                .as_deref()
-                .filter(|username| !username.trim().is_empty())
-        })
+    let account = username
+        .filter(|username| !username.trim().is_empty())
         .map(|username| format!("{}: {}", tr("User"), username))
         .unwrap_or_default();
     let cache = summary.map(source_cache_line).unwrap_or_default();
-    let provider_line = metadata_line([source_display_name(&server.kind), address]);
+    let provider_line = metadata_line([configured_source_kind_display_name(&server.kind), address]);
     let folder_line = metadata_line([account, format!("{}: {}", tr("Music Folder"), folder)]);
     let cache_line = metadata_line([cache, mapping]);
     [provider_line, folder_line, cache_line]
@@ -333,35 +336,6 @@ fn local_mapping_status(summary: Option<&SourceLocalAccessSnapshot>) -> String {
         status.metadata_match_count,
         status.unmatched_count
     )
-}
-
-fn source_identity_display_name(server: &SourceIdentity) -> String {
-    let name = server.name.trim();
-    if name.is_empty() {
-        source_display_name(&server.kind)
-    } else {
-        name.to_string()
-    }
-}
-
-fn source_display_name(kind: &str) -> String {
-    match kind {
-        "jellyfin" => tr("Jellyfin"),
-        "navidrome" => tr("Navidrome"),
-        "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
-        "local" => tr("Local"),
-        other => other.to_string(),
-    }
-}
-
-fn source_kind_icon_name(kind: &str) -> &'static str {
-    match kind {
-        "jellyfin" => "io.github.screwys.Rufin.source.jellyfin",
-        "navidrome" => "io.github.screwys.Rufin.source.navidrome",
-        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.source.opensubsonic",
-        "local" => "rufin-route-folders-symbolic",
-        _ => "network-server-symbolic",
-    }
 }
 
 fn local_folder_title(path: &str) -> String {

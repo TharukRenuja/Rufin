@@ -83,10 +83,6 @@ pub(in crate::controller) fn scrub_smart_refs(
 }
 
 pub(in crate::controller) fn scrub_home_refs(saved: &SavedSource, section: &mut HomeSection) {
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        section.albums.retain(|album| is_local_album_id(&album.id));
-        section.tracks.retain(|track| is_local_track_id(&track.id));
-    }
     scrub_source_album_image_refs(saved, &mut section.albums);
     scrub_source_track_image_refs(saved, &mut section.tracks);
 }
@@ -112,10 +108,6 @@ pub(in crate::controller::root) fn scrub_snapshot_home_refs(
     section: &mut HomeSection,
     external_ref_policy: SnapshotExternalRefPolicy,
 ) {
-    if saved.source.kind == LOCAL_SOURCE_ID {
-        section.albums.retain(|album| is_local_album_id(&album.id));
-        section.tracks.retain(|track| is_local_track_id(&track.id));
-    }
     scrub_snapshot_album_image_refs(saved, &mut section.albums, external_ref_policy);
     scrub_snapshot_track_image_refs(saved, &mut section.tracks, external_ref_policy);
 }

@@ -407,7 +407,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.should_fetch_cover(&key, &image_ref) {
+                } else if self.should_fetch_cover(&key) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.apply_cover_unavailable(&key);
@@ -422,7 +422,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.should_fetch_cover(&key, &image_ref) {
+                } else if self.should_fetch_cover(&key) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.state
@@ -446,7 +446,7 @@ impl Shell {
         path: Option<PathBuf>,
     ) {
         let Some(path) = path else {
-            if self.should_fetch_cover(&key, &image_ref) {
+            if self.should_fetch_cover(&key) {
                 self.mark_cover_request_state(&key, CoverRequestState::Fetching);
                 self.request_cover_for_key(key, image_ref, fetch_size);
                 return;
@@ -471,29 +471,11 @@ impl Shell {
         self.mark_cover_request_state(&key, CoverRequestState::Decoding);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
-    fn should_fetch_cover(&self, key: &str, image_ref: &ImageRef) -> bool {
-        let provider = self
-            .state
-            .library
-            .borrow()
-            .source
-            .as_ref()
-            .map(|server| server.kind.clone());
-        let unavailable = self.state.cover_unavailable.borrow().contains(key);
-        visible_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
-            == VisibleCoverCacheMissAction::Fetch
+    fn should_fetch_cover(&self, key: &str) -> bool {
+        !self.state.cover_unavailable.borrow().contains(key)
     }
     fn should_fetch_warm_cover(&self, key: &str, image_ref: &ImageRef) -> bool {
-        let provider = self
-            .state
-            .library
-            .borrow()
-            .source
-            .as_ref()
-            .map(|server| server.kind.clone());
-        let unavailable = self.state.cover_unavailable.borrow().contains(key);
-        warm_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
-            == VisibleCoverCacheMissAction::Fetch
+        !external_metadata::is_external_image_ref(image_ref) && self.should_fetch_cover(key)
     }
     fn request_cover_for_key(&self, key: String, image_ref: ImageRef, fetch_size: u32) {
         let enqueue_started = Instant::now();
@@ -761,43 +743,6 @@ pub(in crate::ui) fn startup_prime_wait(
     !decoded && (unavailable || path_lookup || fetch || active_decode || queued_decode)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum VisibleCoverCacheMissAction {
-    Fetch,
-    FinalMissing,
-}
-
-pub(in crate::ui) fn visible_cover_cache_miss_action(
-    kind: Option<&str>,
-    image_ref: &ImageRef,
-    unavailable: bool,
-    external_known_missing: bool,
-) -> VisibleCoverCacheMissAction {
-    if unavailable || external_known_missing {
-        return VisibleCoverCacheMissAction::FinalMissing;
-    }
-    if image_ref.item_id.starts_with("local:cover:") {
-        return if kind == Some(source_local::LOCAL_SOURCE_ID) {
-            VisibleCoverCacheMissAction::Fetch
-        } else {
-            VisibleCoverCacheMissAction::FinalMissing
-        };
-    }
-    VisibleCoverCacheMissAction::Fetch
-}
-
-pub(in crate::ui) fn warm_cover_cache_miss_action(
-    kind: Option<&str>,
-    image_ref: &ImageRef,
-    unavailable: bool,
-    external_known_missing: bool,
-) -> VisibleCoverCacheMissAction {
-    if external_metadata::is_external_image_ref(image_ref) {
-        return VisibleCoverCacheMissAction::FinalMissing;
-    }
-    visible_cover_cache_miss_action(kind, image_ref, unavailable, external_known_missing)
-}
-
 pub(in crate::ui) fn cached_cover_candidate_path(
     candidate_keys: &[String],
     mut key_lookup: impl FnMut(&str) -> Option<PathBuf>,
@@ -866,71 +811,6 @@ mod tests {
                 |key| (key == "cover-96").then(|| disk_path.clone())
             ),
             Some(disk_path)
-        );
-    }
-
-    #[test]
-    fn cover_fetch_local() {
-        let local_cover = ImageRef::new("local:cover:file%3A%2F%2Fcover.jpg", None);
-
-        assert_eq!(
-            visible_cover_cache_miss_action(
-                Some(source_local::LOCAL_SOURCE_ID),
-                &local_cover,
-                false,
-                false
-            ),
-            VisibleCoverCacheMissAction::Fetch
-        );
-    }
-
-    #[test]
-    fn cover_fetch_missing() {
-        let provider_cover = ImageRef::new("album-1", None);
-
-        assert_eq!(
-            visible_cover_cache_miss_action(Some("jellyfin"), &provider_cover, false, false),
-            VisibleCoverCacheMissAction::Fetch
-        );
-    }
-
-    #[test]
-    fn cover_stale_source() {
-        let local_cover = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
-
-        assert_eq!(
-            visible_cover_cache_miss_action(Some("jellyfin"), &local_cover, false, false),
-            VisibleCoverCacheMissAction::FinalMissing
-        );
-    }
-
-    #[test]
-    fn cover_missing_final() {
-        let external_cover = ImageRef::new("external:album:artist:album", None);
-
-        assert_eq!(
-            visible_cover_cache_miss_action(Some("jellyfin"), &external_cover, false, true),
-            VisibleCoverCacheMissAction::FinalMissing
-        );
-    }
-
-    #[test]
-    fn warm_cover_fetches_provider() {
-        let provider_cover = ImageRef::new("album-1", None);
-
-        assert_eq!(
-            warm_cover_cache_miss_action(Some("jellyfin"), &provider_cover, false, false),
-            VisibleCoverCacheMissAction::Fetch
-        );
-    }
-
-    #[test]
-    fn warm_cover_skips_external() {
-        let external_cover = ImageRef::new("external:album:artist:album", None);
-
-        assert_eq!(
-            warm_cover_cache_miss_action(Some("jellyfin"), &external_cover, false, false),
-            VisibleCoverCacheMissAction::FinalMissing
         );
     }
 }

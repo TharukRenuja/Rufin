@@ -12,54 +12,49 @@ use tokio_tungstenite::{
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const JELLYFIN_WEBSOCKET_KEY_BYTES: usize = 16;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct JellyfinLibraryChange {
-    pub items_added: Vec<String>,
-    pub items_updated: Vec<String>,
-    pub items_removed: Vec<String>,
-}
-
-impl JellyfinLibraryChange {
-    pub fn is_empty(&self) -> bool {
-        self.items_added.is_empty()
-            && self.items_updated.is_empty()
-            && self.items_removed.is_empty()
-    }
-
-    pub fn merge(&mut self, other: Self) {
-        push_unique_raw_item_ids(&mut self.items_added, &other.items_added);
-        push_unique_raw_item_ids(&mut self.items_updated, &other.items_updated);
-        push_unique_raw_item_ids(&mut self.items_removed, &other.items_removed);
-    }
-
-    pub fn fetch_item_ids(&self) -> Vec<String> {
-        let mut ids = Vec::new();
-        push_unique_raw_item_ids(&mut ids, &self.items_added);
-        push_unique_raw_item_ids(&mut ids, &self.items_updated);
-        ids
-    }
-
-    pub fn removed_track_ids(&self) -> Vec<TrackId> {
-        let mut ids = Vec::new();
-        for raw_id in &self.items_removed {
-            let raw_id = raw_id.trim();
-            if raw_id.is_empty() {
-                continue;
-            }
-            let track_id = TrackId::new(jellyfin_id("track", raw_id));
-            if !ids.contains(&track_id) {
-                ids.push(track_id);
-            }
-        }
-        ids
-    }
-}
-
 impl JellyfinSource {
-    pub async fn listen_library_changes(
+    async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
+        let key = websocket_key()?;
+        let config = JellyfinClientConfig::new(
+            self.identity.base_url.clone(),
+            false,
+            Some(self.device_id.to_string()),
+        );
+        let response = self
+            .client
+            .get(endpoint(&self.base_url, "socket")?)
+            .version(reqwest::Version::HTTP_11)
+            .header(
+                header::AUTHORIZATION,
+                auth_header(&config, Some(&self.access_token)),
+            )
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", key)
+            .send()
+            .await
+            .map_err(|error| SourceError::Other(error.to_string()))?;
+        if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+            return Err(SourceError::Other(format!(
+                "Jellyfin WebSocket upgrade returned {}",
+                response.status()
+            )));
+        }
+        let upgraded = response
+            .upgrade()
+            .await
+            .map_err(|error| SourceError::Other(error.to_string()))?;
+        Ok(WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
+    }
+}
+
+#[async_trait(?Send)]
+impl TrackChangeFeed for JellyfinSource {
+    async fn listen(
         &self,
-        mut on_change: impl FnMut(JellyfinLibraryChange) -> bool,
-        should_stop: impl Fn() -> bool,
+        on_change: &mut dyn FnMut(TrackChange) -> bool,
+        should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
         let mut socket = self.connect_library_socket().await?;
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);
@@ -102,39 +97,34 @@ impl JellyfinSource {
         }
     }
 
-    async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
-        let key = websocket_key()?;
-        let config = JellyfinClientConfig::new(
-            self.identity.base_url.clone(),
-            false,
-            Some(self.device_id.to_string()),
-        );
-        let response = self
-            .client
-            .get(endpoint(&self.base_url, "socket")?)
-            .version(reqwest::Version::HTTP_11)
-            .header(
-                header::AUTHORIZATION,
-                auth_header(&config, Some(&self.access_token)),
-            )
-            .header(header::CONNECTION, "Upgrade")
-            .header(header::UPGRADE, "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", key)
-            .send()
-            .await
-            .map_err(|error| SourceError::Other(error.to_string()))?;
-        if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-            return Err(SourceError::Other(format!(
-                "Jellyfin WebSocket upgrade returned {}",
-                response.status()
-            )));
+    async fn changed_tracks(&self, native_ids: &[String]) -> SourceResult<Vec<Track>> {
+        if native_ids.is_empty() {
+            return Ok(Vec::new());
         }
-        let upgraded = response
-            .upgrade()
-            .await
-            .map_err(|error| SourceError::Other(error.to_string()))?;
-        Ok(WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
+        let mut tracks = Vec::new();
+        for chunk in native_ids.chunks(100).filter(|chunk| !chunk.is_empty()) {
+            let mut url = endpoint(&self.base_url, "Items")?;
+            url.query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("Recursive", "true")
+                .append_pair("IncludeItemTypes", "Audio")
+                .append_pair("Ids", &chunk.join(","))
+                .append_pair("Fields", ITEM_FIELDS)
+                .append_pair("EnableTotalRecordCount", "false");
+            tracks.extend(
+                self.get_json::<ItemQueryResult>(url)
+                    .await?
+                    .items
+                    .into_iter()
+                    .filter(is_audio_item)
+                    .map(track_from_item),
+            );
+        }
+        Ok(tracks)
+    }
+
+    fn track_id_from_native(&self, native_id: &str) -> TrackId {
+        TrackId::new(jellyfin_id("track", native_id))
     }
 }
 
@@ -157,7 +147,7 @@ struct LibraryUpdateInfo {
 }
 
 enum JellyfinSocketMessage {
-    LibraryChanged(JellyfinLibraryChange),
+    LibraryChanged(TrackChange),
     ForceKeepAlive,
     Other,
 }
@@ -172,13 +162,14 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
             };
             let info = serde_json::from_value::<LibraryUpdateInfo>(data)
                 .map_err(|error| SourceError::Other(error.to_string()))?;
-            Ok(JellyfinSocketMessage::LibraryChanged(
-                JellyfinLibraryChange {
-                    items_added: clean_raw_item_ids(info.items_added),
-                    items_updated: clean_raw_item_ids(info.items_updated),
-                    items_removed: clean_raw_item_ids(info.items_removed),
-                },
-            ))
+            let mut fetch_native_ids = clean_raw_item_ids(info.items_added);
+            push_unique_raw_item_ids(&mut fetch_native_ids, &info.items_updated);
+            let removed_native_ids = clean_raw_item_ids(info.items_removed);
+            fetch_native_ids.retain(|id| !removed_native_ids.contains(id));
+            Ok(JellyfinSocketMessage::LibraryChanged(TrackChange {
+                fetch_native_ids,
+                removed_native_ids,
+            }))
         }
         "ForceKeepAlive" => Ok(JellyfinSocketMessage::ForceKeepAlive),
         _ => Ok(JellyfinSocketMessage::Other),
@@ -226,20 +217,14 @@ mod tests {
     #[test]
     fn library_changed_message_extracts_item_ids() {
         let message = library_socket_message(
-            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":[" one ","one"],"ItemsUpdated":["two"],"ItemsRemoved":["three"]}}"#,
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":[" one ","one"],"ItemsUpdated":["two","three"],"ItemsRemoved":["three"]}}"#,
         )
         .expect("parse message");
 
         let JellyfinSocketMessage::LibraryChanged(change) = message else {
             panic!("expected library change");
         };
-        assert_eq!(change.items_added, vec!["one"]);
-        assert_eq!(change.items_updated, vec!["two"]);
-        assert_eq!(change.items_removed, vec!["three"]);
-        assert_eq!(change.fetch_item_ids(), vec!["one", "two"]);
-        assert_eq!(
-            change.removed_track_ids(),
-            vec![TrackId::new("jellyfin:track:three")]
-        );
+        assert_eq!(change.fetch_native_ids, vec!["one", "two"]);
+        assert_eq!(change.removed_native_ids, vec!["three"]);
     }
 }

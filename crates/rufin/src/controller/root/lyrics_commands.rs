@@ -7,19 +7,16 @@ fn lyrics_event(track_id: &TrackId, lyrics: Option<Lyrics>) -> ControllerEvent {
     }
 }
 
-fn default_external_fallback_for_search(search: JellyfinLyricsSearch) -> bool {
+fn default_external_fallback_for_search(search: LyricsSearch) -> bool {
     matches!(
         search,
-        JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
+        LyricsSearch::ServerThenRemote | LyricsSearch::RemoteThenServer
     )
 }
 
-fn cached_lyrics_search_mode(
-    search: JellyfinLyricsSearch,
-    allow_external_fallback: bool,
-) -> JellyfinLyricsSearch {
-    if allow_external_fallback && matches!(search, JellyfinLyricsSearch::ServerOnly) {
-        JellyfinLyricsSearch::ServerThenRemote
+fn cached_lyrics_search_mode(search: LyricsSearch, allow_external_fallback: bool) -> LyricsSearch {
+    if allow_external_fallback && matches!(search, LyricsSearch::ServerOnly) {
+        LyricsSearch::ServerThenRemote
     } else {
         search
     }
@@ -31,15 +28,10 @@ impl AppController {
         self.lyrics_cache_for_track(track_id, true);
     }
     pub fn request_track_auto_lyrics(&self, track_id: TrackId) {
-        self.lyrics_search_for_track_with_external(
-            track_id,
-            true,
-            JellyfinLyricsSearch::ServerOnly,
-            true,
-        );
+        self.lyrics_search_for_track_with_external(track_id, true, LyricsSearch::ServerOnly, true);
     }
     pub fn request_track_server_lyrics(&self, track_id: TrackId) {
-        self.lyrics_search_for_track(track_id, true, JellyfinLyricsSearch::ServerOnly);
+        self.lyrics_search_for_track(track_id, true, LyricsSearch::ServerOnly);
     }
     pub fn refresh_lyrics_for_current(&self) {
         self.lyrics_cache(false);
@@ -70,11 +62,7 @@ impl AppController {
         let settings = load_settings_from_store(&self.store);
         self.lyrics_search_for_track(track_id, use_cache, lyrics_search_for_settings(&settings));
     }
-    pub(in crate::controller) fn lyrics_search(
-        &self,
-        use_cache: bool,
-        search: JellyfinLyricsSearch,
-    ) {
+    pub(in crate::controller) fn lyrics_search(&self, use_cache: bool, search: LyricsSearch) {
         let Some((source_id, entry, _position)) = self.current_playback_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             return;
@@ -87,12 +75,7 @@ impl AppController {
             entry,
         );
     }
-    fn lyrics_search_for_track(
-        &self,
-        track_id: TrackId,
-        use_cache: bool,
-        search: JellyfinLyricsSearch,
-    ) {
+    fn lyrics_search_for_track(&self, track_id: TrackId, use_cache: bool, search: LyricsSearch) {
         let Some((source_id, entry, _position)) = self.current_playback_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             return;
@@ -113,7 +96,7 @@ impl AppController {
         &self,
         track_id: TrackId,
         use_cache: bool,
-        search: JellyfinLyricsSearch,
+        search: LyricsSearch,
         allow_external_fallback: bool,
     ) {
         let Some((source_id, entry, _position)) = self.current_playback_entry() else {
@@ -129,14 +112,18 @@ impl AppController {
     fn lyrics_search_entry(
         &self,
         use_cache: bool,
-        search: JellyfinLyricsSearch,
+        search: LyricsSearch,
         allow_external_fallback: bool,
         source_id: SourceId,
         entry: QueueEntry,
     ) {
         let settings = load_settings_from_store(&self.store);
         let external_providers = settings.external_lyrics_providers.clone();
-        if let Some(lyrics) = local_sidecar_lyrics(&self.store, &source_id, &entry.track_id) {
+        let active = selected_active_source(&self.active_source, &source_id).ok();
+        if let Some(lyrics) = active
+            .as_deref()
+            .and_then(|active| local_sidecar_lyrics(&self.store, active, &entry.track_id))
+        {
             debug!(track_id = %entry.track_id, "loaded lyrics from local sidecar");
             let _saved = self
                 .store
@@ -174,64 +161,24 @@ impl AppController {
                     .with_store(|store| store.delete_remote_lyrics(&source_id, &entry.track_id));
             }
         }
-        let provider_is_local = self
-            .store
-            .with_store(|store| store.saved_source(&source_id))
-            .unwrap_or(None)
-            .is_some_and(|saved| saved.source.kind == LOCAL_SOURCE_ID);
-        if provider_is_local {
-            debug!(
-                track_id = %entry.track_id,
-                allow_external_fallback, "local provider has no server lyrics"
-            );
-            let events = self.events.clone();
-            let store = self.store.clone();
-            let local_external_providers = external_providers.clone();
-            thread::spawn(move || {
-                match allow_external_fallback.then(|| {
-                    external_best_lyrics(&store, &source_id, &entry, &local_external_providers)
-                }) {
-                    Some(Ok(Some(lyrics))) => {
-                        debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
-                        let _saved =
-                            store.with_store(|store| store.save_lyrics(&source_id, &lyrics));
-                        let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
-                    }
-                    Some(Err(error)) => {
-                        debug!(track_id = %entry.track_id, %error, "external lyric fallback failed");
-                        let _sent = events.send(lyrics_event(&entry.track_id, None));
-                    }
-                    Some(Ok(None)) | None => {
-                        let _sent = events.send(lyrics_event(&entry.track_id, None));
-                    }
-                }
-            });
-            return;
-        }
+        let native_lyrics = active.and_then(|active| active.lyrics.clone());
         debug!(
             track_id = %entry.track_id,
             allow_external_fallback,
             ?search,
-            "requesting lyrics from provider"
+            native = native_lyrics.is_some(),
+            "requesting lyrics"
         );
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
         let events = self.events.clone();
         thread::spawn(move || {
-            let Some(saved) = store
-                .with_store(|store| store.saved_source(&source_id))
-                .unwrap_or(None)
-            else {
-                let _sent = events.send(lyrics_event(&entry.track_id, None));
-                return;
+            let result = match native_lyrics {
+                Some(provider) => runtime
+                    .block_on(provider.lyrics(&entry.track_id, search))
+                    .map_err(|error| error.to_string()),
+                None => Ok(None),
             };
-            let result =
-                source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-                    runtime
-                        .block_on(provider.lyrics_with_search(&entry.track_id, search))
-                        .map_err(|error| error.to_string())
-                });
             match result {
                 Ok(Some(lyrics)) => {
                     debug!(track_id = %entry.track_id, source = ?lyrics.source, "loaded lyrics from provider");

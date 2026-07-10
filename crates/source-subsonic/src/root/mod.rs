@@ -8,12 +8,15 @@ use reqwest::{Client, Url};
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
 use source::{
-    AlbumDetail, FavoriteItemId, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest,
-    GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, LyricLine, Lyrics,
-    LyricsSource, MusicSource, PagedRequest, PagedResponse, PlaybackReport, PlaybackReportKind,
-    PlayedFilter, PlaylistDetail, PlaylistEntry, RandomTrackRequest, SavedSourceSession,
-    SearchResults, SourceError, SourceIdentity, SourceResult, SourceSession, StreamDescriptor,
-    StreamRequest,
+    AlbumDetail, FavoriteItemId, FavoriteMutator, FolderBrowser, FolderDetail,
+    GeneratedTrackProvider, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes,
+    ImageProvider, LyricLine, Lyrics, LyricsProvider, LyricsSearch, LyricsSource,
+    MusicFolderProvider, MusicSource, PagedRequest, PagedResponse, PlaybackReport,
+    PlaybackReportKind, PlaybackReporter, PlayedFilter, PlaylistCreator, PlaylistDeleter,
+    PlaylistDetail, PlaylistEntry, PlaylistEntryMover, PlaylistEntryRemover, PlaylistReader,
+    PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider, RandomTrackRequest,
+    RecentAlbumProvider, SearchResults, SourceError, SourceIdentity, SourceResult,
+    StreamDescriptor, StreamRequest, StreamResolver,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -40,14 +43,6 @@ pub enum SubsonicFlavor {
     Subsonic,
 }
 impl SubsonicFlavor {
-    pub fn from_source_id(source_id: &str) -> Option<Self> {
-        match source_id {
-            "navidrome" => Some(Self::Navidrome),
-            "subsonic" | "opensubsonic" => Some(Self::Subsonic),
-            _ => None,
-        }
-    }
-
     pub fn source_id(self) -> &'static str {
         match self {
             Self::Navidrome => "navidrome",
@@ -58,7 +53,7 @@ impl SubsonicFlavor {
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Navidrome => "Navidrome",
-            Self::Subsonic => "Subsonic",
+            Self::Subsonic => "OpenSubsonic",
         }
     }
 }
@@ -70,6 +65,19 @@ pub struct SubsonicLoginRequest {
     pub trust_invalid_cert: bool,
     pub flavor: SubsonicFlavor,
 }
+#[derive(Clone)]
+pub struct SubsonicLoginSession {
+    pub source: SourceIdentity,
+    pub username: String,
+    pub credential: String,
+}
+#[derive(Clone)]
+pub struct SubsonicConfiguredSession {
+    pub source: SourceIdentity,
+    pub username: String,
+    pub trust_invalid_cert: bool,
+    pub credential: String,
+}
 #[derive(Clone, Debug)]
 pub struct SubsonicSource {
     client: Client,
@@ -80,7 +88,7 @@ pub struct SubsonicSource {
 }
 impl SubsonicSource {
     #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, source_kind = request.flavor.source_id(), trust_invalid_cert = request.trust_invalid_cert))]
-    pub async fn login(request: SubsonicLoginRequest) -> SourceResult<SourceSession> {
+    pub async fn login(request: SubsonicLoginRequest) -> SourceResult<SubsonicLoginSession> {
         let base_url = normalize_base_url(&request.base_url)?;
         let client = build_client(request.trust_invalid_cert)?;
         let credential = SubsonicCredential::from_password(&request.password);
@@ -98,24 +106,22 @@ impl SubsonicSource {
             .unwrap_or_else(|| request.flavor.display_name().to_string());
         let source_hash = stable_source_id(source_kind, base_url.as_str(), &request.username);
 
-        Ok(SourceSession {
+        Ok(SubsonicLoginSession {
             source: SourceIdentity {
                 id: SourceId::new(format!("{source_kind}:server:{source_hash}")),
                 kind: source_kind.to_string(),
                 name: server_name,
                 base_url: base_url.as_str().trim_end_matches('/').to_string(),
             },
-            user_id: body.user.username.clone(),
             username: body.user.username,
-            access_token: credential.serialize(),
-            device_id: None,
+            credential: credential.serialize(),
         })
     }
 
-    pub fn from_saved_session(session: SavedSourceSession) -> SourceResult<Self> {
+    pub fn from_configured_session(session: SubsonicConfiguredSession) -> SourceResult<Self> {
         let base_url = normalize_base_url(&session.source.base_url)?;
         let client = build_client(session.trust_invalid_cert)?;
-        let credential = SubsonicCredential::parse(&session.access_token)?;
+        let credential = SubsonicCredential::parse(&session.credential)?;
         Ok(Self {
             client,
             base_url,
@@ -179,24 +185,6 @@ impl SubsonicSource {
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(artists)
-    }
-
-    pub async fn newest_albums(&self, limit: usize) -> SourceResult<Vec<Album>> {
-        let body: AlbumListBody = self
-            .get_json(
-                "getAlbumList2",
-                &[
-                    ("type", "newest".to_string()),
-                    ("size", limit.clamp(1, 500).to_string()),
-                ],
-            )
-            .await?;
-        Ok(body
-            .album_list
-            .album
-            .into_iter()
-            .map(|album| album_from_dto(self, album))
-            .collect())
     }
 
     async fn songs_by_genre(&self, genre_name: &str) -> SourceResult<Vec<Track>> {

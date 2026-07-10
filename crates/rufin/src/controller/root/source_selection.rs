@@ -1,20 +1,18 @@
 use super::*;
+use crate::sources::{
+    activate_configured_source, configured_source_needs_auth, local_configured_source_for_store,
+    resolve_source_registration,
+};
 
 impl AppController {
     pub fn select_source(&self, source: LibrarySourceSelection) {
-        let selection_generation = self
-            .source_selection_generation
-            .fetch_add(1, Ordering::AcqRel)
-            .wrapping_add(1);
-        let _sent = self.events.send(ControllerEvent::SourceSelectionChanged {
-            selected_source: source.clone(),
-        });
-        let source_selection_generation = Arc::clone(&self.source_selection_generation);
+        let transition_generation = self.source_transitions.begin();
+        let source_transitions = Arc::clone(&self.source_transitions);
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
-        let local_library_watcher = Arc::clone(&self.local_library_watcher);
-        let remote_library_watcher = Arc::clone(&self.remote_library_watcher);
+        let active_source = Arc::clone(&self.active_source);
+        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -22,41 +20,44 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
-            let current =
-                || source_selection_is_current(&source_selection_generation, selection_generation);
-            let emit_error = |error| {
-                emit_current_source_selection_error(
-                    &events,
-                    &source_selection_generation,
-                    selection_generation,
-                    error,
-                );
+            let transition_commit = match source_transitions.commit(transition_generation) {
+                Ok(Some(commit)) => commit,
+                Ok(None) => return,
+                Err(error) => {
+                    emit_current_source_selection_error(
+                        &events,
+                        &source_transitions,
+                        transition_generation,
+                        error,
+                    );
+                    return;
+                }
             };
-            let previous_active = match store
-                .with_store(|store| Ok(store.active_source()?.map(|saved| saved.source.id)))
-            {
-                Ok(previous_active) => previous_active,
+            let _sent = events.send(ControllerEvent::SourceSelectionChanged {
+                selected_source: source.clone(),
+            });
+            let emit_error = |error| {
+                emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                let _sent = events.send(ControllerEvent::Error(error));
+            };
+            let saved = match configured_source_for_selection(&store, &source) {
+                Ok(saved) => saved,
                 Err(error) => {
                     emit_error(error);
                     return;
                 }
             };
-            if !current() {
+            let Some(registration) = resolve_source_registration(&saved.source.kind) else {
+                emit_error("Saved source type is no longer supported.".to_string());
                 return;
-            }
-            let mut settings = load_settings_from_store(&store);
-            settings.sources.selected = Some(source.clone());
-            settings.migrate_defaults();
-            if !current() {
-                return;
-            }
-            if let Err(error) = store.save_settings(&settings) {
-                emit_error(error);
-                return;
-            }
-            if !current() {
-                return;
-            }
+            };
+            let needs_auth = match configured_source_needs_auth(&sync_context.secrets, &saved) {
+                Ok(needs_auth) => needs_auth,
+                Err(error) => {
+                    emit_error(error);
+                    return;
+                }
+            };
 
             let queue_activation_context = QueueActivationContext {
                 store: &store,
@@ -68,252 +69,148 @@ impl AppController {
                 auto_dj_enabled: &auto_dj_enabled,
                 events: &events,
             };
-
-            let (selected_saved_needing_sync, selected_saved_for_reconciliation) = match source {
-                LibrarySourceSelection::Local => {
-                    let saved = match ensure_local_source_server(&store) {
-                        Ok(saved) => saved,
-                        Err(error) => {
-                            emit_error(error);
-                            return;
-                        }
-                    };
-                    if !current() {
-                        return;
-                    }
-                    if let Err(error) =
-                        cancel_previous_source_sync(&sync_context, previous_active.as_ref(), &saved)
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    if let Err(error) =
-                        store.with_store(|store| store.set_active_source(&saved.source.id))
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    let activation =
-                        match prepare_saved_queue_activation(&queue_activation_context, &saved) {
-                            Ok(activation) => activation,
-                            Err(error) => {
-                                emit_error(error);
-                                return;
-                            }
-                        };
-                    if !current() {
-                        return;
-                    }
-                    if let Some(activation) = activation
-                        && let Err(error) =
-                            apply_prepared_queue_activation(&queue_activation_context, activation)
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    let local_configured = !settings.sources.local_folders.is_empty();
-                    let needs_sync =
-                        local_configured && active_source_needs_sync(&store, &saved.source.id);
-                    (
-                        needs_sync.then_some(saved.clone()),
-                        (local_configured && !needs_sync).then_some(saved),
-                    )
-                }
-                LibrarySourceSelection::Source(source_id) => {
-                    let saved = match store.with_store(|store| {
-                        let saved = store
-                            .list_sources()?
-                            .into_iter()
-                            .find(|saved| saved.source.id == source_id);
-                        Ok(saved)
-                    }) {
-                        Ok(Some(saved)) => saved,
-                        Ok(None) => {
-                            emit_error("The selected source is no longer saved.".to_string());
-                            return;
-                        }
-                        Err(error) => {
-                            emit_error(error);
-                            return;
-                        }
-                    };
-                    if !current() {
-                        return;
-                    }
-                    if let Err(error) =
-                        cancel_previous_source_sync(&sync_context, previous_active.as_ref(), &saved)
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    if let Err(error) =
-                        store.with_store(|store| store.set_active_source(&source_id))
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    if saved_server_needs_auth(&sync_context.secrets, &saved) {
-                        clear_queue_and_stop_playback(
-                            &queue,
-                            &playback_request_generation,
-                            &next_preload,
-                            &playback,
-                            &playback_snapshot,
-                            &auto_dj_enabled,
-                            &events,
-                        );
-                        if !current() {
-                            return;
-                        }
-                        if !emit_current_runtime_snapshot(
-                            &store,
-                            &sync_context.secrets,
-                            &events,
-                            &source_selection_generation,
-                            selection_generation,
-                        ) {
-                            return;
-                        }
-                        if !current() {
-                            return;
-                        }
-                        refresh_local_library_watcher(
-                            sync_context.clone(),
-                            Arc::clone(&local_library_watcher),
-                        );
-                        refresh_remote_library_watcher(
-                            sync_context,
-                            Arc::clone(&remote_library_watcher),
-                        );
-                        return;
-                    }
-                    let activation =
-                        match prepare_saved_queue_activation(&queue_activation_context, &saved) {
-                            Ok(activation) => activation,
-                            Err(error) => {
-                                emit_error(error);
-                                return;
-                            }
-                        };
-                    if !current() {
-                        return;
-                    }
-                    if let Some(activation) = activation
-                        && let Err(error) =
-                            apply_prepared_queue_activation(&queue_activation_context, activation)
-                    {
-                        emit_error(error);
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    let needs_sync = active_source_needs_sync(&store, &saved.source.id);
-                    (
-                        needs_sync.then_some(saved.clone()),
-                        (!needs_sync).then_some(saved),
-                    )
-                }
-            };
-
-            if !current() {
-                return;
-            }
-            if let Some(saved) = selected_saved_needing_sync {
-                if cached_library_exists(&store, &saved.source.id) {
-                    if !emit_current_runtime_snapshot(
-                        &store,
-                        &sync_context.secrets,
-                        &events,
-                        &source_selection_generation,
-                        selection_generation,
-                    ) {
-                        return;
-                    }
-                    if !current() {
-                        return;
-                    }
-                    start_silent_sync_thread(sync_context.clone(), saved);
-                } else {
-                    start_silent_sync_thread_with_completion_snapshot(sync_context.clone(), saved);
-                }
+            let (candidate, prepared_queue) = if needs_auth {
+                (None, None)
             } else {
-                if !emit_current_runtime_snapshot(
-                    &store,
-                    &sync_context.secrets,
-                    &events,
-                    &source_selection_generation,
-                    selection_generation,
-                ) {
+                let candidate =
+                    match activate_configured_source(&store, &sync_context.secrets, &saved) {
+                        Ok(candidate) => candidate,
+                        Err(error) => {
+                            emit_error(error);
+                            return;
+                        }
+                    };
+                let prepared_queue =
+                    match prepare_saved_queue_activation(&queue_activation_context, &saved) {
+                        Ok(prepared) => prepared,
+                        Err(error) => {
+                            emit_error(error);
+                            return;
+                        }
+                    };
+                (Some(candidate), prepared_queue)
+            };
+            let persistence = match SourcePersistenceSnapshot::capture(&store, &saved.source.id) {
+                Ok(persistence) => persistence,
+                Err(error) => {
+                    emit_error(error);
                     return;
                 }
-                if let Some(saved) = selected_saved_for_reconciliation {
+            };
+            if let Err(error) = cancel_previous_source_sync(
+                &sync_context,
+                persistence.previous_active_id.as_ref(),
+                &saved,
+            ) {
+                emit_error(error);
+                return;
+            }
+            let mut active_guard = match active_source.write() {
+                Ok(active) => active,
+                Err(_) => {
+                    emit_error("active source lock was poisoned".to_string());
+                    return;
+                }
+            };
+            let previous_active = active_guard.clone();
+            if let Err(error) =
+                commit_source_selection(&store, &saved, &source, &persistence.previous_sources)
+            {
+                persistence.restore(&store);
+                emit_error(error);
+                return;
+            }
+            *active_guard = candidate;
+            drop(active_guard);
+            if needs_auth {
+                clear_queue_and_stop_playback(
+                    &queue,
+                    &playback_request_generation,
+                    &next_preload,
+                    &playback,
+                    &playback_snapshot,
+                    &auto_dj_enabled,
+                    &events,
+                );
+            } else if let Some(prepared_queue) = prepared_queue
+                && let Err(error) =
+                    apply_prepared_queue_activation(&queue_activation_context, prepared_queue)
+            {
+                if let Ok(mut active) = active_source.write() {
+                    *active = previous_active;
+                }
+                persistence.restore(&store);
+                emit_error(error);
+                return;
+            }
+            if needs_auth {
+                emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                refresh_source_freshness_watcher(sync_context, source_freshness_watcher);
+                drop(transition_commit);
+                return;
+            }
+
+            let configured_for_sync = (registration.configured_for_sync)(&store, &saved);
+            let needs_sync = configured_for_sync
+                && selected_active_source(&active_source, &saved.source.id)
+                    .is_ok_and(|active| active_source_needs_sync(&store, &active));
+            if needs_sync {
+                if cached_library_exists(&store, &saved.source.id) {
+                    emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                    start_silent_sync_thread(sync_context.clone(), saved.clone());
+                } else {
+                    start_silent_sync_thread_with_completion_snapshot(
+                        sync_context.clone(),
+                        saved.clone(),
+                    );
+                }
+            } else {
+                emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                if configured_for_sync {
                     start_background_sync_thread(sync_context.clone(), saved);
                 }
             }
-            if !current() {
-                return;
-            }
-            refresh_local_library_watcher(sync_context.clone(), local_library_watcher);
-            refresh_remote_library_watcher(sync_context, remote_library_watcher);
+            refresh_source_freshness_watcher(sync_context, source_freshness_watcher);
+            drop(transition_commit);
         });
     }
 }
 
-fn source_selection_is_current(
-    source_selection_generation: &Arc<AtomicU64>,
-    selection_generation: u64,
-) -> bool {
-    source_selection_generation.load(Ordering::Acquire) == selection_generation
+fn configured_source_for_selection(
+    store: &StoreHandle,
+    selection: &LibrarySourceSelection,
+) -> Result<SavedSource, String> {
+    match selection {
+        LibrarySourceSelection::Local => local_configured_source_for_store(store),
+        LibrarySourceSelection::Source(source_id) => store
+            .with_store(|store| store.saved_source(source_id))?
+            .ok_or_else(|| "The selected source is no longer saved.".to_string()),
+    }
+}
+
+fn commit_source_selection(
+    store: &StoreHandle,
+    saved: &SavedSource,
+    selection: &LibrarySourceSelection,
+    previous_sources: &domain::LibrarySourceSettings,
+) -> Result<(), String> {
+    let mut sources = previous_sources.clone();
+    sources.selected = Some(selection.clone());
+    save_source_settings(store, &sources)?;
+    store.with_store(|store| {
+        store.save_source(saved)?;
+        store.set_active_source(&saved.source.id)
+    })
 }
 
 fn emit_current_source_selection_error(
     events: &Sender<ControllerEvent>,
-    source_selection_generation: &Arc<AtomicU64>,
-    selection_generation: u64,
+    source_transitions: &SourceTransitions,
+    transition_generation: u64,
     error: String,
 ) {
-    if source_selection_is_current(source_selection_generation, selection_generation) {
+    if source_transitions.current(transition_generation) {
         let _sent = events.send(ControllerEvent::Error(error));
-    }
-}
-
-fn emit_current_runtime_snapshot(
-    store: &StoreHandle,
-    secrets: &Arc<dyn SecretStore>,
-    events: &Sender<ControllerEvent>,
-    source_selection_generation: &Arc<AtomicU64>,
-    selection_generation: u64,
-) -> bool {
-    match load_runtime_snapshot(store, secrets) {
-        Ok(snapshot) => {
-            if !source_selection_is_current(source_selection_generation, selection_generation) {
-                return false;
-            }
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-            true
-        }
-        Err(error) => {
-            emit_current_source_selection_error(
-                events,
-                source_selection_generation,
-                selection_generation,
-                error,
-            );
-            false
-        }
     }
 }
 

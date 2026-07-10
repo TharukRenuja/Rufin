@@ -100,20 +100,16 @@ fn sync_real_local_root(controller: &AppController, root: &Path) -> SavedSource 
             store.set_active_source(&saved.source.id)
         })
         .expect("seed local source");
-    let source = source_for_saved(
-        &controller.store,
-        &controller.runtime,
-        &controller.secrets,
-        &saved,
-    )
-    .expect("local source");
+    let active =
+        crate::sources::activate_configured_source(&controller.store, &controller.secrets, &saved)
+            .expect("activate local source");
+    *controller.active_source.write().expect("active source") = Some(Arc::clone(&active));
+    let source =
+        LocalSource::from_roots_with_identity(vec![root.to_path_buf()], saved.source.clone())
+            .expect("load local source");
     controller
         .runtime
-        .block_on(sync_source(
-            &controller.store,
-            &saved.source.id,
-            source.as_music_source(),
-        ))
+        .block_on(sync_source(&controller.store, &saved.source.id, &source))
         .expect("sync local source");
     saved
 }
@@ -131,13 +127,17 @@ pub(in crate::controller) fn cover_use_states() {
         &[playback_test_track(1)],
         &[],
     );
+    install_active_source_for_test(&controller, &saved);
     controller
         .secrets
         .save_token(&source_id, "token")
         .expect("save token");
     controller
         .store
-        .with_store(|store| store.fail_sync(&source_id, "previous sync failed"))
+        .with_store(|store| {
+            let generation = store.begin_sync(&source_id)?;
+            store.fail_sync(&source_id, generation, "previous sync failed")
+        })
         .expect("mark sync failed");
     assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
     controller.clear_source_cache(source_id);
@@ -168,40 +168,8 @@ pub(in crate::controller) fn cover_fetch_missing() {
     let cover_bytes = [0xff_u8, 0xd8, 0xff, 0xd9];
     fs::write(root.join("cover.jpg"), cover_bytes).expect("cover file");
 
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().to_string(),
-    }];
-    controller
-        .store
-        .save_settings(&settings)
-        .expect("save settings");
-
-    let saved = local_source_saved();
+    let saved = sync_real_local_root(&controller, &root);
     let source_id = saved.source.id.clone();
-    controller
-        .store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&source_id)
-        })
-        .expect("seed local server");
-    let provider = source_for_saved(
-        &controller.store,
-        &controller.runtime,
-        &controller.secrets,
-        &saved,
-    )
-    .expect("local provider");
-    controller
-        .runtime
-        .block_on(sync_source(
-            &controller.store,
-            &source_id,
-            provider.as_music_source(),
-        ))
-        .expect("sync local provider");
     let image_ref = controller
         .store
         .with_store(|store| store.load_albums(&source_id, 0, 1))
@@ -1004,6 +972,14 @@ pub(in crate::controller) fn cover_change_backend() {
     let PlaybackCommand::PrepareNext(Some(item)) = command else {
         panic!("expected prepared next command");
     };
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_local_manifest(&source_id))
+            .expect("load local manifest")
+            .len(),
+        2
+    );
     assert_eq!(item.track.id, second.id);
     assert!(item.stream.uri().starts_with("https://music.example/"));
     controller
@@ -1174,7 +1150,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         Arc::clone(&next_preload),
@@ -1183,7 +1159,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         Arc::clone(&next_preload),
@@ -1210,7 +1186,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         next_preload,
@@ -1499,6 +1475,7 @@ pub(in crate::controller) fn cover_use_sqlite() {
     let store = StoreHandle::Path {
         cache_database_path: cache_database_path.clone(),
         settings_path: settings_path.clone(),
+        settings: Arc::new(Mutex::new(AppSettings::default())),
     };
     let settings = AppSettings {
         theme_preference: ThemePreference::Dark,
@@ -1596,18 +1573,15 @@ pub(in crate::controller) fn random_play_now() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let saved = sync_real_local_root(&controller, &root);
-    let provider = source_for_saved(
-        &controller.store,
-        &controller.runtime,
-        &controller.secrets,
-        &saved,
-    )
-    .expect("local source");
+    let active =
+        crate::sources::activate_configured_source(&controller.store, &controller.secrets, &saved)
+            .expect("activate local source");
     let expected = controller
         .runtime
         .block_on(
-            provider
-                .as_music_source()
+            active
+                .random_tracks
+                .executor
                 .random_tracks(RandomTrackRequest {
                     limit: 3,
                     min_year: None,

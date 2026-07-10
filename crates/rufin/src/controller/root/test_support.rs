@@ -45,7 +45,6 @@ pub(in crate::controller) fn library_track(
 pub(in crate::controller) fn controller_from_store_for_test(
     store: StoreHandle,
 ) -> (AppController, Receiver<ControllerEvent>) {
-    let test_permit = Some(super::controller_test_permit());
     let (events, receiver) = channel();
     let runtime = Runtime::new()
         .map(Arc::new)
@@ -59,6 +58,12 @@ pub(in crate::controller) fn controller_from_store_for_test(
         MemorySecretStore::new(),
     )));
     let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
+    let active_saved = store
+        .with_store(|store| store.active_source())
+        .expect("load active source");
+    let active_source = active_saved
+        .as_ref()
+        .and_then(|saved| active_source_for_saved_test(&store, saved).ok());
     let controller = AppController {
         settings: super::settings_controller::SettingsController::new(
             store.clone(),
@@ -66,10 +71,11 @@ pub(in crate::controller) fn controller_from_store_for_test(
         ),
         store,
         runtime,
+        active_source: Arc::new(std::sync::RwLock::new(active_source)),
         secrets,
         secret_switch,
         queue: Arc::new(Mutex::new(queue)),
-        source_selection_generation: Arc::new(AtomicU64::new(0)),
+        source_transitions: Arc::new(SourceTransitions::new()),
         play_activation_generation: Arc::new(AtomicU64::new(0)),
         queue_persist_generation: Arc::new(AtomicU64::new(0)),
         playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -82,8 +88,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
         external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-        local_library_watcher: Arc::new(Mutex::new(None)),
-        remote_library_watcher: Arc::new(Mutex::new(None)),
+        source_freshness_watcher: Arc::new(Mutex::new(None)),
         external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
         events,
         sync_in_flight: InFlightGuards::new("Sync"),
@@ -92,9 +97,29 @@ pub(in crate::controller) fn controller_from_store_for_test(
         cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
         external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashMap::new())),
         cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
-        _test_permit: test_permit,
     };
     (controller, receiver)
+}
+
+fn active_source_for_saved_test(
+    store: &StoreHandle,
+    saved: &SavedSource,
+) -> Result<Arc<ActiveSource>, String> {
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.source.id, "test-salt:test-token")
+        .map_err(|error| error.to_string())?;
+    crate::sources::activate_configured_source(store, &secrets, saved)
+}
+
+pub(in crate::controller) fn install_active_source_for_test(
+    controller: &AppController,
+    saved: &SavedSource,
+) -> Arc<ActiveSource> {
+    let active = active_source_for_saved_test(&controller.store, saved)
+        .expect("activate configured test source");
+    *controller.active_source.write().expect("active source") = Some(Arc::clone(&active));
+    active
 }
 
 pub(in crate::controller) struct RecordingPlaybackBackend {
@@ -410,6 +435,7 @@ pub(in crate::controller) fn disk_store_for_test(label: &str) -> (StoreHandle, P
     let store = StoreHandle::Path {
         cache_database_path: root.join(CACHE_DATABASE_FILE_NAME),
         settings_path: root.join("config").join(SETTINGS_FILE_NAME),
+        settings: Arc::new(Mutex::new(AppSettings::default())),
     };
     store.with_store(|_| Ok(())).expect("open disk store");
     (store, root)
@@ -548,6 +574,7 @@ pub(in crate::controller) fn seed_cover_cache(
             })
         })
         .expect("seed cover cache");
+    install_active_source_for_test(controller, &saved);
     source_id
 }
 
@@ -573,6 +600,7 @@ pub(in crate::controller) fn seed_external_cover_miss(
             )
         })
         .expect("seed external miss");
+    install_active_source_for_test(controller, &saved);
     source_id
 }
 

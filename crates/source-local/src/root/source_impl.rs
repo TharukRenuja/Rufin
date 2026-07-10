@@ -10,7 +10,6 @@ pub(super) fn build_library(
     let mut artists = BTreeMap::<ArtistId, ArtistAccumulator>::new();
     let mut album_artists = BTreeMap::<ArtistId, ArtistAccumulator>::new();
     let mut genres = BTreeMap::<GenreId, GenreAccumulator>::new();
-    let mut covers = HashMap::new();
     let mut attempted_artist_cover_dirs = BTreeSet::<(ArtistId, PathBuf)>::new();
     let mut attempted_album_artist_cover_dirs = BTreeSet::<(ArtistId, PathBuf)>::new();
     let mut tracks = Vec::with_capacity(scanned.len());
@@ -61,7 +60,6 @@ pub(super) fn build_library(
             if let Some(cover) = cover {
                 let cover_id = cover_id(&cover);
                 let revision = cover_revision(&cover);
-                covers.entry(cover_id.clone()).or_insert(cover);
                 let image_ref = ImageRef::new(cover_id, revision);
                 track.image_ref = Some(image_ref.clone());
                 album_entry.album.image_ref = Some(image_ref);
@@ -106,7 +104,6 @@ pub(super) fn build_library(
                 &artist.name,
                 track_path,
                 artist_entry,
-                &mut covers,
                 &mut attempted_artist_cover_dirs,
             );
             artist_entry.tracks.insert(track.id.clone());
@@ -128,7 +125,6 @@ pub(super) fn build_library(
                 &artist.name,
                 track_path,
                 artist_entry,
-                &mut covers,
                 &mut attempted_album_artist_cover_dirs,
             );
             artist_entry.tracks.insert(track.id.clone());
@@ -160,7 +156,6 @@ pub(super) fn build_library(
         if let Some(cover) = embedded_cover_from_path(path) {
             let cover_id = cover_id(&cover);
             let revision = cover_revision(&cover);
-            covers.entry(cover_id.clone()).or_insert(cover);
             album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
         }
     }
@@ -241,7 +236,6 @@ pub(super) fn build_library(
         artists,
         album_artists,
         genres,
-        covers,
     }
 }
 
@@ -250,7 +244,6 @@ fn assign_local_artist_image_ref(
     artist_name: &str,
     track_path: Option<&Path>,
     artist: &mut ArtistAccumulator,
-    covers: &mut HashMap<String, LocalCover>,
     attempted_artist_cover_dirs: &mut BTreeSet<(ArtistId, PathBuf)>,
 ) {
     if artist.image_ref.is_some() {
@@ -269,7 +262,6 @@ fn assign_local_artist_image_ref(
         let cover = local_file_cover(path);
         let cover_id = cover_id(&cover);
         let revision = cover_revision(&cover);
-        covers.entry(cover_id.clone()).or_insert(cover);
         artist.image_ref = Some(ImageRef::new(cover_id, revision));
         return;
     }
@@ -466,8 +458,6 @@ pub(super) fn embedded_cover(
         .or_else(|| tagged_file.and_then(|file| select_best_picture_from_tags(file.tags())))?;
     Some(LocalCover::Embedded {
         path: path.to_path_buf(),
-        bytes: Arc::<[u8]>::from([]),
-        content_type: None,
         revision: Some(file_revision(path).unwrap_or_else(|| path_revision_fallback(path))),
     })
 }
@@ -502,17 +492,6 @@ pub(super) fn cover_revision(cover: &LocalCover) -> Option<String> {
     match cover {
         LocalCover::File { revision, .. } | LocalCover::Embedded { revision, .. } => {
             revision.clone()
-        }
-    }
-}
-pub(super) fn cover_url(cover: &LocalCover) -> SourceResult<String> {
-    match cover {
-        LocalCover::File { path, .. } | LocalCover::Embedded { path, .. } => {
-            Url::from_file_path(path)
-                .map(|url| url.to_string())
-                .map_err(|()| {
-                    SourceError::Other("could not turn cover path into a file URI".to_string())
-                })
         }
     }
 }
@@ -583,12 +562,7 @@ pub(super) fn manifest_cover_from_local(cover: &LocalCover) -> Option<LocalManif
                 .unwrap_or_else(|| path_revision_fallback(path)),
             embedded_index: None,
         }),
-        LocalCover::Embedded {
-            path,
-            content_type: _,
-            revision,
-            ..
-        } => Some(LocalManifestCover {
+        LocalCover::Embedded { path, revision } => Some(LocalManifestCover {
             item_id: cover_id(cover),
             kind: LocalManifestCoverKind::Embedded,
             source_path: path.clone(),
@@ -607,8 +581,6 @@ pub(super) fn local_cover_from_manifest(cover: &LocalManifestCover) -> LocalCove
         },
         LocalManifestCoverKind::Embedded => LocalCover::Embedded {
             path: cover.source_path.clone(),
-            bytes: Arc::<[u8]>::from([]),
-            content_type: None,
             revision: Some(cover.revision.clone()),
         },
     }

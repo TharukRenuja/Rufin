@@ -1,3 +1,4 @@
+use super::ensure_gstreamer_initialized;
 use gst::prelude::*;
 use gstreamer as gst;
 use std::time::{Duration, Instant};
@@ -13,7 +14,7 @@ pub fn generate_waveform_peaks_cancellable(
     uri: &str,
     cancelled: impl Fn() -> bool,
 ) -> Result<Vec<(f64, f64)>, String> {
-    gst::init().map_err(|error| error.to_string())?;
+    ensure_gstreamer_initialized()?;
     if cancelled() {
         return Err("waveform generation cancelled".to_string());
     }

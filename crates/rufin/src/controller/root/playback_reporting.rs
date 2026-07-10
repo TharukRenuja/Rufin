@@ -112,7 +112,7 @@ impl AppController {
         report_playback_async(
             self.store.clone(),
             Arc::clone(&self.runtime),
-            Arc::clone(&self.secrets),
+            Arc::clone(&self.active_source),
             self.events.clone(),
             source_id,
             report,

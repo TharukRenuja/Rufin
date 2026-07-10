@@ -69,7 +69,7 @@ jobs:
             labels+=("navidrome")
           fi
 
-          if [[ "$server_text" == *opensubsonic* || "$server_text" == *"open subsonic"* ]]; then
+          if [[ "$server_text" == *subsonic* ]]; then
             labels+=("opensubsonic")
           fi
 

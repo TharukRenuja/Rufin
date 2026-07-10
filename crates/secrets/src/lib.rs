@@ -147,9 +147,12 @@ impl SwitchableSecretStore {
         }
     }
 
-    pub fn replace(&self, inner: Arc<dyn SecretStore>) -> SecretResult<()> {
-        *self.inner.lock().map_err(|_| SecretError::Locked)? = inner;
-        Ok(())
+    pub fn replace(&self, inner: Arc<dyn SecretStore>) -> Arc<dyn SecretStore> {
+        let mut current = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::mem::replace(&mut *current, inner)
     }
 
     fn current(&self) -> SecretResult<Arc<dyn SecretStore>> {
@@ -780,9 +783,7 @@ mod tests {
             store.load_token(&source_id).expect("load first token"),
             Some("first-token".to_string())
         );
-        store
-            .replace(Arc::new(CachedSecretStore::new(second_inner)))
-            .expect("replace backend");
+        let _previous = store.replace(Arc::new(CachedSecretStore::new(second_inner)));
 
         assert_eq!(
             store.load_token(&source_id).expect("load second token"),

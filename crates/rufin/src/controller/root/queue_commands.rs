@@ -1216,6 +1216,7 @@ mod tests {
             .secrets
             .save_token(&saved.source.id, "queue-token")
             .expect("save source token");
+        install_active_source_for_test(&controller, &saved);
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let source_key = PlaySourceKey {
@@ -1298,6 +1299,7 @@ mod tests {
             .secrets
             .save_token(&saved.source.id, "queue-token")
             .expect("save source token");
+        install_active_source_for_test(&controller, &saved);
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let album_id = AlbumId::new("queue:album:reuse");
@@ -1387,6 +1389,7 @@ mod tests {
             .secrets
             .save_token(&saved.source.id, "queue-token")
             .expect("save source token");
+        install_active_source_for_test(&controller, &saved);
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let album_id = AlbumId::new("queue:album:clicked");
@@ -1444,6 +1447,7 @@ mod tests {
             .secrets
             .save_token(&saved.source.id, "queue-token")
             .expect("save source token");
+        install_active_source_for_test(&controller, &saved);
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let album_id = AlbumId::new("queue:album:shuffle");
@@ -1545,6 +1549,7 @@ mod tests {
             .secrets
             .save_token(&saved.source.id, "queue-token")
             .expect("save source token");
+        install_active_source_for_test(&controller, &saved);
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let album_id = AlbumId::new("queue:album:window");

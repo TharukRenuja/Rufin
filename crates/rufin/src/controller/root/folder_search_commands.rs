@@ -24,10 +24,10 @@ impl AppController {
     pub fn load_folder_for_active(&self, request_id: u64, path: Vec<FolderPathItem>) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         thread::spawn(move || {
-            let result = load_folder_detail(&store, &runtime, &secrets, &path);
+            let result = load_folder_detail(&store, &runtime, &active_source, &path);
             match result {
                 Ok(detail) => {
                     let _sent = events.send(ControllerEvent::FolderLoaded {

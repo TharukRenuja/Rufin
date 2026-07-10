@@ -1,5 +1,9 @@
 use super::*;
-use source::MusicSource;
+use source::{
+    FavoriteMutator, FolderBrowser, GeneratedTrackProvider, ImageProvider, MusicFolderProvider,
+    MusicSource, PlaylistCreator, PlaylistDeleter, PlaylistEntryMover, PlaylistEntryRemover,
+    PlaylistReader, PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider,
+};
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
@@ -26,12 +30,12 @@ async fn library_map_session() {
         .mount(&server)
         .await;
 
-    let session = JellyfinSource::login(LoginRequest {
+    let session = JellyfinSource::login(JellyfinLoginRequest {
         base_url: server.uri(),
         username: "demo".to_string(),
         password: "pw".to_string(),
         trust_invalid_cert: false,
-        device_id: Some("rufin-install-one".to_string()),
+        device_id: "rufin-install-one".to_string(),
     })
     .await
     .expect("login");
@@ -40,7 +44,7 @@ async fn library_map_session() {
     assert_eq!(session.source.name, "Music Box");
     assert_eq!(session.username, "demo");
     assert_eq!(session.access_token, "secret-token");
-    assert_eq!(session.device_id.as_deref(), Some("rufin-install-one"));
+    assert_eq!(session.device_id, "rufin-install-one");
 }
 #[test]
 fn library_bare_http() {
@@ -278,12 +282,13 @@ async fn library_image_params() {
     let provider = provider(&server, "secret-token");
 
     let image = provider
-        .image_bytes(ImageRequest {
-            item_id: "jellyfin:album:album-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: Some("album-tag-one".to_string()),
-            size: 256,
-        })
+        .image_bytes(
+            &ImageRef::new(
+                "jellyfin:album:album-one",
+                Some("album-tag-one".to_string()),
+            ),
+            256,
+        )
         .await
         .expect("image bytes");
 
@@ -311,12 +316,13 @@ async fn library_backdrop_image_params() {
     let provider = provider(&server, "secret-token");
 
     let image = provider
-        .image_bytes(ImageRequest {
-            item_id: "jellyfin:backdrop:artist-one".to_string(),
-            kind: ImageKind::Backdrop,
-            tag: Some("backdrop-tag-one".to_string()),
-            size: 256,
-        })
+        .image_bytes(
+            &ImageRef::new(
+                "jellyfin:backdrop:artist-one",
+                Some("backdrop-tag-one".to_string()),
+            ),
+            256,
+        )
         .await
         .expect("image bytes");
 
@@ -337,12 +343,7 @@ async fn image_bytes_rejects_oversized_response() {
     let provider = provider(&server, "secret-token");
 
     let error = provider
-        .image_bytes(ImageRequest {
-            item_id: "jellyfin:album:album-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 256,
-        })
+        .image_bytes(&ImageRef::new("jellyfin:album:album-one", None), 256)
         .await
         .expect_err("oversized image");
 
@@ -386,12 +387,7 @@ async fn library_image_token() {
     let provider = provider(&server, "secret-token");
 
     let error = provider
-        .image_bytes(ImageRequest {
-            item_id: "jellyfin:album:album-one".to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            size: 256,
-        })
+        .image_bytes(&ImageRef::new("jellyfin:album:album-one", None), 256)
         .await
         .expect_err("image error");
 

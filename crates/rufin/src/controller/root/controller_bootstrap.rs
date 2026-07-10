@@ -2,27 +2,45 @@ use super::*;
 
 impl AppController {
     pub(crate) fn bootstrap() -> Result<ControllerBootstrap, String> {
-        #[cfg(test)]
-        let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
             .map_err(|error| format!("failed to create Tokio runtime: {error}"))?;
-        let store = match StoreHandle::open_for_app() {
-            Ok(store) => store,
-            Err(error) => {
-                warn!(%error, "failed to open app store, falling back to memory");
-                StoreHandle::open_memory()
-                    .map_err(|error| format!("failed to open memory store: {error}"))?
-            }
-        };
+        let store = StoreHandle::open_for_app()?;
         let settings = load_settings_from_store(&store);
         let secret_switch = Arc::new(SwitchableSecretStore::new(platform_secret_store(&settings)));
         let secrets: Arc<dyn SecretStore> = Arc::<SwitchableSecretStore>::clone(&secret_switch);
-        let snapshot = load_runtime_snapshot(&store, &secrets).unwrap_or_else(|error| {
-            warn!(%error, "failed to load app snapshot");
-            LibrarySnapshot::first_run()
-        });
+        let mut snapshot = load_runtime_snapshot(&store, &secrets)?;
+        let active = if snapshot.first_run {
+            None
+        } else {
+            let selection = snapshot
+                .selected_source
+                .clone()
+                .ok_or_else(|| "Active library snapshot has no selected source.".to_string())?;
+            let saved = match selection {
+                LibrarySourceSelection::Local => {
+                    crate::sources::ensure_local_configured_source(&store)?
+                }
+                LibrarySourceSelection::Source(source_id) => store
+                    .with_store(|store| store.saved_source(&source_id))?
+                    .ok_or_else(|| "The selected source is no longer saved.".to_string())?,
+            };
+            match crate::sources::activate_configured_source(&store, &secrets, &saved) {
+                Ok(active) => {
+                    store.with_store(|store| store.set_active_source(&saved.source.id))?;
+                    Some(active)
+                }
+                Err(error) => {
+                    warn!(%error, source_id = %saved.source.id, "failed to activate selected source");
+                    snapshot.first_run = true;
+                    snapshot.sync_status =
+                        "Connect once more to continue using this server.".to_string();
+                    snapshot.last_error = None;
+                    None
+                }
+            }
+        };
         let queue = if snapshot.first_run && snapshot.source.is_some() {
             None
         } else {
@@ -42,10 +60,11 @@ impl AppController {
             ),
             store,
             runtime,
+            active_source: Arc::new(std::sync::RwLock::new(active)),
             secrets,
             secret_switch,
             queue: Arc::new(Mutex::new(queue)),
-            source_selection_generation: Arc::new(AtomicU64::new(0)),
+            source_transitions: Arc::new(SourceTransitions::new()),
             play_activation_generation: Arc::new(AtomicU64::new(0)),
             queue_persist_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -60,8 +79,7 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-            local_library_watcher: Arc::new(Mutex::new(None)),
-            remote_library_watcher: Arc::new(Mutex::new(None)),
+            source_freshness_watcher: Arc::new(Mutex::new(None)),
             external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
             events,
             sync_in_flight: InFlightGuards::new("Sync"),
@@ -70,8 +88,6 @@ impl AppController {
             cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashMap::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
-            #[cfg(test)]
-            _test_permit: test_permit,
         };
         controller.warm_playback_backend();
         Ok((
@@ -84,7 +100,6 @@ impl AppController {
     }
     #[cfg(test)]
     pub(in crate::controller) fn bootstrap_memory_for_test() -> ControllerBootstrap {
-        let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
@@ -107,10 +122,11 @@ impl AppController {
             ),
             store,
             runtime,
+            active_source: Arc::new(std::sync::RwLock::new(None)),
             secrets,
             secret_switch,
             queue: Arc::new(Mutex::new(None)),
-            source_selection_generation: Arc::new(AtomicU64::new(0)),
+            source_transitions: Arc::new(SourceTransitions::new()),
             play_activation_generation: Arc::new(AtomicU64::new(0)),
             queue_persist_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
@@ -128,8 +144,7 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-            local_library_watcher: Arc::new(Mutex::new(None)),
-            remote_library_watcher: Arc::new(Mutex::new(None)),
+            source_freshness_watcher: Arc::new(Mutex::new(None)),
             external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
             events,
             sync_in_flight: InFlightGuards::new("Sync"),
@@ -138,7 +153,6 @@ impl AppController {
             cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashMap::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
-            _test_permit: test_permit,
         };
         (
             controller,

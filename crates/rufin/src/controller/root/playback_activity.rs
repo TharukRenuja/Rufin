@@ -10,6 +10,7 @@ pub(in crate::controller) struct PlaybackActivityEntry {
     position_seconds: u32,
     play_recorded: bool,
     skip_recorded: bool,
+    store_play_count: bool,
     session_key: String,
 }
 
@@ -40,6 +41,8 @@ impl AppController {
             position_seconds,
             play_recorded: false,
             skip_recorded: false,
+            store_play_count: selected_active_source(&self.active_source, source_id)
+                .is_ok_and(|active| active.reporter.is_none()),
             session_key,
         };
         if let Ok(mut state) = self.playback_activity.lock() {
@@ -51,7 +54,7 @@ impl AppController {
     pub(in crate::controller) fn record_playback_activity_progress(&self, seconds: u32) {
         let play = self.play_activity_at(seconds);
         if let Some(activity) = play {
-            self.record_local_play(activity);
+            self.record_store_play(activity);
         }
     }
 
@@ -73,7 +76,7 @@ impl AppController {
             }
         };
         if let Some(activity) = play {
-            self.record_local_play(activity);
+            self.record_store_play(activity);
         }
     }
 
@@ -120,13 +123,16 @@ impl AppController {
         Some(activity.clone())
     }
 
-    fn record_local_play(&self, activity: PlaybackActivityEntry) {
+    fn record_store_play(&self, activity: PlaybackActivityEntry) {
+        if !activity.store_play_count {
+            return;
+        }
         if self.store.uses_disk_storage() {
             let store = self.store.clone();
             let events = self.events.clone();
-            thread::spawn(move || record_local_play_now(store, events, activity));
+            thread::spawn(move || record_store_play_now(store, events, activity));
         } else {
-            record_local_play_now(self.store.clone(), self.events.clone(), activity);
+            record_store_play_now(self.store.clone(), self.events.clone(), activity);
         }
     }
 
@@ -141,18 +147,12 @@ impl AppController {
     }
 }
 
-fn record_local_play_now(
+fn record_store_play_now(
     store: StoreHandle,
     events: Sender<ControllerEvent>,
     activity: PlaybackActivityEntry,
 ) {
     let result = store.with_store(|store| {
-        let Some(saved) = store.saved_source(&activity.source_id)? else {
-            return Ok(false);
-        };
-        if saved.source.kind != LOCAL_SOURCE_ID {
-            return Ok(false);
-        }
         store.record_local_track_played(
             &activity.source_id,
             &activity.track_id,
@@ -171,7 +171,7 @@ fn record_local_play_now(
                 source_id = %activity.source_id,
                 track_id = %activity.track_id,
                 entry_id = activity.entry_id.as_str(),
-                "failed to update local play count"
+                "failed to update Store play count"
             );
         }
     }
@@ -246,6 +246,16 @@ mod tests {
         }
     }
 
+    fn activate_source(controller: &AppController, saved: &SavedSource) {
+        let active = crate::sources::activate_configured_source(
+            &controller.store,
+            &controller.secrets,
+            saved,
+        )
+        .expect("activate source");
+        *controller.active_source.write().expect("active source") = Some(active);
+    }
+
     #[test]
     fn playback_track_short() {
         assert_eq!(play_threshold_seconds(8), 8);
@@ -277,7 +287,8 @@ mod tests {
             .with_store(|store| {
                 store.save_source(&saved)?;
                 store.set_active_source(&source_id)?;
-                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)?;
+                let generation = store.begin_sync(&source_id)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), generation)?;
                 Ok(())
             })
             .expect("seed local server");
@@ -285,6 +296,7 @@ mod tests {
         queue.play_now(&track);
         let entry = queue.current().expect("current").clone();
         *controller.queue.lock().expect("queue") = Some(queue);
+        activate_source(&controller, &saved);
 
         controller.start_playback_activity(&source_id, &entry, 0);
         controller.record_playback_activity_progress(90);
@@ -307,12 +319,14 @@ mod tests {
             .store
             .with_store(|store| {
                 store.save_source(&saved)?;
-                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+                let generation = store.begin_sync(&source_id)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), generation)
             })
             .expect("seed activity track");
         let mut queue = QueueEngine::new(source_id.clone());
         queue.play_now(&track);
         let entry = queue.current().expect("current entry").clone();
+        activate_source(&controller, &saved);
 
         controller.start_playback_activity(&source_id, &entry, 0);
         controller.record_current_skip_if_needed();
@@ -342,13 +356,15 @@ mod tests {
             .store
             .with_store(|store| {
                 store.save_source(&saved)?;
-                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+                let generation = store.begin_sync(&source_id)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), generation)
             })
             .expect("seed activity track");
         let mut queue = QueueEngine::new(source_id.clone());
         queue.play_now(&track);
         let entry = queue.current().expect("current entry").clone();
         let threshold = play_threshold_seconds(entry.duration_seconds);
+        activate_source(&controller, &saved);
 
         controller.start_playback_activity(&source_id, &entry, threshold);
         let play_delta = wait_for_activity_delta(&events);
@@ -372,13 +388,15 @@ mod tests {
             .store
             .with_store(|store| {
                 store.save_source(&saved)?;
-                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+                let generation = store.begin_sync(&source_id)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), generation)
             })
             .expect("seed activity track");
         let mut queue = QueueEngine::new(source_id.clone());
         queue.play_now(&track);
         let entry = queue.current().expect("current entry").clone();
         *controller.queue.lock().expect("queue") = Some(queue);
+        activate_source(&controller, &saved);
         controller.start_playback_activity(&source_id, &entry, 0);
 
         *controller.playback.lock().expect("playback") = Box::new(PlaybackEvents {

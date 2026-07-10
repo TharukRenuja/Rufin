@@ -2,10 +2,11 @@ use super::covers;
 pub use super::discovery::{DiscoveredServer, ServerDiscoveryStatus};
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
 use crate::external_scrobbling::{self, ExternalScrobbleState};
+#[cfg(test)]
+pub(in crate::controller) use crate::sources::local_configured_source as local_source_saved;
 use crate::sources::{
-    JellyfinLibraryChange, JellyfinLyricsSearch, LoadedSource, StreamingSource,
-    jellyfin_stream_descriptor_from_saved_session, login_source, source_display_name,
-    source_from_saved,
+    ActiveSource, ActiveSourceSlot, OperationOwner, current_active_source,
+    map_server_path_to_local, selected_active_source,
 };
 use crate::{cover_art_policy, external_metadata};
 use directories::ProjectDirs;
@@ -15,16 +16,14 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
     ExternalLyricsProvider, FolderPathItem, GeneratedTrackSeed, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibraryField, LibraryListSettings, LibrarySourceSelection,
-    LocalLibraryFolder, LocalManifestEntry, LocalManifestScan, Mood, MoodId, MusicFolder,
-    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
+    LocalLibraryFolder, LocalManifestScan, Mood, MoodId, MusicFolder, MusicFolderId,
+    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
     PlaylistEntrySortDescriptor, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion,
     QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
     SecretStorageMode, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceCapabilities,
-    SourceFeatureOwner, SourceFeatureSupport, SourceId, SourceIdentity, SourceOrder,
-    SourcePlaylistCapabilities, SourcePlaylistOperation, SourcePlaylistOperationSupport,
-    StreamDescriptor, StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey,
-    TrackTableSettings,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceFeatureOwner,
+    SourceId, SourceIdentity, SourceOrder, SourcePlaylistOperation, StreamDescriptor,
+    StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
@@ -47,9 +46,9 @@ use secrets::{
 };
 use serde::{Deserialize, Serialize};
 use source::{
-    FavoriteItemId, FolderDetail, Lyrics, MusicSource, PagedRequest, PlaybackReport,
-    PlaybackReportKind, PlaylistEntry, SavedSourceSession, SearchResults, SourceSession,
-    StreamRequest,
+    FavoriteItemId, FolderDetail, Lyrics, LyricsSearch, MusicFolderProvider, MusicSource,
+    PagedRequest, PlaybackReport, PlaybackReportKind, PlaylistEntry, PlaylistReader, SearchResults,
+    StreamRequest, TrackChange,
 };
 #[cfg(test)]
 use source::{LyricLine, LyricsSource, PlayedFilter};
@@ -59,8 +58,6 @@ use std::fs;
 use std::hash::Hash;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -73,6 +70,7 @@ use tracing::{debug, info, instrument, warn};
 
 mod active_source_reconciliation;
 mod auto_dj;
+pub(crate) use auto_dj::{cached_auto_dj_operation, native_auto_dj_operation};
 mod auto_dj_commands;
 mod cached_library_api;
 mod cached_reads;
@@ -101,9 +99,11 @@ mod refresh_commands;
 mod remote_library_watcher;
 mod settings_controller;
 mod source_cache_commands;
-mod source_capabilities;
 mod source_image_policy;
 mod source_lifecycle_commands;
+pub(in crate::controller) use source_lifecycle_commands::{
+    SourcePersistenceSnapshot, save_source_settings,
+};
 mod source_local_access_commands;
 mod source_presentation;
 mod source_readiness;
@@ -123,10 +123,10 @@ mod startup_sync_tests;
 #[cfg(test)]
 mod test_support;
 
-pub(in crate::controller) use active_source_reconciliation::*;
-pub(in crate::controller) use cached_reads::*;
-pub(in crate::controller) use controller_startup::*;
-use local_library_watcher::{LocalLibraryWatcher, refresh_local_library_watcher};
+pub(crate) use active_source_reconciliation::*;
+pub(crate) use cached_reads::*;
+pub(crate) use controller_startup::*;
+pub(crate) use local_library_watcher::local_freshness_operations;
 pub(crate) use play_activation::{
     FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
@@ -139,23 +139,24 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
-use remote_library_watcher::{RemoteLibraryWatcher, refresh_remote_library_watcher};
-pub(in crate::controller) use source_capabilities::source_capabilities_for_saved;
+pub(crate) use remote_library_watcher::{event_freshness_operations, poll_freshness_operations};
+pub(in crate::controller) use source_image_policy::is_local_source_image_ref;
 use source_image_policy::{
-    is_local_album_id, is_local_artist_id, is_local_source_image_ref, is_local_track_id,
-    scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed,
+    is_local_album_id, is_local_artist_id, is_local_track_id, scrub_home_refs,
+    scrub_source_image_ref, source_image_ref_allowed,
 };
 pub(in crate::controller) use source_image_policy::{
     scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
     scrub_selected_genre_image_refs, scrub_selected_mood_image_refs,
     scrub_selected_playlist_image_refs, scrub_selected_track_image_refs, scrub_smart_refs,
 };
-pub(crate) use source_local_access_commands::SourceSettingsInput;
 use source_presentation::{load_runtime_snapshot, load_snapshot};
-#[cfg(test)]
-use source_readiness::{
-    SourceSyncReadinessInput, SyncRequiredReason, active_source_readiness, source_sync_readiness,
+pub(crate) use source_readiness::{
+    SourceSyncReadiness, filesystem_initial_cover_requirement, incremental_readiness_evaluator,
+    local_readiness_evaluator, source_initial_cover_requirement,
 };
+#[cfg(test)]
+use source_readiness::{SyncRequiredReason, active_source_readiness};
 use source_readiness::{active_source_needs_sync, active_source_startup_readiness};
 pub(in crate::controller) use source_refs::track_album_refs_with_settings;
 use source_refs::{
@@ -184,11 +185,10 @@ const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
 const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
 const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
 const TMP_CACHE_DIR_NAME: &str = "tmp";
-pub(in crate::controller) const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
+pub(crate) const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
     pub source: Option<SourceIdentity>,
-    pub source_capabilities: SourceCapabilities,
     pub sources: Vec<SourceIdentity>,
     pub selected_source: Option<LibrarySourceSelection>,
     pub local_folders: Vec<LocalLibraryFolder>,
@@ -197,7 +197,6 @@ pub struct LibrarySnapshot {
     pub local_access_status: LocalAccessStatus,
     pub music_folders: Vec<MusicFolder>,
     pub selected_music_folder_id: Option<MusicFolderId>,
-    pub username: Option<String>,
     pub first_run: bool,
     pub sync_status: String,
     pub last_error: Option<String>,
@@ -256,9 +255,6 @@ pub struct SourceLocalAccessSnapshot {
     pub access: Option<SourceLocalAccess>,
     pub status: LocalAccessStatus,
     pub selected_music_folder_name: Option<String>,
-    pub username: Option<String>,
-    pub trust_invalid_cert: bool,
-    pub use_jellyfin_instant_mix: bool,
     pub sync_status: String,
     pub cached_album_count: usize,
     pub cached_track_count: usize,
@@ -327,7 +323,6 @@ impl LibrarySnapshot {
     fn first_run() -> Self {
         Self {
             source: None,
-            source_capabilities: SourceCapabilities::default(),
             sources: Vec::new(),
             selected_source: None,
             local_folders: Vec::new(),
@@ -336,7 +331,6 @@ impl LibrarySnapshot {
             local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),
             selected_music_folder_id: None,
-            username: None,
             first_run: true,
             sync_status: String::new(),
             last_error: None,
@@ -455,28 +449,16 @@ pub enum ControllerEvent {
     Error(String),
 }
 
-#[derive(Clone, Debug)]
-pub struct LoginRequest {
-    pub source: StreamingSource,
-    pub server_name: Option<String>,
-    pub server_url: String,
-    pub username: String,
-    pub password: String,
-    pub trust_invalid_cert: bool,
-    pub use_jellyfin_instant_mix: bool,
-    pub local_access_root: Option<PathBuf>,
-    pub path_replace_from: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct AppController {
     pub(in crate::controller) store: StoreHandle,
     pub(in crate::controller) runtime: Arc<Runtime>,
+    pub(in crate::controller) active_source: ActiveSourceSlot,
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     secret_switch: Arc<SwitchableSecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
-    source_selection_generation: Arc<AtomicU64>,
+    source_transitions: Arc<SourceTransitions>,
     play_activation_generation: Arc<AtomicU64>,
     queue_persist_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
@@ -489,8 +471,7 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(SourceId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
-    local_library_watcher: Arc<Mutex<Option<LocalLibraryWatcher>>>,
-    remote_library_watcher: Arc<Mutex<Option<RemoteLibraryWatcher>>>,
+    source_freshness_watcher: Arc<Mutex<Option<Box<dyn crate::sources::FreshnessWatcher>>>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<SourceId>,
@@ -499,8 +480,40 @@ pub struct AppController {
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
-    #[cfg(test)]
-    _test_permit: Option<ControllerTestPermit>,
+}
+
+/// Ignore outdated source work before it starts. Once a source change starts,
+/// finish it before applying the next one
+struct SourceTransitions {
+    generation: AtomicU64,
+    commit: Mutex<()>,
+}
+
+impl SourceTransitions {
+    fn new() -> Self {
+        Self {
+            generation: AtomicU64::new(0),
+            commit: Mutex::new(()),
+        }
+    }
+
+    fn begin(&self) -> u64 {
+        self.generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    fn current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn commit(&self, generation: u64) -> Result<Option<std::sync::MutexGuard<'_, ()>>, String> {
+        let guard = self
+            .commit
+            .lock()
+            .map_err(|_| "source transition lock was poisoned".to_string())?;
+        Ok(self.current(generation).then_some(guard))
+    }
 }
 
 pub(crate) type ControllerBootstrap = (
@@ -517,37 +530,6 @@ pub(crate) fn smart_playlist_definition_fingerprint(
     serde_json::to_string(definition).unwrap_or_else(|_| "unavailable".to_string())
 }
 
-#[cfg(test)]
-#[derive(Clone)]
-struct ControllerTestPermit {
-    _inner: Arc<ControllerTestPermitInner>,
-}
-#[cfg(test)]
-struct ControllerTestPermitInner;
-#[cfg(test)]
-static CONTROLLER_TEST_GATE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
-#[cfg(test)]
-fn controller_test_permit() -> ControllerTestPermit {
-    let (lock, cvar) = CONTROLLER_TEST_GATE.get_or_init(|| (Mutex::new(false), Condvar::new()));
-    let mut occupied = lock.lock().expect("controller test gate");
-    while *occupied {
-        occupied = cvar.wait(occupied).expect("controller test gate");
-    }
-    *occupied = true;
-    ControllerTestPermit {
-        _inner: Arc::new(ControllerTestPermitInner),
-    }
-}
-#[cfg(test)]
-impl Drop for ControllerTestPermitInner {
-    fn drop(&mut self) {
-        let (lock, cvar) = CONTROLLER_TEST_GATE.get_or_init(|| (Mutex::new(false), Condvar::new()));
-        if let Ok(mut occupied) = lock.lock() {
-            *occupied = false;
-            cvar.notify_one();
-        }
-    }
-}
 #[derive(Clone)]
 pub(in crate::controller) struct InFlightGuards<K>
 where
@@ -557,7 +539,7 @@ where
     inner: Arc<Mutex<HashMap<K, CancellationToken>>>,
 }
 #[derive(Clone, Debug)]
-pub(in crate::controller) struct CancellationToken {
+pub(crate) struct CancellationToken {
     cancelled: Arc<AtomicBool>,
 }
 pub(in crate::controller) struct InFlightPermit<K>
@@ -581,6 +563,10 @@ impl CancellationToken {
 
     pub(in crate::controller) fn cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
     }
 }
 impl<K> InFlightGuards<K>
@@ -632,7 +618,7 @@ where
 {
     fn acquire(&self, key: K) -> Result<Option<InFlightPermit<K>>, String> {
         let mut running = self.inner.lock().map_err(|_| self.poisoned_message())?;
-        if running.contains_key(&key) {
+        if running.get(&key).is_some_and(|token| !token.cancelled()) {
             return Ok(None);
         }
         let token = CancellationToken::new();
@@ -662,7 +648,12 @@ where
         };
         match self.guards.inner.lock() {
             Ok(mut running) => {
-                running.remove(&key);
+                if running
+                    .get(&key)
+                    .is_some_and(|current| current.same_instance(&self.token))
+                {
+                    running.remove(&key);
+                }
             }
             Err(_) => {
                 warn!(
@@ -676,15 +667,16 @@ where
 pub(in crate::controller) struct HomeRefreshContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    active_source: ActiveSourceSlot,
     events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<SourceId>,
     home_refresh_in_flight: InFlightGuards<SourceId>,
 }
 #[derive(Clone)]
-pub(in crate::controller) struct SyncContext {
+pub(crate) struct SyncContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
+    active_source: ActiveSourceSlot,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
     queue: Arc<Mutex<Option<QueueEngine>>>,
@@ -700,7 +692,7 @@ pub(in crate::controller) struct SyncContext {
 pub(in crate::controller) struct ExplorePrefetchContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    active_source: ActiveSourceSlot,
     events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<SourceId>,
     explore_prefetch_in_flight: InFlightGuards<SourceId>,
@@ -709,12 +701,15 @@ pub(in crate::controller) struct ExplorePrefetchContext {
 pub(in crate::controller) enum HomeRefreshTarget {
     Section(HomeSectionKind),
 }
+/// Keep one current settings value and save one complete change at a time
 #[derive(Clone)]
-pub(in crate::controller) enum StoreHandle {
+pub(crate) enum StoreHandle {
     Path {
         cache_database_path: PathBuf,
         settings_path: PathBuf,
+        settings: Arc<Mutex<AppSettings>>,
     },
+    #[cfg(test)]
     Memory {
         store: Arc<Mutex<Store>>,
         settings: Arc<Mutex<AppSettings>>,
@@ -735,13 +730,20 @@ impl StoreHandle {
         Store::open(&cache_database_path).map_err(|error| error.to_string())?;
 
         let settings_path = app_settings_path();
+        let settings = match fs::read_to_string(&settings_path) {
+            Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string())?,
+            Err(error) if error.kind() == ErrorKind::NotFound => AppSettings::default(),
+            Err(error) => return Err(error.to_string()),
+        };
         let handle = Self::Path {
             cache_database_path,
             settings_path,
+            settings: Arc::new(Mutex::new(settings)),
         };
         Ok(handle)
     }
 
+    #[cfg(test)]
     pub(in crate::controller) fn open_memory() -> Result<Self, String> {
         Store::open_memory()
             .map(|store| Self::Memory {
@@ -755,7 +757,7 @@ impl StoreHandle {
         matches!(self, Self::Path { .. })
     }
 
-    pub(in crate::controller) fn with_store<T>(
+    pub(crate) fn with_store<T>(
         &self,
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, String> {
@@ -767,6 +769,7 @@ impl StoreHandle {
                 let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
                 operation(&store).map_err(|error| error.to_string())
             }
+            #[cfg(test)]
             Self::Memory { store, .. } => {
                 let store = store
                     .lock()
@@ -788,6 +791,7 @@ impl StoreHandle {
                 let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
                 operation(&store)
             }
+            #[cfg(test)]
             Self::Memory { store, .. } => {
                 let store = store
                     .lock()
@@ -810,6 +814,7 @@ impl StoreHandle {
                     .map_err(|error| error.to_string())?;
                 operation(&store).map_err(|error| error.to_string())
             }
+            #[cfg(test)]
             Self::Memory { store, .. } => {
                 let store = store
                     .lock()
@@ -819,26 +824,31 @@ impl StoreHandle {
         }
     }
 
-    pub(in crate::controller) fn load_settings(&self) -> Result<AppSettings, String> {
+    pub(crate) fn load_settings(&self) -> AppSettings {
         match self {
-            Self::Path { settings_path, .. } => match fs::read_to_string(settings_path) {
-                Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string()),
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(AppSettings::default()),
-                Err(error) => Err(error.to_string()),
-            },
+            Self::Path { settings, .. } => settings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
+            #[cfg(test)]
             Self::Memory { settings, .. } => settings
                 .lock()
-                .map(|settings| settings.clone())
-                .map_err(|_| "settings lock was poisoned".to_string()),
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
         }
     }
 
-    pub(in crate::controller) fn save_settings(
-        &self,
-        settings: &AppSettings,
-    ) -> Result<(), String> {
+    #[cfg(test)]
+    pub(crate) fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
         match self {
-            Self::Path { settings_path, .. } => {
+            Self::Path {
+                settings_path,
+                settings: stored,
+                ..
+            } => {
+                let mut stored = stored
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if let Some(parent) = settings_path.parent() {
                     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
                 }
@@ -848,16 +858,58 @@ impl StoreHandle {
                 fs::write(&temp_path, format!("{value}\n")).map_err(|error| error.to_string())?;
                 restrict_settings_file(&temp_path).map_err(|error| error.to_string())?;
                 fs::rename(&temp_path, settings_path).map_err(|error| error.to_string())?;
+                *stored = settings.clone();
                 Ok(())
             }
+            #[cfg(test)]
             Self::Memory {
                 settings: stored, ..
             } => {
                 let mut stored = stored
                     .lock()
-                    .map_err(|_| "settings lock was poisoned".to_string())?;
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 *stored = settings.clone();
                 Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn update_settings<T>(
+        &self,
+        update: impl FnOnce(&mut AppSettings) -> Result<T, String>,
+    ) -> Result<T, String> {
+        match self {
+            Self::Path {
+                settings_path,
+                settings,
+                ..
+            } => {
+                let mut stored = settings
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut next = stored.clone();
+                let output = update(&mut next)?;
+                if let Some(parent) = settings_path.parent() {
+                    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                }
+                let value =
+                    serde_json::to_string_pretty(&next).map_err(|error| error.to_string())?;
+                let temp_path = settings_path.with_extension("json.tmp");
+                fs::write(&temp_path, format!("{value}\n")).map_err(|error| error.to_string())?;
+                restrict_settings_file(&temp_path).map_err(|error| error.to_string())?;
+                fs::rename(&temp_path, settings_path).map_err(|error| error.to_string())?;
+                *stored = next;
+                Ok(output)
+            }
+            #[cfg(test)]
+            Self::Memory { settings, .. } => {
+                let mut stored = settings
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut next = stored.clone();
+                let output = update(&mut next)?;
+                *stored = next;
+                Ok(output)
             }
         }
     }

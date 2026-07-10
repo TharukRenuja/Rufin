@@ -112,7 +112,7 @@ impl WaveformCancellation {
 struct WaveformWarmWorker {
     store: StoreHandle,
     runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    active_source: ActiveSourceSlot,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     generation: Arc<AtomicU64>,
     request_generation: u64,
@@ -150,7 +150,7 @@ impl AppController {
 
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let events = self.events.clone();
         thread::spawn(move || {
@@ -163,7 +163,7 @@ impl AppController {
                 playback_settings,
             };
             let Some((uri, redacted_uri)) =
-                waveform_source_for_track(&store, &runtime, &secrets, &request)
+                waveform_source_for_track(&store, &runtime, &active_source, &request)
             else {
                 return;
             };
@@ -205,7 +205,7 @@ impl AppController {
             WaveformWarmWorker {
                 store: self.store.clone(),
                 runtime: Arc::clone(&self.runtime),
-                secrets: Arc::clone(&self.secrets),
+                active_source: Arc::clone(&self.active_source),
                 playback_snapshot: Arc::clone(&self.playback_snapshot),
                 generation: Arc::clone(&self.waveform_warm_generation),
                 request_generation: generation,
@@ -374,9 +374,12 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmReque
     if !waveform_warm_resolve_can_run(&worker.playback_snapshot) {
         return;
     }
-    let Some((uri, redacted_uri)) =
-        waveform_source_for_track(&worker.store, &worker.runtime, &worker.secrets, &request)
-    else {
+    let Some((uri, redacted_uri)) = waveform_source_for_track(
+        &worker.store,
+        &worker.runtime,
+        &worker.active_source,
+        &request,
+    ) else {
         return;
     };
     if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
@@ -405,13 +408,13 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmReque
 fn waveform_source_for_track(
     store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
+    active_source: &ActiveSourceSlot,
     request: &WaveformWarmRequest,
 ) -> Option<(String, String)> {
     let stream = resolve_stream(
         store,
         runtime,
-        secrets,
+        active_source,
         &request.source_id,
         &request.track_id,
         &request.playback_settings,

@@ -37,7 +37,7 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn persist_current_queue_snapshot_deferred(&self) {
-        if matches!(&self.store, StoreHandle::Memory { .. }) {
+        if !self.store.uses_disk_storage() {
             self.persist_current_queue_snapshot();
             return;
         }
@@ -50,7 +50,7 @@ impl AppController {
         );
     }
     pub(in crate::controller) fn persist_queue_snapshot_deferred(&self, snapshot: QueueSnapshot) {
-        if matches!(&self.store, StoreHandle::Memory { .. }) {
+        if !self.store.uses_disk_storage() {
             self.persist_queue_snapshot(&snapshot);
             return;
         }
