@@ -20,20 +20,6 @@ impl AppController {
             start_background_sync_thread(self.sync_context(), saved);
         }
     }
-    #[cfg(test)]
-    pub fn resync_active_source(&self) {
-        let active = self
-            .store
-            .with_store(|store| store.active_source())
-            .unwrap_or(None);
-        if let Some(saved) = active {
-            self.start_sync(saved);
-        } else {
-            let _sent = self.events.send(ControllerEvent::Error(
-                "No active music server is saved.".to_string(),
-            ));
-        }
-    }
     pub fn resync_server(&self, source_id: SourceId) {
         let saved = self
             .store

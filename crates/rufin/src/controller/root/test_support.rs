@@ -678,15 +678,6 @@ pub(in crate::controller) fn random_request(
         played_filter: PlayedFilter::All,
     }
 }
-pub(in crate::controller) fn random_track_ids(tracks: &[Track], limit: usize) -> Vec<TrackId> {
-    let mut ids = tracks
-        .iter()
-        .map(|track| track.id.clone())
-        .collect::<Vec<_>>();
-    ids.sort_by_key(|id| id.as_str().to_string());
-    ids.truncate(limit);
-    ids
-}
 pub(in crate::controller) fn wait_for_cover_ready(
     events: &Receiver<ControllerEvent>,
     expected_key: &str,
@@ -780,31 +771,6 @@ pub(in crate::controller) fn wait_for_shuffle_without_queue(
             _ => {}
         }
     }
-}
-pub(in crate::controller) fn wait_for_playback_track_position(
-    controller: &AppController,
-    events: &Receiver<ControllerEvent>,
-    track_id: &TrackId,
-    position_millis: u64,
-) -> super::PlaybackSnapshot {
-    wait_for_polled_event(
-        controller,
-        events,
-        "playback track position",
-        |event| match event {
-            ControllerEvent::Playback(playback)
-                if playback.position_millis == position_millis
-                    && playback
-                        .current
-                        .as_ref()
-                        .is_some_and(|entry| &entry.track_id == track_id) =>
-            {
-                Some(*playback)
-            }
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-            _ => None,
-        },
-    )
 }
 pub(in crate::controller) fn wait_for_playback_auto_dj(
     events: &Receiver<ControllerEvent>,

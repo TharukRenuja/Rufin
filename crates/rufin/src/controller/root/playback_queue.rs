@@ -285,7 +285,7 @@ pub(in crate::controller) fn load_folder_detail(
         .ok_or_else(|| "No active server.".to_string())?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
-    let settings = load_settings_for_saved(store, &saved);
+    let settings = load_settings_from_store(store);
     let capabilities = source_capabilities_for_saved(&saved);
     if capabilities.folder_browsing.owner().is_none() {
         return Err("Folder browsing is not supported by the active source.".to_string());
@@ -397,7 +397,7 @@ pub(in crate::controller) fn report_playback_async(
         else {
             return;
         };
-        if saved.source.kind == "fake" || saved.source.kind == "local" {
+        if saved.source.kind == "local" {
             return;
         }
         let result = source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {

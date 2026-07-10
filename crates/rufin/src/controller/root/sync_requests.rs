@@ -24,12 +24,6 @@ pub(in crate::controller) fn resolve_stream(
         cue_source,
         local_path,
     } = playback_stream_lookup(store, source_id, track_id)?;
-    if saved.source.kind == "fake" {
-        return Ok(StreamDescriptor::new(format!(
-            "fake://local/stream/{}",
-            track_id.as_str()
-        )));
-    }
     if let Some(source) = cue_source.as_ref()
         && let Some(stream) = cue_track_stream_from_source(source)?
     {

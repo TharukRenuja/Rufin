@@ -1,15 +1,29 @@
 use super::*;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+
+fn controller_with_current_track(
+    saved: &SavedSource,
+    track: &Track,
+) -> (AppController, Receiver<ControllerEvent>) {
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(&store, saved, &[], std::slice::from_ref(track), &[]);
+    let mut queue = QueueEngine::new(saved.source.id.clone());
+    queue.play_now(track);
+    store
+        .with_store(|store| store.save_queue_snapshot(&queue.snapshot()))
+        .expect("seed current track");
+    controller_from_store_for_test(store)
+}
 
 #[test]
-pub(in crate::controller) fn lyrics_update_controls() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let album = snapshot
-        .albums
-        .iter()
-        .find(|album| !album.favorite)
-        .expect("non-favorite album")
-        .clone();
+pub(in crate::controller) fn store_album_favorite_updates_projection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let album = local_album_with_image_ref(ImageRef::new("local:album:favorite", None));
+    seed_cached_library(&store, &saved, std::slice::from_ref(&album), &[], &[]);
+    let (controller, events) = controller_from_store_for_test(store);
+
     controller.set_album_favorite(album.id.clone(), true);
     let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
     assert_eq!(item_id, FavoriteItemId::Album(album.id.clone()));
@@ -36,65 +50,20 @@ pub(in crate::controller) fn lyrics_update_controls() {
     );
 }
 #[test]
-pub(in crate::controller) fn lyrics_remove_entry() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let third = snapshot.tracks[2].clone();
-    controller.create_playlist(
-        "Controller Playlist".to_string(),
-        vec![first.clone(), second.clone()],
-    );
-    let snapshot = wait_for_snapshot(&events);
-    let playlist = snapshot
-        .playlists
-        .iter()
-        .find(|playlist| playlist.name == "Controller Playlist")
-        .expect("created playlist")
-        .clone();
-    assert_playlist_order(
-        &controller,
-        &playlist.id,
-        &[first.id.as_str(), second.id.as_str()],
-    );
-    let detail = controller
-        .cached_playlist_detail(&playlist.id)
-        .expect("playlist detail")
-        .expect("playlist detail");
-    controller.move_playlist_entry(playlist.id.clone(), detail.entries[1].entry_id.clone(), 0);
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
-    assert_eq!(changed_id, playlist.id);
-    assert_playlist_order(
-        &controller,
-        &playlist.id,
-        &[second.id.as_str(), first.id.as_str()],
-    );
-    controller.add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
-    assert_eq!(changed_id, playlist.id);
-    assert_playlist_order(
-        &controller,
-        &playlist.id,
-        &[second.id.as_str(), first.id.as_str(), third.id.as_str()],
-    );
-    let detail = controller
-        .cached_playlist_detail(&playlist.id)
-        .expect("playlist detail")
-        .expect("playlist detail");
-    controller.remove_playlist_entry(playlist.id.clone(), detail.entries[0].entry_id.clone());
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
-    assert_eq!(changed_id, playlist.id);
-    assert_playlist_order(
-        &controller,
-        &playlist.id,
-        &[first.id.as_str(), third.id.as_str()],
-    );
-}
-#[test]
-pub(in crate::controller) fn playlist_create_empty() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+pub(in crate::controller) fn store_empty_playlist_has_empty_detail() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    seed_cached_library(&store, &saved, &[], &[], &[]);
+    let root = self::unique_test_dir("empty-local-playlist");
+    fs::create_dir_all(&root).expect("create empty local root");
+    let mut settings = store.load_settings().expect("load settings");
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save local settings");
+    let (controller, events) = controller_from_store_for_test(store);
+
     controller.create_playlist("Empty Playlist".to_string(), Vec::new());
     let snapshot = wait_for_snapshot(&events);
     let playlist = snapshot
@@ -113,30 +82,32 @@ pub(in crate::controller) fn playlist_create_empty() {
             .entries
             .is_empty()
     );
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
-pub(in crate::controller) fn local_playlist_commands_use_store_owner() {
+pub(in crate::controller) fn store_playlist_commands_preserve_exact_order() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
-    let generation = begin_active_sync(&store, &saved);
     let mut first = restored_track();
     first.id = TrackId::new("local:track:playlist-one");
     let mut second = restored_track();
     second.id = TrackId::new("local:track:playlist-two");
-    store
-        .with_store(|store| {
-            store.upsert_tracks(
-                &saved.source.id,
-                &[first.clone(), second.clone()],
-                generation,
-            )?;
-            store.complete_sync(&saved.source.id, generation)
-        })
-        .expect("seed local tracks");
+    let mut third = restored_track();
+    third.id = TrackId::new("local:track:playlist-three");
+    seed_cached_library(
+        &store,
+        &saved,
+        &[],
+        &[first.clone(), second.clone(), third.clone()],
+        &[],
+    );
     let (controller, events) = controller_from_store_for_test(store.clone());
 
-    controller.create_playlist("Local Playlist".to_string(), vec![first.clone()]);
+    controller.create_playlist(
+        "Local Playlist".to_string(),
+        vec![first.clone(), second.clone()],
+    );
     let snapshot = wait_for_snapshot(&events);
     let playlist = snapshot
         .playlists
@@ -150,26 +121,65 @@ pub(in crate::controller) fn local_playlist_commands_use_store_owner() {
             .expect("playlist owner"),
         Some(SourceFeatureOwner::Store)
     );
-
-    controller.add_tracks_to_playlist(playlist.id.clone(), vec![second.clone()]);
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
-    assert_eq!(changed_id, playlist.id);
     assert_playlist_order(
         &controller,
         &playlist.id,
         &[first.id.as_str(), second.id.as_str()],
     );
+
+    let detail = controller
+        .cached_playlist_detail(&playlist.id)
+        .expect("playlist detail")
+        .expect("playlist detail");
+    controller.move_playlist_entry(playlist.id.clone(), detail.entries[1].entry_id.clone(), 0);
+    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    assert_eq!(changed_id, playlist.id);
+    assert_playlist_order(
+        &controller,
+        &playlist.id,
+        &[second.id.as_str(), first.id.as_str()],
+    );
+
+    controller.add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
+    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    assert_eq!(changed_id, playlist.id);
+    assert_playlist_order(
+        &controller,
+        &playlist.id,
+        &[second.id.as_str(), first.id.as_str(), third.id.as_str()],
+    );
+
+    let detail = controller
+        .cached_playlist_detail(&playlist.id)
+        .expect("playlist detail")
+        .expect("playlist detail");
+    controller.remove_playlist_entry(playlist.id.clone(), detail.entries[0].entry_id.clone());
+    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    assert_eq!(changed_id, playlist.id);
+    assert_playlist_order(
+        &controller,
+        &playlist.id,
+        &[first.id.as_str(), third.id.as_str()],
+    );
 }
 
 #[test]
 pub(in crate::controller) fn lyrics_emit_event() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    controller.request_track_lyrics(track.id);
+    let root = self::unique_test_dir("local-track-without-sidecar");
+    fs::create_dir_all(&root).expect("create local root");
+    let media_path = root.join("Track.flac");
+    fs::write(&media_path, []).expect("create local media file");
+    let saved = local_source_saved();
+    let mut track = restored_track();
+    track.id = TrackId::new("local:track:without-sidecar");
+    track.album_id = AlbumId::new("local:album:without-sidecar");
+    track.local_path = Some(media_path.to_string_lossy().into_owned());
+    let (controller, events) = controller_with_current_track(&saved, &track);
+
+    controller.request_track_server_lyrics(track.id);
+
     assert!(wait_for_lyrics(&events).is_none());
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn lyrics_local_lookup() {
@@ -219,19 +229,26 @@ pub(in crate::controller) fn lyrics_local_capability() {
 }
 
 #[test]
-pub(in crate::controller) fn lyrics_ignore_remote() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let source_id = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("load active server")
-        .expect("active server")
-        .source
-        .id;
+pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind lyrics server");
+    let address = listener.local_addr().expect("lyrics server address");
+    let (request_sender, request_receiver) = channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept lyrics request");
+        let mut buffer = [0_u8; 4096];
+        let read = stream.read(&mut buffer).expect("read lyrics request");
+        request_sender
+            .send(String::from_utf8_lossy(&buffer[..read]).into_owned())
+            .expect("record lyrics request");
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .expect("write lyrics response");
+    });
+    let mut saved = saved_source();
+    saved.source.base_url = format!("http://{address}");
+    let track = restored_track();
+    let source_id = saved.source.id.clone();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -245,23 +262,33 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
         .store
         .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
         .expect("save remote lyrics");
-    controller.request_track_server_lyrics(track.id);
+    controller
+        .secrets
+        .save_token(&source_id, "lyrics-token")
+        .expect("save lyrics token");
+
+    controller.request_track_server_lyrics(track.id.clone());
+
     assert!(wait_for_lyrics(&events).is_none());
+    let request = request_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("native lyrics request");
+    assert!(request.starts_with("GET /Audio/lyrics/Lyrics HTTP/1.1"));
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_lyrics(&source_id, &track.id))
+            .expect("load ignored cache"),
+        Some(remote_lyrics)
+    );
+    server.join().expect("lyrics server");
 }
 #[test]
 pub(in crate::controller) fn lyrics_remove_cache() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let source_id = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("load active server")
-        .expect("active server")
-        .source
-        .id;
+    let saved = saved_source();
+    let track = restored_track();
+    let source_id = saved.source.id.clone();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -291,18 +318,10 @@ pub(in crate::controller) fn lyrics_remove_cache() {
 }
 #[test]
 pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let source_id = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("load active server")
-        .expect("active server")
-        .source
-        .id;
+    let saved = saved_source();
+    let track = restored_track();
+    let source_id = saved.source.id.clone();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -322,19 +341,23 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
     assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
 }
 #[test]
-pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let source_id = controller
+pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
+    let saved = local_source_saved();
+    let mut track = restored_track();
+    track.id = TrackId::new("local:track:invalid-cached-lyrics");
+    track.album_id = AlbumId::new("local:album:invalid-cached-lyrics");
+    track.title.clear();
+    track.artist.clear();
+    track.artist_id = None;
+    let source_id = saved.source.id.clone();
+    let (controller, events) = controller_with_current_track(&saved, &track);
+    let mut settings = controller.store.load_settings().expect("load settings");
+    settings.external_lyrics_enabled = true;
+    settings.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
+    controller
         .store
-        .with_store(|store| store.active_source())
-        .expect("load active server")
-        .expect("active server")
-        .source
-        .id;
+        .save_settings(&settings)
+        .expect("save Netease cache policy");
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -353,11 +376,10 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
     controller
         .store
         .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
-        .expect("save remote lyrics");
+        .expect("seed invalid cached lyrics");
 
     controller.request_track_lyrics(track.id.clone());
 
-    assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
         controller
             .store
@@ -365,21 +387,14 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
             .expect("load lyrics"),
         None
     );
+    assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
 pub(in crate::controller) fn lyrics_preserve_cache() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let source_id = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("load active server")
-        .expect("active server")
-        .source
-        .id;
+    let saved = saved_source();
+    let track = restored_track();
+    let source_id = saved.source.id.clone();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
@@ -899,18 +914,7 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
 #[test]
 pub(in crate::controller) fn lyrics_change_source() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let playback_server = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new("fake:server:playback"),
-            kind: "fake".to_string(),
-            name: "Playback Server".to_string(),
-            base_url: "https://playback.example.test".to_string(),
-        },
-        user_id: "listener".to_string(),
-        username: "listener".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let playback_server = saved_source();
     let local = local_source_saved();
     store
         .with_store(|store| {
@@ -920,8 +924,12 @@ pub(in crate::controller) fn lyrics_change_source() {
         })
         .expect("seed servers");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    let track_id = TrackId::new("fake:track:queued");
+    let secrets = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&playback_server.source.id, "playback-token")
+        .expect("save playback token");
+    let secrets: Arc<dyn SecretStore> = secrets;
+    let track_id = restored_track().id;
 
     let stream = super::resolve_stream(
         &store,
@@ -933,7 +941,12 @@ pub(in crate::controller) fn lyrics_change_source() {
     )
     .expect("stream");
 
-    assert_eq!(stream.uri(), "fake://local/stream/fake:track:queued");
+    assert!(
+        stream
+            .uri()
+            .starts_with("https://music.example/Audio/lyrics/stream?")
+    );
+    assert!(stream.uri().contains("api_key=playback-token"));
 }
 #[test]
 pub(in crate::controller) fn lyrics_use_source() {
@@ -1409,10 +1422,10 @@ pub(in crate::controller) fn lyrics_keep_netease_content_after_credit() {
 }
 #[test]
 pub(in crate::controller) fn preview_lrclib_result() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("active server").id;
-    let track = snapshot.tracks[0].clone();
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    let track = restored_track();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let result = super::LyricsSearchResult {
         provider: ExternalLyricsProvider::Lrclib,
         id: "21".to_string(),
@@ -1424,8 +1437,6 @@ pub(in crate::controller) fn preview_lrclib_result() {
         plain_lyrics: None,
     };
 
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     controller.preview_lyrics_search_result(track.id.clone(), result);
 
     let lyrics = wait_for_lyrics(&events).expect("lyrics");

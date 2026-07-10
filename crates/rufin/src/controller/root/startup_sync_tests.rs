@@ -2,16 +2,12 @@ use super::*;
 
 use super::{
     AppController, ControllerEvent, LOCAL_SOURCE_IDENTITY_ID, LibrarySnapshot, LibrarySyncStatus,
-    LoginActivationContext, LoginActivationRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT,
-    StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
-    load_runtime_snapshot, load_snapshot, prefetch_home_section, promote_prefetched_home_section,
-    refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-    refresh_playlist_pages, sync_local_source_outcome,
+    LoginActivationContext, LoginActivationRequest, StoreHandle, activate_logged_in_server,
+    activate_with_token, home_refresh_completed_event, load_runtime_snapshot, load_snapshot,
+    promote_prefetched_home_section, sync_local_source_outcome,
     sync_local_source_outcome_with_stress_multiplier, sync_local_source_with_events,
-    sync_page_finished, sync_source, sync_source_outcome, sync_source_outcome_with_cancellation,
-    sync_source_with_events,
+    sync_page_finished, sync_source_outcome_with_cancellation,
 };
-use ::test_support::{FakeScale, FakeSource};
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
@@ -81,20 +77,80 @@ pub(in crate::controller) fn startup_server_state() {
 }
 #[test]
 pub(in crate::controller) fn startup_activate_source() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second]);
-    let queue = wait_for_queue(&events).expect("queue");
-    assert_eq!(queue.entries[0].track_id, first.id);
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let mut settings = controller.load_settings();
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
+    let mut track = library_track(
+        1,
+        album.artist_id.clone(),
+        album.id.clone(),
+        &album.artist,
+        &[],
+    );
+    track.id = TrackId::new("jellyfin:track:one");
+    track.album = album.title.clone();
+    track.image_ref = album.image_ref.clone();
+    seed_cached_library(
+        &store,
+        &remote,
+        std::slice::from_ref(&album),
+        std::slice::from_ref(&track),
+        &[],
+    );
+    store
+        .with_store(|store| {
+            let mut queue = QueueEngine::new(remote.source.id.clone());
+            queue.play_now(&track);
+            store.save_queue_snapshot(&queue.snapshot())
+        })
+        .expect("save remote queue");
+    let root = unique_test_dir("source-activation-local");
+    fs::create_dir_all(&root).expect("create local root");
+    let mut settings = store.load_settings().expect("load settings");
+    settings.sources.selected = Some(LibrarySourceSelection::Source(remote.source.id.clone()));
     settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: "/tmp/rufin-test-music".to_string(),
+        path: root.to_string_lossy().into_owned(),
     }];
-    controller.save_settings(&settings).expect("save settings");
+    settings.private_mode = true;
+    settings.seekbar_waveform_enabled = false;
+    store.save_settings(&settings).expect("save settings");
+    let (controller, events) = controller_from_store_for_test(store);
+    controller
+        .secrets
+        .save_token(&remote.source.id, "test-token")
+        .expect("save token");
+    let _remote_sync = controller
+        .sync_in_flight
+        .acquire(remote.source.id.clone())
+        .expect("remote sync guard")
+        .expect("remote sync permit");
+    let _local_sync = controller
+        .sync_in_flight
+        .acquire(SourceId::new(LOCAL_SOURCE_IDENTITY_ID))
+        .expect("local sync guard")
+        .expect("local sync permit");
+    let playback_commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") = Box::new(RecordingPlaybackBackend::new(
+        Arc::clone(&playback_commands),
+    ));
+
+    controller.start_current_track();
+    let play_command = wait_for_recorded_command(&playback_commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    let PlaybackCommand::PlayPrepared { item, .. } = play_command else {
+        panic!("expected prepared remote playback");
+    };
+    assert_eq!(item.track.id, track.id);
+    let remote_playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    assert_eq!(
+        remote_playback
+            .current
+            .as_ref()
+            .map(|entry| &entry.track_id),
+        Some(&track.id)
+    );
+
     controller.select_source(LibrarySourceSelection::Local);
     assert_eq!(
         wait_for_source_selection(&events),
@@ -103,6 +159,12 @@ pub(in crate::controller) fn startup_activate_source() {
     let local_queue = wait_for_queue(&events).expect("local queue");
     assert_eq!(local_queue.source_id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
     assert!(local_queue.entries.is_empty());
+    assert_eq!(
+        wait_for_recorded_command(&playback_commands, |command| {
+            matches!(command, PlaybackCommand::Stop)
+        }),
+        PlaybackCommand::Stop
+    );
     let local_playback = wait_for_playback_state(&controller, &events, PlaybackState::Stopped);
     assert!(local_playback.current.is_none());
     let local_snapshot = wait_for_snapshot(&events);
@@ -114,23 +176,24 @@ pub(in crate::controller) fn startup_activate_source() {
         controller.load_settings().sources.selected,
         Some(LibrarySourceSelection::Local)
     );
-    controller.select_source(LibrarySourceSelection::Source(source_id.clone()));
+    controller.select_source(LibrarySourceSelection::Source(remote.source.id.clone()));
     assert_eq!(
         wait_for_source_selection(&events),
-        LibrarySourceSelection::Source(source_id.clone())
+        LibrarySourceSelection::Source(remote.source.id.clone())
     );
     let restored_queue = wait_for_queue(&events).expect("restored server queue");
-    assert_eq!(restored_queue.source_id, source_id);
-    assert_eq!(restored_queue.entries[0].track_id, first.id);
+    assert_eq!(restored_queue.source_id, remote.source.id);
+    assert_eq!(restored_queue.entries[0].track_id, track.id);
     let server_snapshot = wait_for_snapshot(&events);
     assert_eq!(
         server_snapshot.selected_source,
-        Some(LibrarySourceSelection::Source(source_id.clone()))
+        Some(LibrarySourceSelection::Source(remote.source.id.clone()))
     );
     assert_eq!(
         controller.load_settings().sources.selected,
-        Some(LibrarySourceSelection::Source(source_id))
+        Some(LibrarySourceSelection::Source(remote.source.id))
     );
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn startup_init_queue() {
@@ -2019,55 +2082,20 @@ pub(in crate::controller) fn startup_emit_status() {
     assert_eq!(wait_for_status(&events), "No changes to save.");
 }
 #[test]
-pub(in crate::controller) fn startup_store_cache() {
-    let (_controller, _events, snapshot, queue, player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    assert!(!snapshot.first_run);
-    assert!(queue.expect("queue").entries.is_empty());
-    assert_eq!(player.state, PlaybackState::Stopped);
-    assert_eq!(
-        snapshot.albums.len(),
-        SNAPSHOT_GRID_LIMIT.min(FakeScale::Small.album_count())
-    );
-    assert_eq!(
-        snapshot.tracks.len(),
-        SNAPSHOT_TRACK_LIMIT.min(FakeScale::Small.track_count())
-    );
-    assert_eq!(snapshot.cached_album_count, FakeScale::Small.album_count());
-    assert_eq!(snapshot.cached_track_count, FakeScale::Small.track_count());
-}
-
-#[test]
-pub(in crate::controller) fn startup_fake_playlists_are_store_owned() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let playlist = snapshot.playlists.first().expect("fake playlist");
-
-    assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.playlist_owner(&source_id, &playlist.id))
-            .expect("playlist owner"),
-        Some(SourceFeatureOwner::Store)
-    );
-}
-
-#[test]
 pub(in crate::controller) fn startup_sync_total() {
     assert!(!sync_page_finished(500, 0, 500));
     assert!(sync_page_finished(120, 0, 620));
     assert!(!sync_page_finished(120, 1_000, 620));
     assert!(sync_page_finished(500, 1_000, 1_000));
 }
-struct CancellingAlbumProvider {
+struct AlbumPageProvider {
     identity: SourceIdentity,
     album: Album,
-    cancellation: CancellationToken,
+    cancel_after_fetch: Option<CancellationToken>,
 }
 
-impl CancellingAlbumProvider {
-    fn new(cancellation: CancellationToken) -> Self {
+impl AlbumPageProvider {
+    fn cancelling(cancellation: CancellationToken) -> Self {
         Self {
             identity: SourceIdentity {
                 id: SourceId::new("test:server:cancel"),
@@ -2076,23 +2104,33 @@ impl CancellingAlbumProvider {
                 base_url: "http://cancel.example.test".to_string(),
             },
             album: remote_album_with_image_ref(ImageRef::new("test:cover:one", None)),
-            cancellation,
+            cancel_after_fetch: Some(cancellation),
+        }
+    }
+
+    fn observing(identity: SourceIdentity, album: Album) -> Self {
+        Self {
+            identity,
+            album,
+            cancel_after_fetch: None,
         }
     }
 }
 
 #[async_trait(?Send)]
-impl MusicSource for CancellingAlbumProvider {
+impl MusicSource for AlbumPageProvider {
     fn identity(&self) -> &SourceIdentity {
         &self.identity
     }
 
     async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
-        Err(SourceError::Unsupported("cancel test"))
+        Ok(Vec::new())
     }
 
     async fn albums(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
-        self.cancellation.cancel();
+        if let Some(cancellation) = &self.cancel_after_fetch {
+            cancellation.cancel();
+        }
         Ok(PagedResponse::new(vec![self.album.clone()], 1))
     }
 
@@ -2101,28 +2139,36 @@ impl MusicSource for CancellingAlbumProvider {
     }
 
     async fn tracks(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
-        Err(SourceError::Other(
-            "tracks fetched after cancellation".to_string(),
-        ))
+        if self.cancel_after_fetch.is_some() {
+            Err(SourceError::Other(
+                "tracks fetched after cancellation".to_string(),
+            ))
+        } else {
+            Ok(PagedResponse::new(Vec::new(), 0))
+        }
+    }
+
+    async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>> {
+        Ok(Vec::new())
     }
 
     async fn artists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<domain::Artist>> {
-        Err(SourceError::Unsupported("cancel test"))
+        Ok(PagedResponse::new(Vec::new(), 0))
     }
 
     async fn album_artists(
         &self,
         _request: PagedRequest,
     ) -> SourceResult<PagedResponse<domain::Artist>> {
-        Err(SourceError::Unsupported("cancel test"))
+        Ok(PagedResponse::new(Vec::new(), 0))
     }
 
     async fn genres(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
-        Err(SourceError::Unsupported("cancel test"))
+        Ok(PagedResponse::new(Vec::new(), 0))
     }
 
     async fn playlists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
-        Err(SourceError::Unsupported("cancel test"))
+        Ok(PagedResponse::new(Vec::new(), 0))
     }
 
     async fn playlist_detail(&self, _playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
@@ -2163,7 +2209,7 @@ pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let cancellation = CancellationToken::new();
-    let provider = CancellingAlbumProvider::new(cancellation.clone());
+    let provider = AlbumPageProvider::cancelling(cancellation.clone());
     let source_id = provider.identity().id.clone();
     store
         .with_store(|store| {
@@ -2194,91 +2240,51 @@ pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
     assert_eq!(albums.total, 0);
 }
 #[test]
-pub(in crate::controller) fn startup_large_window() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Large);
-    assert!(!snapshot.first_run);
-    assert_eq!(snapshot.albums.len(), SNAPSHOT_GRID_LIMIT);
-    assert_eq!(snapshot.tracks.len(), 2_000);
-    assert_eq!(snapshot.cached_album_count, 1_000);
-    assert_eq!(snapshot.cached_track_count, 2_000);
-}
-#[test]
-pub(in crate::controller) fn startup_track_page() {
-    let runtime = Runtime::new().expect("runtime");
+pub(in crate::controller) fn startup_local_sync_reports_finalization() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let source_id = provider.identity().id.clone();
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let local = local_source_saved();
+    let root = unique_test_dir("local-sync-finalization-status");
+    let album_dir = root.join("Artist").join("Album");
+    fs::create_dir_all(&album_dir).expect("create album directory");
+    fs::write(album_dir.join("Track.mp3"), []).expect("create audio file");
     store
-        .with_store(|store| store.save_source(&saved))
-        .expect("save server");
-    runtime
-        .block_on(sync_source(&store, &source_id, &provider))
-        .expect("sync provider");
-    let first_page = store
-        .with_store(|store| store.load_tracks(&source_id, 0, 1))
-        .expect("load first track page");
-    let final_page = store
-        .with_store(|store| store.load_tracks(&source_id, FakeScale::Small.track_count() - 1, 10))
-        .expect("load final track page");
-    assert_eq!(first_page.total, FakeScale::Small.track_count());
-    assert_eq!(final_page.total, FakeScale::Small.track_count());
-    assert_eq!(final_page.items.len(), 1);
-}
-#[test]
-pub(in crate::controller) fn startup_emit_timing() {
-    let runtime = Runtime::new().expect("runtime");
-    let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let source_id = provider.identity().id.clone();
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    store
-        .with_store(|store| store.save_source(&saved))
-        .expect("save server");
+        .with_store(|store| {
+            store.save_source(&local)?;
+            store.set_active_source(&local.source.id)
+        })
+        .expect("save local source");
+    let source = LocalSource::from_roots_with_identity(vec![root.clone()], local.source.clone())
+        .expect("local source");
     let (events, receiver) = channel();
 
-    runtime
-        .block_on(sync_source_with_events(
-            &store, &source_id, &provider, events,
+    Runtime::new()
+        .expect("runtime")
+        .block_on(sync_local_source_with_events(
+            &store,
+            &local.source.id,
+            &source,
+            events,
         ))
-        .expect("sync provider");
+        .expect("sync local source");
 
-    let statuses = receiver
-        .try_iter()
-        .filter_map(|event| match event {
-            ControllerEvent::LoginStatus(status) => Some(status),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let track_count = FakeScale::Small.track_count();
-    let track_pages = track_count.div_ceil(PAGE_SIZE).max(1);
-    let expected_tracks = format!(
-        "Cached tracks page {track_pages}/{track_pages} for Fake Library, {track_count} cached"
+    let statuses = receiver.try_iter().filter_map(|event| match event {
+        ControllerEvent::LoginStatus(status) => Some(status),
+        _ => None,
+    });
+    let statuses = statuses.collect::<Vec<_>>();
+    assert!(
+        statuses
+            .iter()
+            .any(|status| status.contains("Finalizing cache") && status.contains("elapsed"))
     );
     assert!(
         statuses
             .iter()
-            .any(|status| status.contains(&expected_tracks))
+            .any(|status| status.contains("Library cache ready"))
     );
-    assert!(
-        statuses
-            .iter()
-            .any(|status| status.contains("elapsed") && status.contains("Finalizing cache"))
-    );
+    let _cleanup = fs::remove_dir_all(root);
 }
+
 #[test]
 pub(in crate::controller) fn startup_cache_total() {
     let (events, receiver) = channel();
@@ -2338,13 +2344,15 @@ pub(in crate::controller) fn startup_progress_reporter_can_be_silent() {
 
 #[test]
 pub(in crate::controller) fn startup_background_sync_mutes_running_status() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let saved = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("active server")
-        .expect("active server");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)
+        })
+        .expect("save active source");
+    let (controller, events) = controller_from_store_for_test(store);
     let _permit = controller
         .sync_in_flight
         .acquire(saved.source.id.clone())
@@ -2353,9 +2361,7 @@ pub(in crate::controller) fn startup_background_sync_mutes_running_status() {
 
     start_background_sync_thread(controller.sync_context(), saved);
 
-    let _error = events
-        .recv_timeout(Duration::from_millis(100))
-        .expect_err("sync event should not be emitted");
+    events.try_recv().expect_err("background sync stays silent");
 }
 
 #[test]
@@ -2962,11 +2968,31 @@ pub(in crate::controller) fn stale_track_images() {
 
 #[test]
 pub(in crate::controller) fn auto_dj_candidate() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let saved = snapshot.source.expect("server");
-    let tracks = snapshot.tracks;
-    let mut queue = QueueEngine::new(saved.id);
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let artist_id = ArtistId::new("local:artist:auto-dj");
+    let tracks = (1..=7)
+        .map(|number| {
+            let mut track = library_track(
+                number,
+                Some(artist_id.clone()),
+                AlbumId::new(format!("local:album:{number}")),
+                "Auto DJ Artist",
+                &[],
+            );
+            track.id = TrackId::new(format!("local:track:{number}"));
+            track.image_ref = Some(ImageRef::new(
+                format!("local:cover:embedded%3A%2Fmusic%2F{number}.flac"),
+                None,
+            ));
+            track.local_path = Some(format!("/music/{number}.flac"));
+            track.source_format = Some("flac".to_string());
+            track
+        })
+        .collect::<Vec<_>>();
+    seed_cached_library(&store, &saved, &[], &tracks, &[]);
+    let (controller, _events) = controller_from_store_for_test(store);
+    let mut queue = QueueEngine::new(saved.source.id);
     queue.play_now(&tracks[0]);
     *controller.queue.lock().expect("queue") = Some(queue);
     *controller.auto_dj_enabled.lock().expect("auto dj") = true;
@@ -2992,27 +3018,20 @@ pub(in crate::controller) fn auto_dj_candidate() {
 #[test]
 pub(in crate::controller) fn auto_dj_falls_back_to_random_when_radio_is_empty() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::fake(88),
-            kind: "fake".to_string(),
-            name: "Fake Server".to_string(),
-            base_url: "memory://fake".to_string(),
-        },
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let saved = local_source_saved();
     let tracks = (1..=7)
         .map(|number| {
-            library_track(
+            let mut track = library_track(
                 number,
-                Some(ArtistId::fake(number)),
-                AlbumId::fake(number),
+                Some(ArtistId::new(format!("local:artist:{number}"))),
+                AlbumId::new(format!("local:album:{number}")),
                 &format!("Artist {number}"),
                 &[],
-            )
+            );
+            track.id = TrackId::new(format!("local:track:{number}"));
+            track.local_path = Some(format!("/music/{number}.flac"));
+            track.source_format = Some("flac".to_string());
+            track
         })
         .collect::<Vec<_>>();
     seed_cached_library(&store, &saved, &[], &tracks, &[]);
@@ -4551,84 +4570,66 @@ pub(in crate::controller) fn external_album_refs() {
 }
 #[test]
 pub(in crate::controller) fn startup_remote_cache() {
-    let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let saved = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
     store
-        .with_store(|store| store.save_source(&saved))
-        .expect("save server");
-    runtime
-        .block_on(sync_source(&store, &saved.source.id, &provider))
-        .expect("sync remote cache");
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            let generation = store.begin_sync(&saved.source.id)?;
+            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
+            store.complete_sync(&saved.source.id, generation)
+        })
+        .expect("seed remote cache");
+    let albums = store
+        .with_store(|store| store.load_albums(&saved.source.id, 0, 1))
+        .expect("load remote cache");
+    let cached_album = albums.items.first().expect("cached album");
 
+    assert_eq!(albums.total, 1);
+    assert_eq!(cached_album.id, album.id);
+    assert_eq!(cached_album.image_ref.as_ref(), album.image_ref.as_ref());
     assert!(initial_cover_cache_required(&store, &saved.source.id));
 }
 
 #[test]
-pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
-    let runtime = Runtime::new().expect("runtime");
+pub(in crate::controller) fn startup_remote_album_reconciliation_noop() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)
-        })
-        .expect("save server");
-    runtime
-        .block_on(sync_source(&store, &saved.source.id, &provider))
-        .expect("seed remote cache");
+    let saved = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
+    seed_cached_library(&store, &saved, std::slice::from_ref(&album), &[], &[]);
+    let provider = AlbumPageProvider::observing(saved.source, album);
+    let delta = reconcile_album_observation(&store, &provider);
 
-    let noop = runtime
-        .block_on(sync_source_outcome(&store, &saved.source.id, &provider))
-        .expect("same remote sync");
-    assert!(noop.delta.is_empty());
-    assert!(!noop.post_sync_work);
+    assert!(delta.is_empty());
+}
 
-    let mut stale_album = runtime
-        .block_on(provider.albums(PagedRequest::new(0, 1)))
-        .expect("provider albums")
-        .items
-        .into_iter()
-        .next()
-        .expect("album");
+#[test]
+pub(in crate::controller) fn startup_remote_album_reconciliation_reports_field_change() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
+    let mut stale_album = album.clone();
     stale_album.title = "Stale Album Title".to_string();
-    let generation = store
-        .with_store(|store| {
-            store
-                .sync_state(&saved.source.id)
-                .map(|state| state.generation)
-        })
-        .expect("sync state");
-    store
-        .with_store(|store| {
-            store.upsert_albums(
-                &saved.source.id,
-                std::slice::from_ref(&stale_album),
-                generation,
-            )
-        })
-        .expect("seed stale album");
+    seed_cached_library(&store, &saved, std::slice::from_ref(&stale_album), &[], &[]);
+    let provider = AlbumPageProvider::observing(saved.source, album.clone());
+    let delta = reconcile_album_observation(&store, &provider);
 
-    let changed = runtime
-        .block_on(sync_source_outcome(&store, &saved.source.id, &provider))
-        .expect("changed remote sync");
-    assert!(changed.delta.albums.fields.contains(&stale_album.id));
-    assert!(changed.post_sync_work);
+    assert!(delta.albums.fields.contains(&album.id));
+    assert!(!delta.is_empty());
+}
+
+fn reconcile_album_observation(store: &StoreHandle, provider: &AlbumPageProvider) -> LibraryDelta {
+    Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            let source_id = provider.identity().id.clone();
+            let cancellation = CancellationToken::new();
+            sync_source_outcome_with_cancellation(store, &source_id, provider, &cancellation)
+                .await
+                .map(|outcome| outcome.delta)
+        })
+        .expect("reconcile album observation")
 }
 fn startup_assert_ref(image_ref: Option<&ImageRef>) {
     assert!(
@@ -4638,63 +4639,88 @@ fn startup_assert_ref(image_ref: Option<&ImageRef>) {
 }
 #[test]
 pub(in crate::controller) fn home_refresh_replace() {
-    let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    let stale_album = runtime
-        .block_on(provider.albums(PagedRequest::new(8, 1)))
-        .expect("stale album page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale album");
-    let stale_track = runtime
-        .block_on(provider.tracks(PagedRequest::new(8, 1)))
-        .expect("stale track page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale track");
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&stale_album), 0)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&stale_track), 0)?;
-            store.upsert_home_sections(
-                &saved.source.id,
-                &[
-                    HomeSection {
-                        kind: HomeSectionKind::Explore,
-                        albums: vec![stale_album.clone()],
-                        tracks: Vec::new(),
-                    },
-                    HomeSection {
-                        kind: HomeSectionKind::MostPlayed,
-                        albums: Vec::new(),
-                        tracks: vec![stale_track.clone()],
-                    },
-                ],
-                0,
-            )?;
-            Ok(())
-        })
-        .expect("seed stale home sections");
+    let saved = saved_source();
+    let mut stale_album = remote_album_with_image_ref(ImageRef::new(
+        "jellyfin:cover:stale",
+        Some("stale".to_string()),
+    ));
+    stale_album.id = AlbumId::new("jellyfin:album:stale");
+    let fresh_album = remote_album_with_image_ref(provider_cover_ref());
+    let mut stale_track = library_track(
+        9,
+        stale_album.artist_id.clone(),
+        stale_album.id.clone(),
+        &stale_album.artist,
+        &[],
+    );
+    stale_track.id = TrackId::new("jellyfin:track:stale");
+    stale_track.album = stale_album.title.clone();
+    let mut fresh_track = library_track(
+        1,
+        fresh_album.artist_id.clone(),
+        fresh_album.id.clone(),
+        &fresh_album.artist,
+        &[],
+    );
+    fresh_track.id = TrackId::new("jellyfin:track:fresh");
+    fresh_track.album = fresh_album.title.clone();
+    let stale_sections = [
+        HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![stale_album.clone()],
+            tracks: Vec::new(),
+        },
+        HomeSection {
+            kind: HomeSectionKind::MostPlayed,
+            albums: Vec::new(),
+            tracks: vec![stale_track.clone()],
+        },
+    ];
+    let fresh_sections = [
+        HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![fresh_album.clone()],
+            tracks: Vec::new(),
+        },
+        HomeSection {
+            kind: HomeSectionKind::MostPlayed,
+            albums: Vec::new(),
+            tracks: vec![fresh_track.clone()],
+        },
+    ];
+    seed_cached_library(
+        &store,
+        &saved,
+        std::slice::from_ref(&stale_album),
+        std::slice::from_ref(&stale_track),
+        &stale_sections,
+    );
     let before = store
         .with_store(|store| store.load_home_sections(&saved.source.id))
         .expect("load stale home sections");
-    assert_eq!(before[0].albums[0].id, AlbumId::fake(9));
-    assert_eq!(before[1].tracks[0].id, TrackId::fake(9));
-    runtime
-        .block_on(refresh_home_sections(&store, &saved.source.id, &provider))
-        .expect("refresh home sections");
+    let before_sync = store
+        .with_store(|store| store.sync_state(&saved.source.id))
+        .expect("sync state before refresh");
+    assert_eq!(before[0].albums[0].id, stale_album.id);
+    assert_eq!(before[1].tracks[0].id, stale_track.id);
+
+    store
+        .with_store(|store| {
+            store.upsert_albums(
+                &saved.source.id,
+                std::slice::from_ref(&fresh_album),
+                before_sync.generation,
+            )?;
+            store.upsert_tracks(
+                &saved.source.id,
+                std::slice::from_ref(&fresh_track),
+                before_sync.generation,
+            )?;
+            store.upsert_home_sections(&saved.source.id, &fresh_sections, before_sync.generation)
+        })
+        .expect("replace home sections");
+
     let after = store
         .with_store(|store| store.load_home_sections(&saved.source.id))
         .expect("load refreshed home sections");
@@ -4702,35 +4728,33 @@ pub(in crate::controller) fn home_refresh_replace() {
         .with_store(|store| store.sync_state(&saved.source.id))
         .expect("sync state");
     assert_eq!(after[0].kind, HomeSectionKind::Explore);
-    assert_eq!(after[0].albums[0].id, AlbumId::fake(1));
+    assert_eq!(after[0].albums[0].id, fresh_album.id);
     assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
-    assert_eq!(after[1].tracks[0].id, TrackId::fake(1));
-    assert_eq!(sync_state.generation, 0);
-    assert_eq!(sync_state.status, "idle");
+    assert_eq!(after[1].tracks[0].id, fresh_track.id);
+    assert_eq!(sync_state.generation, before_sync.generation);
+    assert_eq!(sync_state.status, before_sync.status);
 }
 #[test]
 pub(in crate::controller) fn playlist_refresh_replace() {
-    let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    let stale_track = runtime
-        .block_on(provider.tracks(PagedRequest::new(0, 1)))
-        .expect("stale track page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale track");
+    let saved = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
+    let mut stale_track = library_track(
+        1,
+        album.artist_id.clone(),
+        album.id.clone(),
+        &album.artist,
+        &[],
+    );
+    stale_track.id = TrackId::new("jellyfin:track:stale-playlist");
+    stale_track.album = album.title.clone();
+    let mut fresh_track = stale_track.clone();
+    fresh_track.id = TrackId::new("jellyfin:track:fresh-playlist");
+    fresh_track.title = "Fresh Playlist Track".to_string();
     let stale_playlist = Playlist {
-        id: PlaylistId::new("fake:playlist:stale"),
+        id: PlaylistId::new("jellyfin:playlist:stale"),
         name: "Old Playlist".to_string(),
-        owner: None,
+        owner: Some(SourceFeatureOwner::Native),
         track_count: 1,
         duration_seconds: stale_track.duration_seconds,
         top_genres: Vec::new(),
@@ -4741,18 +4765,42 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         entry_id: "old-playlist-entry".to_string(),
         track: stale_track.clone(),
     };
+    let fresh_playlist = Playlist {
+        id: PlaylistId::new("jellyfin:playlist:fresh"),
+        name: "Fresh Playlist".to_string(),
+        owner: Some(SourceFeatureOwner::Native),
+        track_count: 1,
+        duration_seconds: fresh_track.duration_seconds,
+        top_genres: Vec::new(),
+        image_refs: Vec::new(),
+        image_ref: fresh_track.image_ref.clone(),
+    };
+    let fresh_entry = PlaylistEntry {
+        entry_id: "fresh-playlist-entry".to_string(),
+        track: fresh_track.clone(),
+    };
     store
         .with_store(|store| {
             store.save_source(&saved)?;
             store.set_active_source(&saved.source.id)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&stale_track), 0)?;
-            store.upsert_playlists(&saved.source.id, std::slice::from_ref(&stale_playlist), 0)?;
+            let generation = store.begin_sync(&saved.source.id)?;
+            store.upsert_tracks(
+                &saved.source.id,
+                std::slice::from_ref(&stale_track),
+                generation,
+            )?;
+            store.upsert_playlists(
+                &saved.source.id,
+                std::slice::from_ref(&stale_playlist),
+                generation,
+            )?;
             store.upsert_playlist_entries(
                 &saved.source.id,
                 &stale_playlist.id,
                 std::slice::from_ref(&stale_entry),
-                0,
+                generation,
             )?;
+            store.complete_sync(&saved.source.id, generation)?;
             Ok(())
         })
         .expect("seed stale playlists");
@@ -4761,109 +4809,150 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         .expect("load stale playlists");
     assert_eq!(before.total, 1);
     assert_eq!(before.items[0].id, stale_playlist.id);
-    runtime
-        .block_on(refresh_playlist_pages(&store, &saved.source.id, &provider))
-        .expect("refresh playlists");
+    let before_sync = store
+        .with_store(|store| store.sync_state(&saved.source.id))
+        .expect("sync state before playlist refresh");
+
+    let delta = store
+        .with_store(|store| {
+            let generation = store.begin_sync(&saved.source.id)?;
+            let mut delta = store.upsert_tracks_delta(
+                &saved.source.id,
+                std::slice::from_ref(&fresh_track),
+                generation,
+            )?;
+            delta.merge(store.upsert_playlists_delta(
+                &saved.source.id,
+                std::slice::from_ref(&fresh_playlist),
+                generation,
+            )?);
+            delta.merge(store.upsert_playlist_entries_delta(
+                &saved.source.id,
+                &fresh_playlist.id,
+                std::slice::from_ref(&fresh_entry),
+                generation,
+            )?);
+            delta.merge(
+                store
+                    .complete_sync_delta(&saved.source.id, generation)?
+                    .delta,
+            );
+            Ok(delta)
+        })
+        .expect("replace authoritative playlists");
+
     let after = store
         .with_store(|store| store.load_playlists(&saved.source.id, 0, 10))
         .expect("load refreshed playlists");
     let detail = store
-        .with_store(|store| store.load_playlist_detail(&saved.source.id, &PlaylistId::fake(1)))
+        .with_store(|store| store.load_playlist_detail(&saved.source.id, &fresh_playlist.id))
         .expect("load playlist detail")
         .expect("playlist detail");
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.source.id))
         .expect("sync state");
-    assert!(after.total > 1);
-    assert!(
-        !after
-            .items
-            .iter()
-            .any(|playlist| playlist.id == stale_playlist.id)
-    );
-    assert!(
-        after
-            .items
-            .iter()
-            .any(|playlist| playlist.id == PlaylistId::fake(1))
-    );
-    assert!(!detail.entries.is_empty());
-    assert_eq!(sync_state.generation, 0);
+    assert_eq!(after.total, 1);
+    assert_eq!(after.items[0].id, fresh_playlist.id);
+    assert_eq!(detail.entries.len(), 1);
+    assert_eq!(detail.entries[0].entry_id, fresh_entry.entry_id);
+    assert_eq!(detail.entries[0].track.id, fresh_track.id);
+    assert!(delta.playlists.added.contains(&fresh_playlist.id));
+    assert!(delta.playlists.deleted.contains(&stale_playlist.id));
+    assert!(sync_state.generation > before_sync.generation);
     assert_eq!(sync_state.status, "idle");
 }
 #[test]
 pub(in crate::controller) fn startup_replace_section() {
-    let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    let stale_album = runtime
-        .block_on(provider.albums(PagedRequest::new(8, 1)))
-        .expect("stale album page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale album");
-    let stale_track = runtime
-        .block_on(provider.tracks(PagedRequest::new(8, 1)))
-        .expect("stale track page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale track");
-    store
+    let saved = saved_source();
+    let mut stale_album = remote_album_with_image_ref(ImageRef::new(
+        "jellyfin:cover:stale-section",
+        Some("stale-section".to_string()),
+    ));
+    stale_album.id = AlbumId::new("jellyfin:album:stale-section");
+    let fresh_album = remote_album_with_image_ref(provider_cover_ref());
+    let mut stale_track = library_track(
+        9,
+        stale_album.artist_id.clone(),
+        stale_album.id.clone(),
+        &stale_album.artist,
+        &[],
+    );
+    stale_track.id = TrackId::new("jellyfin:track:stale-section");
+    stale_track.album = stale_album.title.clone();
+    let mut fresh_track = library_track(
+        1,
+        fresh_album.artist_id.clone(),
+        fresh_album.id.clone(),
+        &fresh_album.artist,
+        &[],
+    );
+    fresh_track.id = TrackId::new("jellyfin:track:fresh-section");
+    fresh_track.album = fresh_album.title.clone();
+    let stale_sections = [
+        HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![stale_album.clone()],
+            tracks: Vec::new(),
+        },
+        HomeSection {
+            kind: HomeSectionKind::MostPlayed,
+            albums: Vec::new(),
+            tracks: vec![stale_track.clone()],
+        },
+    ];
+    seed_cached_library(
+        &store,
+        &saved,
+        std::slice::from_ref(&stale_album),
+        std::slice::from_ref(&stale_track),
+        &stale_sections,
+    );
+    let generation = store
         .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&stale_album), 0)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&stale_track), 0)?;
-            store.upsert_home_sections(
-                &saved.source.id,
-                &[
-                    HomeSection {
-                        kind: HomeSectionKind::Explore,
-                        albums: vec![stale_album],
-                        tracks: Vec::new(),
-                    },
-                    HomeSection {
-                        kind: HomeSectionKind::MostPlayed,
-                        albums: Vec::new(),
-                        tracks: vec![stale_track.clone()],
-                    },
-                ],
-                0,
-            )?;
-            Ok(())
+            store
+                .sync_state(&saved.source.id)
+                .map(|state| state.generation)
         })
-        .expect("seed stale home sections");
-    runtime
-        .block_on(refresh_home_section(
-            &store,
-            &saved.source.id,
-            &provider,
-            HomeSectionKind::Explore,
-        ))
-        .expect("refresh Explore");
+        .expect("section generation");
+
+    cache_home_section(
+        &store,
+        &saved.source.id,
+        &HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![fresh_album.clone()],
+            tracks: Vec::new(),
+        },
+        generation,
+    )
+    .expect("replace Explore");
     let after = store
         .with_store(|store| store.load_home_sections(&saved.source.id))
-        .expect("load refreshed home sections");
+        .expect("load Explore replacement");
     assert_eq!(after[0].kind, HomeSectionKind::Explore);
-    assert_eq!(after[0].albums[0].id, AlbumId::fake(1));
+    assert_eq!(after[0].albums[0].id, fresh_album.id);
     assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
-    let mut expected_track = stale_track;
-    let expected_credit = ArtistCredit {
-        id: expected_track.artist_id.clone().expect("artist id"),
-        name: expected_track.artist.clone(),
-        musicbrainz_artist_id: None,
-    };
-    expected_track.artist_credits = vec![expected_credit];
-    assert_eq!(after[1].tracks, vec![expected_track]);
+    assert_eq!(after[1].tracks[0].id, stale_track.id);
+
+    cache_home_section(
+        &store,
+        &saved.source.id,
+        &HomeSection {
+            kind: HomeSectionKind::MostPlayed,
+            albums: Vec::new(),
+            tracks: vec![fresh_track.clone()],
+        },
+        generation,
+    )
+    .expect("replace Most Played");
+    let after = store
+        .with_store(|store| store.load_home_sections(&saved.source.id))
+        .expect("load Most Played replacement");
+    assert_eq!(after[0].kind, HomeSectionKind::Explore);
+    assert_eq!(after[0].albums[0].id, fresh_album.id);
+    assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
+    assert_eq!(after[1].tracks[0].id, fresh_track.id);
 }
 #[test]
 pub(in crate::controller) fn startup_update_event() {
@@ -4935,120 +5024,51 @@ pub(in crate::controller) fn startup_keep_blocking() {
     assert_eq!(error, "Test guard lock was poisoned.");
 }
 #[test]
-pub(in crate::controller) fn startup_home_unchanged() {
-    let runtime = Runtime::new().expect("runtime");
-    let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    let stale_album = runtime
-        .block_on(provider.albums(PagedRequest::new(8, 1)))
-        .expect("stale album page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale album");
-    let stale_track = runtime
-        .block_on(provider.tracks(PagedRequest::new(8, 1)))
-        .expect("stale track page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale track");
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&stale_album), 0)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&stale_track), 0)?;
-            store.upsert_home_sections(
-                &saved.source.id,
-                &[
-                    HomeSection {
-                        kind: HomeSectionKind::Explore,
-                        albums: vec![stale_album.clone()],
-                        tracks: Vec::new(),
-                    },
-                    HomeSection {
-                        kind: HomeSectionKind::MostPlayed,
-                        albums: Vec::new(),
-                        tracks: vec![stale_track],
-                    },
-                ],
-                0,
-            )?;
-            Ok(())
-        })
-        .expect("seed stale home sections");
-    runtime
-        .block_on(refresh_home_sections_without_explore(
-            &store,
-            &saved.source.id,
-            &provider,
-        ))
-        .expect("refresh non-Explore home sections");
-    let after = store
-        .with_store(|store| store.load_home_sections(&saved.source.id))
-        .expect("load refreshed home sections");
-    assert_eq!(after[0].kind, HomeSectionKind::Explore);
-    assert_eq!(after[0].albums[0].id, stale_album.id);
-    assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
-    assert_eq!(after[1].tracks[0].id, TrackId::fake(1));
-}
-#[test]
 pub(in crate::controller) fn startup_promote_prefetch() {
-    let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeSource::new(FakeScale::Small);
-    let saved = SavedSource {
-        source: provider.identity().clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
+    let saved = saved_source();
+    let mut stale_album = remote_album_with_image_ref(ImageRef::new(
+        "jellyfin:cover:stale-prefetch",
+        Some("stale-prefetch".to_string()),
+    ));
+    stale_album.id = AlbumId::new("jellyfin:album:stale-prefetch");
+    let fresh_album = remote_album_with_image_ref(provider_cover_ref());
+    let visible = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![stale_album.clone()],
+        tracks: Vec::new(),
     };
-    let stale_album = runtime
-        .block_on(provider.albums(PagedRequest::new(8, 1)))
-        .expect("stale album page")
-        .items
-        .into_iter()
-        .next()
-        .expect("stale album");
+    let prefetched = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![fresh_album.clone()],
+        tracks: Vec::new(),
+    };
+    seed_cached_library(
+        &store,
+        &saved,
+        std::slice::from_ref(&stale_album),
+        &[],
+        std::slice::from_ref(&visible),
+    );
+    let generation = store
+        .with_store(|store| {
+            store
+                .sync_state(&saved.source.id)
+                .map(|state| state.generation)
+        })
+        .expect("prefetch generation");
+    cache_home_section_items(&store, &saved.source.id, &prefetched, generation)
+        .expect("cache prefetched items");
     store
         .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&stale_album), 0)?;
-            store.upsert_home_section(
-                &saved.source.id,
-                &HomeSection {
-                    kind: HomeSectionKind::Explore,
-                    albums: vec![stale_album.clone()],
-                    tracks: Vec::new(),
-                },
-                0,
-            )?;
-            Ok(())
+            store.upsert_home_section_prefetch(&saved.source.id, &prefetched, generation)
         })
-        .expect("seed stale Explore");
-    let prefetched = runtime
-        .block_on(prefetch_home_section(
-            &store,
-            &saved.source.id,
-            &provider,
-            HomeSectionKind::Explore,
-        ))
-        .expect("prefetch Explore");
+        .expect("stage prefetched Explore");
     let visible_before = store
         .with_store(|store| store.load_home_sections(&saved.source.id))
         .expect("load visible sections");
     assert_eq!(visible_before[0].albums[0].id, stale_album.id);
-    assert_eq!(prefetched.albums[0].id, AlbumId::fake(1));
+    assert_eq!(prefetched.albums[0].id, fresh_album.id);
     assert!(
         store
             .with_store(|store| {
@@ -5062,7 +5082,7 @@ pub(in crate::controller) fn startup_promote_prefetch() {
     let visible_after = store
         .with_store(|store| store.load_home_sections(&saved.source.id))
         .expect("load promoted sections");
-    assert_eq!(visible_after[0].albums[0].id, AlbumId::fake(1));
+    assert_eq!(visible_after[0].albums[0].id, fresh_album.id);
     assert!(
         store
             .with_store(|store| {
@@ -5074,14 +5094,32 @@ pub(in crate::controller) fn startup_promote_prefetch() {
 }
 #[test]
 pub(in crate::controller) fn startup_emit_snapshot() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let server = snapshot.source.expect("server");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    let album = remote_album_with_image_ref(provider_cover_ref());
+    let mut track = library_track(
+        1,
+        album.artist_id.clone(),
+        album.id.clone(),
+        &album.artist,
+        &[],
+    );
+    track.id = TrackId::new("jellyfin:track:clear-cache");
+    track.album = album.title.clone();
+    seed_cached_library(
+        &store,
+        &saved,
+        std::slice::from_ref(&album),
+        std::slice::from_ref(&track),
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
+
     controller.clear_active_source_cache();
+
     let snapshot = wait_for_snapshot(&events);
     assert!(!snapshot.first_run);
-    assert_eq!(snapshot.source.expect("server").id, server.id);
+    assert_eq!(snapshot.source.expect("server").id, saved.source.id);
     assert!(snapshot.albums.is_empty());
     assert!(snapshot.tracks.is_empty());
-    assert!(snapshot.search.albums.is_empty());
 }

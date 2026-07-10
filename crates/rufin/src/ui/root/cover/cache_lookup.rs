@@ -173,16 +173,6 @@ impl Shell {
     ) -> Option<PlaybackArtworkLookup> {
         let source_id = self.current_playback_source_id()?;
         let image_ref = entry.image_ref.as_ref()?;
-        if self
-            .state
-            .library
-            .borrow()
-            .source
-            .as_ref()
-            .is_some_and(|server| server.kind == "fake")
-        {
-            return None;
-        }
         if external_metadata::is_external_image_ref(image_ref)
             && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
         {
@@ -238,9 +228,6 @@ impl Shell {
 
     pub(in crate::ui) fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
         let server = self.state.library.borrow().source.clone()?;
-        if server.kind == "fake" {
-            return None;
-        }
         if external_metadata::is_external_image_ref(image_ref)
             && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
         {
@@ -259,16 +246,6 @@ impl Shell {
         size: u32,
     ) -> Option<String> {
         let source_id = self.current_playback_source_id()?;
-        if self
-            .state
-            .library
-            .borrow()
-            .source
-            .as_ref()
-            .is_some_and(|server| server.kind == "fake")
-        {
-            return None;
-        }
         if external_metadata::is_external_image_ref(image_ref)
             && !external_metadata::cached_refs_enabled(&self.state.settings.borrow())
         {

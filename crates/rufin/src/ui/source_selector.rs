@@ -389,7 +389,7 @@ fn source_kind_display_name(kind: &str) -> String {
         "jellyfin" => tr("Jellyfin"),
         "navidrome" => tr("Navidrome"),
         "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
-        "local" | "fake" => tr("Local"),
+        "local" => tr("Local"),
         other => other.to_string(),
     }
 }
@@ -403,7 +403,7 @@ fn source_kind_icon_name(kind: &str) -> &'static str {
         "jellyfin" => "io.github.screwys.Rufin.source.jellyfin",
         "navidrome" => "io.github.screwys.Rufin.source.navidrome",
         "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.source.opensubsonic",
-        "local" | "fake" => "rufin-route-folders-symbolic",
+        "local" => "rufin-route-folders-symbolic",
         _ => "network-server-symbolic",
     }
 }

@@ -231,10 +231,6 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
         cover_slots,
         saved,
     } = request;
-    if saved.source.kind == "fake" {
-        return;
-    }
-
     let source_id = saved.source.id.clone();
     if !mark_prefetch_flight(
         &external_cover_prefetch_in_flight,
@@ -315,10 +311,6 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
     request: SourceCoverPrefetchRequest<'_>,
 ) -> Result<(), String> {
     let saved = request.saved;
-    if saved.source.kind == "fake" {
-        return Ok(());
-    }
-
     let started = Instant::now();
     let mut source_stats = SourceCoverPrefetchStats::default();
     let context = CoverPrefetchContext {

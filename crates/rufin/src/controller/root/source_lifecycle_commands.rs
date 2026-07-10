@@ -1,59 +1,6 @@
 use super::*;
 
 impl AppController {
-    #[cfg(test)]
-    pub fn forget_active_source(&self) {
-        let store = self.store.clone();
-        let events = self.events.clone();
-        let secrets = Arc::clone(&self.secrets);
-        let queue = Arc::clone(&self.queue);
-        let playback_request_generation = Arc::clone(&self.playback_request_generation);
-        let next_preload = Arc::clone(&self.next_preload);
-        let playback = Arc::clone(&self.playback);
-        let playback_snapshot = Arc::clone(&self.playback_snapshot);
-        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = self.sync_in_flight.clone();
-        thread::spawn(move || {
-            let Some(saved) = store
-                .with_store(|store| store.active_source())
-                .unwrap_or(None)
-            else {
-                let _sent = events.send(ControllerEvent::Snapshot(Box::new(
-                    LibrarySnapshot::first_run(),
-                )));
-                return;
-            };
-            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
-            let result = store.with_store(|store| {
-                store.forget_source(&saved.source.id)?;
-                Ok(())
-            });
-            if let Err(error) = result {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
-            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
-            clear_queue_and_stop_playback(
-                &queue,
-                &playback_request_generation,
-                &next_preload,
-                &playback,
-                &playback_snapshot,
-                &auto_dj_enabled,
-                &events,
-            );
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(
-                LibrarySnapshot::first_run(),
-            )));
-            delete_token_after_forget(secrets, saved.source.id);
-        });
-    }
     pub fn forget_source(&self, source_id: SourceId) {
         let store = self.store.clone();
         let events = self.events.clone();

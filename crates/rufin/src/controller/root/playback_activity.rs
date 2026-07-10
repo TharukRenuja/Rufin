@@ -297,72 +297,107 @@ mod tests {
     }
 
     #[test]
-    fn playback_manual_count() {
-        let (controller, events, snapshot, _queue, _player) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let source_id = snapshot.source.as_ref().expect("server").id.clone();
-        let first = snapshot.tracks[0].clone();
-        let second = snapshot.tracks[1].clone();
-        controller.play_tracks_now(vec![first.clone(), second]);
-        let _queue = wait_for_queue(&events).expect("queue");
-        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    fn activity_before_threshold_records_one_skip() {
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = local_source_saved();
+        let source_id = saved.source.id.clone();
+        let mut track = library_track(1, None, AlbumId::new("local:album:activity"), "Artist", &[]);
+        track.id = TrackId::new("local:track:activity");
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+            })
+            .expect("seed activity track");
+        let mut queue = QueueEngine::new(source_id.clone());
+        queue.play_now(&track);
+        let entry = queue.current().expect("current entry").clone();
 
-        controller.next_track();
+        controller.start_playback_activity(&source_id, &entry, 0);
+        controller.record_current_skip_if_needed();
+        controller.record_current_skip_if_needed();
+
         let delta = wait_for_activity_delta(&events);
-        assert_eq!(delta.tracks.skip_stats, vec![first.id.clone()]);
-        let _queue = wait_for_queue(&events).expect("next queue");
+        assert_eq!(delta.tracks.skip_stats, vec![track.id.clone()]);
+        assert!(
+            events.try_recv().is_err(),
+            "skip emitted more than one delta"
+        );
 
         let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert_eq!(detail.tracks.len(), 1);
-        assert_eq!(detail.tracks[0].id, first.id);
+        assert_eq!(detail.tracks[0].id, track.id);
         assert_eq!(detail.tracks[0].skip_count, Some(1));
     }
 
     #[test]
-    fn playback_manual_skip() {
-        let (controller, events, snapshot, _queue, _player) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let source_id = snapshot.source.as_ref().expect("server").id.clone();
-        let first = snapshot.tracks[0].clone();
-        let second = snapshot.tracks[1].clone();
-        let seek_seconds = play_threshold_seconds(first.duration_seconds);
-        controller.play_tracks_now(vec![first.clone(), second]);
-        let _queue = wait_for_queue(&events).expect("queue");
-        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    fn activity_at_threshold_records_play_without_skip() {
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = local_source_saved();
+        let source_id = saved.source.id.clone();
+        let mut track = library_track(1, None, AlbumId::new("local:album:activity"), "Artist", &[]);
+        track.id = TrackId::new("local:track:activity");
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+            })
+            .expect("seed activity track");
+        let mut queue = QueueEngine::new(source_id.clone());
+        queue.play_now(&track);
+        let entry = queue.current().expect("current entry").clone();
+        let threshold = play_threshold_seconds(entry.duration_seconds);
 
-        controller.seek_millis(u64::from(seek_seconds) * 1_000);
-        let _playback = wait_for_playback_track_position(
-            &controller,
-            &events,
-            &first.id,
-            u64::from(seek_seconds) * 1_000,
-        );
-        controller.next_track();
-        let _queue = wait_for_queue(&events).expect("next queue");
+        controller.start_playback_activity(&source_id, &entry, threshold);
+        let play_delta = wait_for_activity_delta(&events);
+        assert_eq!(play_delta.tracks.stats, vec![track.id.clone()]);
+        assert!(play_delta.tracks.skip_stats.is_empty());
+        controller.record_current_skip_if_needed();
 
         let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert!(detail.tracks.is_empty());
+        assert!(events.try_recv().is_err(), "threshold emitted a skip delta");
     }
 
     #[test]
-    fn playback_eos_count() {
-        let (controller, events, snapshot, _queue, _player) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let source_id = snapshot.source.as_ref().expect("server").id.clone();
-        let first = snapshot.tracks[0].clone();
-        let second = snapshot.tracks[1].clone();
-        controller.play_tracks_now(vec![first.clone(), second]);
-        let _queue = wait_for_queue(&events).expect("queue");
+    fn end_of_stream_then_error_does_not_record_manual_skip() {
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = local_source_saved();
+        let source_id = saved.source.id.clone();
+        let mut track = library_track(1, None, AlbumId::new("local:album:activity"), "Artist", &[]);
+        track.id = TrackId::new("local:track:activity");
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.upsert_tracks(&source_id, std::slice::from_ref(&track), 1)
+            })
+            .expect("seed activity track");
+        let mut queue = QueueEngine::new(source_id.clone());
+        queue.play_now(&track);
+        let entry = queue.current().expect("current entry").clone();
+        *controller.queue.lock().expect("queue") = Some(queue);
+        controller.start_playback_activity(&source_id, &entry, 0);
 
-        controller.advance_after_end_of_stream();
-        let _queue = wait_for_queue(&events).expect("eos queue");
         *controller.playback.lock().expect("playback") = Box::new(PlaybackEvents {
-            events: vec![PlaybackEvent::Error("stream failed".to_string())],
+            events: vec![
+                PlaybackEvent::EndOfStream,
+                PlaybackEvent::Error("stream failed".to_string()),
+            ],
         });
         controller.poll_playback_events();
 
+        let play_delta = wait_for_activity_delta(&events);
+        assert_eq!(play_delta.tracks.stats, vec![track.id.clone()]);
+        assert!(play_delta.tracks.skip_stats.is_empty());
         let detail = smart_detail_named(&controller, &source_id, "Most Skipped");
         assert!(detail.tracks.is_empty());
+        let played = smart_detail_named(&controller, &source_id, "Most Played");
+        assert_eq!(played.tracks.len(), 1);
+        assert_eq!(played.tracks[0].id, track.id);
+        assert_eq!(played.tracks[0].play_count, Some(1));
     }
 
     fn smart_detail_named(

@@ -502,7 +502,7 @@ fn reset_identity_queue(
     let player = playback_snapshot_from_queue(
         Some(&restored),
         auto_dj_enabled,
-        &load_settings_for_saved(context.store, saved).playback,
+        &load_settings_from_store(context.store).playback,
     );
     *context
         .queue

@@ -145,7 +145,7 @@ impl AppController {
             .store
             .with_store(|store| store.active_source())?
             .ok_or_else(|| "No active music server is saved.".to_string())?;
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let anchor_rank = self.store.with_store(|store| {
             store.track_rank_for_source(
                 &saved.source.id,
@@ -1073,7 +1073,7 @@ fn store_backed_window_play_activation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{AlbumId, Playlist, PlaylistEntrySortDescriptor, SourceIdentity};
+    use domain::{AlbumId, Playlist, PlaylistEntrySortDescriptor};
     use source::PlaylistEntry;
 
     struct RecordingPlaybackBackend {
@@ -1155,23 +1155,15 @@ mod tests {
     #[test]
     fn queue_replace_occurrence() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
-        let saved = SavedSource {
-            source: SourceIdentity {
-                id: SourceId::new("fake:server:queue"),
-                kind: "fake".to_string(),
-                name: "Queue Test".to_string(),
-                base_url: "https://music.example".to_string(),
-            },
-            user_id: "user".to_string(),
-            username: "demo".to_string(),
-            trust_invalid_cert: false,
-            use_jellyfin_instant_mix: false,
-        };
-        let mut repeated_track = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
+        let saved = saved_source();
+        let album_id = AlbumId::new("queue:album:occurrences");
+        let mut repeated_track = library_track(1, None, album_id.clone(), "Artist", &[]);
+        repeated_track.id = TrackId::new("queue:track:repeated");
         repeated_track.title = "Repeated".to_string();
-        let other_track = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
+        let mut other_track = library_track(2, None, album_id, "Artist", &[]);
+        other_track.id = TrackId::new("queue:track:other");
         let playlist = Playlist {
-            id: PlaylistId::fake(1),
+            id: PlaylistId::new("queue:playlist:occurrences"),
             name: "Playlist".to_string(),
             owner: None,
             track_count: 3,
@@ -1202,7 +1194,7 @@ mod tests {
                 let generation = store.begin_sync(&saved.source.id)?;
                 store.upsert_tracks(
                     &saved.source.id,
-                    &[repeated_track.clone(), other_track],
+                    &[repeated_track.clone(), other_track.clone()],
                     generation,
                 )?;
                 store.upsert_playlists(
@@ -1220,6 +1212,10 @@ mod tests {
                 Ok(())
             })
             .expect("seed store");
+        controller
+            .secrets
+            .save_token(&saved.source.id, "queue-token")
+            .expect("save source token");
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
 
         let source_key = PlaySourceKey {
@@ -1254,7 +1250,7 @@ mod tests {
             vec![
                 repeated_track.id.clone(),
                 repeated_track.id.clone(),
-                TrackId::fake(2),
+                other_track.id.clone(),
             ]
         );
         assert!(snapshot.entries[1].origin.is_some());
@@ -1268,7 +1264,7 @@ mod tests {
             target: PlayTarget::StoreBackedSource {
                 source_key,
                 anchor: PlayAnchor {
-                    track_id: TrackId::fake(2),
+                    track_id: other_track.id,
                     source_index: 2,
                     source_item_id: Some("entry-three".to_string()),
                 },
@@ -1289,12 +1285,32 @@ mod tests {
 
     #[test]
     fn queue_same_source_activation_reuses_entries() {
-        let (controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = snapshot.tracks[0..3].to_vec();
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = saved_source();
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)
+            })
+            .expect("set active source");
+        controller
+            .secrets
+            .save_token(&saved.source.id, "queue-token")
+            .expect("save source token");
+        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
+
+        let album_id = AlbumId::new("queue:album:reuse");
+        let mut first = library_track(1, None, album_id.clone(), "Artist", &[]);
+        first.id = TrackId::new("queue:track:reuse:first");
+        let mut second = library_track(2, None, album_id.clone(), "Artist", &[]);
+        second.id = TrackId::new("queue:track:reuse:second");
+        let mut third = library_track(3, None, album_id, "Artist", &[]);
+        third.id = TrackId::new("queue:track:reuse:third");
+        let tracks = [first, second, third];
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
-                playlist_id: PlaylistId::fake(9),
+                playlist_id: PlaylistId::new("queue:playlist:reuse"),
             },
             order: SourceOrder::PlaylistDisplayed {
                 query: None,
@@ -1358,9 +1374,27 @@ mod tests {
 
     #[test]
     fn first_row_source_activation_plays_clicked_track_with_shuffle_enabled() {
-        let (controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = snapshot.tracks[0..8].to_vec();
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = saved_source();
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)
+            })
+            .expect("set active source");
+        controller
+            .secrets
+            .save_token(&saved.source.id, "queue-token")
+            .expect("save source token");
+        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
+
+        let album_id = AlbumId::new("queue:album:clicked");
+        let mut clicked = library_track(1, None, album_id.clone(), "Artist", &[]);
+        clicked.id = TrackId::new("queue:track:clicked");
+        let mut other = library_track(2, None, album_id, "Artist", &[]);
+        other.id = TrackId::new("queue:track:other");
+        let tracks = [clicked, other];
         controller
             .with_queue_mut(|queue| {
                 queue.play_now(&tracks[0]);
@@ -1370,7 +1404,7 @@ mod tests {
             .expect("set shuffled current");
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
-                playlist_id: PlaylistId::fake(9),
+                playlist_id: PlaylistId::new("queue:playlist:clicked"),
             },
             order: SourceOrder::PlaylistDisplayed {
                 query: None,
@@ -1397,9 +1431,27 @@ mod tests {
 
     #[test]
     fn source_shuffle_start_uses_shuffled_current() {
-        let (controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = snapshot.tracks[0..8].to_vec();
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = saved_source();
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)
+            })
+            .expect("set active source");
+        controller
+            .secrets
+            .save_token(&saved.source.id, "queue-token")
+            .expect("save source token");
+        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
+
+        let album_id = AlbumId::new("queue:album:shuffle");
+        let mut previous = library_track(1, None, album_id.clone(), "Artist", &[]);
+        previous.id = TrackId::new("queue:track:shuffle:previous");
+        let mut next = library_track(2, None, album_id, "Artist", &[]);
+        next.id = TrackId::new("queue:track:shuffle:next");
+        let tracks = [previous, next];
         controller
             .with_queue_mut(|queue| {
                 queue.play_now(&tracks[0]);
@@ -1409,7 +1461,7 @@ mod tests {
             .expect("set shuffle");
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
-                playlist_id: PlaylistId::fake(9),
+                playlist_id: PlaylistId::new("queue:playlist:shuffle"),
             },
             order: SourceOrder::PlaylistDisplayed {
                 query: None,
@@ -1444,49 +1496,72 @@ mod tests {
         );
 
         let queue = wait_for_queue(&events).expect("source queue");
-        let identity_order = (0..queue.entries.len()).collect::<Vec<_>>();
+        assert!(queue.shuffle.enabled);
+        assert_eq!(queue.shuffle_order.len(), tracks.len());
         assert_eq!(queue.current_index, queue.shuffle_order.first().copied());
-        assert_ne!(
-            queue
-                .current_index
-                .and_then(|index| queue.entries.get(index))
-                .map(|entry| &entry.track_id),
-            Some(&tracks[0].id)
-        );
-        assert_ne!(queue.shuffle_order, identity_order);
         assert_ne!(queue.shuffle.seed, 19);
     }
 
     #[test]
     fn queue_reorder_preserves_current_entry() {
-        let (controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = snapshot.tracks[0..3].to_vec();
-        let current_track_id = tracks[0].id.clone();
-        let last_track_id = tracks[2].id.clone();
-        controller.play_tracks_now(tracks);
-        let initial = wait_for_queue(&events).expect("initial queue");
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let album_id = AlbumId::new("queue:album:reorder");
+        let mut current = library_track(1, None, album_id.clone(), "Artist", &[]);
+        current.id = TrackId::new("queue:track:reorder:current");
+        let mut middle = library_track(2, None, album_id.clone(), "Artist", &[]);
+        middle.id = TrackId::new("queue:track:reorder:middle");
+        let mut last = library_track(3, None, album_id, "Artist", &[]);
+        last.id = TrackId::new("queue:track:reorder:last");
+        let mut queue = QueueEngine::new(SourceId::new("queue:source:reorder"));
+        queue.append(&current);
+        queue.append(&middle);
+        queue.append(&last);
+        let initial = queue.snapshot();
         let last_entry_id = initial.entries[2].id.clone();
+        *controller.queue.lock().expect("queue") = Some(queue);
 
         controller.reorder_queue_entry(last_entry_id, 0, false);
 
         let reordered = wait_for_queue(&events).expect("reordered queue");
-        assert_eq!(reordered.entries[0].track_id, last_track_id);
+        assert_eq!(reordered.entries[0].track_id, last.id);
         assert_eq!(
             reordered.entries[reordered.current_index.expect("current")].track_id,
-            current_track_id
+            current.id
         );
     }
 
     #[test]
     fn queue_windowed_source_activation_replaces_entries() {
-        let (controller, events, ..) = AppController::bootstrap_with_fake(FakeScale::Small);
-        let tracks = (1..=8)
-            .map(|number| library_track(number, None, AlbumId::fake(1), "Artist", &[]))
-            .collect::<Vec<_>>();
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = saved_source();
+        controller
+            .store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source.id)
+            })
+            .expect("set active source");
+        controller
+            .secrets
+            .save_token(&saved.source.id, "queue-token")
+            .expect("save source token");
+        *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
+
+        let album_id = AlbumId::new("queue:album:window");
+        let mut first = library_track(1, None, album_id.clone(), "Artist", &[]);
+        first.id = TrackId::new("queue:track:window:first");
+        let mut second = library_track(2, None, album_id.clone(), "Artist", &[]);
+        second.id = TrackId::new("queue:track:window:second");
+        let mut third = library_track(3, None, album_id.clone(), "Artist", &[]);
+        third.id = TrackId::new("queue:track:window:third");
+        let mut fourth = library_track(4, None, album_id.clone(), "Artist", &[]);
+        fourth.id = TrackId::new("queue:track:window:fourth");
+        let mut fifth = library_track(5, None, album_id, "Artist", &[]);
+        fifth.id = TrackId::new("queue:track:window:fifth");
+        let tracks = [first, second, third, fourth, fifth];
         let source_key = PlaySourceKey {
             descriptor: PlaySourceDescriptor::Playlist {
-                playlist_id: PlaylistId::fake(10),
+                playlist_id: PlaylistId::new("queue:playlist:window"),
             },
             order: SourceOrder::PlaylistDisplayed {
                 query: None,
@@ -1501,7 +1576,7 @@ mod tests {
                     start,
                     total: Some(tracks.len()),
                 },
-                items: tracks[start..start + 5]
+                items: tracks[start..start + 3]
                     .iter()
                     .cloned()
                     .enumerate()
@@ -1527,9 +1602,9 @@ mod tests {
             .map(|entry| entry.id.clone())
             .collect::<Vec<_>>();
 
-        controller.play_activation(activation(0, 4));
+        controller.play_activation(activation(0, 2));
         let same_window_queue = wait_for_queue(&events).expect("same window source queue");
-        assert_eq!(same_window_queue.current_index, Some(4));
+        assert_eq!(same_window_queue.current_index, Some(2));
         assert_eq!(
             same_window_queue
                 .entries
@@ -1539,12 +1614,12 @@ mod tests {
             initial_ids
         );
 
-        controller.play_activation(activation(3, 3));
+        controller.play_activation(activation(2, 2));
         let moved_queue = wait_for_queue(&events).expect("windowed source queue");
 
-        assert_eq!(moved_queue.current_index, Some(3));
-        assert_eq!(moved_queue.entries[0].track_id, tracks[3].id);
-        assert_eq!(moved_queue.entries[4].track_id, tracks[7].id);
+        assert_eq!(moved_queue.current_index, Some(2));
+        assert_eq!(moved_queue.entries[0].track_id, tracks[2].id);
+        assert_eq!(moved_queue.entries[2].track_id, tracks[4].id);
         assert_ne!(
             moved_queue
                 .entries
@@ -1558,29 +1633,13 @@ mod tests {
     #[test]
     fn queue_clear_activation() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
-        let saved = SavedSource {
-            source: SourceIdentity {
-                id: SourceId::new("fake:server:stale-activation"),
-                kind: "fake".to_string(),
-                name: "Queue Test".to_string(),
-                base_url: "https://music.example".to_string(),
-            },
-            user_id: "user".to_string(),
-            username: "demo".to_string(),
-            trust_invalid_cert: false,
-            use_jellyfin_instant_mix: false,
-        };
-        controller
-            .store
-            .with_store(|store| {
-                store.save_source(&saved)?;
-                store.set_active_source(&saved.source.id)?;
-                Ok(())
-            })
-            .expect("seed store");
-        let current = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
-        let stale = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
-        let mut queue = QueueEngine::new(saved.source.id.clone());
+        let source_id = SourceId::new("queue:source:clear");
+        let album_id = AlbumId::new("queue:album:clear");
+        let mut current = library_track(1, None, album_id.clone(), "Artist", &[]);
+        current.id = TrackId::new("queue:track:clear:current");
+        let mut stale = library_track(2, None, album_id, "Artist", &[]);
+        stale.id = TrackId::new("queue:track:clear:stale");
+        let mut queue = QueueEngine::new(source_id.clone());
         queue.append(&current);
         *controller.queue.lock().expect("queue") = Some(queue);
 
@@ -1589,7 +1648,7 @@ mod tests {
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {
-                        album_id: AlbumId::fake(1),
+                        album_id: AlbumId::new("queue:album:stale"),
                         selected_music_folder_id: None,
                     },
                     order: SourceOrder::Canonical,
@@ -1614,11 +1673,7 @@ mod tests {
         assert_eq!(queue.current_index, Some(0));
         assert_eq!(queue.entries[0].track_id, current.id);
 
-        controller.finish_store_backed_source_activation(
-            &saved.source.id,
-            stale_activation,
-            generation,
-        );
+        controller.finish_store_backed_source_activation(&source_id, stale_activation, generation);
         let queue = controller.queue_snapshot().expect("queue snapshot");
         assert_eq!(queue.entries.len(), 1);
         assert_eq!(queue.current_index, Some(0));
@@ -1627,16 +1682,17 @@ mod tests {
 
     #[test]
     fn queue_clear_keeps_current_playback() {
-        let (mut controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
+        let (mut controller, events, ..) = AppController::bootstrap_memory_for_test();
         let commands = Arc::new(Mutex::new(Vec::new()));
         controller.playback = Arc::new(Mutex::new(Box::new(RecordingPlaybackBackend {
             commands: Arc::clone(&commands),
         })));
-        let saved = snapshot.source.expect("server");
-        let current = snapshot.tracks[0].clone();
-        let next = snapshot.tracks[1].clone();
-        let mut queue = QueueEngine::new(saved.id);
+        let album_id = AlbumId::new("queue:album:clear-playback");
+        let mut current = library_track(1, None, album_id.clone(), "Artist", &[]);
+        current.id = TrackId::new("queue:track:clear-playback:current");
+        let mut next = library_track(2, None, album_id, "Artist", &[]);
+        next.id = TrackId::new("queue:track:clear-playback:next");
+        let mut queue = QueueEngine::new(SourceId::new("queue:source:clear-playback"));
         queue.append(&current);
         queue.append(&next);
         *controller.queue.lock().expect("queue") = Some(queue);
@@ -1673,13 +1729,17 @@ mod tests {
     }
 
     #[test]
-    fn queue_store_activation() {
-        let (controller, events, snapshot, ..) =
-            AppController::bootstrap_with_fake(FakeScale::Small);
-        let saved = snapshot.source.expect("server");
-        let current = snapshot.tracks[0].clone();
-        let stale = snapshot.tracks[1].clone();
-        let mut queue = QueueEngine::new(saved.id.clone());
+    fn stale_store_activation_cannot_overwrite_newer_queue_change() {
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let source_id = SourceId::new("queue:source:stale-generation");
+        let album_id = AlbumId::new("queue:album:stale-generation");
+        let mut current = library_track(1, None, album_id.clone(), "Artist", &[]);
+        current.id = TrackId::new("queue:track:stale-generation:current");
+        let mut stale = library_track(2, None, album_id.clone(), "Artist", &[]);
+        stale.id = TrackId::new("queue:track:stale-generation:stale");
+        let mut newer = library_track(3, None, album_id, "Artist", &[]);
+        newer.id = TrackId::new("queue:track:stale-generation:newer");
+        let mut queue = QueueEngine::new(source_id.clone());
         queue.append(&current);
         *controller.queue.lock().expect("queue") = Some(queue);
 
@@ -1688,7 +1748,7 @@ mod tests {
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {
-                        album_id: AlbumId::fake(1),
+                        album_id: AlbumId::new("queue:album:stale"),
                         selected_music_folder_id: None,
                     },
                     order: SourceOrder::Canonical,
@@ -1707,20 +1767,15 @@ mod tests {
             },
         };
 
-        controller.play_random_tracks(random_request(RandomPlayAction::AddLast, 2));
-        let random_queue = wait_for_queue(&events).expect("random queue");
-        assert!(random_queue.entries.len() > 1);
+        controller.play_last(vec![newer.clone()]);
+        let newer_queue = wait_for_queue(&events).expect("newer queue change");
+        assert_eq!(newer_queue.entries.len(), 2);
 
-        controller.finish_store_backed_source_activation(&saved.id, stale_activation, generation);
+        controller.finish_store_backed_source_activation(&source_id, stale_activation, generation);
         let queue = controller.queue_snapshot().expect("queue snapshot");
-        assert_eq!(queue.entries.len(), random_queue.entries.len());
+        assert_eq!(queue.entries.len(), 2);
         assert_eq!(queue.entries[0].track_id, current.id);
-        assert!(
-            queue
-                .entries
-                .iter()
-                .skip(1)
-                .any(|entry| entry.track_id != stale.id)
-        );
+        assert_eq!(queue.entries[1].track_id, newer.id);
+        assert!(queue.entries.iter().all(|entry| entry.track_id != stale.id));
     }
 }

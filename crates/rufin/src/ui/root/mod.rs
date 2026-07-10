@@ -71,8 +71,6 @@ use crate::external_metadata;
 use crate::i18n::{self, tr, trn_with};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use ::library::{CachedGenreDetail, CachedMoodDetail, LibraryDelta, image_cache_key};
-#[cfg(feature = "dev-tools")]
-use ::test_support::FakeScale;
 use adw::prelude::*;
 use chrome::{build_content_chrome, build_main_area, window_drag_handle_with_child};
 use discord::DiscordPresence;
@@ -346,11 +344,6 @@ pub(in crate::ui) enum RouteResizePolicy {
     Stable,
     LayoutSignature,
     SettledWidth,
-}
-#[derive(Clone, Debug, Default)]
-pub struct AppOptions {
-    #[cfg(feature = "dev-tools")]
-    pub fake_scale: Option<FakeScale>,
 }
 #[derive(Clone)]
 pub(in crate::ui) struct AddServerDialogHandle {
@@ -740,29 +733,11 @@ fn sidebar_scroll_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::Scroll
     slot.set_child(Some(child));
     slot
 }
-pub fn build(app: &adw::Application, _options: AppOptions) {
+pub fn build(app: &adw::Application) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
-    #[cfg(feature = "dev-tools")]
-    let using_fake_library = _options.fake_scale.is_some();
-    #[cfg(not(feature = "dev-tools"))]
-    let using_fake_library = false;
-    let bootstrapped = {
-        #[cfg(feature = "dev-tools")]
-        {
-            if let Some(scale) = _options.fake_scale {
-                Ok(AppController::bootstrap_with_fake(scale))
-            } else {
-                AppController::bootstrap()
-            }
-        }
-        #[cfg(not(feature = "dev-tools"))]
-        {
-            AppController::bootstrap()
-        }
-    };
-    let (controller, events, library, queue, player) = match bootstrapped {
+    let (controller, events, library, queue, player) = match AppController::bootstrap() {
         Ok(bootstrapped) => bootstrapped,
         Err(error) => {
             error!(%error, "failed to start Rufin");
@@ -1158,9 +1133,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         shell.controller.request_waveform_for_current();
     }
 
-    if !using_fake_library {
-        schedule_startup_sync(&shell);
-    }
+    schedule_startup_sync(&shell);
 
     #[cfg(unix)]
     tray::present_initial_window(&shell);

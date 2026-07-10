@@ -63,7 +63,7 @@ pub(in crate::controller) fn source_capabilities_for_saved(
 }
 
 fn source_kind_has_native_playlists(source_kind: &str) -> bool {
-    !matches!(source_kind, "fake" | LOCAL_SOURCE_ID)
+    source_kind != LOCAL_SOURCE_ID
 }
 
 fn source_kind_has_native_playlist_mutations(source_kind: &str) -> bool {

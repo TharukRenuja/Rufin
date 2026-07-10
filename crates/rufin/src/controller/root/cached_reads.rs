@@ -12,19 +12,6 @@ pub(in crate::controller) fn promote_prefetched_home_section(
     store.with_store(|store| store.clear_home_section_prefetch(source_id, section.kind))?;
     Ok(())
 }
-#[cfg(test)]
-pub(in crate::controller) fn cache_home_sections(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    sections: &[HomeSection],
-    generation: i64,
-) -> Result<(), String> {
-    for section in sections {
-        cache_home_section_items(store, source_id, section, generation)?;
-    }
-    store.with_store(|store| store.upsert_home_sections(source_id, sections, generation))?;
-    Ok(())
-}
 pub(in crate::controller) fn cache_home_section(
     store: &StoreHandle,
     source_id: &SourceId,
@@ -67,16 +54,6 @@ pub(in crate::controller) fn sync_page_finished(
     offset: usize,
 ) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
-}
-#[cfg(test)]
-pub(in crate::controller) fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
-    [
-        HomeSectionKind::Explore,
-        HomeSectionKind::MostPlayed,
-        HomeSectionKind::NewlyAdded,
-        HomeSectionKind::RecentlyPlayed,
-        HomeSectionKind::RecentlyReleased,
-    ]
 }
 pub(in crate::controller) fn normalize_artist_detail_image_refs(
     detail: &mut CachedArtistDetail,
@@ -135,145 +112,6 @@ pub(in crate::controller) fn load_home_update(
         prefetched_explore,
     })
 }
-#[cfg(any(test, feature = "dev-tools"))]
-pub(in crate::controller) fn seed_fake_cache(
-    store: &StoreHandle,
-    scale: FakeScale,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let source = FakeSource::new(scale);
-    info!(
-        ?scale,
-        albums = source.album_count(),
-        tracks = source.track_count(),
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "generated fake library"
-    );
-    let server = source.identity().clone();
-    let saved = SavedSource {
-        source: server.clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    store.with_store(|store| {
-        store.save_source(&saved)?;
-        store.set_active_source(&server.id)?;
-        Ok(())
-    })?;
-    let generation = store.with_store(|store| store.begin_sync(&server.id))?;
-
-    let runtime = Runtime::new().map_err(|error| error.to_string())?;
-    let album_limit = match scale {
-        FakeScale::Small => source.album_count(),
-        FakeScale::Large => 1_000,
-        FakeScale::Stress => source.album_count(),
-        FakeScale::ThirtyK => source.album_count(),
-    };
-    let track_limit = match scale {
-        FakeScale::Small => source.track_count(),
-        FakeScale::Large => 2_000,
-        FakeScale::Stress => source.track_count(),
-        FakeScale::ThirtyK => source.track_count(),
-    };
-    runtime.block_on(async {
-        let fetch_started = Instant::now();
-        let albums = source
-            .albums(PagedRequest::new(0, album_limit))
-            .await
-            .map_err(|error| error.to_string())?;
-        let tracks = source
-            .tracks(PagedRequest::new(0, track_limit))
-            .await
-            .map_err(|error| error.to_string())?;
-        let artists = source
-            .artists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let album_artists = source
-            .album_artists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let genres = source
-            .genres(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let playlists = source
-            .playlists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let home_sections = source
-            .home_sections()
-            .await
-            .map_err(|error| error.to_string())?;
-        info!(
-            ?scale,
-            album_limit,
-            track_limit,
-            elapsed_ms = fetch_started.elapsed().as_millis() as u64,
-            total_elapsed_ms = started.elapsed().as_millis() as u64,
-            "fetched fake cache seed pages"
-        );
-
-        let pruned_cover_entries = store.with_store(|store| {
-            let write_started = Instant::now();
-            let step_started = Instant::now();
-            store.upsert_albums(&server.id, &albums.items, generation)?;
-            info!(
-                ?scale,
-                count = albums.items.len(),
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake albums"
-            );
-            let step_started = Instant::now();
-            store.upsert_tracks(&server.id, &tracks.items, generation)?;
-            info!(
-                ?scale,
-                count = tracks.items.len(),
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake tracks"
-            );
-            let step_started = Instant::now();
-            store.upsert_artists(&server.id, &artists.items, false, generation)?;
-            store.upsert_artists(&server.id, &album_artists.items, true, generation)?;
-            store.refresh_library_counts(&server.id)?;
-            store.upsert_genres(&server.id, &genres.items, generation)?;
-            store.upsert_playlists_with_mode(
-                &server.id,
-                &playlists.items,
-                PlaylistWriteMode::StoreOwned,
-            )?;
-            store.upsert_home_sections(&server.id, &home_sections, generation)?;
-            info!(
-                ?scale,
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake library metadata"
-            );
-            let result = store.complete_sync(&server.id, generation);
-            info!(
-                ?scale,
-                elapsed_ms = write_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "finished fake cache writes"
-            );
-            result
-        })?;
-        let prune_started = Instant::now();
-        prune_successful_sync_image_cache(store, &server.id, pruned_cover_entries);
-        info!(
-            ?scale,
-            elapsed_ms = prune_started.elapsed().as_millis() as u64,
-            total_elapsed_ms = started.elapsed().as_millis() as u64,
-            "finished fake cache seed"
-        );
-        Ok::<(), String>(())
-    })?;
-    Ok(())
-}
 pub(in crate::controller) fn restore_queue(
     store: &StoreHandle,
     server: Option<&SourceIdentity>,
@@ -286,7 +124,7 @@ pub(in crate::controller) fn restore_queue(
         trust_invalid_cert: false,
         use_jellyfin_instant_mix: false,
     };
-    let settings = load_settings_for_saved(store, &saved);
+    let settings = load_settings_from_store(store);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
             match queue_track_refs(store, &saved, &settings, &mut snapshot.entries) {
@@ -440,7 +278,7 @@ pub(in crate::controller) fn prepare_saved_queue_activation(
     let playback_snapshot = playback_snapshot_from_queue(
         Some(&restored),
         auto_dj_enabled,
-        &load_settings_for_saved(context.store, saved).playback,
+        &load_settings_from_store(context.store).playback,
     );
 
     Ok(Some(PreparedQueueActivation {
@@ -603,19 +441,6 @@ pub(in crate::controller) fn ensure_local_source_server(
     store.with_store(|store| store.save_source(&saved))?;
     Ok(saved)
 }
-pub(in crate::controller) fn load_settings_for_active_source(store: &StoreHandle) -> AppSettings {
-    let settings = load_settings_from_store(store);
-    match store.with_store(|store| store.active_source()) {
-        Ok(Some(saved)) => settings_for_server(settings, &saved.source),
-        _ => settings,
-    }
-}
-pub(in crate::controller) fn load_settings_for_saved(
-    store: &StoreHandle,
-    saved: &SavedSource,
-) -> AppSettings {
-    settings_for_server(load_settings_from_store(store), &saved.source)
-}
 pub(in crate::controller) fn prune_successful_sync_image_cache(
     store: &StoreHandle,
     source_id: &SourceId,
@@ -632,11 +457,7 @@ fn stale_external_images(
     store: &StoreHandle,
     source_id: &SourceId,
 ) -> Result<Vec<CoverCacheEntry>, String> {
-    let saved = store.with_store(|store| store.saved_source(source_id))?;
-    let settings = saved
-        .as_ref()
-        .map(|saved| load_settings_for_saved(store, saved))
-        .unwrap_or_else(|| load_settings_from_store(store));
+    let settings = load_settings_from_store(store);
     let prune_all_external = !external_metadata::cached_refs_enabled(&settings);
     let live_refs = if prune_all_external {
         Vec::new()
@@ -700,15 +521,6 @@ fn external_prune_tracks(store: &StoreHandle, source_id: &SourceId) -> Result<Ve
     }
 }
 
-pub(in crate::controller) fn settings_for_server(
-    mut settings: AppSettings,
-    server: &SourceIdentity,
-) -> AppSettings {
-    if server.kind == "fake" {
-        settings.external_metadata_enabled = false;
-    }
-    settings
-}
 pub(in crate::controller) fn local_initial_cover_cache_required(
     store: &StoreHandle,
     source_id: &SourceId,
@@ -1036,12 +848,6 @@ pub(in crate::controller) fn shuffle_seed() -> u64 {
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(1)
 }
-pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
-    if fake {
-        return Box::new(FakePlaybackBackend::new());
-    }
-    Box::new(LazyGStreamerPlaybackBackend::new())
-}
 pub(in crate::controller) fn platform_secret_store(settings: &AppSettings) -> Arc<dyn SecretStore> {
     match settings.secret_storage_mode {
         SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
@@ -1068,7 +874,7 @@ pub(in crate::controller) fn saved_server_needs_auth(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedSource,
 ) -> bool {
-    if saved.source.kind == LOCAL_SOURCE_ID || saved.source.kind == "fake" {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         return false;
     }
     !config_token_available(secrets, &saved.source.id)

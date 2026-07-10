@@ -50,7 +50,7 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
-            let settings = load_settings_for_active_source(&store);
+            let settings = load_settings_from_store(&store);
             let query = expected.query.clone();
             let kind = expected.kind.clone();
             let (key, mut results) = match store.with_store(|store| {

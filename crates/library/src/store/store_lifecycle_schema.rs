@@ -298,7 +298,7 @@ fn migrate_to_playlist_owner_schema(store: &Store) -> StoreResult<()> {
           AND server_id IN (
               SELECT server_id
               FROM servers
-              WHERE provider IN ('local', 'fake')
+              WHERE provider = 'local'
           )
         ",
         [],
@@ -337,7 +337,7 @@ fn migrate_to_favorite_override_schema(store: &Store) -> StoreResult<()> {
                 FROM {table}
                 JOIN servers
                   ON servers.server_id = {table}.server_id
-                WHERE servers.provider IN ('local', 'fake')
+                WHERE servers.provider = 'local'
                   AND {table}.favorite = 1
                 "
             ),

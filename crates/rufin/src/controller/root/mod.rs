@@ -8,8 +8,6 @@ use crate::sources::{
     source_from_saved,
 };
 use crate::{cover_art_policy, external_metadata};
-#[cfg(any(test, feature = "dev-tools"))]
-use ::test_support::{FakeScale, FakeSource};
 use directories::ProjectDirs;
 #[cfg(test)]
 use domain::ThemePreference;
@@ -35,11 +33,10 @@ use library::{
     StoreResult, SyncState,
 };
 use playback::{
-    FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
-    PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem,
-    generate_waveform_peaks_cancellable,
+    LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState,
+    PlaybackTrack, PreparedPlaybackItem, generate_waveform_peaks_cancellable,
 };
-#[cfg(any(test, feature = "dev-tools"))]
+#[cfg(test)]
 use secrets::MemorySecretStore;
 #[cfg(unix)]
 use secrets::SecretServiceStore;

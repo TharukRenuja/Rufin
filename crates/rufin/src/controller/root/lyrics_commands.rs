@@ -226,10 +226,6 @@ impl AppController {
                 let _sent = events.send(lyrics_event(&entry.track_id, None));
                 return;
             };
-            if saved.source.kind == "fake" {
-                let _sent = events.send(lyrics_event(&entry.track_id, None));
-                return;
-            }
             let result =
                 source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                     runtime

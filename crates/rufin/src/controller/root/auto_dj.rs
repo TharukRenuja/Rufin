@@ -97,10 +97,10 @@ fn auto_dj_should_schedule(controller: &AppController) -> bool {
     let Some(state) = auto_dj_state(&controller.queue) else {
         return false;
     };
-    let Ok(Some(saved)) = saved_server_for_generated_queue(controller, &state.source_id) else {
+    let Ok(Some(_)) = saved_server_for_generated_queue(controller, &state.source_id) else {
         return false;
     };
-    let settings = load_settings_for_saved(&controller.store, &saved);
+    let settings = load_settings_from_store(&controller.store);
     state.remaining < usize::from(settings.auto_dj_refill_threshold)
 }
 
@@ -119,7 +119,7 @@ fn auto_dj_handles(controller: &AppController) -> Result<bool, String> {
     let Some(saved) = saved_server_for_generated_queue(controller, &state.source_id)? else {
         return Ok(false);
     };
-    let settings = load_settings_for_saved(&controller.store, &saved);
+    let settings = load_settings_from_store(&controller.store);
     let refill_threshold = usize::from(settings.auto_dj_refill_threshold);
     if state.remaining >= refill_threshold {
         return Ok(false);
@@ -244,9 +244,7 @@ fn auto_dj_random_fallback_tracks(
     state: &AutoDjQueueState,
 ) -> Result<Vec<Track>, String> {
     let genre_name = auto_dj_current_genre(controller, state)?;
-    let should_spread_cached_tracks =
-        saved.source.kind == "fake" || saved.source.kind == LOCAL_SOURCE_ID;
-    let mut tracks = if should_spread_cached_tracks {
+    let mut tracks = if saved.source.kind == LOCAL_SOURCE_ID {
         auto_dj_random_fallback_tracks_from_cache(
             controller,
             &saved.source.id,
@@ -280,7 +278,7 @@ fn auto_dj_random_fallback_tracks(
     } else {
         prepare_source_tracks(controller, saved, settings, &mut tracks)?;
     }
-    if should_spread_cached_tracks {
+    if saved.source.kind == LOCAL_SOURCE_ID {
         tracks = spread_radio_tracks(
             &format!("auto-dj:{}", state.current.track_id.as_str()),
             tracks,

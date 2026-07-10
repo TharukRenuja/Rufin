@@ -260,7 +260,7 @@ fn active_source_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn Secret
     let Some(server) = snapshot.source.as_ref() else {
         return false;
     };
-    if server.kind == LOCAL_SOURCE_ID || server.kind == "fake" {
+    if server.kind == LOCAL_SOURCE_ID {
         return false;
     }
     !config_token_available(secrets, &server.id)
@@ -388,7 +388,7 @@ fn load_active_source_snapshot(
     let music_folders = store.with_store(|store| store.list_music_folders(&saved.source.id))?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
-    let metadata_settings = load_settings_for_saved(store, &saved);
+    let metadata_settings = load_settings_from_store(store);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.source.id))
         .ok();

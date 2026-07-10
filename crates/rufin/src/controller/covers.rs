@@ -185,9 +185,6 @@ impl AppController {
         else {
             return;
         };
-        if saved.source.kind == "fake" {
-            return;
-        }
         if let Some(path) = self.cached_cover_path(&image_ref, size) {
             if let Some(key) = self.cover_key(&image_ref, size) {
                 let _sent = self.events.send(ControllerEvent::CoverReady { key, path });
@@ -263,12 +260,6 @@ impl AppController {
                 let Some(saved) = store.with_store(|store| store.active_source())? else {
                     return Ok(CoverRequestOutcome::Deferred);
                 };
-                if saved.source.kind == "fake" {
-                    return Ok(CoverRequestOutcome::TerminalMissing {
-                        external_retry_generation: None,
-                    });
-                }
-
                 let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
                 let expected_key = image_cache_key(&saved.source.id, &image_ref.item_id, tag, size);
                 if expected_key != key {

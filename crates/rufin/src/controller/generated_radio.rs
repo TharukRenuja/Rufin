@@ -13,8 +13,7 @@ use source_local::LOCAL_SOURCE_ID;
 use tracing::info;
 
 use super::{
-    AppController, ControllerEvent, RandomPlayAction, SNAPSHOT_TRACK_LIMIT,
-    load_settings_for_saved,
+    AppController, ControllerEvent, RandomPlayAction, load_settings_from_store,
     root::local_source_saved,
     source_for_saved,
     source_tracks::{
@@ -238,10 +237,8 @@ impl AppController {
         seed: GeneratedTrackSeed,
         limit: usize,
     ) -> Result<Vec<Track>, String> {
-        let settings = load_settings_for_saved(&self.store, saved);
-        let mut tracks = if saved.source.kind == "fake" {
-            self.generated_tracks_from_cache(&saved.source.id, seed, limit)?
-        } else if saved.source.kind == LOCAL_SOURCE_ID {
+        let settings = load_settings_from_store(&self.store);
+        let mut tracks = if saved.source.kind == LOCAL_SOURCE_ID {
             let mut tracks =
                 self.local_generated_tracks_from_cache(&saved.source.id, seed, limit)?;
             dedupe_tracks(&mut tracks);
@@ -264,52 +261,6 @@ impl AppController {
         dedupe_tracks(&mut tracks);
         prepare_source_tracks(self, saved, &settings, &mut tracks)?;
         Ok(tracks)
-    }
-
-    fn generated_tracks_from_cache(
-        &self,
-        source_id: &SourceId,
-        seed: GeneratedTrackSeed,
-        limit: usize,
-    ) -> Result<Vec<Track>, String> {
-        let tracks = self
-            .store
-            .with_store(|store| store.load_tracks(source_id, 0, SNAPSHOT_TRACK_LIMIT))?
-            .items;
-        let mut candidates = match seed {
-            GeneratedTrackSeed::Track(track_id) => {
-                let seed = self
-                    .store
-                    .with_store(|store| store.load_track(source_id, &track_id))?
-                    .ok_or_else(|| "The selected track is no longer available.".to_string())?;
-                tracks
-                    .into_iter()
-                    .filter(|track| track.id != seed.id)
-                    .filter(|track| {
-                        track.artist_id == seed.artist_id
-                            || track.album_id == seed.album_id
-                            || track.genres.iter().any(|genre| seed.genres.contains(genre))
-                    })
-                    .collect::<Vec<_>>()
-            }
-            GeneratedTrackSeed::Album(album_id) => tracks
-                .into_iter()
-                .filter(|track| track.album_id != album_id)
-                .collect(),
-            GeneratedTrackSeed::Artist(artist_id) => tracks
-                .into_iter()
-                .filter(|track| track.artist_id.as_ref() == Some(&artist_id))
-                .collect(),
-            GeneratedTrackSeed::Genre { id: _, name } => tracks
-                .into_iter()
-                .filter(|track| track.genres.iter().any(|genre| genre == &name))
-                .collect(),
-            GeneratedTrackSeed::Playlist(_) => {
-                return Err("Playlist radio is not supported for this source.".to_string());
-            }
-        };
-        candidates.sort_by_key(|track| track.id.as_str().to_string());
-        Ok(candidates.into_iter().take(limit.clamp(1, 500)).collect())
     }
 
     fn apply_generated_radio(&self, action: RandomPlayAction, tracks: Vec<Track>) {

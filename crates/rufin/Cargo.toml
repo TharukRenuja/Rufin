@@ -17,10 +17,6 @@ build = "build.rs"
 name = "rufin"
 path = "src/main.rs"
 
-[features]
-default = []
-dev-tools = ["dep:test_support"]
-
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
 directories.workspace = true
@@ -39,7 +35,6 @@ source-local.workspace = true
 source-subsonic.workspace = true
 secrets.workspace = true
 library.workspace = true
-test_support = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -49,7 +44,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 [dev-dependencies]
 async-trait.workspace = true
 rusqlite.workspace = true
-test_support.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 ksni = { workspace = true, features = ["blocking"] }

@@ -195,7 +195,7 @@ impl AppController {
                 let player = playback_snapshot_from_queue(
                     Some(&restored),
                     auto_dj,
-                    &load_settings_for_saved(&store, &saved).playback,
+                    &load_settings_from_store(&store).playback,
                 );
                 invalidate_playback_requests(&playback_request_generation);
                 if let Ok(mut queue) = queue.lock() {

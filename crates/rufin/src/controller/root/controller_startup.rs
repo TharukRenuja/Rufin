@@ -390,9 +390,6 @@ fn emit_sync_complete_snapshot(
 }
 
 fn start_album_identity_lookup(context: &SyncContext, saved: &SavedSource) {
-    if saved.source.kind == "fake" {
-        return;
-    }
     let settings = load_settings_from_store(&context.store);
     if !external_metadata::enabled(&settings) {
         return;
@@ -536,7 +533,7 @@ pub(in crate::controller) fn snapshot_queue_refs(
         return;
     }
     let mut normalized_entries = original_snapshot.entries.clone();
-    let settings = load_settings_for_saved(&context.store, saved);
+    let settings = load_settings_from_store(&context.store);
     match queue_track_refs(&context.store, saved, &settings, &mut normalized_entries) {
         Ok(true) => {}
         Ok(false) => return,
@@ -628,10 +625,6 @@ pub(in crate::controller) fn start_home_refresh_thread(
     saved: SavedSource,
     target: HomeRefreshTarget,
 ) {
-    if saved.source.kind == "fake" {
-        return;
-    }
-
     let source_id = saved.source.id.clone();
     if sync_is_running(&context.sync_in_flight, &source_id) {
         return;
@@ -682,10 +675,6 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
     context: ExplorePrefetchContext,
     saved: SavedSource,
 ) {
-    if saved.source.kind == "fake" {
-        return;
-    }
-
     let source_id = saved.source.id.clone();
     if sync_is_running(&context.sync_in_flight, &source_id) {
         return;
@@ -1356,46 +1345,6 @@ pub(in crate::controller) async fn sync_source(
     )
     .await
     .map(|_| ())
-}
-#[cfg(test)]
-pub(in crate::controller) async fn sync_source_with_events(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-    events: Sender<ControllerEvent>,
-) -> Result<(), String> {
-    let generation = store.with_store(|store| store.begin_sync(source_id))?;
-    let cancellation = CancellationToken::new();
-    sync_source_generation(
-        store,
-        source_id,
-        source,
-        generation,
-        SyncProgressReporter::for_source(source, Some(events)),
-        false,
-        &cancellation,
-    )
-    .await
-    .map(|_| ())
-}
-#[cfg(test)]
-pub(in crate::controller) async fn sync_source_outcome(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-) -> Result<SyncJobOutcome, String> {
-    let generation = store.with_store(|store| store.begin_sync(source_id))?;
-    let cancellation = CancellationToken::new();
-    sync_source_generation(
-        store,
-        source_id,
-        source,
-        generation,
-        SyncProgressReporter::silent(source),
-        true,
-        &cancellation,
-    )
-    .await
 }
 #[cfg(test)]
 pub(in crate::controller) async fn sync_source_outcome_with_cancellation(
@@ -2375,49 +2324,6 @@ async fn sync_playlist_pages(
         }
     }
 }
-#[cfg(test)]
-pub(in crate::controller) async fn refresh_playlist_pages(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-) -> Result<(), String> {
-    let generation =
-        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
-    let mut playlist_ids = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page = source
-            .playlists(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        for playlist in &page.items {
-            playlist_ids.push(playlist.id.clone());
-        }
-        store.with_store(|store| store.upsert_playlists(source_id, &page.items, generation))?;
-        for playlist in &page.items {
-            let detail = source
-                .playlist_detail(&playlist.id)
-                .await
-                .map_err(|error| error.to_string())?;
-            store.with_store(|store| {
-                store.upsert_tracks(source_id, &detail.tracks, generation)?;
-                store.upsert_playlist_entries(
-                    source_id,
-                    &detail.playlist.id,
-                    &detail.entries,
-                    generation,
-                )?;
-                Ok(())
-            })?;
-        }
-        let item_count = page.items.len();
-        offset += item_count;
-        if sync_page_finished(item_count, page.total, offset) {
-            store.with_store(|store| store.prune_playlists_except(source_id, &playlist_ids))?;
-            return Ok(());
-        }
-    }
-}
 async fn sync_home_sections(
     store: &StoreHandle,
     source_id: &SourceId,
@@ -2429,34 +2335,6 @@ async fn sync_home_sections(
     let sections = await_source(cancellation, source.home_sections()).await?;
     check_sync_cancelled(cancellation)?;
     store.with_store(|store| store.upsert_home_sections_delta(source_id, &sections, generation))
-}
-#[cfg(test)]
-pub(in crate::controller) async fn refresh_home_sections(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-) -> Result<(), String> {
-    let generation =
-        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
-    let sections = source
-        .home_sections()
-        .await
-        .map_err(|error| error.to_string())?;
-    cache_home_sections(store, source_id, &sections, generation)
-}
-#[cfg(test)]
-pub(in crate::controller) async fn refresh_home_sections_without_explore(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    source: &(impl MusicSource + ?Sized),
-) -> Result<(), String> {
-    for kind in home_refresh_section_kinds()
-        .into_iter()
-        .filter(|kind| *kind != HomeSectionKind::Explore)
-    {
-        refresh_home_section(store, source_id, source, kind).await?;
-    }
-    Ok(())
 }
 pub(in crate::controller) async fn refresh_home_section(
     store: &StoreHandle,

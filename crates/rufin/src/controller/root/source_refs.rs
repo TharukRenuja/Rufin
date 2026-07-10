@@ -30,7 +30,7 @@ pub(in crate::controller) fn track_album_refs(
     if tracks.is_empty() {
         return Ok(());
     }
-    let settings = load_settings_for_saved(store, saved);
+    let settings = load_settings_from_store(store);
     track_album_refs_with_settings(store, saved, &settings, tracks, albums)
 }
 
@@ -135,7 +135,7 @@ pub(in crate::controller) fn home_image_refs(
     saved: &SavedSource,
     section: &mut HomeSection,
 ) -> Result<(), String> {
-    let metadata_settings = load_settings_for_saved(store, saved);
+    let metadata_settings = load_settings_from_store(store);
     scrub_home_refs(saved, section);
     cover_art_policy::bind_home_section(section, &metadata_settings);
     scrub_home_refs(saved, section);
