@@ -88,7 +88,10 @@ impl Shell {
         row.set_valign(gtk::Align::Center);
         row.set_halign(gtk::Align::Start);
         row.append(&kind);
-        if let Some(playlist) = radio_playlist {
+        if let Some(playlist) = radio_playlist.filter(|_| {
+            self.controller
+                .manual_radio_supported(domain::GeneratedTrackSeedKind::Playlist)
+        }) {
             let radio = detail_radio_button();
             let controller = self.controller.clone();
             radio.connect_clicked(move |_| {

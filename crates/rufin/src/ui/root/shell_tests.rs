@@ -30,7 +30,7 @@ use super::{
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
     playlist_sort_width, preferences_login_status_toast_message,
     preferences_login_status_toast_message_for_surface, queue_source_waits_for_snapshot,
-    seekbar_target_seconds, snapshot_event_outcome,
+    seekbar_target_seconds, snapshot_event_outcome, source_switch_requires_reconnect,
 };
 use crate::controller::{
     LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, SearchRequestKey,
@@ -606,6 +606,11 @@ pub(in crate::ui) fn shell_snapshot_entry() {
 
     assert_eq!(outcome.render, SnapshotRenderDecision::PreserveScroll);
     assert!(outcome.entered_first_run);
+}
+#[test]
+pub(in crate::ui) fn shell_source_switch_missing_auth_returns_to_reconnect() {
+    assert!(source_switch_requires_reconnect(true, true, true, false));
+    assert!(!source_switch_requires_reconnect(true, true, true, true));
 }
 #[test]
 pub(in crate::ui) fn shell_map_states() {
@@ -1692,7 +1697,6 @@ fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGa
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
     crate::controller::LibrarySnapshot {
         source: None,
-        source_capabilities: domain::SourceCapabilities::default(),
         sources: Vec::new(),
         selected_source: None,
         local_folders: Vec::new(),
@@ -1701,7 +1705,6 @@ pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapsh
         local_access_status: crate::controller::LocalAccessStatus::default(),
         music_folders: Vec::new(),
         selected_music_folder_id: None,
-        username: None,
         first_run: false,
         sync_status: String::new(),
         last_error: None,

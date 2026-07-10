@@ -4,7 +4,7 @@ use super::{
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
     Slot, StatusFade, StatusFadeTarget, StreamDescriptor, VisualizerAnalyzer,
     about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
-    clear_prepared_next_state, same_album_crossfade_is_skipped,
+    clear_prepared_next_state, ensure_gstreamer_initialized, same_album_crossfade_is_skipped,
 };
 use domain::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -674,6 +674,6 @@ fn test_pipeline(
     shared: Arc<Mutex<SharedPlaybackState>>,
     _events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) -> PlayerPipeline {
-    gstreamer::init().expect("gst init");
+    ensure_gstreamer_initialized().expect("gst init");
     PlayerPipeline::new(name, shared)
 }

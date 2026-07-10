@@ -50,7 +50,7 @@ pub(in crate::controller) fn load_settings_with_secrets(
     hydrate_scrobbling_secret_values(secrets, &mut settings);
     if migrated {
         persisted.migrate_defaults();
-        if let Err(error) = store.save_settings(&persisted) {
+        if let Err(error) = save_non_source_settings(store, persisted) {
             warn!(%error, "failed to clear migrated scrobbling secrets from settings");
         }
     }
@@ -82,7 +82,18 @@ fn save_settings_with_missing_secret_action(
     let mut persisted = settings.clone();
     persist_scrobbling_secret_values(secrets, settings, &mut persisted, missing_action)?;
     persisted.migrate_defaults();
-    store.save_settings(&persisted)
+    save_non_source_settings(store, persisted)
+}
+
+fn save_non_source_settings(store: &StoreHandle, mut persisted: AppSettings) -> Result<(), String> {
+    store.update_settings(move |current| {
+        persisted.sources = current.sources.clone();
+        persisted.jellyfin_device_id = current.jellyfin_device_id.clone();
+        persisted.secret_storage_mode = current.secret_storage_mode;
+        persisted.secret_scope_id = current.secret_scope_id.clone();
+        *current = persisted;
+        Ok(())
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -284,7 +295,7 @@ mod tests {
             loaded.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
-        let persisted = store.load_settings().expect("load persisted settings");
+        let persisted = store.load_settings();
         assert_eq!(persisted.scrobbling.lastfm.api_secret, "lastfm-secret");
         assert_eq!(persisted.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
@@ -332,7 +343,7 @@ mod tests {
                 .expect("load lastfm session"),
             Some("lastfm-session".to_string())
         );
-        let persisted = store.load_settings().expect("load persisted settings");
+        let persisted = store.load_settings();
         assert_eq!(persisted.scrobbling.lastfm.api_secret, "");
         assert_eq!(persisted.scrobbling.lastfm.session_key, "");
         assert_eq!(persisted.scrobbling.listenbrainz.user_token, "");
@@ -367,7 +378,7 @@ mod tests {
 
         controller.save_settings(&settings).expect("save settings");
 
-        let persisted = store.load_settings().expect("load persisted settings");
+        let persisted = store.load_settings();
         assert_eq!(persisted.lastfm_api_key, "cover-key");
         assert_eq!(persisted.scrobbling.lastfm.api_key, "cover-key");
         assert_eq!(persisted.scrobbling.lastfm.api_secret, "");
@@ -406,7 +417,7 @@ mod tests {
             .expect_err("secret save failure");
 
         assert!(error.contains("failed to save scrobbling secret"));
-        let persisted = store.load_settings().expect("load persisted settings");
+        let persisted = store.load_settings();
         assert_eq!(persisted.scrobbling.lastfm.session_key, "");
     }
 
@@ -432,6 +443,38 @@ mod tests {
                 .expect("load secret"),
             Some("lastfm-session".to_string())
         );
+    }
+
+    #[test]
+    fn general_settings_save_preserves_source_and_credential_owners() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let controller = SettingsController::new(store.clone(), secrets);
+        let mut current = AppSettings::default();
+        current.sources.selected = Some(LibrarySourceSelection::Local);
+        current.sources.local_folders = vec![LocalLibraryFolder {
+            path: "/music".to_string(),
+        }];
+        current.jellyfin_device_id = "rufin-current".to_string();
+        current.secret_storage_mode = SecretStorageMode::ConfigFile;
+        current.secret_scope_id = "current-scope".to_string();
+        store.save_settings(&current).expect("seed settings");
+
+        let stale = AppSettings {
+            language: "tr".to_string(),
+            jellyfin_device_id: "rufin-stale".to_string(),
+            secret_storage_mode: SecretStorageMode::SystemKeyring,
+            secret_scope_id: "stale-scope".to_string(),
+            ..AppSettings::default()
+        };
+        controller.save_settings(&stale).expect("save settings");
+
+        let persisted = store.load_settings();
+        assert_eq!(persisted.language, "tr");
+        assert_eq!(persisted.sources, current.sources);
+        assert_eq!(persisted.jellyfin_device_id, "rufin-current");
+        assert_eq!(persisted.secret_storage_mode, SecretStorageMode::ConfigFile);
+        assert_eq!(persisted.secret_scope_id, "current-scope");
     }
 
     #[test]

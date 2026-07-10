@@ -86,7 +86,7 @@ impl AppController {
         let controller = self.clone();
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let playback = Arc::clone(&self.playback);
         let queue = Arc::clone(&self.queue);
         let next_preload = Arc::clone(&self.next_preload);
@@ -117,7 +117,7 @@ impl AppController {
                 match resolve_prepared_item(
                     &store,
                     &runtime,
-                    &secrets,
+                    &active_source,
                     &source_id,
                     &entry,
                     &playback_settings,
@@ -223,7 +223,7 @@ impl AppController {
                 prepare_next_stream_from_handles(
                     store.clone(),
                     Arc::clone(&runtime),
-                    Arc::clone(&secrets),
+                    Arc::clone(&active_source),
                     Arc::clone(&playback),
                     queue,
                     next_preload,
@@ -357,7 +357,7 @@ impl AppController {
         prepare_next_stream_from_handles(
             self.store.clone(),
             Arc::clone(&self.runtime),
-            Arc::clone(&self.secrets),
+            Arc::clone(&self.active_source),
             Arc::clone(&self.playback),
             Arc::clone(&self.queue),
             Arc::clone(&self.next_preload),

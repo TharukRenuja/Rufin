@@ -190,6 +190,32 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
+msgid "Local"
+msgstr ""
+
+msgid "Jellyfin"
+msgstr ""
+
+msgid "Navidrome"
+msgstr ""
+
+msgid "OpenSubsonic"
+msgstr ""
+
+msgid "Open on Jellyfin"
+msgstr ""
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
+msgstr ""
+
+msgid "Open on Navidrome"
+msgstr ""
+
 msgid "Favorite tracks"
 msgstr ""
 
@@ -412,9 +438,6 @@ msgstr ""
 msgid "Local Playback Access"
 msgstr ""
 
-msgid "Local Library"
-msgstr ""
-
 msgid "Local playback mapping configured"
 msgstr ""
 
@@ -449,14 +472,6 @@ msgid "Verify server certificate"
 msgstr ""
 
 msgid "Off only for a server you control"
-msgstr ""
-
-msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
-
-msgid ""
-"This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work."
 msgstr ""
 
 msgid "Save Server Settings"
@@ -535,16 +550,7 @@ msgstr[1] ""
 msgid "Add server"
 msgstr ""
 
-msgid "Turn off only for a server you control"
-msgstr ""
-
-msgid "Server"
-msgstr ""
-
-msgid "Private mode"
-msgstr ""
-
-msgid "Privacy and Security"
+msgid "Caching Library"
 msgstr ""
 
 msgid "Local library"
@@ -565,13 +571,28 @@ msgstr ""
 msgid "Caching local library..."
 msgstr ""
 
+msgid "Saved Sources"
+msgstr ""
+
+msgid "Choose a configured source or add another."
+msgstr ""
+
+msgid "Privacy and Security"
+msgstr ""
+
+msgid "Private mode"
+msgstr ""
+
+msgid "Server"
+msgstr ""
+
+msgid "Turn off only for a server you control"
+msgstr ""
+
 msgid "Enter a server address, username, and password"
 msgstr ""
 
 msgid "Connecting to music server..."
-msgstr ""
-
-msgid "Caching Library"
 msgstr ""
 
 msgid "Found Servers"
@@ -602,13 +623,10 @@ msgstr ""
 msgid "Server discovery failed: {error}"
 msgstr ""
 
-msgid "OpenSubsonic"
+msgid "Remove folder"
 msgstr ""
 
 msgid "No folders selected"
-msgstr ""
-
-msgid "Remove folder"
 msgstr ""
 
 msgid "Select Music Folder"
@@ -716,7 +734,7 @@ msgstr ""
 msgid "No remote sources configured"
 msgstr ""
 
-msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
+msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
 msgstr ""
 
 msgid "Local Folders"
@@ -761,18 +779,6 @@ msgid "Local mapping saved. Sync to preview matches."
 msgstr ""
 
 msgid "Local mapping"
-msgstr ""
-
-msgid "Jellyfin"
-msgstr ""
-
-msgid "Navidrome"
-msgstr ""
-
-msgid "Subsonic / OpenSubsonic"
-msgstr ""
-
-msgid "Local"
 msgstr ""
 
 msgid "Scrobbling"
@@ -1317,12 +1323,6 @@ msgstr ""
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
-msgstr ""
-
-msgid "Open on Jellyfin"
-msgstr ""
-
-msgid "Open on Navidrome"
 msgstr ""
 
 msgid "Play radio"

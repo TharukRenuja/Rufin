@@ -2150,7 +2150,7 @@ fn run_gstreamer_thread(
     events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) {
     let startup_started_at = Instant::now();
-    if let Err(error) = gst::init() {
+    if let Err(error) = ensure_gstreamer_initialized() {
         push_event(
             &events,
             PlaybackEvent::Error(format!("GStreamer init failed: {error}")),
@@ -2773,7 +2773,7 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("GStreamer test lock");
-        gst::init().expect("initialize GStreamer");
+        ensure_gstreamer_initialized().expect("initialize GStreamer");
         guard
     }
 

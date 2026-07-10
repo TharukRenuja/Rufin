@@ -9,7 +9,6 @@ members = [
     "crates/source-subsonic",
     "crates/secrets",
     "crates/library",
-    "crates/test-support",
     "crates/xtask",
 ]
 resolver = "2"
@@ -60,7 +59,6 @@ source-jellyfin = { path = "crates/source-jellyfin" }
 source-local = { path = "crates/source-local" }
 source-subsonic = { path = "crates/source-subsonic" }
 tempfile = "3.23.0"
-test_support = { package = "test-support", path = "crates/test-support" }
 thiserror = "2.0.18"
 tokio = "1.52.3"
 tokio-tungstenite = { version = "0.29.0", default-features = false }
@@ -88,7 +86,6 @@ exit = "deny"
 fallible_impl_from = "deny"
 panic_in_result_fn = "deny"
 unreachable = "deny"
-clone_on_ref_ptr = "deny"
 assertions_on_result_states = "deny"
 string_slice = "deny"
 match_wildcard_for_single_variants = "deny"

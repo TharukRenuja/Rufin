@@ -6,12 +6,14 @@ use std::{
 
 use adw::prelude::*;
 use domain::{
-    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, SourceId,
-    SourceIdentity,
+    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, SourceIdentity,
 };
 use gtk::glib;
 
-use super::{Shell, folder_count_text};
+use super::{
+    Shell, configured_source_display_name, configured_source_icon_name,
+    configured_source_kind_display_name, folder_count_text,
+};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
@@ -22,7 +24,6 @@ const SERVER_OPTION_ICON_SIZE: i32 = 14;
 const SERVER_OPTION_CHECK_SIZE: i32 = 13;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 236;
 const SERVER_SELECTOR_POPOVER_ANCHOR_Y: i32 = 148;
-const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
 
 pub(super) struct SourceSelector {
     pub normal_button: gtk::Button,
@@ -223,7 +224,7 @@ fn source_selector_content(library: LibrarySnapshot) -> SourceSelectorContent {
     } else {
         library.selected_music_folder_id
     };
-    let name = source_identity_display_name(&server);
+    let name = configured_source_display_name(&server);
     SourceSelectorContent {
         name,
         selected_source,
@@ -250,12 +251,9 @@ fn selected_source_server(
 }
 
 fn local_source_identity() -> SourceIdentity {
-    SourceIdentity {
-        id: SourceId::new(LOCAL_SOURCE_IDENTITY_ID),
-        kind: "local".to_string(),
-        name: tr("Local"),
-        base_url: String::new(),
-    }
+    let mut source = crate::sources::local_configured_source().source;
+    source.name = configured_source_kind_display_name(&source.kind);
+    source
 }
 
 fn update_selector_popover(
@@ -365,46 +363,12 @@ fn schedule_server_selection_popdown(
 
 fn source_icon_name(content: &SourceSelectorContent) -> &'static str {
     match &content.selected_source {
-        Some(LibrarySourceSelection::Local) => "rufin-route-folders-symbolic",
-        Some(LibrarySourceSelection::Source(_)) => content
+        Some(_) => content
             .active_source
             .as_ref()
-            .map(source_identity_icon_name)
+            .map(configured_source_icon_name)
             .unwrap_or("network-server-symbolic"),
         None => "network-server-symbolic",
-    }
-}
-
-fn source_identity_display_name(server: &SourceIdentity) -> String {
-    let name = server.name.trim();
-    if name.is_empty() {
-        source_kind_display_name(&server.kind)
-    } else {
-        name.to_string()
-    }
-}
-
-fn source_kind_display_name(kind: &str) -> String {
-    match kind {
-        "jellyfin" => tr("Jellyfin"),
-        "navidrome" => tr("Navidrome"),
-        "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
-        "local" | "fake" => tr("Local"),
-        other => other.to_string(),
-    }
-}
-
-fn source_identity_icon_name(server: &SourceIdentity) -> &'static str {
-    source_kind_icon_name(&server.kind)
-}
-
-fn source_kind_icon_name(kind: &str) -> &'static str {
-    match kind {
-        "jellyfin" => "io.github.screwys.Rufin.source.jellyfin",
-        "navidrome" => "io.github.screwys.Rufin.source.navidrome",
-        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.source.opensubsonic",
-        "local" | "fake" => "rufin-route-folders-symbolic",
-        _ => "network-server-symbolic",
     }
 }
 
@@ -427,7 +391,7 @@ fn source_selection_popover(shell: &Rc<Shell>, content: &SourceSelectorContent) 
                 &content.selected_source,
                 Some(LibrarySourceSelection::Source(source_id)) if *source_id == server.id
             );
-            let title = source_identity_display_name(server);
+            let title = configured_source_display_name(server);
             let row = source_option_row(Some(server), &title, "", active);
             if !active {
                 let row_popover = popover.clone();
@@ -444,9 +408,10 @@ fn source_selection_popover(shell: &Rc<Shell>, content: &SourceSelectorContent) 
 
     if !content.local_folders.is_empty() {
         let local_active = matches!(content.selected_source, Some(LibrarySourceSelection::Local));
-        let local = server_action_row(
-            "rufin-route-folders-symbolic",
-            &tr("Local"),
+        let local_source = local_source_identity();
+        let local = source_option_row(
+            Some(&local_source),
+            &configured_source_display_name(&local_source),
             &local_source_popup_detail(&content.local_folders),
             local_active,
         );
@@ -599,7 +564,7 @@ fn source_option_row(
     );
     row_content.set_halign(gtk::Align::Fill);
     let icon_name = server
-        .map(source_identity_icon_name)
+        .map(configured_source_icon_name)
         .unwrap_or("network-server-symbolic");
     row_content.append(&server_row_icon(icon_name));
 

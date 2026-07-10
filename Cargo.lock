@@ -2632,7 +2632,6 @@ dependencies = [
  "source-jellyfin",
  "source-local",
  "source-subsonic",
- "test-support",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3198,16 +3197,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "test-support"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "domain",
- "futures-executor",
- "source",
 ]
 
 [[package]]

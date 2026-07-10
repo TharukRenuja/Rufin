@@ -144,48 +144,56 @@ impl Store {
         &self,
         source_id: &SourceId,
         track_ids: &[TrackId],
+        generation: i64,
     ) -> StoreResult<LibraryDelta> {
-        let mut delta = LibraryDelta::default();
-        let mut existing_tracks = Vec::new();
-        for track_id in track_ids {
-            if let Some(track) = self.load_track_for_delta(source_id, track_id)? {
-                existing_tracks.push(track);
+        self.write_batch(|_| {
+            self.require_current_sync_generation(source_id, generation)?;
+            let mut delta = LibraryDelta::default();
+            let mut existing_tracks = Vec::new();
+            for track_id in track_ids {
+                if let Some(track) = self.load_track_for_delta(source_id, track_id)? {
+                    existing_tracks.push(track);
+                }
             }
-        }
-        if existing_tracks.is_empty() {
-            return Ok(delta);
-        }
+            if existing_tracks.is_empty() {
+                return Ok(delta);
+            }
 
-        let deleted_track_ids = existing_tracks
-            .iter()
-            .map(|track| track.id.clone())
-            .collect::<Vec<_>>();
-        let playlist_stats_before =
-            self.playlists_for_track_stat_changes(source_id, &deleted_track_ids)?;
-        for track in &existing_tracks {
-            delta.tracks.deleted.push(track.id.clone());
-            delta.albums.links.push(track.album_id.clone());
-            if let Some(artist_id) = track.artist_id.clone() {
-                delta.artists.links.push(artist_id);
+            let deleted_track_ids = existing_tracks
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>();
+            let playlist_stats_before =
+                self.playlists_for_track_stat_changes(source_id, &deleted_track_ids)?;
+            for track in &existing_tracks {
+                delta.tracks.deleted.push(track.id.clone());
+                delta.albums.links.push(track.album_id.clone());
+                if let Some(artist_id) = track.artist_id.clone() {
+                    delta.artists.links.push(artist_id);
+                }
+                delta
+                    .artists
+                    .links
+                    .extend(track.artist_credits.iter().map(|credit| credit.id.clone()));
+                delta.album_artists.links.extend(
+                    track
+                        .album_artist_credits
+                        .iter()
+                        .map(|credit| credit.id.clone()),
+                );
+                delta
+                    .genres
+                    .links
+                    .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
             }
-            delta
-                .artists
-                .links
-                .extend(track.artist_credits.iter().map(|credit| credit.id.clone()));
-            delta.album_artists.links.extend(
-                track
-                    .album_artist_credits
-                    .iter()
-                    .map(|credit| credit.id.clone()),
-            );
-            delta
-                .genres
-                .links
-                .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
-        }
-        self.delete_local_track_rows(source_id, &deleted_track_ids)?;
-        self.refresh_track_dependent_playlist_stats(source_id, playlist_stats_before, &mut delta)?;
-        Ok(delta)
+            self.delete_local_track_rows(source_id, &deleted_track_ids)?;
+            self.refresh_track_dependent_playlist_stats(
+                source_id,
+                playlist_stats_before,
+                &mut delta,
+            )?;
+            Ok(delta)
+        })
     }
 
     pub fn upsert_artists_delta(
@@ -327,6 +335,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<Vec<CoverCacheEntry>> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             self.prune_missing_items(source_id, generation)?;
             repair_linked_genres(connection, source_id, generation)?;
             refresh_genre_counts_on_connection(connection, source_id)?;
@@ -447,17 +456,24 @@ impl Store {
         })
     }
 
-    pub fn fail_sync(&self, source_id: &SourceId, error: &str) -> StoreResult<()> {
-        self.connection.execute(
+    pub fn fail_sync(
+        &self,
+        source_id: &SourceId,
+        generation: i64,
+        error: &str,
+    ) -> StoreResult<bool> {
+        let updated = self.connection.execute(
             "
             UPDATE sync_state
             SET status = 'error',
                 last_error = ?2
             WHERE source_id = ?1
+              AND generation = ?3
+              AND status = 'running'
             ",
-            params![source_id.as_str(), error],
+            params![source_id.as_str(), error, generation],
         )?;
-        Ok(())
+        Ok(updated > 0)
     }
     pub fn cancel_sync(&self, source_id: &SourceId, generation: i64) -> StoreResult<()> {
         self.connection.execute(
@@ -520,6 +536,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let albums = albums
                 .iter()
                 .map(|album| canonical_album_for_write(connection, source_id, album))
@@ -710,6 +727,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let local_stress_tracks: Vec<&Track> = tracks
                 .iter()
                 .filter(|track| local_stress_track_base_id(&track.id).is_some())
@@ -1386,6 +1404,7 @@ impl Store {
             "artists"
         };
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let canonical_artists;
             let artists = if album_artist {
                 canonical_artists =
@@ -1487,6 +1506,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let mut statement = connection.prepare(
                 "
                 INSERT INTO genres (
@@ -1570,6 +1590,9 @@ impl Store {
         mode: PlaylistWriteMode,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            if let PlaylistWriteMode::NativeSync { generation } = mode {
+                self.require_current_sync_generation(source_id, generation)?;
+            }
             let owner = mode.owner();
             let generation = mode.sync_generation();
             let mut statement = connection.prepare(
@@ -1747,6 +1770,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             connection.execute(
                 "DELETE FROM home_section_items WHERE source_id = ?1",
                 params![source_id.as_str()],
@@ -1764,6 +1788,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             connection.execute(
                 "
                 DELETE FROM home_section_items
@@ -1782,6 +1807,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             connection.execute(
                 "
                 DELETE FROM home_section_prefetch_items

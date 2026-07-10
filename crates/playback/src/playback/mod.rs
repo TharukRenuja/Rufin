@@ -8,7 +8,7 @@ use gstreamer as gst;
 use std::collections::{HashSet, VecDeque};
 use std::f64::consts::FRAC_PI_2;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -38,6 +38,15 @@ const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const TRACK_START_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);
 const STARTUP_SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);
 const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
+
+/// Initialize GStreamer once before playback or waveform work starts
+fn ensure_gstreamer_initialized() -> Result<(), String> {
+    static INITIALIZED: OnceLock<Result<(), String>> = OnceLock::new();
+    INITIALIZED
+        .get_or_init(|| gst::init().map_err(|error| error.to_string()))
+        .clone()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackTrack {
     pub id: TrackId,
@@ -150,7 +159,7 @@ pub(crate) fn default_audio_output_device_target() -> Option<String> {
 }
 
 pub fn available_audio_outputs() -> Vec<AudioOutput> {
-    if gst::init().is_err() {
+    if ensure_gstreamer_initialized().is_err() {
         return Vec::new();
     }
     let devices = available_audio_output_devices();

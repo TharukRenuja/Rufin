@@ -1,5 +1,5 @@
 use super::*;
-use source::MusicSource;
+use source::{LyricsProvider, MusicSource, PlaybackReporter, StreamResolver};
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -54,7 +54,10 @@ async fn lyrics_use_enabled() {
     let provider = provider(&server, "token-one");
 
     let local = provider
-        .lyrics(&TrackId::new("jellyfin:track:track-local"), true)
+        .lyrics(
+            &TrackId::new("jellyfin:track:track-local"),
+            LyricsSearch::ServerThenRemote,
+        )
         .await
         .expect("local lyrics")
         .expect("local lyrics");
@@ -63,7 +66,10 @@ async fn lyrics_use_enabled() {
     assert_eq!(local.lines[0].start_millis, Some(12_000));
 
     let remote = provider
-        .lyrics(&TrackId::new("jellyfin:track:track-remote"), true)
+        .lyrics(
+            &TrackId::new("jellyfin:track:track-remote"),
+            LyricsSearch::ServerThenRemote,
+        )
         .await
         .expect("remote lyrics")
         .expect("remote lyrics");
@@ -121,9 +127,9 @@ async fn lyrics_search_local() {
     let provider = provider(&server, "token-one");
 
     let remote = provider
-        .lyrics_with_search(
+        .lyrics(
             &TrackId::new("jellyfin:track:track-prefer-remote"),
-            JellyfinLyricsSearch::RemoteThenServer,
+            LyricsSearch::RemoteThenServer,
         )
         .await
         .expect("remote lyrics")
@@ -132,9 +138,9 @@ async fn lyrics_search_local() {
     assert_eq!(remote.lines[0].text, "remote line");
 
     let fallback = provider
-        .lyrics_with_search(
+        .lyrics(
             &TrackId::new("jellyfin:track:track-fallback"),
-            JellyfinLyricsSearch::RemoteThenServer,
+            LyricsSearch::RemoteThenServer,
         )
         .await
         .expect("fallback lyrics")
@@ -239,7 +245,9 @@ async fn lyrics_redact_token() {
     let provider = provider(&server, "secret-token");
 
     let stream = provider
-        .stream(&TrackId::new("jellyfin:track:track-one"))
+        .resolve_stream(&source::StreamRequest::original(TrackId::new(
+            "jellyfin:track:track-one",
+        )))
         .await
         .expect("stream");
 
@@ -255,15 +263,17 @@ async fn lyrics_redact_token() {
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 
-#[test]
-fn original_stream_from_saved_session_uses_audio_endpoint() {
+#[tokio::test]
+async fn original_stream_from_configured_session_uses_audio_endpoint() {
     let session = saved_session();
+    let provider = JellyfinSource::from_configured_session(session).expect("provider");
 
-    let stream = JellyfinSource::stream_descriptor_from_saved_session(
-        &session,
-        &source::StreamRequest::original(TrackId::new("jellyfin:track:track-one")),
-    )
-    .expect("stream");
+    let stream = provider
+        .resolve_stream(&source::StreamRequest::original(TrackId::new(
+            "jellyfin:track:track-one",
+        )))
+        .await
+        .expect("stream");
 
     assert!(
         stream
@@ -276,18 +286,18 @@ fn original_stream_from_saved_session_uses_audio_endpoint() {
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
 }
 
-#[test]
-fn capped_stream_from_saved_session_uses_audio_endpoint() {
+#[tokio::test]
+async fn capped_stream_from_configured_session_uses_audio_endpoint() {
     let session = saved_session();
+    let provider = JellyfinSource::from_configured_session(session).expect("provider");
 
-    let stream = JellyfinSource::stream_descriptor_from_saved_session(
-        &session,
-        &source::StreamRequest::new(
+    let stream = provider
+        .resolve_stream(&source::StreamRequest::new(
             TrackId::new("jellyfin:track:track-one"),
             domain::StreamQuality::MaxBitrateKbps(192),
-        ),
-    )
-    .expect("stream");
+        ))
+        .await
+        .expect("stream");
 
     assert!(
         stream
@@ -299,8 +309,8 @@ fn capped_stream_from_saved_session_uses_audio_endpoint() {
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
 }
 
-fn saved_session() -> SavedSourceSession {
-    SavedSourceSession {
+fn saved_session() -> JellyfinConfiguredSession {
+    JellyfinConfiguredSession {
         source: SourceIdentity {
             id: SourceId::new("jellyfin:server:test"),
             kind: "jellyfin".to_string(),
@@ -308,10 +318,9 @@ fn saved_session() -> SavedSourceSession {
             base_url: "https://library.example.test".to_string(),
         },
         user_id: "user-one".to_string(),
-        username: "demo".to_string(),
         trust_invalid_cert: false,
         access_token: "secret-token".to_string(),
-        device_id: Some("rufin-install-one".to_string()),
+        device_id: "rufin-install-one".to_string(),
     }
 }
 
@@ -372,7 +381,7 @@ async fn lyrics_add_limited() {
     let provider = provider(&server, "secret-token");
 
     let stream = provider
-        .stream_with_request(&source::StreamRequest::new(
+        .resolve_stream(&source::StreamRequest::new(
             TrackId::new("jellyfin:track:track-one"),
             domain::StreamQuality::MaxBitrateKbps(192),
         ))
@@ -387,7 +396,7 @@ async fn lyrics_add_limited() {
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinSource {
-    JellyfinSource::from_saved_session(SavedSourceSession {
+    JellyfinSource::from_configured_session(JellyfinConfiguredSession {
         source: SourceIdentity {
             id: SourceId::new("jellyfin:server:test"),
             kind: "jellyfin".to_string(),
@@ -395,10 +404,9 @@ pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinSource {
             base_url: server.uri(),
         },
         user_id: "user-one".to_string(),
-        username: "demo".to_string(),
         trust_invalid_cert: false,
         access_token: token.to_string(),
-        device_id: Some("rufin-install-one".to_string()),
+        device_id: "rufin-install-one".to_string(),
     })
     .expect("provider")
 }

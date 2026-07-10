@@ -4,6 +4,10 @@ use super::source_image_policy::{
     scrub_snapshot_track_image_refs, snapshot_external_ref_policy,
 };
 use super::*;
+use crate::sources::{
+    configured_source_needs_auth, configured_source_selection, local_configured_source_for_store,
+    resolve_source_registration,
+};
 
 #[derive(Clone, Debug)]
 struct SnapshotSourceReconciliation {
@@ -33,7 +37,12 @@ struct ActiveSourceProjection {
 fn snapshot_remote_servers(saved_sources: &[SavedSource]) -> Vec<SavedSource> {
     saved_sources
         .iter()
-        .filter(|saved| saved.source.kind != LOCAL_SOURCE_ID)
+        .filter(|saved| {
+            matches!(
+                configured_source_selection(saved),
+                LibrarySourceSelection::Source(_)
+            )
+        })
         .cloned()
         .collect()
 }
@@ -60,7 +69,7 @@ fn snapshot_source_local_access_summary(
     saved: &SavedSource,
 ) -> Result<SourceLocalAccessSnapshot, String> {
     let access = store.with_store(|store| store.source_local_access(&saved.source.id))?;
-    let status = local_access_status_for_server(store, &saved.source, access.as_ref())?;
+    let status = local_access_status_for_server(store, access.as_ref())?;
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.source.id))
         .ok();
@@ -99,36 +108,37 @@ fn snapshot_source_local_access_summary(
         access,
         status,
         selected_music_folder_name,
-        username: Some(saved.username.clone()),
-        trust_invalid_cert: saved.trust_invalid_cert,
-        use_jellyfin_instant_mix: saved.use_jellyfin_instant_mix,
         sync_status,
         cached_album_count,
         cached_track_count,
     })
 }
 
-fn reconcile_snapshot_source(
+fn resolve_snapshot_source(
     store: &StoreHandle,
     settings: &AppSettings,
     saved_sources: &[SavedSource],
     remote_saved_sources: &[SavedSource],
 ) -> Result<Option<SnapshotSourceReconciliation>, String> {
     let local_source_configured = local_source_configured(store, settings, saved_sources);
+    let persisted_active = store.with_store(|store| store.active_source())?;
     let selected_source = resolve_selected_source(
         settings,
         remote_saved_sources,
-        store.with_store(|store| store.active_source())?,
+        persisted_active.clone(),
         local_source_configured,
     );
     let Some(selected_source) = selected_source else {
         return Ok(None);
     };
 
-    let saved = saved_server_for_snapshot_source(store, remote_saved_sources, &selected_source)?;
+    let saved = saved_server_for_snapshot_source(
+        store,
+        remote_saved_sources,
+        persisted_active.as_ref(),
+        &selected_source,
+    )?;
 
-    // Keep active_source aligned for follow-up cache, sync, and queue work.
-    store.with_store(|store| store.set_active_source(&saved.source.id))?;
     Ok(Some(SnapshotSourceReconciliation {
         selected_source,
         saved,
@@ -138,10 +148,19 @@ fn reconcile_snapshot_source(
 fn saved_server_for_snapshot_source(
     store: &StoreHandle,
     remote_saved_sources: &[SavedSource],
+    persisted_active: Option<&SavedSource>,
     selected_source: &LibrarySourceSelection,
 ) -> Result<SavedSource, String> {
     match selected_source {
-        LibrarySourceSelection::Local => ensure_local_source_server(store),
+        LibrarySourceSelection::Local => persisted_active
+            .filter(|saved| {
+                matches!(
+                    configured_source_selection(saved),
+                    LibrarySourceSelection::Local
+                )
+            })
+            .cloned()
+            .map_or_else(|| local_configured_source_for_store(store), Ok),
         LibrarySourceSelection::Source(source_id) => remote_saved_sources
             .iter()
             .find(|saved| &saved.source.id == source_id)
@@ -158,19 +177,18 @@ fn local_source_configured(
     if !settings.sources.local_folders.is_empty() {
         return true;
     }
-    let Some(local) = saved_sources
-        .iter()
-        .find(|saved| saved.source.kind == LOCAL_SOURCE_ID)
-    else {
-        return false;
-    };
-    store
-        .with_store(|store| {
-            let tracks = store.load_tracks(&local.source.id, 0, 1)?.total;
-            let albums = store.load_albums(&local.source.id, 0, 1)?.total;
-            Ok(tracks > 0 || albums > 0)
-        })
-        .unwrap_or(false)
+    saved_sources.iter().any(|saved| {
+        matches!(
+            configured_source_selection(saved),
+            LibrarySourceSelection::Local
+        ) && store
+            .with_store(|store| {
+                let tracks = store.load_tracks(&saved.source.id, 0, 1)?.total;
+                let albums = store.load_albums(&saved.source.id, 0, 1)?.total;
+                Ok(tracks > 0 || albums > 0)
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn resolve_selected_source(
@@ -194,20 +212,17 @@ fn resolve_selected_source(
     }
 
     if let Some(saved) = active_source {
-        if saved.source.kind == LOCAL_SOURCE_ID {
-            if local_source_configured {
+        match configured_source_selection(&saved) {
+            LibrarySourceSelection::Local if local_source_configured => {
                 return Some(LibrarySourceSelection::Local);
             }
-        } else {
-            return Some(LibrarySourceSelection::Source(saved.source.id));
+            LibrarySourceSelection::Source(source_id) => {
+                return Some(LibrarySourceSelection::Source(source_id));
+            }
+            LibrarySourceSelection::Local => {}
         }
     }
-    if local_source_configured {
-        return Some(LibrarySourceSelection::Local);
-    }
-    remote_saved_sources
-        .first()
-        .map(|saved| LibrarySourceSelection::Source(saved.source.id.clone()))
+    None
 }
 
 pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
@@ -216,7 +231,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let remote_saved_sources = snapshot_remote_servers(&saved_sources);
     let sources = snapshot_source_identities(&remote_saved_sources);
     let source_local_access = snapshot_source_local_access(store, &remote_saved_sources)?;
-    let Some(reconciled_source) = reconcile_snapshot_source(
+    let Some(reconciled_source) = resolve_snapshot_source(
         store,
         &source_settings,
         &saved_sources,
@@ -248,7 +263,7 @@ pub(in crate::controller) fn load_runtime_snapshot(
     secrets: &Arc<dyn SecretStore>,
 ) -> Result<LibrarySnapshot, String> {
     let mut snapshot = load_snapshot(store)?;
-    if active_source_needs_auth(&snapshot, secrets) {
+    if active_source_needs_auth(store, &snapshot, secrets)? {
         snapshot.first_run = true;
         snapshot.sync_status = "Connect once more to continue using this server.".to_string();
         snapshot.last_error = None;
@@ -256,14 +271,27 @@ pub(in crate::controller) fn load_runtime_snapshot(
     Ok(snapshot)
 }
 
-fn active_source_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn SecretStore>) -> bool {
-    let Some(server) = snapshot.source.as_ref() else {
-        return false;
-    };
-    if server.kind == LOCAL_SOURCE_ID || server.kind == "fake" {
-        return false;
+fn active_source_needs_auth(
+    store: &StoreHandle,
+    snapshot: &LibrarySnapshot,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<bool, String> {
+    if matches!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    ) {
+        return Ok(false);
     }
-    !config_token_available(secrets, &server.id)
+    let Some(server) = snapshot.source.as_ref() else {
+        return Ok(false);
+    };
+    let saved = store
+        .with_store(|store| store.saved_source(&server.id))?
+        .ok_or_else(|| "The selected source is no longer saved.".to_string())?;
+    if resolve_source_registration(&saved.source.kind).is_none() {
+        return Ok(true);
+    }
+    configured_source_needs_auth(secrets, &saved)
 }
 
 fn scrub_projection_refs(
@@ -304,8 +332,13 @@ fn load_active_source_projection(
     saved: &SavedSource,
     metadata_settings: &AppSettings,
 ) -> Result<ActiveSourceProjection, String> {
-    store.with_store(|store| store.repair_artwork_projections(&saved.source.id))?;
-    store.with_store(|store| store.ensure_collection_cover_refs(&saved.source.id))?;
+    let source_is_persisted = store
+        .with_store(|store| store.saved_source(&saved.source.id))?
+        .is_some();
+    if source_is_persisted {
+        store.with_store(|store| store.repair_artwork_projections(&saved.source.id))?;
+        store.with_store(|store| store.ensure_collection_cover_refs(&saved.source.id))?;
+    }
     let home_sections = store.with_store(|store| store.load_home_sections(&saved.source.id))?;
     let prefetched_explore = store.with_store(|store| {
         store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)
@@ -373,22 +406,23 @@ fn load_active_source_snapshot(
     selected_source: LibrarySourceSelection,
     saved: SavedSource,
 ) -> Result<LibrarySnapshot, String> {
-    let (local_access, local_access_status) = if saved.source.kind != LOCAL_SOURCE_ID
-        && let Some(summary) = source_local_access
-            .iter()
-            .find(|summary| summary.source_id == saved.source.id)
+    let (local_access, local_access_status) = if matches!(
+        configured_source_selection(&saved),
+        LibrarySourceSelection::Source(_)
+    ) && let Some(summary) = source_local_access
+        .iter()
+        .find(|summary| summary.source_id == saved.source.id)
     {
         (summary.access.clone(), summary.status.clone())
     } else {
         let local_access = store.with_store(|store| store.source_local_access(&saved.source.id))?;
-        let local_access_status =
-            local_access_status_for_server(store, &saved.source, local_access.as_ref())?;
+        let local_access_status = local_access_status_for_server(store, local_access.as_ref())?;
         (local_access, local_access_status)
     };
     let music_folders = store.with_store(|store| store.list_music_folders(&saved.source.id))?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
-    let metadata_settings = load_settings_for_saved(store, &saved);
+    let metadata_settings = load_settings_from_store(store);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.source.id))
         .ok();
@@ -399,10 +433,8 @@ fn load_active_source_snapshot(
         .unwrap_or_else(|| "Cached library ready".to_string());
     let last_error = sync_state.and_then(|state| state.last_error);
 
-    let source_capabilities = source_capabilities_for_saved(&saved);
     Ok(LibrarySnapshot {
         source: Some(saved.source),
-        source_capabilities,
         sources,
         selected_source: Some(selected_source),
         local_folders: source_settings.sources.local_folders,
@@ -411,7 +443,6 @@ fn load_active_source_snapshot(
         local_access_status,
         music_folders,
         selected_music_folder_id,
-        username: Some(saved.username),
         first_run: false,
         sync_status: status,
         last_error,

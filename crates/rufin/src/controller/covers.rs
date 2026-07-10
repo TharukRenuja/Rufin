@@ -19,7 +19,7 @@ mod prefetch;
 
 use super::{
     AppController, ControllerEvent, IMAGE_TAG_UNTAGGED, acquire_cover_slot,
-    load_settings_from_store, release_cover_slot,
+    is_local_source_image_ref, load_settings_from_store, release_cover_slot,
 };
 use cache::*;
 use fetch::fetch_and_cache_cover;
@@ -161,10 +161,11 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.clear_external_image_lookup_misses(&saved.source.id))?;
+        let active = crate::sources::selected_active_source(&self.active_source, &saved.source.id)?;
         start_cover_prefetch(ExternalCoverPrefetchRequest {
             store: self.store.clone(),
             runtime: Arc::clone(&self.runtime),
-            secrets: Arc::clone(&self.secrets),
+            images: Arc::clone(&active.images),
             events: self.events.clone(),
             cover_in_flight: Arc::clone(&self.cover_in_flight),
             external_cover_retry_generation: Arc::clone(&self.external_cover_retry_generation),
@@ -185,9 +186,6 @@ impl AppController {
         else {
             return;
         };
-        if saved.source.kind == "fake" {
-            return;
-        }
         if let Some(path) = self.cached_cover_path(&image_ref, size) {
             if let Some(key) = self.cover_key(&image_ref, size) {
                 let _sent = self.events.send(ControllerEvent::CoverReady { key, path });
@@ -206,7 +204,13 @@ impl AppController {
 
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let Ok(active) =
+            crate::sources::selected_active_source(&self.active_source, &saved.source.id)
+        else {
+            unmark_cover_in_flight_generation(&self.cover_in_flight, &key, retry_generation);
+            return;
+        };
+        let images = Arc::clone(&active.images);
         let events = self.events.clone();
         let cover_in_flight = Arc::clone(&self.cover_in_flight);
         let cover_slots = Arc::clone(&self.cover_slots);
@@ -215,7 +219,8 @@ impl AppController {
                 unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
                 return;
             }
-            let result = fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size);
+            let result =
+                fetch_and_cache_cover(&store, &runtime, &saved, images.as_ref(), image_ref, size);
             release_cover_slot(&cover_slots);
             unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
             match result {
@@ -232,7 +237,7 @@ impl AppController {
     pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) -> bool {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         let cover_in_flight = Arc::clone(&self.cover_in_flight);
         let cover_slots = Arc::clone(&self.cover_slots);
@@ -263,12 +268,13 @@ impl AppController {
                 let Some(saved) = store.with_store(|store| store.active_source())? else {
                     return Ok(CoverRequestOutcome::Deferred);
                 };
-                if saved.source.kind == "fake" {
-                    return Ok(CoverRequestOutcome::TerminalMissing {
-                        external_retry_generation: None,
-                    });
-                }
-
+                let active = match crate::sources::selected_active_source(
+                    &active_source,
+                    &saved.source.id,
+                ) {
+                    Ok(active) => active,
+                    Err(_) => return Ok(CoverRequestOutcome::Deferred),
+                };
                 let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
                 let expected_key = image_cache_key(&saved.source.id, &image_ref.item_id, tag, size);
                 if expected_key != key {
@@ -296,15 +302,15 @@ impl AppController {
                     match fetch_and_cache_cover(
                         &store,
                         &runtime,
-                        &secrets,
                         &saved,
+                        active.images.as_ref(),
                         image_ref.clone(),
                         size,
                     ) {
                         Ok(path) => Ok(CoverRequestOutcome::Ready(path)),
                         Err(error)
                             if cover_error_is_terminal(
-                                &saved.source.kind,
+                                is_local_source_image_ref(&image_ref),
                                 is_external_cover,
                                 &error,
                             ) =>
@@ -405,12 +411,12 @@ fn emit_cover_outcome(
     }
 }
 
-fn cover_error_is_terminal(kind: &str, is_external_cover: bool, error: &str) -> bool {
+fn cover_error_is_terminal(local_image: bool, is_external_cover: bool, error: &str) -> bool {
     is_source_not_found_error(error)
         || error == "cover response was empty"
         || error.contains("No such file or directory")
         || error.contains("os error 2")
-        || (kind == source_local::LOCAL_SOURCE_ID
+        || (local_image
             && (error.contains("local cover exceeded")
                 || error.contains("embedded cover exceeded")
                 || error.contains("no pictures")
@@ -434,17 +440,17 @@ mod tests {
     #[test]
     fn cover_exclude_failure() {
         assert!(cover_error_is_terminal(
-            "jellyfin",
+            false,
             true,
             "404 Not Found: did not return album art"
         ));
         assert!(!cover_error_is_terminal(
-            "jellyfin",
+            false,
             true,
             "error sending request for url"
         ));
         assert!(!cover_error_is_terminal(
-            "jellyfin",
+            false,
             true,
             "source network failed: timed out"
         ));
@@ -453,7 +459,7 @@ mod tests {
     #[test]
     fn cover_local_unavailable() {
         assert!(cover_error_is_terminal(
-            source_local::LOCAL_SOURCE_ID,
+            true,
             false,
             "No such file or directory (os error 2)"
         ));

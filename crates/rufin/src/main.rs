@@ -10,12 +10,8 @@ mod lyrics;
 mod sources;
 mod ui;
 
-#[cfg(feature = "dev-tools")]
-use ::test_support::FakeScale;
 use adw::prelude::*;
 use clap::Parser;
-#[cfg(feature = "dev-tools")]
-use clap::ValueEnum;
 use gtk::gio;
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -30,36 +26,11 @@ const APP_ICON_NAME: &str = APP_ID;
 #[derive(Clone, Debug, Parser)]
 #[command(
     name = "rufin",
-    about = "Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome and local libraries written in Rust"
+    about = "Native GTK4/libadwaita music client for Jellyfin, Navidrome, OpenSubsonic, and local libraries written in Rust"
 )]
 struct Cli {
-    #[cfg(feature = "dev-tools")]
-    #[arg(long, value_enum)]
-    fake_scale: Option<FakeScaleArg>,
-
     #[arg(long, hide = true)]
     startup_check: bool,
-}
-
-#[cfg(feature = "dev-tools")]
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum FakeScaleArg {
-    Small,
-    Large,
-    Stress,
-    ThirtyK,
-}
-
-#[cfg(feature = "dev-tools")]
-impl From<FakeScaleArg> for FakeScale {
-    fn from(value: FakeScaleArg) -> Self {
-        match value {
-            FakeScaleArg::Small => Self::Small,
-            FakeScaleArg::Large => Self::Large,
-            FakeScaleArg::Stress => Self::Stress,
-            FakeScaleArg::ThirtyK => Self::ThirtyK,
-        }
-    }
 }
 
 fn main() -> ExitCode {
@@ -68,12 +39,7 @@ fn main() -> ExitCode {
     init_tracing();
     i18n::init(&i18n::startup_language_preference());
 
-    let options = ui::AppOptions {
-        #[cfg(feature = "dev-tools")]
-        fake_scale: cli.fake_scale.map(Into::into),
-    };
-
-    info!(?options, "starting Rufin native shell");
+    info!("starting Rufin native shell");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -108,7 +74,7 @@ fn main() -> ExitCode {
     if startup_check {
         app.connect_activate(|app| app.quit());
     } else {
-        app.connect_activate(move |app| ui::build(app, options.clone()));
+        app.connect_activate(ui::build);
     }
 
     let program = std::env::args()

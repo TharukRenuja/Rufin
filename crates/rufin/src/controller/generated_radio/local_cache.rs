@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use domain::{AlbumId, ArtistId, GeneratedTrackSeed, SourceId, Track, TrackId};
 
-use super::AppController;
+use crate::controller::StoreHandle;
 
 const RADIO_RELEVANCE_GENRE: u8 = 0;
 const RADIO_RELEVANCE_ARTIST: u8 = 1;
@@ -21,154 +21,149 @@ struct CandidateContext<'a> {
     exclude_album_id: Option<&'a AlbumId>,
 }
 
-impl AppController {
-    pub(super) fn local_generated_tracks_from_cache(
-        &self,
-        source_id: &SourceId,
-        seed: GeneratedTrackSeed,
-        limit: usize,
-    ) -> Result<Vec<Track>, String> {
-        let limit = limit.clamp(1, 500);
-        let candidate_limit = limit.saturating_mul(8).clamp(limit, 500);
-        let seed_key = local_generated_seed_key(&seed);
-        let mut candidates = Vec::new();
-        let mut seen = HashSet::new();
-        let (genres, artist_ids, exclude_track_id, exclude_album_id) = match seed {
-            GeneratedTrackSeed::Track(track_id) => {
-                let seed = self
-                    .store
-                    .with_store(|store| store.load_track(source_id, &track_id))?
-                    .ok_or_else(|| "The selected track is no longer available.".to_string())?;
-                (
-                    seed.genres,
-                    fallback_artist_ids(
-                        seed.artist_id,
-                        seed.artist_credits,
-                        seed.album_artist_credits,
-                    ),
-                    Some(track_id),
-                    None,
-                )
-            }
-            GeneratedTrackSeed::Album(album_id) => {
-                let (album, _tracks) = self
-                    .store
-                    .with_store(|store| store.load_album_detail(source_id, &album_id))?
-                    .ok_or_else(|| "The selected album is no longer available.".to_string())?;
-                (
-                    album.genres,
-                    fallback_artist_ids(
-                        album.artist_id,
-                        album.artist_credits,
-                        album.album_artist_credits,
-                    ),
-                    None,
-                    Some(album_id),
-                )
-            }
-            GeneratedTrackSeed::Artist(artist_id) => (Vec::new(), vec![artist_id], None, None),
-            GeneratedTrackSeed::Genre { id: _, name } => (vec![name], Vec::new(), None, None),
-            GeneratedTrackSeed::Playlist(_) => {
-                return Err("Playlist radio is not supported for this source.".to_string());
-            }
-        };
-        let context = CandidateContext {
-            source_id,
-            candidate_limit,
-            exclude_track_id: exclude_track_id.as_ref(),
-            exclude_album_id: exclude_album_id.as_ref(),
-        };
-        self.append_cached_fallback_candidates(
-            context,
-            &genres,
-            &artist_ids,
-            &mut seen,
-            &mut candidates,
-        )?;
-        Ok(select_radio_tracks(&seed_key, candidates, limit))
-    }
+pub(in crate::controller) fn local_generated_tracks_from_cache(
+    store: &StoreHandle,
+    source_id: &SourceId,
+    seed: GeneratedTrackSeed,
+    limit: usize,
+) -> Result<Vec<Track>, String> {
+    let limit = limit.clamp(1, 500);
+    let candidate_limit = limit.saturating_mul(8).clamp(limit, 500);
+    let seed_key = local_generated_seed_key(&seed);
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let (genres, artist_ids, exclude_track_id, exclude_album_id) = match seed {
+        GeneratedTrackSeed::Track(track_id) => {
+            let seed = store
+                .with_store(|store| store.load_track(source_id, &track_id))?
+                .ok_or_else(|| "The selected track is no longer available.".to_string())?;
+            (
+                seed.genres,
+                fallback_artist_ids(
+                    seed.artist_id,
+                    seed.artist_credits,
+                    seed.album_artist_credits,
+                ),
+                Some(track_id),
+                None,
+            )
+        }
+        GeneratedTrackSeed::Album(album_id) => {
+            let (album, _tracks) = store
+                .with_store(|store| store.load_album_detail(source_id, &album_id))?
+                .ok_or_else(|| "The selected album is no longer available.".to_string())?;
+            (
+                album.genres,
+                fallback_artist_ids(
+                    album.artist_id,
+                    album.artist_credits,
+                    album.album_artist_credits,
+                ),
+                None,
+                Some(album_id),
+            )
+        }
+        GeneratedTrackSeed::Artist(artist_id) => (Vec::new(), vec![artist_id], None, None),
+        GeneratedTrackSeed::Genre { id: _, name } => (vec![name], Vec::new(), None, None),
+        GeneratedTrackSeed::Playlist(_) => {
+            return Err("Playlist radio is not supported for this source.".to_string());
+        }
+    };
+    let context = CandidateContext {
+        source_id,
+        candidate_limit,
+        exclude_track_id: exclude_track_id.as_ref(),
+        exclude_album_id: exclude_album_id.as_ref(),
+    };
+    append_cached_fallback_candidates(
+        store,
+        context,
+        &genres,
+        &artist_ids,
+        &mut seen,
+        &mut candidates,
+    )?;
+    Ok(select_radio_tracks(&seed_key, candidates, limit))
+}
 
-    fn append_cached_fallback_candidates(
-        &self,
-        context: CandidateContext<'_>,
-        genres: &[String],
-        artist_ids: &[ArtistId],
-        seen: &mut HashSet<TrackId>,
-        candidates: &mut Vec<RadioCandidate>,
-    ) -> Result<(), String> {
-        self.append_cached_genre_candidates(context, genres, seen, candidates)?;
-        self.append_cached_artist_candidates(context, artist_ids, seen, candidates)?;
-        self.append_cached_random_candidates(context, seen, candidates)
-    }
+fn append_cached_fallback_candidates(
+    store: &StoreHandle,
+    context: CandidateContext<'_>,
+    genres: &[String],
+    artist_ids: &[ArtistId],
+    seen: &mut HashSet<TrackId>,
+    candidates: &mut Vec<RadioCandidate>,
+) -> Result<(), String> {
+    append_cached_genre_candidates(store, context, genres, seen, candidates)?;
+    append_cached_artist_candidates(store, context, artist_ids, seen, candidates)?;
+    append_cached_random_candidates(store, context, seen, candidates)
+}
 
-    fn append_cached_genre_candidates(
-        &self,
-        context: CandidateContext<'_>,
-        genres: &[String],
-        seen: &mut HashSet<TrackId>,
-        candidates: &mut Vec<RadioCandidate>,
-    ) -> Result<(), String> {
-        for genre in genres.iter().filter(|genre| !genre.trim().is_empty()) {
-            let tracks = self.store.with_store(|store| {
-                store.load_tracks_by_genre_name(context.source_id, genre, context.candidate_limit)
-            })?;
+fn append_cached_genre_candidates(
+    store: &StoreHandle,
+    context: CandidateContext<'_>,
+    genres: &[String],
+    seen: &mut HashSet<TrackId>,
+    candidates: &mut Vec<RadioCandidate>,
+) -> Result<(), String> {
+    for genre in genres.iter().filter(|genre| !genre.trim().is_empty()) {
+        let tracks = store.with_store(|store| {
+            store.load_tracks_by_genre_name(context.source_id, genre, context.candidate_limit)
+        })?;
+        append_radio_candidates(
+            tracks,
+            RADIO_RELEVANCE_GENRE,
+            context.exclude_track_id,
+            context.exclude_album_id,
+            seen,
+            candidates,
+        );
+    }
+    Ok(())
+}
+
+fn append_cached_artist_candidates(
+    store: &StoreHandle,
+    context: CandidateContext<'_>,
+    artist_ids: &[ArtistId],
+    seen: &mut HashSet<TrackId>,
+    candidates: &mut Vec<RadioCandidate>,
+) -> Result<(), String> {
+    for artist_id in artist_ids {
+        let detail =
+            store.with_store(|store| store.load_artist_detail(context.source_id, artist_id))?;
+        if let Some(detail) = detail {
             append_radio_candidates(
-                tracks,
-                RADIO_RELEVANCE_GENRE,
+                detail.tracks,
+                RADIO_RELEVANCE_ARTIST,
                 context.exclude_track_id,
                 context.exclude_album_id,
                 seen,
                 candidates,
             );
         }
-        Ok(())
     }
+    Ok(())
+}
 
-    fn append_cached_artist_candidates(
-        &self,
-        context: CandidateContext<'_>,
-        artist_ids: &[ArtistId],
-        seen: &mut HashSet<TrackId>,
-        candidates: &mut Vec<RadioCandidate>,
-    ) -> Result<(), String> {
-        for artist_id in artist_ids {
-            let detail = self
-                .store
-                .with_store(|store| store.load_artist_detail(context.source_id, artist_id))?;
-            if let Some(detail) = detail {
-                append_radio_candidates(
-                    detail.tracks,
-                    RADIO_RELEVANCE_ARTIST,
-                    context.exclude_track_id,
-                    context.exclude_album_id,
-                    seen,
-                    candidates,
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn append_cached_random_candidates(
-        &self,
-        context: CandidateContext<'_>,
-        seen: &mut HashSet<TrackId>,
-        candidates: &mut Vec<RadioCandidate>,
-    ) -> Result<(), String> {
-        let tracks = self
-            .store
-            .with_store(|store| store.load_tracks(context.source_id, 0, context.candidate_limit))?
-            .items;
-        append_radio_candidates(
-            tracks,
-            RADIO_RELEVANCE_RANDOM,
-            context.exclude_track_id,
-            context.exclude_album_id,
-            seen,
-            candidates,
-        );
-        Ok(())
-    }
+fn append_cached_random_candidates(
+    store: &StoreHandle,
+    context: CandidateContext<'_>,
+    seen: &mut HashSet<TrackId>,
+    candidates: &mut Vec<RadioCandidate>,
+) -> Result<(), String> {
+    let tracks = store
+        .with_store(|store| store.load_tracks(context.source_id, 0, context.candidate_limit))?
+        .items;
+    append_radio_candidates(
+        tracks,
+        RADIO_RELEVANCE_RANDOM,
+        context.exclude_track_id,
+        context.exclude_album_id,
+        seen,
+        candidates,
+    );
+    Ok(())
 }
 
 fn append_radio_candidates(

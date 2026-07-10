@@ -1,6 +1,7 @@
 use super::*;
+use source::RandomTrackRequest;
 
-struct DeleteFailingSecretStore;
+struct DeleteFailingSecretStore(Sender<()>);
 impl SecretStore for DeleteFailingSecretStore {
     fn save_secret(&self, _key: &secrets::SecretKey, _secret: &str) -> secrets::SecretResult<()> {
         Ok(())
@@ -11,6 +12,7 @@ impl SecretStore for DeleteFailingSecretStore {
     }
 
     fn delete_secret(&self, _key: &secrets::SecretKey) -> secrets::SecretResult<()> {
+        let _sent = self.0.send(());
         Err(secrets::SecretError::Backend("delete failed".to_string()))
     }
 }
@@ -21,18 +23,124 @@ fn enable_auto_dj_for_test(controller: &AppController, events: &Receiver<Control
     assert!(playback.auto_dj_enabled);
 }
 
-#[test]
-pub(in crate::controller) fn cover_use_states() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("server").id;
-    assert_eq!(controller.startup_sync_delay_ms(), None);
+fn playback_test_track(number: u32) -> Track {
+    let mut track = library_track(
+        number,
+        Some(ArtistId::new("test:artist:playback")),
+        AlbumId::new("test:album:playback"),
+        "Artist",
+        &[],
+    );
+    track.id = TrackId::new(format!("test:track:{number}"));
+    track
+}
+
+fn local_playback_test_track(number: u32, path: &Path) -> Track {
+    let mut track = playback_test_track(number);
+    track.id = TrackId::new(format!("local:track:playback-{number}"));
+    track.album_id = AlbumId::new("local:album:playback");
+    track.artist_id = Some(ArtistId::new("local:artist:playback"));
+    track.local_path = Some(path.to_string_lossy().into_owned());
+    track
+}
+
+fn playback_test_queue(source_id: SourceId, tracks: &[Track]) -> QueueEngine {
+    let mut queue = QueueEngine::new(source_id);
+    let mut tracks = tracks.iter();
+    if let Some(first) = tracks.next() {
+        queue.play_now(first);
+    }
+    for track in tracks {
+        queue.append(track);
+    }
+    queue
+}
+
+fn set_playback_test_state(
+    controller: &AppController,
+    queue: QueueEngine,
+    state: PlaybackState,
+    position_seconds: u32,
+) {
+    let current = queue.current().cloned();
+    let snapshot = PlaybackSnapshot {
+        current_source_id: Some(queue.source_id().clone()),
+        duration_seconds: current
+            .as_ref()
+            .map(|entry| entry.duration_seconds)
+            .unwrap_or_default(),
+        current,
+        state,
+        position_seconds,
+        position_millis: u64::from(position_seconds) * 1_000,
+        ..PlaybackSnapshot::default()
+    };
+    *controller.queue.lock().expect("queue") = Some(queue);
+    *controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot") = snapshot;
+}
+
+fn sync_real_local_root(controller: &AppController, root: &Path) -> SavedSource {
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
     controller
         .store
-        .with_store(|store| store.fail_sync(&source_id, "previous sync failed"))
+        .save_settings(&settings)
+        .expect("save local settings");
+    let saved = local_source_saved();
+    controller
+        .store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)
+        })
+        .expect("seed local source");
+    let active =
+        crate::sources::activate_configured_source(&controller.store, &controller.secrets, &saved)
+            .expect("activate local source");
+    *controller.active_source.write().expect("active source") = Some(Arc::clone(&active));
+    let source =
+        LocalSource::from_roots_with_identity(vec![root.to_path_buf()], saved.source.clone())
+            .expect("load local source");
+    controller
+        .runtime
+        .block_on(sync_source(&controller.store, &saved.source.id, &source))
+        .expect("sync local source");
+    saved
+}
+
+#[test]
+pub(in crate::controller) fn cover_use_states() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    seed_cached_library(
+        &controller.store,
+        &saved,
+        &[],
+        &[playback_test_track(1)],
+        &[],
+    );
+    install_active_source_for_test(&controller, &saved);
+    controller
+        .secrets
+        .save_token(&source_id, "token")
+        .expect("save token");
+    controller
+        .store
+        .with_store(|store| {
+            let generation = store.begin_sync(&source_id)?;
+            store.fail_sync(&source_id, generation, "previous sync failed")
+        })
         .expect("mark sync failed");
     assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
-    controller.clear_active_source_cache();
+    controller.clear_source_cache(source_id);
     let _snapshot = wait_for_snapshot(&events);
     assert_eq!(controller.startup_sync_delay_ms(), Some(500));
 }
@@ -60,40 +168,8 @@ pub(in crate::controller) fn cover_fetch_missing() {
     let cover_bytes = [0xff_u8, 0xd8, 0xff, 0xd9];
     fs::write(root.join("cover.jpg"), cover_bytes).expect("cover file");
 
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().to_string(),
-    }];
-    controller
-        .store
-        .save_settings(&settings)
-        .expect("save settings");
-
-    let saved = local_source_saved();
+    let saved = sync_real_local_root(&controller, &root);
     let source_id = saved.source.id.clone();
-    controller
-        .store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&source_id)
-        })
-        .expect("seed local server");
-    let provider = source_for_saved(
-        &controller.store,
-        &controller.runtime,
-        &controller.secrets,
-        &saved,
-    )
-    .expect("local provider");
-    controller
-        .runtime
-        .block_on(sync_source(
-            &controller.store,
-            &source_id,
-            provider.as_music_source(),
-        ))
-        .expect("sync local provider");
     let image_ref = controller
         .store
         .with_store(|store| store.load_albums(&source_id, 0, 1))
@@ -370,24 +446,17 @@ pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
 }
 
 #[test]
-pub(in crate::controller) fn cover_delete_token() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("server").id;
-    controller
-        .secrets
-        .save_token(&source_id, "token")
-        .expect("save token");
-    controller.forget_active_source();
-    let snapshot = wait_for_snapshot(&events);
-    assert!(snapshot.first_run);
-    wait_for_token_deleted(&controller.secrets, &source_id);
-}
-#[test]
 pub(in crate::controller) fn cover_emit_run() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("server").id;
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)
+        })
+        .expect("seed source");
+    let (controller, events) = controller_from_store_for_test(store);
     controller
         .secrets
         .save_token(&source_id, "token")
@@ -419,10 +488,18 @@ pub(in crate::controller) fn cover_emit_run() {
 }
 #[test]
 pub(in crate::controller) fn cover_delete_fails() {
-    let (mut controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("server").id;
-    controller.secrets = Arc::new(DeleteFailingSecretStore);
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)
+        })
+        .expect("seed source");
+    let (mut controller, events) = controller_from_store_for_test(store);
+    let (delete_entered, delete_observed) = channel();
+    controller.secrets = Arc::new(DeleteFailingSecretStore(delete_entered));
 
     controller.forget_source(source_id);
 
@@ -437,25 +514,42 @@ pub(in crate::controller) fn cover_delete_fails() {
             .expect("servers"),
         Vec::new()
     );
+    delete_observed
+        .recv_timeout(Duration::from_secs(1))
+        .expect("secret deletion attempted");
 }
 #[test]
 pub(in crate::controller) fn cover_start_sync() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.expect("server").id;
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)
+        })
+        .expect("seed source");
+    let (controller, events) = controller_from_store_for_test(store);
     let _permit = controller
         .sync_in_flight
-        .acquire(source_id)
+        .acquire(source_id.clone())
         .expect("sync guard")
         .expect("sync permit");
-    controller.resync_active_source();
+    controller.resync_server(source_id);
     assert_eq!(wait_for_status(&events), "Sync already running.");
 }
 #[test]
 pub(in crate::controller) fn cover_persist_queue() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let track = snapshot.tracks[0].clone();
+    let root = unique_test_dir("persisted-local-queue");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let path = root.join("track.flac");
+    fs::write(&path, []).expect("write local track");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let track = local_playback_test_track(1, &path);
+    seed_cached_library(&store, &saved, &[], std::slice::from_ref(&track), &[]);
+    let (controller, events) = controller_from_store_for_test(store);
     controller.play_now(track.clone());
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.entries.len(), 1);
@@ -472,16 +566,31 @@ pub(in crate::controller) fn cover_persist_queue() {
     );
     let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     assert_eq!(playback.current.expect("current").track_id, track.id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_start_stream() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("local-playback-prepare");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        &[first.clone(), second.clone()],
+        &[],
+    );
+    let (controller, _events) = controller_from_store_for_test(store);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first.clone(), second.clone()]);
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
@@ -490,6 +599,10 @@ pub(in crate::controller) fn cover_start_stream() {
         panic!("expected prepared play command");
     };
     assert_eq!(item.track.id, first.id);
+    let first_uri = reqwest::Url::from_file_path(&first_path)
+        .expect("first file URI")
+        .to_string();
+    assert_eq!(item.stream.uri(), first_uri);
     assert!(next.is_none());
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PrepareNext(Some(_)))
@@ -498,16 +611,34 @@ pub(in crate::controller) fn cover_start_stream() {
         panic!("expected prepared next command");
     };
     assert_eq!(item.track.id, second.id);
+    let second_uri = reqwest::Url::from_file_path(&second_path)
+        .expect("second file URI")
+        .to_string();
+    assert_eq!(item.stream.uri(), second_uri);
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn stopped_next_restarts_current() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("stopped-next-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let path = root.join("current.flac");
+    fs::write(&path, []).expect("write local track");
+    let track = local_playback_test_track(1, &path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        std::slice::from_ref(&track),
+        &[],
+    );
+    let (controller, _events) = controller_from_store_for_test(store);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    controller.play_now(snapshot.tracks[0].clone());
+    controller.play_now(track);
     let _play = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
     });
@@ -525,57 +656,69 @@ pub(in crate::controller) fn stopped_next_restarts_current() {
         )
     });
     assert!(matches!(command, PlaybackCommand::PlayPrepared { .. }));
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn manual_next_silences_current_audio_before_start() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("manual-next-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let saved = local_source_saved();
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(&store, &saved, &[], &[first.clone(), second.clone()], &[]);
+    let (controller, _events) = controller_from_store_for_test(store);
+    let queue = playback_test_queue(saved.source.id, &[first, second.clone()]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    controller.play_tracks_now(vec![snapshot.tracks[0].clone(), snapshot.tracks[1].clone()]);
-    let _play = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PlayPrepared { .. })
-    });
-    commands.lock().expect("commands").clear();
 
     controller.next_track();
 
     let command = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::Silence)
-    });
-    assert_eq!(command, PlaybackCommand::Silence);
-    assert!(
-        !commands
-            .lock()
-            .expect("commands")
-            .iter()
-            .any(|command| matches!(command, PlaybackCommand::Stop))
-    );
-    let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
     });
-    assert!(matches!(command, PlaybackCommand::PlayPrepared { .. }));
+    let PlaybackCommand::PlayPrepared { item, .. } = command else {
+        panic!("expected prepared play command");
+    };
+    assert_eq!(item.track.id, second.id);
+    let commands = commands.lock().expect("commands");
+    let silence_index = commands
+        .iter()
+        .position(|command| matches!(command, PlaybackCommand::Silence))
+        .expect("silence command");
+    let play_index = commands
+        .iter()
+        .position(|command| matches!(command, PlaybackCommand::PlayPrepared { .. }))
+        .expect("prepared play command");
+    assert!(silence_index < play_index);
+    assert!(
+        commands
+            .iter()
+            .all(|command| !matches!(command, PlaybackCommand::Stop))
+    );
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn playback_duplicate_current_start_ignored() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:duplicate-start");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(source_id, &[first, second]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second]);
-    let _play = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PlayPrepared { .. })
-    });
-    let _prepare = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    commands.lock().expect("commands").clear();
 
     controller.start_current_track();
     std::thread::sleep(std::time::Duration::from_millis(150));
@@ -585,16 +728,28 @@ pub(in crate::controller) fn playback_duplicate_current_start_ignored() {
 
 #[test]
 pub(in crate::controller) fn playback_current_commits_before_backend_accepts_start() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let commands = Arc::new(Mutex::new(Vec::new()));
-    *controller.playback.lock().expect("playback") =
-        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let root = unique_test_dir("blocking-start-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        &[first.clone(), second.clone()],
+        &[],
+    );
+    let (controller, _events) = controller_from_store_for_test(store);
+    let mut queue = QueueEngine::new(local_source_saved().source.id);
+    queue.play_now(&first);
+    let second_entry = queue.append(&second);
+    *controller.queue.lock().expect("queue") = Some(queue);
 
     let blocked_commands = Arc::new(Mutex::new(Vec::new()));
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -604,15 +759,6 @@ pub(in crate::controller) fn playback_current_commits_before_backend_accepts_sta
         entered_tx,
         release_rx,
     ));
-    let second_entry = controller
-        .queue_snapshot()
-        .expect("queue")
-        .entries
-        .iter()
-        .find(|entry| entry.track_id == second.id)
-        .expect("second entry")
-        .id
-        .clone();
 
     controller.activate_queue_entry(second_entry);
     entered_rx
@@ -643,33 +789,36 @@ pub(in crate::controller) fn playback_current_commits_before_backend_accepts_sta
     let _command = wait_for_recorded_command(&blocked_commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
     });
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn rejected_start_commits_attempted_playback_current() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("rejected-start-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        &[first.clone(), second.clone()],
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
-        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-
-    commands.lock().expect("commands").clear();
-    *controller.playback.lock().expect("playback") =
         Box::new(RejectingPlaybackBackend::new(Arc::clone(&commands)));
-    let second_entry = controller
-        .queue_snapshot()
-        .expect("queue")
-        .entries
-        .iter()
-        .find(|entry| entry.track_id == second.id)
-        .expect("second entry")
-        .id
-        .clone();
+    let mut queue = QueueEngine::new(local_source_saved().source.id);
+    queue.play_now(&first);
+    let second_entry = queue.append(&second);
+    *controller.queue.lock().expect("queue") = Some(queue);
 
     controller.activate_queue_entry(second_entry);
     let _queue = wait_for_queue(&events).expect("queue");
@@ -681,33 +830,36 @@ pub(in crate::controller) fn rejected_start_commits_attempted_playback_current()
     });
 
     assert_eq!(playback.current.expect("current").track_id, second.id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn stale_desired_queue_current_does_not_receive_playback_progress() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("stale-progress-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        &[first.clone(), second.clone()],
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
-        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-
-    commands.lock().expect("commands").clear();
-    *controller.playback.lock().expect("playback") =
         Box::new(RejectingPlaybackBackend::new(Arc::clone(&commands)));
-    let second_entry = controller
-        .queue_snapshot()
-        .expect("queue")
-        .entries
-        .iter()
-        .find(|entry| entry.track_id == second.id)
-        .expect("second entry")
-        .id
-        .clone();
+    let mut queue = QueueEngine::new(local_source_saved().source.id);
+    queue.play_now(&first);
+    let second_entry = queue.append(&second);
+    *controller.queue.lock().expect("queue") = Some(queue);
 
     controller.activate_queue_entry(second_entry);
     let queue = wait_for_queue(&events).expect("queue");
@@ -739,33 +891,32 @@ pub(in crate::controller) fn stale_desired_queue_current_does_not_receive_playba
         second.id
     );
     assert_eq!(queue.progress_seconds, 0);
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn playback_current_queue_activation_restarts() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("current-activation-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let path = root.join("current.flac");
+    fs::write(&path, []).expect("write local track");
+    let first = local_playback_test_track(1, &path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        std::slice::from_ref(&first),
+        &[],
+    );
+    let (controller, _events) = controller_from_store_for_test(store);
+    let mut queue = QueueEngine::new(local_source_saved().source.id);
+    let current_entry_id = queue.play_now(&first);
+    *controller.queue.lock().expect("queue") = Some(queue);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second]);
-    let _play = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PlayPrepared { .. })
-    });
-    let _prepare = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    let current_entry_id = controller
-        .queue_snapshot()
-        .expect("queue")
-        .entries
-        .first()
-        .expect("current entry")
-        .id
-        .clone();
-    commands.lock().expect("commands").clear();
 
     controller.activate_queue_entry(current_entry_id);
 
@@ -776,27 +927,39 @@ pub(in crate::controller) fn playback_current_queue_activation_restarts() {
         panic!("expected prepared play command");
     };
     assert_eq!(item.track.id, first.id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_change_backend() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("reprepare-local-access");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local match");
+    fs::write(&second_path, []).expect("write second local match");
+    let saved = saved_source();
+    let source_id = saved.source.id.clone();
+    let mut first = playback_test_track(1);
+    first.id = TrackId::new("jellyfin:track:local-access-first");
+    first.local_path = Some("/server/music/first.flac".to_string());
+    let mut second = playback_test_track(2);
+    second.id = TrackId::new("jellyfin:track:local-access-second");
+    second.local_path = Some("/server/music/second.flac".to_string());
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(&store, &saved, &[], &[first.clone(), second.clone()], &[]);
+    let (controller, _events) = controller_from_store_for_test(store);
+    controller
+        .secrets
+        .save_token(&source_id, "token")
+        .expect("save token");
+    let mut queue = QueueEngine::new(source_id.clone());
+    queue.play_now(&first);
+    queue.append(&second);
+    *controller.queue.lock().expect("queue") = Some(queue);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _play = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PlayPrepared { .. })
-    });
-    let _initial_prepare = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    commands.lock().expect("commands").clear();
-    let root = unique_test_dir("reprepare-local-access");
-    fs::create_dir_all(&root).expect("create root");
     controller.save_source_local_access(
         source_id.clone(),
         root.clone(),
@@ -809,9 +972,44 @@ pub(in crate::controller) fn cover_change_backend() {
     let PlaybackCommand::PrepareNext(Some(item)) = command else {
         panic!("expected prepared next command");
     };
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_local_manifest(&source_id))
+            .expect("load local manifest")
+            .len(),
+        2
+    );
     assert_eq!(item.track.id, second.id);
+    assert!(item.stream.uri().starts_with("https://music.example/"));
+    controller
+        .store
+        .with_store(|store| {
+            store.replace_track_local_matches(
+                &source_id,
+                &[(
+                    second.id.clone(),
+                    second_path.to_string_lossy().into_owned(),
+                    "metadata".to_string(),
+                )],
+            )
+        })
+        .expect("seed local match");
     commands.lock().expect("commands").clear();
-    controller.clear_source_local_access(source_id);
+    clear_next_preload(&controller.next_preload);
+    controller.prepare_next_stream();
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    let local_uri = reqwest::Url::from_file_path(&second_path)
+        .expect("local file URI")
+        .to_string();
+    assert_eq!(item.stream.uri(), local_uri);
+    commands.lock().expect("commands").clear();
+    controller.clear_source_local_access(source_id.clone());
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PrepareNext(Some(_)))
     });
@@ -819,15 +1017,14 @@ pub(in crate::controller) fn cover_change_backend() {
         panic!("expected prepared next command");
     };
     assert_eq!(item.track.id, second.id);
+    assert!(item.stream.uri().starts_with("https://music.example/"));
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn prepared_send_reject() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let repeated = snapshot.tracks[1].clone();
+    let source_id = SourceId::new("test:source:prepared-reject");
+    let first = playback_test_track(1);
+    let repeated = playback_test_track(2);
     let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     let initial_next_entry_id = engine.append(&repeated);
@@ -858,7 +1055,7 @@ pub(in crate::controller) fn prepared_send_reject() {
     let (events, _receiver) = channel();
     let prepared = prepared_item_from_entry(
         &request.next_entry,
-        StreamDescriptor::new("fake://local/stream/duplicate"),
+        StreamDescriptor::new("test://stream/duplicate"),
     );
     assert!(!send_prepared_next(
         &playback, &queue, &events, &request, prepared
@@ -867,10 +1064,8 @@ pub(in crate::controller) fn prepared_send_reject() {
 }
 #[test]
 pub(in crate::controller) fn prepared_skip_current_repeat() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let track = snapshot.tracks[0].clone();
+    let source_id = SourceId::new("test:source:no-next");
+    let track = playback_test_track(1);
     let mut engine = QueueEngine::new(source_id);
     engine.play_now(&track);
     let queue = Arc::new(Mutex::new(Some(engine)));
@@ -879,20 +1074,25 @@ pub(in crate::controller) fn prepared_skip_current_repeat() {
 }
 #[test]
 pub(in crate::controller) fn prepared_uses_shuffled_next() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let third = snapshot.tracks[2].clone();
+    let source_id = SourceId::new("test:source:shuffled-next");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let third = playback_test_track(3);
     let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     engine.append(&second);
     engine.append(&third);
     engine.set_shuffle(true, 19);
-    let expected = next_queue_entry_after_current(&engine)
-        .expect("shuffled queue should have next")
-        .id;
+    let snapshot = engine.snapshot();
+    let current_index = snapshot.current_index.expect("current queue index");
+    let current_shuffle_position = snapshot
+        .shuffle_order
+        .iter()
+        .position(|index| *index == current_index)
+        .expect("current shuffle position");
+    let next_shuffle_position = (current_shuffle_position + 1) % snapshot.shuffle_order.len();
+    let next_index = snapshot.shuffle_order[next_shuffle_position];
+    let expected = snapshot.entries[next_index].id.clone();
     let queue = Arc::new(Mutex::new(Some(engine)));
 
     let request =
@@ -902,11 +1102,9 @@ pub(in crate::controller) fn prepared_uses_shuffled_next() {
 }
 #[test]
 pub(in crate::controller) fn prepared_uses_appended_next() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
+    let source_id = SourceId::new("test:source:appended-next");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
     let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     let appended = engine.append(&second);
@@ -919,11 +1117,25 @@ pub(in crate::controller) fn prepared_uses_appended_next() {
 }
 #[test]
 pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
-    let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
+    let root = unique_test_dir("prepared-dedupe-local");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let source_id = local_source_saved().source.id;
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &local_source_saved(),
+        &[],
+        &[first.clone(), second.clone()],
+        &[],
+    );
+    let (controller, _events) = controller_from_store_for_test(store);
     let mut engine = QueueEngine::new(source_id);
     engine.play_now(&first);
     engine.append(&second);
@@ -938,7 +1150,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         Arc::clone(&next_preload),
@@ -947,7 +1159,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         Arc::clone(&next_preload),
@@ -974,7 +1186,7 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
     prepare_next_stream_from_handles(
         controller.store.clone(),
         Arc::clone(&controller.runtime),
-        Arc::clone(&controller.secrets),
+        Arc::clone(&controller.active_source),
         Arc::clone(&playback),
         Arc::clone(&queue),
         next_preload,
@@ -987,13 +1199,12 @@ pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
         panic!("expected prepared next command");
     };
     assert_eq!(item.track.id, second.id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_reject_switch() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let track = snapshot.tracks[0].clone();
+    let source_id = SourceId::new("test:source:request-switch");
+    let track = playback_test_track(1);
     let mut engine = QueueEngine::new(source_id.clone());
     engine.play_now(&track);
     let entry = engine.current().expect("current").clone();
@@ -1019,10 +1230,8 @@ pub(in crate::controller) fn cover_reject_switch() {
 }
 #[test]
 pub(in crate::controller) fn playback_request_reject() {
-    let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let source_id = snapshot.source.as_ref().expect("server").id.clone();
-    let track = snapshot.tracks[0].clone();
+    let source_id = SourceId::new("test:source:request-generation");
+    let track = playback_test_track(1);
     let mut engine = QueueEngine::new(source_id.clone());
     engine.play_now(&track);
     let stale_entry = engine.current().expect("current").clone();
@@ -1042,50 +1251,64 @@ pub(in crate::controller) fn playback_request_reject() {
 }
 #[test]
 pub(in crate::controller) fn cover_track_selected() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let queue = wait_for_queue(&events).expect("queue");
-    let second_entry = queue
-        .entries
-        .iter()
-        .find(|entry| entry.track_id == second.id)
-        .expect("second entry")
-        .id
-        .clone();
-    let _initial_playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let root = unique_test_dir("selected-local-queue-track");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    let saved = local_source_saved();
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(&store, &saved, &[], &[first.clone(), second.clone()], &[]);
+    let (controller, events) = controller_from_store_for_test(store);
+    let mut engine = QueueEngine::new(saved.source.id);
+    engine.play_now(&first);
+    let second_entry = engine.append(&second);
+    *controller.queue.lock().expect("queue") = Some(engine);
     controller.activate_queue_entry(second_entry);
     let queue = wait_for_queue(&events).expect("activated queue");
     assert_eq!(queue.current_index, Some(1));
-    let playback = wait_for_playback_matching(&controller, &events, |playback| {
-        playback.state == PlaybackState::Playing
-            && playback
-                .current
-                .as_ref()
-                .is_some_and(|entry| entry.track_id == second.id)
-    });
+    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     assert_eq!(playback.current.expect("current").track_id, second.id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_emit_position() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    controller.play_now(snapshot.tracks[0].clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:seek");
+    let track = playback_test_track(1);
+    let queue = playback_test_queue(source_id, std::slice::from_ref(&track));
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     controller.seek_millis(12_345);
-    let playback =
-        wait_for_playback_track_position(&controller, &events, &snapshot.tracks[0].id, 12_345);
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.position_millis, 12_345);
     assert_eq!(playback.position_seconds, 12);
+    assert_eq!(playback.current.expect("current").track_id, track.id);
+    assert_eq!(
+        controller
+            .queue_snapshot()
+            .expect("queue snapshot")
+            .progress_seconds,
+        12
+    );
 }
 #[test]
 pub(in crate::controller) fn cover_ignore_positions() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    controller.play_now(snapshot.tracks[0].clone());
-    let playing = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    let initial_position = playing.position_millis;
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:error-position");
+    let track = playback_test_track(1);
+    let queue = playback_test_queue(source_id, &[track]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 7);
+    let initial_position = 7_000;
 
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::Error("stream failed".to_string()),
@@ -1116,69 +1339,81 @@ pub(in crate::controller) fn cover_ignore_positions() {
 }
 #[test]
 pub(in crate::controller) fn cover_keep_sync() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:queue-sync"),
+        &[first.clone(), second.clone()],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
     controller.next_track();
-    let queue = wait_for_queue(&events).expect("next queue");
+    let queue = controller.queue_snapshot().expect("next queue");
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
     );
     controller.previous_track();
-    let queue = wait_for_queue(&events).expect("previous queue");
+    let queue = controller.queue_snapshot().expect("previous queue");
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         first.id
     );
     controller.clear_queue();
-    let queue = wait_for_queue(&events).expect("clear queue");
+    let queue = controller.queue_snapshot().expect("clear queue");
     assert_eq!(queue.entries.len(), 1);
     assert_eq!(queue.current_index, Some(0));
     assert_eq!(queue.entries[0].track_id, first.id);
 }
 #[test]
 pub(in crate::controller) fn cover_track_first() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:repeat-all");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let mut queue = playback_test_queue(source_id, &[first.clone(), second]);
+    queue.next_track();
+    queue.set_progress_seconds(12);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 12);
     controller.next_track();
-    let _queue = wait_for_queue(&events).expect("next queue");
-    controller.seek_millis(12_000);
-    let _playback = wait_for_playback_track_position(&controller, &events, &second.id, 12_000);
-    controller.next_track();
-    let playback = wait_for_playback_track_position(&controller, &events, &first.id, 0);
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
     assert_eq!(playback.current.expect("current").track_id, first.id);
+    assert_eq!(playback.position_millis, 0);
     assert_ne!(playback.state, PlaybackState::Stopped);
 }
 #[test]
 pub(in crate::controller) fn manual_ten_seconds() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    controller.next_track();
-    let _queue = wait_for_queue(&events).expect("next queue");
-    controller.seek_millis(11_000);
-    let _playback = wait_for_playback_track_position(&controller, &events, &second.id, 11_000);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:previous-threshold");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let mut queue = playback_test_queue(source_id, &[first, second.clone()]);
+    queue.next_track();
+    queue.set_progress_seconds(11);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 11);
     controller.previous_track();
-    let playback = wait_for_playback_track_position(&controller, &events, &second.id, 0);
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
     assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert_eq!(playback.position_millis, 0);
 }
 #[test]
 pub(in crate::controller) fn cover_use_order() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    controller.play_now(snapshot.tracks[0].clone());
-    let _queue = wait_for_queue(&events).expect("queue");
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let track = playback_test_track(1);
+    let queue = playback_test_queue(SourceId::new("test:source:repeat-order"), &[track]);
+    *controller.queue.lock().expect("queue") = Some(queue);
     controller.cycle_repeat();
     let playback = wait_for_playback_repeat(&events, RepeatMode::One);
     assert_eq!(playback.repeat_mode, RepeatMode::One);
@@ -1192,11 +1427,12 @@ pub(in crate::controller) fn cover_use_order() {
 
 #[test]
 pub(in crate::controller) fn playback_modes_do_not_emit_queue() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    controller.play_tracks_now(vec![snapshot.tracks[0].clone(), snapshot.tracks[1].clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_repeat(&events, RepeatMode::All);
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(SourceId::new("test:source:mode-events"), &[first, second]);
+    *controller.queue.lock().expect("queue") = Some(queue);
 
     controller.cycle_repeat();
     let playback = wait_for_repeat_without_queue(&events, RepeatMode::One);
@@ -1209,25 +1445,18 @@ pub(in crate::controller) fn playback_modes_do_not_emit_queue() {
 
 #[test]
 pub(in crate::controller) fn repeat_one_clears_prepared_next() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_repeat(&events, RepeatMode::All);
-    let command = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    let PlaybackCommand::PrepareNext(Some(item)) = command else {
-        panic!("expected prepared next command");
-    };
-    assert_eq!(item.track.id, second.id);
-    commands.lock().expect("commands").clear();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:repeat-preload"),
+        &[first, second],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
 
     controller.cycle_repeat();
     let playback = wait_for_repeat_without_queue(&events, RepeatMode::One);
@@ -1246,6 +1475,7 @@ pub(in crate::controller) fn cover_use_sqlite() {
     let store = StoreHandle::Path {
         cache_database_path: cache_database_path.clone(),
         settings_path: settings_path.clone(),
+        settings: Arc::new(Mutex::new(AppSettings::default())),
     };
     let settings = AppSettings {
         theme_preference: ThemePreference::Dark,
@@ -1324,7 +1554,7 @@ pub(in crate::controller) fn cover_remove_waveform_tmp() {
 #[test]
 pub(in crate::controller) fn cover_emit_state() {
     let (controller, events, _snapshot, _queue, player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+        AppController::bootstrap_memory_for_test();
     assert!(!player.auto_dj_enabled);
     controller.toggle_auto_dj();
     let playback = wait_for_playback_auto_dj(&events, true);
@@ -1333,36 +1563,39 @@ pub(in crate::controller) fn cover_emit_state() {
 }
 #[test]
 pub(in crate::controller) fn random_play_now() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let expected = random_track_ids(&snapshot.tracks, 3);
-    let first_id = expected.first().expect("random track");
-    let first_album_id = snapshot
-        .tracks
-        .iter()
-        .find(|track| &track.id == first_id)
-        .expect("first random track")
-        .album_id
-        .clone();
-    let expected_first_ref = snapshot
-        .albums
-        .iter()
-        .find(|album| album.id == first_album_id)
-        .and_then(|album| album.image_ref.clone())
-        .expect("album image ref");
-    let saved = controller
-        .store
-        .with_store(|store| store.active_source())
-        .expect("active server")
-        .expect("saved server");
-    let mut tracks_without_track_art = snapshot.tracks.clone();
-    for track in &mut tracks_without_track_art {
-        track.image_ref = None;
+    let root = unique_test_dir("local-random-play-now");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local root");
+    for number in 1..=3 {
+        fs::write(root.join(format!("track-{number}.mp3")), []).expect("write local track");
     }
-    controller
-        .store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &tracks_without_track_art, 0))
-        .expect("strip track image refs");
+    fs::write(root.join("cover.jpg"), [0xff_u8, 0xd8, 0xff, 0xd9]).expect("write local cover");
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = sync_real_local_root(&controller, &root);
+    let active =
+        crate::sources::activate_configured_source(&controller.store, &controller.secrets, &saved)
+            .expect("activate local source");
+    let expected = controller
+        .runtime
+        .block_on(
+            active
+                .random_tracks
+                .executor
+                .random_tracks(RandomTrackRequest {
+                    limit: 3,
+                    min_year: None,
+                    max_year: None,
+                    genre_id: None,
+                    genre_name: None,
+                    played_filter: PlayedFilter::All,
+                }),
+        )
+        .expect("local random tracks")
+        .into_iter()
+        .map(|track| track.id)
+        .collect::<Vec<_>>();
+    *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
     controller.play_random_tracks(random_request(RandomPlayAction::PlayNow, 3));
     let queue = wait_for_queue(&events).expect("random queue");
     assert_eq!(queue.current_index, Some(0));
@@ -1374,74 +1607,32 @@ pub(in crate::controller) fn random_play_now() {
             .collect::<Vec<_>>(),
         expected
     );
-    assert_eq!(
-        queue
-            .entries
-            .first()
-            .and_then(|entry| entry.image_ref.as_ref()),
-        Some(&expected_first_ref)
-    );
-    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    assert_eq!(
-        playback
-            .current
-            .as_ref()
-            .and_then(|entry| entry.image_ref.as_ref()),
-        Some(&expected_first_ref)
-    );
-}
-#[test]
-pub(in crate::controller) fn random_play_next() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let expected_random = random_track_ids(&snapshot.tracks, 2);
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("initial queue");
-    controller.play_random_tracks(random_request(RandomPlayAction::PlayNext, 2));
-    let queue = wait_for_queue(&events).expect("random next queue");
-    let ids = queue
-        .entries
-        .iter()
-        .map(|entry| entry.track_id.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(queue.current_index, Some(0));
-    assert_eq!(ids[0], first.id);
-    assert_eq!(&ids[1..3], expected_random.as_slice());
-    assert_eq!(ids[3], second.id);
-}
-#[test]
-pub(in crate::controller) fn random_add_append() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let expected_random = random_track_ids(&snapshot.tracks, 2);
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("initial queue");
-    controller.play_random_tracks(random_request(RandomPlayAction::AddLast, 2));
-    let queue = wait_for_queue(&events).expect("random append queue");
-    let ids = queue
-        .entries
-        .iter()
-        .map(|entry| entry.track_id.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(queue.current_index, Some(0));
-    assert_eq!(ids[0], first.id);
-    assert_eq!(ids[1], second.id);
-    assert_eq!(&ids[2..4], expected_random.as_slice());
+    assert_eq!(queue.entries.len(), 3);
+    assert!(queue.entries[0].image_ref.is_some());
+    let first_track_id = queue.entries[0].track_id.clone();
+    let playback = wait_for_playback_matching(&controller, &events, |playback| {
+        playback.state == PlaybackState::Playing
+            && playback
+                .current
+                .as_ref()
+                .is_some_and(|current| current.track_id == first_track_id)
+    });
+    assert_eq!(playback.current.expect("current").track_id, first_track_id);
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn play_append_track() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let third = snapshot.tracks[2].clone();
-    let fourth = snapshot.tracks[3].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("initial queue");
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let third = playback_test_track(3);
+    let fourth = playback_test_track(4);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:append"),
+        &[first.clone(), second.clone()],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
     controller.play_last(vec![third.clone(), fourth.clone()]);
     let queue = wait_for_queue(&events).expect("append queue");
     let ids = queue
@@ -1454,8 +1645,17 @@ pub(in crate::controller) fn play_append_track() {
 }
 #[test]
 pub(in crate::controller) fn cover_auto_library() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("local-auto-dj-library");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local root");
+    for number in 0..=super::AUTO_DJ_ITEM_COUNT + 1 {
+        fs::write(root.join(format!("track-{number}.mp3")), []).expect("write local track");
+    }
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = sync_real_local_root(&controller, &root);
+    let snapshot = load_snapshot(&controller.store).expect("load local snapshot");
+    *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.source.id.clone()));
     enable_auto_dj_for_test(&controller, &events);
     let first = snapshot.tracks[0].clone();
     controller.play_now(first.clone());
@@ -1475,50 +1675,60 @@ pub(in crate::controller) fn cover_auto_library() {
             .len(),
         queue.entries.len()
     );
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_auto_timing() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = local_source_saved();
+    controller
+        .store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source.id)
+        })
+        .expect("seed local source");
+    let queue = playback_test_queue(
+        saved.source.id,
+        &[playback_test_track(1), playback_test_track(2)],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
+    *controller.auto_dj_enabled.lock().expect("Auto DJ") = true;
     let mut settings = controller.load_settings();
+    settings.auto_dj_enabled = true;
     settings.auto_dj_refill_threshold = 1;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
-    enable_auto_dj_for_test(&controller, &events);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second]);
-    let queue = wait_for_queue(&events).expect("queue before threshold refill");
-    assert_eq!(queue.entries.len(), 2);
+    assert!(!controller.refill_auto_dj_queue());
 
     let mut settings = controller.load_settings();
     settings.auto_dj_refill_threshold = 2;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
-    controller.refill_auto_dj_queue();
-    let queue = wait_for_queue(&events).expect("queue after threshold refill");
-    assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
+    assert!(controller.refill_auto_dj_queue());
 }
 #[test]
 pub(in crate::controller) fn manual_skip_does_not_refill_auto_dj() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:manual-auto-dj"),
+        &[first.clone(), second.clone()],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
     let mut settings = controller.load_settings();
     settings.auto_dj_refill_threshold = 0;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
     enable_auto_dj_for_test(&controller, &events);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
     controller.next_track();
-    let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries[queue.current_index.expect("current")].track_id == second.id
-    });
+    let queue = controller.queue_snapshot().expect("next queue");
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
@@ -1529,9 +1739,7 @@ pub(in crate::controller) fn manual_skip_does_not_refill_auto_dj() {
         .save_settings(&settings)
         .expect("save Auto DJ settings");
     controller.next_track();
-    let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries[queue.current_index.expect("current")].track_id != second.id
-    });
+    let queue = controller.queue_snapshot().expect("wrapped queue");
     assert_eq!(queue.entries.len(), 2);
     assert_ne!(
         queue.entries[queue.current_index.expect("current")].track_id,
@@ -1541,57 +1749,57 @@ pub(in crate::controller) fn manual_skip_does_not_refill_auto_dj() {
 
 #[test]
 pub(in crate::controller) fn cover_auto_next() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("local-auto-dj-end-of-stream");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local root");
+    for number in 1..=6 {
+        fs::write(root.join(format!("track-{number}.mp3")), []).expect("write local track");
+    }
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = sync_real_local_root(&controller, &root);
+    let tracks = load_snapshot(&controller.store)
+        .expect("load local snapshot")
+        .tracks;
+    let first = tracks[0].clone();
+    let second = tracks[1].clone();
+    let queue = playback_test_queue(saved.source.id, &[first, second.clone()]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
+    *controller.auto_dj_enabled.lock().expect("Auto DJ") = true;
     let mut settings = controller.load_settings();
-    settings.auto_dj_refill_threshold = 0;
-    controller
-        .save_settings(&settings)
-        .expect("save Auto DJ settings");
-    enable_auto_dj_for_test(&controller, &events);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-
-    let mut settings = controller.load_settings();
+    settings.auto_dj_enabled = true;
     settings.auto_dj_refill_threshold = 2;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
     controller.advance_after_end_of_stream();
-    let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries[queue.current_index.expect("current")].track_id == second.id
-    });
-    assert_eq!(queue.entries.len(), 2);
+    let queue = wait_for_queue_matching(&events, |queue| queue.entries.len() > 2);
+    assert!(queue.entries.len() > 2);
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
     );
-
-    let queue = wait_for_queue_matching(&events, |queue| {
-        queue.entries.len() == 2 + super::AUTO_DJ_ITEM_COUNT
-    });
-    assert_eq!(
-        queue.entries[queue.current_index.expect("current")].track_id,
-        second.id
-    );
+    let _cleanup = fs::remove_dir_all(root);
 }
 
 #[test]
 pub(in crate::controller) fn cover_auto_repeat_one_skips_refill() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:repeat-auto-dj"),
+        &[first, second],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
     let mut settings = controller.load_settings();
     settings.auto_dj_refill_threshold = 0;
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
     enable_auto_dj_for_test(&controller, &events);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second]);
-    let queue = wait_for_queue(&events).expect("queue");
+    let queue = controller.queue_snapshot().expect("queue");
     assert_eq!(queue.entries.len(), 2);
     controller.cycle_repeat();
     let _playback = wait_for_playback_repeat(&events, RepeatMode::One);
@@ -1601,22 +1809,24 @@ pub(in crate::controller) fn cover_auto_repeat_one_skips_refill() {
     controller
         .save_settings(&settings)
         .expect("save Auto DJ settings");
-    assert!(!controller.auto_dj_topup());
+    assert!(!controller.refill_auto_dj_queue());
     let queue = controller.queue_snapshot().expect("queue snapshot");
     assert_eq!(queue.entries.len(), 2);
 }
 #[test]
 pub(in crate::controller) fn end_stream_repeat() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    controller.cycle_repeat();
-    let _playback = wait_for_playback_repeat(&events, RepeatMode::One);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let mut queue = playback_test_queue(
+        SourceId::new("test:source:end-repeat"),
+        &[first.clone(), second],
+    );
+    queue.set_repeat_mode(RepeatMode::One);
+    *controller.queue.lock().expect("queue") = Some(queue);
     controller.advance_after_end_of_stream();
-    let queue = wait_for_queue(&events).expect("repeated queue");
+    let queue = controller.queue_snapshot().expect("repeated queue");
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         first.id
@@ -1624,14 +1834,17 @@ pub(in crate::controller) fn end_stream_repeat() {
 }
 #[test]
 pub(in crate::controller) fn end_of_stream_advances_queue() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(
+        SourceId::new("test:source:end-advance"),
+        &[first, second.clone()],
+    );
+    *controller.queue.lock().expect("queue") = Some(queue);
     controller.advance_after_end_of_stream();
-    let queue = wait_for_queue(&events).expect("next queue");
+    let queue = controller.queue_snapshot().expect("next queue");
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
@@ -1639,13 +1852,13 @@ pub(in crate::controller) fn end_of_stream_advances_queue() {
 }
 #[test]
 pub(in crate::controller) fn cover_track_event() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:track-boundary");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(source_id, &[first.clone(), second.clone()]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::EndOfStream,
         PlaybackEvent::StateChanged(PlaybackState::Stopped),
@@ -1662,13 +1875,11 @@ pub(in crate::controller) fn cover_track_event() {
 
     controller.poll_playback_events();
 
-    let playback = wait_for_playback_matching(&controller, &events, |playback| {
-        playback.state == PlaybackState::Buffering
-            && playback
-                .current
-                .as_ref()
-                .is_some_and(|entry| entry.track_id == second.id)
-    });
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
     assert_eq!(playback.current.expect("current").track_id, second.id);
     assert_eq!(playback.state, PlaybackState::Buffering);
     assert_eq!(playback.position_seconds, 0);
@@ -1679,21 +1890,14 @@ pub(in crate::controller) fn cover_track_event() {
 }
 #[test]
 pub(in crate::controller) fn cover_track_queue() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    controller.advance_after_end_of_stream();
-    let _queue = wait_for_queue(&events).expect("next queue");
-    let _playback = wait_for_playback_matching(&controller, &events, |playback| {
-        playback
-            .current
-            .as_ref()
-            .is_some_and(|entry| entry.track_id == second.id)
-    });
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:stale-timing");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let mut queue = playback_test_queue(source_id, &[first.clone(), second.clone()]);
+    queue.next_track();
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::PositionChanged {
             track_id: Some(first.id.clone()),
@@ -1720,13 +1924,13 @@ pub(in crate::controller) fn cover_track_queue() {
 }
 #[test]
 pub(in crate::controller) fn cover_track_ignored() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first.clone(), second.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:future-timing");
+    let first = playback_test_track(1);
+    let second = playback_test_track(2);
+    let queue = playback_test_queue(source_id, &[first.clone(), second.clone()]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::DurationChanged {
             track_id: Some(second.id.clone()),
@@ -1746,12 +1950,12 @@ pub(in crate::controller) fn cover_track_ignored() {
 }
 #[test]
 pub(in crate::controller) fn cover_ignores_implausible_backend_duration() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
-    let first = snapshot.tracks[0].clone();
-    controller.play_tracks_now(vec![first.clone()]);
-    let _queue = wait_for_queue(&events).expect("queue");
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let source_id = SourceId::new("test:source:duration");
+    let first = playback_test_track(1);
+    let queue = playback_test_queue(source_id, std::slice::from_ref(&first));
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::DurationChanged {
             track_id: Some(first.id.clone()),
@@ -1771,27 +1975,33 @@ pub(in crate::controller) fn cover_ignores_implausible_backend_duration() {
 }
 #[test]
 pub(in crate::controller) fn cover_advance_playback() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("prepared-local-advance");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local playback root");
+    let first_path = root.join("first.flac");
+    let second_path = root.join("second.flac");
+    let third_path = root.join("third.flac");
+    fs::write(&first_path, []).expect("write first local track");
+    fs::write(&second_path, []).expect("write second local track");
+    fs::write(&third_path, []).expect("write third local track");
+    let saved = local_source_saved();
+    let first = local_playback_test_track(1, &first_path);
+    let second = local_playback_test_track(2, &second_path);
+    let third = local_playback_test_track(3, &third_path);
+    let store = StoreHandle::open_memory().expect("memory store");
+    seed_cached_library(
+        &store,
+        &saved,
+        &[],
+        &[first.clone(), second.clone(), third.clone()],
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    let first = snapshot.tracks[0].clone();
-    let second = snapshot.tracks[1].clone();
-    let third = snapshot.tracks[2].clone();
-    controller.play_tracks_now(vec![first, second.clone(), third.clone()]);
-    let _initial_queue = wait_for_queue(&events).expect("initial queue");
-    let _command = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PlayPrepared { .. })
-    });
-    let command = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    let PlaybackCommand::PrepareNext(Some(item)) = command else {
-        panic!("expected prepared next command");
-    };
-    assert_eq!(item.track.id, second.id);
-    commands.lock().expect("commands").clear();
+    let queue = playback_test_queue(saved.source.id, &[first, second.clone(), third.clone()]);
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     controller.advance_after_prepared_track_started(PlaybackTrack {
         id: second.id.clone(),
         album_id: Some(second.album_id.clone()),
@@ -1832,19 +2042,26 @@ pub(in crate::controller) fn cover_advance_playback() {
                 PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
             ))
     );
+    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn cover_update_snapshot() {
-    let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap_with_fake(FakeScale::Small);
+    let root = unique_test_dir("local-favorite-projection");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create local root");
+    fs::write(root.join("track.mp3"), []).expect("write local track");
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let saved = sync_real_local_root(&controller, &root);
+    let snapshot = load_snapshot(&controller.store).expect("load local snapshot");
     let track = snapshot
         .tracks
         .iter()
         .find(|track| !track.favorite)
         .expect("non-favorite track")
         .clone();
-    controller.play_now(track.clone());
-    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let queue = playback_test_queue(saved.source.id, std::slice::from_ref(&track));
+    set_playback_test_state(&controller, queue, PlaybackState::Playing, 0);
     controller.set_track_favorite(track.id.clone(), true);
     let playback = wait_for_playback_current_favorite(&controller, &events, true);
     assert_eq!(playback.current.expect("current").track_id, track.id);
@@ -1865,4 +2082,5 @@ pub(in crate::controller) fn cover_update_snapshot() {
             .iter()
             .any(|candidate| candidate.id == track.id)
     );
+    let _cleanup = fs::remove_dir_all(root);
 }

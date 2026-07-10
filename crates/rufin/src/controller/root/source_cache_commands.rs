@@ -32,12 +32,10 @@ impl AppController {
                 return;
             }
             if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
+                warn!(%error, source_id = %saved.source.id, "failed to clear source cover cache");
             }
             if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
+                warn!(%error, source_id = %saved.source.id, "failed to clear source waveform cache");
             }
             let _sent = events.send(ControllerEvent::LoginStatus(
                 "Cached library cleared.".to_string(),
@@ -91,12 +89,10 @@ impl AppController {
                 return;
             }
             if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
+                warn!(%error, source_id = %saved.source.id, "failed to clear source cover cache");
             }
             if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
+                warn!(%error, source_id = %saved.source.id, "failed to clear source waveform cache");
             }
             let _sent = events.send(ControllerEvent::LoginStatus(
                 "Cached library cleared.".to_string(),

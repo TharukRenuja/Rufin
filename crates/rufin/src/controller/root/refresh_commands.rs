@@ -20,20 +20,6 @@ impl AppController {
             start_background_sync_thread(self.sync_context(), saved);
         }
     }
-    #[cfg(test)]
-    pub fn resync_active_source(&self) {
-        let active = self
-            .store
-            .with_store(|store| store.active_source())
-            .unwrap_or(None);
-        if let Some(saved) = active {
-            self.start_sync(saved);
-        } else {
-            let _sent = self.events.send(ControllerEvent::Error(
-                "No active music server is saved.".to_string(),
-            ));
-        }
-    }
     pub fn resync_server(&self, source_id: SourceId) {
         let saved = self
             .store
@@ -102,7 +88,7 @@ impl AppController {
             ExplorePrefetchContext {
                 store: self.store.clone(),
                 runtime: Arc::clone(&self.runtime),
-                secrets: Arc::clone(&self.secrets),
+                active_source: Arc::clone(&self.active_source),
                 events: self.events.clone(),
                 sync_in_flight: self.sync_in_flight.clone(),
                 explore_prefetch_in_flight: self.explore_prefetch_in_flight.clone(),
@@ -119,7 +105,7 @@ impl AppController {
             HomeRefreshContext {
                 store: self.store.clone(),
                 runtime: Arc::clone(&self.runtime),
-                secrets: Arc::clone(&self.secrets),
+                active_source: Arc::clone(&self.active_source),
                 events: self.events.clone(),
                 sync_in_flight: self.sync_in_flight.clone(),
                 home_refresh_in_flight: self.home_refresh_in_flight.clone(),
@@ -132,6 +118,7 @@ impl AppController {
         SyncContext {
             store: self.store.clone(),
             runtime: Arc::clone(&self.runtime),
+            active_source: Arc::clone(&self.active_source),
             secrets: Arc::clone(&self.secrets),
             events: self.events.clone(),
             queue: Arc::clone(&self.queue),
@@ -159,7 +146,8 @@ impl AppController {
             );
             return None;
         }
-        let readiness = active_source_startup_readiness(&self.store, &saved.source.id).ok()?;
+        let active = selected_active_source(&self.active_source, &saved.source.id).ok()?;
+        let readiness = active_source_startup_readiness(&self.store, &active).ok()?;
         debug!(
             source_id = %saved.source.id,
             source_kind = %saved.source.kind,
@@ -170,16 +158,13 @@ impl AppController {
             startup_delay_ms = ?readiness.startup_delay_ms,
             "evaluated active source readiness"
         );
-        let local_source_configured = saved.source.kind != LOCAL_SOURCE_ID
-            || !load_settings_from_store(&self.store)
-                .sources
-                .local_folders
-                .is_empty();
-        if local_source_configured
+        let cached_reconciliation_available = active
+            .freshness
+            .as_ref()
+            .is_some_and(|freshness| (freshness.available)());
+        if cached_reconciliation_available
             && cached_library_exists(&self.store, &saved.source.id)
             && readiness.sync_required_reason.is_none()
-            && (saved.source.kind == LOCAL_SOURCE_ID
-                || active_source_reconciliation_supported(&saved))
         {
             Some(ACTIVE_SOURCE_RECONCILIATION_DELAY_MS)
         } else {

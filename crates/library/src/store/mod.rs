@@ -44,6 +44,12 @@ pub enum StoreError {
     InvalidPlaylistOwner(String),
     #[error("invalid favorite item kind: {0}")]
     InvalidFavoriteItemKind(String),
+    #[error("stale sync generation {generation} for {source_id}; current generation is {current}")]
+    StaleSyncGeneration {
+        source_id: String,
+        generation: i64,
+        current: i64,
+    },
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;

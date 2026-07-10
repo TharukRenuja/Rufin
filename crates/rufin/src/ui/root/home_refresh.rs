@@ -723,12 +723,17 @@ pub(in crate::ui) fn present_playlist_context_menu(
         "playlist.play-last",
         PLAY_LATER_ICON,
     ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Playlist radio"),
-        "playlist.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("playlist"),
-    ));
+    let radio_supported = shell
+        .controller
+        .manual_radio_supported(domain::GeneratedTrackSeedKind::Playlist);
+    if radio_supported {
+        menu.append(&context_menu_submenu_action(
+            msgid("Playlist radio"),
+            "playlist.play-radio",
+            RADIO_ICON,
+            &radio_context_submenu("playlist"),
+        ));
+    }
     let can_delete = shell.playlist_operation_supported(&playlist, SourcePlaylistOperation::Delete);
     if can_delete {
         menu.append(&context_menu_action(
@@ -765,29 +770,31 @@ pub(in crate::ui) fn present_playlist_context_menu(
         }
     });
 
-    surface.add_action("play-radio", {
-        let controller = shell.controller.clone();
-        let playlist = playlist.clone();
-        move || {
-            controller.play_playlist_radio(playlist.clone());
-        }
-    });
+    if radio_supported {
+        surface.add_action("play-radio", {
+            let controller = shell.controller.clone();
+            let playlist = playlist.clone();
+            move || {
+                controller.play_playlist_radio(playlist.clone());
+            }
+        });
 
-    surface.add_action("play-radio-next", {
-        let controller = shell.controller.clone();
-        let playlist = playlist.clone();
-        move || {
-            controller.play_playlist_radio_next(playlist.clone());
-        }
-    });
+        surface.add_action("play-radio-next", {
+            let controller = shell.controller.clone();
+            let playlist = playlist.clone();
+            move || {
+                controller.play_playlist_radio_next(playlist.clone());
+            }
+        });
 
-    surface.add_action("play-radio-last", {
-        let controller = shell.controller.clone();
-        let playlist = playlist.clone();
-        move || {
-            controller.play_playlist_radio_last(playlist.clone());
-        }
-    });
+        surface.add_action("play-radio-last", {
+            let controller = shell.controller.clone();
+            let playlist = playlist.clone();
+            move || {
+                controller.play_playlist_radio_last(playlist.clone());
+            }
+        });
+    }
 
     if can_delete {
         surface.add_action("delete", {

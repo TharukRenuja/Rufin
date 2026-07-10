@@ -3,7 +3,7 @@ use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
     HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalCueTrackSource,
     LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
-    LocalManifestScan, LocalScanCounters, Playlist, PlaylistId, SourceId, Track, TrackId,
+    LocalManifestScan, LocalScanCounters, SourceId, Track, TrackId,
 };
 use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
@@ -13,19 +13,17 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use source::{
-    AlbumDetail, FolderDetail, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes,
-    ImageKind, ImageMetadata, ImageRequest, MusicSource, PagedRequest, PagedResponse, PlayedFilter,
-    PlaylistDetail, RandomTrackRequest, SearchResults, SourceError, SourceIdentity, SourceResult,
-    StreamDescriptor,
+    AlbumDetail, FolderBrowser, FolderDetail, GenreDetail, ImageBytes, MusicSource, PagedRequest,
+    PagedResponse, PlayedFilter, RandomTrackProvider, RandomTrackRequest, SearchResults,
+    SourceError, SourceIdentity, SourceResult,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
-use url::Url;
 use walkdir::WalkDir;
 
 mod cue;
@@ -55,7 +53,6 @@ struct LocalLibrary {
     artists: Vec<Artist>,
     album_artists: Vec<Artist>,
     genres: Vec<Genre>,
-    covers: HashMap<String, LocalCover>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LocalFolderEntry {
@@ -71,8 +68,6 @@ enum LocalCover {
     },
     Embedded {
         path: PathBuf,
-        bytes: Arc<[u8]>,
-        content_type: Option<String>,
         revision: Option<String>,
     },
 }
@@ -204,16 +199,6 @@ impl LocalSource {
         })
     }
 
-    pub fn from_source(source: SourceIdentity) -> SourceResult<Self> {
-        let root = normalize_root(PathBuf::from(&source.base_url))?;
-        let (library, manifest_scan) = scan_library(&[root], Vec::new(), None);
-        Ok(Self {
-            identity: source,
-            library,
-            manifest_scan,
-        })
-    }
-
     pub fn manifest_scan(&self) -> &LocalManifestScan {
         &self.manifest_scan
     }
@@ -311,6 +296,109 @@ impl MusicSource for LocalSource {
         Ok(page(&self.library.tracks, request))
     }
 
+    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
+        Ok(page(&self.library.artists, request))
+    }
+
+    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
+        Ok(page(&self.library.album_artists, request))
+    }
+
+    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
+        Ok(page(&self.library.genres, request))
+    }
+
+    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
+        let genre = self
+            .library
+            .genres
+            .iter()
+            .find(|genre| genre.id == *genre_id)
+            .cloned()
+            .ok_or(SourceError::NotFound)?;
+        let tracks = self
+            .library
+            .tracks
+            .iter()
+            .filter(|track| {
+                track
+                    .genres
+                    .iter()
+                    .any(|name| local_id::<GenreId>("genre", name) == genre.id)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let album_ids = tracks
+            .iter()
+            .map(|track| track.album_id.clone())
+            .collect::<BTreeSet<_>>();
+        let albums = self
+            .library
+            .albums
+            .iter()
+            .filter(|album| album_ids.contains(&album.id))
+            .cloned()
+            .collect();
+        Ok(GenreDetail {
+            genre,
+            albums,
+            tracks,
+        })
+    }
+
+    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
+        self.library
+            .tracks
+            .iter()
+            .find(|track| track.id == *track_id)
+            .cloned()
+            .ok_or(SourceError::NotFound)
+    }
+
+    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
+        let query = normalize_search(query);
+        if query.is_empty() {
+            return Ok(SearchResults::default());
+        }
+        Ok(SearchResults {
+            albums: self
+                .library
+                .albums
+                .iter()
+                .filter(|album| {
+                    searchable_matches(&query, [&album.title, &album.artist].into_iter())
+                })
+                .take(50)
+                .cloned()
+                .collect(),
+            tracks: self
+                .library
+                .tracks
+                .iter()
+                .filter(|track| {
+                    searchable_matches(
+                        &query,
+                        [&track.title, &track.artist, &track.album].into_iter(),
+                    )
+                })
+                .take(50)
+                .cloned()
+                .collect(),
+            artists: self
+                .library
+                .artists
+                .iter()
+                .filter(|artist| searchable_matches(&query, [&artist.name].into_iter()))
+                .take(50)
+                .cloned()
+                .collect(),
+            playlists: Vec::new(),
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl FolderBrowser for LocalSource {
     async fn folder(
         &self,
         folder_id: Option<&FolderId>,
@@ -374,10 +462,13 @@ impl MusicSource for LocalSource {
             tracks,
         })
     }
+}
 
+#[async_trait(?Send)]
+impl RandomTrackProvider for LocalSource {
     async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
         if request.played_filter != PlayedFilter::All {
-            return Err(SourceError::Unsupported("random played filter"));
+            return Err(SourceError::InvalidRequest("random played filter"));
         }
         if let (Some(min_year), Some(max_year)) = (request.min_year, request.max_year)
             && min_year > max_year
@@ -420,221 +511,8 @@ impl MusicSource for LocalSource {
             .take(request.limit.clamp(1, 500))
             .collect())
     }
-
-    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
-        let limit = request.limit.clamp(1, 500);
-        match request.seed {
-            GeneratedTrackSeed::Track(track_id) => {
-                let seed = self
-                    .library
-                    .tracks
-                    .iter()
-                    .find(|track| track.id == track_id)
-                    .ok_or(SourceError::NotFound)?;
-                let mut tracks = self
-                    .random_tracks(RandomTrackRequest {
-                        limit: limit.saturating_add(1),
-                        min_year: None,
-                        max_year: None,
-                        genre_id: None,
-                        genre_name: seed.genres.first().cloned(),
-                        played_filter: PlayedFilter::All,
-                    })
-                    .await?;
-                tracks.retain(|track| track.id != track_id);
-                Ok(tracks.into_iter().take(limit).collect())
-            }
-            GeneratedTrackSeed::Album(album_id) => {
-                let album = self
-                    .library
-                    .albums
-                    .iter()
-                    .find(|album| album.id == album_id)
-                    .ok_or(SourceError::NotFound)?;
-                let mut tracks = self
-                    .random_tracks(RandomTrackRequest {
-                        limit: limit.saturating_mul(2),
-                        min_year: None,
-                        max_year: None,
-                        genre_id: None,
-                        genre_name: album.genres.first().cloned(),
-                        played_filter: PlayedFilter::All,
-                    })
-                    .await?;
-                tracks.retain(|track| track.album_id != album_id);
-                Ok(tracks.into_iter().take(limit).collect())
-            }
-            GeneratedTrackSeed::Artist(artist_id) => {
-                let mut tracks = self
-                    .library
-                    .tracks
-                    .iter()
-                    .filter(|track| track.artist_id.as_ref() == Some(&artist_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                tracks.sort_by_key(|track| track.id.as_str().to_string());
-                Ok(tracks.into_iter().take(limit).collect())
-            }
-            GeneratedTrackSeed::Genre { id, name } => {
-                self.random_tracks(RandomTrackRequest {
-                    limit,
-                    min_year: None,
-                    max_year: None,
-                    genre_id: id,
-                    genre_name: (!name.trim().is_empty()).then_some(name),
-                    played_filter: PlayedFilter::All,
-                })
-                .await
-            }
-            GeneratedTrackSeed::Playlist(_) => Err(SourceError::Unsupported("playlist radio")),
-        }
-    }
-
-    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
-        Ok(page(&self.library.artists, request))
-    }
-
-    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
-        Ok(page(&self.library.album_artists, request))
-    }
-
-    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
-        Ok(page(&self.library.genres, request))
-    }
-
-    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
-        let _unused = request;
-        Ok(PagedResponse::new(Vec::new(), 0))
-    }
-
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
-        let _unused = playlist_id;
-        Err(SourceError::NotFound)
-    }
-
-    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
-        let genre = self
-            .library
-            .genres
-            .iter()
-            .find(|genre| genre.id == *genre_id)
-            .cloned()
-            .ok_or(SourceError::NotFound)?;
-        let tracks = self
-            .library
-            .tracks
-            .iter()
-            .filter(|track| {
-                track
-                    .genres
-                    .iter()
-                    .any(|name| local_id::<GenreId>("genre", name) == genre.id)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let album_ids = tracks
-            .iter()
-            .map(|track| track.album_id.clone())
-            .collect::<BTreeSet<_>>();
-        let albums = self
-            .library
-            .albums
-            .iter()
-            .filter(|album| album_ids.contains(&album.id))
-            .cloned()
-            .collect();
-        Ok(GenreDetail {
-            genre,
-            albums,
-            tracks,
-        })
-    }
-
-    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
-        self.library
-            .tracks
-            .iter()
-            .find(|track| track.id == *track_id)
-            .cloned()
-            .ok_or(SourceError::NotFound)
-    }
-
-    async fn stream(&self, track_id: &TrackId) -> SourceResult<StreamDescriptor> {
-        let track = self.track(track_id).await?;
-        let Some(local_path) = track.local_path else {
-            return Err(SourceError::NotFound);
-        };
-        let url = Url::from_file_path(local_path).map_err(|()| {
-            SourceError::Other("could not turn local track path into a file URI".to_string())
-        })?;
-        Ok(StreamDescriptor::new(url.to_string()))
-    }
-
-    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
-        let query = normalize_search(query);
-        if query.is_empty() {
-            return Ok(SearchResults::default());
-        }
-        Ok(SearchResults {
-            albums: self
-                .library
-                .albums
-                .iter()
-                .filter(|album| {
-                    searchable_matches(&query, [&album.title, &album.artist].into_iter())
-                })
-                .take(50)
-                .cloned()
-                .collect(),
-            tracks: self
-                .library
-                .tracks
-                .iter()
-                .filter(|track| {
-                    searchable_matches(
-                        &query,
-                        [&track.title, &track.artist, &track.album].into_iter(),
-                    )
-                })
-                .take(50)
-                .cloned()
-                .collect(),
-            artists: self
-                .library
-                .artists
-                .iter()
-                .filter(|artist| searchable_matches(&query, [&artist.name].into_iter()))
-                .take(50)
-                .cloned()
-                .collect(),
-            playlists: Vec::new(),
-        })
-    }
-
-    async fn image_metadata(&self, item_id: &str, kind: ImageKind) -> SourceResult<ImageMetadata> {
-        let _unused = kind;
-        let cover = self
-            .library
-            .covers
-            .get(item_id)
-            .ok_or(SourceError::NotFound)?;
-        Ok(ImageMetadata {
-            item_id: item_id.to_string(),
-            kind: ImageKind::Primary,
-            tag: None,
-            url: cover_url(cover)?,
-        })
-    }
-
-    async fn image_bytes(&self, request: ImageRequest) -> SourceResult<ImageBytes> {
-        let cover = self
-            .library
-            .covers
-            .get(&request.item_id)
-            .ok_or(SourceError::NotFound)?;
-        image_bytes_for_local_cover(cover)
-    }
 }
+
 fn local_cover_from_item_id(item_id: &str) -> Option<LocalCover> {
     let decoded = decode_cover_id(item_id)?;
     if let Some(path) = decoded.strip_prefix("file:") {
@@ -647,8 +525,6 @@ fn local_cover_from_item_id(item_id: &str) -> Option<LocalCover> {
         .strip_prefix("embedded:")
         .map(|path| LocalCover::Embedded {
             path: PathBuf::from(path),
-            bytes: Arc::<[u8]>::from([]),
-            content_type: None,
             revision: None,
         })
 }
@@ -683,25 +559,7 @@ fn image_bytes_for_local_cover(cover: &LocalCover) -> SourceResult<ImageBytes> {
             bytes: read_cover_file_bounded(path)?,
             content_type: content_type_from_path(path),
         }),
-        LocalCover::Embedded {
-            path,
-            bytes,
-            content_type,
-            ..
-        } if bytes.is_empty() => embedded_cover_image_bytes(path).map(|mut image| {
-            if image.content_type.is_none() {
-                image.content_type = content_type.clone();
-            }
-            image
-        }),
-        LocalCover::Embedded {
-            bytes,
-            content_type,
-            ..
-        } => Ok(ImageBytes {
-            bytes: bytes.to_vec(),
-            content_type: content_type.clone(),
-        }),
+        LocalCover::Embedded { path, .. } => embedded_cover_image_bytes(path),
     }
 }
 fn embedded_cover_image_bytes(path: &Path) -> SourceResult<ImageBytes> {

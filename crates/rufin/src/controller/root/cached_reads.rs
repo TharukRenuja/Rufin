@@ -12,28 +12,14 @@ pub(in crate::controller) fn promote_prefetched_home_section(
     store.with_store(|store| store.clear_home_section_prefetch(source_id, section.kind))?;
     Ok(())
 }
-#[cfg(test)]
-pub(in crate::controller) fn cache_home_sections(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    sections: &[HomeSection],
-    generation: i64,
-) -> Result<(), String> {
-    for section in sections {
-        cache_home_section_items(store, source_id, section, generation)?;
-    }
-    store.with_store(|store| store.upsert_home_sections(source_id, sections, generation))?;
-    Ok(())
-}
 pub(in crate::controller) fn cache_home_section(
     store: &StoreHandle,
     source_id: &SourceId,
     section: &HomeSection,
     generation: i64,
 ) -> Result<(), String> {
-    let section = source_scoped_home_section(source_id, section);
-    cache_home_section_items(store, source_id, &section, generation)?;
-    store.with_store(|store| store.upsert_home_section(source_id, &section, generation))?;
+    cache_home_section_items(store, source_id, section, generation)?;
+    store.with_store(|store| store.upsert_home_section(source_id, section, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section_items(
@@ -50,33 +36,12 @@ pub(in crate::controller) fn cache_home_section_items(
     }
     Ok(())
 }
-fn source_scoped_home_section(source_id: &SourceId, section: &HomeSection) -> HomeSection {
-    if source_id.as_str() != LOCAL_SOURCE_IDENTITY_ID {
-        return section.clone();
-    }
-    let mut section = section.clone();
-    section.albums.retain(|album| is_local_album_id(&album.id));
-    section.tracks.retain(|track| is_local_track_id(&track.id));
-    let saved = local_source_saved();
-    scrub_home_refs(&saved, &mut section);
-    section
-}
 pub(in crate::controller) fn sync_page_finished(
     item_count: usize,
     total: usize,
     offset: usize,
 ) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
-}
-#[cfg(test)]
-pub(in crate::controller) fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
-    [
-        HomeSectionKind::Explore,
-        HomeSectionKind::MostPlayed,
-        HomeSectionKind::NewlyAdded,
-        HomeSectionKind::RecentlyPlayed,
-        HomeSectionKind::RecentlyReleased,
-    ]
 }
 pub(in crate::controller) fn normalize_artist_detail_image_refs(
     detail: &mut CachedArtistDetail,
@@ -135,145 +100,6 @@ pub(in crate::controller) fn load_home_update(
         prefetched_explore,
     })
 }
-#[cfg(any(test, feature = "dev-tools"))]
-pub(in crate::controller) fn seed_fake_cache(
-    store: &StoreHandle,
-    scale: FakeScale,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let source = FakeSource::new(scale);
-    info!(
-        ?scale,
-        albums = source.album_count(),
-        tracks = source.track_count(),
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "generated fake library"
-    );
-    let server = source.identity().clone();
-    let saved = SavedSource {
-        source: server.clone(),
-        user_id: "fake-user".to_string(),
-        username: "fake".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    store.with_store(|store| {
-        store.save_source(&saved)?;
-        store.set_active_source(&server.id)?;
-        Ok(())
-    })?;
-    let generation = store.with_store(|store| store.begin_sync(&server.id))?;
-
-    let runtime = Runtime::new().map_err(|error| error.to_string())?;
-    let album_limit = match scale {
-        FakeScale::Small => source.album_count(),
-        FakeScale::Large => 1_000,
-        FakeScale::Stress => source.album_count(),
-        FakeScale::ThirtyK => source.album_count(),
-    };
-    let track_limit = match scale {
-        FakeScale::Small => source.track_count(),
-        FakeScale::Large => 2_000,
-        FakeScale::Stress => source.track_count(),
-        FakeScale::ThirtyK => source.track_count(),
-    };
-    runtime.block_on(async {
-        let fetch_started = Instant::now();
-        let albums = source
-            .albums(PagedRequest::new(0, album_limit))
-            .await
-            .map_err(|error| error.to_string())?;
-        let tracks = source
-            .tracks(PagedRequest::new(0, track_limit))
-            .await
-            .map_err(|error| error.to_string())?;
-        let artists = source
-            .artists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let album_artists = source
-            .album_artists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let genres = source
-            .genres(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let playlists = source
-            .playlists(PagedRequest::new(0, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
-        let home_sections = source
-            .home_sections()
-            .await
-            .map_err(|error| error.to_string())?;
-        info!(
-            ?scale,
-            album_limit,
-            track_limit,
-            elapsed_ms = fetch_started.elapsed().as_millis() as u64,
-            total_elapsed_ms = started.elapsed().as_millis() as u64,
-            "fetched fake cache seed pages"
-        );
-
-        let pruned_cover_entries = store.with_store(|store| {
-            let write_started = Instant::now();
-            let step_started = Instant::now();
-            store.upsert_albums(&server.id, &albums.items, generation)?;
-            info!(
-                ?scale,
-                count = albums.items.len(),
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake albums"
-            );
-            let step_started = Instant::now();
-            store.upsert_tracks(&server.id, &tracks.items, generation)?;
-            info!(
-                ?scale,
-                count = tracks.items.len(),
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake tracks"
-            );
-            let step_started = Instant::now();
-            store.upsert_artists(&server.id, &artists.items, false, generation)?;
-            store.upsert_artists(&server.id, &album_artists.items, true, generation)?;
-            store.refresh_library_counts(&server.id)?;
-            store.upsert_genres(&server.id, &genres.items, generation)?;
-            store.upsert_playlists_with_mode(
-                &server.id,
-                &playlists.items,
-                PlaylistWriteMode::StoreOwned,
-            )?;
-            store.upsert_home_sections(&server.id, &home_sections, generation)?;
-            info!(
-                ?scale,
-                elapsed_ms = step_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "seeded fake library metadata"
-            );
-            let result = store.complete_sync(&server.id, generation);
-            info!(
-                ?scale,
-                elapsed_ms = write_started.elapsed().as_millis() as u64,
-                total_elapsed_ms = started.elapsed().as_millis() as u64,
-                "finished fake cache writes"
-            );
-            result
-        })?;
-        let prune_started = Instant::now();
-        prune_successful_sync_image_cache(store, &server.id, pruned_cover_entries);
-        info!(
-            ?scale,
-            elapsed_ms = prune_started.elapsed().as_millis() as u64,
-            total_elapsed_ms = started.elapsed().as_millis() as u64,
-            "finished fake cache seed"
-        );
-        Ok::<(), String>(())
-    })?;
-    Ok(())
-}
 pub(in crate::controller) fn restore_queue(
     store: &StoreHandle,
     server: Option<&SourceIdentity>,
@@ -286,7 +112,7 @@ pub(in crate::controller) fn restore_queue(
         trust_invalid_cert: false,
         use_jellyfin_instant_mix: false,
     };
-    let settings = load_settings_for_saved(store, &saved);
+    let settings = load_settings_from_store(store);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
             match queue_track_refs(store, &saved, &settings, &mut snapshot.entries) {
@@ -323,92 +149,6 @@ pub(in crate::controller) struct QueueActivationContext<'a> {
     pub(in crate::controller) events: &'a Sender<ControllerEvent>,
 }
 
-pub(in crate::controller) type LoginActivationContext<'a> = QueueActivationContext<'a>;
-
-#[derive(Clone, Copy)]
-pub(in crate::controller) struct LoginActivationRequest<'a> {
-    pub(in crate::controller) session: &'a SourceSession,
-    pub(in crate::controller) server_name: Option<&'a str>,
-    pub(in crate::controller) trust_invalid_cert: bool,
-    pub(in crate::controller) use_jellyfin_instant_mix: bool,
-    pub(in crate::controller) local_access_root: Option<&'a Path>,
-    pub(in crate::controller) path_replace_from: Option<&'a str>,
-}
-
-pub(in crate::controller) fn activate_logged_in_server(
-    context: &LoginActivationContext<'_>,
-    request: LoginActivationRequest<'_>,
-) -> Result<SavedSource, String> {
-    let session = request.session;
-    let mut server = session.source.clone();
-    if let Some(name) = trimmed_optional(request.server_name) {
-        server.name = name;
-    }
-    let saved = SavedSource {
-        source: server,
-        user_id: session.user_id.clone(),
-        username: session.username.clone(),
-        trust_invalid_cert: request.trust_invalid_cert,
-        use_jellyfin_instant_mix: request.use_jellyfin_instant_mix,
-    };
-    context.store.with_store(|store| {
-        store.save_source(&saved)?;
-        if let Some(root) = request.local_access_root.and_then(Path::to_str) {
-            store.save_source_local_access(&SourceLocalAccess {
-                source_id: saved.source.id.clone(),
-                root_path: root.to_string(),
-                path_replace_from: trimmed_optional(request.path_replace_from),
-                path_replace_to: Some(root.to_string()),
-            })?;
-        }
-        store.set_active_source(&saved.source.id)?;
-        Ok(())
-    })?;
-    let mut settings = load_settings_from_store(context.store);
-    settings.sources.selected = Some(LibrarySourceSelection::Source(saved.source.id.clone()));
-    settings.migrate_defaults();
-    context.store.save_settings(&settings)?;
-
-    activate_saved_queue(context, &saved)?;
-    let _sent = context.events.send(ControllerEvent::LoginStatus(
-        "Connected. Loading cached library...".to_string(),
-    ));
-    emit_snapshot(context.store, context.events);
-    Ok(saved)
-}
-
-pub(in crate::controller) fn activate_with_token(
-    context: &LoginActivationContext<'_>,
-    secrets: &Arc<dyn SecretStore>,
-    request: LoginActivationRequest<'_>,
-) -> Result<SavedSource, String> {
-    let session = request.session;
-    secrets
-        .save_token(&session.source.id, &session.access_token)
-        .map_err(|error| error.to_string())?;
-    match activate_logged_in_server(context, request) {
-        Ok(saved) => Ok(saved),
-        Err(error) => {
-            if let Err(delete_error) = secrets.delete_token(&session.source.id) {
-                warn!(
-                    %delete_error,
-                    source_id = %session.source.id,
-                    "failed to delete token after login activation failed"
-                );
-            }
-            Err(error)
-        }
-    }
-}
-pub(in crate::controller) fn activate_saved_queue(
-    context: &QueueActivationContext<'_>,
-    saved: &SavedSource,
-) -> Result<(), String> {
-    let Some(activation) = prepare_saved_queue_activation(context, saved)? else {
-        return Ok(());
-    };
-    apply_prepared_queue_activation(context, activation)
-}
 pub(in crate::controller) struct PreparedQueueActivation {
     source_id: SourceId,
     queue: QueueEngine,
@@ -440,7 +180,7 @@ pub(in crate::controller) fn prepare_saved_queue_activation(
     let playback_snapshot = playback_snapshot_from_queue(
         Some(&restored),
         auto_dj_enabled,
-        &load_settings_for_saved(context.store, saved).playback,
+        &load_settings_from_store(context.store).playback,
     );
 
     Ok(Some(PreparedQueueActivation {
@@ -485,6 +225,60 @@ pub(in crate::controller) fn apply_prepared_queue_activation(
         .events
         .send(ControllerEvent::Playback(Box::new(player)));
     Ok(())
+}
+
+pub(in crate::controller) struct PreparedActiveSourceQueueReset {
+    queue: QueueEngine,
+    queue_snapshot: QueueSnapshot,
+    playback_snapshot: PlaybackSnapshot,
+}
+
+pub(in crate::controller) fn prepare_active_source_queue_reset(
+    context: &QueueActivationContext<'_>,
+    saved: &SavedSource,
+) -> PreparedActiveSourceQueueReset {
+    let restored = QueueEngine::new(saved.source.id.clone());
+    let queue_snapshot = restored.snapshot();
+    let auto_dj_enabled = context
+        .auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    let player = playback_snapshot_from_queue(
+        Some(&restored),
+        auto_dj_enabled,
+        &load_settings_from_store(context.store).playback,
+    );
+    PreparedActiveSourceQueueReset {
+        queue: restored,
+        queue_snapshot,
+        playback_snapshot: player,
+    }
+}
+
+pub(in crate::controller) fn apply_active_source_queue_reset(
+    context: &QueueActivationContext<'_>,
+    mut queue: std::sync::MutexGuard<'_, Option<QueueEngine>>,
+    reset: PreparedActiveSourceQueueReset,
+) {
+    let PreparedActiveSourceQueueReset {
+        queue: restored,
+        queue_snapshot,
+        playback_snapshot: player,
+    } = reset;
+    *queue = Some(restored);
+    drop(queue);
+    if let Ok(mut snapshot) = context.playback_snapshot.lock() {
+        *snapshot = player.clone();
+    }
+    invalidate_playback_requests(context.playback_request_generation);
+    stop_playback_backend(context.playback, context.next_preload, context.events);
+    let _sent = context
+        .events
+        .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+    let _sent = context
+        .events
+        .send(ControllerEvent::Playback(Box::new(player)));
 }
 pub(in crate::controller) fn stop_playback_backend(
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
@@ -563,58 +357,10 @@ pub(in crate::controller) fn trimmed_optional(value: Option<&str>) -> Option<Str
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
-pub(in crate::controller) fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
-    let mut settings = store.load_settings().unwrap_or_else(|error| {
-        warn!(%error, "failed to load settings, using defaults");
-        AppSettings::default()
-    });
+pub(crate) fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
+    let mut settings = store.load_settings();
     settings.migrate_defaults();
     settings
-}
-pub(in crate::controller) fn local_folder_paths(settings: &AppSettings) -> Vec<PathBuf> {
-    settings
-        .sources
-        .local_folders
-        .iter()
-        .map(|folder| PathBuf::from(&folder.path))
-        .collect()
-}
-pub(in crate::controller) fn local_source_server() -> SourceIdentity {
-    SourceIdentity {
-        id: SourceId::new(LOCAL_SOURCE_IDENTITY_ID),
-        kind: LOCAL_SOURCE_ID.to_string(),
-        name: "Local".to_string(),
-        base_url: String::new(),
-    }
-}
-pub(in crate::controller) fn local_source_saved() -> SavedSource {
-    SavedSource {
-        source: local_source_server(),
-        user_id: "local".to_string(),
-        username: "Local".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    }
-}
-pub(in crate::controller) fn ensure_local_source_server(
-    store: &StoreHandle,
-) -> Result<SavedSource, String> {
-    let saved = local_source_saved();
-    store.with_store(|store| store.save_source(&saved))?;
-    Ok(saved)
-}
-pub(in crate::controller) fn load_settings_for_active_source(store: &StoreHandle) -> AppSettings {
-    let settings = load_settings_from_store(store);
-    match store.with_store(|store| store.active_source()) {
-        Ok(Some(saved)) => settings_for_server(settings, &saved.source),
-        _ => settings,
-    }
-}
-pub(in crate::controller) fn load_settings_for_saved(
-    store: &StoreHandle,
-    saved: &SavedSource,
-) -> AppSettings {
-    settings_for_server(load_settings_from_store(store), &saved.source)
 }
 pub(in crate::controller) fn prune_successful_sync_image_cache(
     store: &StoreHandle,
@@ -632,11 +378,7 @@ fn stale_external_images(
     store: &StoreHandle,
     source_id: &SourceId,
 ) -> Result<Vec<CoverCacheEntry>, String> {
-    let saved = store.with_store(|store| store.saved_source(source_id))?;
-    let settings = saved
-        .as_ref()
-        .map(|saved| load_settings_for_saved(store, saved))
-        .unwrap_or_else(|| load_settings_from_store(store));
+    let settings = load_settings_from_store(store);
     let prune_all_external = !external_metadata::cached_refs_enabled(&settings);
     let live_refs = if prune_all_external {
         Vec::new()
@@ -700,29 +442,17 @@ fn external_prune_tracks(store: &StoreHandle, source_id: &SourceId) -> Result<Ve
     }
 }
 
-pub(in crate::controller) fn settings_for_server(
-    mut settings: AppSettings,
-    server: &SourceIdentity,
-) -> AppSettings {
-    if server.kind == "fake" {
-        settings.external_metadata_enabled = false;
-    }
-    settings
-}
-pub(in crate::controller) fn local_initial_cover_cache_required(
+pub(in crate::controller) fn filesystem_initial_cover_cache_required(
     store: &StoreHandle,
     source_id: &SourceId,
 ) -> bool {
-    local_cover_cache_missing(store, source_id, true)
+    filesystem_source_cover_cache_missing(store, source_id, true)
 }
-pub(in crate::controller) fn local_cover_cache_missing(
+pub(in crate::controller) fn filesystem_source_cover_cache_missing(
     store: &StoreHandle,
     source_id: &SourceId,
     missing_library_requires_prefetch: bool,
 ) -> bool {
-    if source_id.as_str() != LOCAL_SOURCE_IDENTITY_ID {
-        return false;
-    }
     store
         .with_store(|store| {
             let album_count = store.load_albums(source_id, 0, 1)?.total;
@@ -1036,12 +766,6 @@ pub(in crate::controller) fn shuffle_seed() -> u64 {
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(1)
 }
-pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
-    if fake {
-        return Box::new(FakePlaybackBackend::new());
-    }
-    Box::new(LazyGStreamerPlaybackBackend::new())
-}
 pub(in crate::controller) fn platform_secret_store(settings: &AppSettings) -> Arc<dyn SecretStore> {
     match settings.secret_storage_mode {
         SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
@@ -1068,21 +792,16 @@ pub(in crate::controller) fn saved_server_needs_auth(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedSource,
 ) -> bool {
-    if saved.source.kind == LOCAL_SOURCE_ID || saved.source.kind == "fake" {
-        return false;
-    }
-    !config_token_available(secrets, &saved.source.id)
-}
-pub(in crate::controller) fn config_token_available(
-    secrets: &Arc<dyn SecretStore>,
-    source_id: &SourceId,
-) -> bool {
-    match secrets.load_token(source_id) {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
+    match crate::sources::configured_source_needs_auth(secrets, saved) {
+        Ok(needs_auth) => needs_auth,
         Err(error) => {
-            warn!(%error, source_id = %source_id, "failed to load saved token");
-            false
+            warn!(
+                %error,
+                source_id = %saved.source.id,
+                source_kind = %saved.source.kind,
+                "failed to resolve source authentication state"
+            );
+            true
         }
     }
 }
@@ -1119,7 +838,7 @@ pub(in crate::controller) fn prepared_item_from_entry(
 pub(in crate::controller) fn resolve_prepared_item(
     store: &StoreHandle,
     runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
+    active_source: &ActiveSourceSlot,
     source_id: &SourceId,
     entry: &QueueEntry,
     playback_settings: &PlaybackSettings,
@@ -1127,7 +846,7 @@ pub(in crate::controller) fn resolve_prepared_item(
     let stream = resolve_stream(
         store,
         runtime,
-        secrets,
+        active_source,
         source_id,
         &entry.track_id,
         playback_settings,
@@ -1166,7 +885,7 @@ pub(in crate::controller) fn send_prepared_next(
 pub(in crate::controller) fn prepare_next_stream_from_handles(
     store: StoreHandle,
     runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    active_source: ActiveSourceSlot,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     queue: Arc<Mutex<Option<QueueEngine>>>,
     next_preload: Arc<Mutex<NextPreloadState>>,
@@ -1197,13 +916,21 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
         let prepared = match resolve_prepared_item(
             &store,
             &runtime,
-            &secrets,
+            &active_source,
             &ticket.request.source_id,
             &ticket.request.next_entry,
             &playback_settings,
         ) {
             Ok(prepared) => prepared,
             Err(error) => {
+                if !next_preload_ticket_valid(&next_preload, &ticket) {
+                    debug!(
+                        track_id = %ticket.request.next_entry.track_id.as_str(),
+                        elapsed_ms = preload_started_at.elapsed().as_millis(),
+                        "discarded stale next playback stream error"
+                    );
+                    return;
+                }
                 clear_matching_next_preload(&next_preload, &ticket);
                 if preload_error_is_transient(&error) {
                     debug!(%error, "skipped next playback preload while store is busy");

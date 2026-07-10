@@ -25,24 +25,50 @@ impl AppController {
     }
 
     pub fn set_secret_storage_mode(&self, mode: SecretStorageMode) -> Result<AppSettings, String> {
-        let mut settings = self.settings.load_settings();
-        if settings.secret_storage_mode == mode {
-            return Ok(settings);
+        let transition_generation = self.source_transitions.begin();
+        let transition_commit = self
+            .source_transitions
+            .commit(transition_generation)?
+            .ok_or_else(|| "A newer source transition replaced this request.".to_string())?;
+        let previous = self.settings.load_settings();
+        if previous.secret_storage_mode == mode {
+            return Ok(previous);
         }
 
-        if settings.secret_storage_mode == SecretStorageMode::ConfigFile {
-            let saved_sources = self.store.with_store(|store| store.list_sources())?;
-            delete_current_secrets(&self.secrets, &saved_sources)?;
+        let saved_sources = self.store.with_store(|store| store.list_sources())?;
+        for saved in &saved_sources {
+            cancel_sync_if_running(&self.sync_in_flight, &saved.source.id)?;
         }
-        settings.secret_storage_mode = mode;
-        settings.secret_scope_id = new_secret_scope_id();
-        clear_scrobbling_secret_fields(&mut settings);
-        settings.migrate_defaults();
-        self.store.save_settings(&settings)?;
-        self.secret_switch
-            .replace(platform_secret_store(&settings))
-            .map_err(|error| error.to_string())?;
-        self.reload_snapshot();
+        let mut active = self
+            .active_source
+            .write()
+            .map_err(|_| "active source lock was poisoned".to_string())?;
+        let settings = self.store.update_settings(|settings| {
+            settings.secret_storage_mode = mode;
+            settings.secret_scope_id = new_secret_scope_id();
+            clear_scrobbling_secret_fields(settings);
+            settings.migrate_defaults();
+            Ok(settings.clone())
+        })?;
+        let previous_secrets = self.secret_switch.replace(platform_secret_store(&settings));
+        *active = None;
+        drop(active);
+        clear_queue_and_stop_playback(
+            &self.queue,
+            &self.playback_request_generation,
+            &self.next_preload,
+            &self.playback,
+            &self.playback_snapshot,
+            &self.auto_dj_enabled,
+            &self.events,
+        );
+        delete_current_secrets(&previous_secrets, &saved_sources);
+        emit_runtime_snapshot(&self.store, &self.secrets, &self.events);
+        refresh_source_freshness_watcher(
+            self.sync_context(),
+            Arc::clone(&self.source_freshness_watcher),
+        );
+        drop(transition_commit);
         Ok(settings)
     }
 }
@@ -54,14 +80,11 @@ fn clear_scrobbling_secret_fields(settings: &mut AppSettings) {
     settings.scrobbling.listenbrainz.user_token.clear();
 }
 
-fn delete_current_secrets(
-    secrets: &Arc<dyn SecretStore>,
-    saved_sources: &[SavedSource],
-) -> Result<(), String> {
+fn delete_current_secrets(secrets: &Arc<dyn SecretStore>, saved_sources: &[SavedSource]) {
     for saved in saved_sources {
-        secrets
-            .delete_token(&saved.source.id)
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = secrets.delete_token(&saved.source.id) {
+            warn!(%error, source_id = %saved.source.id, "failed to remove token from previous secret backend");
+        }
     }
 
     for key in [
@@ -70,12 +93,10 @@ fn delete_current_secrets(
         SecretKey::LibreFmSession,
         SecretKey::ListenBrainzToken,
     ] {
-        secrets
-            .delete_secret(&key)
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = secrets.delete_secret(&key) {
+            warn!(%error, ?key, "failed to remove API secret from previous secret backend");
+        }
     }
-
-    Ok(())
 }
 
 fn new_secret_scope_id() -> String {
@@ -143,8 +164,7 @@ mod tests {
             .expect("save listenbrainz token");
 
         let backend: Arc<dyn SecretStore> = Arc::<MemorySecretStore>::clone(&secrets);
-        delete_current_secrets(&backend, &[first.clone(), second.clone()])
-            .expect("delete current secrets");
+        delete_current_secrets(&backend, &[first.clone(), second.clone()]);
 
         assert_eq!(
             secrets.load_token(&first.source.id).expect("load first"),
@@ -181,53 +201,26 @@ mod tests {
     }
 
     #[test]
-    fn legacy_backend_change_keeps_mode_when_delete_fails() {
+    fn backend_change_completes_when_previous_cleanup_fails() {
         let (controller, _events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();
-        let mut settings = controller.load_settings();
-        settings.secret_storage_mode = SecretStorageMode::ConfigFile;
         controller
-            .save_settings(&settings)
+            .store
+            .update_settings(|settings| {
+                settings.secret_storage_mode = SecretStorageMode::ConfigFile;
+                Ok(())
+            })
             .expect("save legacy settings");
         let failing: Arc<dyn SecretStore> = Arc::new(DeleteFailingSecretStore);
-        controller
-            .secret_switch
-            .replace(failing)
-            .expect("replace backend");
+        let _previous = controller.secret_switch.replace(failing);
 
-        let error = controller
+        controller
             .set_secret_storage_mode(SecretStorageMode::SystemKeyring)
-            .expect_err("backend switch should fail");
-
-        assert!(error.contains("delete failed"));
-        assert_eq!(
-            controller.load_settings().secret_storage_mode,
-            SecretStorageMode::ConfigFile
-        );
-    }
-
-    #[test]
-    fn secure_backend_change_skips_keyring_delete_failure() {
-        let (controller, _events, _snapshot, _queue, _player) =
-            AppController::bootstrap_memory_for_test();
-        let mut settings = controller.load_settings();
-        settings.secret_storage_mode = SecretStorageMode::SystemKeyring;
-        controller
-            .save_settings(&settings)
-            .expect("save secure settings");
-        let failing: Arc<dyn SecretStore> = Arc::new(DeleteFailingSecretStore);
-        controller
-            .secret_switch
-            .replace(failing)
-            .expect("replace backend");
-
-        controller
-            .set_secret_storage_mode(SecretStorageMode::ConfigFile)
-            .expect("switch from secure storage");
+            .expect("switch backend");
 
         assert_eq!(
             controller.load_settings().secret_storage_mode,
-            SecretStorageMode::ConfigFile
+            SecretStorageMode::SystemKeyring
         );
     }
 

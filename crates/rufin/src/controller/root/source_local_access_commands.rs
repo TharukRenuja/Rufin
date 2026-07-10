@@ -1,4 +1,9 @@
 use super::*;
+use crate::sources::PreparedSourceSettingsUpdate;
+#[cfg(test)]
+use crate::sources::{
+    AuthenticatedSource, CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput,
+};
 
 impl AppController {
     pub fn save_source_local_access(
@@ -10,7 +15,7 @@ impl AppController {
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let queue = Arc::clone(&self.queue);
         let playback = Arc::clone(&self.playback);
         let next_preload = Arc::clone(&self.next_preload);
@@ -25,22 +30,25 @@ impl AppController {
             let path_replace_to =
                 trimmed_optional(path_replace_to.as_deref()).unwrap_or_else(|| root_path.clone());
             let matched_source_id = source_id.clone();
-            let result = store.with_store(|store| {
+            let generation = match store.with_store(|store| {
                 store.save_source_local_access(&SourceLocalAccess {
                     source_id,
                     root_path: root_path.clone(),
                     path_replace_from: trimmed_optional(path_replace_from.as_deref()),
                     path_replace_to: Some(path_replace_to),
-                })
-            });
-            if let Err(error) = result {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
+                })?;
+                Ok(store.sync_state(&matched_source_id)?.generation)
+            }) {
+                Ok(generation) => generation,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
             if let Err(error) = runtime.block_on(refresh_local_track_matches(
                 &store,
                 &matched_source_id,
-                None,
+                generation,
                 None,
             )) {
                 warn!(%error, "failed to refresh local track matches");
@@ -49,134 +57,212 @@ impl AppController {
             prepare_next_stream_from_handles(
                 store.clone(),
                 Arc::clone(&runtime),
-                Arc::clone(&secrets),
+                Arc::clone(&active_source),
                 Arc::clone(&playback),
                 Arc::clone(&queue),
                 Arc::clone(&next_preload),
                 events.clone(),
             );
-            match load_snapshot(&store) {
-                Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                }
-            }
+            emit_snapshot(&store, &events);
         });
     }
-    pub fn update_source_settings(&self, input: SourceSettingsInput) {
-        let source_id = input.source_id.clone();
+
+    pub(crate) fn configured_source(&self, source_id: &SourceId) -> Option<SavedSource> {
+        self.store
+            .with_store(|store| store.saved_source(source_id))
+            .ok()
+            .flatten()
+    }
+
+    pub(crate) fn update_source_settings<Prepare>(
+        &self,
+        source_id: SourceId,
+        source_name: &'static str,
+        prepare: Prepare,
+    ) where
+        Prepare: FnOnce(
+                &Runtime,
+                &StoreHandle,
+                &Arc<dyn SecretStore>,
+                SavedSource,
+                &dyn Fn(),
+            ) -> Result<Option<PreparedSourceSettingsUpdate>, String>
+            + Send
+            + 'static,
+    {
+        let transition_generation = self.source_transitions.begin();
+        let source_transitions = Arc::clone(&self.source_transitions);
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let runtime = Arc::clone(&sync_context.runtime);
         let secrets = Arc::clone(&sync_context.secrets);
         let events = sync_context.events.clone();
+        let active_source = Arc::clone(&self.active_source);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
+        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         thread::spawn(move || {
-            let result = update_source_settings_with_login(&store, &secrets, input, |request| {
-                if sync_is_running(&sync_context.sync_in_flight, &source_id) {
-                    return Err(
-                        "Wait for the current library sync to finish before editing server credentials."
-                            .to_string(),
-                    );
+            let current = || source_transitions.current(transition_generation);
+            let emit_current_error = |error| {
+                if current() {
+                    let _sent = events.send(ControllerEvent::Error(error));
                 }
-                let source_name = request.source.title();
+            };
+            let saved = match store.with_store(|store| store.saved_source(&source_id)) {
+                Ok(Some(saved)) => saved,
+                Ok(None) => {
+                    if current() {
+                        let _sent = events.send(ControllerEvent::LoginStatus(
+                            "No changes to save.".to_string(),
+                        ));
+                    }
+                    return;
+                }
+                Err(error) => {
+                    emit_current_error(error);
+                    return;
+                }
+            };
+            let authentication_started = || {
                 let _sent = events.send(ControllerEvent::LoginStatus(format!(
                     "Checking {source_name} server..."
                 )));
-                let device_id = if request.source == StreamingSource::Jellyfin {
-                    Some(ensure_jellyfin_device_id(&store)?)
-                } else {
-                    None
-                };
-                runtime
-                    .block_on(login_source(
-                        request.source,
-                        request.base_url,
-                        request.username,
-                        request.password,
-                        request.trust_invalid_cert,
-                        device_id,
-                    ))
-                    .map_err(|error| error.to_string())
-            });
-            match result {
-                Ok(outcome) if outcome.changed && outcome.identity_changed => {
-                    let status = source_settings_status_for_outcome(&outcome);
-                    let Some(saved) = outcome.saved else {
-                        emit_snapshot(&store, &events);
-                        return;
-                    };
-                    if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                        let _sent = events.send(ControllerEvent::Error(error));
-                        return;
-                    }
-                    if let Err(error) = reset_identity_queue(
-                        &QueueActivationContext {
-                            store: &store,
-                            queue: &queue,
-                            playback_request_generation: &playback_request_generation,
-                            next_preload: &next_preload,
-                            playback: &playback,
-                            playback_snapshot: &playback_snapshot,
-                            auto_dj_enabled: &auto_dj_enabled,
-                            events: &events,
-                        },
-                        &saved,
-                    ) {
-                        let _sent = events.send(ControllerEvent::Error(error));
-                        return;
-                    }
-                    let _sent = events.send(ControllerEvent::LoginStatus(
-                        source_settings_status_message(status).to_string(),
-                    ));
-                    start_sync_thread_with_snapshots(sync_context, saved, SyncPresentation::Silent);
-                }
-                Ok(outcome) if outcome.changed => {
-                    if source_settings_status_for_outcome(&outcome)
-                        == SourceSettingsStatus::Resyncing
-                    {
-                        let Some(saved) = outcome.saved else {
-                            emit_snapshot(&store, &events);
-                            return;
-                        };
-                        let _sent = events.send(ControllerEvent::LoginStatus(
-                            source_settings_status_message(SourceSettingsStatus::Resyncing)
-                                .to_string(),
-                        ));
-                        start_sync_thread_with_snapshots(
-                            sync_context,
-                            saved,
-                            SyncPresentation::Silent,
-                        );
-                        return;
-                    }
-                    let _sent = events.send(ControllerEvent::LoginStatus(
-                        source_settings_status_message(SourceSettingsStatus::Saved).to_string(),
-                    ));
-                    emit_snapshot(&store, &events);
-                }
-                Ok(_) => {
-                    let _sent = events.send(ControllerEvent::LoginStatus(
-                        source_settings_status_message(SourceSettingsStatus::Unchanged).to_string(),
-                    ));
-                }
+            };
+            let prepared = match prepare(&runtime, &store, &secrets, saved, &authentication_started)
+            {
+                Ok(prepared) => prepared,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    emit_current_error(error);
+                    return;
+                }
+            };
+            let Some(PreparedSourceSettingsUpdate {
+                previous,
+                saved,
+                active,
+                identity_changed,
+                credential,
+            }) = prepared
+            else {
+                if current() {
+                    let _sent = events.send(ControllerEvent::LoginStatus(
+                        "No changes to save.".to_string(),
+                    ));
+                }
+                return;
+            };
+            let transition_commit = match source_transitions.commit(transition_generation) {
+                Ok(Some(commit)) => commit,
+                Ok(None) => return,
+                Err(error) => {
+                    emit_current_error(error);
+                    return;
+                }
+            };
+            let emit_error = |error| {
+                let _sent = events.send(ControllerEvent::Error(error));
+            };
+            let current_saved = match store.with_store(|store| store.saved_source(&source_id)) {
+                Ok(current) => current,
+                Err(error) => {
+                    emit_error(error);
+                    return;
+                }
+            };
+            if current_saved.as_ref() != Some(&previous) {
+                emit_error("Source settings changed before this update completed.".to_string());
+                return;
+            }
+            let reauthenticated = credential.is_some();
+            let selected = source_is_selected(&store, &saved.source.id);
+            if (reauthenticated || selected)
+                && let Err(error) = cancel_sync_if_running(&sync_context.sync_in_flight, &source_id)
+            {
+                emit_error(error);
+                return;
+            }
+            let mut active_guard = if selected {
+                match active_source.write() {
+                    Ok(active) => Some(active),
+                    Err(_) => {
+                        emit_error("active source lock was poisoned".to_string());
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            let queue_context = QueueActivationContext {
+                store: &store,
+                queue: &queue,
+                playback_request_generation: &playback_request_generation,
+                next_preload: &next_preload,
+                playback: &playback,
+                playback_snapshot: &playback_snapshot,
+                auto_dj_enabled: &auto_dj_enabled,
+                events: &events,
+            };
+            let queue_reset = if identity_changed && selected {
+                let reset = prepare_active_source_queue_reset(&queue_context, &saved);
+                let queue = match queue.lock() {
+                    Ok(queue) => queue,
+                    Err(_) => {
+                        emit_error("queue lock was poisoned".to_string());
+                        return;
+                    }
+                };
+                Some((queue, reset))
+            } else {
+                None
+            };
+            if let Err(error) = persist_source_settings_update(
+                &store,
+                &secrets,
+                &source_id,
+                &saved,
+                identity_changed,
+                credential.as_deref(),
+            ) {
+                emit_error(error);
+                return;
+            }
+            if selected && let Some(mut current) = active_guard.take() {
+                *current = Some(Arc::clone(&active));
+                drop(current);
+            }
+            if identity_changed {
+                if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
+                    warn!(%error, source_id = %saved.source.id, "failed to clear replaced source cover cache");
+                }
+                if let Some((queue, reset)) = queue_reset {
+                    apply_active_source_queue_reset(&queue_context, queue, reset);
                 }
             }
+            if selected {
+                refresh_source_freshness_watcher(sync_context.clone(), source_freshness_watcher);
+            }
+            let _sent = events.send(ControllerEvent::LoginStatus(
+                "Source settings saved.".to_string(),
+            ));
+            if selected {
+                start_background_sync_thread(sync_context, saved);
+            } else if identity_changed || reauthenticated {
+                start_sync_thread_with_snapshots(sync_context, saved, SyncPresentation::Silent);
+            } else {
+                emit_snapshot(&store, &events);
+            }
+            drop(transition_commit);
         });
     }
+
     pub fn clear_source_local_access(&self, source_id: SourceId) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let queue = Arc::clone(&self.queue);
         let playback = Arc::clone(&self.playback);
         let next_preload = Arc::clone(&self.next_preload);
@@ -193,280 +279,51 @@ impl AppController {
             prepare_next_stream_from_handles(
                 store.clone(),
                 Arc::clone(&runtime),
-                Arc::clone(&secrets),
+                Arc::clone(&active_source),
                 Arc::clone(&playback),
                 Arc::clone(&queue),
                 Arc::clone(&next_preload),
                 events.clone(),
             );
-            match load_snapshot(&store) {
-                Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                }
-            }
+            emit_snapshot(&store, &events);
         });
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SourceSettingsInput {
-    pub(crate) source_id: SourceId,
-    pub(crate) name: String,
-    pub(crate) base_url: String,
-    pub(crate) username: String,
-    pub(crate) password: String,
-    pub(crate) trust_invalid_cert: bool,
-    pub(crate) use_jellyfin_instant_mix: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SourceSettingsReauthRequest {
-    source: StreamingSource,
-    base_url: String,
-    username: String,
-    password: String,
-    trust_invalid_cert: bool,
-}
-
-#[derive(Clone, Debug)]
-struct PreparedSourceSettingsUpdate {
-    saved: SavedSource,
-    next_name: String,
-    next_base_url: String,
-    next_username: String,
-    next_trust_invalid_cert: bool,
-    next_use_jellyfin_instant_mix: bool,
-    reauth: Option<SourceSettingsReauthRequest>,
-}
-
-#[derive(Clone, Debug)]
-struct SourceSettingsUpdateOutcome {
-    changed: bool,
+fn persist_source_settings_update(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+    source_id: &SourceId,
+    saved: &SavedSource,
     identity_changed: bool,
-    reauthenticated: bool,
-    saved: Option<SavedSource>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SourceSettingsStatus {
-    Saved,
-    Resyncing,
-    Unchanged,
-}
-
-fn source_settings_status_for_outcome(
-    outcome: &SourceSettingsUpdateOutcome,
-) -> SourceSettingsStatus {
-    if !outcome.changed {
-        SourceSettingsStatus::Unchanged
-    } else if outcome.identity_changed || outcome.reauthenticated {
-        SourceSettingsStatus::Resyncing
-    } else {
-        SourceSettingsStatus::Saved
-    }
-}
-
-fn source_settings_status_message(status: SourceSettingsStatus) -> &'static str {
-    match status {
-        SourceSettingsStatus::Saved => "Source settings saved.",
-        SourceSettingsStatus::Resyncing => "Source settings saved.",
-        SourceSettingsStatus::Unchanged => "No changes to save.",
-    }
-}
-
-fn update_source_settings_with_login(
-    store: &StoreHandle,
-    secrets: &Arc<dyn SecretStore>,
-    input: SourceSettingsInput,
-    login: impl FnOnce(SourceSettingsReauthRequest) -> Result<SourceSession, String>,
-) -> Result<SourceSettingsUpdateOutcome, String> {
-    let saved = store.with_store(|store| {
-        Ok(store
-            .list_sources()?
-            .into_iter()
-            .find(|saved| saved.source.id == input.source_id))
-    })?;
-    let Some(saved) = saved else {
-        return Ok(SourceSettingsUpdateOutcome {
-            changed: false,
-            identity_changed: false,
-            reauthenticated: false,
-            saved: None,
-        });
-    };
-    let Some(prepared) = prepare_source_settings_update(saved, input)? else {
-        return Ok(SourceSettingsUpdateOutcome {
-            changed: false,
-            identity_changed: false,
-            reauthenticated: false,
-            saved: None,
-        });
-    };
-    let session = match prepared.reauth.clone() {
-        Some(request) => Some(login(request)?),
-        None => None,
-    };
-    persist_prepared_source_settings_update(store, secrets, &prepared, session.as_ref())
-}
-
-fn prepare_source_settings_update(
-    saved: SavedSource,
-    input: SourceSettingsInput,
-) -> Result<Option<PreparedSourceSettingsUpdate>, String> {
-    let remote = saved.source.kind != LOCAL_SOURCE_ID;
-    let next_name = input.name.trim().to_string();
-    let next_base_url = if remote {
-        input.base_url.trim().to_string()
-    } else {
-        saved.source.base_url.clone()
-    };
-    let next_username = if remote {
-        input.username.trim().to_string()
-    } else {
-        saved.username.clone()
-    };
-    let next_trust_invalid_cert = if remote {
-        input.trust_invalid_cert
-    } else {
-        saved.trust_invalid_cert
-    };
-    let next_use_jellyfin_instant_mix = if saved.source.kind == "jellyfin" {
-        input.use_jellyfin_instant_mix
-    } else {
-        false
-    };
-
-    if remote && next_base_url.is_empty() {
-        return Err("Enter a server address.".to_string());
-    }
-    if remote && next_username.is_empty() {
-        return Err("Enter a username.".to_string());
-    }
-
-    let password_entered = remote && !input.password.is_empty();
-    let auth_sensitive = remote
-        && (saved.source.base_url != next_base_url
-            || saved.username != next_username
-            || password_entered);
-    if auth_sensitive && input.password.is_empty() {
-        return Err("Enter the server password to save address or username changes.".to_string());
-    }
-
-    let changed = saved.source.name != next_name
-        || saved.source.base_url != next_base_url
-        || saved.username != next_username
-        || saved.trust_invalid_cert != next_trust_invalid_cert
-        || saved.use_jellyfin_instant_mix != next_use_jellyfin_instant_mix
-        || password_entered;
-    if !changed {
-        return Ok(None);
-    }
-
-    let reauth = if auth_sensitive {
-        let source = StreamingSource::from_source_id(&saved.source.kind)
-            .ok_or_else(|| "Saved server source is no longer supported.".to_string())?;
-        Some(SourceSettingsReauthRequest {
-            source,
-            base_url: next_base_url.clone(),
-            username: next_username.clone(),
-            password: input.password,
-            trust_invalid_cert: next_trust_invalid_cert,
+    credential: Option<&str>,
+) -> Result<(), String> {
+    let previous_token = credential
+        .map(|credential| {
+            let previous = secrets
+                .load_token(source_id)
+                .map_err(|error| error.to_string())?;
+            secrets
+                .save_token(source_id, credential)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(previous)
         })
-    } else {
-        None
-    };
-
-    Ok(Some(PreparedSourceSettingsUpdate {
-        saved,
-        next_name,
-        next_base_url,
-        next_username,
-        next_trust_invalid_cert,
-        next_use_jellyfin_instant_mix,
-        reauth,
-    }))
-}
-
-fn persist_prepared_source_settings_update(
-    store: &StoreHandle,
-    secrets: &Arc<dyn SecretStore>,
-    prepared: &PreparedSourceSettingsUpdate,
-    session: Option<&SourceSession>,
-) -> Result<SourceSettingsUpdateOutcome, String> {
-    if let Some(session) = session
-        && session.source.kind != prepared.saved.source.kind
+        .transpose()?;
+    if let Err(error) =
+        store.with_store(|store| store.save_source_settings_update(saved, identity_changed))
     {
-        return Err("Authenticated source did not match the saved server.".to_string());
-    }
-
-    let identity_changed =
-        session.is_some_and(|session| authenticated_identity_changed(&prepared.saved, session));
-    let next_saved = next_saved_server(prepared, session);
-    let previous_token = if let Some(session) = session {
-        let previous = secrets
-            .load_token(&prepared.saved.source.id)
-            .map_err(|error| error.to_string())?;
-        secrets
-            .save_token(&prepared.saved.source.id, &session.access_token)
-            .map_err(|error| error.to_string())?;
-        Some(previous)
-    } else {
-        None
-    };
-
-    let result = store.with_store(|store| {
-        store.save_source_settings_update(&next_saved, identity_changed)?;
-        Ok(())
-    });
-    if let Err(error) = result {
         if let Some(previous_token) = previous_token
-            && let Err(restore_error) =
-                restore_server_token(secrets, &prepared.saved.source.id, previous_token)
+            && let Err(restore_error) = restore_server_token(secrets, source_id, previous_token)
         {
             warn!(
                 %restore_error,
-                source_id = %prepared.saved.source.id,
+                %source_id,
                 "failed to restore server token after settings update failed"
             );
         }
         return Err(error);
     }
-
-    Ok(SourceSettingsUpdateOutcome {
-        changed: true,
-        identity_changed,
-        reauthenticated: session.is_some(),
-        saved: Some(next_saved),
-    })
-}
-
-fn next_saved_server(
-    prepared: &PreparedSourceSettingsUpdate,
-    session: Option<&SourceSession>,
-) -> SavedSource {
-    let mut saved = prepared.saved.clone();
-    saved.source.name = prepared.next_name.clone();
-    saved.source.base_url = session
-        .map(|session| session.source.base_url.clone())
-        .unwrap_or_else(|| prepared.next_base_url.clone());
-    saved.username = session
-        .map(|session| session.username.clone())
-        .unwrap_or_else(|| prepared.next_username.clone());
-    saved.user_id = session
-        .map(|session| session.user_id.clone())
-        .unwrap_or_else(|| saved.user_id.clone());
-    saved.trust_invalid_cert = prepared.next_trust_invalid_cert;
-    saved.use_jellyfin_instant_mix = prepared.next_use_jellyfin_instant_mix;
-    saved
-}
-
-fn authenticated_identity_changed(saved: &SavedSource, session: &SourceSession) -> bool {
-    saved.source.kind != session.source.kind
-        || saved.source.id != session.source.id
-        || saved.user_id != session.user_id
+    Ok(())
 }
 
 fn restore_server_token(
@@ -481,45 +338,13 @@ fn restore_server_token(
     .map_err(|error| error.to_string())
 }
 
-fn reset_identity_queue(
-    context: &QueueActivationContext<'_>,
-    saved: &SavedSource,
-) -> Result<(), String> {
-    let active_id = context
-        .store
-        .with_store(|store| Ok(store.active_source()?.map(|saved| saved.source.id)))?;
-    if active_id.as_ref() != Some(&saved.source.id) {
-        return Ok(());
-    }
-
-    let restored = QueueEngine::new(saved.source.id.clone());
-    let queue_snapshot = restored.snapshot();
-    let auto_dj_enabled = context
-        .auto_dj_enabled
-        .lock()
-        .map(|enabled| *enabled)
-        .unwrap_or_default();
-    let player = playback_snapshot_from_queue(
-        Some(&restored),
-        auto_dj_enabled,
-        &load_settings_for_saved(context.store, saved).playback,
-    );
-    *context
-        .queue
-        .lock()
-        .map_err(|_| "queue lock was poisoned".to_string())? = Some(restored);
-    if let Ok(mut snapshot) = context.playback_snapshot.lock() {
-        *snapshot = player.clone();
-    }
-    invalidate_playback_requests(context.playback_request_generation);
-    stop_playback_backend(context.playback, context.next_preload, context.events);
-    let _sent = context
-        .events
-        .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
-    let _sent = context
-        .events
-        .send(ControllerEvent::Playback(Box::new(player)));
-    Ok(())
+fn source_is_selected(store: &StoreHandle, source_id: &SourceId) -> bool {
+    store
+        .with_store(|store| Ok(store.active_source()?.map(|saved| saved.source.id)))
+        .ok()
+        .flatten()
+        .as_ref()
+        == Some(source_id)
 }
 
 #[cfg(test)]
@@ -549,37 +374,77 @@ mod tests {
         password: &str,
         trust_invalid_cert: bool,
         use_jellyfin_instant_mix: bool,
-    ) -> SourceSettingsInput {
-        SourceSettingsInput {
-            source_id: saved.source.id.clone(),
-            name: name.to_string(),
-            base_url: base_url.to_string(),
-            username: username.to_string(),
-            password: password.to_string(),
-            trust_invalid_cert,
-            use_jellyfin_instant_mix,
+    ) -> JellyfinSettingsInput {
+        JellyfinSettingsInput {
+            credentials: CredentialSettingsInput {
+                source_id: saved.source.id.clone(),
+                name: name.to_string(),
+                base_url: base_url.to_string(),
+                username: username.to_string(),
+                password: password.to_string(),
+                trust_invalid_cert,
+            },
+            use_instant_mix: use_jellyfin_instant_mix,
         }
     }
 
+    fn update_jellyfin_settings_with_login(
+        store: &StoreHandle,
+        secrets: &Arc<dyn SecretStore>,
+        input: JellyfinSettingsInput,
+        login: impl FnOnce(SavedSource, CredentialHostInput) -> Result<AuthenticatedSource, String>,
+    ) -> Result<(bool, bool), String> {
+        let saved = store
+            .with_store(|store| store.saved_source(&input.credentials.source_id))?
+            .ok_or_else(|| "saved source missing".to_string())?;
+        let prepared = crate::sources::prepare_jellyfin_settings_update_with_login(
+            store, secrets, saved, input, login,
+        )?;
+        let Some(PreparedSourceSettingsUpdate {
+            saved,
+            identity_changed,
+            credential,
+            ..
+        }) = prepared
+        else {
+            return Ok((false, false));
+        };
+        let reauthenticated = credential.is_some();
+        persist_source_settings_update(
+            store,
+            secrets,
+            &saved.source.id,
+            &saved,
+            identity_changed,
+            credential.as_deref(),
+        )?;
+        Ok((identity_changed, reauthenticated))
+    }
+
     fn provider_session(
-        saved: &SavedSource,
+        store: &StoreHandle,
+        mut saved: SavedSource,
         source_id: SourceId,
         base_url: &str,
         user_id: &str,
         username: &str,
         token: &str,
-    ) -> SourceSession {
-        SourceSession {
-            source: SourceIdentity {
-                id: source_id,
-                kind: saved.source.kind.clone(),
-                name: "Jellyfin".to_string(),
-                base_url: base_url.to_string(),
-            },
-            user_id: user_id.to_string(),
-            username: username.to_string(),
-            access_token: token.to_string(),
-            device_id: Some("rufin-install-one".to_string()),
+    ) -> AuthenticatedSource {
+        saved.source.base_url = base_url.to_string();
+        saved.user_id = user_id.to_string();
+        saved.username = username.to_string();
+        let credential = token.to_string();
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        secrets
+            .save_token(&saved.source.id, &credential)
+            .expect("save authenticated source token");
+        let active = crate::sources::activate_configured_source(store, &secrets, &saved)
+            .expect("activate authenticated source");
+        AuthenticatedSource {
+            saved,
+            credential,
+            active,
+            authenticated_source_id: source_id,
         }
     }
 
@@ -633,7 +498,7 @@ mod tests {
             .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_source_settings_with_login(
+        let (identity_changed, reauthenticated) = update_jellyfin_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
@@ -645,12 +510,12 @@ mod tests {
                 true,
                 false,
             ),
-            |_| panic!("name-only edit should not reauthenticate"),
+            |_, _| panic!("name-only edit should not reauthenticate"),
         )
         .expect("update settings");
 
-        assert!(outcome.changed);
-        assert!(!outcome.identity_changed);
+        assert!(!identity_changed);
+        assert!(!reauthenticated);
         let edited = saved_source(&store, &saved.source.id);
         assert_eq!(edited.source.name, "Renamed Server");
         assert_eq!(edited.source.base_url, saved.source.base_url);
@@ -674,7 +539,7 @@ mod tests {
             .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_source_settings_with_login(
+        let (identity_changed, reauthenticated) = update_jellyfin_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
@@ -686,11 +551,12 @@ mod tests {
                 false,
                 false,
             ),
-            |request| {
-                assert_eq!(request.base_url, "https://music-lan.example.test");
+            |target, request| {
+                assert_eq!(request.server_url, "https://music-lan.example.test");
                 assert_eq!(request.username, "listener");
                 Ok(provider_session(
-                    &saved,
+                    &store,
+                    target,
                     saved.source.id.clone(),
                     "https://music-lan.example.test",
                     &saved.user_id,
@@ -701,17 +567,8 @@ mod tests {
         )
         .expect("update settings");
 
-        assert!(outcome.changed);
-        assert!(!outcome.identity_changed);
-        assert!(outcome.reauthenticated);
-        assert_eq!(
-            source_settings_status_for_outcome(&outcome),
-            SourceSettingsStatus::Resyncing
-        );
-        assert_eq!(
-            source_settings_status_message(source_settings_status_for_outcome(&outcome)),
-            "Source settings saved."
-        );
+        assert!(!identity_changed);
+        assert!(reauthenticated);
         let edited = saved_source(&store, &saved.source.id);
         assert_eq!(edited.source.base_url, "https://music-lan.example.test");
         assert_eq!(edited.user_id, saved.user_id);
@@ -733,7 +590,7 @@ mod tests {
             .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let error = update_source_settings_with_login(
+        let error = update_jellyfin_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
@@ -745,7 +602,7 @@ mod tests {
                 false,
                 false,
             ),
-            |_request| Err("Authentication failed".to_string()),
+            |_, _| Err("Authentication failed".to_string()),
         )
         .expect_err("auth failure");
 
@@ -770,7 +627,7 @@ mod tests {
             .save_token(&saved.source.id, "old-token")
             .expect("save token");
 
-        let outcome = update_source_settings_with_login(
+        let (identity_changed, reauthenticated) = update_jellyfin_settings_with_login(
             &store,
             &secrets,
             server_settings_input(
@@ -782,9 +639,10 @@ mod tests {
                 false,
                 false,
             ),
-            |_request| {
+            |target, _request| {
                 Ok(provider_session(
-                    &saved,
+                    &store,
+                    target,
                     SourceId::new("jellyfin:server:other"),
                     &saved.source.base_url,
                     "alternate-id",
@@ -795,8 +653,8 @@ mod tests {
         )
         .expect("update settings");
 
-        assert!(outcome.changed);
-        assert!(outcome.identity_changed);
+        assert!(identity_changed);
+        assert!(reauthenticated);
         let edited = saved_source(&store, &saved.source.id);
         assert_eq!(edited.source.id, saved.source.id);
         assert_eq!(edited.user_id, "alternate-id");

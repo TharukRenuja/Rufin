@@ -298,7 +298,7 @@ fn migrate_to_playlist_owner_schema(store: &Store) -> StoreResult<()> {
           AND server_id IN (
               SELECT server_id
               FROM servers
-              WHERE provider IN ('local', 'fake')
+              WHERE provider = 'local'
           )
         ",
         [],
@@ -337,7 +337,7 @@ fn migrate_to_favorite_override_schema(store: &Store) -> StoreResult<()> {
                 FROM {table}
                 JOIN servers
                   ON servers.server_id = {table}.server_id
-                WHERE servers.provider IN ('local', 'fake')
+                WHERE servers.provider = 'local'
                   AND {table}.favorite = 1
                 "
             ),
@@ -1561,6 +1561,20 @@ impl Store {
             Ok(())
         })
     }
+    pub fn save_source_activation(
+        &self,
+        saved: &SavedSource,
+        clear_identity_cache: bool,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            save_source_on_connection(connection, saved)?;
+            self.set_active_source(&saved.source.id)?;
+            if clear_identity_cache {
+                clear_source_cache(connection, &saved.source.id)?;
+            }
+            Ok(())
+        })
+    }
     pub fn set_active_source(&self, source_id: &SourceId) -> StoreResult<()> {
         self.connection.execute(
             "
@@ -1570,6 +1584,11 @@ impl Store {
             ",
             params![source_id.as_str()],
         )?;
+        Ok(())
+    }
+    pub fn clear_active_source(&self) -> StoreResult<()> {
+        self.connection
+            .execute("DELETE FROM active_source WHERE singleton = 1", [])?;
         Ok(())
     }
     pub fn active_source(&self) -> StoreResult<Option<SavedSource>> {
@@ -1799,6 +1818,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let mut statement = connection.prepare(
                 "
                 INSERT INTO source_music_folders (source_id, folder_id, name, sync_generation)
@@ -1880,6 +1900,7 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            self.require_current_sync_generation(source_id, generation)?;
             let mut statement = connection.prepare(
                 "
                 INSERT INTO track_music_folders (
@@ -2065,6 +2086,32 @@ impl Store {
             params![source_id.as_str(), generation],
         )?;
         Ok(generation)
+    }
+
+    /// Check that this sync is still current after starting its database write
+    pub(super) fn require_current_sync_generation(
+        &self,
+        source_id: &SourceId,
+        generation: i64,
+    ) -> StoreResult<()> {
+        let current = self
+            .connection
+            .query_row(
+                "SELECT generation FROM sync_state WHERE source_id = ?1",
+                params![source_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if current == generation {
+            Ok(())
+        } else {
+            Err(StoreError::StaleSyncGeneration {
+                source_id: source_id.as_str().to_string(),
+                generation,
+                current,
+            })
+        }
     }
 }
 

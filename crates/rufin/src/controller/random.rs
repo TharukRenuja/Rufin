@@ -3,9 +3,10 @@ use std::thread;
 use domain::{GenreId, Track};
 use source::{PlayedFilter, RandomTrackRequest};
 
+use crate::sources::{RandomTrackDomain, current_active_source, selected_active_source};
+
 use super::{
-    AppController, ControllerEvent, SNAPSHOT_TRACK_LIMIT, load_settings_for_saved,
-    source_for_saved, source_tracks::prepare_source_tracks,
+    AppController, ControllerEvent, load_settings_from_store, source_tracks::prepare_source_tracks,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +28,10 @@ pub struct RandomPlayRequest {
 }
 
 impl AppController {
+    pub(crate) fn random_track_domain(&self) -> Option<RandomTrackDomain> {
+        current_active_source(&self.active_source).map(|active| active.random_tracks.domain)
+    }
+
     pub fn play_random_tracks(&self, request: RandomPlayRequest) {
         let generation = self.next_play_activation_generation();
         let controller = self.clone();
@@ -50,58 +55,27 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Err("No active music server is saved.".to_string());
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
-        let mut tracks = if saved.source.kind == "fake" {
-            self.random_tracks_from_cache(&saved.source.id, request)?
-        } else {
-            let provider = source_for_saved(&self.store, &self.runtime, &self.secrets, &saved)?;
-            self.runtime
-                .block_on(
-                    provider
-                        .as_music_source()
-                        .random_tracks(RandomTrackRequest {
-                            limit: request.limit,
-                            min_year: request.min_year,
-                            max_year: request.max_year,
-                            genre_id: request.genre_id.clone(),
-                            genre_name: request.genre_name.clone(),
-                            played_filter: request.played_filter,
-                        }),
-                )
-                .map_err(|error| error.to_string())?
+        let settings = load_settings_from_store(&self.store);
+        let active = selected_active_source(&self.active_source, &saved.source.id)?;
+        let source_request = RandomTrackRequest {
+            limit: request.limit,
+            min_year: request.min_year,
+            max_year: request.max_year,
+            genre_id: request.genre_id.clone(),
+            genre_name: request.genre_name.clone(),
+            played_filter: request.played_filter,
         };
-        prepare_source_tracks(self, &saved, &settings, &mut tracks)?;
-        Ok(tracks)
-    }
-
-    fn random_tracks_from_cache(
-        &self,
-        source_id: &domain::SourceId,
-        request: &RandomPlayRequest,
-    ) -> Result<Vec<Track>, String> {
+        active
+            .random_tracks
+            .domain
+            .validate(&source_request)
+            .map_err(str::to_string)?;
         let mut tracks = self
-            .store
-            .with_store(|store| store.load_tracks(source_id, 0, SNAPSHOT_TRACK_LIMIT))?
-            .items
-            .into_iter()
-            .filter(|track| {
-                request.min_year.is_none_or(|year| track.year >= year)
-                    && request.max_year.is_none_or(|year| track.year <= year)
-                    && request.genre_name.as_ref().is_none_or(|genre| {
-                        track.genres.iter().any(|track_genre| track_genre == genre)
-                    })
-                    && match request.played_filter {
-                        PlayedFilter::All => true,
-                        PlayedFilter::Unplayed => track.last_played.is_none(),
-                        PlayedFilter::Played => track.last_played.is_some(),
-                    }
-            })
-            .collect::<Vec<_>>();
-        tracks.sort_by_key(|track| track.id.as_str().to_string());
-        Ok(tracks
-            .into_iter()
-            .take(request.limit.clamp(1, 500))
-            .collect())
+            .runtime
+            .block_on(active.random_tracks.executor.random_tracks(source_request))
+            .map_err(|error| error.to_string())?;
+        prepare_source_tracks(&self.store, &saved, &settings, &mut tracks)?;
+        Ok(tracks)
     }
 
     fn apply_random_tracks(&self, action: RandomPlayAction, tracks: Vec<Track>) {

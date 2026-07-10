@@ -1,10 +1,23 @@
 use super::*;
 
 impl AppController {
+    pub fn playlist_creation_supported(&self) -> bool {
+        current_active_source(&self.active_source).is_some()
+    }
+
+    pub fn playlist_operation_supported(
+        &self,
+        owner: SourceFeatureOwner,
+        operation: SourcePlaylistOperation,
+    ) -> bool {
+        current_active_source(&self.active_source)
+            .is_some_and(|active| active.supports_playlist_operation(operation, owner))
+    }
+
     pub fn create_playlist(&self, name: String, tracks: Vec<Track>) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
@@ -20,28 +33,26 @@ impl AppController {
                 .iter()
                 .map(|track| track.id.clone())
                 .collect::<Vec<_>>();
-            let capabilities = source_capabilities_for_saved(&saved);
-            let create_owner = capabilities.playlists.create;
-            let playlist_id = match create_owner {
-                SourceFeatureOwner::Native => match source_for_saved(
-                    &store, &runtime, &secrets, &saved,
-                )
-                .and_then(|provider| {
-                    runtime
-                        .block_on(
-                            provider
-                                .as_music_source()
-                                .create_playlist(&name, &track_ids),
-                        )
-                        .map_err(|error| error.to_string())
-                }) {
+            let active = match selected_active_source(&active_source, &saved.source.id) {
+                Ok(active) => active,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            let create_owner = active.playlist_creation.owner();
+            let playlist_id = match &active.playlist_creation {
+                OperationOwner::Native(executor) => match runtime
+                    .block_on(executor.create_playlist(&name, &track_ids))
+                    .map_err(|error| error.to_string())
+                {
                     Ok(playlist_id) => playlist_id,
                     Err(error) => {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
                 },
-                SourceFeatureOwner::Store => PlaylistId::new(format!(
+                OperationOwner::Store => PlaylistId::new(format!(
                     "rufin:playlist:{}",
                     unique_millis().unwrap_or(tracks.len() as u128)
                 )),
@@ -72,7 +83,7 @@ impl AppController {
     pub fn rename_playlist(&self, playlist_id: PlaylistId, name: String) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
@@ -87,26 +98,28 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let capabilities = source_capabilities_for_saved(&saved);
+            let active = match selected_active_source(&active_source, &saved.source.id) {
+                Ok(active) => active,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
             if !playlist_operation_supported(
                 owner,
                 SourcePlaylistOperation::Rename,
-                capabilities,
+                &active,
                 &events,
             ) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
-                let result =
-                    source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-                        runtime
-                            .block_on(
-                                provider
-                                    .as_music_source()
-                                    .rename_playlist(&playlist_id, &name),
-                            )
-                            .map_err(|error| error.to_string())
-                    });
+                let Some(executor) = active.playlist_rows.rename.as_ref() else {
+                    return;
+                };
+                let result = runtime
+                    .block_on(executor.rename_playlist(&playlist_id, &name))
+                    .map_err(|error| error.to_string());
                 if let Err(error) = result {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
@@ -127,7 +140,7 @@ impl AppController {
     pub fn delete_playlist(&self, playlist_id: PlaylistId) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
@@ -142,22 +155,28 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let capabilities = source_capabilities_for_saved(&saved);
+            let active = match selected_active_source(&active_source, &saved.source.id) {
+                Ok(active) => active,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
             if !playlist_operation_supported(
                 owner,
                 SourcePlaylistOperation::Delete,
-                capabilities,
+                &active,
                 &events,
             ) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
-                let result =
-                    source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-                        runtime
-                            .block_on(provider.as_music_source().delete_playlist(&playlist_id))
-                            .map_err(|error| error.to_string())
-                    });
+                let Some(executor) = active.playlist_rows.delete.as_ref() else {
+                    return;
+                };
+                let result = runtime
+                    .block_on(executor.delete_playlist(&playlist_id))
+                    .map_err(|error| error.to_string());
                 if let Err(error) = result {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
@@ -349,7 +368,7 @@ impl AppController {
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
@@ -380,14 +399,19 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let capabilities = source_capabilities_for_saved(&saved);
-            if !playlist_operation_supported(owner, operation, capabilities, &events) {
+            let active = match selected_active_source(&active_source, &saved.source.id) {
+                Ok(active) => active,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            if !playlist_operation_supported(owner, operation, &active, &events) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
-                match sync_playlist_mutation(&store, &runtime, &secrets, &saved, &before, &after) {
-                    Ok(Some(fresh)) => after = fresh,
-                    Ok(None) => {}
+                match sync_playlist_mutation(&runtime, &active, operation, &before, &after) {
+                    Ok(fresh) => after = fresh,
                     Err(error) => {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
@@ -479,13 +503,10 @@ fn cached_playlist_owner(
 fn playlist_operation_supported(
     owner: SourceFeatureOwner,
     operation: SourcePlaylistOperation,
-    capabilities: SourceCapabilities,
+    active: &ActiveSource,
     events: &Sender<ControllerEvent>,
 ) -> bool {
-    if !capabilities
-        .playlists
-        .operation_supported_for_owner(operation, owner)
-    {
+    if !active.supports_playlist_operation(operation, owner) {
         let message = format!(
             "{} is not supported for {} playlists by the active source.",
             playlist_operation_label(operation),

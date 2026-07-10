@@ -325,6 +325,14 @@ pub(in crate::ui) fn snapshot_event_outcome(
         render,
     }
 }
+pub(in crate::ui) fn source_switch_requires_reconnect(
+    preparing: bool,
+    first_run: bool,
+    has_configured_source: bool,
+    first_run_connection_pending: bool,
+) -> bool {
+    preparing && first_run && has_configured_source && !first_run_connection_pending
+}
 pub(in crate::ui) fn local_source_cache_gate_action(
     input: LocalSourceCacheGateInput<'_>,
 ) -> LocalSourceCacheGateAction {
@@ -870,8 +878,7 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
 }
 
 pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
-    shell.controller.refresh_local_library_watcher();
-    shell.controller.refresh_remote_library_watcher();
+    shell.controller.refresh_source_freshness_watcher();
 
     if let Some(delay_ms) = shell.controller.startup_sync_delay_ms() {
         let shell = Rc::clone(shell);
@@ -1039,6 +1046,24 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     refresh_context_playlist_picker(&shell);
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_source_selector();
+                    let switch_requires_reconnect = {
+                        let library = shell.state.library.borrow();
+                        source_switch_requires_reconnect(
+                            shell.state.source_switch_preparing.get(),
+                            library.first_run,
+                            library.source.is_some(),
+                            shell.state.first_run_connection_pending.get(),
+                        )
+                    };
+                    if switch_requires_reconnect {
+                        shell.state.source_switch_preparing.set(false);
+                        shell.state.startup_route_render_pending.set(false);
+                        shell.state.startup_route_revealed.set(true);
+                        shell.state.startup_route_content_prepared.set(true);
+                        shell.render_current_route();
+                        shell.show_reconnect_notice_if_needed();
+                        continue;
+                    }
                     match local_gate_action {
                         LocalSourceCacheGateAction::Enter => {
                             shell.state.local_source_preparing.set(true);

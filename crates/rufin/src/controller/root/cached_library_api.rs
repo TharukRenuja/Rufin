@@ -11,7 +11,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(None);
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let Some((mut album, mut tracks)) = self
             .store
             .with_store(|store| store.load_album_detail(&saved.source.id, album_id))?
@@ -37,7 +37,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(std::collections::HashMap::new());
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut tracks_by_album = self
             .store
             .with_store(|store| store.load_tracks_for_albums(&saved.source.id, album_ids))?;
@@ -64,7 +64,7 @@ impl AppController {
         else {
             return Ok(None);
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         scrub_selected_artist_image_refs(
             &saved,
             &settings,
@@ -90,7 +90,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(None);
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         self.cached_playlist_detail_for_saved(playlist_id, &saved, &settings)
     }
 
@@ -107,8 +107,7 @@ impl AppController {
             trust_invalid_cert: false,
             use_jellyfin_instant_mix: false,
         };
-        let settings = settings_for_server(settings.clone(), &saved.source);
-        self.cached_playlist_detail_for_saved(playlist_id, &saved, &settings)
+        self.cached_playlist_detail_for_saved(playlist_id, &saved, settings)
     }
 
     fn cached_playlist_detail_for_saved(
@@ -143,7 +142,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(None);
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let Some(mut detail) = self
             .store
             .with_store(|store| store.load_genre_detail(&saved.source.id, genre_id))?
@@ -168,7 +167,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(None);
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let Some(mut detail) = self
             .store
             .with_store(|store| store.load_mood_detail(&saved.source.id, mood_id))?
@@ -198,7 +197,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self
             .store
             .with_store(|store| store.load_albums(&saved.source.id, offset, limit))?;
@@ -216,7 +215,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             store.load_albums_matching(&saved.source.id, query, offset, limit)
         })?;
@@ -233,7 +232,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             let sort = settings.library_list(domain::LibraryListKey::Tracks);
             store.load_tracks_sorted(
@@ -258,7 +257,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             let sort = settings.library_list(domain::LibraryListKey::Tracks);
             store.load_tracks_matching_sorted(
@@ -284,7 +283,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             store.load_artists(&saved.source.id, album_artist, offset, limit)
         })?;
@@ -302,7 +301,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             store.load_artists_matching(&saved.source.id, album_artist, query, offset, limit)
         })?;
@@ -318,7 +317,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self
             .store
             .with_store(|store| store.load_genres(&saved.source.id, offset, limit))?;
@@ -334,7 +333,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self
             .store
             .with_store(|store| store.load_moods(&saved.source.id, offset, limit))?;
@@ -351,7 +350,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             store.load_moods_matching(&saved.source.id, query, offset, limit)
         })?;
@@ -368,7 +367,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let mut page = self.store.with_store(|store| {
             store.load_genres_matching(&saved.source.id, query, offset, limit)
         })?;
@@ -398,7 +397,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         self.store
             .with_store(|store| store.load_playlists(&saved.source.id, offset, limit))
             .map(|mut page| {
@@ -416,7 +415,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_source())? else {
             return Ok(source::PagedResponse::new(Vec::new(), 0));
         };
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         self.store
             .with_store(|store| {
                 store.load_playlists_matching(&saved.source.id, query, offset, limit)
@@ -464,7 +463,7 @@ impl AppController {
         };
         let store_ms = store_started.elapsed().as_millis() as u64;
         let settings_started = Instant::now();
-        let settings = load_settings_for_saved(&self.store, &saved);
+        let settings = load_settings_from_store(&self.store);
         let settings_ms = settings_started.elapsed().as_millis() as u64;
         let scrub_started = Instant::now();
         let mut detail = detail;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::sources::{FreshnessOperations, FreshnessWatcher};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -7,7 +8,7 @@ const DEBOUNCE: Duration = Duration::from_secs(2);
 const RETRY_POLL: Duration = Duration::from_millis(500);
 
 pub(in crate::controller) struct LocalLibraryWatcher {
-    roots: Vec<PathBuf>,
+    active: Arc<ActiveSource>,
     tx: Sender<WatchMessage>,
     retry_scheduled: Arc<AtomicBool>,
 }
@@ -17,59 +18,39 @@ enum WatchMessage {
     Stop,
 }
 
-impl AppController {
-    pub fn refresh_local_library_watcher(&self) {
-        refresh_local_library_watcher(self.sync_context(), Arc::clone(&self.local_library_watcher));
+pub(crate) fn local_freshness_operations(
+    roots: crate::sources::LocalRootsLoader,
+) -> FreshnessOperations {
+    let available_roots = Arc::clone(&roots);
+    let watcher_roots = roots;
+    FreshnessOperations {
+        available: Arc::new(move || !(available_roots)().is_empty()),
+        reconcile_cached: full_ingest_cached_reconciliation(),
+        start_watcher: Arc::new(move |context, saved, active| {
+            let mut roots = watcher_roots();
+            roots.sort();
+            roots.dedup();
+            (!roots.is_empty()).then(|| {
+                Box::new(LocalLibraryWatcher::start(roots, context, saved, active))
+                    as Box<dyn FreshnessWatcher>
+            })
+        }),
     }
-}
-
-pub(in crate::controller) fn refresh_local_library_watcher(
-    context: SyncContext,
-    slot: Arc<Mutex<Option<LocalLibraryWatcher>>>,
-) {
-    let target = active_local_watch_target(&context.store);
-    let Ok(mut current) = slot.lock() else {
-        return;
-    };
-    let Some((saved, roots)) = target else {
-        *current = None;
-        return;
-    };
-    if current
-        .as_ref()
-        .is_some_and(|watcher| watcher.roots == roots)
-    {
-        return;
-    }
-    *current = Some(LocalLibraryWatcher::start(roots, context, saved));
-}
-
-fn active_local_watch_target(store: &StoreHandle) -> Option<(SavedSource, Vec<PathBuf>)> {
-    let saved = store
-        .with_store(|store| store.active_source())
-        .ok()
-        .flatten()?;
-    if saved.source.kind != LOCAL_SOURCE_ID {
-        return None;
-    }
-    let mut roots = load_settings_from_store(store)
-        .sources
-        .local_folders
-        .into_iter()
-        .map(|folder| PathBuf::from(folder.path))
-        .collect::<Vec<_>>();
-    roots.sort();
-    roots.dedup();
-    (!roots.is_empty()).then_some((saved, roots))
 }
 
 impl LocalLibraryWatcher {
-    fn start(roots: Vec<PathBuf>, context: SyncContext, saved: SavedSource) -> Self {
+    fn start(
+        roots: Vec<PathBuf>,
+        context: SyncContext,
+        saved: SavedSource,
+        active: Arc<ActiveSource>,
+    ) -> Self {
         let (tx, rx) = channel();
         let thread_tx = tx.clone();
         let watched_roots = roots.clone();
         let retry_scheduled = Arc::new(AtomicBool::new(false));
         let thread_retry_scheduled = Arc::clone(&retry_scheduled);
+        let thread_active = Arc::clone(&active);
         thread::spawn(move || {
             watch_local_roots(
                 rx,
@@ -77,14 +58,21 @@ impl LocalLibraryWatcher {
                 watched_roots,
                 context,
                 saved,
+                thread_active,
                 thread_retry_scheduled,
             );
         });
         Self {
-            roots,
+            active,
             tx,
             retry_scheduled,
         }
+    }
+}
+
+impl FreshnessWatcher for LocalLibraryWatcher {
+    fn active(&self) -> &Arc<ActiveSource> {
+        &self.active
     }
 }
 
@@ -101,6 +89,7 @@ fn watch_local_roots(
     roots: Vec<PathBuf>,
     context: SyncContext,
     saved: SavedSource,
+    expected: Arc<ActiveSource>,
     retry_scheduled: Arc<AtomicBool>,
 ) {
     let event_tx = tx.clone();
@@ -138,7 +127,7 @@ fn watch_local_roots(
                 if !drain_watch_events(&rx) {
                     return;
                 }
-                trigger_local_reconciliation(&context, &saved, &retry_scheduled);
+                trigger_local_reconciliation(&context, &saved, &expected, &retry_scheduled);
             }
             WatchMessage::Stop => return,
         }
@@ -158,10 +147,11 @@ fn drain_watch_events(rx: &Receiver<WatchMessage>) -> bool {
 fn trigger_local_reconciliation(
     context: &SyncContext,
     saved: &SavedSource,
+    expected: &Arc<ActiveSource>,
     retry_scheduled: &Arc<AtomicBool>,
 ) {
     if !sync_target_is_current(&context.store, &saved.source.id)
-        || active_local_watch_target(&context.store).is_none()
+        || !local_watch_target_is_active(context, saved, expected)
     {
         return;
     }
@@ -169,6 +159,7 @@ fn trigger_local_reconciliation(
         start_local_retry_after_in_flight(
             context.clone(),
             saved.clone(),
+            Arc::clone(expected),
             Arc::clone(retry_scheduled),
         );
         return;
@@ -179,6 +170,7 @@ fn trigger_local_reconciliation(
 fn start_local_retry_after_in_flight(
     context: SyncContext,
     saved: SavedSource,
+    expected: Arc<ActiveSource>,
     retry_scheduled: Arc<AtomicBool>,
 ) {
     if retry_scheduled.swap(true, Ordering::AcqRel) {
@@ -187,16 +179,24 @@ fn start_local_retry_after_in_flight(
     thread::spawn(move || {
         while retry_scheduled.load(Ordering::Acquire)
             && context.sync_in_flight.contains_or_blocked(&saved.source.id)
-            && sync_target_is_current(&context.store, &saved.source.id)
-            && active_local_watch_target(&context.store).is_some()
+            && local_watch_target_is_active(&context, &saved, &expected)
         {
             thread::sleep(RETRY_POLL);
         }
         let should_run = retry_scheduled.swap(false, Ordering::AcqRel)
-            && sync_target_is_current(&context.store, &saved.source.id)
-            && active_local_watch_target(&context.store).is_some();
+            && local_watch_target_is_active(&context, &saved, &expected);
         if should_run {
             start_background_sync_thread(context, saved);
         }
     });
+}
+
+fn local_watch_target_is_active(
+    context: &SyncContext,
+    saved: &SavedSource,
+    expected: &Arc<ActiveSource>,
+) -> bool {
+    sync_target_is_current(&context.store, &saved.source.id)
+        && selected_active_source(&context.active_source, &saved.source.id)
+            .is_ok_and(|active| Arc::ptr_eq(&active, expected))
 }

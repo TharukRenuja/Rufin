@@ -13,7 +13,7 @@ impl AppController {
     pub(in crate::controller) fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
+        let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
@@ -31,26 +31,25 @@ impl AppController {
                 return;
             };
 
-            let capabilities = source_capabilities_for_saved(&saved);
-            let owner = capabilities.favorite_mutations;
-            match owner {
-                SourceFeatureOwner::Native => {
-                    let result =
-                        source_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
-                            runtime
-                                .block_on(
-                                    provider
-                                        .as_music_source()
-                                        .set_favorite(item_id.clone(), favorite),
-                                )
-                                .map_err(|error| error.to_string())
-                        });
+            let active = match selected_active_source(&active_source, &saved.source.id) {
+                Ok(active) => active,
+                Err(error) => {
+                    emit_favorite_change_failed(&events, &item_id, !favorite, error);
+                    return;
+                }
+            };
+            let owner = active.favorites.owner();
+            match &active.favorites {
+                OperationOwner::Native(executor) => {
+                    let result = runtime
+                        .block_on(executor.set_favorite(item_id.clone(), favorite))
+                        .map_err(|error| error.to_string());
                     if let Err(error) = result {
                         emit_favorite_change_failed(&events, &item_id, !favorite, error);
                         return;
                     }
                 }
-                SourceFeatureOwner::Store => {}
+                OperationOwner::Store => {}
             }
 
             let result = store.with_store(|store| {
