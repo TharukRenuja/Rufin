@@ -144,7 +144,8 @@ impl Shell {
             .unwrap_or(1)
     }
     pub(in crate::ui) fn login_screen_active(&self) -> bool {
-        self.state.library.borrow().first_run || self.state.first_run_connection_pending.get()
+        self.state.library.borrow().first_run
+            || self.state.library_load.borrow().source_setup_active()
     }
     pub(in crate::ui) fn log_layout_snapshot(&self, stage: &'static str) {
         if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_none() {
@@ -162,8 +163,7 @@ impl Shell {
                 self.state.startup_route_revealed.get(),
             ),
             first_run = self.state.library.borrow().first_run,
-            first_run_connection_pending = self.state.first_run_connection_pending.get(),
-            first_run_connection_ready = self.state.first_run_connection_ready.get(),
+            library_load = ?self.state.library_load.borrow(),
             window_width = self.layout_width(),
             root_stack_width = self.root_stack.width(),
             app_root_width = self.app_root.width(),

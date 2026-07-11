@@ -7,19 +7,19 @@ use std::{
 
 use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, LibraryField, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, Mood, MoodId, MusicFolder,
-    MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    QueueEntryId, QueueSnapshot, SearchResults, SmartPlaylist, SmartPlaylistBuiltin,
+    ImageRef, LibraryField, LocalCueDependency, LocalCueTrackSource, LocalFileFacts,
+    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, Mood,
+    MoodId, MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
+    PlaylistId, QueueEntryId, QueueSnapshot, SearchResults, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
     SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceFeatureOwner, SourceId,
-    SourceIdentity, Track, TrackId, normalize_release_types,
+    SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceEntityKind, SourceFeatureOwner,
+    SourceId, SourceIdentity, SourceObjectMapping, Track, TrackId, normalize_release_types,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 24;
+const SCHEMA_VERSION: i64 = 25;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
@@ -44,10 +44,20 @@ pub enum StoreError {
     InvalidPlaylistOwner(String),
     #[error("invalid favorite item kind: {0}")]
     InvalidFavoriteItemKind(String),
+    #[error("invalid sync batch: {0}")]
+    InvalidSyncBatch(String),
+    #[error("library changes require a full sync")]
+    NeedsFullSync,
     #[error("stale sync generation {generation} for {source_id}; current generation is {current}")]
     StaleSyncGeneration {
         source_id: String,
         generation: i64,
+        current: i64,
+    },
+    #[error("stale cache revision {revision} for {source_id}; current revision is {current}")]
+    StaleCacheRevision {
+        source_id: String,
+        revision: i64,
         current: i64,
     },
 }
@@ -161,9 +171,11 @@ pub struct LocalAccessStatusFacts {
 pub struct SyncState {
     pub source_id: SourceId,
     pub generation: i64,
+    pub cache_revision: i64,
     pub status: String,
     pub last_started_at: Option<String>,
     pub last_completed_at: Option<String>,
+    pub last_all_completed_at: Option<String>,
     pub last_error: Option<String>,
 }
 
@@ -189,28 +201,6 @@ pub struct SourceObject {
     pub cue_track_index: Option<i64>,
     pub segment_start_ms: Option<i64>,
     pub segment_end_ms: Option<i64>,
-    pub sync_generation: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalFileSourceObject {
-    pub source_path: String,
-    pub root_path: String,
-    pub relative_path: String,
-    pub sync_generation: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CueTrackSourceObject {
-    pub source_object_id: String,
-    pub track_id: TrackId,
-    pub source_path: String,
-    pub parent_source_object_id: String,
-    pub cue_path: String,
-    pub cue_revision: String,
-    pub cue_track_index: i64,
-    pub segment_start_ms: i64,
-    pub segment_end_ms: i64,
     pub sync_generation: i64,
 }
 
@@ -478,10 +468,15 @@ mod smart_playlists;
 mod source_windows;
 mod sources;
 mod store_lifecycle_schema;
+mod sync;
 
 pub use identity::local_file_source_object_id;
-pub use local_manifest::LocalLibraryDelta;
+pub use local_manifest::{LocalLibraryDelta, LocalManifestDelta};
 pub use sources::{image_cache_key, lyrics_cache_key};
+pub use sync::{
+    LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, SyncCommit, SyncCoverage,
+    TrackFolderMembership,
+};
 
 #[cfg(test)]
 mod library_relationship_tests;

@@ -1,5 +1,30 @@
 use super::*;
 
+impl SourceObjectKeyProvider for JellyfinSource {
+    fn source_object_key(
+        &self,
+        entity_kind: SourceEntityKind,
+        entity_id: &str,
+    ) -> SourceResult<String> {
+        let id_kind = match entity_kind {
+            SourceEntityKind::Album => "album",
+            SourceEntityKind::Track => "track",
+            SourceEntityKind::Artist | SourceEntityKind::AlbumArtist => "artist",
+            SourceEntityKind::Genre => "genre",
+            SourceEntityKind::Playlist => "playlist",
+            SourceEntityKind::MusicFolder => "music-folder",
+        };
+        let prefix = format!("jellyfin:{id_kind}:");
+        entity_id
+            .strip_prefix(&prefix)
+            .filter(|key| !key.is_empty())
+            .map(ToString::to_string)
+            .ok_or(SourceError::InvalidRequest(
+                "entity ID does not belong to this Jellyfin source",
+            ))
+    }
+}
+
 pub(super) fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: LyricDto) -> Lyrics {
     Lyrics {
         track_id,

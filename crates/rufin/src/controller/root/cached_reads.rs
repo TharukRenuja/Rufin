@@ -6,10 +6,14 @@ pub(in crate::controller) fn promote_prefetched_home_section(
     source_id: &SourceId,
     section: &HomeSection,
 ) -> Result<(), String> {
-    let generation =
-        store.with_store(|store| store.sync_state(source_id).map(|state| state.generation))?;
-    cache_home_section(store, source_id, section, generation)?;
-    store.with_store(|store| store.clear_home_section_prefetch(source_id, section.kind))?;
+    let (generation, base_cache_revision) = store.with_store(|store| {
+        let state = store.sync_state(source_id)?;
+        Ok((state.generation, state.cache_revision))
+    })?;
+    let commit = store.with_store(|store| {
+        store.promote_home_section(source_id, generation, base_cache_revision, section)
+    })?;
+    prune_successful_sync_image_cache(store, source_id, commit.pruned_cover_entries);
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section(
@@ -17,24 +21,11 @@ pub(in crate::controller) fn cache_home_section(
     source_id: &SourceId,
     section: &HomeSection,
     generation: i64,
-) -> Result<(), String> {
-    cache_home_section_items(store, source_id, section, generation)?;
-    store.with_store(|store| store.upsert_home_section(source_id, section, generation))?;
-    Ok(())
-}
-pub(in crate::controller) fn cache_home_section_items(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    section: &HomeSection,
-    generation: i64,
-) -> Result<(), String> {
-    if !section.albums.is_empty() {
-        store.with_store(|store| store.upsert_albums(source_id, &section.albums, generation))?;
-    }
-    if !section.tracks.is_empty() {
-        store.with_store(|store| store.upsert_tracks(source_id, &section.tracks, generation))?;
-    }
-    Ok(())
+    base_cache_revision: i64,
+) -> Result<SyncCommit, String> {
+    store.with_store(|store| {
+        store.replace_home_section(source_id, generation, base_cache_revision, section)
+    })
 }
 pub(in crate::controller) fn sync_page_finished(
     item_count: usize,
@@ -53,30 +44,20 @@ pub(in crate::controller) fn normalize_artist_detail_image_refs(
     cover_art_policy::bind_tracks(&mut detail.tracks, settings);
     cover_art_policy::bind_artist(&mut detail.artist, settings);
 }
-pub(in crate::controller) fn cached_library_exists(
-    store: &StoreHandle,
-    source_id: &SourceId,
-) -> bool {
-    store
-        .with_store(|store| {
-            let albums = store.load_albums(source_id, 0, 1)?.total;
-            let tracks = store.load_tracks(source_id, 0, 1)?.total;
-            Ok(albums.saturating_add(tracks) > 0)
-        })
-        .unwrap_or(false)
-}
 pub(in crate::controller) fn load_library_counts(
     store: &StoreHandle,
     source_id: &SourceId,
 ) -> Result<LibraryCounts, String> {
     store.with_store(|store| {
-        Ok(LibraryCounts {
-            albums: store.load_albums(source_id, 0, 0)?.total,
-            tracks: store.load_tracks(source_id, 0, 0)?.total,
-            artists: store.load_artists(source_id, false, 0, 0)?.total,
-            album_artists: store.load_artists(source_id, true, 0, 0)?.total,
-            genres: store.load_genres(source_id, 0, 0)?.total,
-            playlists: store.load_playlists(source_id, 0, 0)?.total,
+        store.read_snapshot(|store| {
+            Ok(LibraryCounts {
+                albums: store.load_albums(source_id, 0, 0)?.total,
+                tracks: store.load_tracks(source_id, 0, 0)?.total,
+                artists: store.load_artists(source_id, false, 0, 0)?.total,
+                album_artists: store.load_artists(source_id, true, 0, 0)?.total,
+                genres: store.load_genres(source_id, 0, 0)?.total,
+                playlists: store.load_playlists(source_id, 0, 0)?.total,
+            })
         })
     })
 }
@@ -84,20 +65,23 @@ pub(in crate::controller) fn load_home_update(
     store: &StoreHandle,
     saved: &SavedSource,
 ) -> Result<LibraryHomeUpdate, String> {
-    store.with_store(|store| store.ensure_collection_cover_refs(&saved.source.id))?;
-    let mut sections = store.with_store(|store| store.load_home_sections(&saved.source.id))?;
-    let mut prefetched_explore = store.with_store(|store| {
-        store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)
-    })?;
-    for section in &mut sections {
-        home_image_refs(store, saved, section)?;
-    }
-    if let Some(section) = &mut prefetched_explore {
-        home_image_refs(store, saved, section)?;
-    }
-    Ok(LibraryHomeUpdate {
-        sections,
-        prefetched_explore,
+    let settings = load_settings_from_store(store);
+    store.with_store(|store| {
+        store.read_snapshot(|store| {
+            let mut sections = store.load_home_sections(&saved.source.id)?;
+            let mut prefetched_explore =
+                store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)?;
+            for section in &mut sections {
+                home_image_refs_from_store(store, saved, &settings, section)?;
+            }
+            if let Some(section) = &mut prefetched_explore {
+                home_image_refs_from_store(store, saved, &settings, section)?;
+            }
+            Ok(LibraryHomeUpdate {
+                sections,
+                prefetched_explore,
+            })
+        })
     })
 }
 pub(in crate::controller) fn restore_queue(
@@ -442,161 +426,6 @@ fn external_prune_tracks(store: &StoreHandle, source_id: &SourceId) -> Result<Ve
     }
 }
 
-pub(in crate::controller) fn filesystem_initial_cover_cache_required(
-    store: &StoreHandle,
-    source_id: &SourceId,
-) -> bool {
-    filesystem_source_cover_cache_missing(store, source_id, true)
-}
-pub(in crate::controller) fn filesystem_source_cover_cache_missing(
-    store: &StoreHandle,
-    source_id: &SourceId,
-    missing_library_requires_prefetch: bool,
-) -> bool {
-    store
-        .with_store(|store| {
-            let album_count = store.load_albums(source_id, 0, 1)?.total;
-            let track_count = store.load_tracks(source_id, 0, 1)?.total;
-            if album_count == 0 && track_count == 0 {
-                return Ok(missing_library_requires_prefetch);
-            }
-            missing_source_refs(store, source_id)
-        })
-        .unwrap_or(true)
-}
-fn missing_source_refs(store: &Store, source_id: &SourceId) -> Result<bool, StoreError> {
-    let mut seen = HashSet::new();
-    if local_album_cover_refs_missing(store, source_id, &mut seen)? {
-        return Ok(true);
-    }
-    if local_track_cover_refs_missing(store, source_id, &mut seen)? {
-        return Ok(true);
-    }
-    if local_artist_cover_refs_missing(store, source_id, false, &mut seen)? {
-        return Ok(true);
-    }
-    local_artist_cover_refs_missing(store, source_id, true, &mut seen)
-}
-fn local_album_cover_refs_missing(
-    store: &Store,
-    source_id: &SourceId,
-    seen: &mut HashSet<(String, String)>,
-) -> Result<bool, StoreError> {
-    let mut offset = 0;
-    loop {
-        let page = store.load_albums(source_id, offset, PAGE_SIZE)?;
-        for album in &page.items {
-            if !is_local_album_id(&album.id) {
-                return Ok(true);
-            }
-            if local_image_ref_cache_missing(store, source_id, album.image_ref.as_ref(), seen)? {
-                return Ok(true);
-            }
-        }
-        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
-            return Ok(false);
-        }
-        offset += page.items.len();
-    }
-}
-fn local_track_cover_refs_missing(
-    store: &Store,
-    source_id: &SourceId,
-    seen: &mut HashSet<(String, String)>,
-) -> Result<bool, StoreError> {
-    let mut offset = 0;
-    loop {
-        let page = store.load_tracks(source_id, offset, PAGE_SIZE)?;
-        let album_ids = page
-            .items
-            .iter()
-            .map(|track| track.album_id.clone())
-            .collect::<Vec<_>>();
-        let album_image_refs = store.load_album_image_refs(source_id, &album_ids)?;
-        for track in &page.items {
-            if !is_local_track_id(&track.id) || !is_local_album_id(&track.album_id) {
-                return Ok(true);
-            }
-            let image_ref = album_image_refs
-                .get(&track.album_id)
-                .or(track.image_ref.as_ref());
-            if local_image_ref_cache_missing(store, source_id, image_ref, seen)? {
-                return Ok(true);
-            }
-        }
-        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
-            return Ok(false);
-        }
-        offset += page.items.len();
-    }
-}
-fn local_artist_cover_refs_missing(
-    store: &Store,
-    source_id: &SourceId,
-    album_artist: bool,
-    seen: &mut HashSet<(String, String)>,
-) -> Result<bool, StoreError> {
-    let mut offset = 0;
-    loop {
-        let page = store.load_artists(source_id, album_artist, offset, PAGE_SIZE)?;
-        for artist in &page.items {
-            if !is_local_artist_id(&artist.id) {
-                return Ok(true);
-            }
-            if local_image_ref_cache_missing(store, source_id, artist.image_ref.as_ref(), seen)? {
-                return Ok(true);
-            }
-        }
-        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
-            return Ok(false);
-        }
-        offset += page.items.len();
-    }
-}
-fn local_image_ref_cache_missing(
-    store: &Store,
-    source_id: &SourceId,
-    image_ref: Option<&ImageRef>,
-    seen: &mut HashSet<(String, String)>,
-) -> Result<bool, StoreError> {
-    let Some(image_ref) = image_ref else {
-        return Ok(false);
-    };
-    if !is_local_source_image_ref(image_ref) {
-        return Ok(false);
-    }
-    let tag = image_ref
-        .tag
-        .as_deref()
-        .unwrap_or(IMAGE_TAG_UNTAGGED)
-        .to_string();
-    if !seen.insert((image_ref.item_id.clone(), tag.clone())) {
-        return Ok(false);
-    }
-    for size in [256, 512] {
-        if cover_cache_entry_exists(store, source_id, image_ref, &tag, size)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-fn cover_cache_entry_exists(
-    store: &Store,
-    source_id: &SourceId,
-    image_ref: &ImageRef,
-    tag: &str,
-    size: u32,
-) -> Result<bool, StoreError> {
-    let key = library::image_cache_key(source_id, &image_ref.item_id, tag, size);
-    if cover_cache_path_for_key(&key).is_some_and(|path| path.exists()) {
-        return Ok(true);
-    }
-    let Some(entry) = store.load_cover_cache_entry(source_id, &image_ref.item_id, tag, size)?
-    else {
-        return Ok(false);
-    };
-    Ok(Path::new(&entry.path).exists())
-}
 pub(in crate::controller) fn playback_snapshot_from_queue(
     queue: Option<&QueueEngine>,
     auto_dj_enabled: bool,

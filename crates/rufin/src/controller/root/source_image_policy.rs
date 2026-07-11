@@ -252,15 +252,3 @@ pub(in crate::controller) fn image_ref_allowed(
 pub(in crate::controller) fn is_local_source_image_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with("local:cover:")
 }
-
-pub(in crate::controller) fn is_local_album_id(album_id: &AlbumId) -> bool {
-    album_id.as_str().starts_with("local:album:")
-}
-
-pub(in crate::controller) fn is_local_track_id(track_id: &TrackId) -> bool {
-    track_id.as_str().starts_with("local:track:")
-}
-
-pub(in crate::controller) fn is_local_artist_id(artist_id: &ArtistId) -> bool {
-    artist_id.as_str().starts_with("local:artist:")
-}

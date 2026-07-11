@@ -13,9 +13,11 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 lofty.workspace = true
+notify.workspace = true
 percent-encoding.workspace = true
 domain.workspace = true
 source.workspace = true
+tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 

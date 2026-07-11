@@ -37,7 +37,7 @@ impl AppController {
 
         let saved_sources = self.store.with_store(|store| store.list_sources())?;
         for saved in &saved_sources {
-            cancel_sync_if_running(&self.sync_in_flight, &saved.source.id)?;
+            self.forget_source_sync(&saved.source.id);
         }
         let mut active = self
             .active_source
@@ -64,10 +64,7 @@ impl AppController {
         );
         delete_current_secrets(&previous_secrets, &saved_sources);
         emit_runtime_snapshot(&self.store, &self.secrets, &self.events);
-        refresh_source_freshness_watcher(
-            self.sync_context(),
-            Arc::clone(&self.source_freshness_watcher),
-        );
+        self.refresh_source_freshness();
         drop(transition_commit);
         Ok(settings)
     }

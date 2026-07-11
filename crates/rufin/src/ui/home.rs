@@ -105,9 +105,10 @@ impl Shell {
         }
 
         if !appended {
-            content.append(&self.route_empty_view(msgid(
-                "Cached library data will appear here as sync pages finish.",
-            )));
+            content
+                .append(&self.route_empty_view(msgid(
+                    "Cached entries will appear here after sync finishes",
+                )));
         }
 
         scroller.set_child(Some(&library_route_inset(content.upcast())));
@@ -452,8 +453,7 @@ mod tests {
             music_folders: Vec::new(),
             selected_music_folder_id: None,
             first_run: false,
-            sync_status: String::new(),
-            last_error: None,
+            cache: crate::controller::LibraryCacheState::NoCache { revision: 0 },
             cached_album_count: albums.len(),
             cached_track_count: 0,
             cached_artist_count: 0,

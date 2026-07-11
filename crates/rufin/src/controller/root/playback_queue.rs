@@ -635,21 +635,6 @@ pub(in crate::controller) fn clear_store_disk_waveform_cache(
     clear_disk_waveform_cache(source_id)
 }
 
-pub(in crate::controller) fn prune_disk_waveform_cache_entries(
-    source_id: &SourceId,
-    track_ids: &[TrackId],
-) {
-    if track_ids.is_empty() {
-        return;
-    }
-    let Some(root) =
-        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(source_id.as_str())))
-    else {
-        return;
-    };
-    prune_disk_waveforms(track_ids, &root);
-}
-
 pub(in crate::controller) fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
@@ -666,53 +651,6 @@ pub(in crate::controller) fn encode_key_part(value: &str) -> String {
             _ => '_',
         })
         .collect()
-}
-
-fn prune_disk_waveforms(track_ids: &[TrackId], root: &Path) {
-    let stale_hashes = track_ids
-        .iter()
-        .map(|track_id| format!("{:x}", md5::compute(track_id.as_str())))
-        .collect::<HashSet<_>>();
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            warn!(%error, path = %root.display(), "failed to read waveform cache directory");
-            return;
-        }
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let stale = file_name
-            .split_once('-')
-            .is_some_and(|(hash, _duration)| stale_hashes.contains(hash));
-        if !stale {
-            continue;
-        }
-        if let Err(error) = fs::remove_file(&path) {
-            warn!(%error, path = %path.display(), "failed to remove stale waveform cache file");
-        }
-    }
-}
-
-pub(in crate::controller) fn sync_is_running(
-    sync_in_flight: &InFlightGuards<SourceId>,
-    source_id: &SourceId,
-) -> bool {
-    sync_in_flight.contains_or_blocked(source_id)
-}
-
-pub(in crate::controller) fn cancel_sync_if_running(
-    sync_in_flight: &InFlightGuards<SourceId>,
-    source_id: &SourceId,
-) -> Result<bool, String> {
-    sync_in_flight.cancel(source_id)
 }
 
 pub(in crate::controller) fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
@@ -793,29 +731,6 @@ mod tests {
         assert!(outside.exists());
         let _cleanup_root = fs::remove_dir_all(root);
         let _cleanup_outside = fs::remove_dir_all(outside.parent().expect("outside parent"));
-    }
-
-    #[test]
-    fn queue_prune_waveforms() {
-        let root = unique_test_dir("waveform-prune-root");
-        fs::create_dir_all(&root).expect("waveform root");
-        let stale_track = TrackId::new("track-stale");
-        let kept_track = TrackId::new("track-kept");
-        let stale_hash = format!("{:x}", md5::compute(stale_track.as_str()));
-        let kept_hash = format!("{:x}", md5::compute(kept_track.as_str()));
-        let stale_path = root.join(format!("{stale_hash}-180.json"));
-        let stale_alt_duration_path = root.join(format!("{stale_hash}-240.json"));
-        let kept_path = root.join(format!("{kept_hash}-180.json"));
-        fs::write(&stale_path, b"stale").expect("write stale waveform");
-        fs::write(&stale_alt_duration_path, b"stale").expect("write stale waveform duration");
-        fs::write(&kept_path, b"keep").expect("write kept waveform");
-
-        prune_disk_waveforms(&[stale_track], &root);
-
-        assert!(!stale_path.exists());
-        assert!(!stale_alt_duration_path.exists());
-        assert!(kept_path.exists());
-        let _cleanup = fs::remove_dir_all(root);
     }
 
     fn unique_test_dir(label: &str) -> PathBuf {

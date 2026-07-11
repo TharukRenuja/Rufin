@@ -3,9 +3,9 @@ use crate::sources::{AuthenticatedSource, source_identity_changed};
 
 impl AppController {
     pub fn forget_source(&self, source_id: SourceId) {
+        let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
-        let sync_context = self.sync_context();
         let store = self.store.clone();
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
@@ -16,7 +16,6 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
@@ -58,12 +57,7 @@ impl AppController {
                     return;
                 }
             };
-            if let Err(error) =
-                cancel_sync_if_running(&sync_context.sync_in_flight, &saved.source.id)
-            {
-                emit_error(error);
-                return;
-            }
+            controller.forget_source_sync(&saved.source.id);
             let mut active_guard = if active_id.as_ref() == Some(&saved.source.id) {
                 match active_source.write() {
                     Ok(active) => Some(active),
@@ -108,7 +102,7 @@ impl AppController {
                 warn!(%error, source_id = %saved.source.id, "failed to clear forgotten source cover cache");
             }
             emit_runtime_snapshot(&store, &secrets, &events);
-            refresh_source_freshness_watcher(sync_context, source_freshness_watcher);
+            controller.refresh_source_freshness();
             drop(transition_commit);
         });
     }
@@ -121,13 +115,13 @@ impl AppController {
         Authenticate:
             FnOnce(&Runtime, &StoreHandle) -> Result<AuthenticatedSource, String> + Send + 'static,
     {
+        let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
-        let sync_context = self.sync_context();
-        let store = sync_context.store.clone();
-        let runtime = Arc::clone(&sync_context.runtime);
-        let secrets = Arc::clone(&sync_context.secrets);
-        let events = sync_context.events.clone();
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
         let active_source = Arc::clone(&self.active_source);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
@@ -135,17 +129,19 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                        source_id: None,
+                        error,
+                    });
                 }
             };
-            let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                "Checking {source_name} server..."
-            )));
+            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Checking {
+                source_name: source_name.to_string(),
+            }));
             let authenticated = match authenticate(&runtime, &store) {
                 Ok(authenticated) => authenticated,
                 Err(error) => {
@@ -178,14 +174,12 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                    source_id: Some(saved.source.id.clone()),
+                    error,
+                });
             };
-            if let Err(error) =
-                cancel_sync_if_running(&sync_context.sync_in_flight, &saved.source.id)
-            {
-                emit_error(error);
-                return;
-            }
+            controller.forget_source_sync(&saved.source.id);
             let persistence = match SourcePersistenceSnapshot::capture(&store, &saved.source.id) {
                 Ok(persistence) => persistence,
                 Err(error) => {
@@ -267,12 +261,9 @@ impl AppController {
             {
                 warn!(%error, source_id = %saved.source.id, "failed to clear replaced source cover cache");
             }
-            let _sent = events.send(ControllerEvent::LoginStatus(
-                "Connected. Loading cached library...".to_string(),
-            ));
+            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Connected));
             emit_runtime_snapshot(&store, &secrets, &events);
-            refresh_source_freshness_watcher(sync_context.clone(), source_freshness_watcher);
-            start_login_sync_thread(sync_context, saved);
+            controller.refresh_source_freshness();
             drop(transition_commit);
         });
     }
@@ -416,12 +407,15 @@ mod tests {
                 store.save_source(previous)?;
                 store.set_active_source(&previous.source.id)?;
                 let generation = store.begin_sync(&previous.source.id)?;
-                store.upsert_albums(
+                commit_cached_library(
+                    store,
                     &previous.source.id,
-                    std::slice::from_ref(&album),
                     generation,
+                    CachedLibraryObservation {
+                        albums: vec![album.clone()],
+                        ..CachedLibraryObservation::default()
+                    },
                 )?;
-                store.complete_sync(&previous.source.id, generation)?;
                 let mut queue = QueueEngine::new(previous.source.id.clone());
                 queue.play_now(&track);
                 store.save_queue_snapshot(&queue.snapshot())

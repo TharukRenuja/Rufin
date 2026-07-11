@@ -1,3 +1,4 @@
+use crate::controller::LibraryCommitProjection;
 use crate::i18n::tr_with;
 
 use super::now_playing_notification::now_playing_notification_should_withdraw;
@@ -6,7 +7,6 @@ use super::*;
 const MOUSE_BACK_BUTTON: u32 = 8;
 const MOUSE_FORWARD_BUTTON: u32 = 9;
 const SLOW_EVENT_BATCH_MS: u64 = 100;
-const SLOW_LIBRARY_SYNC_STATUS_MS: u64 = 100;
 const SLOW_PLAYBACK_EVENT_POLL_MS: u64 = 100;
 const TRANSLATOR_CREDITS: &str = include_str!(concat!(env!("OUT_DIR"), "/translator_credits.txt"));
 const KEY_SEEK_SECONDS: i32 = 10;
@@ -150,224 +150,24 @@ pub(in crate::ui) enum AutoLyricsRequest {
     Default,
     ServerOnly,
 }
-pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<String> {
-    let status = status.trim();
-    if let Some(kind) = status
-        .strip_prefix("Checking ")
-        .and_then(|status| status.strip_suffix(" server..."))
-        .filter(|provider| !provider.trim().is_empty())
-    {
-        let provider = status_provider_label(kind);
-        return Some(tr_with(
-            "Checking {provider} server...",
-            &[("provider", provider.as_str())],
-        ));
-    }
-    match status {
-        "Server settings saved." => Some(tr("Server settings saved.")),
-        "Server settings saved. Resyncing library..." => {
-            Some(tr("Server settings saved. Resyncing library..."))
-        }
-        "No changes to save." => Some(tr("No changes to save.")),
-        "Sync already running." => Some(tr("Sync already running.")),
-        _ => None,
-    }
-}
-
-pub(in crate::ui) fn preferences_login_status_toast_message_for_surface(
-    status: &str,
-    status_visible_on_page: bool,
-) -> Option<String> {
-    if status_visible_on_page {
-        return None;
-    }
-    preferences_login_status_toast_message(status)
-}
-
 pub(in crate::ui) fn controller_error_is_user_visible(error: &str) -> bool {
     !error.contains("Element failed to change its state")
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum LibrarySyncToastState {
-    Progress,
-    Complete,
-    Clear,
-}
-
-pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyncToastState> {
-    let status = status.trim();
-    if status == LIBRARY_SYNC_COMPLETE_STATUS {
-        return Some(LibrarySyncToastState::Complete);
+fn source_notice_message(notice: &SourceNotice) -> String {
+    match notice {
+        SourceNotice::Checking { source_name } => tr_with(
+            "Checking {provider} server...",
+            &[("provider", source_name.as_str())],
+        ),
+        SourceNotice::Connected => tr("Connected. Loading cached library..."),
+        SourceNotice::SettingsSaved => tr("Source settings saved."),
+        SourceNotice::NoChanges => tr("No changes to save."),
+        SourceNotice::CacheCleared => tr("Cached library cleared."),
+        SourceNotice::CoverProgress {
+            processed, total, ..
+        } => format!("Caching library artwork... {processed}/{total} covers checked"),
     }
-    if status == "Cached library ready" || status.starts_with("Library cache ready for ") {
-        return Some(LibrarySyncToastState::Clear);
-    }
-    if status.starts_with("Syncing ") && status.ends_with(" library...") {
-        return Some(LibrarySyncToastState::Progress);
-    }
-    if status.starts_with("Caching library...")
-        || status.starts_with("Caching local library...")
-        || status.starts_with("Caching library artwork...")
-        || library_sync_progress_detail(status)
-    {
-        return Some(LibrarySyncToastState::Progress);
-    }
-    None
-}
-
-fn library_sync_progress_detail(status: &str) -> bool {
-    status.starts_with("Fetching ")
-        || status.starts_with("Cached albums ")
-        || status.starts_with("Cached tracks ")
-        || status.starts_with("Cached music folders ")
-        || status.starts_with("Cached artists ")
-        || status.starts_with("Cached album artists ")
-        || status.starts_with("Cached genres ")
-        || status.starts_with("Cached playlists ")
-        || status.starts_with("Cached home sections ")
-        || status.starts_with("Finalizing cache ")
-        || status.starts_with("Scanning folders ")
-        || status.starts_with("Reading track metadata ")
-        || status.starts_with("Preparing local cache ")
-}
-
-pub(in crate::ui) fn library_sync_toast_message(status: &str) -> String {
-    let status = status.trim();
-    if let Some(kind) = status
-        .strip_prefix("Syncing ")
-        .and_then(|status| status.strip_suffix(" library..."))
-        .filter(|provider| !provider.trim().is_empty())
-    {
-        let provider = status_provider_label(kind);
-        return tr_with(
-            "Syncing {provider} library...",
-            &[("provider", provider.as_str())],
-        );
-    }
-    if status.starts_with("Caching library... This may take some time.") {
-        return tr("Caching library... This may take some time.");
-    }
-    if status.starts_with("Caching local library... This may take some time.") {
-        return tr("Caching local library... This may take some time.");
-    }
-    if status.starts_with("Caching library artwork...") {
-        return tr("Caching library artwork...");
-    }
-    if library_sync_progress_detail(status) {
-        return status.to_string();
-    }
-    match status {
-        "Cached library ready" => tr("Cached library ready"),
-        "Library sync complete" => tr("Library sync complete"),
-        _ => status.to_string(),
-    }
-}
-
-fn status_provider_label(kind: &str) -> String {
-    if kind == "Music Server" {
-        tr("Music Server")
-    } else {
-        kind.to_string()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum SnapshotRenderDecision {
-    SourceChanged,
-    FirstRunFinished,
-    PreserveScroll,
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum LocalSourceCacheGateAction {
-    None,
-    Enter,
-    Wait,
-    Reveal,
-    Cancel,
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) struct SnapshotEventOutcome {
-    pub entered_first_run: bool,
-    pub render: SnapshotRenderDecision,
-}
-#[derive(Clone, Copy, Debug)]
-pub(in crate::ui) struct LocalSourceCacheGateInput<'a> {
-    pub local_folders_changed: bool,
-    pub next_source: &'a Option<domain::LibrarySourceSelection>,
-    pub has_local_folders: bool,
-    pub has_cached_library: bool,
-    pub startup_route_revealed: bool,
-    pub preparing: bool,
-    pub sync_seen: bool,
-    pub sync_status: &'a str,
-}
-pub(in crate::ui) fn snapshot_event_outcome(
-    previous_first_run: bool,
-    next_first_run: bool,
-    previous_source: &Option<domain::LibrarySourceSelection>,
-    next_source: &Option<domain::LibrarySourceSelection>,
-    first_run_connection_pending: bool,
-    first_run_connection_ready: bool,
-) -> SnapshotEventOutcome {
-    let first_run_finished =
-        first_run_connection_pending && first_run_connection_ready && !next_first_run;
-    let render = if first_run_finished {
-        SnapshotRenderDecision::FirstRunFinished
-    } else if previous_source != next_source {
-        SnapshotRenderDecision::SourceChanged
-    } else {
-        SnapshotRenderDecision::PreserveScroll
-    };
-
-    SnapshotEventOutcome {
-        entered_first_run: next_first_run && !previous_first_run,
-        render,
-    }
-}
-pub(in crate::ui) fn source_switch_requires_reconnect(
-    preparing: bool,
-    first_run: bool,
-    has_configured_source: bool,
-    first_run_connection_pending: bool,
-) -> bool {
-    preparing && first_run && has_configured_source && !first_run_connection_pending
-}
-pub(in crate::ui) fn local_source_cache_gate_action(
-    input: LocalSourceCacheGateInput<'_>,
-) -> LocalSourceCacheGateAction {
-    if !library_source_is_local(input.next_source) {
-        return if input.preparing {
-            LocalSourceCacheGateAction::Cancel
-        } else {
-            LocalSourceCacheGateAction::None
-        };
-    }
-
-    let uncached_local_wait = !input.has_cached_library
-        && (input.local_folders_changed || local_source_snapshot_is_syncing(input.sync_status));
-    let startup_folder_wait = input.local_folders_changed && !input.startup_route_revealed;
-    if !input.preparing && input.has_local_folders && (uncached_local_wait || startup_folder_wait) {
-        return LocalSourceCacheGateAction::Enter;
-    }
-
-    if !input.preparing {
-        return LocalSourceCacheGateAction::None;
-    }
-
-    if local_source_snapshot_is_syncing(input.sync_status) || !input.sync_seen {
-        LocalSourceCacheGateAction::Wait
-    } else {
-        LocalSourceCacheGateAction::Reveal
-    }
-}
-pub(in crate::ui) fn library_source_is_local(
-    source: &Option<domain::LibrarySourceSelection>,
-) -> bool {
-    matches!(source, Some(domain::LibrarySourceSelection::Local))
-}
-pub(in crate::ui) fn local_source_snapshot_is_syncing(sync_status: &str) -> bool {
-    sync_status == "Syncing library..."
 }
 pub(in crate::ui) fn queue_source_waits_for_snapshot(
     queue: Option<&QueueSnapshot>,
@@ -375,12 +175,12 @@ pub(in crate::ui) fn queue_source_waits_for_snapshot(
 ) -> bool {
     queue.is_some_and(|queue| active_source_id != Some(&queue.source_id))
 }
-pub(in crate::ui) fn queue_source_matches_library(
+pub(in crate::ui) fn queue_ready_for_library(
     queue: Option<&QueueSnapshot>,
     library: &LibrarySnapshot,
 ) -> bool {
     let Some(queue) = queue else {
-        return false;
+        return true;
     };
     library
         .source
@@ -877,56 +677,6 @@ pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
     present_light_dismiss_dialog(&dialog, &shell.window);
 }
 
-pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
-    shell.controller.refresh_source_freshness_watcher();
-
-    if let Some(delay_ms) = shell.controller.startup_sync_delay_ms() {
-        let shell = Rc::clone(shell);
-        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
-            debug!(delay_ms, "starting deferred active source reconciliation");
-            shell.controller.start_background_sync_for_active();
-        });
-    }
-}
-pub(in crate::ui) fn apply_library_sync_status(
-    library: &mut LibrarySnapshot,
-    status: LibrarySyncStatus,
-) -> bool {
-    let Some(source_id) = library.source.as_ref().map(|server| server.id.clone()) else {
-        return false;
-    };
-    if source_id != status.source_id {
-        return false;
-    }
-
-    invalidate_sync_snapshot_pages(library, &status.delta);
-    library.sync_status = status.sync_status;
-    library.last_error = status.last_error;
-    if login_status_marks_sync_complete(&library.sync_status) {
-        library.first_run = false;
-    }
-    library.cached_album_count = status.counts.albums;
-    library.cached_track_count = status.counts.tracks;
-    library.cached_artist_count = status.counts.artists;
-    library.cached_album_artist_count = status.counts.album_artists;
-    library.cached_genre_count = status.counts.genres;
-    library.cached_playlist_count = status.counts.playlists;
-    if let Some(home) = status.home {
-        library.home_sections = home.sections;
-        library.prefetched_explore = home.prefetched_explore;
-    }
-    if let Some(source) = library
-        .source_local_access
-        .iter_mut()
-        .find(|source| source.source_id == source_id)
-    {
-        source.sync_status = library.sync_status.clone();
-        source.cached_album_count = library.cached_album_count;
-        source.cached_track_count = library.cached_track_count;
-    }
-    true
-}
-
 fn invalidate_sync_snapshot_pages(library: &mut LibrarySnapshot, delta: &LibraryDelta) {
     if delta.is_empty() {
         return;
@@ -990,167 +740,17 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
         while let Ok(event) = receiver.try_recv() {
             event_count += 1;
             match event {
-                ControllerEvent::Snapshot(snapshot) => {
-                    let (snapshot_outcome, local_folders_changed) = {
-                        let current = shell.state.library.borrow();
-                        (
-                            snapshot_event_outcome(
-                                current.first_run,
-                                snapshot.first_run,
-                                &current.selected_source,
-                                &snapshot.selected_source,
-                                shell.state.first_run_connection_pending.get(),
-                                shell.state.first_run_connection_ready.get(),
-                            ),
-                            current.local_folders != snapshot.local_folders,
-                        )
-                    };
-                    let local_gate_action = if matches!(
-                        snapshot_outcome.render,
-                        SnapshotRenderDecision::FirstRunFinished
-                    ) {
-                        LocalSourceCacheGateAction::None
-                    } else {
-                        local_source_cache_gate_action(LocalSourceCacheGateInput {
-                            local_folders_changed,
-                            next_source: &snapshot.selected_source,
-                            has_local_folders: !snapshot.local_folders.is_empty(),
-                            has_cached_library: snapshot
-                                .cached_album_count
-                                .saturating_add(snapshot.cached_track_count)
-                                > 0,
-                            startup_route_revealed: shell.state.startup_route_revealed.get(),
-                            preparing: shell.state.local_source_preparing.get(),
-                            sync_seen: shell.state.local_source_sync_seen.get(),
-                            sync_status: &snapshot.sync_status,
-                        })
-                    };
-                    let local_snapshot_syncing =
-                        local_source_snapshot_is_syncing(&snapshot.sync_status);
-                    let source_id = snapshot.source.as_ref().map(|server| server.id.clone());
-                    let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
-                    let sections = snapshot.home_sections.clone();
-                    shell.replace_library_snapshot(*snapshot);
-                    if snapshot_outcome.entered_first_run {
-                        shell.state.server_discovery_started.set(false);
-                        shell.state.server_discovery_running.set(false);
-                        *shell.state.discovered_servers.borrow_mut() = Vec::new();
-                        *shell.state.server_discovery_status.borrow_mut() =
-                            ServerDiscoveryStatus::Idle;
-                    }
-                    shell.update_prefetched_explore_from_snapshot(
-                        source_id,
-                        prefetched_explore,
-                        &sections,
-                    );
-                    refresh_context_playlist_picker(&shell);
-                    *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
-                    shell.update_source_selector();
-                    let switch_requires_reconnect = {
-                        let library = shell.state.library.borrow();
-                        source_switch_requires_reconnect(
-                            shell.state.source_switch_preparing.get(),
-                            library.first_run,
-                            library.source.is_some(),
-                            shell.state.first_run_connection_pending.get(),
-                        )
-                    };
-                    if switch_requires_reconnect {
-                        shell.state.source_switch_preparing.set(false);
-                        shell.state.startup_route_render_pending.set(false);
-                        shell.state.startup_route_revealed.set(true);
-                        shell.state.startup_route_content_prepared.set(true);
-                        shell.render_current_route();
-                        shell.show_reconnect_notice_if_needed();
-                        continue;
-                    }
-                    match local_gate_action {
-                        LocalSourceCacheGateAction::Enter => {
-                            shell.state.local_source_preparing.set(true);
-                            shell.state.source_switch_preparing.set(false);
-                            shell
-                                .state
-                                .local_source_sync_seen
-                                .set(local_snapshot_syncing);
-                            shell.state.startup_route_render_pending.set(false);
-                            shell.state.startup_route_revealed.set(false);
-                            shell.state.startup_route_content_prepared.set(false);
-                            shell.prepare_home_route();
-                            shell.render_startup_loading_view();
-                            continue;
-                        }
-                        LocalSourceCacheGateAction::Wait => {
-                            if local_snapshot_syncing {
-                                shell.state.local_source_sync_seen.set(true);
-                            }
-                            shell.render_startup_loading_view();
-                            continue;
-                        }
-                        LocalSourceCacheGateAction::Reveal => {
-                            shell.state.local_source_preparing.set(false);
-                            shell.state.local_source_sync_seen.set(false);
-                            shell.state.source_switch_preparing.set(false);
-                            shell.log_layout_snapshot("local_source_final_snapshot");
-                            shell.schedule_startup_route_reveal();
-                            continue;
-                        }
-                        LocalSourceCacheGateAction::Cancel => {
-                            shell.state.local_source_preparing.set(false);
-                            shell.state.local_source_sync_seen.set(false);
-                            shell.state.source_switch_preparing.set(false);
-                            shell.state.startup_route_render_pending.set(false);
-                            shell.state.startup_route_revealed.set(true);
-                            shell.state.startup_route_content_prepared.set(true);
-                        }
-                        LocalSourceCacheGateAction::None => {}
-                    }
-                    if shell.state.source_switch_preparing.get() {
-                        let queue_matches_library = {
-                            let queue = shell.state.queue.borrow();
-                            let library = shell.state.library.borrow();
-                            queue_source_matches_library(queue.as_ref(), &library)
-                        };
-                        if queue_matches_library {
-                            shell.state.source_switch_preparing.set(false);
-                            shell.prepare_home_route();
-                            shell.render_queue_panel();
-                            shell.render_lyrics_panel();
-                            shell.update_bottom_player();
-                            shell.update_fullscreen_player();
-                            let player = shell.state.player.borrow().clone();
-                            #[cfg(unix)]
-                            shell.update_mpris_player();
-                            shell.update_discord_presence(&player);
-                            shell.schedule_startup_route_reveal();
-                            continue;
-                        }
-                    }
-                    match snapshot_outcome.render {
-                        SnapshotRenderDecision::FirstRunFinished => {
-                            shell.state.local_source_preparing.set(false);
-                            shell.state.local_source_sync_seen.set(false);
-                            shell.state.source_switch_preparing.set(false);
-                            shell.log_layout_snapshot("first_run_final_snapshot");
-                            shell.schedule_first_run_app_reveal();
-                            continue;
-                        }
-                        SnapshotRenderDecision::SourceChanged => {
-                            shell.reset_cover_pipeline();
-                            shell.navigate(Route::Home);
-                        }
-                        SnapshotRenderDecision::PreserveScroll => {
-                            shell.render_current_route_preserving_scroll();
-                        }
-                    }
-                }
+                ControllerEvent::Snapshot(snapshot) => shell.apply_library_snapshot(*snapshot),
                 ControllerEvent::SourceSelectionChanged { selected_source } => {
                     {
                         let mut library = shell.state.library.borrow_mut();
-                        library.selected_source = Some(selected_source);
+                        library.selected_source = Some(selected_source.clone());
                         library.music_folders.clear();
                         library.selected_music_folder_id = None;
                     }
-                    shell.state.source_switch_preparing.set(true);
+                    *shell.state.library_load.borrow_mut() = LibraryLoad::Switching {
+                        target: selected_source,
+                    };
                     shell.state.startup_route_render_pending.set(false);
                     shell.state.startup_route_revealed.set(false);
                     shell.state.startup_route_content_prepared.set(false);
@@ -1158,89 +758,11 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.render_startup_loading_view();
                     continue;
                 }
-                ControllerEvent::LibrarySyncStatus(status) => {
-                    let event_started = Instant::now();
-                    let sync_status = status.sync_status.clone();
-                    let delta_empty = status.delta.is_empty();
-                    let last_error = status.last_error.clone();
-                    let sync_toast_state = library_sync_toast_state(&status.sync_status);
-                    let delta = status.delta.clone();
-                    let tracks_changed = delta.reset.is_some() || !delta.tracks.is_empty();
-                    let apply_started = Instant::now();
-                    let applied = {
-                        let mut library = shell.state.library.borrow_mut();
-                        apply_library_sync_status(&mut library, *status)
-                    };
-                    let apply_ms = apply_started.elapsed().as_millis() as u64;
-                    if !applied {
-                        continue;
-                    }
-                    if tracks_changed {
-                        shell.rebuild_track_index();
-                    }
-                    let sync_complete = login_status_marks_sync_complete(&sync_status);
-                    if sync_complete && shell.state.first_run_connection_pending.get() {
-                        shell.state.first_run_connection_ready.set(true);
-                    }
-                    let selector_started = Instant::now();
-                    shell.update_source_selector();
-                    let selector_ms = selector_started.elapsed().as_millis() as u64;
-                    if let Some(error) = last_error {
-                        warn!(%error, "library sync update reported an error");
-                        shell.dismiss_library_sync_toast();
-                        shell.show_preferences_toast(&error);
-                    } else if let Some(sync_toast_state) = sync_toast_state {
-                        shell.update_library_sync_toast(sync_toast_state, &sync_status);
-                    } else if let Some(message) = preferences_login_status_toast_message_for_surface(
-                        &sync_status,
-                        shell.library_sync_status_visible_fullscreen(),
-                    ) {
-                        shell.show_preferences_toast(&message);
-                    }
-                    let mut delta_ms = 0_u64;
-                    if shell.state.local_source_preparing.get() {
-                        let syncing = {
-                            let library = shell.state.library.borrow();
-                            local_source_snapshot_is_syncing(&library.sync_status)
-                        };
-                        if syncing {
-                            shell.render_startup_loading_view();
-                        } else {
-                            shell.state.local_source_preparing.set(false);
-                            shell.state.local_source_sync_seen.set(false);
-                            shell.state.source_switch_preparing.set(false);
-                            shell.log_layout_snapshot("local_source_status_ready");
-                            shell.schedule_startup_route_reveal();
-                        }
-                    } else {
-                        let delta_started = Instant::now();
-                        shell.apply_library_delta(delta);
-                        delta_ms = delta_started.elapsed().as_millis() as u64;
-                        info!(
-                            sync_status = %sync_status,
-                            delta_empty,
-                            apply_ms,
-                            selector_ms,
-                            delta_ms,
-                            total_ms = event_started.elapsed().as_millis() as u64,
-                            "handled library sync status"
-                        );
-                    }
-                    if sync_complete && shell.state.first_run_connection_pending.get() {
-                        shell.schedule_first_run_app_reveal();
-                    }
-                    let total_ms = event_started.elapsed().as_millis() as u64;
-                    if total_ms >= SLOW_LIBRARY_SYNC_STATUS_MS {
-                        warn!(
-                            sync_status = %sync_status,
-                            delta_empty,
-                            apply_ms,
-                            selector_ms,
-                            delta_ms,
-                            total_ms,
-                            "slow library sync status handling"
-                        );
-                    }
+                ControllerEvent::SourceSyncChanged(change) => {
+                    shell.apply_source_sync_changed(change);
+                }
+                ControllerEvent::LibraryCommitted(update) => {
+                    shell.apply_library_committed(*update);
                 }
                 ControllerEvent::LibraryDelta(delta) => {
                     shell.apply_library_delta(*delta);
@@ -1347,7 +869,6 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         continue;
                     }
                     warn!(%error, "controller error");
-                    shell.dismiss_library_sync_toast();
                     shell.show_preferences_toast(&error);
                 }
                 ControllerEvent::Queue(queue) => {
@@ -1363,11 +884,32 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     };
                     *shell.state.queue.borrow_mut() = next_queue;
                     if waits_for_source_snapshot {
-                        shell.state.source_switch_preparing.set(true);
+                        if let Some(target) = shell.state.library.borrow().selected_source.clone() {
+                            *shell.state.library_load.borrow_mut() =
+                                LibraryLoad::Switching { target };
+                        }
                         shell.state.startup_route_render_pending.set(false);
                         shell.state.startup_route_revealed.set(false);
                         shell.state.startup_route_content_prepared.set(false);
                         shell.render_startup_loading_view();
+                        continue;
+                    }
+                    let switch_ready = {
+                        let load = shell.state.library_load.borrow();
+                        let library = shell.state.library.borrow();
+                        matches!(
+                            &*load,
+                            LibraryLoad::Switching { target }
+                                if library.selected_source.as_ref() == Some(target)
+                                    && library.cache.is_committed()
+                                    && queue_ready_for_library(
+                                        shell.state.queue.borrow().as_ref(),
+                                        &library,
+                                    )
+                        )
+                    };
+                    if switch_ready {
+                        shell.finish_source_switch();
                         continue;
                     }
                     shell.schedule_queue_panel_render();
@@ -1409,7 +951,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     ) {
                         shell.withdraw_now_playing_notification();
                     }
-                    if shell.state.source_switch_preparing.get() {
+                    if matches!(
+                        &*shell.state.library_load.borrow(),
+                        LibraryLoad::Switching { .. }
+                    ) {
                         if previous_track != next_track {
                             *shell.state.lyrics.borrow_mut() = None;
                             *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
@@ -1533,45 +1078,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                     shell.refresh_add_server_dialog();
                 }
-                ControllerEvent::LoginStatus(status) => {
-                    if let Some(sync_toast_state) = library_sync_toast_state(&status) {
-                        shell.update_library_sync_toast(sync_toast_state, &status);
-                    } else if let Some(message) = preferences_login_status_toast_message_for_surface(
-                        &status,
-                        shell.library_sync_status_visible_fullscreen(),
-                    ) {
-                        shell.show_preferences_toast(&message);
-                    }
-                    let sync_complete = login_status_marks_sync_complete(&status);
-                    if sync_complete {
-                        shell.state.first_run_connection_ready.set(true);
-                        if shell.state.local_source_preparing.get() {
-                            shell.state.local_source_sync_seen.set(true);
-                        }
-                    }
-                    let first_run_connection_pending =
-                        shell.state.first_run_connection_pending.get();
-                    let display_status = if sync_complete && first_run_connection_pending {
-                        library_preparing_status()
-                    } else {
-                        status
-                    };
-                    let should_render = {
-                        let mut library = shell.state.library.borrow_mut();
-                        library.sync_status = display_status;
-                        route_displays_sync_status(
-                            shell.state.routes.borrow().current(),
-                            library.first_run,
-                        ) || shell.state.first_run_connection_pending.get()
-                            || shell.state.local_source_preparing.get()
-                    };
-                    if should_render {
-                        if shell.state.local_source_preparing.get() {
-                            shell.render_startup_loading_view();
-                        } else {
-                            shell.render_current_route();
-                        }
-                    }
+                ControllerEvent::SourceNotice(notice) => shell.apply_source_notice(notice),
+                ControllerEvent::SourceTransitionFailed { source_id, error } => {
+                    shell.apply_source_transition_failed(source_id, error);
                 }
                 ControllerEvent::Error(error) => {
                     shell.clear_pending_playlist_entry_selection();
@@ -1580,21 +1089,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         continue;
                     }
                     warn!(%error, "controller error");
-                    shell.dismiss_library_sync_toast();
                     shell.show_preferences_toast(&error);
-                    shell.state.first_run_connection_pending.set(false);
-                    shell.state.first_run_connection_ready.set(false);
-                    shell.state.local_source_preparing.set(false);
-                    shell.state.local_source_sync_seen.set(false);
-                    shell.state.source_switch_preparing.set(false);
-                    shell.state.startup_route_render_pending.set(false);
-                    shell.state.startup_route_revealed.set(true);
-                    shell.state.startup_route_content_prepared.set(true);
-                    let mut library = shell.state.library.borrow_mut();
-                    library.sync_status = "Action failed".to_string();
-                    library.last_error = Some(error);
-                    drop(library);
-                    shell.render_current_route();
                 }
             }
         }
@@ -1609,12 +1104,460 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
     });
 }
 
-fn login_status_marks_sync_complete(status: &str) -> bool {
-    let status = status.trim();
-    status == LIBRARY_SYNC_COMPLETE_STATUS
-        || status == "Cached library ready"
-        || status.starts_with("Library cache ready for ")
+impl Shell {
+    fn apply_source_notice(self: &Rc<Self>, notice: SourceNotice) {
+        let message = source_notice_message(&notice);
+        match notice {
+            SourceNotice::Checking { .. } | SourceNotice::Connected
+                if matches!(
+                    &*self.state.library_load.borrow(),
+                    LibraryLoad::Connecting { .. }
+                ) =>
+            {
+                let first_run = match &*self.state.library_load.borrow() {
+                    LibraryLoad::Connecting { first_run, .. } => *first_run,
+                    _ => false,
+                };
+                *self.state.library_load.borrow_mut() = LibraryLoad::Connecting {
+                    stage: message,
+                    first_run,
+                };
+                self.render_current_route();
+            }
+            SourceNotice::CoverProgress {
+                source_id,
+                processed,
+                total,
+            } => self.update_source_notice_toast(&source_id, &message, processed == total),
+            _ => self.show_preferences_toast(&message),
+        }
+    }
+
+    fn apply_source_transition_failed(self: &Rc<Self>, source_id: Option<SourceId>, error: String) {
+        warn!(%error, "source transition failed");
+        self.show_preferences_toast(&error);
+        let load = self.state.library_load.borrow().clone();
+        match load {
+            LibraryLoad::Connecting {
+                first_run: true, ..
+            } => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Failed {
+                    source_id,
+                    message: error,
+                };
+                self.render_current_route();
+            }
+            LibraryLoad::Connecting {
+                first_run: false, ..
+            } => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.render_current_route();
+            }
+            LibraryLoad::Switching { .. } | LibraryLoad::WaitingForFirstCommit { .. } => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.schedule_startup_route_reveal();
+            }
+            LibraryLoad::Ready | LibraryLoad::Failed { .. } => {}
+        }
+    }
+
+    fn apply_library_snapshot(self: &Rc<Self>, snapshot: LibrarySnapshot) {
+        let (previous_first_run, previous_source) = {
+            let current = self.state.library.borrow();
+            (current.first_run, current.selected_source.clone())
+        };
+        let entered_first_run = snapshot.first_run && !previous_first_run;
+        let source_changed = previous_source != snapshot.selected_source;
+        let source_id = snapshot.source.as_ref().map(|source| source.id.clone());
+        let selected_source = snapshot.selected_source.clone();
+        let first_run = snapshot.first_run;
+        let has_cache = snapshot.cache.is_committed();
+        let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
+        let sections = snapshot.home_sections.clone();
+        self.replace_library_snapshot(snapshot);
+
+        if entered_first_run {
+            self.state.server_discovery_started.set(false);
+            self.state.server_discovery_running.set(false);
+            *self.state.discovered_servers.borrow_mut() = Vec::new();
+            *self.state.server_discovery_status.borrow_mut() = ServerDiscoveryStatus::Idle;
+        }
+        self.update_prefetched_explore_from_snapshot(
+            source_id.clone(),
+            prefetched_explore,
+            &sections,
+        );
+        refresh_context_playlist_picker(self);
+        *self.state.folder_state.borrow_mut() = FolderRouteState::default();
+        self.update_source_selector();
+
+        let load = self.state.library_load.borrow().clone();
+        let recovers_failed_projection =
+            failed_projection_snapshot_recovers(&load, source_id.as_ref(), has_cache);
+        match load {
+            LibraryLoad::Connecting { .. } if has_cache && source_id.is_some() => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.schedule_first_run_app_reveal();
+                return;
+            }
+            LibraryLoad::Connecting { .. } => {
+                self.render_current_route();
+                return;
+            }
+            LibraryLoad::Switching { target }
+                if selected_source.as_ref() == Some(&target)
+                    && first_run
+                    && source_id.is_some() =>
+            {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.state.startup_route_render_pending.set(false);
+                self.state.startup_route_revealed.set(true);
+                self.state.startup_route_content_prepared.set(true);
+                self.render_current_route();
+                self.show_reconnect_notice_if_needed();
+                return;
+            }
+            LibraryLoad::Switching { target }
+                if selected_source.as_ref() == Some(&target) && has_cache =>
+            {
+                if queue_ready_for_library(
+                    self.state.queue.borrow().as_ref(),
+                    &self.state.library.borrow(),
+                ) {
+                    self.finish_source_switch();
+                } else {
+                    self.render_startup_loading_view();
+                }
+                return;
+            }
+            LibraryLoad::Switching { .. } | LibraryLoad::WaitingForFirstCommit { .. } => {
+                self.render_startup_loading_view();
+                return;
+            }
+            LibraryLoad::Ready if !has_cache && !first_run => {
+                if let Some(source_id) = source_id {
+                    *self.state.library_load.borrow_mut() =
+                        LibraryLoad::WaitingForFirstCommit { source_id };
+                    self.state.startup_route_render_pending.set(false);
+                    self.state.startup_route_revealed.set(false);
+                    self.state.startup_route_content_prepared.set(false);
+                    self.render_startup_loading_view();
+                    return;
+                }
+            }
+            LibraryLoad::Failed { .. } if recovers_failed_projection => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.schedule_startup_route_reveal();
+                return;
+            }
+            LibraryLoad::Failed { .. } => {
+                self.render_current_route();
+                return;
+            }
+            LibraryLoad::Ready => {}
+        }
+
+        if source_changed {
+            self.reset_cover_pipeline();
+            self.navigate(Route::Home);
+        } else {
+            self.render_current_route_preserving_scroll();
+        }
+    }
+
+    fn finish_source_switch(self: &Rc<Self>) {
+        *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+        self.prepare_home_route();
+        self.render_queue_panel();
+        self.render_lyrics_panel();
+        self.update_bottom_player();
+        self.update_fullscreen_player();
+        let player = self.state.player.borrow().clone();
+        #[cfg(unix)]
+        self.update_mpris_player();
+        self.update_discord_presence(&player);
+        self.schedule_startup_route_reveal();
+    }
+
+    fn apply_source_sync_changed(self: &Rc<Self>, change: library_sync::SourceSyncChanged) {
+        apply_source_sync_presentation(&mut self.state.source_syncs.borrow_mut(), &change);
+        if matches!(
+            change.phase,
+            library_sync::SyncPhase::Idle | library_sync::SyncPhase::Failed
+        ) {
+            self.dismiss_source_sync_toast(&change.source_id);
+        }
+        let active = self
+            .state
+            .library
+            .borrow()
+            .source
+            .as_ref()
+            .is_some_and(|source| source.id == change.source_id);
+        match change.phase {
+            library_sync::SyncPhase::Running => {
+                if active && self.state.library_load.borrow().blocks_library() {
+                    if self.login_screen_active() {
+                        self.render_current_route();
+                    } else {
+                        self.render_startup_loading_view();
+                    }
+                }
+                if change.manual && !self.library_sync_status_visible_fullscreen() {
+                    let status = source_sync_progress_text(&change);
+                    self.show_or_update_source_sync_toast(&change.source_id, change.epoch, &status);
+                }
+            }
+            library_sync::SyncPhase::Failed => {
+                if let Some(failure) = change.failure {
+                    if active && !self.state.library.borrow().cache.is_committed() {
+                        *self.state.library_load.borrow_mut() = LibraryLoad::Failed {
+                            source_id: Some(change.source_id),
+                            message: failure.clone(),
+                        };
+                        self.render_current_route();
+                    }
+                    if change.manual {
+                        self.show_preferences_toast(&failure);
+                    }
+                }
+            }
+            library_sync::SyncPhase::Idle => {}
+        }
+    }
+
+    fn apply_library_committed(self: &Rc<Self>, update: LibraryCommitUpdate) {
+        let LibraryCommitUpdate { commit, projection } = update;
+        let tracks_changed = commit.delta.reset.is_some() || !commit.delta.tracks.is_empty();
+        let projection_error = match projection {
+            None => return,
+            Some(Ok(LibraryCommitProjection::Initial(snapshot))) => {
+                if !initial_snapshot_matches_commit(&snapshot, &commit)
+                    || !self.commit_matches_selected_source(&commit)
+                {
+                    return;
+                }
+                let waiting_for_first_commit = matches!(
+                    &*self.state.library_load.borrow(),
+                    LibraryLoad::WaitingForFirstCommit { source_id }
+                        if source_id == &commit.source_id
+                );
+                self.apply_library_snapshot(*snapshot);
+                if waiting_for_first_commit {
+                    *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                    self.schedule_startup_route_reveal();
+                }
+                return;
+            }
+            Some(Ok(LibraryCommitProjection::Current { counts, home })) => {
+                if !self.commit_matches_selected_source(&commit) {
+                    return;
+                }
+                if failed_projection_matches_source(
+                    &self.state.library_load.borrow(),
+                    &commit.source_id,
+                ) {
+                    self.controller.reload_snapshot();
+                    return;
+                }
+                let applied = {
+                    let mut library = self.state.library.borrow_mut();
+                    apply_library_commit_to_snapshot(&mut library, &commit, Some(counts), home)
+                };
+                if !applied {
+                    return;
+                }
+                None
+            }
+            Some(Err(error)) => {
+                if !self.commit_matches_selected_source(&commit) {
+                    return;
+                }
+                let first_projection = !self.state.library.borrow().cache.is_committed();
+                let applied = {
+                    let mut library = self.state.library.borrow_mut();
+                    apply_library_commit_to_snapshot(&mut library, &commit, None, None)
+                };
+                if !applied {
+                    return;
+                }
+                Some((first_projection, error))
+            }
+        };
+        if tracks_changed {
+            self.rebuild_track_index();
+        }
+        self.update_source_selector();
+        self.apply_library_delta(commit.delta);
+        if let Some((first_projection, error)) = projection_error {
+            if first_projection {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Failed {
+                    source_id: Some(commit.source_id.clone()),
+                    message: error.clone(),
+                };
+                self.render_current_route();
+                self.controller.reload_snapshot();
+            }
+            self.show_preferences_toast(&error);
+            return;
+        }
+        let load = self.state.library_load.borrow().clone();
+        match load {
+            LibraryLoad::Connecting { .. } => self.schedule_first_run_app_reveal(),
+            LibraryLoad::Switching { .. } => self.finish_source_switch(),
+            LibraryLoad::WaitingForFirstCommit { source_id } if source_id == commit.source_id => {
+                *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+                self.schedule_startup_route_reveal();
+            }
+            LibraryLoad::Ready
+            | LibraryLoad::WaitingForFirstCommit { .. }
+            | LibraryLoad::Failed { .. } => {}
+        }
+    }
+
+    fn commit_matches_selected_source(&self, commit: &library_sync::LibraryCommitted) -> bool {
+        let library = self.state.library.borrow();
+        let Some(source) = library.source.as_ref() else {
+            return false;
+        };
+        if source.id != commit.source_id {
+            return false;
+        }
+        match library.selected_source.as_ref() {
+            Some(LibrarySourceSelection::Source(source_id)) => source_id == &commit.source_id,
+            Some(LibrarySourceSelection::Local) => source.kind == source_local::LOCAL_SOURCE_ID,
+            None => false,
+        }
+    }
 }
+
+fn failed_projection_matches_source(load: &LibraryLoad, source_id: &SourceId) -> bool {
+    matches!(
+        load,
+        LibraryLoad::Failed {
+            source_id: Some(failed_source_id),
+            ..
+        } if failed_source_id == source_id
+    )
+}
+
+fn failed_projection_snapshot_recovers(
+    load: &LibraryLoad,
+    source_id: Option<&SourceId>,
+    has_cache: bool,
+) -> bool {
+    has_cache
+        && source_id.is_some_and(|source_id| failed_projection_matches_source(load, source_id))
+}
+
+fn apply_source_sync_presentation(
+    presentations: &mut HashMap<SourceId, library_sync::SourceSyncChanged>,
+    change: &library_sync::SourceSyncChanged,
+) {
+    match change.phase {
+        library_sync::SyncPhase::Running => {
+            presentations.insert(change.source_id.clone(), change.clone());
+        }
+        library_sync::SyncPhase::Idle | library_sync::SyncPhase::Failed => {
+            presentations.remove(&change.source_id);
+        }
+    }
+}
+
+fn initial_snapshot_matches_commit(
+    snapshot: &LibrarySnapshot,
+    commit: &library_sync::LibraryCommitted,
+) -> bool {
+    snapshot.cache.revision() == commit.revision
+        && snapshot
+            .source
+            .as_ref()
+            .is_some_and(|source| source.id == commit.source_id)
+}
+
+pub(in crate::ui) fn apply_library_commit_to_snapshot(
+    library: &mut LibrarySnapshot,
+    commit: &library_sync::LibraryCommitted,
+    counts: Option<crate::controller::LibraryCounts>,
+    home: Option<crate::controller::LibraryHomeUpdate>,
+) -> bool {
+    let active = library
+        .source
+        .as_ref()
+        .is_some_and(|source| source.id == commit.source_id);
+    if !active || commit.revision <= library.cache.revision() {
+        return false;
+    }
+
+    library.cache = LibraryCacheState::Committed {
+        revision: commit.revision,
+    };
+    invalidate_sync_snapshot_pages(library, &commit.delta);
+    if let Some(counts) = counts {
+        library.cached_album_count = counts.albums;
+        library.cached_track_count = counts.tracks;
+        library.cached_artist_count = counts.artists;
+        library.cached_album_artist_count = counts.album_artists;
+        library.cached_genre_count = counts.genres;
+        library.cached_playlist_count = counts.playlists;
+    }
+    if let Some(home) = home {
+        library.home_sections = home.sections;
+        library.prefetched_explore = home.prefetched_explore;
+    }
+    true
+}
+
+pub(in crate::ui) fn source_sync_progress_text(change: &library_sync::SourceSyncChanged) -> String {
+    match change.progress {
+        None => "Syncing library...".to_string(),
+        Some(library_sync::Progress::LocalScan(progress)) => match progress.stage {
+            library_sync::LocalScanStage::Walking => "Scanning folders...".to_string(),
+            library_sync::LocalScanStage::ReadingTags => "Reading track metadata...".to_string(),
+            library_sync::LocalScanStage::BuildingLibrary => "Preparing local cache...".to_string(),
+        },
+        Some(library_sync::Progress::CollectionStarted(collection)) => {
+            format!("Fetching {}...", sync_collection_name(collection))
+        }
+        Some(library_sync::Progress::PageFetching {
+            collection,
+            fetched,
+            total,
+        }) => match total {
+            Some(total) => format!(
+                "Fetching {}, {fetched}/{total} fetched...",
+                sync_collection_name(collection)
+            ),
+            None => format!(
+                "Fetching {}, {fetched} fetched...",
+                sync_collection_name(collection)
+            ),
+        },
+        Some(library_sync::Progress::PageStaged {
+            collection,
+            fetched,
+        }) => format!(
+            "Cached {}, {fetched} ready...",
+            sync_collection_name(collection)
+        ),
+        Some(library_sync::Progress::Finalizing) => "Finalizing library cache...".to_string(),
+        Some(library_sync::Progress::Finished) => tr("Cached library ready"),
+    }
+}
+
+fn sync_collection_name(collection: library_sync::Collection) -> &'static str {
+    match collection {
+        library_sync::Collection::Albums => "albums",
+        library_sync::Collection::Tracks => "tracks",
+        library_sync::Collection::MusicFolders => "music folders",
+        library_sync::Collection::Artists => "artists",
+        library_sync::Collection::AlbumArtists => "album artists",
+        library_sync::Collection::Genres => "genres",
+        library_sync::Collection::Playlists => "playlists",
+        library_sync::Collection::HomeSections => "home sections",
+    }
+}
+
 impl Shell {
     pub(in crate::ui) fn show_control_feedback_toast(&self, title: String) {
         if !self.state.settings.borrow().control_notifications_enabled {
@@ -1640,71 +1583,48 @@ impl Shell {
         self.toast_overlay.add_toast(adw::Toast::new(message));
     }
 
-    pub(in crate::ui) fn update_library_sync_toast(
+    fn library_sync_status_visible_fullscreen(&self) -> bool {
+        self.login_screen_active() || !self.state.startup_route_revealed.get()
+    }
+
+    fn show_or_update_source_sync_toast(
         self: &Rc<Self>,
-        state: LibrarySyncToastState,
+        source_id: &SourceId,
+        _epoch: u64,
         message: &str,
     ) {
-        match state {
-            LibrarySyncToastState::Progress if self.library_sync_status_visible_fullscreen() => {
-                self.dismiss_library_sync_toast()
-            }
-            LibrarySyncToastState::Progress => self.show_or_update_library_sync_toast(message),
-            LibrarySyncToastState::Complete | LibrarySyncToastState::Clear => {
-                self.dismiss_library_sync_toast()
-            }
-        }
-    }
-
-    fn library_sync_status_visible_fullscreen(&self) -> bool {
-        let route_displays_status = {
-            let library = self.state.library.borrow();
-            route_displays_sync_status(self.state.routes.borrow().current(), library.first_run)
-        };
-        route_displays_status
-            || self.state.first_run_connection_pending.get()
-            || self.state.local_source_preparing.get()
-    }
-
-    fn show_or_update_library_sync_toast(self: &Rc<Self>, status: &str) {
-        if status.trim().starts_with("Syncing ") {
-            self.state.library_sync_toast_suppressed.set(false);
-        } else if self.state.library_sync_toast_suppressed.get() {
-            return;
-        }
-
-        let message = library_sync_toast_message(status);
-        if let Some(toast) = self.state.library_sync_toast.borrow().as_ref() {
-            toast.set_title(&message);
+        if let Some(toast) = self.state.source_sync_toasts.borrow().get(source_id) {
+            toast.set_title(message);
             toast.set_timeout(0);
             return;
         }
 
-        let toast = adw::Toast::new(&message);
+        let toast = adw::Toast::new(message);
         toast.set_timeout(0);
-        let weak_shell = Rc::downgrade(self);
-        let toast_for_signal = toast.clone();
-        toast.connect_dismissed(move |_| {
-            let Some(shell) = weak_shell.upgrade() else {
-                return;
-            };
-            let mut active = shell.state.library_sync_toast.borrow_mut();
-            if active
-                .as_ref()
-                .is_some_and(|toast| toast == &toast_for_signal)
-            {
-                active.take();
-                shell.state.library_sync_toast_suppressed.set(true);
-            }
-        });
         self.toast_overlay.add_toast(toast.clone());
-        *self.state.library_sync_toast.borrow_mut() = Some(toast);
+        self.state
+            .source_sync_toasts
+            .borrow_mut()
+            .insert(source_id.clone(), toast);
     }
 
-    pub(in crate::ui) fn dismiss_library_sync_toast(&self) {
-        let toast = self.state.library_sync_toast.borrow_mut().take();
+    fn dismiss_source_sync_toast(&self, source_id: &SourceId) {
+        let toast = self.state.source_sync_toasts.borrow_mut().remove(source_id);
         if let Some(toast) = toast {
             toast.dismiss();
+        }
+    }
+
+    fn update_source_notice_toast(
+        self: &Rc<Self>,
+        source_id: &SourceId,
+        message: &str,
+        complete: bool,
+    ) {
+        if complete {
+            self.dismiss_source_sync_toast(source_id);
+        } else if !self.library_sync_status_visible_fullscreen() {
+            self.show_or_update_source_sync_toast(source_id, 0, message);
         }
     }
 }
@@ -1835,5 +1755,86 @@ pub(in crate::ui) fn initial_visible_count_from_metrics(
             let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
             rows.saturating_mul(columns)
         }
+    }
+}
+
+#[cfg(test)]
+mod source_sync_handoff_tests {
+    use super::*;
+
+    fn sync_change(
+        source_id: &SourceId,
+        epoch: u64,
+        phase: library_sync::SyncPhase,
+        manual: bool,
+    ) -> library_sync::SourceSyncChanged {
+        library_sync::SourceSyncChanged {
+            source_id: source_id.clone(),
+            epoch,
+            phase,
+            progress: None,
+            failure: None,
+            manual,
+        }
+    }
+
+    #[test]
+    fn failed_projection_retries_and_recovers_only_for_its_cached_source() {
+        let failed_source = SourceId::new("source-a");
+        let other_source = SourceId::new("source-b");
+        let load = LibraryLoad::Failed {
+            source_id: Some(failed_source.clone()),
+            message: "snapshot read failed".to_string(),
+        };
+
+        assert!(failed_projection_matches_source(&load, &failed_source));
+        assert!(!failed_projection_matches_source(&load, &other_source));
+        assert!(failed_projection_snapshot_recovers(
+            &load,
+            Some(&failed_source),
+            true,
+        ));
+        assert!(!failed_projection_snapshot_recovers(
+            &load,
+            Some(&failed_source),
+            false,
+        ));
+        assert!(!failed_projection_snapshot_recovers(
+            &load,
+            Some(&other_source),
+            true,
+        ));
+    }
+
+    #[test]
+    fn automatic_idle_removes_only_its_source_presentation() {
+        let automatic_source = SourceId::new("source-a");
+        let manual_source = SourceId::new("source-b");
+        let mut presentations = HashMap::new();
+        apply_source_sync_presentation(
+            &mut presentations,
+            &sync_change(
+                &automatic_source,
+                3,
+                library_sync::SyncPhase::Running,
+                false,
+            ),
+        );
+        apply_source_sync_presentation(
+            &mut presentations,
+            &sync_change(&manual_source, 7, library_sync::SyncPhase::Running, true),
+        );
+
+        apply_source_sync_presentation(
+            &mut presentations,
+            &sync_change(&automatic_source, 3, library_sync::SyncPhase::Idle, false),
+        );
+
+        assert!(!presentations.contains_key(&automatic_source));
+        assert!(
+            presentations
+                .get(&manual_source)
+                .is_some_and(|change| change.manual && change.epoch == 7)
+        );
     }
 }

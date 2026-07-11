@@ -172,6 +172,21 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
+        self.read_snapshot(|store| {
+            store.load_tracks_matching_sorted_inner(
+                source_id, query, sort_key, descending, offset, limit,
+            )
+        })
+    }
+    fn load_tracks_matching_sorted_inner(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        sort_key: LibraryField,
+        descending: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
         let Some(pattern) = like_pattern(query) else {
             return self.load_tracks_sorted(source_id, sort_key, descending, offset, limit);
         };
@@ -610,124 +625,9 @@ impl Store {
         self.attach_playlist_cover_image_refs(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
-    pub(super) fn prune_missing_items(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            for table in [
-                "albums",
-                "tracks",
-                "artists",
-                "album_artists",
-                "genres",
-                "album_genres",
-                "track_genres",
-                "track_moods",
-                "album_artist_links",
-                "track_artist_links",
-                "source_music_folders",
-                "track_music_folders",
-                "home_section_items",
-            ] {
-                let sql =
-                    format!("DELETE FROM {table} WHERE source_id = ?1 AND sync_generation < ?2");
-                connection.execute(&sql, params![source_id.as_str(), generation])?;
-            }
-            connection.execute(
-                "
-                DELETE FROM playlist_tracks
-                WHERE source_id = ?1
-                  AND sync_generation < ?2
-                  AND playlist_id IN (
-                      SELECT playlist_id
-                      FROM playlists
-                      WHERE source_id = ?1
-                        AND owner = 'native'
-                  )
-                ",
-                params![source_id.as_str(), generation],
-            )?;
-            connection.execute(
-                "
-                DELETE FROM playlists
-                WHERE source_id = ?1
-                  AND sync_generation < ?2
-                  AND owner = 'native'
-                ",
-                params![source_id.as_str(), generation],
-            )?;
-            prune_dangling_playlist_tracks(connection, source_id)?;
-            prune_missing_entity_rows(connection, source_id)?;
-
-            connection.execute(
-                "
-                UPDATE source_library_preferences
-                SET selected_music_folder_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE source_id = ?1
-                  AND selected_music_folder_id IS NOT NULL
-                  AND selected_music_folder_id NOT IN (
-                      SELECT folder_id
-                      FROM source_music_folders
-                      WHERE source_id = ?1
-                  )
-                ",
-                params![source_id.as_str()],
-            )?;
-
-            connection.execute(
-                "
-                DELETE FROM library_fts
-                WHERE source_id = ?1
-                  AND item_type = 'album'
-                  AND item_id NOT IN (
-                    SELECT album_id FROM albums WHERE source_id = ?1
-                  )
-                ",
-                params![source_id.as_str()],
-            )?;
-            connection.execute(
-                "
-                DELETE FROM library_fts
-                WHERE source_id = ?1
-                  AND item_type = 'track'
-                  AND item_id NOT IN (
-                    SELECT track_id FROM tracks WHERE source_id = ?1
-                  )
-                ",
-                params![source_id.as_str()],
-            )?;
-            connection.execute(
-                "
-                DELETE FROM library_fts
-                WHERE source_id = ?1
-                  AND item_type IN ('artist', 'album_artist')
-                  AND item_id NOT IN (
-                    SELECT artist_id FROM artists WHERE source_id = ?1
-                    UNION
-                    SELECT artist_id FROM album_artists WHERE source_id = ?1
-                  )
-                ",
-                params![source_id.as_str()],
-            )?;
-            connection.execute(
-                "
-                DELETE FROM library_fts
-                WHERE source_id = ?1
-                  AND item_type = 'playlist'
-                  AND item_id NOT IN (
-                    SELECT playlist_id FROM playlists WHERE source_id = ?1
-                  )
-                ",
-                params![source_id.as_str()],
-            )?;
-            Ok(())
-        })
-    }
     pub(super) fn configure_pragmas(&self, wal: bool) -> StoreResult<()> {
         self.connection.pragma_update(None, "foreign_keys", "ON")?;
+        self.connection.pragma_update(None, "temp_store", "FILE")?;
         if wal {
             self.connection.pragma_update(None, "journal_mode", "WAL")?;
         }
@@ -753,91 +653,25 @@ impl Store {
             }
         }
     }
-}
 
-fn prune_dangling_playlist_tracks(
-    connection: &Connection,
-    source_id: &SourceId,
-) -> StoreResult<()> {
-    let mut statement = connection.prepare(
-        "
-        SELECT DISTINCT playlist_id
-        FROM playlist_tracks pt
-        WHERE pt.source_id = ?1
-          AND NOT EXISTS (
-              SELECT 1
-              FROM tracks t
-              WHERE t.source_id = pt.source_id
-                AND t.track_id = pt.track_id
-          )
-        ",
-    )?;
-    let playlist_ids = collect_rows(statement.query_map(params![source_id.as_str()], |row| {
-        row.get::<_, String>(0).map(PlaylistId::new)
-    })?)?;
-    if playlist_ids.is_empty() {
-        return Ok(());
-    }
-    connection.execute(
-        "
-        DELETE FROM playlist_tracks
-        WHERE source_id = ?1
-          AND playlist_id IN (
-              SELECT playlist_id
-              FROM playlists
-              WHERE source_id = ?1
-                AND owner = 'native'
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM tracks t
-              WHERE t.source_id = playlist_tracks.source_id
-                AND t.track_id = playlist_tracks.track_id
-          )
-        ",
-        params![source_id.as_str()],
-    )?;
-    for playlist_id in playlist_ids {
-        super::library_auxiliary_cache::refresh_playlist_stats(
-            connection,
-            source_id,
-            &playlist_id,
-        )?;
-        super::library_auxiliary_cache::refresh_playlist_refs(connection, source_id, &playlist_id)?;
-    }
-    Ok(())
-}
-
-fn prune_missing_entity_rows(connection: &Connection, source_id: &SourceId) -> StoreResult<()> {
-    for (entity_kind, table, id_column) in [
-        ("track", "tracks", "track_id"),
-        ("album", "albums", "album_id"),
-        ("artist", "artists", "artist_id"),
-        ("album_artist", "album_artists", "artist_id"),
-    ] {
-        for entity_table in [
-            "entity_content_refs",
-            "entity_facts",
-            "entity_grouping_keys",
-            "entity_identity_keys",
-            "entity_links",
-            "entities",
-        ] {
-            let sql = format!(
-                "
-                DELETE FROM {entity_table}
-                WHERE source_id = ?1
-                  AND entity_kind = ?2
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM {table}
-                      WHERE {table}.source_id = {entity_table}.source_id
-                        AND {table}.{id_column} = {entity_table}.entity_id
-                  )
-                "
-            );
-            connection.execute(&sql, params![source_id.as_str(), entity_kind])?;
+    pub fn read_snapshot<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        if !self.connection.is_autocommit() {
+            return operation(self);
+        }
+        self.connection.execute_batch("BEGIN")?;
+        let result = operation(self);
+        match result {
+            Ok(value) => {
+                self.connection.execute_batch("COMMIT")?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _rollback = self.connection.execute_batch("ROLLBACK");
+                Err(error)
+            }
         }
     }
-    Ok(())
 }

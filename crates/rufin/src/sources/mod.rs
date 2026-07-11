@@ -18,7 +18,7 @@ pub use source_jellyfin::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use source_jellyfin::{
     JellyfinConfiguredSession, JellyfinLoginRequest, JellyfinLoginSession, JellyfinSource,
 };
-use source_local::{LOCAL_SOURCE_ID, LocalScanProgress, LocalSource};
+use source_local::{LOCAL_SOURCE_ID, LocalChangeFeed, LocalScanProgress, LocalSource};
 use source_subsonic::{
     SubsonicConfiguredSession, SubsonicFlavor, SubsonicLoginRequest, SubsonicLoginSession,
     SubsonicSource,
@@ -103,7 +103,12 @@ pub(crate) struct JellyfinSettingsInput {
 }
 
 pub(crate) type LocalLoader = Arc<
-    dyn Fn(&mut dyn FnMut(LocalScanProgress)) -> source::SourceResult<LocalSource> + Send + Sync,
+    dyn Fn(
+            &mut dyn FnMut(LocalScanProgress),
+            &library_sync::CancellationToken,
+        ) -> source::SourceResult<LocalSource>
+        + Send
+        + Sync,
 >;
 pub(crate) type LocalRootsLoader = Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
 
@@ -889,7 +894,7 @@ struct ConfiguredLocalSource {
 
 impl ConfiguredLocalSource {
     fn source(&self) -> source::SourceResult<LocalSource> {
-        (self.load)(&mut |_| {})
+        (self.load)(&mut |_| {}, &library_sync::CancellationToken::new())
     }
 }
 
@@ -959,18 +964,17 @@ fn build_local_active_source(
         Arc::clone(&generated_tracks),
     );
     let local_audio: AudioFileLookup = Arc::new(cached_local_audio_path);
-    let ingest = crate::controller::local_ingest_operation(identity.id.clone(), Arc::clone(&load));
-    let readiness =
-        crate::controller::local_readiness_evaluator(identity.id.clone(), Arc::clone(&roots));
-    let initial_cover_cache_required =
-        crate::controller::filesystem_initial_cover_requirement(identity.id.clone());
-    let freshness = crate::controller::local_freshness_operations(roots);
+    let sync = crate::controller::local_sync_operation(
+        identity.id.clone(),
+        identity.clone(),
+        Arc::clone(&load),
+        Arc::clone(&roots),
+    );
+    let freshness = library_sync::Freshness::Events(Arc::new(LocalChangeFeed::new(roots)));
     let home_section = cached_home_section_loader(identity.id.clone());
     Arc::new(ActiveSource {
         identity,
-        ingest,
-        readiness,
-        initial_cover_cache_required,
+        sync,
         freshness: Some(freshness),
         home_section,
         playback_file: Arc::clone(&local_audio),
@@ -1016,24 +1020,12 @@ fn build_jellyfin_active_source(
         Arc::clone(&generated_tracks),
         random_tracks.clone(),
     );
-    let ingest = crate::controller::paged_ingest_operation(
-        identity.id.clone(),
-        source.clone(),
-        Some(source.clone()),
-        Some(source.clone()),
-    );
-    let readiness = crate::controller::incremental_readiness_evaluator(identity.id.clone());
-    let initial_cover_cache_required =
-        crate::controller::source_initial_cover_requirement(identity.id.clone());
-    let reconcile_cached =
-        crate::controller::recent_tracks_cached_reconciliation(source.clone(), 50);
-    let freshness = crate::controller::event_freshness_operations(source.clone(), reconcile_cached);
+    let sync = crate::controller::remote_sync_operation(source.clone(), Some(source.clone()));
+    let freshness = library_sync::Freshness::Events(source.clone());
     let home_section = native_home_section_loader(source.clone());
     Arc::new(ActiveSource {
         identity,
-        ingest,
-        readiness,
-        initial_cover_cache_required,
+        sync,
         freshness: Some(freshness),
         home_section,
         playback_file: Arc::new(matched_remote_audio_path),
@@ -1085,25 +1077,15 @@ fn build_subsonic_active_source(source: SubsonicSource) -> Arc<ActiveSource> {
         Arc::clone(&generated_tracks),
         random_tracks.clone(),
     );
-    let ingest = crate::controller::paged_ingest_operation(
-        identity.id.clone(),
-        source.clone(),
-        Some(source.clone()),
-        Some(source.clone()),
-    );
-    let readiness = crate::controller::incremental_readiness_evaluator(identity.id.clone());
-    let initial_cover_cache_required =
-        crate::controller::source_initial_cover_requirement(identity.id.clone());
-    let reconcile_cached =
-        crate::controller::recent_albums_cached_reconciliation(source.clone(), source.clone(), 20);
-    let freshness =
-        crate::controller::poll_freshness_operations(Duration::from_secs(5 * 60), reconcile_cached);
+    let sync = crate::controller::remote_sync_operation(source.clone(), None);
+    let freshness = library_sync::Freshness::Probe {
+        interval: Duration::from_secs(5 * 60),
+        probe: source.clone(),
+    };
     let home_section = native_home_section_loader(source.clone());
     Arc::new(ActiveSource {
         identity,
-        ingest,
-        readiness,
-        initial_cover_cache_required,
+        sync,
         freshness: Some(freshness),
         home_section,
         playback_file: Arc::new(matched_remote_audio_path),
@@ -1200,15 +1182,16 @@ fn activate_local_saved(
     let load_store = store.clone();
     let load_identity = identity.clone();
     let load_roots = Arc::clone(&roots);
-    let load: LocalLoader = Arc::new(move |progress| {
+    let load: LocalLoader = Arc::new(move |progress, cancellation| {
         let manifest = load_store
             .with_store(|store| store.load_local_manifest(&load_identity.id))
             .map_err(source::SourceError::Other)?;
-        LocalSource::from_roots_with_manifest_cache_and_progress(
+        LocalSource::from_roots_with_manifest_scan(
             load_roots(),
             load_identity.clone(),
             manifest,
             progress,
+            || cancellation.is_cancelled(),
         )
     });
     Ok(build_local_active_source(identity, load, roots))

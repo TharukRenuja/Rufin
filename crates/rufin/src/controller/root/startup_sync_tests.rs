@@ -1,43 +1,29 @@
 use super::*;
 
 use super::{
-    AppController, ControllerEvent, LOCAL_SOURCE_IDENTITY_ID, LibrarySnapshot, LibrarySyncStatus,
-    StoreHandle, home_refresh_completed_event, load_runtime_snapshot, load_snapshot,
-    promote_prefetched_home_section, sync_local_source_outcome,
-    sync_local_source_outcome_with_stress_multiplier, sync_local_source_with_events,
-    sync_page_finished, sync_source_outcome_with_cancellation,
+    AppController, ControllerEvent, LOCAL_SOURCE_IDENTITY_ID, LibrarySnapshot, StoreHandle,
+    home_refresh_completed_event, load_runtime_snapshot, load_snapshot,
+    promote_prefetched_home_section, sync_local_source_outcome, sync_local_source_with_events,
 };
-use async_trait::async_trait;
 use domain::{
-    Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, LibrarySourceSelection, LocalLibraryFolder, Playlist, PlaylistId, SourceId,
-    SourceIdentity, Track, TrackId,
+    AlbumId, AppSettings, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
+    LibrarySourceSelection, LocalLibraryFolder, Playlist, PlaylistId, SourceId, SourceIdentity,
+    TrackId,
 };
 use library::{SavedSource, SourceLocalAccess};
 use playback::PlaybackState;
 use rusqlite::Connection;
 use secrets::{MemorySecretStore, SecretStore};
-use source::{
-    AlbumDetail, GenreDetail, MusicSource, PagedRequest, PagedResponse, PlaylistEntry,
-    SearchResults, SourceError, SourceResult,
-};
-use std::collections::{HashMap, HashSet};
+use source::{PlaylistEntry, SourceObjectChanges};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
-
-fn active_source_for_test(store: &StoreHandle, saved: &SavedSource) -> Arc<ActiveSource> {
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    secrets
-        .save_token(&saved.source.id, "test-salt:test-token")
-        .expect("save source credential");
-    crate::sources::activate_configured_source(store, &secrets, saved)
-        .expect("activate configured source")
-}
 
 #[test]
 pub(in crate::controller) fn startup_jellyfin_saved() {
@@ -133,16 +119,6 @@ pub(in crate::controller) fn startup_activate_source() {
         .secrets
         .save_token(&remote.source.id, "test-token")
         .expect("save token");
-    let _remote_sync = controller
-        .sync_in_flight
-        .acquire(remote.source.id.clone())
-        .expect("remote sync guard")
-        .expect("remote sync permit");
-    let _local_sync = controller
-        .sync_in_flight
-        .acquire(SourceId::new(LOCAL_SOURCE_IDENTITY_ID))
-        .expect("local sync guard")
-        .expect("local sync permit");
     let playback_commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") = Box::new(RecordingPlaybackBackend::new(
         Arc::clone(&playback_commands),
@@ -457,11 +433,6 @@ pub(in crate::controller) fn startup_missing_token_reconnects_saved_remote() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Source(saved.source.id.clone()))
     );
-    assert_eq!(
-        snapshot.sync_status,
-        "Connect once more to continue using this server."
-    );
-    assert!(snapshot.last_error.is_none());
 }
 
 #[test]
@@ -520,7 +491,7 @@ pub(in crate::controller) fn selecting_unknown_source_restores_committed_selecti
 
     assert_eq!(
         wait_for_source_selection(&events),
-        LibrarySourceSelection::Source(unsupported.source.id)
+        LibrarySourceSelection::Source(unsupported.source.id.clone())
     );
     let snapshot = wait_for_snapshot(&events);
     assert_eq!(
@@ -530,8 +501,11 @@ pub(in crate::controller) fn selecting_unknown_source_restores_committed_selecti
     let error = events.recv_timeout(Duration::from_secs(1)).expect("error");
     assert!(matches!(
         error,
-        ControllerEvent::Error(message)
-            if message == "Saved source type is no longer supported."
+        ControllerEvent::SourceTransitionFailed {
+            source_id: Some(source_id),
+            error,
+        } if source_id == unsupported.source.id
+            && error == "Saved source type is no longer supported."
     ));
     assert_eq!(
         current_active_source(&controller.active_source)
@@ -628,54 +602,6 @@ pub(in crate::controller) fn startup_add_syncs() {
         .expect("active server")
         .expect("active server");
     assert_eq!(active.source.id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_start_refresh() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let remote = saved_source();
-    let local = local_source_saved();
-    let root = unique_test_dir("fresh-local-source-selection");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Source(remote.source.id.clone()));
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    let generation = store
-        .with_store(|store| {
-            store.save_source(&remote)?;
-            store.save_source(&local)?;
-            store.set_active_source(&remote.source.id)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.complete_sync(&local.source.id, generation)?;
-            Ok(generation)
-        })
-        .expect("seed fresh local sync");
-    let (controller, events) = controller_from_store_for_test(store);
-
-    controller.select_source(LibrarySourceSelection::Local);
-
-    assert_eq!(
-        wait_for_source_selection(&events),
-        LibrarySourceSelection::Local
-    );
-    let queue = wait_for_queue(&events).expect("local queue");
-    assert_eq!(queue.source_id.as_str(), LOCAL_SOURCE_IDENTITY_ID);
-    let snapshot = wait_for_snapshot(&events);
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Local)
-    );
-    assert_eq!(snapshot.sync_status, "Cached library ready");
-    let state = controller
-        .store
-        .with_store(|store| store.sync_state(&local.source.id))
-        .expect("sync state");
-    assert_eq!(state.status, "idle");
-    assert_eq!(state.generation, generation + 1);
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -697,15 +623,18 @@ pub(in crate::controller) fn startup_reuse_cache() {
             store.save_source(&local)?;
             store.set_active_source(&remote.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                &[local_album_with_image_ref(ImageRef::new(
-                    "local:cover:file%3A%2F%2Fmissing-cover",
-                    None,
-                ))],
                 generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![local_album_with_image_ref(ImageRef::new(
+                        "local:cover:file%3A%2F%2Fmissing-cover",
+                        None,
+                    ))],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let (controller, events) = controller_from_store_for_test(store);
@@ -719,76 +648,8 @@ pub(in crate::controller) fn startup_reuse_cache() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Local)
     );
-    assert_eq!(snapshot.sync_status, "Cached library ready");
     assert_eq!(snapshot.cached_album_count, 1);
     let _cleanup = fs::remove_dir_all(root);
-}
-
-#[test]
-pub(in crate::controller) fn startup_login_sync_reuses_current_cache() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("login-sync-snapshot");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    seed_cached_library(
-        &store,
-        &local,
-        &[local_album_with_image_ref(ImageRef::new(
-            "local:cover:file%3A%2F%2Flogin-sync-cover",
-            None,
-        ))],
-        &[],
-        &[],
-    );
-    let (controller, events) = controller_from_store_for_test(store);
-
-    start_login_sync_thread(controller.sync_context(), local);
-
-    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-    assert_eq!(status.last_error, None);
-    assert!(status.delta.is_empty());
-    assert_eq!(wait_for_status(&events), "Cached library ready");
-    let _cleanup = fs::remove_dir_all(root);
-}
-
-#[test]
-pub(in crate::controller) fn startup_login_sync_reuses_current_disk_cache() {
-    let (store, store_root) = disk_store_for_test("login-sync-disk-cache");
-    let local = local_source_saved();
-    let root = unique_test_dir("login-sync-disk-root");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    seed_cached_library(
-        &store,
-        &local,
-        &[local_album_with_image_ref(ImageRef::new(
-            "local:cover:file%3A%2F%2Flogin-sync-disk-cover",
-            None,
-        ))],
-        &[],
-        &[],
-    );
-    let (controller, events) = controller_from_store_for_test(store);
-
-    start_login_sync_thread(controller.sync_context(), local);
-
-    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-    assert_eq!(status.last_error, None);
-    assert!(status.delta.is_empty());
-    assert_eq!(wait_for_status(&events), "Cached library ready");
-    let _cleanup = fs::remove_dir_all(root);
-    let _cleanup = fs::remove_dir_all(store_root);
 }
 
 #[test]
@@ -819,59 +680,8 @@ pub(in crate::controller) fn startup_disk_store_waits_for_short_write_lock() {
         .expect("join writer")
         .expect("begin sync after lock release");
     assert_eq!(generation, 1);
-    let state = store
-        .with_store(|store| store.sync_state(&local.source.id))
-        .expect("sync state");
-    assert_eq!(state.status, "running");
-    assert_eq!(state.generation, generation);
+    assert_eq!(generation, 1);
     let _cleanup = fs::remove_dir_all(store_root);
-}
-#[test]
-pub(in crate::controller) fn startup_source_sync_running_emits_snapshot() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let remote = saved_source();
-    let local = local_source_saved();
-    let root = unique_test_dir("running-local-source-selection");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Source(remote.source.id.clone()));
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    store
-        .with_store(|store| {
-            store.save_source(&remote)?;
-            store.save_source(&local)?;
-            store.set_active_source(&remote.source.id)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
-                &local.source.id,
-                &[local_album_with_image_ref(ImageRef::new(
-                    "local:cover:file%3A%2F%2Fmissing-cover",
-                    None,
-                ))],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed local cache");
-    let (controller, events) = controller_from_store_for_test(store);
-    let _permit = controller
-        .sync_in_flight
-        .acquire(local.source.id.clone())
-        .expect("sync guard")
-        .expect("sync permit");
-
-    controller.select_source(LibrarySourceSelection::Local);
-
-    let snapshot = wait_for_snapshot(&events);
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Local)
-    );
-    assert_eq!(snapshot.cached_album_count, 1);
-    let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
 pub(in crate::controller) fn startup_track_deleted() {
@@ -909,13 +719,14 @@ pub(in crate::controller) fn startup_track_deleted() {
             .total,
         2
     );
-    let committed_generation = store
+    let (seed_generation, seed_revision) = store
         .with_store(|store| {
-            store
-                .sync_state(&local.source.id)
-                .map(|state| state.generation)
+            Ok((
+                store.begin_sync(&local.source.id)?,
+                store.source_cache_revision(&local.source.id)?,
+            ))
         })
-        .expect("committed generation");
+        .expect("begin manifest seed");
     let mut committed_manifest = store
         .with_store(|store| store.load_local_manifest(&local.source.id))
         .expect("committed manifest");
@@ -930,12 +741,50 @@ pub(in crate::controller) fn startup_track_deleted() {
         .collect::<Vec<_>>();
     store
         .with_store(|store| {
-            store.upsert_tracks(&local.source.id, &committed_tracks, committed_generation)?;
-            store.replace_local_manifest(
-                &local.source.id,
-                committed_generation,
-                &committed_manifest,
-            )
+            store.upsert_tracks(&local.source.id, &committed_tracks, seed_generation)?;
+            let current_album_ids = store
+                .load_albums(&local.source.id, 0, 100)?
+                .items
+                .into_iter()
+                .map(|album| album.id)
+                .collect();
+            let current_artist_ids = store
+                .load_artists(&local.source.id, false, 0, 100)?
+                .items
+                .into_iter()
+                .map(|artist| artist.id)
+                .collect();
+            let current_album_artist_ids = store
+                .load_artists(&local.source.id, true, 0, 100)?
+                .items
+                .into_iter()
+                .map(|artist| artist.id)
+                .collect();
+            let current_genre_ids = store
+                .load_genres(&local.source.id, 0, 100)?
+                .items
+                .into_iter()
+                .map(|genre| genre.id)
+                .collect();
+            store
+                .commit_local_library_delta(
+                    &local.source.id,
+                    seed_generation,
+                    seed_revision,
+                    true,
+                    library::LocalLibraryDelta {
+                        current_album_ids,
+                        current_artist_ids,
+                        current_album_artist_ids,
+                        current_genre_ids,
+                        manifest: library::LocalManifestDelta {
+                            upserted_entries: committed_manifest.clone(),
+                            ..library::LocalManifestDelta::default()
+                        },
+                        ..library::LocalLibraryDelta::default()
+                    },
+                )
+                .map(|_| ())
         })
         .expect("seed committed genres");
     fs::remove_file(&removed).expect("remove audio");
@@ -948,7 +797,7 @@ pub(in crate::controller) fn startup_track_deleted() {
         manifest,
     )
     .expect("warm local provider");
-    assert_eq!(warm.manifest_scan().retained_track_ids.len(), 1);
+    assert_eq!(warm.manifest_scan().entries.len(), 1);
     assert_eq!(warm.manifest_scan().deleted_track_ids.len(), 1);
 
     runtime
@@ -985,283 +834,7 @@ pub(in crate::controller) fn startup_track_deleted() {
 }
 
 #[test]
-pub(in crate::controller) fn startup_local_stress_multiplier_writes_playable_duplicates() {
-    let runtime = Runtime::new().expect("runtime");
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-stress-multiplier");
-    fs::create_dir_all(root.join("Album")).expect("create album dir");
-    let first = root.join("Album/First.mp3");
-    let second = root.join("Album/Second.mp3");
-    fs::write(&first, []).expect("first audio");
-    fs::write(&second, []).expect("second audio");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)
-        })
-        .expect("save local server");
-    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], local.source.clone())
-        .expect("local provider");
-
-    runtime
-        .block_on(sync_local_source_outcome_with_stress_multiplier(
-            &store,
-            &local.source.id,
-            &provider,
-            3,
-        ))
-        .expect("stress local sync");
-
-    let page = store
-        .with_store(|store| store.load_tracks(&local.source.id, 0, 20))
-        .expect("tracks");
-    assert_eq!(page.total, 6);
-    assert_eq!(page.items.len(), 6);
-    let stress_tracks = page
-        .items
-        .iter()
-        .filter(|track| track.id.as_str().starts_with("local:stress-track:"))
-        .collect::<Vec<_>>();
-    assert_eq!(stress_tracks.len(), 4);
-    let mut path_counts = HashMap::<String, usize>::new();
-    for track in &page.items {
-        let path = store
-            .with_store(|store| store.track_local_path(&local.source.id, &track.id))
-            .expect("local path")
-            .expect("playable local path");
-        *path_counts.entry(path).or_default() += 1;
-    }
-    assert_eq!(path_counts.len(), 2);
-    assert_eq!(path_counts[first.to_string_lossy().as_ref()], 3);
-    assert_eq!(path_counts[second.to_string_lossy().as_ref()], 3);
-    let albums = store
-        .with_store(|store| store.load_albums(&local.source.id, 0, 10))
-        .expect("albums");
-    assert_eq!(albums.total, 3);
-    assert_eq!(albums.items.len(), 3);
-    assert_eq!(
-        albums
-            .items
-            .iter()
-            .map(|album| usize::from(album.track_count))
-            .sum::<usize>(),
-        6
-    );
-    let stress_album = albums
-        .items
-        .iter()
-        .find(|album| album.id.as_str().starts_with("local:stress-album:"))
-        .expect("stress album");
-    assert_eq!(stress_album.track_count, 2);
-    let (_album, stress_album_tracks) = store
-        .with_store(|store| store.load_album_detail(&local.source.id, &stress_album.id))
-        .expect("stress album detail")
-        .expect("stress album exists");
-    assert_eq!(stress_album_tracks.len(), 2);
-    assert!(stress_album_tracks.iter().all(|track| {
-        track.album_id == stress_album.id && track.id.as_str().starts_with("local:stress-track:")
-    }));
-    for track in &stress_album_tracks {
-        let path = store
-            .with_store(|store| store.track_local_path(&local.source.id, &track.id))
-            .expect("stress album track local path")
-            .expect("stress album track playable local path");
-        assert!(path == first.to_string_lossy() || path == second.to_string_lossy());
-    }
-    let manifest = store
-        .with_store(|store| store.load_local_manifest(&local.source.id))
-        .expect("manifest");
-    assert_eq!(manifest.len(), 2);
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.source.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    let unchanged = runtime
-        .block_on(sync_local_source_outcome_with_stress_multiplier(
-            &store,
-            &local.source.id,
-            &warm,
-            3,
-        ))
-        .expect("warm stress local sync");
-    assert!(!unchanged.post_sync_work);
-    let warm_page = store
-        .with_store(|store| store.load_tracks(&local.source.id, 0, 20))
-        .expect("warm tracks");
-    assert_eq!(warm_page.total, 6);
-
-    runtime
-        .block_on(sync_local_source_outcome_with_stress_multiplier(
-            &store,
-            &local.source.id,
-            &warm,
-            1,
-        ))
-        .expect("unstress local sync");
-
-    let restored = store
-        .with_store(|store| store.load_tracks(&local.source.id, 0, 20))
-        .expect("restored tracks");
-    assert_eq!(restored.total, 2);
-    assert!(
-        restored
-            .items
-            .iter()
-            .all(|track| !track.id.as_str().starts_with("local:stress-track:"))
-    );
-    let restored_albums = store
-        .with_store(|store| store.load_albums(&local.source.id, 0, 10))
-        .expect("restored albums");
-    assert_eq!(restored_albums.total, 1);
-    assert_eq!(restored_albums.items[0].track_count, 2);
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_advance_generation() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-no-change-generation");
-    let album_dir = root.join("Artist").join("Album");
-    fs::create_dir_all(&album_dir).expect("create album dir");
-    fs::write(album_dir.join("cover.jpg"), [1_u8]).expect("cover");
-    fs::write(album_dir.join("Track.mp3"), []).expect("audio");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)
-        })
-        .expect("save local server");
-    let runtime = Runtime::new().expect("runtime");
-    let (events, _receiver) = channel();
-    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.source.clone())
-        .expect("cold local provider");
-    runtime
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &cold,
-            events.clone(),
-        ))
-        .expect("cold local sync");
-    let committed_generation = store
-        .with_store(|store| {
-            store
-                .sync_state(&local.source.id)
-                .map(|state| state.generation)
-        })
-        .expect("committed generation");
-    let mut manifest = store
-        .with_store(|store| store.load_local_manifest(&local.source.id))
-        .expect("manifest");
-    for entry in &mut manifest {
-        entry.track.genres = vec!["Example".to_string()];
-        entry.metadata_hash = format!("metadata:{}", entry.track.id.as_str());
-        entry.search_hash = format!("search:{}", entry.track.id.as_str());
-    }
-    let committed_tracks = manifest
-        .iter()
-        .map(|entry| entry.track.clone())
-        .collect::<Vec<_>>();
-    let committed_genres = [Genre {
-        id: GenreId::new("local:genre:example"),
-        name: "Example".to_string(),
-        album_count: 1,
-        track_count: 1,
-        duration_seconds: 180,
-        image_refs: Vec::new(),
-        image_ref: None,
-    }];
-    store
-        .with_store(|store| {
-            store.upsert_tracks(&local.source.id, &committed_tracks, committed_generation)?;
-            store.upsert_genres(&local.source.id, &committed_genres, committed_generation)?;
-            store.replace_local_manifest(&local.source.id, committed_generation, &manifest)?;
-            store.complete_sync(&local.source.id, committed_generation)?;
-            Ok(())
-        })
-        .expect("seed committed genre");
-    let cached_genres = store
-        .with_store(|store| store.load_genres(&local.source.id, 0, 10))
-        .expect("cached genres");
-    assert_eq!(cached_genres.total, 1);
-    assert!(
-        cached_genres.items[0].image_ref.is_some(),
-        "genre should have a derived collection cover ref"
-    );
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.source.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    assert!(!warm.manifest_scan().library_changed);
-
-    runtime
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &warm,
-            events,
-        ))
-        .expect("warm local sync");
-
-    let state = store
-        .with_store(|store| store.sync_state(&local.source.id))
-        .expect("sync state");
-    assert_eq!(state.status, "idle");
-    assert_eq!(state.generation, committed_generation + 1);
-    store
-        .with_store(|store| {
-            assert!(
-                store
-                    .load_raw_track_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            Ok(())
-        })
-        .expect("track refs repaired");
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_cached_local_status_reports_noop_and_delta() {
-    for changed in [false, true] {
-        let label = if changed {
-            "local-delta-snapshot"
-        } else {
-            "local-noop-status"
-        };
-        let (store, local, root, generation) = seed_cached_local_source(label);
-        if changed {
-            fs::write(root.join("Artist").join("Album").join("Second.mp3"), []).expect("audio");
-        }
-        let (controller, events) = controller_from_store_for_test(store);
-
-        controller.start_sync(local);
-
-        assert_eq!(wait_for_status(&events), "Syncing Local library...");
-        let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-        if changed {
-            assert!(!status.delta.tracks.added.is_empty(), "{label}");
-            assert_eq!(status.counts.tracks, 2, "{label}");
-        } else {
-            assert_eq!(status.last_error, None, "{label}");
-            assert!(status.delta.is_empty(), "{label}");
-            let state = controller
-                .store
-                .with_store(|store| store.sync_state(&status.source_id))
-                .expect("final sync state");
-            assert_eq!(state.generation, generation + 1, "{label}");
-        }
-        let _cleanup = fs::remove_dir_all(root);
-    }
-}
-#[test]
-pub(in crate::controller) fn local_sync_post_sync_work_matches_manifest_change() {
+pub(in crate::controller) fn local_sync_delta_matches_manifest_change() {
     for changed in [false, true] {
         let label = if changed {
             "local-changed-post-sync"
@@ -1283,283 +856,116 @@ pub(in crate::controller) fn local_sync_post_sync_work_matches_manifest_change()
         .expect("warm local provider");
         assert_eq!(warm.manifest_scan().library_changed, changed, "{label}");
         let runtime = Runtime::new().expect("runtime");
+        let revision = store
+            .with_store(|store| store.source_cache_revision(&local.source.id))
+            .expect("cache revision");
 
         let outcome = runtime
             .block_on(sync_local_source_outcome(&store, &local.source.id, &warm))
             .expect("local sync");
 
         assert_eq!(outcome.delta.is_empty(), !changed, "{label}");
-        assert_eq!(outcome.post_sync_work, changed, "{label}");
+        assert_eq!(
+            store
+                .with_store(|store| store.source_cache_revision(&local.source.id))
+                .expect("updated cache revision"),
+            revision + 1,
+            "{label}"
+        );
         let _cleanup = fs::remove_dir_all(root);
     }
 }
 
 #[test]
-pub(in crate::controller) fn startup_repairs_damaged_local_image_rows() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-image-row-repair");
-    let album_dir = root.join("Artist").join("Album");
-    fs::create_dir_all(&album_dir).expect("create album dir");
-    fs::write(album_dir.join("cover.jpg"), [1_u8]).expect("cover image");
-    fs::write(album_dir.join("Track.mp3"), []).expect("audio");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)
-        })
-        .expect("save local server");
-    let runtime = Runtime::new().expect("runtime");
-    let (events, _receiver) = channel();
-    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], local.source.clone())
-        .expect("cold local provider");
-    runtime
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &cold,
-            events.clone(),
-        ))
-        .expect("cold local sync");
-
-    let generation = store
-        .with_store(|store| {
-            store
-                .sync_state(&local.source.id)
-                .map(|state| state.generation)
-        })
-        .expect("sync state");
-    store
-        .with_store(|store| {
-            let mut tracks = store.load_tracks(&local.source.id, 0, 10)?.items;
-            for track in &mut tracks {
-                track.image_ref = None;
-            }
-            let mut albums = store.load_albums(&local.source.id, 0, 10)?.items;
-            for album in &mut albums {
-                album.image_ref = None;
-            }
-            let mut artists = store.load_artists(&local.source.id, false, 0, 10)?.items;
-            for artist in &mut artists {
-                artist.image_ref = None;
-            }
-            let mut album_artists = store.load_artists(&local.source.id, true, 0, 10)?.items;
-            for artist in &mut album_artists {
-                artist.image_ref = None;
-            }
-            store.update_local_track_image_refs(&local.source.id, &tracks, generation)?;
-            store.upsert_albums(&local.source.id, &albums, generation)?;
-            store.upsert_artists(&local.source.id, &artists, false, generation)?;
-            store.upsert_artists(&local.source.id, &album_artists, true, generation)
-        })
-        .expect("damage image rows");
-    store
-        .with_store(|store| {
-            assert!(
-                store
-                    .load_raw_track_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_raw_album_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, false)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, true)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            Ok(())
-        })
-        .expect("verify damaged rows");
-
+pub(in crate::controller) fn local_object_scope_ignores_unrelated_path_and_commits_audio() {
+    let (store, local, root, _generation) = seed_cached_local_source("local-object-scope");
     let manifest = store
         .with_store(|store| store.load_local_manifest(&local.source.id))
-        .expect("manifest");
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.source.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    assert!(!warm.manifest_scan().library_changed);
-    runtime
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &warm,
-            events,
-        ))
-        .expect("warm local sync");
-
-    store
-        .with_store(|store| {
-            assert!(
-                store
-                    .load_raw_track_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            assert!(
-                store
-                    .load_raw_album_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, false)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, true)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            Ok(())
+        .expect("cached manifest");
+    let roots: crate::sources::LocalRootsLoader = {
+        let root = root.clone();
+        Arc::new(move || vec![root.clone()])
+    };
+    let full_scan_used = Arc::new(AtomicBool::new(false));
+    let load: crate::sources::LocalLoader = {
+        let root = root.clone();
+        let identity = local.source.clone();
+        let full_scan_used = Arc::clone(&full_scan_used);
+        Arc::new(move |progress, cancellation| {
+            full_scan_used.store(true, Ordering::Relaxed);
+            LocalSource::from_roots_with_manifest_scan(
+                vec![root.clone()],
+                identity.clone(),
+                manifest.clone(),
+                progress,
+                || cancellation.is_cancelled(),
+            )
         })
-        .expect("verify repaired rows");
-    let _cleanup = fs::remove_dir_all(root);
-}
-
-#[test]
-pub(in crate::controller) fn startup_repairs_local_aggregates_from_retained_track_refs() {
-    let (store, local, root, generation) = seed_cached_local_source("local-retained-track-repair");
-    let retained_ref = ImageRef::new(
-        "local:cover:embedded%3A%2Fmusic%2Fretained-track.flac",
-        Some("retained-track".to_string()),
-    );
-    let mut manifest = store
-        .with_store(|store| store.load_local_manifest(&local.source.id))
-        .expect("manifest");
-    store
-        .with_store(|store| {
-            let mut tracks = store.load_tracks(&local.source.id, 0, 10)?.items;
-            for track in &mut tracks {
-                track.image_ref = Some(retained_ref.clone());
-            }
-            let track_refs = tracks
-                .iter()
-                .map(|track| (track.id.clone(), track.image_ref.clone()))
-                .collect::<HashMap<_, _>>();
-            for entry in &mut manifest {
-                entry.track.image_ref = track_refs.get(&entry.track.id).cloned().flatten();
-                entry.cover = None;
-            }
-            let mut albums = store.load_albums(&local.source.id, 0, 10)?.items;
-            for album in &mut albums {
-                album.image_ref = None;
-            }
-            let mut artists = store.load_artists(&local.source.id, false, 0, 10)?.items;
-            for artist in &mut artists {
-                artist.image_ref = None;
-            }
-            let mut album_artists = store.load_artists(&local.source.id, true, 0, 10)?.items;
-            for artist in &mut album_artists {
-                artist.image_ref = None;
-            }
-            store.update_local_track_image_refs(&local.source.id, &tracks, generation)?;
-            store.upsert_albums(&local.source.id, &albums, generation)?;
-            store.upsert_artists(&local.source.id, &artists, false, generation)?;
-            store.upsert_artists(&local.source.id, &album_artists, true, generation)?;
-            store.replace_local_manifest(&local.source.id, generation, &manifest)
-        })
-        .expect("damage aggregate rows");
-    store
-        .with_store(|store| {
-            assert!(
-                store
-                    .load_raw_track_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_some)
-            );
-            assert!(
-                store
-                    .load_raw_album_image_refs(&local.source.id)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, false)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_raw_artist_image_refs(&local.source.id, true)?
-                    .values()
-                    .all(Option::is_none)
-            );
-            assert!(
-                store
-                    .load_local_manifest(&local.source.id)?
-                    .iter()
-                    .all(|entry| entry.cover.is_none())
-            );
-            Ok(())
-        })
-        .expect("verify damaged retained track shape");
-
-    let warm = LocalSource::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.source.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    assert!(!warm.manifest_scan().library_changed);
+    };
+    let sync = local_sync_operation(local.source.id.clone(), local.source.clone(), load, roots);
     let runtime = Runtime::new().expect("runtime");
-    let (events, _receiver) = channel();
-    runtime
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &warm,
-            events,
-        ))
-        .expect("warm local sync");
+    let cancellation = library_sync::CancellationToken::new();
+    let mut progress = |_| {};
+    let revision = store
+        .with_store(|store| store.source_cache_revision(&local.source.id))
+        .expect("cache revision");
+    let unrelated = root.join("notes.txt");
+    fs::write(&unrelated, "not library data").expect("unrelated file");
+    let generation = store
+        .with_store(|store| store.begin_sync(&local.source.id))
+        .expect("begin unrelated object sync");
+    let scope = library_sync::ReconcileScope::objects(SourceObjectChanges::new([unrelated
+        .to_string_lossy()
+        .into_owned()]));
 
-    store
-        .with_store(|store| {
-            let album_refs = store.load_raw_album_image_refs(&local.source.id)?;
-            assert!(
-                album_refs
-                    .values()
-                    .all(|image_ref| image_ref.as_ref() == Some(&retained_ref))
-            );
-            let artist_refs = store.load_raw_artist_image_refs(&local.source.id, false)?;
-            assert!(
-                artist_refs
-                    .values()
-                    .all(|image_ref| image_ref.as_ref() == Some(&retained_ref))
-            );
-            let album_artist_refs = store.load_raw_artist_image_refs(&local.source.id, true)?;
-            assert!(
-                album_artist_refs
-                    .values()
-                    .all(|image_ref| image_ref.as_ref() == Some(&retained_ref))
-            );
-            assert!(
-                store
-                    .load_local_manifest(&local.source.id)?
-                    .iter()
-                    .all(|entry| entry.cover.is_some())
-            );
-            Ok(())
-        })
-        .expect("verify aggregate repair");
+    let ignored = sync(
+        &store,
+        &runtime,
+        &scope,
+        generation,
+        &mut progress,
+        &cancellation,
+    )
+    .expect("sync unrelated path");
+
+    assert_eq!(ignored, library_sync::SyncOutcome::Ignored);
+    assert!(!full_scan_used.load(Ordering::Relaxed));
+    assert_eq!(
+        store
+            .with_store(|store| store.source_cache_revision(&local.source.id))
+            .expect("unchanged cache revision"),
+        revision
+    );
+
+    let added = root.join("Artist").join("Album").join("Second.mp3");
+    fs::write(&added, []).expect("added audio");
+    let generation = store
+        .with_store(|store| store.begin_sync(&local.source.id))
+        .expect("begin audio object sync");
+    let scope = library_sync::ReconcileScope::objects(SourceObjectChanges::new([added
+        .to_string_lossy()
+        .into_owned()]));
+
+    let outcome = sync(
+        &store,
+        &runtime,
+        &scope,
+        generation,
+        &mut progress,
+        &cancellation,
+    )
+    .expect("sync changed path");
+    let library_sync::SyncOutcome::Committed(commit) = outcome else {
+        panic!("expected local commit");
+    };
+
+    assert!(!full_scan_used.load(Ordering::Relaxed));
+    assert_eq!(commit.delta.tracks.added.len(), 1);
+    let tracks = store
+        .with_store(|store| store.load_tracks(&local.source.id, 0, 10))
+        .expect("load local tracks");
+    assert_eq!(tracks.total, 2);
+    assert!(tracks.items.iter().any(|track| track.title == "Second"));
     let _cleanup = fs::remove_dir_all(root);
 }
 
@@ -1884,7 +1290,7 @@ pub(in crate::controller) fn startup_removing_cache() {
 }
 
 #[test]
-pub(in crate::controller) fn startup_record_state() {
+pub(in crate::controller) fn inactive_manual_sync_failure_keeps_the_active_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_source();
     let failing = SavedSource {
@@ -1905,40 +1311,25 @@ pub(in crate::controller) fn startup_record_state() {
             store.save_source(&failing)?;
             store.set_active_source(&remote.source.id)
         })
-        .expect("seed servers");
-    let (controller, _events) = controller_from_store_for_test(store);
-
-    controller.start_sync(failing.clone());
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let state = controller
-            .store
-            .with_store(|store| store.sync_state(&failing.source.id))
-            .expect("sync state");
-        if state.status == "error" {
-            assert_eq!(
-                state.last_error.as_deref(),
-                Some("Saved source type is no longer supported.")
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "inactive failed sync stayed {}",
-            state.status
-        );
-        thread::sleep(Duration::from_millis(25));
-    }
+        .expect("seed sources");
+    let (controller, events) = controller_from_store_for_test(store);
+    controller.request_manual_source_sync(failing.source.id.clone());
+    let running = wait_for_source_sync_change(&events, &failing.source.id);
+    assert_eq!(running.phase, library_sync::SyncPhase::Running);
+    assert!(running.manual);
+    let failed = wait_for_source_sync_change(&events, &failing.source.id);
+    assert_eq!(failed.epoch, running.epoch);
+    assert_eq!(failed.phase, library_sync::SyncPhase::Failed);
+    assert!(failed.manual);
     let active = controller
         .store
         .with_store(|store| store.active_source())
-        .expect("active server")
-        .expect("active server");
+        .expect("active source")
+        .expect("active source");
     assert_eq!(active.source.id, remote.source.id);
 }
 #[test]
-pub(in crate::controller) fn startup_cached_sync_error_uses_status() {
+pub(in crate::controller) fn failed_manual_sync_keeps_the_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_source();
     let album = remote_album_with_image_ref(ImageRef::new("album:one", Some("tag".to_string())));
@@ -1948,122 +1339,101 @@ pub(in crate::controller) fn startup_cached_sync_error_uses_status() {
         ImageRef::new("track:one", Some("tag".to_string())),
     );
     seed_cached_library(&store, &saved, &[album], &[track], &[]);
+    let revision = store
+        .with_store(|store| store.source_cache_revision(&saved.source.id))
+        .expect("cache revision");
+    let cached = store
+        .with_store(|store| store.load_tracks(&saved.source.id, 0, 10))
+        .expect("cached tracks");
     let (controller, events) = controller_from_store_for_test(store);
-
-    controller.start_sync(saved);
-
-    let status = wait_for_sync_status_without_snapshot(&events, "Action failed");
-    assert_eq!(status.sync_status, "Action failed");
+    *controller.active_source.write().expect("active source") = None;
+    controller.request_manual_source_sync(saved.source.id.clone());
+    let failure = wait_for_sync_failure(&events, &saved.source.id);
+    assert_eq!(failure, "No saved token found for the active server.");
     assert_eq!(
-        status.last_error.as_deref(),
-        Some("No saved token found for the active server.")
+        controller
+            .store
+            .with_store(|store| store.source_cache_revision(&saved.source.id))
+            .expect("final cache revision"),
+        revision
+    );
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_tracks(&saved.source.id, 0, 10))
+            .expect("final cached tracks"),
+        cached
     );
 }
 
-fn wait_for_sync_status_without_snapshot(
+fn wait_for_library_commit(
     events: &std::sync::mpsc::Receiver<ControllerEvent>,
-    expected_status: &str,
-) -> LibrarySyncStatus {
+    source_id: &SourceId,
+) -> Box<LibraryCommitUpdate> {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
             .expect("controller event")
         {
-            ControllerEvent::LibrarySyncStatus(status) if status.sync_status == expected_status => {
-                return *status;
+            ControllerEvent::LibraryCommitted(update) if update.commit.source_id == *source_id => {
+                return update;
             }
-            ControllerEvent::Snapshot(_) => panic!("cached same-source sync emitted snapshot"),
-            ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::SourceSelectionChanged { .. }
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::SearchLoaded { .. }
-            | ControllerEvent::SearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. }
-            | ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::FavoriteChangeFailed { error, .. } => {
-                panic!("favorite change failed: {error}");
+            ControllerEvent::SourceSyncChanged(state)
+                if state.source_id == *source_id
+                    && state.phase == library_sync::SyncPhase::Failed =>
+            {
+                panic!("source sync failed: {:?}", state.failure)
             }
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
+        }
+    }
+}
+fn wait_for_sync_failure(
+    events: &std::sync::mpsc::Receiver<ControllerEvent>,
+    source_id: &SourceId,
+) -> String {
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("controller event")
+        {
+            ControllerEvent::SourceSyncChanged(state)
+                if state.source_id == *source_id
+                    && state.phase == library_sync::SyncPhase::Failed =>
+            {
+                return state.failure.expect("typed sync failure");
+            }
+            ControllerEvent::LibraryCommitted(update) if update.commit.source_id == *source_id => {
+                panic!("source sync unexpectedly committed")
+            }
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
         }
     }
 }
 
-#[test]
-pub(in crate::controller) fn startup_persist_field() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let source_id = SourceId::new("server:editable");
-    controller
-        .store
-        .with_store(|store| {
-            store.save_source(&SavedSource {
-                source: SourceIdentity {
-                    id: source_id.clone(),
-                    kind: "jellyfin".to_string(),
-                    name: "Old name".to_string(),
-                    base_url: "http://old.example.test".to_string(),
-                },
-                user_id: "user-id".to_string(),
-                username: "listener".to_string(),
-                trust_invalid_cert: false,
-                use_jellyfin_instant_mix: false,
-            })?;
-            store.set_active_source(&source_id)
-        })
-        .expect("save server");
-    controller
-        .secrets
-        .save_token(&source_id, "test-token")
-        .expect("save token");
-    crate::sources::update_jellyfin_settings(
-        &controller,
-        crate::sources::JellyfinSettingsInput {
-            credentials: crate::sources::CredentialSettingsInput {
-                source_id: source_id.clone(),
-                name: "Edited server".to_string(),
-                base_url: "http://old.example.test".to_string(),
-                username: "listener".to_string(),
-                password: String::new(),
-                trust_invalid_cert: true,
-            },
-            use_instant_mix: false,
-        },
-    );
-    assert_eq!(wait_for_status(&events), "Source settings saved.");
-    let snapshot = wait_for_snapshot(&events);
-    let edited = snapshot
-        .sources
-        .iter()
-        .find(|server| server.id == source_id)
-        .expect("edited server");
-    assert_eq!(edited.name, "Edited server");
-    assert_eq!(edited.base_url, "http://old.example.test");
-    let saved = controller
-        .store
-        .with_store(|store| store.list_sources())
-        .expect("load saved servers")
-        .into_iter()
-        .find(|saved| saved.source.id == source_id)
-        .expect("edited saved server");
-    assert!(saved.trust_invalid_cert);
+fn wait_for_source_sync_change(
+    events: &std::sync::mpsc::Receiver<ControllerEvent>,
+    source_id: &SourceId,
+) -> library_sync::SourceSyncChanged {
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("controller event")
+        {
+            ControllerEvent::SourceSyncChanged(state) if state.source_id == *source_id => {
+                return state;
+            }
+            ControllerEvent::LibraryCommitted(update) if update.commit.source_id == *source_id => {
+                panic!("source sync unexpectedly committed")
+            }
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
+        }
+    }
 }
+
 #[test]
 pub(in crate::controller) fn startup_emit_status() {
     let (controller, events, _snapshot, _queue, _player) =
@@ -2106,623 +1476,24 @@ pub(in crate::controller) fn startup_emit_status() {
         },
     );
 
-    assert_eq!(wait_for_status(&events), "No changes to save.");
+    assert_eq!(wait_for_notice(&events), SourceNotice::NoChanges);
 }
 #[test]
-pub(in crate::controller) fn startup_sync_total() {
-    assert!(!sync_page_finished(500, 0, 500));
-    assert!(sync_page_finished(120, 0, 620));
-    assert!(!sync_page_finished(120, 1_000, 620));
-    assert!(sync_page_finished(500, 1_000, 1_000));
-}
-struct AlbumPageProvider {
-    identity: SourceIdentity,
-    album: Album,
-    cancel_after_fetch: Option<CancellationToken>,
-}
-
-impl AlbumPageProvider {
-    fn cancelling(cancellation: CancellationToken) -> Self {
-        Self {
-            identity: SourceIdentity {
-                id: SourceId::new("test:server:cancel"),
-                kind: "test".to_string(),
-                name: "Cancel Test".to_string(),
-                base_url: "http://cancel.example.test".to_string(),
-            },
-            album: remote_album_with_image_ref(ImageRef::new("test:cover:one", None)),
-            cancel_after_fetch: Some(cancellation),
-        }
-    }
-
-    fn observing(identity: SourceIdentity, album: Album) -> Self {
-        Self {
-            identity,
-            album,
-            cancel_after_fetch: None,
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl MusicSource for AlbumPageProvider {
-    fn identity(&self) -> &SourceIdentity {
-        &self.identity
-    }
-
-    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
-        Ok(Vec::new())
-    }
-
-    async fn albums(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
-        if let Some(cancellation) = &self.cancel_after_fetch {
-            cancellation.cancel();
-        }
-        Ok(PagedResponse::new(vec![self.album.clone()], 1))
-    }
-
-    async fn album_detail(&self, _album_id: &AlbumId) -> SourceResult<AlbumDetail> {
-        Err(SourceError::NotFound)
-    }
-
-    async fn tracks(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
-        if self.cancel_after_fetch.is_some() {
-            Err(SourceError::Other(
-                "tracks fetched after cancellation".to_string(),
-            ))
-        } else {
-            Ok(PagedResponse::new(Vec::new(), 0))
-        }
-    }
-
-    async fn artists(&self, _request: PagedRequest) -> SourceResult<PagedResponse<domain::Artist>> {
-        Ok(PagedResponse::new(Vec::new(), 0))
-    }
-
-    async fn album_artists(
-        &self,
-        _request: PagedRequest,
-    ) -> SourceResult<PagedResponse<domain::Artist>> {
-        Ok(PagedResponse::new(Vec::new(), 0))
-    }
-
-    async fn genres(&self, _request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
-        Ok(PagedResponse::new(Vec::new(), 0))
-    }
-
-    async fn genre_detail(&self, _genre_id: &GenreId) -> SourceResult<GenreDetail> {
-        Err(SourceError::NotFound)
-    }
-
-    async fn track(&self, _track_id: &TrackId) -> SourceResult<Track> {
-        Err(SourceError::NotFound)
-    }
-
-    async fn search(&self, _query: &str) -> SourceResult<SearchResults> {
-        Err(SourceError::InvalidRequest("unused album page search"))
-    }
-}
-
-#[test]
-pub(in crate::controller) fn startup_sync_cancel_skips_fetched_page_write() {
-    let runtime = Runtime::new().expect("runtime");
-    let store = StoreHandle::open_memory().expect("memory store");
-    let cancellation = CancellationToken::new();
-    let provider = AlbumPageProvider::cancelling(cancellation.clone());
-    let source_id = provider.identity().id.clone();
-    store
-        .with_store(|store| {
-            store.save_source(&SavedSource {
-                source: provider.identity().clone(),
-                user_id: "cancel-user".to_string(),
-                username: "listener".to_string(),
-                trust_invalid_cert: false,
-                use_jellyfin_instant_mix: false,
-            })?;
-            store.set_active_source(&source_id)
-        })
-        .expect("save server");
-
-    let error = runtime
-        .block_on(sync_source_outcome_with_cancellation(
-            &store,
-            &source_id,
-            &provider,
-            &cancellation,
-        ))
-        .expect_err("sync should cancel");
-
-    assert_eq!(error, "Sync cancelled.");
-    let albums = store
-        .with_store(|store| store.load_albums(&source_id, 0, 10))
-        .expect("load albums");
-    assert_eq!(albums.total, 0);
-}
-#[test]
-pub(in crate::controller) fn startup_local_sync_reports_finalization() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-sync-finalization-status");
-    let album_dir = root.join("Artist").join("Album");
-    fs::create_dir_all(&album_dir).expect("create album directory");
-    fs::write(album_dir.join("Track.mp3"), []).expect("create audio file");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)
-        })
-        .expect("save local source");
-    let source = LocalSource::from_roots_with_identity(vec![root.clone()], local.source.clone())
-        .expect("local source");
-    let (events, receiver) = channel();
-
-    Runtime::new()
-        .expect("runtime")
-        .block_on(sync_local_source_with_events(
-            &store,
-            &local.source.id,
-            &source,
-            events,
-        ))
-        .expect("sync local source");
-
-    let statuses = receiver.try_iter().filter_map(|event| match event {
-        ControllerEvent::LoginStatus(status) => Some(status),
-        _ => None,
-    });
-    let statuses = statuses.collect::<Vec<_>>();
-    assert!(
-        statuses
-            .iter()
-            .any(|status| status.contains("Finalizing cache") && status.contains("elapsed"))
-    );
-    assert!(
-        statuses
-            .iter()
-            .any(|status| status.contains("Library cache ready"))
-    );
-    let _cleanup = fs::remove_dir_all(root);
-}
-
-#[test]
-pub(in crate::controller) fn startup_cache_total() {
-    let (events, receiver) = channel();
-    let mut progress =
-        SyncProgressReporter::new(Some(events), "Local Music".to_string(), "Local".to_string());
-
-    progress.page_written(SyncPageProgress {
-        collection: SyncCollection::Tracks,
-        page_number: 2,
-        fetched: 620,
-        written: 620,
-        total: None,
-        finished: true,
-        fetch_elapsed: Duration::from_millis(25),
-        write_elapsed: Duration::from_millis(10),
-    });
-
-    let status = wait_for_status(&receiver);
-    assert!(status.contains("Cached tracks page 2 for Local Music"));
-    assert!(!status.contains("Local Music (Local)"));
-    assert!(status.contains("620 cached"));
-    assert!(!status.contains("fetched"));
-    assert!(!status.contains("620/"));
-}
-
-#[test]
-pub(in crate::controller) fn startup_progress_reporter_can_be_silent() {
-    let (events, receiver) = channel();
-    let mut progress =
-        SyncProgressReporter::new(Some(events), "Music".to_string(), "Jellyfin".to_string());
-    progress.page_written(SyncPageProgress {
-        collection: SyncCollection::Albums,
-        page_number: 1,
-        fetched: 10,
-        written: 10,
-        total: Some(10),
-        finished: true,
-        fetch_elapsed: Duration::from_millis(5),
-        write_elapsed: Duration::from_millis(5),
-    });
-    assert!(wait_for_status(&receiver).contains("Cached albums page 1/1"));
-
-    let (_events, receiver) = channel::<ControllerEvent>();
-    let mut silent = SyncProgressReporter::new(None, "Music".to_string(), "Jellyfin".to_string());
-    silent.page_written(SyncPageProgress {
-        collection: SyncCollection::Albums,
-        page_number: 1,
-        fetched: 10,
-        written: 10,
-        total: Some(10),
-        finished: true,
-        fetch_elapsed: Duration::from_millis(5),
-        write_elapsed: Duration::from_millis(5),
-    });
-    assert!(receiver.try_iter().next().is_none());
-}
-
-#[test]
-pub(in crate::controller) fn startup_background_sync_mutes_running_status() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = saved_source();
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)
-        })
-        .expect("save active source");
-    let (controller, events) = controller_from_store_for_test(store);
-    let _permit = controller
-        .sync_in_flight
-        .acquire(saved.source.id.clone())
-        .expect("sync guard")
-        .expect("sync permit");
-
-    start_background_sync_thread(controller.sync_context(), saved);
-
-    events.try_recv().expect_err("background sync stays silent");
-}
-
-#[test]
-pub(in crate::controller) fn startup_local_cache() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fexample-cover", None);
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
-                &local.source.id,
-                &[local_album_with_image_ref(image_ref.clone())],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed local cache");
-
-    let active = active_source_for_test(&store, &local);
-    assert!(initial_cover_cache_required(&store, &active));
-    assert!(!active_source_needs_sync(&store, &active));
-    let readiness = active_source_readiness(&store, &active).expect("readiness");
-    assert!(!readiness.artwork_fresh);
-    assert_eq!(
-        readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::ArtworkMissing)
-    );
-}
-#[test]
-pub(in crate::controller) fn startup_readiness_cache() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fmissing-startup-cover", None);
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
-                &local.source.id,
-                &[local_album_with_image_ref(image_ref)],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed local cache");
-
-    let active = active_source_for_test(&store, &local);
-    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
-
-    assert!(readiness.metadata_fresh);
-    assert!(!readiness.artwork_fresh);
-    assert_eq!(
-        readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::ArtworkMissing)
-    );
-    assert_eq!(readiness.startup_delay_ms, None);
-}
-#[test]
-pub(in crate::controller) fn warm_cache_schedule() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-warm-manifest-refresh");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
-                &local.source.id,
-                &[local_album_with_image_ref(ImageRef::new(
-                    "local:cover:file%3A%2F%2Fwarm-cover",
-                    None,
-                ))],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed local cache");
-
-    let active = active_source_for_test(&store, &local);
-    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
-
-    assert_eq!(readiness.sync_required_reason, None);
-    assert_eq!(readiness.startup_delay_ms, None);
-    assert!(readiness.metadata_fresh);
-    assert!(!readiness.artwork_fresh);
-    assert_eq!(
-        readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::ArtworkMissing)
-    );
-    assert!(!active_source_needs_sync(&store, &active));
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn empty_cache_schedule() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-empty-manifest-refresh");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed empty local cache");
-
-    let active = active_source_for_test(&store, &local);
-    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
-
-    assert_eq!(
-        readiness.sync_required_reason,
-        Some(SyncRequiredReason::EmptyCache)
-    );
-    assert_eq!(readiness.startup_delay_ms, Some(500));
-    assert!(!readiness.metadata_fresh);
-    assert!(readiness.artwork_fresh);
-    assert!(active_source_needs_sync(&store, &active));
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_local_refresh() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
-                &local.source.id,
-                &[local_album_with_image_ref(ImageRef::new(
-                    "local:cover:file%3A%2F%2Fwarm-cover",
-                    None,
-                ))],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("seed local cache");
-
-    let active = active_source_for_test(&store, &local);
-    let readiness = active_source_startup_readiness(&store, &active).expect("readiness");
-
-    assert_eq!(readiness.sync_required_reason, None);
-    assert_eq!(readiness.startup_delay_ms, None);
-    assert!(!active_source_needs_sync(&store, &active));
-}
-#[test]
-pub(in crate::controller) fn startup_local_exists() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fcached-cover", None);
-    let album = local_album_with_image_ref(image_ref.clone());
-    let stale_track = local_track_with_image_ref(
-        1,
-        &album,
-        ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fstale.flac", None),
-    );
-    let root = unique_test_dir("local-cover-cache-ready");
-    fs::create_dir_all(&root).expect("create cache dir");
-    let cover_path = root.join("cover.jpg");
-    fs::write(&cover_path, [0xff_u8, 0xd8, 0xff, 0xd9]).expect("write cover file");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, &[stale_track], generation)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                source_id: local.source.id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: IMAGE_TAG_UNTAGGED.to_string(),
-                size: 256,
-                path: cover_path.to_string_lossy().to_string(),
-            })?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("save local server");
-
-    let active = active_source_for_test(&store, &local);
-    assert!(!initial_cover_cache_required(&store, &active));
-    assert!(!active_source_needs_sync(&store, &active));
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_local_artwork() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fthumbnail-only-cover", None);
-    let album = local_album_with_image_ref(image_ref.clone());
-    let root = unique_test_dir("local-thumbnail-only-cover-cache");
-    fs::create_dir_all(&root).expect("create cache dir");
-    let cover_path = root.join("cover.jpg");
-    fs::write(&cover_path, [0xff_u8, 0xd8, 0xff, 0xd9]).expect("write cover file");
-    store
-        .with_store(|store| {
-            store.save_source(&local)?;
-            let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                source_id: local.source.id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: IMAGE_TAG_UNTAGGED.to_string(),
-                size: 96,
-                path: cover_path.to_string_lossy().to_string(),
-            })?;
-            store.complete_sync(&local.source.id, generation)
-        })
-        .expect("save local server");
-
-    let active = active_source_for_test(&store, &local);
-    assert!(initial_cover_cache_required(&store, &active));
-    assert!(!active_source_needs_sync(&store, &active));
-    let readiness = active_source_readiness(&store, &active).expect("readiness");
-    assert!(!readiness.artwork_fresh);
-    assert_eq!(
-        readiness.prefetch_required_reason,
-        Some(SyncRequiredReason::ArtworkMissing)
-    );
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn stale_remote_cache_requests_activation_sync_fallback() {
-    let (store, root) = disk_store_for_test("remote-stale-activation");
-    let saved = saved_source();
-    let track = library_track(1, Some(ArtistId::fake(1)), AlbumId::fake(1), "Artist", &[]);
-    seed_cached_library(&store, &saved, &[], &[track], &[]);
-    let database_path = disk_store_database_path(&store);
-    Connection::open(database_path)
-        .expect("open cache db")
-        .execute(
-            "
-            UPDATE sync_state
-            SET last_completed_at = datetime('now', '-25 hours')
-            WHERE source_id = ?1
-            ",
-            [saved.source.id.as_str()],
-        )
-        .expect("age sync state");
-
-    let active = active_source_for_test(&store, &saved);
-    let readiness = active_source_readiness(&store, &active).expect("readiness");
-
-    assert_eq!(
-        readiness.sync_required_reason,
-        Some(SyncRequiredReason::CacheStale)
-    );
-    assert!(active_source_needs_sync(&store, &active));
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn ready_subsonic_remotes_schedule_active_reconciliation() {
-    for provider in ["subsonic", "navidrome"] {
-        let store = StoreHandle::open_memory().expect("memory store");
-        let mut saved = saved_source();
-        saved.source.kind = provider.to_string();
-        saved.source.id = SourceId::new(format!("{provider}:server:ready"));
-        let album = library_album(1, "Artist", "Album", None);
-        let track = library_track(1, Some(ArtistId::fake(1)), album.id.clone(), "Artist", &[]);
-        seed_cached_library(&store, &saved, &[album], &[track], &[]);
-        let (controller, _events) = controller_from_store_for_test(store);
-        controller
-            .secrets
-            .save_token(&saved.source.id, "test-salt:test-token")
-            .expect("save token");
-        let active = crate::sources::activate_configured_source(
-            &controller.store,
-            &controller.secrets,
-            &saved,
-        )
-        .expect("activate source");
-        *controller.active_source.write().expect("active source") = Some(Arc::clone(&active));
-
-        assert!(!active_source_needs_sync(&controller.store, &active));
-        assert_eq!(
-            controller.startup_sync_delay_ms(),
-            Some(2_000),
-            "{provider}"
-        );
-    }
-}
-#[test]
-pub(in crate::controller) fn stale_local_cache_requests_activation_sync_fallback() {
-    let (store, cache_root) = disk_store_for_test("local-stale-activation");
-    let local = local_source_saved();
-    let root = unique_test_dir("local-stale-activation-root");
-    fs::create_dir_all(&root).expect("create root");
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    settings.sources.local_folders = vec![LocalLibraryFolder {
-        path: root.to_string_lossy().into_owned(),
-    }];
-    store.save_settings(&settings).expect("save settings");
-    let album = local_album_with_image_ref(ImageRef::new(
-        "local:cover:file%3A%2F%2Fstale-local-cover",
-        None,
-    ));
-    let track = local_track_with_image_ref(
-        1,
-        &album,
-        ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
-    );
-    seed_cached_library(&store, &local, &[album], &[track], &[]);
-    let database_path = disk_store_database_path(&store);
-    Connection::open(database_path)
-        .expect("open cache db")
-        .execute(
-            "
-            UPDATE sync_state
-            SET last_completed_at = datetime('now', '-25 hours')
-            WHERE source_id = ?1
-            ",
-            [local.source.id.as_str()],
-        )
-        .expect("age sync state");
-
-    let active = active_source_for_test(&store, &local);
-    let readiness = active_source_readiness(&store, &active).expect("readiness");
-
-    assert_eq!(
-        readiness.sync_required_reason,
-        Some(SyncRequiredReason::FullRefresh)
-    );
-    assert!(active_source_needs_sync(&store, &active));
-    let (controller, _events) = controller_from_store_for_test(store);
-    *controller.active_source.write().expect("active source") = Some(active);
-    assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
-    let _cleanup_cache = fs::remove_dir_all(cache_root);
-    let _cleanup_music = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn active_local_reconciliation_updates_manifest_delta() {
-    let (store, _local, root, _generation) =
-        seed_cached_local_source("local-active-reconciliation");
+pub(in crate::controller) fn active_local_sync_updates_manifest_delta() {
+    let (store, local, root, _generation) = seed_cached_local_source("local-active-sync");
     let album_dir = root.join("Artist").join("Album");
     fs::write(album_dir.join("Second.mp3"), []).expect("audio");
     let (controller, events) = controller_from_store_for_test(store);
-
-    controller.start_background_sync_for_active();
-
-    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-    assert!(!status.delta.tracks.added.is_empty());
-    assert_eq!(status.counts.tracks, 2);
+    controller.request_manual_source_sync(local.source.id.clone());
+    let update = wait_for_library_commit(&events, &local.source.id);
+    assert!(!update.commit.delta.tracks.added.is_empty());
+    let Some(Ok(LibraryCommitProjection::Current { counts, .. })) = update.projection else {
+        panic!("expected current library projection")
+    };
+    assert_eq!(counts.tracks, 2);
     let tracks = controller
         .store
-        .with_store(|store| store.load_tracks(&status.source_id, 0, 10))
+        .with_store(|store| store.load_tracks(&local.source.id, 0, 10))
         .expect("load local tracks")
         .items;
     assert_eq!(tracks.len(), 2);
@@ -3140,7 +1911,7 @@ pub(in crate::controller) fn sync_refreshes_queue() {
     *controller.queue.lock().expect("queue") = Some(queue);
     controller.sync_playback_snapshot_from_queue();
 
-    super::refresh_queue_refs(&controller.sync_context(), &local);
+    super::refresh_queue_refs(&controller, &local);
 
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&new_image_ref));
@@ -3196,7 +1967,7 @@ pub(in crate::controller) fn startup_change_progress() {
         .expect("queue")
         .set_progress_seconds(17);
 
-    super::snapshot_queue_refs(&controller.sync_context(), &local, original_snapshot);
+    super::snapshot_queue_refs(&controller, &local, original_snapshot);
 
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.progress_seconds, 17);
@@ -3224,21 +1995,20 @@ pub(in crate::controller) fn snapshot_discards_image() {
             store.save_source(&remote)?;
             store.set_active_source(&remote.source.id)?;
             let generation = store.begin_sync(&remote.source.id)?;
-            store.upsert_albums(
+            commit_cached_library(
+                store,
                 &remote.source.id,
-                std::slice::from_ref(&remote_album),
                 generation,
-            )?;
-            store.upsert_home_sections(
-                &remote.source.id,
-                &[HomeSection {
-                    kind: HomeSectionKind::Explore,
-                    albums: vec![remote_album],
-                    tracks: Vec::new(),
-                }],
-                generation,
-            )?;
-            store.complete_sync(&remote.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![remote_album.clone()],
+                    home_sections: vec![HomeSection {
+                        kind: HomeSectionKind::Explore,
+                        albums: vec![remote_album],
+                        tracks: Vec::new(),
+                    }],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed remote cache");
 
@@ -3263,21 +2033,20 @@ pub(in crate::controller) fn snapshot_discards_external() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&local_album),
                 generation,
-            )?;
-            store.upsert_home_sections(
-                &local.source.id,
-                &[HomeSection {
-                    kind: HomeSectionKind::Explore,
-                    albums: vec![local_album],
-                    tracks: Vec::new(),
-                }],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![local_album.clone()],
+                    home_sections: vec![HomeSection {
+                        kind: HomeSectionKind::Explore,
+                        albums: vec![local_album],
+                        tracks: Vec::new(),
+                    }],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -3307,21 +2076,20 @@ pub(in crate::controller) fn snapshot_keeps_cached_external_art_in_private_mode(
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&local_album),
                 generation,
-            )?;
-            store.upsert_home_sections(
-                &local.source.id,
-                &[HomeSection {
-                    kind: HomeSectionKind::Explore,
-                    albums: vec![local_album],
-                    tracks: Vec::new(),
-                }],
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![local_album.clone()],
+                    home_sections: vec![HomeSection {
+                        kind: HomeSectionKind::Explore,
+                        albums: vec![local_album],
+                        tracks: Vec::new(),
+                    }],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -3444,21 +2212,18 @@ pub(in crate::controller) fn local_artist_grids_use_detail_selected_mbid_fallbac
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_artists(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&artist),
-                false,
                 generation,
-            )?;
-            store.upsert_artists(
-                &local.source.id,
-                std::slice::from_ref(&artist),
-                true,
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    tracks: vec![track.clone()],
+                    artists: vec![artist.clone()],
+                    album_artists: vec![artist],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let expected = external_metadata::external_album_identity_image_ref(&album)
@@ -3492,93 +2257,6 @@ pub(in crate::controller) fn local_artist_grids_use_detail_selected_mbid_fallbac
 }
 
 #[test]
-pub(in crate::controller) fn startup_repairs_cached_remote_artist_art_before_reads() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = saved_source();
-    let artist_id = ArtistId::new("jellyfin:artist:one");
-    let album_ref = ImageRef::new("jellyfin:album:one", Some("album-tag".to_string()));
-    let mut album = remote_album_with_image_ref(album_ref.clone());
-    album.artist_id = Some(artist_id.clone());
-    album.artist = "Example Artist".to_string();
-    let mut track = library_track(
-        1,
-        Some(artist_id.clone()),
-        album.id.clone(),
-        "Example Artist",
-        &[],
-    );
-    track.id = TrackId::new("jellyfin:track:one");
-    track.album = album.title.clone();
-    let artist = domain::Artist {
-        id: artist_id.clone(),
-        name: "Example Artist".to_string(),
-        album_count: 1,
-        track_count: 1,
-        favorite: false,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        musicbrainz_artist_id: None,
-        image_ref: None,
-    };
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&artist),
-                false,
-                generation,
-            )?;
-            store.upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&artist),
-                true,
-                generation,
-            )?;
-            store.complete_sync(&saved.source.id, generation)?;
-            store.upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&artist),
-                false,
-                generation,
-            )?;
-            store.upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&artist),
-                true,
-                generation,
-            )
-        })
-        .expect("seed stale remote artist cache");
-
-    let snapshot = load_snapshot(&store).expect("startup snapshot");
-    let snapshot_artist = snapshot
-        .artists
-        .iter()
-        .find(|artist| artist.id == artist_id)
-        .expect("snapshot artist");
-    let snapshot_album_artist = snapshot
-        .album_artists
-        .iter()
-        .find(|artist| artist.id == artist_id)
-        .expect("snapshot album artist");
-    assert_eq!(snapshot_artist.image_ref.as_ref(), Some(&album_ref));
-    assert_eq!(snapshot_album_artist.image_ref.as_ref(), Some(&album_ref));
-
-    let (controller, _events) = controller_from_store_for_test(store);
-    let detail = controller
-        .cached_artist_detail(&artist_id)
-        .expect("artist detail")
-        .expect("artist detail row");
-    assert_eq!(detail.artist.image_ref.as_ref(), Some(&album_ref));
-}
-
-#[test]
 pub(in crate::controller) fn local_genre_grid_uses_cached_mbid_album_fallback_art() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
@@ -3601,13 +2279,6 @@ pub(in crate::controller) fn local_genre_grid_uses_cached_mbid_album_fallback_ar
     };
     settings.sources.selected = Some(LibrarySourceSelection::Local);
     store.save_settings(&settings).expect("save settings");
-    seed_cached_library(
-        &store,
-        &local,
-        std::slice::from_ref(&album),
-        std::slice::from_ref(&track),
-        &[],
-    );
     let genre = Genre {
         id: GenreId::new("local:genre:example"),
         name: "Example Genre".to_string(),
@@ -3619,15 +2290,22 @@ pub(in crate::controller) fn local_genre_grid_uses_cached_mbid_album_fallback_ar
     };
     store
         .with_store(|store| {
-            let generation = store
-                .sync_state(&local.source.id)
-                .map(|state| state.generation)?;
-            store.upsert_genres(&local.source.id, std::slice::from_ref(&genre), generation)
+            store.save_source(&local)?;
+            store.set_active_source(&local.source.id)?;
+            let generation = store.begin_sync(&local.source.id)?;
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    tracks: vec![track],
+                    genres: vec![genre],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
-        .expect("seed genre");
-    store
-        .with_store(|store| store.refresh_library_counts(&local.source.id))
-        .expect("refresh genre projection");
+        .expect("seed genre cache");
     let expected = external_metadata::external_album_identity_image_ref(&album)
         .expect("external release-group ref");
     let root = unique_test_dir("genre-mbid-cover-cache");
@@ -3728,15 +2406,17 @@ pub(in crate::controller) fn album_artist_grid_uses_track_album_fallback_art() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_artists(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&album_artist),
-                true,
                 generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    album_artists: vec![album_artist],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let (controller, _events) = controller_from_store_for_test(store);
@@ -3746,87 +2426,11 @@ pub(in crate::controller) fn album_artist_grid_uses_track_album_fallback_art() {
         .expect("cached album artists")
         .items;
 
-    assert_eq!(artists.len(), 1);
-    assert_eq!(artists[0].image_ref.as_ref(), Some(&fallback_ref));
-}
-
-#[test]
-pub(in crate::controller) fn album_artist_grid_bridges_source_duplicate_artist_ids_for_art() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new("remote:server:source-ids"),
-            kind: "subsonic".to_string(),
-            name: "Remote Library".to_string(),
-            base_url: "https://library.example.test".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "listener".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
-    let fallback_ref = ImageRef::new(
-        "remote:album:source-linked-album",
-        Some("source-tag".to_string()),
-    );
-    let route_artist_id = ArtistId::new("remote:artist:route-row");
-    let linked_artist_id = ArtistId::new("remote:artist:linked-row");
-    let mut album = local_album_with_image_ref(fallback_ref.clone());
-    album.id = AlbumId::new("remote:album:source-linked-album");
-    album.title = "Linked Album".to_string();
-    album.artist = "Source Artist".to_string();
-    album.artist_id = Some(linked_artist_id.clone());
-    album.album_artist_credits = vec![ArtistCredit {
-        id: linked_artist_id,
-        name: "Source Artist".to_string(),
-        musicbrainz_artist_id: None,
-    }];
-    let album_artist = domain::Artist {
-        id: route_artist_id.clone(),
-        name: "Source Artist".to_string(),
-        album_count: 1,
-        track_count: 1,
-        favorite: false,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        musicbrainz_artist_id: None,
-        image_ref: None,
-    };
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&album_artist),
-                true,
-                generation,
-            )?;
-            store.complete_sync(&saved.source.id, generation)
-        })
-        .expect("seed remote cache");
-    let raw_refs = store
-        .with_store(|store| store.load_raw_artist_image_refs(&saved.source.id, true))
-        .expect("raw album artist refs");
-    let raw_ref = raw_refs
-        .get(&route_artist_id)
-        .expect("raw album artist row")
-        .as_ref()
-        .expect("bound album artist ref")
-        .clone();
-    assert_eq!(raw_ref, fallback_ref);
-    let (controller, _events) = controller_from_store_for_test(store);
-
-    let artists = controller
-        .cached_artists_page(true, 0, 10)
-        .expect("cached album artists")
-        .items;
-
-    assert_eq!(artists.len(), 1);
-    assert_eq!(artists[0].image_ref.as_ref(), Some(&fallback_ref));
+    let guest = artists
+        .iter()
+        .find(|artist| artist.name == "Guest Artist")
+        .expect("guest album artist");
+    assert_eq!(guest.image_ref.as_ref(), Some(&fallback_ref));
 }
 
 #[test]
@@ -3866,17 +2470,28 @@ pub(in crate::controller) fn album_projection_binds_track_fallback_art_before_ro
             store.save_source(&saved)?;
             store.set_active_source(&saved.source.id)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&saved.source.id, generation)
+            commit_cached_library(
+                store,
+                &saved.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    tracks: vec![track],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed remote cache");
 
     let raw_refs = store
         .with_store(|store| store.load_raw_album_image_refs(&saved.source.id))
         .expect("raw album refs");
+    let selected = store
+        .with_store(|store| store.load_albums(&saved.source.id, 0, 10))
+        .expect("selected albums");
 
-    assert_eq!(raw_refs.get(&album.id), Some(&Some(fallback_ref)));
+    assert_eq!(raw_refs.get(&album.id), Some(&None));
+    assert_eq!(selected.items[0].image_ref.as_ref(), Some(&fallback_ref));
 }
 
 #[test]
@@ -3926,10 +2541,17 @@ pub(in crate::controller) fn genre_projection_uses_bound_album_track_fallback_ar
             store.save_source(&saved)?;
             store.set_active_source(&saved.source.id)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_genres(&saved.source.id, std::slice::from_ref(&genre), generation)?;
-            store.complete_sync(&saved.source.id, generation)
+            commit_cached_library(
+                store,
+                &saved.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    genres: vec![genre],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed remote cache");
 
@@ -3979,17 +2601,28 @@ pub(in crate::controller) fn track_projection_binds_album_fallback_art_before_ro
             store.save_source(&saved)?;
             store.set_active_source(&saved.source.id)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&saved.source.id, generation)
+            commit_cached_library(
+                store,
+                &saved.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track.clone()],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed remote cache");
 
     let raw_refs = store
         .with_store(|store| store.load_raw_track_image_refs(&saved.source.id))
         .expect("raw track refs");
+    let selected = store
+        .with_store(|store| store.load_tracks(&saved.source.id, 0, 10))
+        .expect("selected tracks");
 
-    assert_eq!(raw_refs.get(&track.id), Some(&Some(album_ref)));
+    assert_eq!(raw_refs.get(&track.id), Some(&None));
+    assert_eq!(selected.items[0].image_ref.as_ref(), Some(&album_ref));
 }
 
 #[test]
@@ -4007,16 +2640,27 @@ pub(in crate::controller) fn album_projection_binds_mbid_art_before_route_read()
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
     let raw_refs = store
         .with_store(|store| store.load_raw_album_image_refs(&local.source.id))
         .expect("raw album refs");
+    let selected = store
+        .with_store(|store| store.load_albums(&local.source.id, 0, 10))
+        .expect("selected albums");
 
-    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected.clone())));
+    assert_eq!(raw_refs.get(&album.id), Some(&None));
+    assert_eq!(selected.items[0].image_ref.as_ref(), Some(&expected));
 }
 
 #[test]
@@ -4054,10 +2698,17 @@ pub(in crate::controller) fn genre_projection_uses_bound_mbid_album_art() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_genres(&local.source.id, std::slice::from_ref(&genre), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    tracks: vec![track],
+                    genres: vec![genre],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -4112,10 +2763,17 @@ pub(in crate::controller) fn genre_route_consumes_bound_mbid_art_without_cache()
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_genres(&local.source.id, std::slice::from_ref(&genre), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    genres: vec![genre],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let (controller, _events) = controller_from_store_for_test(store);
@@ -4172,16 +2830,27 @@ pub(in crate::controller) fn genre_route_keeps_cached_mbid_art_in_private_mode()
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_genres(&local.source.id, std::slice::from_ref(&genre), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    tracks: vec![track],
+                    genres: vec![genre],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let raw_refs = store
         .with_store(|store| store.load_raw_album_image_refs(&local.source.id))
         .expect("raw album refs");
-    assert_eq!(raw_refs.get(&album.id), Some(&Some(expected.clone())));
+    let selected = store
+        .with_store(|store| store.load_albums(&local.source.id, 0, 10))
+        .expect("selected albums");
+    assert_eq!(raw_refs.get(&album.id), Some(&None));
+    assert_eq!(selected.items[0].image_ref.as_ref(), Some(&expected));
     let (controller, _events) = controller_from_store_for_test(store);
 
     let genres = controller
@@ -4233,15 +2902,17 @@ pub(in crate::controller) fn artist_grid_uses_track_fallback_art() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.upsert_artists(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&artist),
-                false,
                 generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    artists: vec![artist],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
     let (controller, _events) = controller_from_store_for_test(store);
@@ -4323,21 +2994,18 @@ pub(in crate::controller) fn startup_snapshot_includes_artist_grid_fallback_art(
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, &[guest_album, singer_album], generation)?;
-            store.upsert_tracks(&local.source.id, &[guest_track, singer_track], generation)?;
-            store.upsert_artists(
+            commit_cached_library(
+                store,
                 &local.source.id,
-                std::slice::from_ref(&guest_album_artist),
-                true,
                 generation,
-            )?;
-            store.upsert_artists(
-                &local.source.id,
-                std::slice::from_ref(&singer),
-                false,
-                generation,
-            )?;
-            store.complete_sync(&local.source.id, generation)
+                CachedLibraryObservation {
+                    albums: vec![guest_album, singer_album],
+                    tracks: vec![guest_track, singer_track],
+                    artists: vec![singer],
+                    album_artists: vec![guest_album_artist],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -4380,9 +3048,16 @@ pub(in crate::controller) fn startup_track_image() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -4404,12 +3079,15 @@ pub(in crate::controller) fn cache_album_page() {
             store.save_source(&remote)?;
             store.set_active_source(&remote.source.id)?;
             let generation = store.begin_sync(&remote.source.id)?;
-            store.upsert_albums(
+            commit_cached_library(
+                store,
                 &remote.source.id,
-                std::slice::from_ref(&remote_album),
                 generation,
+                CachedLibraryObservation {
+                    albums: vec![remote_album],
+                    ..CachedLibraryObservation::default()
+                },
             )?;
-            store.complete_sync(&remote.source.id, generation)?;
             Ok(())
         })
         .expect("seed remote cache");
@@ -4444,9 +3122,16 @@ pub(in crate::controller) fn external_album_refs() {
             store.save_source(&local)?;
             store.set_active_source(&local.source.id)?;
             let generation = store.begin_sync(&local.source.id)?;
-            store.upsert_albums(&local.source.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.source.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.source.id, generation)
+            commit_cached_library(
+                store,
+                &local.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album],
+                    tracks: vec![track],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed local cache");
 
@@ -4468,8 +3153,15 @@ pub(in crate::controller) fn startup_remote_cache() {
         .with_store(|store| {
             store.save_source(&saved)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)?;
-            store.complete_sync(&saved.source.id, generation)
+            commit_cached_library(
+                store,
+                &saved.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: vec![album.clone()],
+                    ..CachedLibraryObservation::default()
+                },
+            )
         })
         .expect("seed remote cache");
     let albums = store
@@ -4480,49 +3172,8 @@ pub(in crate::controller) fn startup_remote_cache() {
     assert_eq!(albums.total, 1);
     assert_eq!(cached_album.id, album.id);
     assert_eq!(cached_album.image_ref.as_ref(), album.image_ref.as_ref());
-    let active = active_source_for_test(&store, &saved);
-    assert!(initial_cover_cache_required(&store, &active));
 }
 
-#[test]
-pub(in crate::controller) fn startup_remote_album_reconciliation_noop() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = saved_source();
-    let album = remote_album_with_image_ref(provider_cover_ref());
-    seed_cached_library(&store, &saved, std::slice::from_ref(&album), &[], &[]);
-    let provider = AlbumPageProvider::observing(saved.source, album);
-    let delta = reconcile_album_observation(&store, &provider);
-
-    assert!(delta.is_empty());
-}
-
-#[test]
-pub(in crate::controller) fn startup_remote_album_reconciliation_reports_field_change() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = saved_source();
-    let album = remote_album_with_image_ref(provider_cover_ref());
-    let mut stale_album = album.clone();
-    stale_album.title = "Stale Album Title".to_string();
-    seed_cached_library(&store, &saved, std::slice::from_ref(&stale_album), &[], &[]);
-    let provider = AlbumPageProvider::observing(saved.source, album.clone());
-    let delta = reconcile_album_observation(&store, &provider);
-
-    assert!(delta.albums.fields.contains(&album.id));
-    assert!(!delta.is_empty());
-}
-
-fn reconcile_album_observation(store: &StoreHandle, provider: &AlbumPageProvider) -> LibraryDelta {
-    Runtime::new()
-        .expect("runtime")
-        .block_on(async {
-            let source_id = provider.identity().id.clone();
-            let cancellation = CancellationToken::new();
-            sync_source_outcome_with_cancellation(store, &source_id, provider, &cancellation)
-                .await
-                .map(|outcome| outcome.delta)
-        })
-        .expect("reconcile album observation")
-}
 fn startup_assert_ref(image_ref: Option<&ImageRef>) {
     assert!(
         !image_ref.is_some_and(|image_ref| image_ref.item_id.starts_with("local:cover:")),
@@ -4671,28 +3322,37 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         entry_id: "fresh-playlist-entry".to_string(),
         track: fresh_track.clone(),
     };
+    let sync_artist = Artist {
+        id: album.artist_id.clone().expect("album artist"),
+        name: album.artist.clone(),
+        album_count: 1,
+        track_count: 1,
+        favorite: false,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        musicbrainz_artist_id: None,
+        image_ref: None,
+    };
     store
         .with_store(|store| {
             store.save_source(&saved)?;
             store.set_active_source(&saved.source.id)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_tracks(
+            commit_cached_library(
+                store,
                 &saved.source.id,
-                std::slice::from_ref(&stale_track),
                 generation,
+                CachedLibraryObservation {
+                    tracks: vec![stale_track.clone()],
+                    playlists: vec![PlaylistDetail {
+                        playlist: stale_playlist.clone(),
+                        tracks: vec![stale_track.clone()],
+                        entries: vec![stale_entry.clone()],
+                    }],
+                    ..CachedLibraryObservation::default()
+                },
             )?;
-            store.upsert_playlists(
-                &saved.source.id,
-                std::slice::from_ref(&stale_playlist),
-                generation,
-            )?;
-            store.upsert_playlist_entries(
-                &saved.source.id,
-                &stale_playlist.id,
-                std::slice::from_ref(&stale_entry),
-                generation,
-            )?;
-            store.complete_sync(&saved.source.id, generation)?;
             Ok(())
         })
         .expect("seed stale playlists");
@@ -4706,30 +3366,65 @@ pub(in crate::controller) fn playlist_refresh_replace() {
         .expect("sync state before playlist refresh");
 
     let delta = store
-        .with_store(|store| {
-            let generation = store.begin_sync(&saved.source.id)?;
-            let mut delta = store.upsert_tracks_delta(
-                &saved.source.id,
-                std::slice::from_ref(&fresh_track),
-                generation,
-            )?;
-            delta.merge(store.upsert_playlists_delta(
-                &saved.source.id,
-                std::slice::from_ref(&fresh_playlist),
-                generation,
-            )?);
-            delta.merge(store.upsert_playlist_entries_delta(
-                &saved.source.id,
-                &fresh_playlist.id,
-                std::slice::from_ref(&fresh_entry),
-                generation,
-            )?);
-            delta.merge(
-                store
-                    .complete_sync_delta(&saved.source.id, generation)?
-                    .delta,
-            );
-            Ok(delta)
+        .with_store_session(|store| {
+            let generation = store
+                .begin_sync(&saved.source.id)
+                .map_err(|error| error.to_string())?;
+            let base_cache_revision = store
+                .source_cache_revision(&saved.source.id)
+                .map_err(|error| error.to_string())?;
+            store
+                .commit_library_sync(
+                    &saved.source.id,
+                    generation,
+                    base_cache_revision,
+                    library::LibrarySync {
+                        albums: vec![album.clone()],
+                        tracks: vec![fresh_track.clone()],
+                        artists: vec![sync_artist.clone()],
+                        album_artists: vec![sync_artist.clone()],
+                        genres: Vec::new(),
+                        playlists: vec![PlaylistDetail {
+                            playlist: fresh_playlist.clone(),
+                            tracks: vec![fresh_track.clone()],
+                            entries: vec![fresh_entry.clone()],
+                        }],
+                        home_sections: Vec::new(),
+                        mappings: vec![
+                            SourceObjectMapping {
+                                source_object_id: album.id.as_str().to_string(),
+                                entity_kind: SourceEntityKind::Album,
+                                entity_id: album.id.as_str().to_string(),
+                            },
+                            SourceObjectMapping {
+                                source_object_id: fresh_track.id.as_str().to_string(),
+                                entity_kind: SourceEntityKind::Track,
+                                entity_id: fresh_track.id.as_str().to_string(),
+                            },
+                            SourceObjectMapping {
+                                source_object_id: sync_artist.id.as_str().to_string(),
+                                entity_kind: SourceEntityKind::Artist,
+                                entity_id: sync_artist.id.as_str().to_string(),
+                            },
+                            SourceObjectMapping {
+                                source_object_id: sync_artist.id.as_str().to_string(),
+                                entity_kind: SourceEntityKind::AlbumArtist,
+                                entity_id: sync_artist.id.as_str().to_string(),
+                            },
+                            SourceObjectMapping {
+                                source_object_id: fresh_playlist.id.as_str().to_string(),
+                                entity_kind: SourceEntityKind::Playlist,
+                                entity_id: fresh_playlist.id.as_str().to_string(),
+                            },
+                        ],
+                        coverage: library::SyncCoverage::All {
+                            music_folders: Vec::new(),
+                        },
+                        local_access: None,
+                    },
+                )
+                .map(|commit| commit.delta)
+                .map_err(|error| error.to_string())
         })
         .expect("replace authoritative playlists");
 
@@ -4796,15 +3491,15 @@ pub(in crate::controller) fn startup_replace_section() {
     seed_cached_library(
         &store,
         &saved,
-        std::slice::from_ref(&stale_album),
-        std::slice::from_ref(&stale_track),
+        &[stale_album.clone(), fresh_album.clone()],
+        &[stale_track.clone(), fresh_track.clone()],
         &stale_sections,
     );
-    let generation = store
+    let (generation, cache_revision) = store
         .with_store(|store| {
             store
                 .sync_state(&saved.source.id)
-                .map(|state| state.generation)
+                .map(|state| (state.generation, state.cache_revision))
         })
         .expect("section generation");
 
@@ -4817,6 +3512,7 @@ pub(in crate::controller) fn startup_replace_section() {
             tracks: Vec::new(),
         },
         generation,
+        cache_revision,
     )
     .expect("replace Explore");
     let after = store
@@ -4827,6 +3523,9 @@ pub(in crate::controller) fn startup_replace_section() {
     assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
     assert_eq!(after[1].tracks[0].id, stale_track.id);
 
+    let cache_revision = store
+        .with_store(|store| store.source_cache_revision(&saved.source.id))
+        .expect("Home cache revision");
     cache_home_section(
         &store,
         &saved.source.id,
@@ -4836,6 +3535,7 @@ pub(in crate::controller) fn startup_replace_section() {
             tracks: vec![fresh_track.clone()],
         },
         generation,
+        cache_revision,
     )
     .expect("replace Most Played");
     let after = store
@@ -4871,71 +3571,7 @@ pub(in crate::controller) fn startup_update_event() {
         }
     ));
 }
-#[test]
-pub(in crate::controller) fn startup_suppress_release() {
-    let guards = InFlightGuards::new("Test");
-    let source_id = SourceId::new("test-server");
-    let permit = guards
-        .acquire(source_id.clone())
-        .expect("guard lock")
-        .expect("first permit");
 
-    assert!(guards.contains_or_blocked(&source_id));
-    assert!(
-        guards
-            .acquire(source_id.clone())
-            .expect("duplicate guard lock")
-            .is_none()
-    );
-
-    drop(permit);
-
-    assert!(!guards.contains_or_blocked(&source_id));
-    assert!(
-        guards
-            .acquire(source_id)
-            .expect("guard lock after release")
-            .is_some()
-    );
-}
-
-#[test]
-pub(in crate::controller) fn cancelled_guard_can_be_replaced_without_old_drop_releasing_it() {
-    let guards = InFlightGuards::new("Test");
-    let source_id = SourceId::new("test-server");
-    let old = guards
-        .acquire(source_id.clone())
-        .expect("guard lock")
-        .expect("old permit");
-    assert!(guards.cancel(&source_id).expect("cancel old permit"));
-
-    let replacement = guards
-        .acquire(source_id.clone())
-        .expect("replacement guard lock")
-        .expect("replacement permit");
-    drop(old);
-
-    assert!(guards.contains_or_blocked(&source_id));
-    drop(replacement);
-    assert!(!guards.contains_or_blocked(&source_id));
-}
-#[test]
-pub(in crate::controller) fn startup_keep_blocking() {
-    let guards = InFlightGuards::new("Test");
-    let poisoned = guards.clone();
-    let _panic = std::thread::spawn(move || {
-        let _running = poisoned.inner.lock().expect("guard lock");
-        panic!("poison in-flight guard");
-    })
-    .join();
-
-    assert!(guards.contains_or_blocked(&SourceId::new("test-server")));
-    let error = match guards.acquire(SourceId::new("another-test-server")) {
-        Ok(_) => panic!("poisoned guard accepted a permit"),
-        Err(error) => error,
-    };
-    assert_eq!(error, "Test guard lock was poisoned.");
-}
 #[test]
 pub(in crate::controller) fn startup_promote_prefetch() {
     let store = StoreHandle::open_memory().expect("memory store");
@@ -4959,22 +3595,25 @@ pub(in crate::controller) fn startup_promote_prefetch() {
     seed_cached_library(
         &store,
         &saved,
-        std::slice::from_ref(&stale_album),
+        &[stale_album.clone(), fresh_album.clone()],
         &[],
         std::slice::from_ref(&visible),
     );
-    let generation = store
+    let (generation, cache_revision) = store
         .with_store(|store| {
             store
                 .sync_state(&saved.source.id)
-                .map(|state| state.generation)
+                .map(|state| (state.generation, state.cache_revision))
         })
         .expect("prefetch generation");
-    cache_home_section_items(&store, &saved.source.id, &prefetched, generation)
-        .expect("cache prefetched items");
     store
         .with_store(|store| {
-            store.upsert_home_section_prefetch(&saved.source.id, &prefetched, generation)
+            store.save_home_section_prefetch(
+                &saved.source.id,
+                generation,
+                cache_revision,
+                &prefetched,
+            )
         })
         .expect("stage prefetched Explore");
     let visible_before = store

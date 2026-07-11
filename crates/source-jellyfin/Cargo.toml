@@ -26,6 +26,8 @@ tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+library.workspace = true
+library-sync.workspace = true
 wiremock.workspace = true
 
 [lints]

@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, info, warn};
 
 use crate::controller::{
-    CancellationToken, ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot,
+    ControllerEvent, IMAGE_TAG_UNTAGGED, SourceNotice, StoreHandle, acquire_cover_slot,
     load_settings_from_store, release_cover_slot,
 };
 use crate::external_metadata;
@@ -152,7 +152,6 @@ struct CoverPrefetchContext<'a> {
     retry_generation: u64,
     cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     saved: &'a SavedSource,
-    cancellation: Option<&'a CancellationToken>,
 }
 
 pub(in crate::controller) struct SourceCoverPrefetchRequest<'a> {
@@ -165,7 +164,6 @@ pub(in crate::controller) struct SourceCoverPrefetchRequest<'a> {
     pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     pub(in crate::controller) saved: &'a SavedSource,
     pub(in crate::controller) images: &'a dyn ImageProvider,
-    pub(in crate::controller) cancellation: Option<&'a CancellationToken>,
     pub(in crate::controller) emit_status: bool,
 }
 
@@ -256,7 +254,6 @@ pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetch
             retry_generation,
             cover_slots: &cover_slots,
             saved: &saved,
-            cancellation: None,
         };
         let result = prefetch_synced_images(&context, &mut stats);
         match result {
@@ -323,7 +320,6 @@ pub(in crate::controller) fn prefetch_initial_source_cover_cache(
         retry_generation: request.retry_generation,
         cover_slots: request.cover_slots,
         saved,
-        cancellation: request.cancellation,
     };
     context.store.with_store_session(|cache_store| {
         prefetch_synced_source_covers(&context, request.images, cache_store, &mut source_stats)
@@ -392,21 +388,13 @@ fn prefetch_synced_source_covers(
     stats: &mut SourceCoverPrefetchStats,
 ) -> Result<(), String> {
     let mut seen = HashSet::new();
-    check_prefetch_cancelled(context.cancellation)?;
     let select_started = Instant::now();
-    let image_refs = synced_source_cover_refs(
-        cache_store,
-        context.saved,
-        context.cancellation,
-        &mut seen,
-        stats,
-    )?;
+    let image_refs = synced_source_cover_refs(cache_store, context.saved, &mut seen, stats)?;
     stats.select_refs_elapsed_ms = elapsed_ms(select_started);
     stats.image_refs = image_refs.len();
     emit_initial_cover_prefetch_status(context, 0, stats.image_refs);
     let loop_started = Instant::now();
     for (index, image_ref) in image_refs.into_iter().enumerate() {
-        check_prefetch_cancelled(context.cancellation)?;
         if active_source_changed_in_store(cache_store, context.saved)? {
             stats.cover_loop_elapsed_ms = elapsed_ms(loop_started);
             info!(
@@ -434,22 +422,24 @@ fn emit_initial_cover_prefetch_status(
     if total == 0 || !context.emit_status {
         return;
     }
-    let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
-        "Caching library artwork... {processed}/{total} covers checked"
-    )));
+    let _sent = context
+        .events
+        .send(ControllerEvent::SourceNotice(SourceNotice::CoverProgress {
+            source_id: context.saved.source.id.clone(),
+            processed,
+            total,
+        }));
 }
 
 fn synced_source_cover_refs(
     store: &Store,
     saved: &SavedSource,
-    cancellation: Option<&CancellationToken>,
     seen: &mut HashSet<(String, String)>,
     stats: &mut SourceCoverPrefetchStats,
 ) -> Result<Vec<ImageRef>, String> {
     let mut image_refs = Vec::new();
     let mut offset = 0;
     loop {
-        check_prefetch_cancelled(cancellation)?;
         let page = store
             .load_albums(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
@@ -466,7 +456,6 @@ fn synced_source_cover_refs(
 
     let mut offset = 0;
     loop {
-        check_prefetch_cancelled(cancellation)?;
         let page = store
             .load_tracks(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
@@ -484,7 +473,6 @@ fn synced_source_cover_refs(
     for album_artist in [false, true] {
         let mut offset = 0;
         loop {
-            check_prefetch_cancelled(cancellation)?;
             let page = store
                 .load_artists(
                     &saved.source.id,
@@ -515,7 +503,6 @@ fn synced_source_cover_refs(
 
     let mut offset = 0;
     loop {
-        check_prefetch_cancelled(cancellation)?;
         let page = store
             .load_genres(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
@@ -532,7 +519,6 @@ fn synced_source_cover_refs(
 
     let mut offset = 0;
     loop {
-        check_prefetch_cancelled(cancellation)?;
         let page = store
             .load_playlists(&saved.source.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
             .map_err(|error| error.to_string())?;
@@ -557,7 +543,6 @@ fn prefetch_source_image_ref(
     image_ref: ImageRef,
     stats: &mut SourceCoverPrefetchStats,
 ) -> Result<SyncedImagePrefetchOutcome, String> {
-    check_prefetch_cancelled(context.cancellation)?;
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(
         &context.saved.source.id,
@@ -584,15 +569,9 @@ fn prefetch_source_image_ref(
         return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
 
-    check_prefetch_cancelled(context.cancellation)?;
     if !acquire_cover_slot(context.cover_slots) {
         unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
         return Ok(SyncedImagePrefetchOutcome::Skipped);
-    }
-    if let Err(error) = check_prefetch_cancelled(context.cancellation) {
-        release_cover_slot(context.cover_slots);
-        unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
-        return Err(error);
     }
     let request_started = Instant::now();
     let result = fetch_and_cache_source_cover_timed_with_store(
@@ -919,13 +898,6 @@ fn active_source_changed_in_store(store: &Store, saved: &SavedSource) -> Result<
         .active_source()
         .map_err(|error| error.to_string())?
         .is_none_or(|active| active.source.id != saved.source.id))
-}
-
-fn check_prefetch_cancelled(cancellation: Option<&CancellationToken>) -> Result<(), String> {
-    if cancellation.is_some_and(|token| token.cancelled()) {
-        return Err("Sync cancelled.".to_string());
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -98,6 +98,14 @@ impl Store {
         limit: usize,
     ) -> StoreResult<PagedResponse<SmartPlaylist>> {
         self.ensure_smart_playlist_defaults_seeded(source_id)?;
+        self.read_snapshot(|store| store.load_smart_playlists_inner(source_id, offset, limit))
+    }
+    fn load_smart_playlists_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<SmartPlaylist>> {
         let total = self.connection.query_row(
             "SELECT COUNT(*) FROM smart_playlists WHERE source_id = ?1",
             params![source_id.as_str()],
@@ -129,6 +137,15 @@ impl Store {
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<Option<SmartPlaylistDetail>> {
         self.ensure_smart_playlist_defaults_seeded(source_id)?;
+        self.read_snapshot(|store| {
+            store.load_smart_playlist_detail_inner(source_id, smart_playlist_id)
+        })
+    }
+    fn load_smart_playlist_detail_inner(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+    ) -> StoreResult<Option<SmartPlaylistDetail>> {
         let Some(row) = self.load_smart_playlist_row(source_id, smart_playlist_id)? else {
             return Ok(None);
         };
@@ -155,6 +172,17 @@ impl Store {
         limit: usize,
     ) -> StoreResult<Option<PagedResponse<Track>>> {
         self.ensure_smart_playlist_defaults_seeded(source_id)?;
+        self.read_snapshot(|store| {
+            store.load_smart_playlist_tracks_page_inner(source_id, smart_playlist_id, offset, limit)
+        })
+    }
+    fn load_smart_playlist_tracks_page_inner(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Option<PagedResponse<Track>>> {
         let Some(row) = self.load_smart_playlist_row(source_id, smart_playlist_id)? else {
             return Ok(None);
         };
@@ -457,14 +485,6 @@ impl Store {
             ));
         }
         self.write_batch(|connection| {
-            connection.execute(
-                "
-                DELETE FROM collection_cover_refs
-                WHERE source_id = ?1
-                  AND collection_type = ?2
-                ",
-                params![source_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
-            )?;
             for (smart_playlist_id, image_refs) in cover_refs {
                 replace_collection_refs(
                     connection,
@@ -474,6 +494,19 @@ impl Store {
                     &image_refs,
                 )?;
             }
+            connection.execute(
+                "
+                DELETE FROM collection_cover_refs
+                WHERE source_id = ?1
+                  AND collection_type = ?2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM smart_playlists
+                      WHERE smart_playlists.source_id = collection_cover_refs.source_id
+                        AND smart_playlists.smart_playlist_id = collection_cover_refs.collection_id
+                  )
+                ",
+                params![source_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
+            )?;
             Ok(())
         })
     }
@@ -1105,7 +1138,9 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_support::{album, album_with_image, saved_source, track};
+    use crate::store::test_support::{
+        LibraryObservation, album, album_with_image, saved_source, track,
+    };
     use domain::SmartPlaylistRuleValue;
 
     #[test]
@@ -1182,15 +1217,13 @@ mod tests {
         let album_image = album.image_ref.clone();
         let mut track = track(1, &album);
         track.play_count = Some(1);
-        store
-            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
-            .expect("album");
-        store
-            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
-            .expect("track");
-        store
-            .complete_sync(&saved.source.id, generation)
-            .expect("complete sync");
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        }
+        .commit(&store, &saved.source.id, generation)
+        .expect("commit library");
 
         let page = store
             .load_smart_playlists(&saved.source.id, 0, 20)

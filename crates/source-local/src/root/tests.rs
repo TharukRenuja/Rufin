@@ -119,6 +119,7 @@ FILE "album.wav" WAVE
     assert_eq!(warm.manifest_scan().counters.cue_reused_tracks, 2);
     assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
     assert_eq!(warm.manifest_scan().cue_track_sources.len(), 2);
+    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
     assert!(!warm.manifest_scan().library_changed);
     assert_eq!(
         warm.tracks(PagedRequest::new(0, 10))
@@ -268,6 +269,7 @@ async fn manifest_scan_reuse() {
     assert_eq!(cold.manifest_scan().counters.tag_reads, 1);
     assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
     assert_eq!(warm.manifest_scan().counters.unchanged_reused, 1);
+    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
     assert!(!warm.manifest_scan().library_changed);
     assert_eq!(
         warm.tracks(PagedRequest::new(0, 10))
@@ -276,6 +278,358 @@ async fn manifest_scan_reuse() {
             .total,
         1
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn manifest_scan_keeps_cached_track_when_changed_file_cannot_be_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("track.wav");
+    write_silent_wav(&audio, 1).expect("track file");
+    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+            .expect("cold provider");
+    let cached = cold.manifest_scan().entries.clone();
+    let original_permissions = fs::metadata(&audio).expect("track metadata").permissions();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&audio)
+        .expect("open track")
+        .set_len(fs::metadata(&audio).expect("track metadata").len() + 1)
+        .expect("change track");
+    let mut unreadable = original_permissions.clone();
+    unreadable.set_mode(0o0);
+    fs::set_permissions(&audio, unreadable).expect("make track unreadable");
+
+    let warm = LocalSource::from_roots_with_manifest_cache(
+        vec![dir.path().to_path_buf()],
+        server,
+        cached.clone(),
+    )
+    .expect("warm provider");
+    fs::set_permissions(&audio, original_permissions).expect("restore track permissions");
+
+    assert_eq!(warm.manifest_scan().entries, cached);
+    assert!(warm.manifest_scan().changed_manifest_paths.is_empty());
+    assert!(warm.manifest_scan().deleted_paths.is_empty());
+    assert!(warm.manifest_scan().deleted_track_ids.is_empty());
+    assert!(!warm.manifest_scan().library_changed);
+    assert_eq!(warm.manifest_scan().counters.parse_failures, 1);
+    assert_eq!(
+        warm.tracks(PagedRequest::new(0, 10))
+            .await
+            .expect("tracks")
+            .total,
+        1
+    );
+}
+
+#[test]
+fn manifest_scan_rejects_an_incomplete_cached_root_walk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    let audio = root.join("track.wav");
+    write_silent_wav(&audio, 1).expect("track file");
+    let server = LocalSource::identity_for_root(&root).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![root.clone()], server.clone()).expect("cold");
+    let cached = cold.manifest_scan().entries.clone();
+    drop(dir);
+
+    let error = LocalSource::from_roots_with_manifest_cache(vec![root], server, cached)
+        .expect_err("incomplete walk");
+
+    assert!(!error.to_string().is_empty());
+}
+
+#[tokio::test]
+async fn manifest_path_scan_updates_only_the_dirty_audio() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let changed = dir.path().join("changed.wav");
+    let untouched = dir.path().join("untouched.wav");
+    write_silent_wav(&changed, 1).expect("changed track");
+    write_silent_wav(&untouched, 1).expect("untouched track");
+    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    let untouched_before = cold
+        .manifest_scan()
+        .entries
+        .iter()
+        .find(|entry| entry.facts.path == untouched)
+        .cloned()
+        .expect("untouched manifest");
+    write_silent_wav(&changed, 2).expect("replace changed track");
+
+    let finite = finite_path_source(
+        dir.path(),
+        identity,
+        cold.manifest_scan().entries.clone(),
+        BTreeSet::from([changed.clone()]),
+    );
+    let scan = finite.manifest_scan();
+
+    assert_eq!(scan.counters.tag_reads, 1);
+    assert_eq!(scan.changed_manifest_paths, vec![changed]);
+    assert_eq!(
+        scan.entries
+            .iter()
+            .find(|entry| entry.facts.path == untouched)
+            .expect("retained manifest"),
+        &untouched_before
+    );
+    let tracks = finite
+        .tracks(PagedRequest::new(0, 10))
+        .await
+        .expect("tracks");
+    assert_eq!(tracks.total, 2);
+    assert!(
+        tracks
+            .items
+            .iter()
+            .any(|track| track.title == "changed" && track.duration_seconds == 2)
+    );
+}
+
+#[tokio::test]
+async fn manifest_path_scan_deletes_one_proven_missing_audio() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("removed.wav");
+    write_silent_wav(&audio, 1).expect("track");
+    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    let removed_id = cold.manifest_scan().entries[0].track.id.clone();
+    fs::remove_file(&audio).expect("remove track");
+
+    let finite = finite_path_source(
+        dir.path(),
+        identity,
+        cold.manifest_scan().entries.clone(),
+        BTreeSet::from([audio.clone()]),
+    );
+
+    assert!(finite.manifest_scan().entries.is_empty());
+    assert_eq!(finite.manifest_scan().deleted_paths, vec![audio]);
+    assert_eq!(finite.manifest_scan().deleted_track_ids, vec![removed_id]);
+    assert_eq!(
+        finite
+            .tracks(PagedRequest::new(0, 10))
+            .await
+            .expect("tracks")
+            .total,
+        0
+    );
+}
+
+#[tokio::test]
+async fn manifest_path_scan_applies_a_complete_rename() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let old = dir.path().join("old.wav");
+    let new = dir.path().join("new.wav");
+    write_silent_wav(&old, 1).expect("track");
+    let identity = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![dir.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    let old_id = cold.manifest_scan().entries[0].track.id.clone();
+    fs::rename(&old, &new).expect("rename track");
+
+    let finite = finite_path_source(
+        dir.path(),
+        identity,
+        cold.manifest_scan().entries.clone(),
+        BTreeSet::from([old.clone(), new.clone()]),
+    );
+    let scan = finite.manifest_scan();
+
+    assert_eq!(scan.entries.len(), 1);
+    assert_eq!(scan.entries[0].facts.path, new);
+    assert_eq!(scan.deleted_paths, vec![old]);
+    assert_eq!(scan.deleted_track_ids, vec![old_id]);
+    let tracks = finite
+        .tracks(PagedRequest::new(0, 10))
+        .await
+        .expect("tracks");
+    assert_eq!(tracks.total, 1);
+    assert_eq!(tracks.items[0].title, "new");
+}
+
+#[tokio::test]
+async fn manifest_path_scan_adds_an_ordinary_new_audio_file() {
+    let root = tempfile::tempdir().expect("root");
+    let existing = root.path().join("existing.wav");
+    let added = root.path().join("added.wav");
+    write_silent_wav(&existing, 1).expect("existing track");
+    fs::write(
+        root.path().join("dormant.cue"),
+        r#"
+FILE "future.wav" WAVE
+  TRACK 01 AUDIO
+    INDEX 01 00:00:00
+"#,
+    )
+    .expect("dormant cue");
+    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    assert_eq!(cold.manifest_scan().cue_dependencies.len(), 1);
+    write_silent_wav(&added, 1).expect("added track");
+
+    let finite = LocalSource::from_roots_with_manifest_paths(
+        vec![root.path().to_path_buf()],
+        identity,
+        cold.manifest_scan().entries.clone(),
+        &cold.manifest_scan().cue_dependencies,
+        &BTreeSet::from([added.clone()]),
+        |_| {},
+        || false,
+    )
+    .expect("path scan")
+    .expect("ordinary new file is exact");
+
+    assert_eq!(finite.manifest_scan().entries.len(), 2);
+    assert_eq!(finite.manifest_scan().changed_manifest_paths, vec![added]);
+    assert_eq!(
+        finite.manifest_scan().cue_dependencies,
+        cold.manifest_scan().cue_dependencies
+    );
+    assert_eq!(
+        finite
+            .tracks(PagedRequest::new(0, 10))
+            .await
+            .expect("tracks")
+            .total,
+        2
+    );
+}
+
+#[test]
+fn manifest_path_scan_widens_ambiguous_dependencies() {
+    let root = tempfile::tempdir().expect("root");
+    let album = root.path().join("album");
+    fs::create_dir_all(&album).expect("album directory");
+    let audio = album.join("track.wav");
+    let cover = album.join("cover.jpg");
+    write_silent_wav(&audio, 1).expect("track");
+    fs::write(&cover, [1_u8]).expect("cover");
+    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    let outside = tempfile::tempdir().expect("outside");
+
+    for path in [
+        root.path().to_path_buf(),
+        album,
+        cover,
+        root.path().join("new.cue"),
+        outside.path().join("outside.wav"),
+    ] {
+        let result = LocalSource::from_roots_with_manifest_paths(
+            vec![root.path().to_path_buf()],
+            identity.clone(),
+            cold.manifest_scan().entries.clone(),
+            &cold.manifest_scan().cue_dependencies,
+            &BTreeSet::from([path]),
+            |_| {},
+            || false,
+        )
+        .expect("path classification");
+        assert!(result.is_none());
+    }
+}
+
+#[test]
+fn manifest_path_scan_widens_a_dormant_cue_target() {
+    let root = tempfile::tempdir().expect("root");
+    let cue = root.path().join("album.cue");
+    let audio = root.path().join("missing.wav");
+    fs::write(
+        &cue,
+        r#"
+FILE "missing.wav" WAVE
+  TRACK 01 AUDIO
+    INDEX 01 00:00:00
+"#,
+    )
+    .expect("cue");
+    let identity = LocalSource::identity_for_root(root.path()).expect("identity");
+    let cold =
+        LocalSource::from_roots_with_identity(vec![root.path().to_path_buf()], identity.clone())
+            .expect("cold source");
+    assert_eq!(
+        cold.manifest_scan().cue_dependencies,
+        vec![LocalCueDependency {
+            cue_path: cue,
+            source_path: audio.clone(),
+        }]
+    );
+    write_silent_wav(&audio, 8).expect("backing track");
+
+    let result = LocalSource::from_roots_with_manifest_paths(
+        vec![root.path().to_path_buf()],
+        identity,
+        cold.manifest_scan().entries.clone(),
+        &cold.manifest_scan().cue_dependencies,
+        &BTreeSet::from([audio]),
+        |_| {},
+        || false,
+    )
+    .expect("path classification");
+
+    assert!(result.is_none());
+}
+
+#[test]
+fn manifest_path_scan_does_not_delete_an_unreadable_root() {
+    let dir = tempfile::tempdir().expect("root");
+    let root = dir.path().to_path_buf();
+    let audio = root.join("track.wav");
+    write_silent_wav(&audio, 1).expect("track");
+    let identity = LocalSource::identity_for_root(&root).expect("identity");
+    let cold = LocalSource::from_roots_with_identity(vec![root.clone()], identity.clone())
+        .expect("cold source");
+    let manifest = cold.manifest_scan().entries.clone();
+    let cue_dependencies = cold.manifest_scan().cue_dependencies.clone();
+    drop(dir);
+
+    let result = LocalSource::from_roots_with_manifest_paths(
+        vec![root],
+        identity,
+        manifest,
+        &cue_dependencies,
+        &BTreeSet::from([audio]),
+        |_| {},
+        || false,
+    );
+
+    result.expect_err("unreadable root");
+}
+
+fn finite_path_source(
+    root: &Path,
+    identity: SourceIdentity,
+    manifest: Vec<LocalManifestEntry>,
+    dirty_paths: BTreeSet<PathBuf>,
+) -> LocalSource {
+    LocalSource::from_roots_with_manifest_paths(
+        vec![root.to_path_buf()],
+        identity,
+        manifest,
+        &[],
+        &dirty_paths,
+        |_| {},
+        || false,
+    )
+    .expect("finite path scan")
+    .expect("exact paths")
 }
 
 #[test]
@@ -345,11 +699,12 @@ fn local_scan_reports_progress() {
     let server = LocalSource::identity_for_root(dir.path()).expect("identity");
     let mut reports = Vec::new();
 
-    let provider = LocalSource::from_roots_with_manifest_cache_and_progress(
+    let provider = LocalSource::from_roots_with_manifest_scan(
         vec![dir.path().to_path_buf()],
         server,
         Vec::new(),
         |progress| reports.push(progress),
+        || false,
     )
     .expect("provider");
 
@@ -369,6 +724,49 @@ fn local_scan_reports_progress() {
             .any(|progress| progress.stage == LocalScanStage::BuildingLibrary
                 && progress.processed_tracks == 1)
     );
+}
+
+#[test]
+fn cancelled_manifest_scan_stops_tag_workers_without_returning_partial_source() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let track_count = 16;
+    for index in 0..track_count {
+        write_silent_wav(&dir.path().join(format!("track-{index:02}.wav")), 1).expect("track file");
+    }
+    let server = LocalSource::identity_for_root(dir.path()).expect("identity");
+    let scan_thread = thread::current().id();
+    let first_worker_job = Arc::new(AtomicBool::new(true));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_checks = Arc::new(AtomicUsize::new(0));
+    let callback_cancelled = Arc::clone(&cancelled);
+    let callback_first_worker_job = Arc::clone(&first_worker_job);
+    let callback_worker_checks = Arc::clone(&worker_checks);
+
+    let error = LocalSource::from_roots_with_manifest_scan(
+        vec![dir.path().to_path_buf()],
+        server,
+        Vec::new(),
+        |_| {},
+        move || {
+            if thread::current().id() == scan_thread {
+                return callback_cancelled.load(Ordering::Acquire);
+            }
+            callback_worker_checks.fetch_add(1, Ordering::Relaxed);
+            if callback_first_worker_job.swap(false, Ordering::AcqRel) {
+                return false;
+            }
+            callback_cancelled.store(true, Ordering::Release);
+            true
+        },
+    )
+    .expect_err("cancelled scan");
+
+    assert!(error.to_string().contains("cancelled"));
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(worker_checks.load(Ordering::Relaxed) < track_count);
 }
 
 #[test]
@@ -491,6 +889,7 @@ async fn manifest_scan_update() {
 
     assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
     assert_eq!(warm.manifest_scan().counters.artwork_changed, 1);
+    assert_eq!(warm.manifest_scan().changed_manifest_paths.len(), 1);
     assert!(warm.manifest_scan().library_changed);
     assert_ne!(cold_tag, warm_tag);
 }
@@ -516,10 +915,7 @@ fn reparsed_track_artwork() {
     let classification =
         classify_reparsed_manifest_entry("/tmp/rufin-track-cover.flac", &stale, &current);
 
-    assert!(classification.changed_track_ids.is_empty());
-    assert!(classification.metadata_track_ids.is_empty());
-    assert_eq!(classification.artwork_track_ids, vec![TrackId::fake(1)]);
-    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
     assert_eq!(classification.counters.artwork_changed, 1);
 }
 
@@ -528,16 +924,15 @@ fn metadata_track_reparse() {
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
     let mut current_scanned = stale_scanned.clone();
     current_scanned.track.duration_seconds += 1;
+    current_scanned.track.bpm = Some(128);
+    current_scanned.track.moods = vec!["Focused".to_string()];
     let classification = classify_reparsed_manifest_entry(
         "/tmp/rufin-track-duration.flac",
         &stale_scanned,
         &current_scanned,
     );
 
-    assert!(classification.changed_track_ids.is_empty());
-    assert_eq!(classification.metadata_track_ids, vec![TrackId::fake(1)]);
-    assert!(classification.artwork_track_ids.is_empty());
-    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
     assert_eq!(classification.counters.artwork_changed, 0);
 }
 
@@ -553,9 +948,6 @@ fn reparsed_track_changed() {
     );
 
     assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
-    assert!(classification.metadata_track_ids.is_empty());
-    assert!(classification.artwork_track_ids.is_empty());
-    assert!(classification.retained_track_ids.is_empty());
     assert_eq!(classification.counters.artwork_changed, 0);
 }
 
@@ -570,10 +962,7 @@ fn comment_track_reparse() {
         &current_scanned,
     );
 
-    assert!(classification.changed_track_ids.is_empty());
-    assert_eq!(classification.metadata_track_ids, vec![TrackId::fake(1)]);
-    assert!(classification.artwork_track_ids.is_empty());
-    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
 }
 
 #[test]
@@ -863,9 +1252,6 @@ async fn local_reject_id() {
 
 struct ReparsedClassification {
     changed_track_ids: Vec<TrackId>,
-    metadata_track_ids: Vec<TrackId>,
-    artwork_track_ids: Vec<TrackId>,
-    retained_track_ids: Vec<TrackId>,
     counters: LocalScanCounters,
 }
 
@@ -879,9 +1265,6 @@ fn classify_reparsed_manifest_entry(
     let current = manifest_entry_for_scanned(&facts, current_scanned);
     let mut result = ReparsedClassification {
         changed_track_ids: Vec::new(),
-        metadata_track_ids: Vec::new(),
-        artwork_track_ids: Vec::new(),
-        retained_track_ids: Vec::new(),
         counters: LocalScanCounters::default(),
     };
 
@@ -889,9 +1272,6 @@ fn classify_reparsed_manifest_entry(
         Some(&stale),
         &current,
         &mut result.changed_track_ids,
-        &mut result.metadata_track_ids,
-        &mut result.artwork_track_ids,
-        &mut result.retained_track_ids,
         &mut result.counters,
     ));
     result

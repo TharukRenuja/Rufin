@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 use domain::{
     Album, Artist, FolderId, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, Track, TrackId,
+    MusicFolderId, Playlist, PlaylistId, SourceEntityKind, SourceObjectMapping, Track, TrackId,
 };
 use thiserror::Error;
 
@@ -34,56 +36,48 @@ pub enum SourceError {
 
 pub type SourceResult<T> = Result<T, SourceError>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PageState {
+    fetched: usize,
+    total: Option<usize>,
+}
+
+impl PageState {
+    pub fn request(&self, limit: usize) -> PagedRequest {
+        PagedRequest::new(self.fetched, limit)
+    }
+
+    pub fn fetched(&self) -> usize {
+        self.fetched
+    }
+
+    pub fn total(&self) -> Option<usize> {
+        self.total
+    }
+
+    pub fn add(&mut self, count: usize, reported_total: Option<usize>) -> Option<bool> {
+        if let Some(reported_total) = reported_total {
+            if self.total.is_some_and(|total| total != reported_total) {
+                return None;
+            }
+            self.total = Some(reported_total);
+        }
+        self.fetched = self.fetched.checked_add(count)?;
+        match self.total {
+            Some(total) if self.fetched > total => None,
+            Some(total) if self.fetched == total => Some(true),
+            Some(_) if count == 0 => None,
+            Some(_) => Some(false),
+            None => Some(count == 0),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LyricsSearch {
     ServerOnly,
     ServerThenRemote,
     RemoteThenServer,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TrackChange {
-    pub fetch_native_ids: Vec<String>,
-    pub removed_native_ids: Vec<String>,
-}
-
-impl TrackChange {
-    pub fn is_empty(&self) -> bool {
-        self.fetch_native_ids.is_empty() && self.removed_native_ids.is_empty()
-    }
-
-    pub fn merge(&mut self, other: Self) {
-        for removed in other.removed_native_ids {
-            let removed = removed.trim();
-            if removed.is_empty() {
-                continue;
-            }
-            self.fetch_native_ids
-                .retain(|native_id| native_id != removed);
-            if !self
-                .removed_native_ids
-                .iter()
-                .any(|existing| existing == removed)
-            {
-                self.removed_native_ids.push(removed.to_string());
-            }
-        }
-        for native_id in other.fetch_native_ids {
-            let native_id = native_id.trim();
-            if native_id.is_empty() {
-                continue;
-            }
-            self.removed_native_ids
-                .retain(|removed| removed != native_id);
-            if !self
-                .fetch_native_ids
-                .iter()
-                .any(|existing| existing == native_id)
-            {
-                self.fetch_native_ids.push(native_id.to_string());
-            }
-        }
-    }
 }
 
 #[async_trait(?Send)]
@@ -119,27 +113,103 @@ pub trait MusicFolderProvider {
     ) -> SourceResult<PagedResponse<Track>>;
 }
 
-#[async_trait(?Send)]
-pub trait RecentTrackProvider {
-    async fn recent_tracks(&self, limit: usize) -> SourceResult<Vec<Track>>;
+pub trait SourceObjectKeyProvider {
+    fn source_object_key(
+        &self,
+        entity_kind: SourceEntityKind,
+        entity_id: &str,
+    ) -> SourceResult<String>;
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SourceObjectChanges {
+    object_ids: BTreeSet<String>,
+}
+
+impl SourceObjectChanges {
+    pub fn new(object_ids: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            object_ids: object_ids
+                .into_iter()
+                .filter(|object_id| !object_id.is_empty())
+                .collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.object_ids.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.object_ids.iter()
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        self.object_ids.extend(other.object_ids);
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LibraryChange {
+    Objects(SourceObjectChanges),
+    Full,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LibraryObjectObservation {
+    pub mappings: Vec<SourceObjectMapping>,
+    pub missing_source_objects: BTreeSet<String>,
+    pub ignored_source_objects: BTreeSet<String>,
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+    pub artists: Vec<Artist>,
+    pub album_artists: Vec<Artist>,
+    pub genres: Vec<Genre>,
+    pub playlists: Vec<PlaylistDetail>,
+    pub home_sections: Vec<HomeSection>,
+    pub track_music_folders: Vec<(TrackId, Vec<MusicFolderId>)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LibraryChangeResolution {
+    /// Every affected music object was identified
+    Exact(Box<LibraryObjectObservation>),
+    /// The change needs a complete source read
+    Full,
+    /// The input does not affect the music library
+    Ignored,
 }
 
 #[async_trait(?Send)]
-pub trait RecentAlbumProvider {
-    async fn recent_albums(&self, limit: usize) -> SourceResult<Vec<Album>>;
+pub trait LibraryChangeResolver {
+    async fn resolve_changes(
+        &self,
+        changes: &SourceObjectChanges,
+        known: &[SourceObjectMapping],
+    ) -> SourceResult<LibraryChangeResolution>;
 }
 
 #[async_trait(?Send)]
-pub trait TrackChangeFeed {
+pub trait LibraryChangeFeed {
     async fn listen(
         &self,
-        on_change: &mut dyn FnMut(TrackChange) -> bool,
+        on_ready: &mut dyn FnMut() -> bool,
+        on_change: &mut dyn FnMut(LibraryChange) -> bool,
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()>;
+}
 
-    async fn changed_tracks(&self, native_ids: &[String]) -> SourceResult<Vec<Track>>;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LibraryProbeResult {
+    Unchanged,
+    Changed,
+    Unknown,
+    Busy,
+}
 
-    fn track_id_from_native(&self, native_id: &str) -> TrackId;
+#[async_trait(?Send)]
+pub trait LibraryFreshnessProbe {
+    async fn probe(&self) -> SourceResult<LibraryProbeResult>;
 }
 
 #[async_trait(?Send)]
@@ -237,39 +307,4 @@ pub trait LyricsProvider {
 #[async_trait(?Send)]
 pub trait PlaybackReporter {
     async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn later_fetch_cancels_a_pending_removal() {
-        let mut change = TrackChange {
-            fetch_native_ids: Vec::new(),
-            removed_native_ids: vec!["track-1".to_string()],
-        };
-        change.merge(TrackChange {
-            fetch_native_ids: vec!["track-1".to_string()],
-            removed_native_ids: Vec::new(),
-        });
-
-        assert_eq!(change.fetch_native_ids, vec!["track-1"]);
-        assert!(change.removed_native_ids.is_empty());
-    }
-
-    #[test]
-    fn later_removal_cancels_a_pending_fetch() {
-        let mut change = TrackChange {
-            fetch_native_ids: vec!["track-1".to_string()],
-            removed_native_ids: Vec::new(),
-        };
-        change.merge(TrackChange {
-            fetch_native_ids: Vec::new(),
-            removed_native_ids: vec!["track-1".to_string()],
-        });
-
-        assert!(change.fetch_native_ids.is_empty());
-        assert_eq!(change.removed_native_ids, vec!["track-1"]);
-    }
 }

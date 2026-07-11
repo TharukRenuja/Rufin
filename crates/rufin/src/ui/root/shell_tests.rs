@@ -15,26 +15,19 @@ use super::right_panel::{
     queue_lyrics_initial_position, queue_lyrics_position_for_height, queue_lyrics_saved_height,
 };
 use super::startup_reveal::{
-    StartupRevealAction, connection_progress_status_label, main_loop_stall_delay_ms,
-    startup_loading_status_label, startup_loading_status_parts, startup_prime_action,
+    StartupRevealAction, main_loop_stall_delay_ms, startup_prime_action,
     startup_route_reveal_action, take_pending_warm,
 };
 use super::{
-    AutoLyricsRequest, LibrarySyncToastState, LocalSourceCacheGateAction,
-    LocalSourceCacheGateInput, PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
-    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled, current_playback_track_id,
-    home_visible_sections::changed_visible_home_section_kinds, library_sync_toast_message,
-    library_sync_toast_state, local_source_cache_gate_action, local_source_snapshot_is_syncing,
-    lyrics_result_subtitle, lyrics_result_subtitle_markup, lyrics_result_title_markup,
+    AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort, auto_lyrics_request_for_settings,
+    auto_lyrics_skip_action_enabled, current_playback_track_id,
+    home_visible_sections::changed_visible_home_section_kinds, lyrics_result_subtitle,
+    lyrics_result_subtitle_markup, lyrics_result_title_markup,
     lyrics_search_response_matches_query, lyrics_search_result_has_content, playlist_cover_size,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
-    playlist_sort_width, preferences_login_status_toast_message,
-    preferences_login_status_toast_message_for_surface, queue_source_waits_for_snapshot,
-    seekbar_target_seconds, snapshot_event_outcome, source_switch_requires_reconnect,
+    playlist_sort_width, queue_source_waits_for_snapshot, seekbar_target_seconds,
 };
-use crate::controller::{
-    LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, SearchRequestKey,
-};
+use crate::controller::{LibraryCounts, LibraryHomeUpdate, LyricsSearchResult, SearchRequestKey};
 use domain::ExternalLyricsProvider;
 use domain::{
     Album, AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
@@ -355,66 +348,7 @@ pub(in crate::ui) fn shell_home_sections() {
     );
 }
 #[test]
-pub(in crate::ui) fn shell_prioritize_completion() {
-    let previous_source = None;
-    let next_source = Some(LibrarySourceSelection::Local);
-
-    let outcome = snapshot_event_outcome(true, false, &previous_source, &next_source, true, true);
-
-    assert_eq!(outcome.render, SnapshotRenderDecision::FirstRunFinished);
-    assert!(!outcome.entered_first_run);
-}
-#[test]
-pub(in crate::ui) fn shell_change_source() {
-    let previous_source = None;
-    let next_source = Some(LibrarySourceSelection::Local);
-
-    let outcome =
-        snapshot_event_outcome(false, false, &previous_source, &next_source, false, false);
-
-    assert_eq!(outcome.render, SnapshotRenderDecision::SourceChanged);
-    assert!(!outcome.entered_first_run);
-}
-#[test]
-pub(in crate::ui) fn shell_preserve_source() {
-    let source = Some(LibrarySourceSelection::Local);
-
-    let outcome = snapshot_event_outcome(false, false, &source, &source, false, false);
-
-    assert_eq!(outcome.render, SnapshotRenderDecision::PreserveScroll);
-    assert!(!outcome.entered_first_run);
-}
-#[test]
-pub(in crate::ui) fn shell_apply_sync_status() {
-    let mut library = test_library_snapshot();
-    let server = test_server("active");
-    library.first_run = true;
-    library.source = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
-    library.cached_track_count = 2;
-
-    let applied = super::apply_library_sync_status(
-        &mut library,
-        LibrarySyncStatus {
-            source_id: server.id.clone(),
-            sync_status: "Cached library ready".to_string(),
-            last_error: None,
-            counts: LibraryCounts {
-                tracks: 2,
-                ..LibraryCounts::default()
-            },
-            home: None,
-            delta: LibraryDelta::default(),
-        },
-    );
-
-    assert!(applied);
-    assert_eq!(library.sync_status, "Cached library ready");
-    assert!(!library.first_run);
-    assert_eq!(library.cached_track_count, 2);
-}
-#[test]
-pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
+pub(in crate::ui) fn shell_active_commit_invalidates_changed_pages() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
     let section = HomeSection {
@@ -426,40 +360,50 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
     library.source = Some(server.clone());
     library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
     library.tracks = vec![track.clone()];
+    let playlist = test_playlist("Regular", test_image_ref("playlist"));
+    library.playlists = vec![playlist.clone()];
     library.favorites = vec![track.clone()];
     library.search = SearchResults {
         tracks: vec![track.clone()],
         ..SearchResults::default()
     };
 
-    let applied = super::apply_library_sync_status(
+    let applied = super::apply_library_commit_to_snapshot(
         &mut library,
-        LibrarySyncStatus {
+        &library_sync::LibraryCommitted {
             source_id: server.id.clone(),
-            sync_status: "Cached library ready".to_string(),
-            last_error: None,
-            counts: LibraryCounts {
-                tracks: 30_000,
-                playlists: 40,
-                ..LibraryCounts::default()
-            },
-            home: Some(LibraryHomeUpdate {
-                sections: vec![section.clone()],
-                prefetched_explore: None,
-            }),
+            revision: 7,
             delta: LibraryDelta {
                 tracks: library::TrackDelta {
                     fields: vec![track.id.clone()],
+                    ..Default::default()
+                },
+                playlists: library::PlaylistDelta {
+                    entries: vec![playlist.id.clone()],
                     ..Default::default()
                 },
                 home_changed: true,
                 ..LibraryDelta::default()
             },
         },
+        Some(LibraryCounts {
+            tracks: 30_000,
+            playlists: 40,
+            ..LibraryCounts::default()
+        }),
+        Some(LibraryHomeUpdate {
+            sections: vec![section.clone()],
+            prefetched_explore: None,
+        }),
     );
 
     assert!(applied);
+    assert_eq!(
+        library.cache,
+        crate::controller::LibraryCacheState::Committed { revision: 7 }
+    );
     assert!(library.tracks.is_empty());
+    assert!(library.playlists.is_empty());
     assert_eq!(library.favorites, vec![track.clone()]);
     assert!(library.search.tracks.is_empty());
     assert_eq!(library.cached_track_count, 30_000);
@@ -535,166 +479,48 @@ pub(in crate::ui) fn shell_search_event_requires_current_request_and_identity() 
 }
 
 #[test]
-pub(in crate::ui) fn shell_apply_sync_playlist_entries_invalidate_playlist_page() {
-    let mut library = test_library_snapshot();
-    let server = test_server("active");
-    let playlist = test_playlist("Regular", test_image_ref("playlist"));
-    library.source = Some(server.clone());
-    library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
-    library.playlists = vec![playlist.clone()];
-
-    let applied = super::apply_library_sync_status(
-        &mut library,
-        LibrarySyncStatus {
-            source_id: server.id.clone(),
-            sync_status: "Cached library ready".to_string(),
-            last_error: None,
-            counts: LibraryCounts {
-                playlists: 1,
-                ..LibraryCounts::default()
-            },
-            home: None,
-            delta: LibraryDelta {
-                playlists: library::PlaylistDelta {
-                    entries: vec![playlist.id.clone()],
-                    ..Default::default()
-                },
-                ..LibraryDelta::default()
-            },
-        },
-    );
-
-    assert!(applied);
-    assert!(library.playlists.is_empty());
-    assert_eq!(library.cached_playlist_count, 1);
-}
-#[test]
-pub(in crate::ui) fn shell_ignore_stale_sync_status() {
+pub(in crate::ui) fn shell_commit_ignores_inactive_or_stale_update() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
     library.source = Some(server.clone());
     library.selected_source = Some(LibrarySourceSelection::Source(server.id.clone()));
-    library.sync_status = "Cached library ready".to_string();
+    library.cache = crate::controller::LibraryCacheState::Committed { revision: 5 };
+    library.cached_track_count = 2;
 
-    let applied = super::apply_library_sync_status(
+    let inactive_applied = super::apply_library_commit_to_snapshot(
         &mut library,
-        LibrarySyncStatus {
+        &library_sync::LibraryCommitted {
             source_id: SourceId::new("server:stale"),
-            sync_status: "Sync needs attention".to_string(),
-            last_error: Some("sync failed".to_string()),
-            counts: LibraryCounts {
-                tracks: 10,
-                ..LibraryCounts::default()
-            },
-            home: None,
+            revision: 6,
             delta: LibraryDelta {
                 home_changed: true,
                 ..LibraryDelta::default()
             },
         },
-    );
-
-    assert!(!applied);
-    assert_eq!(library.sync_status, "Cached library ready");
-    assert_eq!(library.last_error, None);
-}
-#[test]
-pub(in crate::ui) fn shell_snapshot_entry() {
-    let source = None::<LibrarySourceSelection>;
-
-    let outcome = snapshot_event_outcome(false, true, &source, &source, false, false);
-
-    assert_eq!(outcome.render, SnapshotRenderDecision::PreserveScroll);
-    assert!(outcome.entered_first_run);
-}
-#[test]
-pub(in crate::ui) fn shell_source_switch_missing_auth_returns_to_reconnect() {
-    assert!(source_switch_requires_reconnect(true, true, true, false));
-    assert!(!source_switch_requires_reconnect(true, true, true, true));
-}
-#[test]
-pub(in crate::ui) fn shell_map_states() {
-    let cases = [
-        (
-            "cached library stays visible",
-            LocalCacheGateInput::cached(false, false, "Cached library ready"),
-            LocalSourceCacheGateAction::None,
-        ),
-        (
-            "folder change waits behind gate",
-            LocalCacheGateInput::cached_startup(true, false, "Cached library ready"),
-            LocalSourceCacheGateAction::Enter,
-        ),
-        (
-            "revealed cached folder change stays visible",
-            LocalCacheGateInput::cached(true, false, "Cached library ready"),
-            LocalSourceCacheGateAction::None,
-        ),
-        (
-            "empty folder selection stays visible",
-            LocalCacheGateInput {
-                local_folders_changed: true,
-                has_local_folders: false,
-                has_cached_library: false,
-                startup_route_revealed: true,
-                preparing: false,
-                sync_seen: false,
-                sync_status: "Cached library ready",
-            },
-            LocalSourceCacheGateAction::None,
-        ),
-        (
-            "uncached local sync waits behind gate",
-            LocalCacheGateInput::uncached(false, false, "Syncing library..."),
-            LocalSourceCacheGateAction::Enter,
-        ),
-        (
-            "cached sync stays visible",
-            LocalCacheGateInput::cached(false, false, "Syncing library..."),
-            LocalSourceCacheGateAction::None,
-        ),
-        (
-            "preparing waits for first snapshot",
-            LocalCacheGateInput::uncached(false, true, "Cached library ready"),
-            LocalSourceCacheGateAction::Wait,
-        ),
-        (
-            "preparing waits while snapshot is syncing",
-            LocalCacheGateInput::uncached(true, true, "Syncing library..."),
-            LocalSourceCacheGateAction::Wait,
-        ),
-        (
-            "preparing reveals after synced snapshot",
-            LocalCacheGateInput::uncached(true, true, "Cached library ready"),
-            LocalSourceCacheGateAction::Reveal,
-        ),
-    ];
-
-    assert!(local_source_snapshot_is_syncing("Syncing library..."));
-    for (name, input, expected) in cases {
-        assert_eq!(local_cache_gate_action(input), expected, "{name}");
-    }
-}
-
-#[test]
-pub(in crate::ui) fn shell_source_local() {
-    let source = Some(LibrarySourceSelection::Source(domain::SourceId::new(
-        "jellyfin:server:test",
-    )));
-
-    assert_eq!(
-        local_source_cache_gate_action(LocalSourceCacheGateInput {
-            local_folders_changed: false,
-            next_source: &source,
-            has_local_folders: true,
-            has_cached_library: true,
-            startup_route_revealed: true,
-            preparing: true,
-            sync_seen: true,
-            sync_status: "Cached library ready",
+        Some(LibraryCounts {
+            tracks: 10,
+            ..LibraryCounts::default()
         }),
-        LocalSourceCacheGateAction::Cancel
+        None,
     );
+    let stale_applied = super::apply_library_commit_to_snapshot(
+        &mut library,
+        &library_sync::LibraryCommitted {
+            source_id: server.id,
+            revision: 5,
+            delta: LibraryDelta {
+                reset: Some(library::LibraryReset::Source),
+                ..LibraryDelta::default()
+            },
+        },
+        Some(LibraryCounts::default()),
+        None,
+    );
+
+    assert!(!inactive_applied);
+    assert!(!stale_applied);
+    assert_eq!(library.cache.revision(), 5);
+    assert_eq!(library.cached_track_count, 2);
 }
 #[test]
 pub(in crate::ui) fn shell_match_snapshot() {
@@ -769,38 +595,6 @@ pub(in crate::ui) fn main_loop_stall_delay() {
     assert_eq!(
         main_loop_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(725)),
         625
-    );
-}
-#[test]
-pub(in crate::ui) fn shell_hide_status() {
-    assert_eq!(startup_loading_status_label(""), None);
-    assert_eq!(startup_loading_status_label("Cached library ready"), None);
-    assert_eq!(
-        startup_loading_status_label("Syncing Local library..."),
-        Some("Syncing Local library...".to_string())
-    );
-}
-#[test]
-pub(in crate::ui) fn shell_split_status_detail() {
-    assert_eq!(
-        startup_loading_status_parts(
-            "Caching local library... This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
-        ),
-        (
-            "Caching local library... This may take some time.".to_string(),
-            Some("Reading track metadata for Local, 25/2,567 tracks processed (12s)".to_string())
-        )
-    );
-}
-#[test]
-pub(in crate::ui) fn shell_connection_progress_detail() {
-    assert_eq!(
-        connection_progress_status_label("Fetching music folders for Desktop (20s elapsed)"),
-        Some("Fetching music folders for Desktop (20s elapsed)".to_string())
-    );
-    assert_eq!(
-        connection_progress_status_label("Library cache ready for Desktop in 44s elapsed"),
-        Some("Preparing library...".to_string())
     );
 }
 #[test]
@@ -1420,93 +1214,13 @@ pub(in crate::ui) fn shell_reject_stale_lyrics() {
     assert!(!loaded_lyrics_matches_current(None, &old_track, None));
 }
 #[test]
-pub(in crate::ui) fn shell_use_statuses() {
-    assert_eq!(
-        preferences_login_status_toast_message("Checking Jellyfin server..."),
-        Some("Checking Jellyfin server...".to_string())
-    );
-    assert_eq!(
-        preferences_login_status_toast_message_for_surface("Checking Jellyfin server...", false),
-        Some("Checking Jellyfin server...".to_string())
-    );
-    assert_eq!(
-        preferences_login_status_toast_message_for_surface("Checking Jellyfin server...", true),
-        None
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Server settings saved."),
-        Some("Server settings saved.".to_string())
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Server settings saved. Resyncing library..."),
-        Some("Server settings saved. Resyncing library...".to_string())
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Syncing Jellyfin library..."),
-        None
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Library sync complete"),
-        None
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Cached library ready"),
-        None
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("Sync already running."),
-        Some("Sync already running.".to_string())
-    );
-    assert_eq!(
-        preferences_login_status_toast_message("No changes to save."),
-        Some("No changes to save.".to_string())
-    );
+pub(in crate::ui) fn shell_filters_internal_controller_errors() {
     assert!(!super::controller_error_is_user_visible(
         "Element failed to change its state"
     ));
     assert!(super::controller_error_is_user_visible(
         "No saved token found for the active server."
     ));
-    assert_eq!(
-        library_sync_toast_state("Syncing Jellyfin library..."),
-        Some(LibrarySyncToastState::Progress)
-    );
-    assert_eq!(
-        library_sync_toast_state("Cached albums page 2 for Test, 500 cached (3s)"),
-        Some(LibrarySyncToastState::Progress)
-    );
-    assert_eq!(
-        library_sync_toast_state("Caching library artwork..."),
-        Some(LibrarySyncToastState::Progress)
-    );
-    assert_eq!(
-        library_sync_toast_state("Library sync complete"),
-        Some(LibrarySyncToastState::Complete)
-    );
-    assert_eq!(
-        library_sync_toast_state("Cached library ready"),
-        Some(LibrarySyncToastState::Clear)
-    );
-    assert_eq!(
-        library_sync_toast_state("Library cache ready for Test in 44s elapsed"),
-        Some(LibrarySyncToastState::Clear)
-    );
-    assert_eq!(library_sync_toast_state("Cached library cleared."), None);
-    assert_eq!(
-        library_sync_toast_message("Caching library... This may take some time."),
-        "Caching library... This may take some time."
-    );
-    assert_eq!(
-        library_sync_toast_message("Cached tracks page 4/6 for Test, 2,000 cached (24s)"),
-        "Cached tracks page 4/6 for Test, 2,000 cached (24s)"
-    );
-    assert_eq!(
-        library_sync_toast_message(
-            "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
-        ),
-        "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
-    );
-    assert_eq!(library_sync_toast_state("Sync already running."), None);
 }
 #[test]
 pub(in crate::ui) fn shell_ignore_field() {
@@ -1630,70 +1344,6 @@ pub(in crate::ui) fn landscape_cover_crop() {
     assert!((rect.x + 22.0).abs() < f64::EPSILON);
     assert!((rect.y - 0.0).abs() < f64::EPSILON);
 }
-#[derive(Clone, Copy)]
-struct LocalCacheGateInput<'a> {
-    local_folders_changed: bool,
-    has_local_folders: bool,
-    has_cached_library: bool,
-    startup_route_revealed: bool,
-    preparing: bool,
-    sync_seen: bool,
-    sync_status: &'a str,
-}
-
-impl<'a> LocalCacheGateInput<'a> {
-    fn cached(local_folders_changed: bool, preparing: bool, sync_status: &'a str) -> Self {
-        Self::cached_inner(local_folders_changed, true, preparing, sync_status)
-    }
-
-    fn cached_startup(local_folders_changed: bool, preparing: bool, sync_status: &'a str) -> Self {
-        Self::cached_inner(local_folders_changed, false, preparing, sync_status)
-    }
-
-    fn cached_inner(
-        local_folders_changed: bool,
-        startup_route_revealed: bool,
-        preparing: bool,
-        sync_status: &'a str,
-    ) -> Self {
-        Self {
-            local_folders_changed,
-            has_local_folders: true,
-            has_cached_library: true,
-            startup_route_revealed,
-            preparing,
-            sync_seen: false,
-            sync_status,
-        }
-    }
-
-    fn uncached(sync_seen: bool, preparing: bool, sync_status: &'a str) -> Self {
-        Self {
-            local_folders_changed: false,
-            has_local_folders: true,
-            has_cached_library: false,
-            startup_route_revealed: true,
-            preparing,
-            sync_seen,
-            sync_status,
-        }
-    }
-}
-
-fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGateAction {
-    let source = Some(LibrarySourceSelection::Local);
-    local_source_cache_gate_action(LocalSourceCacheGateInput {
-        local_folders_changed: input.local_folders_changed,
-        next_source: &source,
-        has_local_folders: input.has_local_folders,
-        has_cached_library: input.has_cached_library,
-        startup_route_revealed: input.startup_route_revealed,
-        preparing: input.preparing,
-        sync_seen: input.sync_seen,
-        sync_status: input.sync_status,
-    })
-}
-
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
     crate::controller::LibrarySnapshot {
         source: None,
@@ -1706,8 +1356,7 @@ pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapsh
         music_folders: Vec::new(),
         selected_music_folder_id: None,
         first_run: false,
-        sync_status: String::new(),
-        last_error: None,
+        cache: crate::controller::LibraryCacheState::NoCache { revision: 0 },
         cached_album_count: 0,
         cached_track_count: 0,
         cached_artist_count: 0,

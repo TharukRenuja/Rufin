@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
-    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalCueTrackSource,
-    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
-    LocalManifestScan, LocalScanCounters, SourceId, Track, TrackId,
+    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalCueDependency,
+    LocalCueTrackSource, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
+    LocalManifestEntry, LocalManifestScan, LocalScanCounters, SourceId, Track, TrackId,
 };
 use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
@@ -17,7 +17,7 @@ use source::{
     PagedResponse, PlayedFilter, RandomTrackProvider, RandomTrackRequest, SearchResults,
     SourceError, SourceIdentity, SourceResult,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -28,9 +28,11 @@ use walkdir::WalkDir;
 
 mod cue;
 mod source_impl;
+mod watch;
 
 use cue::*;
 use source_impl::*;
+pub use watch::LocalChangeFeed;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +40,7 @@ mod tests;
 pub const LOCAL_SOURCE_ID: &str = "local";
 const LOCAL_COVER_MAX_BYTES: usize = 32 * 1024 * 1024;
 const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
+const LOCAL_SCAN_CANCELLED: &str = "local library scan was cancelled";
 #[derive(Clone, Debug)]
 pub struct LocalSource {
     identity: SourceIdentity,
@@ -106,6 +109,7 @@ struct LocalReusedTrack {
 struct LocalDiscoveredFiles {
     audio: Vec<LocalFileFacts>,
     cues: Vec<LocalFileFacts>,
+    directories: Vec<PathBuf>,
 }
 #[derive(Clone, Debug)]
 struct AlbumAccumulator {
@@ -143,6 +147,7 @@ pub struct LocalScanProgress {
     pub processed_tracks: usize,
     pub total_tracks: Option<usize>,
 }
+
 impl LocalSource {
     pub fn from_root(root: PathBuf) -> SourceResult<Self> {
         let root = normalize_root(root)?;
@@ -168,7 +173,7 @@ impl LocalSource {
         roots: Vec<PathBuf>,
         source: SourceIdentity,
     ) -> SourceResult<Self> {
-        let (library, manifest_scan) = scan_library(&roots, Vec::new(), None);
+        let (library, manifest_scan) = scan_library(&roots, Vec::new(), None, &|| false)?;
         Ok(Self {
             identity: source,
             library,
@@ -181,17 +186,19 @@ impl LocalSource {
         source: SourceIdentity,
         cache: Vec<LocalManifestEntry>,
     ) -> SourceResult<Self> {
-        Self::from_roots_with_manifest_cache_and_progress(roots, source, cache, |_| {})
+        Self::from_roots_with_manifest_scan(roots, source, cache, |_| {}, || false)
     }
 
-    pub fn from_roots_with_manifest_cache_and_progress(
+    pub fn from_roots_with_manifest_scan(
         roots: Vec<PathBuf>,
         source: SourceIdentity,
         cache: Vec<LocalManifestEntry>,
         mut progress: impl FnMut(LocalScanProgress),
+        cancelled: impl Fn() -> bool + Sync,
     ) -> SourceResult<Self> {
         let roots = normalize_roots(roots)?;
-        let (library, manifest_scan) = scan_library(&roots, cache, Some(&mut progress));
+        let (library, manifest_scan) =
+            scan_library(&roots, cache, Some(&mut progress), &cancelled)?;
         Ok(Self {
             identity: source,
             library,
@@ -199,8 +206,40 @@ impl LocalSource {
         })
     }
 
+    pub fn from_roots_with_manifest_paths(
+        roots: Vec<PathBuf>,
+        identity: SourceIdentity,
+        manifest: Vec<LocalManifestEntry>,
+        cached_cue_dependencies: &[LocalCueDependency],
+        dirty_paths: &BTreeSet<PathBuf>,
+        mut on_progress: impl FnMut(LocalScanProgress),
+        is_cancelled: impl Fn() -> bool + Sync,
+    ) -> SourceResult<Option<Self>> {
+        let roots = normalize_roots(roots)?;
+        let Some((library, manifest_scan)) = scan_manifest_paths(
+            &roots,
+            manifest,
+            cached_cue_dependencies,
+            dirty_paths,
+            Some(&mut on_progress),
+            &is_cancelled,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            identity,
+            library,
+            manifest_scan,
+        }))
+    }
+
     pub fn manifest_scan(&self) -> &LocalManifestScan {
         &self.manifest_scan
+    }
+
+    pub fn into_manifest_scan(self) -> LocalManifestScan {
+        self.manifest_scan
     }
 
     pub fn identity_for_root(root: impl AsRef<Path>) -> SourceResult<SourceIdentity> {
@@ -692,37 +731,41 @@ fn scan_library(
     roots: &[PathBuf],
     cache: Vec<LocalManifestEntry>,
     mut progress: Option<&mut dyn FnMut(LocalScanProgress)>,
-) -> (LocalLibrary, LocalManifestScan) {
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<(LocalLibrary, LocalManifestScan)> {
+    check_local_scan_cancelled(cancelled)?;
     let mut counters = LocalScanCounters::default();
     let walk_started = Instant::now();
-    let discovered = discover_local_files(roots, &mut counters, &mut progress);
+    let discovered = discover_local_files(roots, &mut counters, &mut progress, cancelled)?;
     counters.filesystem_walk_elapsed_ms = elapsed_ms(walk_started);
+    let LocalDiscoveredFiles {
+        audio,
+        cues,
+        directories,
+    } = discovered;
 
     let compare_started = Instant::now();
-    let mut cache_by_path = cache
-        .into_iter()
-        .map(|entry| (entry.facts.path.clone(), entry))
-        .collect::<HashMap<_, _>>();
-    let cue_scan = scan_cue_sheets(
-        &discovered.cues,
-        &discovered.audio,
-        &mut cache_by_path,
-        &mut counters,
-    );
+    let mut cache_by_path = HashMap::with_capacity(cache.len());
+    for entry in cache {
+        check_local_scan_cancelled(cancelled)?;
+        cache_by_path.insert(entry.facts.path.clone(), entry);
+    }
+    let cue_scan = scan_cue_sheets(&cues, &audio, &mut cache_by_path, &mut counters, cancelled)?;
+    let cue_dependencies = cue_scan.dependencies.into_iter().collect();
     let suppressed_audio_paths = cue_scan.suppressed_audio_paths;
     let cue_tracks = cue_scan.tracks;
-    let facts = discovered
-        .audio
-        .into_iter()
-        .filter(|facts| !suppressed_audio_paths.contains(&facts.path))
-        .collect::<Vec<_>>();
+    let mut facts = Vec::with_capacity(audio.len());
+    for file_facts in audio {
+        check_local_scan_cancelled(cancelled)?;
+        if !suppressed_audio_paths.contains(&file_facts.path) {
+            facts.push(file_facts);
+        }
+    }
     let mut scanned = Vec::with_capacity(facts.len());
     let mut entries = Vec::with_capacity(facts.len());
+    let mut changed_manifest_paths = BTreeSet::new();
     let mut cue_track_sources = Vec::new();
     let mut changed_track_ids = Vec::new();
-    let mut metadata_track_ids = Vec::new();
-    let mut artwork_track_ids = Vec::new();
-    let mut retained_track_ids = Vec::new();
     let mut dirty_album_ids = BTreeSet::new();
     let mut dirty_artist_ids = BTreeSet::new();
     let mut dirty_album_artist_ids = BTreeSet::new();
@@ -741,6 +784,7 @@ fn scan_library(
         true,
     );
     for (index, facts) in facts.into_iter().enumerate() {
+        check_local_scan_cancelled(cancelled)?;
         let cached = cache_by_path.remove(&facts.path);
         let stale_entry = match cached {
             Some(cached) if local_file_facts_match(&cached.facts, &facts) => {
@@ -776,7 +820,6 @@ fn scan_library(
                 None
             }
         };
-        library_changed = true;
         counters.tag_reads = counters.tag_reads.saturating_add(1);
         parse_jobs.push(LocalParseJob {
             index,
@@ -784,8 +827,11 @@ fn scan_library(
             stale_entry,
         });
     }
-    let parsed_tracks =
-        parse_local_tracks(parse_jobs, reused_tracks.len(), total_tracks, |count| {
+    let parsed_rows = parse_local_tracks(
+        parse_jobs,
+        reused_tracks.len(),
+        total_tracks,
+        |count| {
             emit_local_scan_progress(
                 &mut progress,
                 LocalScanStage::ReadingTags,
@@ -794,16 +840,20 @@ fn scan_library(
                 Some(total_tracks),
                 false,
             );
-        });
-    let mut parsed_tracks = parsed_tracks
-        .into_iter()
-        .map(|parsed| (parsed.index, parsed))
-        .collect::<HashMap<_, _>>();
+        },
+        cancelled,
+    )?;
+    let mut parsed_tracks = HashMap::with_capacity(parsed_rows.len());
+    for parsed in parsed_rows {
+        check_local_scan_cancelled(cancelled)?;
+        parsed_tracks.insert(parsed.index, parsed);
+    }
     for index in 0..total_tracks {
+        check_local_scan_cancelled(cancelled)?;
         if let Some(reused) = reused_tracks.remove(&index) {
             if reused.artwork_changed {
                 counters.artwork_changed = counters.artwork_changed.saturating_add(1);
-                artwork_track_ids.push(reused.track_id);
+                changed_track_ids.push(reused.track_id);
                 mark_track_aggregate_dirty(
                     &reused.entry.track,
                     &mut dirty_album_ids,
@@ -812,8 +862,7 @@ fn scan_library(
                     &mut dirty_genre_names,
                 );
                 library_changed = true;
-            } else {
-                retained_track_ids.push(reused.track_id);
+                changed_manifest_paths.insert(reused.entry.facts.path.clone());
             }
             scanned.push(reused.scanned_track);
             entries.push(reused.entry);
@@ -828,13 +877,12 @@ fn scan_library(
         match parsed.scanned_track {
             Some(scanned_track) => {
                 let entry = manifest_entry_for_scanned(&parsed.facts, &scanned_track);
+                changed_manifest_paths.insert(entry.facts.path.clone());
+                library_changed = true;
                 let track_changed = classify_reparsed_track(
                     parsed.stale_entry.as_ref(),
                     &entry,
                     &mut changed_track_ids,
-                    &mut metadata_track_ids,
-                    &mut artwork_track_ids,
-                    &mut retained_track_ids,
                     &mut counters,
                 );
                 if track_changed {
@@ -860,10 +908,15 @@ fn scan_library(
             }
             None => {
                 counters.parse_failures = counters.parse_failures.saturating_add(1);
+                if let Some(stale_entry) = parsed.stale_entry {
+                    scanned.push(scanned_track_from_manifest(&stale_entry));
+                    entries.push(stale_entry);
+                }
             }
         }
     }
     for cue_track in cue_tracks {
+        check_local_scan_cancelled(cancelled)?;
         let CueScannedTrack {
             facts,
             stale_entry,
@@ -873,13 +926,13 @@ fn scan_library(
             cue_track_sources.push(source.clone());
         }
         let entry = manifest_entry_for_scanned(&facts, &scanned_track);
+        if stale_entry.as_ref() != Some(&entry) {
+            changed_manifest_paths.insert(entry.facts.path.clone());
+        }
         let track_changed = classify_reparsed_track(
             stale_entry.as_ref(),
             &entry,
             &mut changed_track_ids,
-            &mut metadata_track_ids,
-            &mut artwork_track_ids,
-            &mut retained_track_ids,
             &mut counters,
         );
         if track_changed {
@@ -905,12 +958,15 @@ fn scan_library(
         scanned.push(scanned_track);
     }
 
-    let deleted_entries = cache_by_path.into_values().collect::<Vec<_>>();
-    let deleted_track_ids = deleted_entries
-        .iter()
-        .map(|entry| entry.track.id.clone())
-        .collect::<Vec<_>>();
+    let mut deleted_entries = Vec::with_capacity(cache_by_path.len());
+    for entry in cache_by_path.into_values() {
+        check_local_scan_cancelled(cancelled)?;
+        deleted_entries.push(entry);
+    }
+    let mut deleted_track_ids = Vec::with_capacity(deleted_entries.len());
     for entry in &deleted_entries {
+        check_local_scan_cancelled(cancelled)?;
+        deleted_track_ids.push(entry.track.id.clone());
         mark_track_aggregate_dirty(
             &entry.track,
             &mut dirty_album_ids,
@@ -919,10 +975,11 @@ fn scan_library(
             &mut dirty_genre_names,
         );
     }
-    let deleted_paths = deleted_entries
-        .into_iter()
-        .map(|entry| entry.facts.path)
-        .collect::<Vec<_>>();
+    let mut deleted_paths = Vec::with_capacity(deleted_entries.len());
+    for entry in deleted_entries {
+        check_local_scan_cancelled(cancelled)?;
+        deleted_paths.push(entry.facts.path);
+    }
     counters.deleted = deleted_paths.len().min(u64::MAX as usize) as u64;
     if !deleted_paths.is_empty() {
         library_changed = true;
@@ -937,23 +994,37 @@ fn scan_library(
         Some(total_tracks),
         true,
     );
+    check_local_scan_cancelled(cancelled)?;
     scanned.sort_by(local_scanned_track_sort);
     let library_started = Instant::now();
-    let (root_entries, folders) = scan_folders(roots);
+    let (root_entries, folders) = scan_folders(roots, directories, cancelled)?;
+    check_local_scan_cancelled(cancelled)?;
     let library = build_library(scanned, root_entries, folders);
+    check_local_scan_cancelled(cancelled)?;
+    let mut manifest_covers_before = HashMap::with_capacity(entries.len());
+    for entry in &entries {
+        check_local_scan_cancelled(cancelled)?;
+        manifest_covers_before.insert(entry.facts.path.clone(), entry.cover.clone());
+    }
     sync_manifest_covers_from_library(&library, &mut entries);
+    for entry in &entries {
+        check_local_scan_cancelled(cancelled)?;
+        if manifest_covers_before.get(&entry.facts.path) != Some(&entry.cover) {
+            changed_manifest_paths.insert(entry.facts.path.clone());
+        }
+    }
     counters.library_build_elapsed_ms = elapsed_ms(library_started);
+    check_local_scan_cancelled(cancelled)?;
 
-    (
+    Ok((
         library,
         LocalManifestScan {
             entries,
+            changed_manifest_paths: changed_manifest_paths.into_iter().collect(),
+            cue_dependencies,
             cue_track_sources,
             deleted_paths,
             changed_track_ids,
-            metadata_track_ids,
-            artwork_track_ids,
-            retained_track_ids,
             deleted_track_ids,
             dirty_album_ids: dirty_album_ids.into_iter().collect(),
             dirty_artist_ids: dirty_artist_ids.into_iter().collect(),
@@ -962,7 +1033,341 @@ fn scan_library(
             counters,
             library_changed,
         },
-    )
+    ))
+}
+
+fn scan_manifest_paths(
+    roots: &[PathBuf],
+    cache: Vec<LocalManifestEntry>,
+    cached_cue_dependencies: &[LocalCueDependency],
+    dirty_paths: &BTreeSet<PathBuf>,
+    mut progress: Option<&mut dyn FnMut(LocalScanProgress)>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<Option<(LocalLibrary, LocalManifestScan)>> {
+    check_local_scan_cancelled(cancelled)?;
+    let compare_started = Instant::now();
+    let mut entries = cache
+        .into_iter()
+        .map(|entry| (entry.facts.path.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let previous = entries
+        .iter()
+        .map(|(path, entry)| (path.clone(), (entry.track.clone(), entry.cover.clone())))
+        .collect::<HashMap<_, _>>();
+    let mut cue_dependencies = cached_cue_dependencies.to_vec();
+    cue_dependencies.sort();
+    cue_dependencies.dedup();
+    let mut scan = LocalManifestScan {
+        cue_dependencies,
+        ..LocalManifestScan::default()
+    };
+    let mut changed_paths = BTreeSet::new();
+    let mut dirty_album_ids = BTreeSet::new();
+    let mut dirty_artist_ids = BTreeSet::new();
+    let mut dirty_album_artist_ids = BTreeSet::new();
+    let mut dirty_genre_names = BTreeSet::new();
+    let mut checked_roots = BTreeSet::new();
+    let mut scanned_overrides = HashMap::new();
+
+    emit_local_scan_progress(
+        &mut progress,
+        LocalScanStage::ReadingTags,
+        &scan.counters,
+        0,
+        Some(dirty_paths.len()),
+        true,
+    );
+    for (index, path) in dirty_paths.iter().enumerate() {
+        check_local_scan_cancelled(cancelled)?;
+        let Some(root) = roots.iter().find(|root| path.starts_with(root)) else {
+            return Ok(None);
+        };
+        if path == root
+            || entries.contains_key(path) && !is_audio_file(path)
+            || manifest_has_descendant(&entries, path)
+            || manifest_has_cue_dependency(&entries, path)
+            || manifest_has_file_cover_dependency(&entries, path)
+            || is_cue_file(path)
+            || supported_cover_extension(path)
+            || path.canonicalize().is_ok_and(|resolved| resolved != *path)
+        {
+            return Ok(None);
+        }
+        if checked_roots.insert(root.clone()) {
+            require_readable_local_root(root)?;
+            scan.counters.roots_walked = scan.counters.roots_walked.saturating_add(1);
+        }
+        scan.counters.directory_entries_visited =
+            scan.counters.directory_entries_visited.saturating_add(1);
+
+        match fs::metadata(path) {
+            Ok(metadata) if !metadata.is_file() => return Ok(None),
+            Ok(_) if !is_audio_file(path) => {}
+            Ok(_) => {
+                scan.counters.audio_candidates = scan.counters.audio_candidates.saturating_add(1);
+                let facts = local_file_facts_from_path(root, path)?;
+                let stale_entry = entries.remove(path);
+                if let Some(stale) = stale_entry.as_ref()
+                    && local_file_facts_match(&stale.facts, &facts)
+                {
+                    scan.counters.unchanged_reused =
+                        scan.counters.unchanged_reused.saturating_add(1);
+                    entries.insert(path.clone(), stale.clone());
+                    continue;
+                }
+                if stale_entry.is_none()
+                    && cached_cue_dependencies
+                        .iter()
+                        .any(|dependency| dependency.source_path == *path)
+                {
+                    return Ok(None);
+                }
+                if stale_entry.is_some() {
+                    scan.counters.changed_reparsed =
+                        scan.counters.changed_reparsed.saturating_add(1);
+                } else {
+                    scan.counters.new_parsed = scan.counters.new_parsed.saturating_add(1);
+                }
+                scan.counters.tag_reads = scan.counters.tag_reads.saturating_add(1);
+                let parsed = parse_local_track(LocalParseJob {
+                    index,
+                    facts,
+                    stale_entry,
+                });
+                scan.counters.tag_parse_elapsed_ms = scan
+                    .counters
+                    .tag_parse_elapsed_ms
+                    .saturating_add(parsed.parse_elapsed_ms);
+                match parsed.scanned_track {
+                    Some(scanned_track) => {
+                        let entry = manifest_entry_for_scanned(&parsed.facts, &scanned_track);
+                        changed_paths.insert(path.clone());
+                        scan.library_changed = true;
+                        if classify_reparsed_track(
+                            parsed.stale_entry.as_ref(),
+                            &entry,
+                            &mut scan.changed_track_ids,
+                            &mut scan.counters,
+                        ) {
+                            if let Some(stale) = &parsed.stale_entry {
+                                mark_track_aggregate_dirty(
+                                    &stale.track,
+                                    &mut dirty_album_ids,
+                                    &mut dirty_artist_ids,
+                                    &mut dirty_album_artist_ids,
+                                    &mut dirty_genre_names,
+                                );
+                            }
+                            mark_track_aggregate_dirty(
+                                &entry.track,
+                                &mut dirty_album_ids,
+                                &mut dirty_artist_ids,
+                                &mut dirty_album_artist_ids,
+                                &mut dirty_genre_names,
+                            );
+                        }
+                        scanned_overrides.insert(path.clone(), scanned_track);
+                        entries.insert(path.clone(), entry);
+                    }
+                    None => {
+                        scan.counters.parse_failures =
+                            scan.counters.parse_failures.saturating_add(1);
+                        if let Some(stale) = parsed.stale_entry {
+                            entries.insert(path.clone(), stale);
+                        }
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(stale) = entries.remove(path) {
+                    mark_track_aggregate_dirty(
+                        &stale.track,
+                        &mut dirty_album_ids,
+                        &mut dirty_artist_ids,
+                        &mut dirty_album_artist_ids,
+                        &mut dirty_genre_names,
+                    );
+                    scan.deleted_track_ids.push(stale.track.id);
+                    scan.deleted_paths.push(path.clone());
+                    scan.counters.deleted = scan.counters.deleted.saturating_add(1);
+                    scan.library_changed = true;
+                }
+            }
+            Err(error) => return Err(SourceError::Other(error.to_string())),
+        }
+        emit_local_scan_progress(
+            &mut progress,
+            LocalScanStage::ReadingTags,
+            &scan.counters,
+            index + 1,
+            Some(dirty_paths.len()),
+            false,
+        );
+    }
+    scan.counters.manifest_compare_elapsed_ms = elapsed_ms(compare_started);
+
+    emit_local_scan_progress(
+        &mut progress,
+        LocalScanStage::BuildingLibrary,
+        &scan.counters,
+        entries.len(),
+        Some(entries.len()),
+        true,
+    );
+    check_local_scan_cancelled(cancelled)?;
+    let library_started = Instant::now();
+    let directories = manifest_directories(roots, entries.values());
+    let (root_entries, folders) = scan_folders(roots, directories, cancelled)?;
+    let mut scanned = entries
+        .values()
+        .map(|entry| {
+            scanned_overrides
+                .remove(&entry.facts.path)
+                .unwrap_or_else(|| scanned_track_from_manifest(entry))
+        })
+        .collect::<Vec<_>>();
+    scanned.sort_by(local_scanned_track_sort);
+    let library = build_library(scanned, root_entries, folders);
+    let mut entries = entries.into_values().collect::<Vec<_>>();
+    sync_manifest_covers_from_library(&library, &mut entries);
+    for entry in &entries {
+        if previous.get(&entry.facts.path).map(|(_, cover)| cover) == Some(&entry.cover) {
+            continue;
+        }
+        changed_paths.insert(entry.facts.path.clone());
+        scan.library_changed = true;
+        if !scan.changed_track_ids.contains(&entry.track.id) {
+            scan.changed_track_ids.push(entry.track.id.clone());
+        }
+        if let Some((track, _)) = previous.get(&entry.facts.path) {
+            mark_track_aggregate_dirty(
+                track,
+                &mut dirty_album_ids,
+                &mut dirty_artist_ids,
+                &mut dirty_album_artist_ids,
+                &mut dirty_genre_names,
+            );
+        }
+        mark_track_aggregate_dirty(
+            &entry.track,
+            &mut dirty_album_ids,
+            &mut dirty_artist_ids,
+            &mut dirty_album_artist_ids,
+            &mut dirty_genre_names,
+        );
+    }
+    scan.counters.library_build_elapsed_ms = elapsed_ms(library_started);
+    check_local_scan_cancelled(cancelled)?;
+
+    scan.entries = entries;
+    scan.changed_manifest_paths = changed_paths.into_iter().collect();
+    scan.dirty_album_ids = dirty_album_ids.into_iter().collect();
+    scan.dirty_artist_ids = dirty_artist_ids.into_iter().collect();
+    scan.dirty_album_artist_ids = dirty_album_artist_ids.into_iter().collect();
+    scan.dirty_genre_names = dirty_genre_names.into_iter().collect();
+    sort_dedup(&mut scan.changed_track_ids);
+    sort_dedup(&mut scan.deleted_track_ids);
+    sort_dedup(&mut scan.deleted_paths);
+    Ok(Some((library, scan)))
+}
+
+fn require_readable_local_root(root: &Path) -> SourceResult<()> {
+    let metadata = fs::metadata(root).map_err(|error| SourceError::Other(error.to_string()))?;
+    if !metadata.is_dir() {
+        return Err(SourceError::Other(format!(
+            "Local library root is not a directory: {}",
+            root.display()
+        )));
+    }
+    fs::read_dir(root).map_err(|error| SourceError::Other(error.to_string()))?;
+    Ok(())
+}
+
+fn manifest_has_descendant(entries: &BTreeMap<PathBuf, LocalManifestEntry>, path: &Path) -> bool {
+    entries.values().any(|entry| {
+        (entry.facts.path != path && entry.facts.path.starts_with(path))
+            || entry
+                .track
+                .local_path
+                .as_deref()
+                .map(Path::new)
+                .is_some_and(|track_path| track_path != path && track_path.starts_with(path))
+    })
+}
+
+fn manifest_has_cue_dependency(
+    entries: &BTreeMap<PathBuf, LocalManifestEntry>,
+    path: &Path,
+) -> bool {
+    entries.values().any(|entry| {
+        let Some(cue_path) = cue_path_from_manifest_entry(entry) else {
+            return false;
+        };
+        cue_path == path
+            || entry
+                .track
+                .local_path
+                .as_deref()
+                .map(Path::new)
+                .is_some_and(|source_path| source_path == path)
+    })
+}
+
+fn cue_path_from_manifest_entry(entry: &LocalManifestEntry) -> Option<PathBuf> {
+    let text = entry.facts.path.to_string_lossy();
+    let (path, track) = text.rsplit_once("#track=")?;
+    track.parse::<u16>().ok()?;
+    Some(PathBuf::from(path))
+}
+
+fn manifest_has_file_cover_dependency(
+    entries: &BTreeMap<PathBuf, LocalManifestEntry>,
+    path: &Path,
+) -> bool {
+    entries.values().any(|entry| {
+        entry.cover.as_ref().is_some_and(|cover| {
+            cover.kind == LocalManifestCoverKind::File && cover.source_path == path
+        })
+    })
+}
+
+fn manifest_directories<'a>(
+    roots: &[PathBuf],
+    entries: impl Iterator<Item = &'a LocalManifestEntry>,
+) -> Vec<PathBuf> {
+    let mut directories = roots.iter().cloned().collect::<BTreeSet<_>>();
+    for entry in entries {
+        let path = entry
+            .track
+            .local_path
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(&entry.facts.path);
+        let Some(root) = roots.iter().find(|root| path.starts_with(root)) else {
+            continue;
+        };
+        let mut current = path.parent();
+        while let Some(directory) = current.filter(|directory| directory.starts_with(root)) {
+            directories.insert(directory.to_path_buf());
+            if directory == root {
+                break;
+            }
+            current = directory.parent();
+        }
+    }
+    directories.into_iter().collect()
+}
+
+fn sort_dedup<T: Ord>(items: &mut Vec<T>) {
+    items.sort();
+    items.dedup();
+}
+
+fn check_local_scan_cancelled(cancelled: &(dyn Fn() -> bool + Sync)) -> SourceResult<()> {
+    if cancelled() {
+        return Err(SourceError::Other(LOCAL_SCAN_CANCELLED.to_string()));
+    }
+    Ok(())
 }
 fn mark_track_aggregate_dirty(
     track: &Track,
@@ -993,9 +1398,11 @@ fn parse_local_tracks(
     reused_count: usize,
     total_tracks: usize,
     mut progress: impl FnMut(usize),
-) -> Vec<LocalParsedTrack> {
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<Vec<LocalParsedTrack>> {
+    check_local_scan_cancelled(cancelled)?;
     if jobs.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let worker_count = thread::available_parallelism()
         .map(usize::from)
@@ -1004,13 +1411,15 @@ fn parse_local_tracks(
         .min(jobs.len());
     let chunk_size = jobs.len().div_ceil(worker_count).max(1);
     let (tx, rx) = mpsc::channel();
-    thread::scope(|scope| {
+    let parsed_tracks = thread::scope(|scope| {
         for chunk in jobs.chunks(chunk_size) {
             let tx = tx.clone();
             let chunk = chunk.to_vec();
             scope.spawn(move || {
                 for job in chunk {
-                    let _sent = tx.send(parse_local_track(job));
+                    if cancelled() || tx.send(parse_local_track(job)).is_err() {
+                        break;
+                    }
                 }
             });
         }
@@ -1021,12 +1430,14 @@ fn parse_local_tracks(
             progress((reused_count + parsed_tracks.len()).min(total_tracks));
         }
         parsed_tracks
-    })
+    });
+    check_local_scan_cancelled(cancelled)?;
+    Ok(parsed_tracks)
 }
 
 fn parse_local_track(job: LocalParseJob) -> LocalParsedTrack {
     let parse_started = Instant::now();
-    let scanned_track = read_track(job.facts.path.clone());
+    let scanned_track = read_track(job.facts.path.clone(), job.stale_entry.is_some());
     LocalParsedTrack {
         index: job.index,
         facts: job.facts,
@@ -1040,9 +1451,6 @@ fn classify_reparsed_track(
     stale_entry: Option<&LocalManifestEntry>,
     entry: &LocalManifestEntry,
     changed_track_ids: &mut Vec<TrackId>,
-    metadata_track_ids: &mut Vec<TrackId>,
-    artwork_track_ids: &mut Vec<TrackId>,
-    retained_track_ids: &mut Vec<TrackId>,
     counters: &mut LocalScanCounters,
 ) -> bool {
     let Some(stale_entry) = stale_entry else {
@@ -1052,20 +1460,13 @@ fn classify_reparsed_track(
     let metadata_changed = stale_entry.metadata_hash != entry.metadata_hash;
     let search_changed = stale_entry.search_hash != entry.search_hash;
     let artwork_changed = stale_entry.cover != entry.cover;
-    if search_changed {
+    if artwork_changed {
+        counters.artwork_changed = counters.artwork_changed.saturating_add(1);
+    }
+    if search_changed || metadata_changed || artwork_changed {
         changed_track_ids.push(entry.track.id.clone());
         return true;
     }
-    if metadata_changed {
-        metadata_track_ids.push(entry.track.id.clone());
-        return true;
-    }
-    if artwork_changed {
-        counters.artwork_changed = counters.artwork_changed.saturating_add(1);
-        artwork_track_ids.push(entry.track.id.clone());
-        return true;
-    }
-    retained_track_ids.push(entry.track.id.clone());
     false
 }
 
@@ -1073,6 +1474,7 @@ fn classify_reparsed_track(
 struct CueScan {
     tracks: Vec<CueScannedTrack>,
     suppressed_audio_paths: BTreeSet<PathBuf>,
+    dependencies: BTreeSet<LocalCueDependency>,
 }
 
 #[derive(Clone, Debug)]
@@ -1082,21 +1484,32 @@ struct CueScannedTrack {
     scanned_track: ScannedTrack,
 }
 
+struct CueFileScanInput<'a> {
+    cue_facts: &'a LocalFileFacts,
+    audio_facts: &'a LocalFileFacts,
+    cue_file: &'a CueFile,
+    cue_revision: &'a str,
+}
+
 fn discover_local_files(
     roots: &[PathBuf],
     counters: &mut LocalScanCounters,
     progress: &mut Option<&mut dyn FnMut(LocalScanProgress)>,
-) -> LocalDiscoveredFiles {
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<LocalDiscoveredFiles> {
     let mut discovered = LocalDiscoveredFiles::default();
     emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
     for root in roots {
+        check_local_scan_cancelled(cancelled)?;
         counters.roots_walked = counters.roots_walked.saturating_add(1);
         for entry in WalkDir::new(root).follow_links(true).into_iter() {
-            let Ok(entry) = entry else {
-                continue;
-            };
+            check_local_scan_cancelled(cancelled)?;
+            let entry = entry.map_err(|error| SourceError::Other(error.to_string()))?;
             counters.directory_entries_visited =
                 counters.directory_entries_visited.saturating_add(1);
+            if entry.file_type().is_dir() {
+                discovered.directories.push(entry.path().to_path_buf());
+            }
             if entry.file_type().is_file() && supported_cover_extension(entry.path()) {
                 counters.artwork_candidates = counters.artwork_candidates.saturating_add(1);
             }
@@ -1104,20 +1517,23 @@ fn discover_local_files(
                 continue;
             }
             if is_cue_file(entry.path()) {
-                if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
-                    discovered.cues.push(file_facts);
-                }
+                discovered
+                    .cues
+                    .push(local_file_facts_from_path(root, entry.path())?);
                 continue;
             }
             if is_audio_file(entry.path()) {
                 counters.audio_candidates = counters.audio_candidates.saturating_add(1);
-                if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
-                    discovered.audio.push(file_facts);
-                }
+                discovered
+                    .audio
+                    .push(local_file_facts_from_path(root, entry.path())?);
             }
             emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, false);
         }
     }
+    check_local_scan_cancelled(cancelled)?;
+    discovered.directories.sort();
+    discovered.directories.dedup();
     discovered
         .audio
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -1130,8 +1546,10 @@ fn discover_local_files(
     discovered
         .cues
         .dedup_by(|left, right| left.path == right.path);
+    check_local_scan_cancelled(cancelled)?;
     emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
-    discovered
+    check_local_scan_cancelled(cancelled)?;
+    Ok(discovered)
 }
 
 fn scan_cue_sheets(
@@ -1139,16 +1557,21 @@ fn scan_cue_sheets(
     audio_facts: &[LocalFileFacts],
     cache_by_path: &mut HashMap<PathBuf, LocalManifestEntry>,
     counters: &mut LocalScanCounters,
-) -> CueScan {
-    let audio_by_path = audio_facts
-        .iter()
-        .map(|facts| (facts.path.clone(), facts))
-        .collect::<HashMap<_, _>>();
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<CueScan> {
+    check_local_scan_cancelled(cancelled)?;
+    let mut audio_by_path = HashMap::with_capacity(audio_facts.len());
+    for facts in audio_facts {
+        check_local_scan_cancelled(cancelled)?;
+        audio_by_path.insert(facts.path.clone(), facts);
+    }
     let mut scan = CueScan::default();
     for cue_facts in cue_facts {
+        check_local_scan_cancelled(cancelled)?;
         let Ok(bytes) = read_cue_file_bounded(cue_facts) else {
             continue;
         };
+        check_local_scan_cancelled(cancelled)?;
         let cue_text = String::from_utf8_lossy(&bytes);
         let Some(sheet) = parse_cue_sheet(&cue_facts.path, &cue_text) else {
             continue;
@@ -1157,30 +1580,40 @@ fn scan_cue_sheets(
         let cue_revision =
             file_revision(&cue_facts.path).unwrap_or_else(|| cue_revision_from_facts(cue_facts));
         for cue_file in &sheet.files {
+            check_local_scan_cancelled(cancelled)?;
+            scan.dependencies.insert(LocalCueDependency {
+                cue_path: cue_facts.path.clone(),
+                source_path: cue_file.path.clone(),
+            });
             let Some(audio_facts) = audio_by_path.get(&cue_file.path).copied() else {
                 continue;
             };
             if reuse_cached_cue_file(
-                cue_facts,
-                audio_facts,
-                cue_file,
-                &cue_revision,
+                CueFileScanInput {
+                    cue_facts,
+                    audio_facts,
+                    cue_file,
+                    cue_revision: &cue_revision,
+                },
                 cache_by_path,
                 counters,
                 &mut scan,
-            ) {
+                cancelled,
+            )? {
                 continue;
             }
             counters.cue_backing_reads = counters.cue_backing_reads.saturating_add(1);
-            let Some(backing_track) = read_track(audio_facts.path.clone()) else {
+            let Some(backing_track) = read_track(audio_facts.path.clone(), false) else {
                 continue;
             };
+            check_local_scan_cancelled(cancelled)?;
             let backing_duration_ms = u64::from(backing_track.track.duration_seconds) * 1_000;
             if backing_duration_ms == 0 {
                 continue;
             }
             scan.suppressed_audio_paths.insert(audio_facts.path.clone());
             for (position, cue_track) in cue_file.tracks.iter().enumerate() {
+                check_local_scan_cancelled(cancelled)?;
                 let segment_start_ms = cue_track.index_start_ms;
                 let segment_end_ms = cue_file
                     .tracks
@@ -1223,27 +1656,33 @@ fn scan_cue_sheets(
             }
         }
     }
-    scan
+    check_local_scan_cancelled(cancelled)?;
+    Ok(scan)
 }
 
 fn reuse_cached_cue_file(
-    cue_facts: &LocalFileFacts,
-    audio_facts: &LocalFileFacts,
-    cue_file: &CueFile,
-    cue_revision: &str,
+    input: CueFileScanInput<'_>,
     cache_by_path: &mut HashMap<PathBuf, LocalManifestEntry>,
     counters: &mut LocalScanCounters,
     scan: &mut CueScan,
-) -> bool {
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<bool> {
+    let CueFileScanInput {
+        cue_facts,
+        audio_facts,
+        cue_file,
+        cue_revision,
+    } = input;
     let mut candidates = Vec::new();
     for (position, cue_track) in cue_file.tracks.iter().enumerate() {
+        check_local_scan_cancelled(cancelled)?;
         let segment_start_ms = cue_track.index_start_ms;
         let facts = cue_track_facts(cue_facts, audio_facts, cue_track.number);
         let Some(entry) = cache_by_path.get(&facts.path) else {
-            return false;
+            return Ok(false);
         };
         if !local_file_facts_match(&entry.facts, &facts) {
-            return false;
+            return Ok(false);
         }
         let segment_end_ms = cue_file
             .tracks
@@ -1266,10 +1705,11 @@ fn reuse_cached_cue_file(
         candidates.push((facts, source));
     }
     if candidates.is_empty() {
-        return false;
+        return Ok(false);
     }
     scan.suppressed_audio_paths.insert(audio_facts.path.clone());
     for (facts, source) in candidates {
+        check_local_scan_cancelled(cancelled)?;
         let Some(stale_entry) = cache_by_path.remove(&facts.path) else {
             continue;
         };
@@ -1282,7 +1722,7 @@ fn reuse_cached_cue_file(
             scanned_track,
         });
     }
-    true
+    Ok(true)
 }
 
 fn reused_cue_manifest_track(
@@ -1511,6 +1951,17 @@ fn reuse_manifest_track(
     };
     (scanned_track, entry, artwork_changed)
 }
+fn scanned_track_from_manifest(entry: &LocalManifestEntry) -> ScannedTrack {
+    ScannedTrack {
+        track: entry.track.clone(),
+        album_artist: entry.album_artist.clone(),
+        musicbrainz_album_id: entry.musicbrainz_album_id.clone(),
+        musicbrainz_release_group_id: entry.musicbrainz_release_group_id.clone(),
+        cue_source: None,
+        cover: entry.cover.as_ref().map(local_cover_from_manifest),
+        embedded_cover_path: None,
+    }
+}
 fn reused_cover_for_track(
     path: &Path,
     cached: Option<&LocalManifestCover>,
@@ -1560,19 +2011,19 @@ fn local_scanned_track_sort(left: &ScannedTrack, right: &ScannedTrack) -> std::c
                 .cmp(&right.track.title.to_lowercase()),
         )
 }
-fn scan_folders(roots: &[PathBuf]) -> (Vec<LocalFolderEntry>, HashMap<FolderId, LocalFolderEntry>) {
+fn scan_folders(
+    roots: &[PathBuf],
+    directories: Vec<PathBuf>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> SourceResult<(Vec<LocalFolderEntry>, HashMap<FolderId, LocalFolderEntry>)> {
     let mut entries = HashMap::<FolderId, LocalFolderEntry>::new();
     let mut root_entries = Vec::new();
-    for root in roots {
-        for entry in WalkDir::new(root)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_dir())
-        {
-            let path = entry.path().to_path_buf();
+    for path in directories {
+        check_local_scan_cancelled(cancelled)?;
+        if let Some(root) = roots.iter().find(|root| path.starts_with(root)) {
+            let is_root = path == *root;
             let folder = folder_for_path(&path);
-            let parent_id = if path == *root {
+            let parent_id = if is_root {
                 None
             } else {
                 path.parent()
@@ -1584,14 +2035,15 @@ fn scan_folders(roots: &[PathBuf]) -> (Vec<LocalFolderEntry>, HashMap<FolderId, 
                 path,
                 parent_id,
             };
-            if entry.path() == root {
+            if is_root {
                 root_entries.push(local_entry.clone());
             }
             entries.insert(folder.id.clone(), local_entry);
         }
     }
+    check_local_scan_cancelled(cancelled)?;
     root_entries.sort_by(|left, right| folder_sort(&left.folder, &right.folder));
-    (root_entries, entries)
+    Ok((root_entries, entries))
 }
 fn folder_for_path(path: &Path) -> Folder {
     let path_text = path.to_string_lossy();
@@ -1611,10 +2063,13 @@ fn folder_sort(left: &Folder, right: &Folder) -> std::cmp::Ordering {
         .cmp(&right.name.to_lowercase())
         .then_with(|| left.id.cmp(&right.id))
 }
-fn read_track(path: PathBuf) -> Option<ScannedTrack> {
-    let tagged_file = Probe::open(&path)
-        .and_then(|probe| probe.options(local_scan_parse_options()).read())
-        .ok();
+fn read_track(path: PathBuf, preserve_cached_on_parse_error: bool) -> Option<ScannedTrack> {
+    let probe = Probe::open(&path).ok()?;
+    let tagged_file = match probe.options(local_scan_parse_options()).read() {
+        Ok(tagged_file) => Some(tagged_file),
+        Err(_) if preserve_cached_on_parse_error => return None,
+        Err(_) => None,
+    };
     let tag = tagged_file
         .as_ref()
         .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
@@ -1891,11 +2346,15 @@ fn clean_bpm(value: &str) -> Option<u16> {
 fn local_scan_parse_options() -> ParseOptions {
     ParseOptions::new().read_cover_art(false)
 }
-fn local_file_facts_from_path(root: &Path, path: &Path) -> Option<LocalFileFacts> {
-    let metadata = fs::metadata(path).ok()?;
-    let modified = metadata.modified().ok()?;
-    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(LocalFileFacts {
+fn local_file_facts_from_path(root: &Path, path: &Path) -> SourceResult<LocalFileFacts> {
+    let metadata = fs::metadata(path).map_err(|error| SourceError::Other(error.to_string()))?;
+    let modified = metadata
+        .modified()
+        .map_err(|error| SourceError::Other(error.to_string()))?;
+    let duration = modified
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| SourceError::Other(error.to_string()))?;
+    Ok(LocalFileFacts {
         path: path.to_path_buf(),
         root_path: root.to_path_buf(),
         relative_path: path

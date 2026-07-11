@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
 
 use adw::prelude::*;
 use library::SavedSource;
@@ -14,7 +13,7 @@ use crate::sources::{
 };
 
 use super::{
-    AddServerDialogHandle, Shell,
+    AddServerDialogHandle, LibraryLoad, Shell,
     chrome::window_close_controls,
     folder_selected_text,
     layout::{
@@ -22,8 +21,7 @@ use super::{
         large_popup_content_width, style_compact_field_row,
     },
     local_access_mapping::confirm_forget_source,
-    startup_reveal::connection_progress_status_label,
-    text_button,
+    source_sync_progress_text, text_button,
 };
 
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
@@ -114,7 +112,10 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        if self.state.first_run_connection_pending.get() {
+        if matches!(
+            &*self.state.library_load.borrow(),
+            LibraryLoad::Connecting { .. }
+        ) {
             return self.connection_progress_view();
         }
         let context = self.setup_view_context(None);
@@ -153,10 +154,10 @@ impl Shell {
     }
 
     fn default_source_setup_flow(self: &Rc<Self>) -> Rc<dyn SourceSetupFlow> {
+        let source_setup_active = self.state.library_load.borrow().source_setup_active();
         let registration = {
             let library = self.state.library.borrow();
-            library
-                .first_run
+            (library.first_run || source_setup_active)
                 .then_some(())
                 .and_then(|()| library.source.as_ref())
                 .and_then(|source| resolve_source_registration(&source.kind))
@@ -170,7 +171,7 @@ impl Shell {
         registration: &'static SourceRegistration,
     ) -> Option<SavedSource> {
         let library = self.state.library.borrow();
-        if !library.first_run {
+        if !library.first_run && !self.state.library_load.borrow().source_setup_active() {
             return None;
         }
         let source = library.source.as_ref()?;
@@ -199,13 +200,11 @@ impl Shell {
     }
 
     fn begin_first_run_connection(self: &Rc<Self>, status: &str) {
-        self.state.first_run_connection_pending.set(true);
-        self.state.first_run_connection_ready.set(false);
-        {
-            let mut library = self.state.library.borrow_mut();
-            library.sync_status = status.to_string();
-            library.last_error = None;
-        }
+        let first_run = self.state.library.borrow().first_run;
+        *self.state.library_load.borrow_mut() = LibraryLoad::Connecting {
+            stage: status.to_string(),
+            first_run,
+        };
         self.render_current_route();
     }
 
@@ -240,8 +239,7 @@ impl Shell {
         title.set_wrap(true);
         content.append(&title);
 
-        let sync_status = self.state.library.borrow().sync_status.clone();
-        let status_text = connection_progress_status_label(&sync_status).unwrap_or_default();
+        let status_text = self.source_connection_progress_text();
         let status = gtk::Label::new(Some(&status_text));
         status.add_css_class("muted");
         status.set_justify(gtk::Justification::Center);
@@ -252,6 +250,26 @@ impl Shell {
         clamp.set_child(Some(&content));
         scroller.set_child(Some(&clamp));
         scroller.upcast()
+    }
+
+    fn source_connection_progress_text(&self) -> String {
+        let source_id = self
+            .state
+            .library
+            .borrow()
+            .source
+            .as_ref()
+            .map(|source| source.id.clone());
+        if let Some(change) = source_id
+            .as_ref()
+            .and_then(|source_id| self.state.source_syncs.borrow().get(source_id).cloned())
+        {
+            return source_sync_progress_text(&change);
+        }
+        match &*self.state.library_load.borrow() {
+            LibraryLoad::Connecting { stage, .. } => stage.clone(),
+            _ => tr("Preparing library..."),
+        }
     }
 
     fn start_server_discovery_once(&self) {
@@ -418,8 +436,6 @@ impl SourceSetupFlow for LocalSetupFlow {
         let shell_for_login = Rc::clone(shell);
         let status_for_login = status.clone();
         let login_for_click = login.clone();
-        let attempt = Rc::new(Cell::new(false));
-        let attempt_for_click = Rc::clone(&attempt);
         let on_connect_started = context.on_connect_started.clone();
         let submit = Rc::clone(&self.submit);
         login.connect_clicked(move |_| {
@@ -433,7 +449,6 @@ impl SourceSetupFlow for LocalSetupFlow {
             begin_connect_attempt(
                 &status_for_login,
                 &login_for_click,
-                &attempt_for_click,
                 on_connect_started.as_ref(),
                 &message,
             );
@@ -441,12 +456,6 @@ impl SourceSetupFlow for LocalSetupFlow {
             submit(&controller, roots);
         });
         source_enter_controller(&login);
-        let ready = {
-            let folders = Rc::clone(&self.folders);
-            let login = login.clone();
-            Rc::new(move || login.set_sensitive(!folders.borrow().is_empty())) as Rc<dyn Fn()>
-        };
-        connect_add_server_status_watcher(shell, &status, &login, ready, attempt);
 
         finish_setup_scaffold(
             shell,
@@ -664,7 +673,10 @@ fn same_registration(
 }
 
 fn render_setup_flow(shell: &Rc<Shell>, context: &SetupViewContext) {
-    if shell.state.first_run_connection_pending.get() {
+    if matches!(
+        &*shell.state.library_load.borrow(),
+        LibraryLoad::Connecting { .. }
+    ) {
         replace_add_server_content(&context.content, shell.connection_progress_view());
         return;
     }
@@ -809,8 +821,6 @@ fn append_credential_connect(
     let status_for_login = status.clone();
     let login_for_click = login.clone();
     let host_for_click = host_widgets(&host);
-    let attempt = Rc::new(Cell::new(false));
-    let attempt_for_click = Rc::clone(&attempt);
     let on_connect_started = context.on_connect_started.clone();
     login.connect_clicked(move |_| {
         if !host_for_click.ready() {
@@ -822,7 +832,6 @@ fn append_credential_connect(
         begin_connect_attempt(
             &status_for_login,
             &login_for_click,
-            &attempt_for_click,
             on_connect_started.as_ref(),
             &message,
         );
@@ -831,7 +840,6 @@ fn append_credential_connect(
     });
     content.append(&setup_actions(&login));
     content.append(&status);
-    connect_add_server_status_watcher(shell, &status, &login, refresh, attempt);
 }
 
 fn host_widgets(host: &CredentialHost) -> CredentialHost {
@@ -857,8 +865,8 @@ fn setup_status_label(shell: &Rc<Shell>) -> gtk::Label {
     status.add_css_class("muted");
     status.set_wrap(true);
     status.set_xalign(0.0);
-    if let Some(error) = &shell.state.library.borrow().last_error {
-        status.set_text(error);
+    if let LibraryLoad::Failed { message, .. } = &*shell.state.library_load.borrow() {
+        status.set_text(message);
         status.add_css_class("error-text");
         status.set_visible(true);
     } else {
@@ -870,11 +878,9 @@ fn setup_status_label(shell: &Rc<Shell>) -> gtk::Label {
 fn begin_connect_attempt(
     status: &gtk::Label,
     login: &gtk::Button,
-    attempt: &Cell<bool>,
     on_connect_started: Option<&Rc<dyn Fn()>>,
     message: &str,
 ) {
-    attempt.set(true);
     status.remove_css_class("error-text");
     status.set_text(message);
     status.set_visible(true);
@@ -882,48 +888,6 @@ fn begin_connect_attempt(
     if let Some(on_connect_started) = on_connect_started {
         on_connect_started();
     }
-}
-
-fn connect_add_server_status_watcher(
-    shell: &Rc<Shell>,
-    status: &gtk::Label,
-    login: &gtk::Button,
-    refresh_ready: Rc<dyn Fn()>,
-    connect_attempt_started: Rc<Cell<bool>>,
-) {
-    let shell = Rc::clone(shell);
-    let status = status.clone();
-    let login = login.clone();
-    gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
-        if status.root().is_none() {
-            return gtk::glib::ControlFlow::Break;
-        }
-        let pending = shell.state.first_run_connection_pending.get();
-        let (sync_status, last_error) = {
-            let library = shell.state.library.borrow();
-            (library.sync_status.clone(), library.last_error.clone())
-        };
-        if pending {
-            status.remove_css_class("error-text");
-            let text = connection_progress_status_label(&sync_status).unwrap_or_default();
-            status.set_text(&text);
-            status.set_visible(!text.trim().is_empty());
-            login.set_sensitive(false);
-            return gtk::glib::ControlFlow::Continue;
-        }
-        if let Some(error) = last_error {
-            connect_attempt_started.set(false);
-            status.set_text(&error);
-            status.add_css_class("error-text");
-            status.set_visible(true);
-            refresh_ready();
-            return gtk::glib::ControlFlow::Continue;
-        }
-        if connect_attempt_started.get() {
-            return gtk::glib::ControlFlow::Break;
-        }
-        gtk::glib::ControlFlow::Continue
-    });
 }
 
 fn discovered_servers_group(

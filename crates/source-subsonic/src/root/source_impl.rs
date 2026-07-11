@@ -1,5 +1,30 @@
 use super::*;
 
+impl SourceObjectKeyProvider for SubsonicSource {
+    fn source_object_key(
+        &self,
+        entity_kind: SourceEntityKind,
+        entity_id: &str,
+    ) -> SourceResult<String> {
+        let id_kind = match entity_kind {
+            SourceEntityKind::Album => "album",
+            SourceEntityKind::Track => "track",
+            SourceEntityKind::Artist | SourceEntityKind::AlbumArtist => "artist",
+            SourceEntityKind::Genre => "genre",
+            SourceEntityKind::Playlist => "playlist",
+            SourceEntityKind::MusicFolder => "music-folder",
+        };
+        let prefix = format!("{}:{id_kind}:", self.source_id());
+        entity_id
+            .strip_prefix(&prefix)
+            .filter(|key| !key.is_empty())
+            .map(ToString::to_string)
+            .ok_or(SourceError::InvalidRequest(
+                "entity ID does not belong to this OpenSubsonic source",
+            ))
+    }
+}
+
 pub(super) fn redact_subsonic_query(url: &mut Url) {
     let pairs = url
         .query_pairs()
@@ -382,6 +407,17 @@ pub(super) struct AuthenticateBody {
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct SubsonicUser {
     pub(super) username: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct ScanStatusBody {
+    #[serde(rename = "scanStatus")]
+    pub(super) scan_status: ScanStatus,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct ScanStatus {
+    pub(super) scanning: bool,
+    #[serde(default)]
+    pub(super) count: i64,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct AlbumListBody {

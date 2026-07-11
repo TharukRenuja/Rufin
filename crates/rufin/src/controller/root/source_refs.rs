@@ -41,6 +41,18 @@ pub(in crate::controller) fn track_album_refs_with_settings(
     tracks: &mut [Track],
     albums: &[Album],
 ) -> Result<(), String> {
+    store.with_store_fast(|store| {
+        track_album_refs_from_store(store, saved, settings, tracks, albums)
+    })
+}
+
+pub(in crate::controller) fn track_album_refs_from_store(
+    store: &Store,
+    saved: &SavedSource,
+    settings: &AppSettings,
+    tracks: &mut [Track],
+    albums: &[Album],
+) -> StoreResult<()> {
     if tracks.is_empty() {
         return Ok(());
     }
@@ -63,9 +75,7 @@ pub(in crate::controller) fn track_album_refs_with_settings(
             ids
         });
     if !missing_album_ids.is_empty() {
-        let mut loaded = store.with_store_fast(|store| {
-            store.load_album_image_refs(&saved.source.id, &missing_album_ids)
-        })?;
+        let mut loaded = store.load_album_image_refs(&saved.source.id, &missing_album_ids)?;
         loaded.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
         image_refs.extend(loaded);
     }
@@ -80,9 +90,7 @@ pub(in crate::controller) fn track_album_refs_with_settings(
             ids
         });
     if !missing_album_ids.is_empty() {
-        let mut loaded = store.with_store_fast(|store| {
-            store.load_albums_by_ids(&saved.source.id, &missing_album_ids)
-        })?;
+        let mut loaded = store.load_albums_by_ids(&saved.source.id, &missing_album_ids)?;
         for album in &mut loaded {
             scrub_source_image_ref(saved, &mut album.image_ref);
             cover_art_policy::bind_album(album, settings);
@@ -104,6 +112,14 @@ pub(in crate::controller) fn album_track_refs(
     saved: &SavedSource,
     albums: &mut [Album],
 ) -> Result<(), String> {
+    store.with_store(|store| album_track_refs_from_store(store, saved, albums))
+}
+
+pub(in crate::controller) fn album_track_refs_from_store(
+    store: &Store,
+    saved: &SavedSource,
+    albums: &mut [Album],
+) -> StoreResult<()> {
     if albums.is_empty() {
         return Ok(());
     }
@@ -119,8 +135,7 @@ pub(in crate::controller) fn album_track_refs(
     if album_ids.is_empty() {
         return Ok(());
     }
-    let mut image_refs =
-        store.with_store(|store| store.load_album_image_refs(&saved.source.id, &album_ids))?;
+    let mut image_refs = store.load_album_image_refs(&saved.source.id, &album_ids)?;
     image_refs.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
     for album in albums {
         if let Some(image_ref) = image_refs.get(&album.id) {
@@ -135,21 +150,31 @@ pub(in crate::controller) fn home_image_refs(
     saved: &SavedSource,
     section: &mut HomeSection,
 ) -> Result<(), String> {
-    let metadata_settings = load_settings_from_store(store);
-    scrub_home_refs(saved, section);
-    cover_art_policy::bind_home_section(section, &metadata_settings);
-    scrub_home_refs(saved, section);
-    home_local_refs(store, saved, section)
+    let settings = load_settings_from_store(store);
+    store.with_store_fast(|store| home_image_refs_from_store(store, saved, &settings, section))
 }
 
-pub(in crate::controller) fn home_local_refs(
-    store: &StoreHandle,
+pub(in crate::controller) fn home_image_refs_from_store(
+    store: &Store,
     saved: &SavedSource,
+    settings: &AppSettings,
     section: &mut HomeSection,
-) -> Result<(), String> {
-    album_track_refs(store, saved, &mut section.albums)?;
+) -> StoreResult<()> {
+    scrub_home_refs(saved, section);
+    cover_art_policy::bind_home_section(section, settings);
+    scrub_home_refs(saved, section);
+    home_local_refs_from_store(store, saved, settings, section)
+}
+
+pub(in crate::controller) fn home_local_refs_from_store(
+    store: &Store,
+    saved: &SavedSource,
+    settings: &AppSettings,
+    section: &mut HomeSection,
+) -> StoreResult<()> {
+    album_track_refs_from_store(store, saved, &mut section.albums)?;
     let albums = section.albums.clone();
-    track_album_refs(store, saved, &mut section.tracks, &albums)
+    track_album_refs_from_store(store, saved, settings, &mut section.tracks, &albums)
 }
 
 pub(in crate::controller) fn queue_track_refs(
@@ -218,13 +243,5 @@ pub(in crate::controller) fn push_unique_cover_ref(
     };
     if !image_refs.iter().any(|existing| existing == image_ref) {
         image_refs.push(image_ref.clone());
-    }
-}
-
-pub(in crate::controller) fn sync_status_text(state: &SyncState) -> String {
-    match state.status.as_str() {
-        "running" => "Syncing library...".to_string(),
-        "error" => "Sync needs attention".to_string(),
-        _ => "Cached library ready".to_string(),
     }
 }

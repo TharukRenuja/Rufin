@@ -109,41 +109,15 @@ fn sync_real_local_root(controller: &AppController, root: &Path) -> SavedSource 
             .expect("load local source");
     controller
         .runtime
-        .block_on(sync_source(&controller.store, &saved.source.id, &source))
+        .block_on(sync_local_source_outcome(
+            &controller.store,
+            &saved.source.id,
+            &source,
+        ))
         .expect("sync local source");
     saved
 }
 
-#[test]
-pub(in crate::controller) fn cover_use_states() {
-    let (controller, events, _snapshot, _queue, _player) =
-        AppController::bootstrap_memory_for_test();
-    let saved = saved_source();
-    let source_id = saved.source.id.clone();
-    seed_cached_library(
-        &controller.store,
-        &saved,
-        &[],
-        &[playback_test_track(1)],
-        &[],
-    );
-    install_active_source_for_test(&controller, &saved);
-    controller
-        .secrets
-        .save_token(&source_id, "token")
-        .expect("save token");
-    controller
-        .store
-        .with_store(|store| {
-            let generation = store.begin_sync(&source_id)?;
-            store.fail_sync(&source_id, generation, "previous sync failed")
-        })
-        .expect("mark sync failed");
-    assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
-    controller.clear_source_cache(source_id);
-    let _snapshot = wait_for_snapshot(&events);
-    assert_eq!(controller.startup_sync_delay_ms(), Some(500));
-}
 #[test]
 pub(in crate::controller) fn cover_emit_fetching() {
     let (controller, events, _snapshot, _queue, _player) =
@@ -285,7 +259,8 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             }
             ControllerEvent::Snapshot(_)
             | ControllerEvent::SourceSelectionChanged { .. }
-            | ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::SourceSyncChanged(_)
+            | ControllerEvent::LibraryCommitted(_)
             | ControllerEvent::LibraryDelta(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
@@ -307,7 +282,8 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             | ControllerEvent::CoverReady { .. }
             | ControllerEvent::CoverUnavailable { .. }
             | ControllerEvent::CoverDeferred { .. }
-            | ControllerEvent::LoginStatus(_) => {}
+            | ControllerEvent::SourceNotice(_)
+            | ControllerEvent::SourceTransitionFailed { .. } => {}
             ControllerEvent::FavoriteChangeFailed { error, .. } => {
                 panic!("favorite change failed: {error}");
             }
@@ -446,7 +422,7 @@ pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
 }
 
 #[test]
-pub(in crate::controller) fn cover_emit_run() {
+pub(in crate::controller) fn cover_forget_source_removes_snapshot_and_token() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_source();
     let source_id = saved.source.id.clone();
@@ -461,12 +437,6 @@ pub(in crate::controller) fn cover_emit_run() {
         .secrets
         .save_token(&source_id, "token")
         .expect("save token");
-    let permit = controller
-        .sync_in_flight
-        .acquire(source_id.clone())
-        .expect("sync guard")
-        .expect("sync permit");
-
     controller.forget_source(source_id.clone());
 
     let snapshot = wait_for_snapshot(&events);
@@ -480,10 +450,6 @@ pub(in crate::controller) fn cover_emit_run() {
             .expect("servers"),
         Vec::new()
     );
-    assert!(controller.sync_in_flight.contains_or_blocked(&source_id));
-    assert!(controller.sync_in_flight.cancellation_requested(&source_id));
-    drop(permit);
-    assert!(!controller.sync_in_flight.contains_or_blocked(&source_id));
     wait_for_token_deleted(&controller.secrets, &source_id);
 }
 #[test]
@@ -517,26 +483,6 @@ pub(in crate::controller) fn cover_delete_fails() {
     delete_observed
         .recv_timeout(Duration::from_secs(1))
         .expect("secret deletion attempted");
-}
-#[test]
-pub(in crate::controller) fn cover_start_sync() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = saved_source();
-    let source_id = saved.source.id.clone();
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&source_id)
-        })
-        .expect("seed source");
-    let (controller, events) = controller_from_store_for_test(store);
-    let _permit = controller
-        .sync_in_flight
-        .acquire(source_id.clone())
-        .expect("sync guard")
-        .expect("sync permit");
-    controller.resync_server(source_id);
-    assert_eq!(wait_for_status(&events), "Sync already running.");
 }
 #[test]
 pub(in crate::controller) fn cover_persist_queue() {
@@ -934,9 +880,7 @@ pub(in crate::controller) fn cover_change_backend() {
     let root = unique_test_dir("reprepare-local-access");
     let _cleanup = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create root");
-    let first_path = root.join("first.flac");
     let second_path = root.join("second.flac");
-    fs::write(&first_path, []).expect("write first local match");
     fs::write(&second_path, []).expect("write second local match");
     let saved = saved_source();
     let source_id = saved.source.id.clone();
@@ -947,7 +891,34 @@ pub(in crate::controller) fn cover_change_backend() {
     second.id = TrackId::new("jellyfin:track:local-access-second");
     second.local_path = Some("/server/music/second.flac".to_string());
     let store = StoreHandle::open_memory().expect("memory store");
-    seed_cached_library(&store, &saved, &[], &[first.clone(), second.clone()], &[]);
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&source_id)?;
+            store.save_source_local_access(&SourceLocalAccess {
+                source_id: source_id.clone(),
+                root_path: root.to_string_lossy().into_owned(),
+                path_replace_from: Some("/server/music".to_string()),
+                path_replace_to: Some(root.to_string_lossy().into_owned()),
+            })?;
+            let generation = store.begin_sync(&source_id)?;
+            commit_cached_library(
+                store,
+                &source_id,
+                generation,
+                CachedLibraryObservation {
+                    tracks: vec![first.clone(), second.clone()],
+                    local_matches: vec![(
+                        second.id.clone(),
+                        second_path.to_string_lossy().into_owned(),
+                        "metadata".to_string(),
+                    )],
+                    ..CachedLibraryObservation::default()
+                },
+            )
+            .map(|_| ())
+        })
+        .expect("seed source with local match");
     let (controller, _events) = controller_from_store_for_test(store);
     controller
         .secrets
@@ -960,43 +931,6 @@ pub(in crate::controller) fn cover_change_backend() {
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
-    controller.save_source_local_access(
-        source_id.clone(),
-        root.clone(),
-        Some("/server/music".to_string()),
-        Some(root.to_string_lossy().into_owned()),
-    );
-    let command = wait_for_recorded_command(&commands, |command| {
-        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
-    });
-    let PlaybackCommand::PrepareNext(Some(item)) = command else {
-        panic!("expected prepared next command");
-    };
-    assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.load_local_manifest(&source_id))
-            .expect("load local manifest")
-            .len(),
-        2
-    );
-    assert_eq!(item.track.id, second.id);
-    assert!(item.stream.uri().starts_with("https://music.example/"));
-    controller
-        .store
-        .with_store(|store| {
-            store.replace_track_local_matches(
-                &source_id,
-                &[(
-                    second.id.clone(),
-                    second_path.to_string_lossy().into_owned(),
-                    "metadata".to_string(),
-                )],
-            )
-        })
-        .expect("seed local match");
-    commands.lock().expect("commands").clear();
-    clear_next_preload(&controller.next_preload);
     controller.prepare_next_stream();
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PrepareNext(Some(_)))
@@ -1004,12 +938,28 @@ pub(in crate::controller) fn cover_change_backend() {
     let PlaybackCommand::PrepareNext(Some(item)) = command else {
         panic!("expected prepared next command");
     };
+    assert_eq!(item.track.id, second.id);
     let local_uri = reqwest::Url::from_file_path(&second_path)
         .expect("local file URI")
         .to_string();
     assert_eq!(item.stream.uri(), local_uri);
     commands.lock().expect("commands").clear();
     controller.clear_source_local_access(source_id.clone());
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
+    assert!(item.stream.uri().starts_with("https://music.example/"));
+    commands.lock().expect("commands").clear();
+    controller.save_source_local_access(
+        source_id,
+        root.clone(),
+        Some("/server/music".to_string()),
+        Some(root.to_string_lossy().into_owned()),
+    );
     let command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PrepareNext(Some(_)))
     });

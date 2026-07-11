@@ -1,12 +1,14 @@
 pub(super) use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, LyricLine, Lyrics, LyricsSource, MusicFolder, MusicFolderId, Playlist,
-    PlaylistEntry, PlaylistId, QueueEngine, SourceFeatureOwner, SourceId, SourceIdentity, Track,
-    TrackId,
+    PlaylistDetail, PlaylistEntry, PlaylistId, QueueEngine, SourceEntityKind, SourceFeatureOwner,
+    SourceId, SourceIdentity, Track, TrackId,
 };
 
 pub(super) use super::{
-    CoverCacheEntry, SavedSource, SourceLocalAccess, Store, image_cache_key, lyrics_cache_key,
+    CoverCacheEntry, LibrarySync, MusicFolderSnapshot, SavedSource, SourceLocalAccess,
+    SourceObjectMapping, Store, StoreResult, SyncCommit, SyncCoverage, image_cache_key,
+    lyrics_cache_key,
 };
 
 pub(super) fn sqlite_sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
@@ -54,8 +56,15 @@ impl StoreCase {
         self.store.begin_sync(&self.id).expect(label)
     }
 
-    pub(super) fn finish_sync(&self, generation: i64, label: &str) {
-        self.store.complete_sync(&self.id, generation).expect(label);
+    pub(super) fn commit_library(
+        &self,
+        generation: i64,
+        observation: LibraryObservation,
+        label: &str,
+    ) -> SyncCommit {
+        observation
+            .commit(&self.store, &self.id, generation)
+            .expect(label)
     }
 
     fn with_server(saved: SavedSource) -> Self {
@@ -65,6 +74,132 @@ impl StoreCase {
             store,
             id: saved.source.id,
         }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct LibraryObservation {
+    pub(super) albums: Vec<Album>,
+    pub(super) tracks: Vec<Track>,
+    pub(super) artists: Vec<Artist>,
+    pub(super) album_artists: Vec<Artist>,
+    pub(super) genres: Vec<Genre>,
+    pub(super) music_folders: Vec<(MusicFolder, Vec<Track>)>,
+    pub(super) playlists: Vec<PlaylistDetail>,
+    pub(super) home_sections: Vec<HomeSection>,
+}
+
+impl LibraryObservation {
+    pub(super) fn commit(
+        self,
+        store: &Store,
+        source_id: &SourceId,
+        generation: i64,
+    ) -> StoreResult<SyncCommit> {
+        let folders = self
+            .music_folders
+            .iter()
+            .map(|(folder, _)| folder.clone())
+            .collect::<Vec<_>>();
+        let playlists = self
+            .playlists
+            .iter()
+            .map(|detail| detail.playlist.clone())
+            .collect::<Vec<_>>();
+        let mappings = self.source_object_mappings(&folders, &playlists);
+        let base_cache_revision = store.source_cache_revision(source_id)?;
+        store.commit_library_sync(
+            source_id,
+            generation,
+            base_cache_revision,
+            LibrarySync {
+                albums: self.albums,
+                tracks: self.tracks,
+                artists: self.artists,
+                album_artists: self.album_artists,
+                genres: self.genres,
+                playlists: self.playlists,
+                home_sections: self.home_sections,
+                mappings,
+                coverage: SyncCoverage::All {
+                    music_folders: self
+                        .music_folders
+                        .into_iter()
+                        .map(|(folder, tracks)| MusicFolderSnapshot {
+                            folder,
+                            track_ids: tracks.into_iter().map(|track| track.id).collect(),
+                        })
+                        .collect(),
+                },
+                local_access: None,
+            },
+        )
+    }
+
+    fn source_object_mappings(
+        &self,
+        folders: &[MusicFolder],
+        playlists: &[Playlist],
+    ) -> Vec<SourceObjectMapping> {
+        let mut mappings = Vec::new();
+        for (kind, ids) in [
+            (
+                SourceEntityKind::Album,
+                self.albums
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::Track,
+                self.tracks
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::Artist,
+                self.artists
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::AlbumArtist,
+                self.album_artists
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::Genre,
+                self.genres
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::Playlist,
+                playlists
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                SourceEntityKind::MusicFolder,
+                folders
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            mappings.extend(ids.into_iter().map(|entity_id| SourceObjectMapping {
+                source_object_id: entity_id.to_string(),
+                entity_kind: kind,
+                entity_id: entity_id.to_string(),
+            }));
+        }
+        mappings
     }
 }
 
@@ -185,15 +320,13 @@ pub(super) fn seed_cached_library(store: &Store, source_id: &SourceId) {
     let generation = store.begin_sync(source_id).expect("begin sync");
     let album = album(1);
     let track = track(1, &album);
-    store
-        .upsert_albums(source_id, std::slice::from_ref(&album), generation)
-        .expect("upsert albums");
-    store
-        .upsert_tracks(source_id, std::slice::from_ref(&track), generation)
-        .expect("upsert tracks");
-    store
-        .complete_sync(source_id, generation)
-        .expect("complete sync");
+    LibraryObservation {
+        albums: vec![album],
+        tracks: vec![track],
+        ..LibraryObservation::default()
+    }
+    .commit(store, source_id, generation)
+    .expect("commit library");
 }
 
 pub(super) fn cover_entry(source_id: &SourceId) -> CoverCacheEntry {

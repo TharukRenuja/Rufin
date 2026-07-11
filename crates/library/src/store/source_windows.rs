@@ -116,6 +116,18 @@ impl Store {
         before: usize,
         after: usize,
     ) -> StoreResult<StoreBackedSourceWindow> {
+        self.read_snapshot(|store| {
+            store.tracks_window_for_source_inner(source_id, source, anchor_rank, before, after)
+        })
+    }
+    fn tracks_window_for_source_inner(
+        &self,
+        source_id: &SourceId,
+        source: &PlaySourceKey,
+        anchor_rank: usize,
+        before: usize,
+        after: usize,
+    ) -> StoreResult<StoreBackedSourceWindow> {
         let source_query = playlist_source_query(source)?;
         let total_source_items = self.count_tracks_for_source(source_id, source)?;
         let requested_len = before.saturating_add(after).saturating_add(1);

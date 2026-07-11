@@ -5,41 +5,22 @@ use super::identity::{
 use super::sources::*;
 use super::*;
 
-#[cfg(debug_assertions)]
-const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SyncCompleteDelta {
-    pub pruned_cover_entries: Vec<CoverCacheEntry>,
-    pub delta: LibraryDelta,
-}
-
 impl Store {
-    pub fn complete_sync_delta(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<SyncCompleteDelta> {
-        let deleted = self.stale_library_ids(source_id, generation)?;
-        let pruned_cover_entries = self.complete_sync(source_id, generation)?;
-        Ok(SyncCompleteDelta {
-            pruned_cover_entries,
-            delta: deleted,
-        })
-    }
-
-    pub fn upsert_albums_delta(
+    pub(super) fn upsert_albums_delta(
         &self,
         source_id: &SourceId,
         albums: &[Album],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
+        let mut changed = Vec::new();
         for album in albums {
             let delta_album = canonical_album_for_write(&self.connection, source_id, album)?;
             match self.load_album_for_delta(source_id, &album.id)? {
-                Some(existing) if existing == delta_album => {}
                 Some(existing) => {
+                    if !album_observation_changed(&existing, &delta_album) {
+                        continue;
+                    }
                     if album_stats_changed(&existing, &delta_album) {
                         delta.albums.stats.push(album.id.clone());
                     }
@@ -55,25 +36,41 @@ impl Store {
                 }
                 None => delta.albums.added.push(album.id.clone()),
             }
+            changed.push(album.clone());
         }
-        self.upsert_albums(source_id, albums, generation)?;
+        self.upsert_albums(source_id, &changed, generation)?;
         Ok(delta)
     }
 
-    pub fn upsert_tracks_delta(
+    pub(super) fn upsert_tracks_delta(
         &self,
         source_id: &SourceId,
         tracks: &[Track],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
+        let (changed, playlist_stat_track_ids, delta) =
+            self.plan_tracks_delta(source_id, tracks)?;
+        let playlist_stats_before =
+            self.playlists_for_track_stat_changes(source_id, &playlist_stat_track_ids)?;
+        self.upsert_tracks(source_id, &changed, generation)?;
+        self.finish_tracks_delta(source_id, playlist_stats_before, delta)
+    }
+
+    pub(super) fn plan_tracks_delta(
+        &self,
+        source_id: &SourceId,
+        tracks: &[Track],
+    ) -> StoreResult<(Vec<Track>, Vec<TrackId>, LibraryDelta)> {
         let mut delta = LibraryDelta::default();
         let mut playlist_stat_track_ids = Vec::<TrackId>::new();
+        let mut changed = Vec::new();
         for track in tracks {
             match self.load_track_for_delta(source_id, &track.id)? {
                 Some(existing) => {
                     if !track_changed(&existing, track) {
                         continue;
                     }
+                    let duration_changed = existing.duration_seconds != track.duration_seconds;
                     if existing.favorite != track.favorite {
                         delta.tracks.favorite.push(track.id.clone());
                     }
@@ -94,7 +91,7 @@ impl Store {
                     {
                         playlist_stat_track_ids.push(track.id.clone());
                     }
-                    if existing.album_id != track.album_id {
+                    if existing.album_id != track.album_id || duration_changed {
                         delta.albums.links.push(existing.album_id.clone());
                         delta.albums.links.push(track.album_id.clone());
                     }
@@ -106,7 +103,19 @@ impl Store {
                             delta.artists.links.push(artist_id);
                         }
                     }
-                    if existing.genres != track.genres {
+                    if artist_credits_changed(
+                        &existing.album_artist_credits,
+                        &track.album_artist_credits,
+                    ) {
+                        delta.album_artists.links.extend(
+                            existing
+                                .album_artist_credits
+                                .iter()
+                                .chain(track.album_artist_credits.iter())
+                                .map(|credit| credit.id.clone()),
+                        );
+                    }
+                    if existing.genres != track.genres || duration_changed {
                         delta.genres.links.extend(
                             existing
                                 .genres
@@ -123,6 +132,12 @@ impl Store {
                     if let Some(artist_id) = track.artist_id.clone() {
                         delta.artists.links.push(artist_id);
                     }
+                    delta.album_artists.links.extend(
+                        track
+                            .album_artist_credits
+                            .iter()
+                            .map(|credit| credit.id.clone()),
+                    );
                     delta
                         .genres
                         .links
@@ -132,71 +147,22 @@ impl Store {
                     }
                 }
             }
+            changed.push(track.clone());
         }
-        let playlist_stats_before =
-            self.playlists_for_track_stat_changes(source_id, &playlist_stat_track_ids)?;
-        self.upsert_tracks(source_id, tracks, generation)?;
+        Ok((changed, playlist_stat_track_ids, delta))
+    }
+
+    pub(super) fn finish_tracks_delta(
+        &self,
+        source_id: &SourceId,
+        playlist_stats_before: Vec<(PlaylistId, Option<Playlist>)>,
+        mut delta: LibraryDelta,
+    ) -> StoreResult<LibraryDelta> {
         self.refresh_track_dependent_playlist_stats(source_id, playlist_stats_before, &mut delta)?;
         Ok(delta)
     }
 
-    pub fn delete_tracks_delta(
-        &self,
-        source_id: &SourceId,
-        track_ids: &[TrackId],
-        generation: i64,
-    ) -> StoreResult<LibraryDelta> {
-        self.write_batch(|_| {
-            self.require_current_sync_generation(source_id, generation)?;
-            let mut delta = LibraryDelta::default();
-            let mut existing_tracks = Vec::new();
-            for track_id in track_ids {
-                if let Some(track) = self.load_track_for_delta(source_id, track_id)? {
-                    existing_tracks.push(track);
-                }
-            }
-            if existing_tracks.is_empty() {
-                return Ok(delta);
-            }
-
-            let deleted_track_ids = existing_tracks
-                .iter()
-                .map(|track| track.id.clone())
-                .collect::<Vec<_>>();
-            let playlist_stats_before =
-                self.playlists_for_track_stat_changes(source_id, &deleted_track_ids)?;
-            for track in &existing_tracks {
-                delta.tracks.deleted.push(track.id.clone());
-                delta.albums.links.push(track.album_id.clone());
-                if let Some(artist_id) = track.artist_id.clone() {
-                    delta.artists.links.push(artist_id);
-                }
-                delta
-                    .artists
-                    .links
-                    .extend(track.artist_credits.iter().map(|credit| credit.id.clone()));
-                delta.album_artists.links.extend(
-                    track
-                        .album_artist_credits
-                        .iter()
-                        .map(|credit| credit.id.clone()),
-                );
-                delta
-                    .genres
-                    .links
-                    .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
-            }
-            self.delete_local_track_rows(source_id, &deleted_track_ids)?;
-            self.refresh_track_dependent_playlist_stats(
-                source_id,
-                playlist_stats_before,
-                &mut delta,
-            )?;
-            Ok(delta)
-        })
-    }
-
-    pub fn upsert_artists_delta(
+    pub(super) fn upsert_artists_delta(
         &self,
         source_id: &SourceId,
         artists: &[Artist],
@@ -204,35 +170,43 @@ impl Store {
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
-        let canonical_artists;
-        let delta_artists = if album_artist {
-            canonical_artists =
-                canonical_album_artists_for_write(&self.connection, source_id, artists)?
-                    .into_iter()
-                    .map(|artist| artist.artist)
-                    .collect::<Vec<_>>();
-            canonical_artists.as_slice()
+        let canonical_artists = if album_artist {
+            Some(canonical_album_artists_for_write(
+                &self.connection,
+                source_id,
+                artists,
+            )?)
         } else {
-            artists
+            None
         };
+        let delta_artists = canonical_artists
+            .as_ref()
+            .map(|artists| {
+                artists
+                    .iter()
+                    .map(|artist| &artist.artist)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| artists.iter().collect());
+        let mut changed_input_ids = HashSet::new();
         for artist in delta_artists {
             match self.load_artist_for_delta(source_id, &artist.id, album_artist)? {
-                Some(existing) if !artist_projection_changed(&existing, artist) => {}
+                Some(existing) if !artist_projection_changed(&existing, artist) => continue,
                 Some(existing) => {
                     let entity = if album_artist {
                         &mut delta.album_artists
                     } else {
                         &mut delta.artists
                     };
-                    if existing.album_count != artist.album_count
-                        || existing.track_count != artist.track_count
-                    {
+                    if artist_stats_changed(&existing, artist) {
                         entity.stats.push(artist.id.clone());
                     }
                     if existing.image_ref != artist.image_ref {
                         entity.cover_refs.push(artist.id.clone());
                     }
-                    entity.fields.push(artist.id.clone());
+                    if artist_fields_changed(&existing, artist) {
+                        entity.fields.push(artist.id.clone());
+                    }
                 }
                 None => {
                     if album_artist {
@@ -242,65 +216,65 @@ impl Store {
                     }
                 }
             }
+            if let Some(canonical) = canonical_artists
+                .as_ref()
+                .and_then(|artists| artists.iter().find(|item| item.artist.id == artist.id))
+            {
+                changed_input_ids.insert(canonical.artist.id.clone());
+                changed_input_ids.extend(canonical.alias_ids.iter().cloned());
+            } else {
+                changed_input_ids.insert(artist.id.clone());
+            }
         }
-        self.upsert_artists(source_id, artists, album_artist, generation)?;
+        let changed = artists
+            .iter()
+            .filter(|artist| changed_input_ids.contains(&artist.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.upsert_artists(source_id, &changed, album_artist, generation)?;
         Ok(delta)
     }
 
-    pub fn upsert_genres_delta(
+    pub(super) fn upsert_genres_delta(
         &self,
         source_id: &SourceId,
         genres: &[Genre],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
+        let mut changed = Vec::new();
         for genre in genres {
             match self.load_genre_for_delta(source_id, &genre.id)? {
-                Some(existing) if genre_delta_unchanged(&existing, genre) => {}
+                Some(existing) if genre_delta_unchanged(&existing, genre) => continue,
                 Some(existing) => {
-                    if existing.album_count != genre.album_count
-                        || existing.track_count != genre.track_count
-                        || (genre.duration_seconds > 0
-                            && existing.duration_seconds != genre.duration_seconds)
-                    {
-                        delta.genres.stats.push(genre.id.clone());
-                    }
-                    if existing.image_ref != genre.image_ref
-                        || existing.image_refs != genre.image_refs
-                    {
+                    if existing.image_ref != genre.image_ref {
                         delta.genres.cover_refs.push(genre.id.clone());
                     }
-                    if !genre_delta_unchanged(&existing, genre) {
+                    if existing.name != genre.name {
                         delta.genres.fields.push(genre.id.clone());
                     }
                 }
                 None => delta.genres.added.push(genre.id.clone()),
             }
+            changed.push(genre.clone());
         }
-        self.upsert_genres(source_id, genres, generation)?;
+        self.upsert_genres_without_count_refresh(source_id, &changed, generation)?;
         Ok(delta)
     }
 
-    pub fn upsert_playlists_delta(
+    pub(super) fn upsert_playlists_delta(
         &self,
         source_id: &SourceId,
         playlists: &[Playlist],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
+        let mut changed = Vec::new();
         for playlist in playlists {
             match self.load_playlist_for_delta(source_id, &playlist.id)? {
-                Some(existing) if playlist_summary_matches(&existing, playlist) => {}
+                Some(existing) if playlist_summary_matches(&existing, playlist) => continue,
                 Some(existing) => {
-                    if !self.playlist_has_entries(source_id, &playlist.id)?
-                        && (existing.track_count != playlist.track_count
-                            || existing.duration_seconds != playlist.duration_seconds)
-                    {
-                        delta.playlists.entries.push(playlist.id.clone());
-                    }
-                    if existing.image_ref != playlist.image_ref
-                        || existing.image_refs != playlist.image_refs
-                    {
+                    if existing.image_ref != playlist.image_ref {
                         delta.playlists.cover_refs.push(playlist.id.clone());
                     }
                     if existing.name != playlist.name {
@@ -309,58 +283,38 @@ impl Store {
                 }
                 None => delta.playlists.added.push(playlist.id.clone()),
             }
+            changed.push(playlist.clone());
         }
-        self.upsert_playlists(source_id, playlists, generation)?;
+        self.upsert_playlists(source_id, &changed, generation)?;
         Ok(delta)
     }
 
-    pub fn upsert_home_sections_delta(
+    pub(super) fn upsert_home_sections_delta(
         &self,
         source_id: &SourceId,
         sections: &[HomeSection],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
-        let before = self.load_home_sections(source_id)?;
+        let mut changed = false;
+        for kind in home_section_kinds() {
+            let before = self.load_home_membership_from("home_section_items", source_id, kind)?;
+            let after = sections
+                .iter()
+                .find(|section| section.kind == kind)
+                .map(home_membership)
+                .unwrap_or_default();
+            if before != after {
+                changed = true;
+                break;
+            }
+        }
+        if !changed {
+            return Ok(LibraryDelta::default());
+        }
         self.upsert_home_sections(source_id, sections, generation)?;
-        let after = self.load_home_sections(source_id)?;
         Ok(LibraryDelta {
-            home_changed: home_keys(&before) != home_keys(&after),
+            home_changed: true,
             ..LibraryDelta::default()
-        })
-    }
-
-    pub fn complete_sync(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<Vec<CoverCacheEntry>> {
-        self.write_batch(|connection| {
-            self.require_current_sync_generation(source_id, generation)?;
-            self.prune_missing_items(source_id, generation)?;
-            repair_linked_genres(connection, source_id, generation)?;
-            refresh_genre_counts_on_connection(connection, source_id)?;
-            self.bind_album_fallback_image_refs(source_id)?;
-            self.bind_album_artist_fallback_image_refs(source_id)?;
-            self.bind_album_external_identity_image_refs(source_id)?;
-            self.bind_track_album_fallback_image_refs(source_id)?;
-            self.bind_artist_fallback_image_refs(source_id, false)?;
-            self.bind_artist_fallback_image_refs(source_id, true)?;
-            self.refresh_selected_cover_content_refs(source_id)?;
-            self.refresh_collection_cover_refs(source_id)?;
-            self.refresh_smart_playlist_cover_refs(source_id)?;
-            let pruned_cover_entries = self.prune_stale_image_cache_entries(source_id)?;
-            self.connection.execute(
-                "
-                UPDATE sync_state
-                SET status = 'idle',
-                    generation = ?2,
-                    last_completed_at = CURRENT_TIMESTAMP,
-                    last_error = NULL
-                WHERE source_id = ?1
-                ",
-                params![source_id.as_str(), generation],
-            )?;
-            Ok(pruned_cover_entries)
         })
     }
 
@@ -438,24 +392,6 @@ impl Store {
         })
     }
 
-    pub fn repair_artwork_projections(&self, source_id: &SourceId) -> StoreResult<usize> {
-        self.write_batch(|_| {
-            let mut changed = 0;
-            changed += self.bind_album_fallback_image_refs(source_id)?;
-            changed += self.bind_album_artist_fallback_image_refs(source_id)?;
-            changed += self.bind_album_external_identity_image_refs(source_id)?;
-            changed += self.bind_track_album_fallback_image_refs(source_id)?;
-            changed += self.bind_artist_fallback_image_refs(source_id, false)?;
-            changed += self.bind_artist_fallback_image_refs(source_id, true)?;
-            self.refresh_selected_cover_content_refs(source_id)?;
-            if changed > 0 {
-                self.refresh_collection_cover_refs(source_id)?;
-                self.refresh_smart_playlist_cover_refs(source_id)?;
-            }
-            Ok(changed)
-        })
-    }
-
     pub fn fail_sync(
         &self,
         source_id: &SourceId,
@@ -475,7 +411,11 @@ impl Store {
         )?;
         Ok(updated > 0)
     }
-    pub fn cancel_sync(&self, source_id: &SourceId, generation: i64) -> StoreResult<()> {
+    pub fn finish_sync_without_commit(
+        &self,
+        source_id: &SourceId,
+        generation: i64,
+    ) -> StoreResult<()> {
         self.connection.execute(
             "
             UPDATE sync_state
@@ -496,9 +436,11 @@ impl Store {
                 "
                 UPDATE sync_state
                 SET generation = 0,
+                    cache_revision = cache_revision + 1,
                     status = 'idle',
                     last_started_at = NULL,
                     last_completed_at = NULL,
+                    last_all_completed_at = NULL,
                     last_error = NULL
                 WHERE source_id = ?1
                 ",
@@ -728,10 +670,6 @@ impl Store {
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
             self.require_current_sync_generation(source_id, generation)?;
-            let local_stress_tracks: Vec<&Track> = tracks
-                .iter()
-                .filter(|track| local_stress_track_base_id(&track.id).is_some())
-                .collect();
             let mut statement = connection.prepare(
                 "
                 INSERT INTO tracks (
@@ -831,9 +769,6 @@ impl Store {
             )?;
 
             for track in tracks {
-                if local_stress_track_base_id(&track.id).is_some() {
-                    continue;
-                }
                 let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
                 let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
                 statement.execute(params![
@@ -929,12 +864,6 @@ impl Store {
                     format!("{} {}", track.artist, track.album),
                 ])?;
             }
-            Self::upsert_local_stress_track_rows_on_connection(
-                connection,
-                source_id,
-                &local_stress_tracks,
-                generation,
-            )?;
             let track_ids = tracks
                 .iter()
                 .map(|track| track.id.clone())
@@ -944,353 +873,8 @@ impl Store {
         })
     }
 
-    fn upsert_local_stress_track_rows_on_connection(
-        connection: &Connection,
-        source_id: &SourceId,
-        tracks: &[&Track],
-        generation: i64,
-    ) -> StoreResult<()> {
-        if tracks.is_empty() {
-            return Ok(());
-        }
-        connection.execute_batch(
-            "
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_tracks (
-                track_id TEXT PRIMARY KEY,
-                base_track_id TEXT NOT NULL,
-                album_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                artist TEXT NOT NULL,
-                artist_id TEXT,
-                album TEXT NOT NULL,
-                year INTEGER NOT NULL,
-                release_date TEXT,
-                date_added TEXT,
-                last_played TEXT,
-                play_count INTEGER,
-                user_rating INTEGER,
-                duration_seconds INTEGER NOT NULL,
-                favorite INTEGER NOT NULL,
-                disc_number INTEGER NOT NULL,
-                track_number INTEGER NOT NULL,
-                image_item_id TEXT,
-                image_tag TEXT,
-                image_origin TEXT NOT NULL,
-                local_path TEXT,
-                source_format TEXT,
-                comment TEXT,
-                skip_count INTEGER,
-                bpm INTEGER
-            ) WITHOUT ROWID;
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_genres (
-                track_id TEXT NOT NULL,
-                genre_name TEXT NOT NULL
-            );
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_moods (
-                track_id TEXT NOT NULL,
-                mood_name TEXT NOT NULL
-            );
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_artists (
-                track_id TEXT NOT NULL,
-                album_id TEXT NOT NULL,
-                artist_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                position INTEGER NOT NULL
-            );
-            DELETE FROM temp_local_stress_tracks;
-            DELETE FROM temp_local_stress_track_genres;
-            DELETE FROM temp_local_stress_track_moods;
-            DELETE FROM temp_local_stress_track_artists;
-            ",
-        )?;
-        {
-            let mut insert = connection.prepare(
-                "
-                INSERT INTO temp_local_stress_tracks (
-                    track_id, base_track_id, album_id, title, artist, artist_id, album,
-                    year, release_date, date_added, last_played, play_count, user_rating,
-                    duration_seconds, favorite, disc_number, track_number, image_item_id,
-                    image_tag, image_origin, local_path, source_format, comment, skip_count, bpm
-                )
-                VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
-                )
-                ",
-            )?;
-            let mut insert_genre = connection.prepare(
-                "
-                INSERT INTO temp_local_stress_track_genres (track_id, genre_name)
-                VALUES (?1, ?2)
-                ",
-            )?;
-            let mut insert_mood = connection.prepare(
-                "
-                INSERT INTO temp_local_stress_track_moods (track_id, mood_name)
-                VALUES (?1, ?2)
-                ",
-            )?;
-            let mut insert_artist = connection.prepare(
-                "
-                INSERT INTO temp_local_stress_track_artists (
-                    track_id, album_id, artist_id, name, position
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                ",
-            )?;
-            for track in tracks {
-                let Some(base_track_id) = local_stress_track_base_id(&track.id) else {
-                    continue;
-                };
-                let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
-                insert.execute(params![
-                    track.id.as_str(),
-                    base_track_id,
-                    track.album_id.as_str(),
-                    track.title,
-                    track.artist,
-                    track.artist_id.as_ref().map(ArtistId::as_str),
-                    track.album,
-                    i64::from(track.year),
-                    track.release_date.as_deref(),
-                    track.date_added.as_deref(),
-                    track.last_played.as_deref(),
-                    track.play_count.map(i64::from),
-                    track.user_rating.map(i64::from),
-                    i64::from(track.duration_seconds),
-                    bool_to_i64(track.favorite),
-                    i64::from(track.disc_number),
-                    i64::from(track.track_number),
-                    image_item_id,
-                    image_tag,
-                    image_origin,
-                    track.local_path.as_deref(),
-                    track.source_format.as_deref(),
-                    track.comment.as_deref(),
-                    track.skip_count.map(i64::from),
-                    track.bpm.map(i64::from),
-                ])?;
-                for genre in &track.genres {
-                    let genre = genre.trim();
-                    if !genre.is_empty() {
-                        insert_genre.execute(params![track.id.as_str(), genre])?;
-                    }
-                }
-                for mood in &track.moods {
-                    let mood = mood.trim();
-                    if !mood.is_empty() {
-                        insert_mood.execute(params![track.id.as_str(), mood])?;
-                    }
-                }
-                for (position, artist) in track_artist_credits(track).iter().enumerate() {
-                    insert_artist.execute(params![
-                        track.id.as_str(),
-                        track.album_id.as_str(),
-                        artist.id.as_str(),
-                        artist.name.trim(),
-                        position as i64,
-                    ])?;
-                }
-            }
-        }
-        for sql in [
-            "DELETE FROM track_music_folders WHERE source_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM track_genres WHERE source_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM track_moods WHERE source_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM track_artist_links WHERE source_id = ?1 AND track_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM library_fts WHERE source_id = ?1 AND item_type = 'track' AND item_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM entity_identity_keys WHERE source_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM entity_grouping_keys WHERE source_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-            "DELETE FROM source_objects WHERE source_id = ?1 AND entity_kind = 'track' AND entity_id IN (SELECT track_id FROM temp_local_stress_tracks)",
-        ] {
-            connection.execute(sql, params![source_id.as_str()])?;
-        }
-        connection.execute(
-            "
-            INSERT INTO tracks (
-                source_id, track_id, album_id, title, artist, artist_id, album,
-                year, release_date, date_added, last_played, play_count, user_rating,
-                duration_seconds, favorite, disc_number, track_number,
-                image_item_id, image_tag, image_origin, local_path, source_format, comment,
-                skip_count, bpm, sync_generation
-            )
-            SELECT ?1, track_id, album_id, title, artist, artist_id, album, year, release_date,
-                   date_added, last_played, play_count, user_rating, duration_seconds, favorite,
-                   disc_number, track_number, image_item_id, image_tag, image_origin, local_path,
-                   source_format, comment, skip_count, bpm, ?2
-            FROM temp_local_stress_tracks stress
-            WHERE 1
-            ON CONFLICT(source_id, track_id) DO UPDATE SET
-                album_id = excluded.album_id,
-                title = excluded.title,
-                artist = excluded.artist,
-                artist_id = excluded.artist_id,
-                album = excluded.album,
-                year = excluded.year,
-                release_date = excluded.release_date,
-                date_added = excluded.date_added,
-                last_played = excluded.last_played,
-                play_count = excluded.play_count,
-                user_rating = excluded.user_rating,
-                duration_seconds = excluded.duration_seconds,
-                favorite = excluded.favorite,
-                disc_number = excluded.disc_number,
-                track_number = excluded.track_number,
-                image_item_id = excluded.image_item_id,
-                image_tag = excluded.image_tag,
-                image_origin = excluded.image_origin,
-                local_path = excluded.local_path,
-                source_format = excluded.source_format,
-                comment = excluded.comment,
-                skip_count = excluded.skip_count,
-                bpm = excluded.bpm,
-                sync_generation = excluded.sync_generation
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO track_music_folders (source_id, track_id, folder_id, sync_generation)
-            SELECT base.source_id, stress.track_id, base.folder_id, ?2
-            FROM track_music_folders base
-            JOIN temp_local_stress_tracks stress
-              ON stress.base_track_id = base.track_id
-            WHERE base.source_id = ?1
-            ON CONFLICT(source_id, track_id, folder_id) DO UPDATE SET
-                sync_generation = excluded.sync_generation
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO track_genres (source_id, track_id, genre_name, sync_generation)
-            SELECT DISTINCT ?1, track_id, genre_name, ?2
-            FROM temp_local_stress_track_genres
-            WHERE 1
-            ON CONFLICT(source_id, track_id, genre_name) DO UPDATE SET
-                sync_generation = excluded.sync_generation
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO track_moods (source_id, track_id, mood_name, sync_generation)
-            SELECT DISTINCT ?1, track_id, mood_name, ?2
-            FROM temp_local_stress_track_moods
-            WHERE 1
-            ON CONFLICT(source_id, track_id, mood_name) DO UPDATE SET
-                sync_generation = excluded.sync_generation
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO track_artist_links (
-                source_id, track_id, album_id, artist_id, name, position, sync_generation
-            )
-            SELECT ?1, track_id, album_id, artist_id, name, position, ?2
-            FROM temp_local_stress_track_artists
-            WHERE 1
-            ON CONFLICT(source_id, track_id, artist_id) DO UPDATE SET
-                album_id = excluded.album_id,
-                name = excluded.name,
-                position = excluded.position,
-                sync_generation = excluded.sync_generation
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO library_fts (source_id, item_type, item_id, title, subtitle)
-            SELECT ?1, 'track', track_id, title, artist || ' ' || album
-            FROM temp_local_stress_tracks
-            ",
-            params![source_id.as_str()],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO entities (
-                source_id, entity_kind, entity_id, source, source_object_id, updated_at
-            )
-            SELECT ?1, 'track', track_id, 'local', NULL, CURRENT_TIMESTAMP
-            FROM temp_local_stress_tracks
-            WHERE 1
-            ON CONFLICT(source_id, entity_kind, entity_id) DO UPDATE SET
-                source = excluded.source,
-                source_object_id = excluded.source_object_id,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str()],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO entity_identity_keys (
-                source_id, entity_kind, namespace, value, entity_id, source, strength, updated_at
-            )
-            SELECT ?1, 'track', 'source:track_id', track_id, track_id, 'local', 100,
-                   CURRENT_TIMESTAMP
-            FROM temp_local_stress_tracks
-            WHERE 1
-            ON CONFLICT(source_id, entity_kind, namespace, value) DO UPDATE SET
-                entity_id = excluded.entity_id,
-                source = excluded.source,
-                strength = excluded.strength,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str()],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO source_objects (
-                source_id, source_object_id, entity_kind, entity_id, source_object_kind, source_path,
-                parent_source_object_id, cue_path, cue_revision, cue_track_index,
-                segment_start_ms, segment_end_ms, metadata_json, sync_generation, updated_at
-            )
-            SELECT base.source_id,
-                   base.source_object_id || char(31) || 'stress:' || stress.track_id,
-                   'track', stress.track_id, base.source_object_kind, base.source_path,
-                   base.parent_source_object_id, base.cue_path, base.cue_revision,
-                   base.cue_track_index, base.segment_start_ms, base.segment_end_ms,
-                   base.metadata_json, ?2, CURRENT_TIMESTAMP
-            FROM source_objects base
-            JOIN temp_local_stress_tracks stress
-              ON stress.base_track_id = base.entity_id
-            WHERE base.source_id = ?1
-              AND base.entity_kind = 'track'
-              AND base.source_object_kind = 'cue_track'
-            ON CONFLICT(source_id, source_object_id) DO UPDATE SET
-                entity_kind = excluded.entity_kind,
-                entity_id = excluded.entity_id,
-                source_object_kind = excluded.source_object_kind,
-                source_path = excluded.source_path,
-                parent_source_object_id = excluded.parent_source_object_id,
-                cue_path = excluded.cue_path,
-                cue_revision = excluded.cue_revision,
-                cue_track_index = excluded.cue_track_index,
-                segment_start_ms = excluded.segment_start_ms,
-                segment_end_ms = excluded.segment_end_ms,
-                metadata_json = excluded.metadata_json,
-                sync_generation = excluded.sync_generation,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        Ok(())
-    }
-
     pub fn refresh_library_counts(&self, source_id: &SourceId) -> StoreResult<()> {
         self.write_batch(|connection| {
-            let generation = connection
-                .query_row(
-                    "SELECT generation FROM sync_state WHERE source_id = ?1",
-                    params![source_id.as_str()],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?
-                .unwrap_or(0);
-            repair_linked_artists(connection, source_id, generation)?;
-            repair_linked_genres(connection, source_id, generation)?;
             self.bind_album_fallback_image_refs(source_id)?;
             self.bind_album_artist_fallback_image_refs(source_id)?;
             self.bind_album_external_identity_image_refs(source_id)?;
@@ -1298,62 +882,86 @@ impl Store {
             self.bind_artist_fallback_image_refs(source_id, false)?;
             self.bind_artist_fallback_image_refs(source_id, true)?;
             self.refresh_selected_cover_content_refs(source_id)?;
+            refresh_genre_counts_on_connection(connection, source_id)?;
             connection.execute(
                 "
                 UPDATE albums
-                SET track_count = MAX(track_count, (
+                SET track_count = (
                     SELECT COUNT(*)
                     FROM tracks
                     WHERE tracks.source_id = albums.source_id
                       AND tracks.album_id = albums.album_id
-                )),
-                    duration_seconds = MAX(duration_seconds, (
+                ),
+                    duration_seconds = (
                     SELECT COALESCE(SUM(duration_seconds), 0)
                     FROM tracks
                     WHERE tracks.source_id = albums.source_id
                       AND tracks.album_id = albums.album_id
-                ))
+                )
                 WHERE source_id = ?1
+                  AND (
+                      track_count != (
+                          SELECT COUNT(*)
+                          FROM tracks
+                          WHERE tracks.source_id = albums.source_id
+                            AND tracks.album_id = albums.album_id
+                      )
+                      OR duration_seconds != (
+                          SELECT COALESCE(SUM(duration_seconds), 0)
+                          FROM tracks
+                          WHERE tracks.source_id = albums.source_id
+                            AND tracks.album_id = albums.album_id
+                      )
+                  )
                 ",
                 params![source_id.as_str()],
             )?;
             connection.execute(
                 "
+                WITH artist_tracks AS MATERIALIZED (
+                    SELECT source_id, artist_id, track_id, album_id
+                    FROM tracks
+                    WHERE source_id = ?1 AND artist_id IS NOT NULL
+                    UNION
+                    SELECT tracks.source_id, links.artist_id,
+                           tracks.track_id, tracks.album_id
+                    FROM track_artist_links links
+                    JOIN tracks
+                      ON tracks.source_id = links.source_id
+                     AND tracks.track_id = links.track_id
+                    WHERE links.source_id = ?1
+                ),
+                computed AS MATERIALIZED (
+                    SELECT artists.rowid AS row_id,
+                           COUNT(DISTINCT artist_tracks.track_id) AS track_count,
+                           COUNT(DISTINCT artist_tracks.album_id) AS album_count
+                    FROM artists
+                    LEFT JOIN artist_tracks
+                      ON artist_tracks.source_id = artists.source_id
+                     AND artist_tracks.artist_id = artists.artist_id
+                    WHERE artists.source_id = ?1
+                    GROUP BY artists.rowid
+                )
                 UPDATE artists
-                SET track_count = MAX(track_count, (
-                    SELECT COUNT(DISTINCT tracks.track_id)
-                    FROM tracks
-                    LEFT JOIN track_artist_links tal
-                        ON tal.source_id = tracks.source_id
-                       AND tal.track_id = tracks.track_id
-                       AND tal.artist_id = artists.artist_id
-                    WHERE tracks.source_id = artists.source_id
-                      AND (
-                          tracks.artist_id = artists.artist_id
-                          OR tal.artist_id IS NOT NULL
-                      )
-                )),
-                    album_count = MAX(album_count, (
-                    SELECT COUNT(DISTINCT tracks.album_id)
-                    FROM tracks
-                    LEFT JOIN track_artist_links tal
-                        ON tal.source_id = tracks.source_id
-                       AND tal.track_id = tracks.track_id
-                       AND tal.artist_id = artists.artist_id
-                    WHERE tracks.source_id = artists.source_id
-                      AND (
-                          tracks.artist_id = artists.artist_id
-                          OR tal.artist_id IS NOT NULL
-                      )
-                ))
-                WHERE source_id = ?1
+                SET track_count = (
+                        SELECT track_count FROM computed WHERE row_id = artists.rowid
+                    ),
+                    album_count = (
+                        SELECT album_count FROM computed WHERE row_id = artists.rowid
+                    )
+                WHERE rowid IN (
+                    SELECT row_id
+                    FROM computed
+                    WHERE computed.track_count != artists.track_count
+                       OR computed.album_count != artists.album_count
+                )
                 ",
                 params![source_id.as_str()],
             )?;
             connection.execute(
                 "
                 UPDATE album_artists
-                SET track_count = MAX(track_count, (
+                SET track_count = (
                     SELECT COALESCE(SUM(track_count), 0)
                     FROM albums
                     WHERE albums.source_id = album_artists.source_id
@@ -1367,8 +975,8 @@ impl Store {
                                 AND aal.artist_id = album_artists.artist_id
                           )
                       )
-                )),
-                    album_count = MAX(album_count, (
+                ),
+                    album_count = (
                     SELECT COUNT(DISTINCT album_id)
                     FROM albums
                     WHERE albums.source_id = album_artists.source_id
@@ -1382,12 +990,41 @@ impl Store {
                                 AND aal.artist_id = album_artists.artist_id
                           )
                       )
-                ))
+                )
                 WHERE source_id = ?1
+                  AND (
+                      track_count != (
+                          SELECT COALESCE(SUM(track_count), 0)
+                          FROM albums
+                          WHERE albums.source_id = album_artists.source_id
+                            AND (
+                                albums.artist_id = album_artists.artist_id
+                                OR EXISTS (
+                                    SELECT 1 FROM album_artist_links aal
+                                    WHERE aal.source_id = albums.source_id
+                                      AND aal.album_id = albums.album_id
+                                      AND aal.artist_id = album_artists.artist_id
+                                )
+                            )
+                      )
+                      OR album_count != (
+                          SELECT COUNT(DISTINCT album_id)
+                          FROM albums
+                          WHERE albums.source_id = album_artists.source_id
+                            AND (
+                                albums.artist_id = album_artists.artist_id
+                                OR EXISTS (
+                                    SELECT 1 FROM album_artist_links aal
+                                    WHERE aal.source_id = albums.source_id
+                                      AND aal.album_id = albums.album_id
+                                      AND aal.artist_id = album_artists.artist_id
+                                )
+                            )
+                      )
+                  )
                 ",
                 params![source_id.as_str()],
             )?;
-            refresh_genre_counts_on_connection(connection, source_id)?;
             Ok(())
         })
     }
@@ -1505,6 +1142,25 @@ impl Store {
         genres: &[Genre],
         generation: i64,
     ) -> StoreResult<()> {
+        self.upsert_genres_with_count_refresh(source_id, genres, generation, true)
+    }
+
+    fn upsert_genres_without_count_refresh(
+        &self,
+        source_id: &SourceId,
+        genres: &[Genre],
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.upsert_genres_with_count_refresh(source_id, genres, generation, false)
+    }
+
+    fn upsert_genres_with_count_refresh(
+        &self,
+        source_id: &SourceId,
+        genres: &[Genre],
+        generation: i64,
+        refresh_counts: bool,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
             self.require_current_sync_generation(source_id, generation)?;
             let mut statement = connection.prepare(
@@ -1566,7 +1222,9 @@ impl Store {
                     &cover_refs,
                 )?;
             }
-            refresh_genre_counts_on_connection(connection, source_id)?;
+            if refresh_counts {
+                refresh_genre_counts_on_connection(connection, source_id)?;
+            }
             Ok(())
         })
     }
@@ -1690,76 +1348,6 @@ impl Store {
                     playlist.name,
                 ])?;
             }
-            Ok(())
-        })
-    }
-    pub fn prune_playlists_except(
-        &self,
-        source_id: &SourceId,
-        playlist_ids: &[PlaylistId],
-    ) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            let keep = playlist_ids
-                .iter()
-                .map(|playlist_id| playlist_id.as_str().to_string())
-                .collect::<Vec<_>>();
-            let existing = {
-                let mut statement = connection.prepare(
-                    "
-                    SELECT playlist_id
-                    FROM playlists
-                    WHERE source_id = ?1
-                      AND owner = 'native'
-                    ",
-                )?;
-                collect_rows(
-                    statement
-                        .query_map(params![source_id.as_str()], |row| row.get::<_, String>(0))?,
-                )?
-            };
-
-            for playlist_id in existing {
-                if keep.iter().any(|keep_id| keep_id == &playlist_id) {
-                    continue;
-                }
-                connection.execute(
-                    "
-                    DELETE FROM playlist_tracks
-                    WHERE source_id = ?1 AND playlist_id = ?2
-                    ",
-                    params![source_id.as_str(), playlist_id.as_str()],
-                )?;
-                connection.execute(
-                    "
-                    DELETE FROM playlists
-                    WHERE source_id = ?1 AND playlist_id = ?2 AND owner = 'native'
-                    ",
-                    params![source_id.as_str(), playlist_id.as_str()],
-                )?;
-                connection.execute(
-                    "
-                    DELETE FROM collection_cover_refs
-                    WHERE source_id = ?1
-                      AND collection_type = ?2
-                      AND collection_id = ?3
-                    ",
-                    params![
-                        source_id.as_str(),
-                        COLLECTION_COVER_PLAYLIST,
-                        playlist_id.as_str(),
-                    ],
-                )?;
-                connection.execute(
-                    "
-                    DELETE FROM library_fts
-                    WHERE source_id = ?1
-                      AND item_type = 'playlist'
-                      AND item_id = ?2
-                    ",
-                    params![source_id.as_str(), playlist_id.as_str()],
-                )?;
-            }
-
             Ok(())
         })
     }
@@ -1901,7 +1489,7 @@ impl Store {
 }
 
 impl Store {
-    fn load_album_for_delta(
+    pub(super) fn load_album_for_delta(
         &self,
         source_id: &SourceId,
         album_id: &AlbumId,
@@ -1912,7 +1500,9 @@ impl Store {
                 "
                 SELECT album_id, title, artist, artist_id, year, release_date, date_added,
                        last_played, play_count, user_rating, track_count, duration_seconds,
-                       favorite, color_seed, image_item_id, image_tag,
+                       favorite, color_seed,
+                       CASE WHEN image_origin = 'source' THEN image_item_id END,
+                       CASE WHEN image_origin = 'source' THEN image_tag END,
                        release_types_json, is_compilation, musicbrainz_album_id,
                        musicbrainz_release_group_id
                 FROM albums
@@ -1937,7 +1527,7 @@ impl Store {
         Ok(album)
     }
 
-    fn load_artist_for_delta(
+    pub(super) fn load_artist_for_delta(
         &self,
         source_id: &SourceId,
         artist_id: &ArtistId,
@@ -1951,7 +1541,9 @@ impl Store {
         let sql = format!(
             "
             SELECT artist_id, name, album_count, track_count, favorite,
-                   last_played, play_count, user_rating, image_item_id, image_tag
+                   last_played, play_count, user_rating,
+                   CASE WHEN image_origin = 'source' THEN image_item_id END,
+                   CASE WHEN image_origin = 'source' THEN image_tag END
             FROM {table}
             WHERE source_id = ?1 AND artist_id = ?2
             "
@@ -1966,7 +1558,7 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    fn load_track_for_delta(
+    pub(super) fn load_track_for_delta(
         &self,
         source_id: &SourceId,
         track_id: &TrackId,
@@ -1978,7 +1570,9 @@ impl Store {
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
                        duration_seconds, favorite, disc_number, track_number,
-                       image_item_id, image_tag, local_path, source_format, comment, skip_count,
+                       CASE WHEN image_origin = 'source' THEN image_item_id END,
+                       CASE WHEN image_origin = 'source' THEN image_tag END,
+                       local_path, source_format, comment, skip_count,
                        bpm
                 FROM tracks
                 WHERE source_id = ?1 AND track_id = ?2
@@ -2003,7 +1597,8 @@ impl Store {
             .query_row(
                 "
                 SELECT genre_id, name, album_count, track_count, duration_seconds,
-                       image_item_id, image_tag
+                       CASE WHEN image_origin = 'source' THEN image_item_id END,
+                       CASE WHEN image_origin = 'source' THEN image_tag END
                 FROM genres
                 WHERE source_id = ?1 AND genre_id = ?2
                 ",
@@ -2024,7 +1619,9 @@ impl Store {
             .query_row(
                 "
                 SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                       owner, image_item_id, image_tag
+                       owner,
+                       CASE WHEN image_origin = 'source' THEN image_item_id END,
+                       CASE WHEN image_origin = 'source' THEN image_tag END
                 FROM playlists
                 WHERE source_id = ?1 AND playlist_id = ?2
                 ",
@@ -2034,116 +1631,23 @@ impl Store {
             .optional()?;
         Ok(playlist)
     }
-
-    fn playlist_has_entries(
-        &self,
-        source_id: &SourceId,
-        playlist_id: &PlaylistId,
-    ) -> StoreResult<bool> {
-        let has_entries = self.connection.query_row(
-            "
-            SELECT EXISTS (
-                SELECT 1
-                FROM playlist_tracks
-                WHERE source_id = ?1 AND playlist_id = ?2
-            )
-            ",
-            params![source_id.as_str(), playlist_id.as_str()],
-            |row| row.get::<_, bool>(0),
-        )?;
-        Ok(has_entries)
-    }
-
-    fn stale_library_ids(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<LibraryDelta> {
-        let mut delta = LibraryDelta::default();
-        delta.tracks.deleted =
-            self.stale_ids(source_id, "tracks", "track_id", generation, TrackId::new)?;
-        delta.albums.deleted =
-            self.stale_ids(source_id, "albums", "album_id", generation, AlbumId::new)?;
-        delta.artists.deleted =
-            self.stale_ids(source_id, "artists", "artist_id", generation, ArtistId::new)?;
-        delta.album_artists.deleted = self.stale_ids(
-            source_id,
-            "album_artists",
-            "artist_id",
-            generation,
-            ArtistId::new,
-        )?;
-        delta.genres.deleted =
-            self.stale_ids(source_id, "genres", "genre_id", generation, GenreId::new)?;
-        delta.playlists.deleted = self.stale_native_playlist_ids(source_id, generation)?;
-        Ok(delta)
-    }
-
-    fn stale_native_playlist_ids(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<Vec<PlaylistId>> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT playlist_id
-            FROM playlists
-            WHERE source_id = ?1
-              AND sync_generation < ?2
-              AND owner = 'native'
-            ORDER BY playlist_id
-            ",
-        )?;
-        collect_rows(
-            statement.query_map(params![source_id.as_str(), generation], |row| {
-                row.get::<_, String>(0).map(PlaylistId::new)
-            })?,
-        )
-    }
-
-    fn stale_ids<Id>(
-        &self,
-        source_id: &SourceId,
-        table: &str,
-        column: &str,
-        generation: i64,
-        id: impl Fn(String) -> Id,
-    ) -> StoreResult<Vec<Id>> {
-        let sql = format!(
-            "
-            SELECT {column}
-            FROM {table}
-            WHERE source_id = ?1 AND sync_generation < ?2
-            ORDER BY {column}
-            "
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        collect_rows(
-            statement.query_map(params![source_id.as_str(), generation], |row| {
-                row.get::<_, String>(0).map(&id)
-            })?,
-        )
-    }
 }
 
 fn album_stats_changed(left: &Album, right: &Album) -> bool {
-    let provider_counts_changed = (right.track_count > left.track_count
-        && left.track_count != right.track_count)
-        || (right.duration_seconds > left.duration_seconds
-            && left.duration_seconds != right.duration_seconds);
-    provider_counts_changed
-        || left.play_count != right.play_count
+    left.play_count != right.play_count
         || left.last_played != right.last_played
         || left.user_rating != right.user_rating
 }
 
+fn album_observation_changed(left: &Album, right: &Album) -> bool {
+    album_stats_changed(left, right)
+        || album_links_changed(left, right)
+        || album_fields_changed(left, right)
+        || left.image_ref != right.image_ref
+}
+
 fn playlist_summary_matches(left: &Playlist, right: &Playlist) -> bool {
-    left.id == right.id
-        && left.name == right.name
-        && left.track_count == right.track_count
-        && left.duration_seconds == right.duration_seconds
-        && left.image_refs == right.image_refs
-        && left.image_ref == right.image_ref
+    left.id == right.id && left.name == right.name && left.image_ref == right.image_ref
 }
 
 fn refresh_playlists_for_track_ids_on_connection(
@@ -2197,7 +1701,6 @@ fn refresh_playlists_for_track_ids_on_connection(
 fn album_links_changed(left: &Album, right: &Album) -> bool {
     left.artist_id != right.artist_id
         || artist_credits_changed(&left.album_artist_credits, &right.album_artist_credits)
-        || artist_credits_changed(&left.artist_credits, &right.artist_credits)
         || left.genres != right.genres
 }
 
@@ -2254,26 +1757,6 @@ fn track_stats_changed(left: &Track, right: &Track) -> bool {
         || left.skip_count != right.skip_count
 }
 
-fn local_stress_track_base_id(track_id: &TrackId) -> Option<&str> {
-    #[cfg(debug_assertions)]
-    {
-        let suffix = track_id
-            .as_str()
-            .strip_prefix(LOCAL_STRESS_TRACK_ID_PREFIX)?;
-        let (_, base_track_id) = suffix.split_once(':')?;
-        if base_track_id.is_empty() {
-            None
-        } else {
-            Some(base_track_id)
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = track_id;
-        None
-    }
-}
-
 fn track_artist_links_changed(left: &Track, right: &Track) -> bool {
     left.artist_id != right.artist_id
         || (!right.artist_credits.is_empty()
@@ -2295,8 +1778,6 @@ fn artist_credits_changed(left: &[ArtistCredit], right: &[ArtistCredit]) -> bool
 fn artist_projection_changed(left: &Artist, right: &Artist) -> bool {
     left.id != right.id
         || left.name != right.name
-        || left.album_count != right.album_count
-        || left.track_count != right.track_count
         || left.favorite != right.favorite
         || left.last_played != right.last_played
         || left.play_count != right.play_count
@@ -2304,22 +1785,16 @@ fn artist_projection_changed(left: &Artist, right: &Artist) -> bool {
         || left.image_ref != right.image_ref
 }
 
-fn home_keys(sections: &[HomeSection]) -> Vec<(HomeSectionKind, &'static str, String)> {
-    sections
-        .iter()
-        .flat_map(|section| {
-            section
-                .albums
-                .iter()
-                .map(|album| (section.kind, "album", album.id.as_str().to_string()))
-                .chain(
-                    section
-                        .tracks
-                        .iter()
-                        .map(|track| (section.kind, "track", track.id.as_str().to_string())),
-                )
-        })
-        .collect()
+fn artist_stats_changed(left: &Artist, right: &Artist) -> bool {
+    left.last_played != right.last_played
+        || left.play_count != right.play_count
+        || left.user_rating != right.user_rating
+}
+
+fn artist_fields_changed(left: &Artist, right: &Artist) -> bool {
+    left.name != right.name
+        || left.favorite != right.favorite
+        || left.musicbrainz_artist_id != right.musicbrainz_artist_id
 }
 
 fn refresh_genre_counts_on_connection(
@@ -2328,91 +1803,65 @@ fn refresh_genre_counts_on_connection(
 ) -> StoreResult<()> {
     connection.execute(
         "
+        WITH linked_albums AS MATERIALIZED (
+            SELECT links.source_id, links.genre_name, albums.album_id
+            FROM album_genres links
+            JOIN albums
+              ON albums.source_id = links.source_id
+             AND albums.album_id = links.album_id
+            WHERE links.source_id = ?1
+            UNION
+            SELECT links.source_id, links.genre_name, albums.album_id
+            FROM track_genres links
+            JOIN tracks
+              ON tracks.source_id = links.source_id
+             AND tracks.track_id = links.track_id
+            JOIN albums
+              ON albums.source_id = tracks.source_id
+             AND albums.album_id = tracks.album_id
+            WHERE links.source_id = ?1
+        ),
+        album_counts AS MATERIALIZED (
+            SELECT source_id, genre_name, COUNT(*) AS album_count
+            FROM linked_albums
+            GROUP BY source_id, genre_name
+        ),
+        track_counts AS MATERIALIZED (
+            SELECT links.source_id, links.genre_name,
+                   COUNT(DISTINCT links.track_id) AS track_count,
+                   COALESCE(SUM(tracks.duration_seconds), 0) AS duration_seconds
+            FROM track_genres links
+            LEFT JOIN tracks
+              ON tracks.source_id = links.source_id
+             AND tracks.track_id = links.track_id
+            WHERE links.source_id = ?1
+            GROUP BY links.source_id, links.genre_name
+        ),
+        computed AS MATERIALIZED (
+            SELECT genres.rowid AS row_id,
+                   COALESCE(album_counts.album_count, 0) AS album_count,
+                   COALESCE(track_counts.track_count, 0) AS track_count,
+                   COALESCE(track_counts.duration_seconds, 0) AS duration_seconds
+            FROM genres
+            LEFT JOIN album_counts
+              ON album_counts.source_id = genres.source_id
+             AND album_counts.genre_name = genres.name
+            LEFT JOIN track_counts
+              ON track_counts.source_id = genres.source_id
+             AND track_counts.genre_name = genres.name
+            WHERE genres.source_id = ?1
+        )
         UPDATE genres
-        SET album_count = CASE
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM album_genres
-                    WHERE album_genres.source_id = genres.source_id
-                      AND album_genres.genre_name = genres.name
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM track_genres
-                    WHERE track_genres.source_id = genres.source_id
-                      AND track_genres.genre_name = genres.name
-                )
-                THEN (
-                    SELECT COUNT(DISTINCT album_id)
-                    FROM (
-                        SELECT albums.album_id
-                        FROM album_genres
-                        JOIN albums
-                            ON albums.source_id = album_genres.source_id
-                           AND albums.album_id = album_genres.album_id
-                        WHERE album_genres.source_id = genres.source_id
-                          AND album_genres.genre_name = genres.name
-                        UNION
-                        SELECT albums.album_id
-                        FROM track_genres
-                        JOIN tracks
-                            ON tracks.source_id = track_genres.source_id
-                           AND tracks.track_id = track_genres.track_id
-                        JOIN albums
-                            ON albums.source_id = tracks.source_id
-                           AND albums.album_id = tracks.album_id
-                        WHERE track_genres.source_id = genres.source_id
-                          AND track_genres.genre_name = genres.name
-                    ) linked_albums
-                )
-                ELSE album_count
-            END,
-            track_count = CASE
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM album_genres
-                    WHERE album_genres.source_id = genres.source_id
-                      AND album_genres.genre_name = genres.name
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM track_genres
-                    WHERE track_genres.source_id = genres.source_id
-                      AND track_genres.genre_name = genres.name
-                )
-                THEN (
-                    SELECT COUNT(DISTINCT track_id)
-                    FROM track_genres
-                    WHERE track_genres.source_id = genres.source_id
-                      AND track_genres.genre_name = genres.name
-                )
-                ELSE track_count
-            END,
-            duration_seconds = CASE
-                WHEN EXISTS (
-                    SELECT 1
-                    FROM album_genres
-                    WHERE album_genres.source_id = genres.source_id
-                      AND album_genres.genre_name = genres.name
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM track_genres
-                    WHERE track_genres.source_id = genres.source_id
-                      AND track_genres.genre_name = genres.name
-                )
-                THEN COALESCE((
-                    SELECT SUM(tracks.duration_seconds)
-                    FROM track_genres
-                    JOIN tracks
-                        ON tracks.source_id = track_genres.source_id
-                       AND tracks.track_id = track_genres.track_id
-                    WHERE track_genres.source_id = genres.source_id
-                      AND track_genres.genre_name = genres.name
-                ), 0)
-                ELSE duration_seconds
-            END
-        WHERE source_id = ?1
+        SET album_count = (SELECT album_count FROM computed WHERE row_id = genres.rowid),
+            track_count = (SELECT track_count FROM computed WHERE row_id = genres.rowid),
+            duration_seconds = (SELECT duration_seconds FROM computed WHERE row_id = genres.rowid)
+        WHERE rowid IN (
+            SELECT row_id
+            FROM computed
+            WHERE computed.album_count != genres.album_count
+               OR computed.track_count != genres.track_count
+               OR computed.duration_seconds != genres.duration_seconds
+        )
         ",
         params![source_id.as_str()],
     )?;
@@ -2420,18 +1869,12 @@ fn refresh_genre_counts_on_connection(
 }
 
 fn genre_delta_unchanged(left: &Genre, right: &Genre) -> bool {
-    left.id == right.id
-        && left.name == right.name
-        && left.album_count == right.album_count
-        && left.track_count == right.track_count
-        && (right.duration_seconds == 0 || left.duration_seconds == right.duration_seconds)
-        && left.image_refs == right.image_refs
-        && left.image_ref == right.image_ref
+    left.id == right.id && left.name == right.name && left.image_ref == right.image_ref
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{album, track};
+    use super::test_support::{StoreCase, album, artist, credit, genre, track};
     use super::*;
 
     #[test]
@@ -2449,5 +1892,68 @@ mod tests {
         let mut renamed = original.clone();
         renamed.title = "Updated title".to_string();
         assert!(track_fields_changed(&original, &renamed));
+    }
+
+    #[test]
+    fn linked_artist_and_genre_counts_are_distinct() {
+        let case = StoreCase::open();
+        let generation = case.start_sync("begin sync");
+        let mut first_album = album(1);
+        first_album.genres = vec!["Genre 1".to_string()];
+        let mut second_album = album(2);
+        second_album.artist = "Artist 2".to_string();
+        second_album.artist_id = Some(ArtistId::fake(2));
+        let mut first_track = track(1, &first_album);
+        first_track
+            .artist_credits
+            .push(credit(ArtistId::fake(2), "Artist 2"));
+        let mut second_track = track(2, &second_album);
+        second_track.genres = vec!["Genre 1".to_string()];
+        let primary_artist = artist(1, None);
+        let mut credited_artist = artist(2, None);
+        credited_artist.album_count = 0;
+        credited_artist.track_count = 0;
+        let mut linked_genre = genre(1, None);
+        linked_genre.album_count = 0;
+        linked_genre.track_count = 0;
+        linked_genre.duration_seconds = 0;
+
+        case.upsert_albums(&case.id, &[first_album, second_album], generation)
+            .expect("upsert albums");
+        case.upsert_tracks(&case.id, &[first_track, second_track], generation)
+            .expect("upsert tracks");
+        case.upsert_artists(
+            &case.id,
+            &[primary_artist, credited_artist.clone()],
+            false,
+            generation,
+        )
+        .expect("upsert artists");
+        case.upsert_genres(&case.id, std::slice::from_ref(&linked_genre), generation)
+            .expect("upsert genre");
+        case.refresh_library_counts(&case.id)
+            .expect("refresh counts");
+
+        let credited_artist = case
+            .load_artists(&case.id, false, 0, 10)
+            .expect("load artists")
+            .items
+            .into_iter()
+            .find(|artist| artist.id == credited_artist.id)
+            .expect("credited artist");
+        let linked_genre = case
+            .load_genres(&case.id, 0, 10)
+            .expect("load genres")
+            .items
+            .into_iter()
+            .find(|genre| genre.id == linked_genre.id)
+            .expect("linked genre");
+
+        assert_eq!(
+            (credited_artist.album_count, credited_artist.track_count),
+            (2, 2)
+        );
+        assert_eq!((linked_genre.album_count, linked_genre.track_count), (2, 2));
+        assert_eq!(linked_genre.duration_seconds, 360);
     }
 }

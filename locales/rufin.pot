@@ -321,7 +321,7 @@ msgstr ""
 msgid "Queue a track to begin"
 msgstr ""
 
-msgid "Cached library data will appear here as sync pages finish."
+msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
 msgid "Previous page"
@@ -376,9 +376,6 @@ msgid "Play playlist"
 msgstr ""
 
 msgid "Play smart playlist"
-msgstr ""
-
-msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
 msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
@@ -551,6 +548,9 @@ msgid "Add server"
 msgstr ""
 
 msgid "Caching Library"
+msgstr ""
+
+msgid "Preparing library..."
 msgstr ""
 
 msgid "Local library"
@@ -1229,38 +1229,16 @@ msgstr ""
 msgid "Checking {provider} server..."
 msgstr ""
 
-msgid "Server settings saved."
+msgid "Connected. Loading cached library..."
 msgstr ""
 
-msgid "Server settings saved. Resyncing library..."
+msgid "Source settings saved."
 msgstr ""
 
 msgid "No changes to save."
 msgstr ""
 
-msgid "Sync already running."
-msgstr ""
-
-#, rust-format
-msgid "Syncing {provider} library..."
-msgstr ""
-
-msgid "Caching library... This may take some time."
-msgstr ""
-
-msgid "Caching local library... This may take some time."
-msgstr ""
-
-msgid "Caching library artwork..."
-msgstr ""
-
-msgid "Cached library ready"
-msgstr ""
-
-msgid "Library sync complete"
-msgstr ""
-
-msgid "Music Server"
+msgid "Cached library cleared."
 msgstr ""
 
 msgid "Synced lyrics"
@@ -1323,6 +1301,9 @@ msgstr ""
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
+msgstr ""
+
+msgid "Cached library ready"
 msgstr ""
 
 msgid "Play radio"
@@ -1483,9 +1464,6 @@ msgid "{count} track"
 msgid_plural "{count} tracks"
 msgstr[0] ""
 msgstr[1] ""
-
-msgid "Preparing library..."
-msgstr ""
 
 msgid "New Playlist"
 msgstr ""

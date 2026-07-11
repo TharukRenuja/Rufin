@@ -3,12 +3,13 @@ use std::{collections::BTreeSet, fs, path::PathBuf};
 use super::sources::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 use crate::{
-    CueTrackSourceObject, LocalFileSourceObject, LocalLibraryDelta, PlaylistWriteMode, StoreError,
-    local_file_source_object_id,
+    LocalLibraryDelta, LocalManifestDelta, PlaylistWriteMode, SourceEntityKind,
+    SourceObjectMapping, StoreError, local_file_source_object_id,
 };
 use domain::{
-    AlbumId, ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, SourceFeatureOwner, SourceId, TrackId,
+    AlbumId, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, LocalCueTrackSource,
+    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
+    SourceFeatureOwner, SourceId, TrackId,
 };
 
 const OLD_SOURCE_ID_COLUMN_TABLES: &[&str] = &[
@@ -129,7 +130,15 @@ fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
+    for column in ["cache_revision", "last_all_completed_at"] {
+        assert!(
+            store
+                .table_has_column("sync_state", column)
+                .expect("column lookup"),
+            "sync_state.{column} should exist"
+        );
+    }
     for column in [
         "release_types_json",
         "is_compilation",
@@ -240,6 +249,158 @@ fn current_schema_initializes_empty_database() {
         "settings are persisted outside the SQLite store"
     );
 }
+
+#[test]
+fn version_24_migrates_sync_state_and_source_objects() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_source();
+    store.save_source(&saved).expect("save source");
+    store
+        .connection
+        .execute(
+            "UPDATE sync_state SET last_completed_at = '2026-07-01 12:00:00' WHERE source_id = ?1",
+            rusqlite::params![saved.source.id.as_str()],
+        )
+        .expect("seed completion time");
+    let old_mapping = SourceObjectMapping {
+        source_object_id: "provider-album-1".to_string(),
+        entity_kind: SourceEntityKind::Album,
+        entity_id: "album-1".to_string(),
+    };
+    seed_source_object_mappings(
+        &store,
+        &saved.source.id,
+        std::slice::from_ref(&old_mapping),
+        4,
+    );
+    let local_source_object_id = local_file_source_object_id("/music", "track.flac");
+    store
+        .connection
+        .execute(
+            "
+            INSERT INTO source_objects (
+                source_id, source_object_id, entity_kind, source_object_kind,
+                source_path, sync_generation
+            ) VALUES (?1, ?2, '', 'local_file', '/music/track.flac', 4)
+            ",
+            rusqlite::params![saved.source.id.as_str(), local_source_object_id.as_str()],
+        )
+        .expect("seed local source object");
+    store
+        .connection
+        .execute_batch(
+            "
+            DROP INDEX source_objects_entity_idx;
+            DROP INDEX source_objects_parent_idx;
+            ALTER TABLE source_objects RENAME TO source_objects_v25;
+            CREATE TABLE source_objects (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                source_object_id TEXT NOT NULL,
+                entity_kind TEXT,
+                entity_id TEXT,
+                source_object_kind TEXT NOT NULL,
+                source_path TEXT,
+                parent_source_object_id TEXT,
+                cue_path TEXT,
+                cue_revision TEXT,
+                cue_track_index INTEGER,
+                segment_start_ms INTEGER,
+                segment_end_ms INTEGER,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                sync_generation INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    source_object_kind != 'cue_track'
+                    OR (
+                        entity_kind IS NOT NULL
+                        AND entity_id IS NOT NULL
+                        AND parent_source_object_id IS NOT NULL
+                        AND cue_path IS NOT NULL
+                        AND cue_revision IS NOT NULL
+                        AND cue_track_index IS NOT NULL
+                        AND segment_start_ms IS NOT NULL
+                        AND segment_end_ms IS NOT NULL
+                    )
+                ),
+                PRIMARY KEY (source_id, source_object_id)
+            );
+            CREATE INDEX source_objects_entity_idx
+                ON source_objects(source_id, entity_kind, entity_id);
+            CREATE INDEX source_objects_parent_idx
+                ON source_objects(source_id, parent_source_object_id);
+            INSERT INTO source_objects (
+                source_id, source_object_id, entity_kind, entity_id, source_object_kind,
+                source_path, parent_source_object_id, cue_path, cue_revision,
+                cue_track_index, segment_start_ms, segment_end_ms, metadata_json,
+                sync_generation, updated_at
+            )
+            SELECT source_id, source_object_id, NULLIF(entity_kind, ''), entity_id,
+                   source_object_kind, source_path, parent_source_object_id, cue_path,
+                   cue_revision, cue_track_index, segment_start_ms, segment_end_ms,
+                   metadata_json, sync_generation, updated_at
+            FROM source_objects_v25;
+            DROP TABLE source_objects_v25;
+            ALTER TABLE sync_state DROP COLUMN last_all_completed_at;
+            ALTER TABLE sync_state DROP COLUMN cache_revision;
+            PRAGMA user_version = 24;
+            ",
+        )
+        .expect("simulate version 24");
+
+    store.migrate().expect("migrate version 24");
+
+    assert_eq!(store.schema_version().expect("schema version"), 25);
+    let state = store.sync_state(&saved.source.id).expect("sync state");
+    assert_eq!(state.cache_revision, 0);
+    assert_eq!(
+        state.last_all_completed_at.as_deref(),
+        Some("2026-07-01 12:00:00")
+    );
+    assert_eq!(
+        store
+            .source_object_mappings(&saved.source.id, &old_mapping.source_object_id)
+            .expect("load migrated source object"),
+        vec![old_mapping]
+    );
+    let local_source = store
+        .connection
+        .query_row(
+            "SELECT entity_kind, source_object_kind FROM source_objects WHERE source_id = ?1 AND source_object_id = ?2",
+            rusqlite::params![saved.source.id.as_str(), local_source_object_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .expect("load migrated local source object");
+    assert_eq!(local_source, (String::new(), "local_file".to_string()));
+}
+
+#[test]
+fn one_source_object_maps_to_both_artist_roles() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_source();
+    store.save_source(&saved).expect("save source");
+    let source_object_id = "provider-artist-1";
+    let mappings = vec![
+        SourceObjectMapping {
+            source_object_id: source_object_id.to_string(),
+            entity_kind: SourceEntityKind::Artist,
+            entity_id: "artist-1".to_string(),
+        },
+        SourceObjectMapping {
+            source_object_id: source_object_id.to_string(),
+            entity_kind: SourceEntityKind::AlbumArtist,
+            entity_id: "album-artist-1".to_string(),
+        },
+    ];
+
+    seed_source_object_mappings(&store, &saved.source.id, &mappings, 7);
+
+    assert_eq!(
+        store
+            .source_object_mappings(&saved.source.id, source_object_id)
+            .expect("load source object mappings"),
+        vec![mappings[1].clone(), mappings[0].clone()]
+    );
+}
 #[test]
 fn schema_create_indexes() {
     let store = Store::open_memory().expect("open store");
@@ -268,6 +429,8 @@ fn schema_create_indexes() {
             "local_artwork_manifest",
             "local_artwork_manifest_source_idx",
         ),
+        ("source_objects", "source_objects_entity_idx"),
+        ("source_objects", "source_objects_parent_idx"),
     ] {
         assert!(index_exists(&store, table, index), "{index} should exist");
     }
@@ -301,6 +464,57 @@ fn local_manifest_entry() -> LocalManifestEntry {
         }),
         metadata_hash: "metadata-one".to_string(),
         search_hash: "search-one".to_string(),
+    }
+}
+
+fn seed_local_manifest(
+    store: &Store,
+    source_id: &SourceId,
+    generation: i64,
+    entries: &[LocalManifestEntry],
+) {
+    store
+        .write_batch(|connection| {
+            store.require_current_sync_generation(source_id, generation)?;
+            super::local_manifest::apply_local_manifest_delta_on_connection(
+                connection,
+                source_id,
+                generation,
+                &LocalManifestDelta {
+                    upserted_entries: entries.to_vec(),
+                    ..LocalManifestDelta::default()
+                },
+            )
+        })
+        .expect("seed Local manifest");
+}
+
+fn seed_source_object_mappings(
+    store: &Store,
+    source_id: &SourceId,
+    mappings: &[SourceObjectMapping],
+    generation: i64,
+) {
+    for mapping in mappings {
+        store
+            .connection
+            .execute(
+                "
+                INSERT INTO source_objects (
+                    source_id, source_object_id, entity_kind, entity_id,
+                    source_object_kind, metadata_json, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, 'source', '{}', ?5)
+                ",
+                rusqlite::params![
+                    source_id.as_str(),
+                    mapping.source_object_id.as_str(),
+                    mapping.entity_kind.as_str(),
+                    mapping.entity_id.as_str(),
+                    generation,
+                ],
+            )
+            .expect("seed source object mapping");
     }
 }
 
@@ -376,28 +590,6 @@ fn entity_fact_count(
         .expect("count entity facts")
 }
 
-fn entity_row_count(
-    store: &Store,
-    source_id: &SourceId,
-    entity_kind: &str,
-    entity_id: &str,
-) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(*)
-            FROM entities
-            WHERE source_id = ?1
-              AND entity_kind = ?2
-              AND entity_id = ?3
-            ",
-            rusqlite::params![source_id.as_str(), entity_kind, entity_id],
-            |row| row.get(0),
-        )
-        .expect("count entities")
-}
-
 fn content_ref_count(
     store: &Store,
     source_id: &SourceId,
@@ -420,30 +612,6 @@ fn content_ref_count(
             |row| row.get(0),
         )
         .expect("count content refs")
-}
-
-fn entity_link_count(
-    store: &Store,
-    source_id: &SourceId,
-    entity_kind: &str,
-    entity_id: &str,
-    namespace: &str,
-) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(*)
-            FROM entity_links
-            WHERE source_id = ?1
-              AND entity_kind = ?2
-              AND entity_id = ?3
-              AND namespace = ?4
-            ",
-            rusqlite::params![source_id.as_str(), entity_kind, entity_id, namespace],
-            |row| row.get(0),
-        )
-        .expect("count entity links")
 }
 
 fn selected_image_origin(
@@ -511,7 +679,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -563,7 +731,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
@@ -589,7 +757,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -628,18 +796,14 @@ fn schema_upgrade_servers() {
         let mut cached_genre = genre(1, None);
         cached_genre.name = genre_name.clone();
         cached_genre.duration_seconds = 0;
-        store
-            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
-            .expect("upsert album");
-        store
-            .upsert_tracks(&saved.source.id, &[first_track, second_track], generation)
-            .expect("upsert tracks");
-        store
-            .upsert_genres(&saved.source.id, &[cached_genre], generation)
-            .expect("upsert genre");
-        store
-            .complete_sync(&saved.source.id, generation)
-            .expect("complete sync");
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![first_track, second_track],
+            genres: vec![cached_genre],
+            ..LibraryObservation::default()
+        }
+        .commit(&store, &saved.source.id, generation)
+        .expect("commit library");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
     simulate_pre_source_identity_schema(&connection);
@@ -654,7 +818,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -774,7 +938,7 @@ fn schema_upgrade_collapses_provider_content_ref_duplicates() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     let rows = store
         .connection
         .query_row(
@@ -819,23 +983,14 @@ fn schema_upgrade_backfills_artist_label_links() {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save source");
         let generation = store.begin_sync(&saved.source.id).expect("begin sync");
-        store
-            .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
-            .expect("upsert album");
-        store
-            .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
-            .expect("upsert track");
-        store
-            .upsert_artists(
-                &saved.source.id,
-                std::slice::from_ref(&artist),
-                false,
-                generation,
-            )
-            .expect("upsert artist");
-        store
-            .complete_sync(&saved.source.id, generation)
-            .expect("complete sync");
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![track.clone()],
+            artists: vec![artist.clone()],
+            ..LibraryObservation::default()
+        }
+        .commit(&store, &saved.source.id, generation)
+        .expect("commit library");
         store
             .connection
             .execute_batch("PRAGMA user_version = 23;")
@@ -843,7 +998,7 @@ fn schema_upgrade_backfills_artist_label_links() {
     }
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     let track_link_count: i64 = store
         .connection
         .query_row(
@@ -1056,7 +1211,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     let local_override_count = store
         .connection
         .query_row(
@@ -1109,7 +1264,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1132,12 +1287,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 25)
+        .pragma_update(None, "user_version", 26)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1172,11 +1327,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 24);
+        assert_eq!(store.schema_version().expect("schema version"), 25);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1192,7 +1347,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 24);
+        assert_eq!(store.schema_version().expect("schema version"), 25);
     }
 
     let store = Store::open_file(&path).expect("open current store");
@@ -1201,7 +1356,7 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 24);
+    assert_eq!(store.schema_version().expect("schema version"), 25);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1311,8 +1466,12 @@ fn schema_clear_lifecycle() {
     let entry = local_manifest_entry();
     let first_generation = case.start_sync("begin first sync");
 
-    case.replace_local_manifest(&case.id, first_generation, std::slice::from_ref(&entry))
-        .expect("replace manifest");
+    seed_local_manifest(
+        &case,
+        &case.id,
+        first_generation,
+        std::slice::from_ref(&entry),
+    );
 
     assert_eq!(
         case.load_local_manifest(&case.id).expect("load manifest"),
@@ -1328,68 +1487,17 @@ fn schema_clear_lifecycle() {
     );
 
     let second_generation = case.start_sync("begin second sync");
-    case.replace_local_manifest(&case.id, second_generation, std::slice::from_ref(&entry))
-        .expect("replace manifest again");
+    seed_local_manifest(
+        &case,
+        &case.id,
+        second_generation,
+        std::slice::from_ref(&entry),
+    );
     case.forget_source(&case.id).expect("forget server");
     assert!(
         case.load_local_manifest(&case.id)
             .expect("load forgotten manifest")
             .is_empty()
-    );
-}
-
-#[test]
-fn stale_local_access_scan_changes_neither_matches_nor_manifest() {
-    let case = StoreCase::with_source_id("server:local-access-generation");
-    let first_generation = case.start_sync("begin first sync");
-    let old_match = (
-        TrackId::new("remote:track:old"),
-        "/music/old.flac".to_string(),
-        "metadata".to_string(),
-    );
-    let old_manifest = local_manifest_entry();
-    case.commit_local_access_scan(
-        &case.id,
-        first_generation,
-        std::slice::from_ref(&old_match),
-        std::slice::from_ref(&old_manifest),
-    )
-    .expect("commit first local access scan");
-    case.finish_sync(first_generation, "complete first sync");
-    let _current_generation = case.start_sync("begin newer sync");
-
-    let new_match = (
-        TrackId::new("remote:track:new"),
-        "/music/new.flac".to_string(),
-        "metadata".to_string(),
-    );
-    let mut new_manifest = old_manifest.clone();
-    new_manifest.track.id = TrackId::new("local:track:new");
-    new_manifest.facts.path = PathBuf::from("/music/new.flac");
-    new_manifest.facts.relative_path = "new.flac".to_string();
-    let error = case
-        .commit_local_access_scan(
-            &case.id,
-            first_generation,
-            std::slice::from_ref(&new_match),
-            std::slice::from_ref(&new_manifest),
-        )
-        .expect_err("reject stale local access scan");
-
-    assert!(matches!(error, StoreError::StaleSyncGeneration { .. }));
-    assert_eq!(
-        case.track_local_match_path(&case.id, &old_match.0)
-            .expect("load old match"),
-        Some(old_match.1)
-    );
-    assert_eq!(
-        case.track_local_match_path(&case.id, &new_match.0)
-            .expect("load new match"),
-        None
-    );
-    assert_eq!(
-        case.load_local_manifest(&case.id).expect("load manifest"),
-        vec![old_manifest]
     );
 }
 
@@ -1414,29 +1522,40 @@ fn schema_track_commit() {
     removed_entry.metadata_hash = "metadata-removed".to_string();
     removed_entry.search_hash = "search-removed".to_string();
     let first_generation = case.start_sync("begin first sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, &[kept.clone(), removed.clone()], first_generation)
-        .expect("upsert tracks");
-    case.finish_sync(first_generation, "complete first sync");
-    case.replace_local_manifest(
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![kept.clone(), removed.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
+    seed_local_manifest(
+        &case,
         &case.id,
         first_generation,
         &[kept_entry.clone(), removed_entry],
-    )
-    .expect("replace manifest");
+    );
     let failed_generation = case.start_sync("begin failed sync");
     let mut duplicate_manifest = kept_entry.clone();
     duplicate_manifest.track.id = TrackId::fake(99);
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     let error = case.commit_local_library_delta(
         &case.id,
         failed_generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
             deleted_track_ids: vec![removed.id.clone()],
-            current_track_ids: vec![kept.id.clone()],
             current_album_ids: vec![album.id.clone()],
             dirty_albums: vec![album],
-            manifest_entries: vec![kept_entry, duplicate_manifest],
+            manifest: LocalManifestDelta {
+                upserted_entries: vec![kept_entry, duplicate_manifest],
+                ..LocalManifestDelta::default()
+            },
             ..LocalLibraryDelta::default()
         },
     );
@@ -1455,7 +1574,319 @@ fn schema_track_commit() {
 }
 
 #[test]
-fn schema_local_delta_applies_favorite_overrides() {
+fn local_delta_does_not_rewrite_unchanged_manifest_siblings() {
+    let case = StoreCase::with_source_id("local:server:keyed-manifest");
+    let mut album = album(1);
+    let album_artist_id = album.artist_id.clone().expect("album artist id");
+    album.album_artist_credits = vec![credit(album_artist_id.clone(), &album.artist)];
+    let mut changed_entry = local_manifest_entry();
+    changed_entry.track = track(1, &album);
+    changed_entry.track.album_artist_credits = album.album_artist_credits.clone();
+    changed_entry.track.local_path = Some("/music/Album/first.mp3".to_string());
+    changed_entry.facts.path = PathBuf::from("/music/Album/first.mp3");
+    changed_entry.facts.relative_path = "Album/first.mp3".to_string();
+    let mut sibling_entry = changed_entry.clone();
+    sibling_entry.track = track(2, &album);
+    sibling_entry.track.album_artist_credits = album.album_artist_credits.clone();
+    sibling_entry.track.local_path = Some("/music/Album/sibling.mp3".to_string());
+    sibling_entry.facts.path = PathBuf::from("/music/Album/sibling.mp3");
+    sibling_entry.facts.relative_path = "Album/sibling.mp3".to_string();
+    sibling_entry.metadata_hash = "metadata-sibling".to_string();
+    sibling_entry.search_hash = "search-sibling".to_string();
+    let home = HomeSection {
+        kind: HomeSectionKind::NewlyAdded,
+        albums: vec![album.clone()],
+        tracks: vec![changed_entry.track.clone(), sibling_entry.track.clone()],
+    };
+
+    let first_generation = case.start_sync("begin first sync");
+    seed_local_manifest(
+        &case,
+        &case.id,
+        first_generation,
+        &[changed_entry.clone(), sibling_entry.clone()],
+    );
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![changed_entry.track.clone(), sibling_entry.track.clone()],
+            home_sections: vec![home.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
+
+    let sibling_source_object_id = local_file_source_object_id("/music", "Album/sibling.mp3");
+    case.connection
+        .execute_batch(
+            "
+            CREATE TEMP TABLE local_manifest_sibling_writes (kind TEXT NOT NULL);
+            CREATE TEMP TRIGGER audit_sibling_file_update
+            AFTER UPDATE ON local_file_manifest
+            WHEN OLD.path = '/music/Album/sibling.mp3'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('file update'); END;
+            CREATE TEMP TRIGGER audit_sibling_file_delete
+            AFTER DELETE ON local_file_manifest
+            WHEN OLD.path = '/music/Album/sibling.mp3'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('file delete'); END;
+            CREATE TEMP TRIGGER audit_sibling_track_update
+            AFTER UPDATE ON local_track_manifest_data
+            WHEN OLD.track_id = 'track-2'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('track update'); END;
+            CREATE TEMP TRIGGER audit_sibling_track_delete
+            AFTER DELETE ON local_track_manifest_data
+            WHEN OLD.track_id = 'track-2'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('track delete'); END;
+            CREATE TEMP TRIGGER audit_unchanged_home_insert
+            AFTER INSERT ON home_section_items
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('home insert'); END;
+            CREATE TEMP TRIGGER audit_unchanged_home_update
+            AFTER UPDATE ON home_section_items
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('home update'); END;
+            CREATE TEMP TRIGGER audit_unchanged_home_delete
+            AFTER DELETE ON home_section_items
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('home delete'); END;
+            ",
+        )
+        .expect("install manifest audit");
+    case.connection
+        .execute_batch(&format!(
+            "
+            CREATE TEMP TRIGGER audit_sibling_source_update
+            AFTER UPDATE ON source_objects
+            WHEN OLD.source_object_id = '{sibling_source_object_id}'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('source update'); END;
+            CREATE TEMP TRIGGER audit_sibling_source_delete
+            AFTER DELETE ON source_objects
+            WHEN OLD.source_object_id = '{sibling_source_object_id}'
+            BEGIN INSERT INTO local_manifest_sibling_writes VALUES ('source delete'); END;
+            "
+        ))
+        .expect("install source audit");
+
+    changed_entry.track.bpm = Some(123);
+    changed_entry.metadata_hash = "metadata-changed".to_string();
+    let second_generation = case.start_sync("begin changed sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        base_cache_revision,
+        true,
+        LocalLibraryDelta {
+            tracks: vec![changed_entry.track.clone()],
+            current_album_ids: vec![album.id.clone()],
+            current_artist_ids: vec![album_artist_id.clone()],
+            current_album_artist_ids: vec![album_artist_id.clone()],
+            dirty_albums: vec![album.clone()],
+            home_sections: vec![home.clone()],
+            manifest: LocalManifestDelta {
+                upserted_entries: vec![changed_entry.clone()],
+                ..LocalManifestDelta::default()
+            },
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit changed manifest entry");
+
+    let sibling_writes = case
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM local_manifest_sibling_writes",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("count sibling writes");
+    assert_eq!(sibling_writes, 0);
+    assert_eq!(
+        case.load_local_manifest(&case.id).expect("load manifest"),
+        vec![changed_entry.clone(), sibling_entry]
+    );
+    let third_generation = case.start_sync("begin identical sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
+    let committed = case
+        .commit_local_library_delta(
+            &case.id,
+            third_generation,
+            base_cache_revision,
+            true,
+            LocalLibraryDelta {
+                tracks: vec![changed_entry.track],
+                current_album_ids: vec![album.id.clone()],
+                current_artist_ids: vec![album_artist_id.clone()],
+                current_album_artist_ids: vec![album_artist_id],
+                dirty_albums: vec![album],
+                home_sections: vec![home],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit identical Local input");
+
+    assert!(committed.delta.is_empty(), "{:?}", committed.delta);
+    assert_eq!(
+        case.connection
+            .query_row(
+                "SELECT COUNT(*) FROM local_manifest_sibling_writes",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count unchanged writes"),
+        0
+    );
+}
+
+#[test]
+fn local_deletion_keeps_durable_track_state_and_external_mappings() {
+    let case = StoreCase::with_source_id("local:server:durable-delete");
+    let album = album(1);
+    let mut entry = local_manifest_entry();
+    entry.track = track(1, &album);
+    entry.track.local_path = Some(entry.facts.path.to_string_lossy().into_owned());
+    let first_generation = case.start_sync("begin first sync");
+    seed_local_manifest(
+        &case,
+        &case.id,
+        first_generation,
+        std::slice::from_ref(&entry),
+    );
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![entry.track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
+    seed_source_object_mappings(
+        &case,
+        &case.id,
+        &[SourceObjectMapping {
+            source_object_id: "external-source-key".to_string(),
+            entity_kind: SourceEntityKind::Track,
+            entity_id: entry.track.id.as_str().to_string(),
+        }],
+        first_generation,
+    );
+    case.connection
+        .execute_batch(&format!(
+            "
+            INSERT INTO entity_identity_keys (
+                source_id, entity_kind, namespace, value, entity_id, source, strength
+            ) VALUES (
+                '{}', 'track', 'external:track', 'external-track-one', '{}', 'musicbrainz', 100
+            );
+            INSERT INTO entity_facts (
+                source_id, entity_kind, entity_id, fact_key, value_json, source, status
+            ) VALUES (
+                '{}', 'track', '{}', 'external_fact', 'true', 'musicbrainz', 'resolved'
+            );
+            INSERT INTO entity_content_refs (
+                source_id, entity_kind, entity_id, content_kind, content_key, source
+            ) VALUES (
+                '{}', 'track', '{}', 'lyrics', 'external-lyrics-one', 'musicbrainz'
+            );
+            ",
+            case.id.as_str(),
+            entry.track.id.as_str(),
+            case.id.as_str(),
+            entry.track.id.as_str(),
+            case.id.as_str(),
+            entry.track.id.as_str(),
+        ))
+        .expect("save external entity state");
+    case.record_local_track_played(&case.id, &entry.track.id, "session-one")
+        .expect("record local play");
+    case.set_track_favorite_for_owner(&case.id, &entry.track.id, true, SourceFeatureOwner::Store)
+        .expect("save favorite override");
+
+    let second_generation = case.start_sync("begin delete sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
+    case.commit_local_library_delta(
+        &case.id,
+        second_generation,
+        base_cache_revision,
+        true,
+        LocalLibraryDelta {
+            deleted_track_ids: vec![entry.track.id.clone()],
+            manifest: LocalManifestDelta {
+                deleted_paths: vec![entry.facts.path.clone()],
+                ..LocalManifestDelta::default()
+            },
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit local deletion");
+
+    assert!(
+        case.load_track(&case.id, &entry.track.id)
+            .expect("load deleted track")
+            .is_none()
+    );
+    assert!(
+        case.load_local_manifest(&case.id)
+            .expect("load manifest")
+            .is_empty()
+    );
+    assert_eq!(
+        case.source_object_mappings(&case.id, "external-source-key")
+            .expect("load source mapping")
+            .len(),
+        1
+    );
+    for table in [
+        "entity_identity_keys",
+        "entity_facts",
+        "entity_content_refs",
+    ] {
+        let count = case
+            .connection
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {table} WHERE source_id = ?1 AND entity_kind = 'track' AND entity_id = ?2 AND source = 'musicbrainz'"
+                ),
+                rusqlite::params![case.id.as_str(), entry.track.id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count external entity state");
+        assert_eq!(count, 1, "{table}");
+    }
+    let durable_rows = case
+        .connection
+        .query_row(
+            "
+            SELECT
+                (SELECT COUNT(*) FROM track_activity WHERE source_id = ?1 AND track_id = ?2) +
+                (SELECT COUNT(*) FROM item_favorite_overrides WHERE source_id = ?1 AND item_kind = 'track' AND item_id = ?2)
+            ",
+            rusqlite::params![case.id.as_str(), entry.track.id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("count durable track state");
+    assert_eq!(durable_rows, 2);
+    let local_file_rows = case
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM source_objects WHERE source_id = ?1 AND source_object_id = ?2",
+            rusqlite::params![
+                case.id.as_str(),
+                local_file_source_object_id("/music", "Album/track.mp3")
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("count deleted file mapping");
+    assert_eq!(local_file_rows, 0);
+}
+
+#[test]
+fn schema_local_track_observations_preserve_app_owned_state() {
     let case = StoreCase::with_source_id("local:server:favorites");
     let mut album = album(1);
     album.favorite = false;
@@ -1464,35 +1895,41 @@ fn schema_local_delta_applies_favorite_overrides() {
     let mut metadata_track = track(11, &album);
     metadata_track.favorite = false;
     let mut library_artist = artist(20, None);
-    library_artist.id = ArtistId::new("local:artist:favorites-artist");
+    library_artist.id = changed_track.artist_id.clone().expect("track artist id");
+    library_artist.name = changed_track.artist.clone();
     library_artist.favorite = false;
     let mut album_artist = artist(21, None);
-    album_artist.id = ArtistId::new("local:album-artist:favorites-artist");
+    album_artist.id = album.artist_id.clone().expect("album artist id");
+    album_artist.name = album.artist.clone();
     album_artist.favorite = false;
     let first_generation = case.start_sync("begin first sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
-        .expect("upsert album");
-    case.upsert_tracks(
-        &case.id,
-        &[changed_track.clone(), metadata_track.clone()],
+    case.commit_library(
         first_generation,
-    )
-    .expect("upsert tracks");
-    case.upsert_artists(
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![changed_track.clone(), metadata_track.clone()],
+            artists: vec![library_artist.clone()],
+            album_artists: vec![album_artist.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
+    let store_playlist = playlist(30, None);
+    case.upsert_playlists_with_mode(
         &case.id,
-        std::slice::from_ref(&library_artist),
-        false,
-        first_generation,
+        std::slice::from_ref(&store_playlist),
+        PlaylistWriteMode::StoreOwned,
     )
-    .expect("upsert artist");
-    case.upsert_artists(
+    .expect("upsert store playlist");
+    case.upsert_playlist_entries_with_mode(
         &case.id,
-        std::slice::from_ref(&album_artist),
-        true,
-        first_generation,
+        &store_playlist.id,
+        &schema_track_test(&store_playlist.id, std::slice::from_ref(&metadata_track)),
+        PlaylistWriteMode::StoreOwned,
     )
-    .expect("upsert album artist");
-    case.finish_sync(first_generation, "complete first sync");
+    .expect("upsert store playlist entries");
+    case.record_local_track_played(&case.id, &metadata_track.id, "session-one")
+        .expect("record local play");
     case.set_album_favorite_for_owner(&case.id, &album.id, true, SourceFeatureOwner::Store)
         .expect("favorite album override");
     case.set_track_favorite_for_owner(&case.id, &changed_track.id, true, SourceFeatureOwner::Store)
@@ -1530,18 +1967,20 @@ fn schema_local_delta_applies_favorite_overrides() {
     incoming_artist.track_count += 1;
     let mut incoming_album_artist = album_artist.clone();
     incoming_album_artist.favorite = false;
-    incoming_album_artist.album_count += 1;
     let second_generation = case.start_sync("begin second sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     case.commit_local_library_delta(
         &case.id,
         second_generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
-            changed_tracks: vec![incoming_changed_track.clone(), new_track.clone()],
-            metadata_tracks: vec![incoming_metadata_track.clone()],
-            current_track_ids: vec![
-                changed_track.id.clone(),
-                metadata_track.id.clone(),
-                new_track.id.clone(),
+            tracks: vec![
+                incoming_changed_track.clone(),
+                incoming_metadata_track.clone(),
+                new_track.clone(),
             ],
             current_album_ids: vec![album.id.clone()],
             current_artist_ids: vec![library_artist.id.clone()],
@@ -1608,6 +2047,26 @@ fn schema_local_delta_applies_favorite_overrides() {
         incoming_album_artist.album_count
     );
     assert!(loaded_album_artist.favorite);
+    let stored_playlist = case
+        .load_playlist_detail(&case.id, &store_playlist.id)
+        .expect("load store playlist")
+        .expect("store playlist");
+    assert_eq!(stored_playlist.entries.len(), 1);
+    assert_eq!(stored_playlist.entries[0].track.id, metadata_track.id);
+    assert_eq!(
+        stored_playlist.playlist.duration_seconds,
+        incoming_metadata_track.duration_seconds
+    );
+    let activity = case
+        .connection
+        .query_row(
+            "SELECT play_count, last_played IS NOT NULL FROM track_activity
+             WHERE source_id = ?1 AND track_id = ?2",
+            rusqlite::params![case.id.as_str(), metadata_track.id.as_str()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
+        )
+        .expect("load track activity");
+    assert_eq!(activity, (1, true));
 }
 
 #[test]
@@ -1619,34 +2078,36 @@ fn artwork_delta_update() {
     let mut track = track(1, &album);
     track.local_path = Some("/music/Album/track.mp3".to_string());
     let first_generation = case.start_sync("begin first sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
-        .expect("upsert track");
-    case.finish_sync(first_generation, "complete first sync");
-    let fts_rowid = library_fts_rowid(&case, &case.id, &track.id);
-    let genre_rowid = track_genre_rowid(&case, &case.id, &track.id, "Dream Pop");
-    let artist_rowid = track_artist_link_rowid(
-        &case,
-        &case.id,
-        &track.id,
-        track.artist_id.as_ref().expect("artist id"),
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
     );
-
     let mut updated_album = album.clone();
     updated_album.image_ref = Some(image_ref("local:cover:file:album", "cover-two"));
     let mut artwork_track = track.clone();
     artwork_track.image_ref = updated_album.image_ref.clone();
     let second_generation = case.start_sync("begin artwork sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     case.commit_local_library_delta(
         &case.id,
         second_generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
-            artwork_tracks: vec![artwork_track],
-            current_track_ids: vec![track.id.clone()],
+            tracks: vec![artwork_track],
             current_album_ids: vec![updated_album.id.clone()],
             dirty_albums: vec![updated_album],
-            manifest_entries: vec![local_manifest_entry()],
+            manifest: LocalManifestDelta {
+                upserted_entries: vec![local_manifest_entry()],
+                ..LocalManifestDelta::default()
+            },
             ..LocalLibraryDelta::default()
         },
     )
@@ -1662,104 +2123,6 @@ fn artwork_delta_update() {
             .as_ref()
             .and_then(|image| image.tag.as_deref()),
         Some("cover-two")
-    );
-    assert_eq!(library_fts_rowid(&case, &case.id, &track.id), fts_rowid);
-    assert_eq!(
-        track_genre_rowid(&case, &case.id, &track.id, "Dream Pop"),
-        genre_rowid
-    );
-    assert_eq!(
-        track_artist_link_rowid(
-            &case,
-            &case.id,
-            &track.id,
-            track.artist_id.as_ref().expect("artist id"),
-        ),
-        artist_rowid
-    );
-}
-
-#[test]
-fn meta_delta_update() {
-    let case = StoreCase::open();
-    let mut album = album(1);
-    album.genres = vec!["Dream Pop".to_string()];
-    let mut track = super::test_support::track(1, &album);
-    track.local_path = Some("/music/Album/track.mp3".to_string());
-    let mut retained_track = super::test_support::track(2, &album);
-    retained_track.local_path = Some("/music/Album/retained.mp3".to_string());
-    let first_generation = case.start_sync("begin first sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
-        .expect("upsert album");
-    case.upsert_tracks(
-        &case.id,
-        &[track.clone(), retained_track.clone()],
-        first_generation,
-    )
-    .expect("upsert track");
-    case.finish_sync(first_generation, "complete first sync");
-    let fts_rowid = library_fts_rowid(&case, &case.id, &track.id);
-    let genre_rowid = track_genre_rowid(&case, &case.id, &track.id, "Dream Pop");
-    let artist_rowid = track_artist_link_rowid(
-        &case,
-        &case.id,
-        &track.id,
-        track.artist_id.as_ref().expect("artist id"),
-    );
-    let retained_track_generation =
-        track_table_generation(&case, "tracks", &case.id, &retained_track.id);
-    let retained_genre_generation =
-        track_table_generation(&case, "track_genres", &case.id, &retained_track.id);
-    let retained_artist_generation =
-        track_table_generation(&case, "track_artist_links", &case.id, &retained_track.id);
-
-    let mut updated_track = track.clone();
-    updated_track.duration_seconds += 1;
-    let second_generation = case.start_sync("begin metadata sync");
-    case.commit_local_library_delta(
-        &case.id,
-        second_generation,
-        LocalLibraryDelta {
-            metadata_tracks: vec![updated_track.clone()],
-            current_track_ids: vec![track.id.clone(), retained_track.id.clone()],
-            current_album_ids: vec![album.id.clone()],
-            dirty_albums: vec![album],
-            manifest_entries: vec![local_manifest_entry()],
-            ..LocalLibraryDelta::default()
-        },
-    )
-    .expect("commit metadata delta");
-
-    let loaded = case
-        .load_track(&case.id, &track.id)
-        .expect("load track")
-        .expect("track");
-    assert_eq!(loaded.duration_seconds, updated_track.duration_seconds);
-    assert_eq!(library_fts_rowid(&case, &case.id, &track.id), fts_rowid);
-    assert_eq!(
-        track_genre_rowid(&case, &case.id, &track.id, "Dream Pop"),
-        genre_rowid
-    );
-    assert_eq!(
-        track_artist_link_rowid(
-            &case,
-            &case.id,
-            &track.id,
-            track.artist_id.as_ref().expect("artist id"),
-        ),
-        artist_rowid
-    );
-    assert_eq!(
-        track_table_generation(&case, "tracks", &case.id, &retained_track.id),
-        retained_track_generation
-    );
-    assert_eq!(
-        track_table_generation(&case, "track_genres", &case.id, &retained_track.id),
-        retained_genre_generation
-    );
-    assert_eq!(
-        track_table_generation(&case, "track_artist_links", &case.id, &retained_track.id),
-        retained_artist_generation
     );
 }
 
@@ -1780,15 +2143,15 @@ fn schema_update_id() {
     track.artist_credits = vec![credit(credited_artist_id.clone(), "Featured Artist")];
     track.local_path = Some("/music/Album/track.mp3".to_string());
     let first_generation = case.start_sync("begin first sync");
-    case.upsert_albums(
-        &case.id,
-        std::slice::from_ref(&first_album),
+    case.commit_library(
         first_generation,
-    )
-    .expect("upsert first album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
-        .expect("upsert track");
-    case.finish_sync(first_generation, "complete first sync");
+        LibraryObservation {
+            albums: vec![first_album.clone()],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     assert_eq!(
         track_artist_link_album_id(&case, &case.id, &track.id, &credited_artist_id),
         first_album.id
@@ -1797,15 +2160,22 @@ fn schema_update_id() {
     let mut updated_track = track.clone();
     updated_track.album_id = second_album.id.clone();
     let second_generation = case.start_sync("begin album move sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     case.commit_local_library_delta(
         &case.id,
         second_generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
-            changed_tracks: vec![updated_track.clone()],
-            current_track_ids: vec![updated_track.id.clone()],
+            tracks: vec![updated_track.clone()],
             current_album_ids: vec![second_album.id.clone()],
             dirty_albums: vec![second_album.clone()],
-            manifest_entries: vec![local_manifest_entry()],
+            manifest: LocalManifestDelta {
+                upserted_entries: vec![local_manifest_entry()],
+                ..LocalManifestDelta::default()
+            },
             ..LocalLibraryDelta::default()
         },
     )
@@ -1837,56 +2207,6 @@ fn schema_update_id() {
     );
 }
 
-fn library_fts_rowid(store: &Store, source_id: &SourceId, track_id: &TrackId) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT rowid
-            FROM library_fts
-            WHERE source_id = ?1 AND item_type = 'track' AND item_id = ?2
-            ",
-            rusqlite::params![source_id.as_str(), track_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("library fts rowid")
-}
-
-fn track_genre_rowid(store: &Store, source_id: &SourceId, track_id: &TrackId, genre: &str) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT rowid
-            FROM track_genres
-            WHERE source_id = ?1 AND track_id = ?2 AND genre_name = ?3
-            ",
-            rusqlite::params![source_id.as_str(), track_id.as_str(), genre],
-            |row| row.get(0),
-        )
-        .expect("track genre rowid")
-}
-
-fn track_artist_link_rowid(
-    store: &Store,
-    source_id: &SourceId,
-    track_id: &TrackId,
-    artist_id: &ArtistId,
-) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT rowid
-            FROM track_artist_links
-            WHERE source_id = ?1 AND track_id = ?2 AND artist_id = ?3
-            ",
-            rusqlite::params![source_id.as_str(), track_id.as_str(), artist_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("track artist link rowid")
-}
-
 fn track_artist_link_album_id(
     store: &Store,
     source_id: &SourceId,
@@ -1905,48 +2225,6 @@ fn track_artist_link_album_id(
             |row| row.get::<_, String>(0).map(AlbumId::new),
         )
         .expect("track artist link album id")
-}
-
-fn track_table_generation(
-    store: &Store,
-    table: &str,
-    source_id: &SourceId,
-    track_id: &TrackId,
-) -> i64 {
-    store
-        .connection
-        .query_row(
-            &format!(
-                "
-                SELECT sync_generation
-                FROM {table}
-                WHERE source_id = ?1
-                  AND track_id = ?2
-                LIMIT 1
-                "
-            ),
-            rusqlite::params![source_id.as_str(), track_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("track table generation")
-}
-
-#[test]
-fn source_local_access_round_trips() {
-    let case = StoreCase::open();
-    let access = SourceLocalAccess {
-        source_id: case.id.clone(),
-        root_path: "/home/me/Music".to_string(),
-        path_replace_from: Some("/media/music".to_string()),
-        path_replace_to: Some("/home/me/Music".to_string()),
-    };
-    case.save_source_local_access(&access)
-        .expect("save local access");
-    assert_eq!(
-        case.source_local_access(&case.id)
-            .expect("load local access"),
-        Some(access)
-    );
 }
 
 #[test]
@@ -2077,13 +2355,16 @@ fn artist_image_use() {
     let album = album_with_image(1);
     let track = track(1, &album);
     let artist = artist(1, None);
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
-        .expect("upsert artist");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![track],
+            artists: vec![artist.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
     let loaded = case
         .load_artists(&case.id, false, 0, 10)
         .expect("load artists")
@@ -2118,11 +2399,15 @@ fn album_external_fallback_repairs_to_track_source_ref() {
     ));
     let mut track = track(1, &album);
     track.image_ref = Some(track_ref.clone());
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![track],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let loaded = case
         .load_albums(&case.id, 0, 10)
@@ -2142,11 +2427,15 @@ fn album_source_ref_survives_track_fallback_repair() {
     album.image_ref = Some(album_ref.clone());
     let mut track = track(1, &album);
     track.image_ref = Some(track_ref);
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![track],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let loaded = case
         .load_albums(&case.id, 0, 10)
@@ -2170,13 +2459,16 @@ fn artist_source_fallback_wins_over_external_album_ref() {
     album.year = 2001;
     let tracks = vec![track(1, &single), track(2, &album)];
     let artist = artist(1, None);
-    case.upsert_albums(&case.id, &[single, album.clone()], generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
-        .expect("upsert artist");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![single, album.clone()],
+            tracks,
+            artists: vec![artist.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let loaded = case
         .load_artists(&case.id, false, 0, 10)
@@ -2205,13 +2497,16 @@ fn artist_external_fallback_repairs_to_source_ref() {
     album.year = 2001;
     let tracks = vec![track(1, &single), track(2, &album)];
     let artist = artist(1, Some(external_ref));
-    case.upsert_albums(&case.id, &[single, album.clone()], generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
-        .expect("upsert artist");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![single, album.clone()],
+            tracks,
+            artists: vec![artist.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let loaded = case
         .load_artists(&case.id, false, 0, 10)
@@ -2262,16 +2557,15 @@ fn album_artist_image() {
     album.album_artist_credits = vec![credit(album_artist_id.clone(), "Linked Album Artist")];
     let mut album_artist = artist(8, None);
     album_artist.name = "Linked Album Artist".to_string();
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_artists(
-        &case.id,
-        std::slice::from_ref(&album_artist),
-        true,
+    case.commit_library(
         generation,
-    )
-    .expect("upsert album artist");
-    case.finish_sync(generation, "complete sync");
+        LibraryObservation {
+            albums: vec![album.clone()],
+            album_artists: vec![album_artist],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
     let loaded = case
         .load_artists(&case.id, true, 0, 10)
         .expect("load album artists")
@@ -2286,229 +2580,6 @@ fn album_artist_image() {
         .remove(0);
     assert_eq!(loaded.image_ref, album.image_ref);
     assert_eq!(matching.image_ref, album.image_ref);
-}
-
-#[test]
-fn album_artist_provider_page_does_not_merge_label_only_projection() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let linked_id = ArtistId::new("jellyfin:artist:linked-album-artist");
-    let page_id = ArtistId::new("jellyfin:artist:provider-page-album-artist");
-    let mut album = album_with_image(9);
-    album.artist = "Linked Album Artist".to_string();
-    album.artist_id = Some(linked_id.clone());
-    album.album_artist_credits = vec![credit(linked_id.clone(), "Linked Album Artist")];
-    let mut track = track(1, &album);
-    track.album_artist_credits = album.album_artist_credits.clone();
-    let page_image = image_ref("provider-page-album-artist", "provider-page-tag");
-    let mut page_artist = artist(90, Some(page_image.clone()));
-    page_artist.id = page_id.clone();
-    page_artist.name = "Linked Album Artist".to_string();
-    page_artist.favorite = true;
-    page_artist.play_count = Some(7);
-    page_artist.user_rating = Some(80);
-
-    case.upsert_artists(
-        &case.id,
-        std::slice::from_ref(&page_artist),
-        true,
-        generation,
-    )
-    .expect("seed provider page artist");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-    case.upsert_artists_delta(
-        &case.id,
-        std::slice::from_ref(&page_artist),
-        true,
-        generation,
-    )
-    .expect("upsert provider page artist");
-    case.finish_sync(generation, "complete sync");
-
-    let loaded = case
-        .load_artists(&case.id, true, 0, 10)
-        .expect("load album artists");
-    let matching = case
-        .load_artists_matching(&case.id, true, "Linked Album Artist", 0, 10)
-        .expect("search album artists");
-    assert_eq!(loaded.total, 2);
-    assert_eq!(matching.total, 2);
-    assert!(loaded.items.iter().any(|artist| artist.id == linked_id));
-    assert!(loaded.items.iter().any(|artist| artist.id == page_id));
-
-    let next_generation = case.start_sync("begin no-op sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), next_generation)
-        .expect("upsert same album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), next_generation)
-        .expect("upsert same track");
-    let delta = case
-        .upsert_artists_delta(
-            &case.id,
-            std::slice::from_ref(&page_artist),
-            true,
-            next_generation,
-        )
-        .expect("upsert same provider page artist");
-    assert!(delta.album_artists.is_empty());
-}
-
-#[test]
-fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let first_id = ArtistId::new("jellyfin:artist:first-linked");
-    let second_id = ArtistId::new("jellyfin:artist:second-linked");
-    let page_id = ArtistId::new("jellyfin:artist:ambiguous-page");
-    let mut first_album = album(10);
-    first_album.artist = "Shared Name".to_string();
-    first_album.artist_id = Some(first_id.clone());
-    first_album.album_artist_credits = vec![credit(first_id.clone(), "Shared Name")];
-    let mut second_album = album(11);
-    second_album.artist = "Shared Name".to_string();
-    second_album.artist_id = Some(second_id.clone());
-    second_album.album_artist_credits = vec![credit(second_id.clone(), "Shared Name")];
-    let mut first_track = track(1, &first_album);
-    first_track.album_artist_credits = first_album.album_artist_credits.clone();
-    let mut second_track = track(2, &second_album);
-    second_track.album_artist_credits = second_album.album_artist_credits.clone();
-    let mut page_artist = artist(91, None);
-    page_artist.id = page_id.clone();
-    page_artist.name = "Shared Name".to_string();
-
-    case.upsert_albums(&case.id, &[first_album, second_album], generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &[first_track, second_track], generation)
-        .expect("upsert tracks");
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-    let linked_count: i64 = case
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(DISTINCT artist_id)
-            FROM album_artist_links
-            WHERE source_id = ?1
-              AND LOWER(TRIM(name)) = LOWER(TRIM('Shared Name'))
-            ",
-            rusqlite::params![case.id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("linked count");
-    assert_eq!(linked_count, 2);
-    case.upsert_artists(
-        &case.id,
-        std::slice::from_ref(&page_artist),
-        true,
-        generation,
-    )
-    .expect("upsert provider page artist");
-
-    let loaded = case
-        .load_artists(&case.id, true, 0, 10)
-        .expect("load album artists");
-    let ids = loaded
-        .items
-        .iter()
-        .filter(|artist| artist.name == "Shared Name")
-        .map(|artist| artist.id.clone())
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(ids.len(), 3);
-    assert!(ids.contains(&first_id));
-    assert!(ids.contains(&second_id));
-    assert!(ids.contains(&page_id));
-}
-
-#[test]
-fn album_artist_provider_page_merges_unique_relation_backed_musicbrainz_split() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let linked_id = ArtistId::new("jellyfin:artist:linked-credit");
-    let page_id = ArtistId::new("jellyfin:artist:provider-page");
-    let mut album = album(12);
-    album.artist = "Credit Artist".to_string();
-    album.artist_id = Some(linked_id.clone());
-    album.album_artist_credits = vec![credit(linked_id.clone(), "Credit Artist")];
-    let mut track = track(1, &album);
-    track.album_artist_credits = album.album_artist_credits.clone();
-    let mut page_artist = artist(92, None);
-    page_artist.id = page_id.clone();
-    page_artist.name = "Credit Artist".to_string();
-    page_artist.musicbrainz_artist_id = Some("mb-credit-artist".to_string());
-
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.refresh_library_counts(&case.id)
-        .expect("repair linked album artist");
-    let delta = case
-        .upsert_artists_delta(
-            &case.id,
-            std::slice::from_ref(&page_artist),
-            true,
-            generation,
-        )
-        .expect("upsert provider page artist");
-    let loaded = case
-        .load_artists(&case.id, true, 0, 10)
-        .expect("load album artists");
-    let alias_entity_id: String = case
-        .connection
-        .query_row(
-            "
-            SELECT entity_id
-            FROM entity_identity_keys
-            WHERE source_id = ?1
-              AND entity_kind = 'album_artist'
-              AND namespace = 'source:artist_id'
-              AND value = ?2
-            ",
-            rusqlite::params![case.id.as_str(), page_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("alias identity");
-    let linked_mbid_count: i64 = case
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(*)
-            FROM entity_identity_keys
-            WHERE source_id = ?1
-              AND entity_kind = 'album_artist'
-              AND namespace = 'musicbrainz:artist'
-              AND entity_id = ?2
-              AND value = 'mb-credit-artist'
-            ",
-            rusqlite::params![case.id.as_str(), linked_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("linked mbid keys");
-    let alias_row_count: i64 = case
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(*)
-            FROM album_artists
-            WHERE source_id = ?1
-              AND artist_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), page_id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("alias rows");
-
-    assert!(delta.album_artists.is_empty());
-    assert_eq!(loaded.total, 1);
-    assert_eq!(loaded.items[0].id, linked_id);
-    assert_eq!(alias_entity_id, loaded.items[0].id.as_str());
-    assert_eq!(linked_mbid_count, 1);
-    assert_eq!(alias_row_count, 0);
 }
 
 #[test]
@@ -2706,38 +2777,6 @@ fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
 }
 
 #[test]
-fn album_artist_musicbrainz_fallback_merges_to_provider_artist() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let fallback_id = ArtistId::new("jellyfin:artist:musicbrainz:mb-artist-one");
-    let provider_id = ArtistId::new("jellyfin:artist:artist-one");
-    let mut album = album(1);
-    album.artist = "Example Artist".to_string();
-    album.artist_id = Some(fallback_id.clone());
-    album.album_artist_credits = vec![credit(fallback_id.clone(), "Example Artist")];
-
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-
-    let mut artist = artist(1, None);
-    artist.id = provider_id.clone();
-    artist.name = "Example Artist".to_string();
-    artist.musicbrainz_artist_id = Some("mb-artist-one".to_string());
-    case.upsert_artists(&case.id, &[artist], true, generation)
-        .expect("upsert album artist");
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-
-    let detail = case
-        .load_album_detail(&case.id, &album.id)
-        .expect("load album detail")
-        .expect("album detail");
-
-    assert_eq!(detail.0.artist_id.as_ref(), Some(&provider_id));
-    assert_eq!(detail.0.album_artist_credits[0].id, provider_id);
-}
-
-#[test]
 fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
     let case = StoreCase::open();
     let artist_id = ArtistId::new("local:artist:musicbrainz:credit-page");
@@ -2772,56 +2811,6 @@ fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
     );
 }
 
-#[test]
-fn album_artist_repair_splits_compound_credit_when_track_artists_match() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let first_id = ArtistId::new("jellyfin:artist:compound-first");
-    let second_id = ArtistId::new("jellyfin:artist:compound-second");
-    let compound_id = ArtistId::new("jellyfin:artist:compound-alias");
-    let mut album = album(12);
-    album.artist = "Primary Artist / Score Artist".to_string();
-    album.artist_id = Some(compound_id.clone());
-    album.album_artist_credits = vec![credit(compound_id.clone(), "Primary Artist / Score Artist")];
-    let mut track = track(1, &album);
-    track.artist_credits = vec![
-        credit(first_id.clone(), "Primary Artist"),
-        credit(second_id.clone(), "Score Artist"),
-    ];
-    track.album_artist_credits = album.album_artist_credits.clone();
-
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-
-    let loaded = case
-        .load_artists(&case.id, true, 0, 10)
-        .expect("load album artists");
-    let ids = loaded
-        .items
-        .iter()
-        .map(|artist| artist.id.clone())
-        .collect::<BTreeSet<_>>();
-
-    assert!(ids.contains(&first_id));
-    assert!(ids.contains(&second_id));
-    assert!(!ids.contains(&compound_id));
-    let first = loaded
-        .items
-        .iter()
-        .find(|artist| artist.id == first_id)
-        .expect("first resolved artist");
-    assert_eq!(first.name, "Primary Artist");
-
-    let next_generation = case.start_sync("begin no-op sync");
-    let delta = case
-        .upsert_albums_delta(&case.id, std::slice::from_ref(&album), next_generation)
-        .expect("upsert same compound album");
-    assert!(delta.albums.links.is_empty());
-}
 #[test]
 fn schema_replace_local() {
     let case = StoreCase::open();
@@ -3087,13 +3076,22 @@ fn schema_stale_sync() {
         name: "Music".to_string(),
     };
     let first_generation = case.start_sync("begin sync");
-    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), first_generation)
-        .expect("upsert folder");
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            music_folders: vec![(folder.clone(), Vec::new())],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     case.set_selected_music_folder_id(&case.id, Some(&folder.id))
         .expect("select folder");
-    case.finish_sync(first_generation, "complete first sync");
     let second_generation = case.start_sync("begin next sync");
-    case.finish_sync(second_generation, "complete second sync");
+    case.commit_library(
+        second_generation,
+        LibraryObservation::default(),
+        "commit empty library",
+    );
     assert!(
         case.list_music_folders(&case.id)
             .expect("list folders")
@@ -3114,9 +3112,18 @@ fn schema_store_playlist_survives_native_sync_prune() {
     store_owned.owner = Some(SourceFeatureOwner::Store);
 
     let first_generation = case.start_sync("begin sync");
-    case.upsert_playlists(&case.id, std::slice::from_ref(&native), first_generation)
-        .expect("upsert native playlist");
-    case.finish_sync(first_generation, "complete first sync");
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            playlists: vec![PlaylistDetail {
+                playlist: native,
+                tracks: Vec::new(),
+                entries: Vec::new(),
+            }],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     case.upsert_playlists_with_mode(
         &case.id,
         std::slice::from_ref(&store_owned),
@@ -3125,7 +3132,11 @@ fn schema_store_playlist_survives_native_sync_prune() {
     .expect("upsert store playlist");
 
     let second_generation = case.start_sync("begin next sync");
-    case.finish_sync(second_generation, "complete second sync");
+    case.commit_library(
+        second_generation,
+        LibraryObservation::default(),
+        "commit empty library",
+    );
 
     let playlists = case
         .load_playlists(&case.id, 0, 10)
@@ -3149,9 +3160,15 @@ fn schema_store_playlist_rehydrates_entries_for_returning_tracks() {
     let store_owned = playlist(1, None);
     let entries = schema_track_test(&store_owned.id, &[first.clone(), second.clone()]);
     let first_generation = case.start_sync("begin sync");
-    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], first_generation)
-        .expect("upsert tracks");
-    case.finish_sync(first_generation, "complete first sync");
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![first.clone(), second.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     case.upsert_playlists_with_mode(
         &case.id,
         std::slice::from_ref(&store_owned),
@@ -3167,9 +3184,15 @@ fn schema_store_playlist_rehydrates_entries_for_returning_tracks() {
     .expect("upsert store playlist entries");
 
     let second_generation = case.start_sync("begin next sync");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&first), second_generation)
-        .expect("upsert remaining track");
-    case.finish_sync(second_generation, "complete second sync");
+    case.commit_library(
+        second_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![first.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit second library",
+    );
 
     let detail = case
         .load_playlist_detail(&case.id, &store_owned.id)
@@ -3181,9 +3204,15 @@ fn schema_store_playlist_rehydrates_entries_for_returning_tracks() {
     assert_eq!(detail.playlist.duration_seconds, first.duration_seconds);
 
     let third_generation = case.start_sync("begin reload sync");
-    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], third_generation)
-        .expect("reload tracks");
-    case.finish_sync(third_generation, "complete reload sync");
+    case.commit_library(
+        third_generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![first.clone(), second.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit reloaded library",
+    );
 
     let reloaded = case
         .load_playlist_detail(&case.id, &store_owned.id)
@@ -3204,11 +3233,15 @@ fn schema_local_delta_preserves_store_playlist_membership_for_returning_tracks()
     let store_owned = playlist(1, None);
     let entries = schema_track_test(&store_owned.id, &[first.clone(), second.clone()]);
     let first_generation = case.start_sync("begin sync");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), first_generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], first_generation)
-        .expect("upsert tracks");
-    case.finish_sync(first_generation, "complete first sync");
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![first.clone(), second.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     case.upsert_playlists_with_mode(
         &case.id,
         std::slice::from_ref(&store_owned),
@@ -3224,18 +3257,28 @@ fn schema_local_delta_preserves_store_playlist_membership_for_returning_tracks()
     .expect("upsert store playlist entries");
 
     let second_generation = case.start_sync("begin local delete sync");
-    case.commit_local_library_delta(
-        &case.id,
-        second_generation,
-        LocalLibraryDelta {
-            deleted_track_ids: vec![second.id.clone()],
-            current_track_ids: vec![first.id.clone()],
-            current_album_ids: vec![album.id.clone()],
-            dirty_albums: vec![album.clone()],
-            ..LocalLibraryDelta::default()
-        },
-    )
-    .expect("commit local delete");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
+    let commit = case
+        .commit_local_library_delta(
+            &case.id,
+            second_generation,
+            base_cache_revision,
+            true,
+            LocalLibraryDelta {
+                deleted_track_ids: vec![second.id.clone()],
+                current_album_ids: vec![album.id.clone()],
+                dirty_albums: vec![album.clone()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit local delete");
+    assert_eq!(commit.delta.playlists.entries, vec![store_owned.id.clone()]);
+    assert_eq!(
+        commit.delta.playlists.cover_refs,
+        vec![store_owned.id.clone()]
+    );
 
     let detail = case
         .load_playlist_detail(&case.id, &store_owned.id)
@@ -3246,12 +3289,16 @@ fn schema_local_delta_preserves_store_playlist_membership_for_returning_tracks()
     assert_eq!(detail.playlist.track_count, 1);
 
     let third_generation = case.start_sync("begin local return sync");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     case.commit_local_library_delta(
         &case.id,
         third_generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
-            changed_tracks: vec![second.clone()],
-            current_track_ids: vec![first.id.clone(), second.id.clone()],
+            tracks: vec![second.clone()],
             current_album_ids: vec![album.id.clone()],
             dirty_albums: vec![album.clone()],
             ..LocalLibraryDelta::default()
@@ -3277,9 +3324,15 @@ fn schema_clear_library_cache_preserves_store_playlist_membership() {
     let store_owned = playlist(1, None);
     let entries = schema_track_test(&store_owned.id, std::slice::from_ref(&track));
     let first_generation = case.start_sync("begin sync");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), first_generation)
-        .expect("upsert track");
-    case.finish_sync(first_generation, "complete first sync");
+    case.commit_library(
+        first_generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit first library",
+    );
     case.upsert_playlists_with_mode(
         &case.id,
         std::slice::from_ref(&store_owned),
@@ -3309,9 +3362,15 @@ fn schema_clear_library_cache_preserves_store_playlist_membership() {
     );
 
     let second_generation = case.start_sync("begin reload sync");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), second_generation)
-        .expect("reload track");
-    case.finish_sync(second_generation, "complete reload sync");
+    case.commit_library(
+        second_generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit reloaded library",
+    );
     let reloaded = case
         .load_playlist_detail(&case.id, &store_owned.id)
         .expect("load reloaded playlist")
@@ -3374,11 +3433,15 @@ fn schema_trip_page() {
             track
         })
         .collect::<Vec<_>>();
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks,
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
     let albums = case.load_albums(&case.id, 0, 25).expect("load albums");
     let detail = case
         .load_album_detail(&case.id, &album.id)
@@ -3402,18 +3465,19 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     cached_album.musicbrainz_release_group_id = Some("group-three".to_string());
     cached_album.release_types = vec!["album".to_string()];
     let missing_album = album(4);
-    case.upsert_albums(
-        &case.id,
-        &[
-            release_group_album.clone(),
-            release_album.clone(),
-            cached_album,
-            missing_album,
-        ],
+    case.commit_library(
         generation,
-    )
-    .expect("upsert albums");
-    case.finish_sync(generation, "complete sync");
+        LibraryObservation {
+            albums: vec![
+                release_group_album.clone(),
+                release_album.clone(),
+                cached_album,
+                missing_album,
+            ],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let candidates = case
         .load_album_release_type_lookup_candidates(&case.id, 10)
@@ -3667,79 +3731,7 @@ fn projection_preserves_and_replaces_artist_credit_musicbrainz_ids() {
 }
 
 #[test]
-fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let mut album = album(1);
-    album.musicbrainz_album_id = Some("release-one".to_string());
-    album.musicbrainz_release_group_id = Some("group-one".to_string());
-    let mut track = track(1, &album);
-    track.musicbrainz_recording_id = Some("recording-one".to_string());
-    track.musicbrainz_release_track_id = Some("release-track-one".to_string());
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert tracks");
-    case.finish_sync(generation, "complete first sync");
-    case.connection
-        .execute(
-            "
-            INSERT INTO entity_links (
-                source_id, entity_kind, entity_id, namespace, url, label, source, status
-            )
-            VALUES (?1, 'album', ?2, 'lastfm:album', ?3, 'Last.fm', 'lastfm', 'resolved')
-            ",
-            rusqlite::params![
-                case.id.as_str(),
-                album.id.as_str(),
-                "https://www.last.fm/music/Example+Artist/Example+Album"
-            ],
-        )
-        .expect("insert album link");
-    assert_eq!(
-        entity_link_count(&case, &case.id, "album", album.id.as_str(), "lastfm:album"),
-        1
-    );
-
-    let next_generation = case.start_sync("begin next sync");
-    case.finish_sync(next_generation, "complete empty sync");
-
-    assert_eq!(
-        entity_row_count(&case, &case.id, "album", album.id.as_str()),
-        0
-    );
-    assert_eq!(
-        entity_row_count(&case, &case.id, "track", track.id.as_str()),
-        0
-    );
-    assert_eq!(
-        entity_key_count(
-            &case,
-            &case.id,
-            "album",
-            "musicbrainz:release",
-            "release-one"
-        ),
-        0
-    );
-    assert_eq!(
-        grouping_key_count(
-            &case,
-            &case.id,
-            "track",
-            "musicbrainz:recording",
-            "recording-one"
-        ),
-        0
-    );
-    assert_eq!(
-        entity_link_count(&case, &case.id, "album", album.id.as_str(), "lastfm:album"),
-        0
-    );
-}
-
-#[test]
-fn local_metadata_update_refreshes_track_identity_rows() {
+fn local_track_observation_refreshes_track_identity_rows() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let album = album(1);
@@ -3755,8 +3747,21 @@ fn local_metadata_update_refreshes_track_identity_rows() {
     let next_generation = case.start_sync("begin next sync");
     track.musicbrainz_recording_id = Some("recording-new".to_string());
     track.musicbrainz_release_track_id = Some("release-track-new".to_string());
-    case.update_local_track_metadata_rows(&case.id, std::slice::from_ref(&track), next_generation)
-        .expect("update local metadata");
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
+    case.commit_local_library_delta(
+        &case.id,
+        next_generation,
+        base_cache_revision,
+        false,
+        LocalLibraryDelta {
+            tracks: vec![track.clone()],
+            current_album_ids: vec![album.id.clone()],
+            ..LocalLibraryDelta::default()
+        },
+    )
+    .expect("commit local track observation");
 
     assert_eq!(
         grouping_key_count(
@@ -3853,125 +3858,16 @@ fn album_identity_change_clears_stale_release_metadata() {
 }
 
 #[test]
-fn local_manifest_writes_physical_file_source_objects() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let entry = local_manifest_entry();
-    case.upsert_albums(&case.id, std::slice::from_ref(&album(1)), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&entry.track), generation)
-        .expect("upsert track");
-    case.replace_local_manifest(&case.id, generation, std::slice::from_ref(&entry))
-        .expect("replace manifest");
-
-    let source_object_id = local_file_source_object_id("/music", "Album/track.mp3");
-    let source = case
-        .load_source_object(&case.id, &source_object_id)
-        .expect("load source object")
-        .expect("source object");
-    assert_eq!(source.source_object_kind, "local_file");
-    assert_eq!(source.entity_kind, None);
-    assert_eq!(source.entity_id, None);
-    assert_eq!(
-        source.source_path.as_deref(),
-        Some("/music/Album/track.mp3")
-    );
-
-    let entity_source_object_id = case
-        .connection
-        .query_row(
-            "
-            SELECT source_object_id
-            FROM entities
-            WHERE source_id = ?1
-              AND entity_kind = 'track'
-              AND entity_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), entry.track.id.as_str()],
-            |row| row.get::<_, String>(0),
-        )
-        .expect("load entity source object id");
-    assert_eq!(entity_source_object_id, source_object_id);
-}
-
-#[test]
-fn typed_source_object_api_writes_cue_segment_shape() {
-    let case = StoreCase::open();
-    let parent_id = case
-        .upsert_local_file_source_object(
-            &case.id,
-            &LocalFileSourceObject {
-                source_path: "/music/album.flac".to_string(),
-                root_path: "/music".to_string(),
-                relative_path: "album.flac".to_string(),
-                sync_generation: 7,
-            },
-        )
-        .expect("upsert file source object");
-    let cue = CueTrackSourceObject {
-        source_object_id: "local:cue:track:1".to_string(),
-        track_id: TrackId::new("track-cue-1"),
-        source_path: "/music/album.flac".to_string(),
-        parent_source_object_id: parent_id.clone(),
-        cue_path: "/music/album.cue".to_string(),
-        cue_revision: "cue-revision-one".to_string(),
-        cue_track_index: 1,
-        segment_start_ms: 12345,
-        segment_end_ms: 67890,
-        sync_generation: 7,
-    };
-    case.upsert_cue_track_source_object(&case.id, &cue)
-        .expect("upsert cue source object");
-
-    let file_source = case
-        .load_source_object(&case.id, &parent_id)
-        .expect("load file source object")
-        .expect("file source object");
-    assert_eq!(file_source.source_object_kind, "local_file");
-    assert_eq!(file_source.entity_kind, None);
-    assert_eq!(file_source.entity_id, None);
-
-    let cue_source = case
-        .load_source_object(&case.id, &cue.source_object_id)
-        .expect("load cue source object")
-        .expect("cue source object");
-    assert_eq!(cue_source.source_object_kind, "cue_track");
-    assert_eq!(cue_source.entity_kind.as_deref(), Some("track"));
-    assert_eq!(cue_source.entity_id.as_deref(), Some("track-cue-1"));
-    assert_eq!(
-        cue_source.parent_source_object_id.as_deref(),
-        Some(parent_id.as_str())
-    );
-    assert_eq!(cue_source.cue_path.as_deref(), Some("/music/album.cue"));
-    assert_eq!(cue_source.cue_revision.as_deref(), Some("cue-revision-one"));
-    assert_eq!(cue_source.cue_track_index, Some(1));
-    assert_eq!(cue_source.segment_start_ms, Some(12345));
-    assert_eq!(cue_source.segment_end_ms, Some(67890));
-
-    let entity_source_object_id = case
-        .connection
-        .query_row(
-            "
-            SELECT source_object_id
-            FROM entities
-            WHERE source_id = ?1
-              AND entity_kind = 'track'
-              AND entity_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), cue.track_id.as_str()],
-            |row| row.get::<_, String>(0),
-        )
-        .expect("load cue entity source object id");
-    assert_eq!(entity_source_object_id, cue.source_object_id);
-}
-
-#[test]
 fn local_delta_commit_writes_cue_track_source_objects() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.local_path = Some("/music/album.flac".to_string());
+    let mut manifest_entry = local_manifest_entry();
+    manifest_entry.track = track.clone();
+    manifest_entry.facts.path = PathBuf::from("/music/album.cue#track=01");
+    manifest_entry.facts.relative_path = "album.cue#track=01".to_string();
     let cue_source = LocalCueTrackSource {
         source_object_id: "local:cue:track:1".to_string(),
         track_id: track.id.clone(),
@@ -3986,14 +3882,22 @@ fn local_delta_commit_writes_cue_track_source_objects() {
         sync_generation: generation,
     };
 
+    let base_cache_revision = case
+        .source_cache_revision(&case.id)
+        .expect("cache revision");
     case.commit_local_library_delta(
         &case.id,
         generation,
+        base_cache_revision,
+        true,
         LocalLibraryDelta {
-            changed_tracks: vec![track.clone()],
-            current_track_ids: vec![track.id.clone()],
+            tracks: vec![track.clone()],
             current_album_ids: vec![album.id.clone()],
             dirty_albums: vec![album],
+            manifest: LocalManifestDelta {
+                upserted_entries: vec![manifest_entry],
+                ..LocalManifestDelta::default()
+            },
             cue_track_sources: vec![cue_source.clone()],
             ..LocalLibraryDelta::default()
         },
@@ -4009,154 +3913,6 @@ fn local_delta_commit_writes_cue_track_source_objects() {
     assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
     assert_eq!(source.segment_start_ms, Some(12345));
     assert_eq!(source.segment_end_ms, Some(67890));
-}
-
-#[test]
-fn local_delta_commit_writes_stress_cue_track_source_objects() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let album = album(1);
-    let mut stress_album = album.clone();
-    stress_album.id = AlbumId::new(format!("local:stress-album:1:{}", album.id.as_str()));
-    let mut track = track(1, &album);
-    track.local_path = Some("/music/album.flac".to_string());
-    let mut stress_track = track.clone();
-    stress_track.id = TrackId::new(format!("local:stress-track:1:{}", track.id.as_str()));
-    stress_track.album_id = stress_album.id.clone();
-    let cue_source = LocalCueTrackSource {
-        source_object_id: "local:cue:track:1".to_string(),
-        track_id: track.id.clone(),
-        source_path: "/music/album.flac".to_string(),
-        root_path: "/music".to_string(),
-        relative_path: "album.flac".to_string(),
-        cue_path: "/music/album.cue".to_string(),
-        cue_revision: "cue-revision-one".to_string(),
-        cue_track_index: 1,
-        segment_start_ms: 12345,
-        segment_end_ms: 67890,
-        sync_generation: generation,
-    };
-
-    case.commit_local_library_delta(
-        &case.id,
-        generation,
-        LocalLibraryDelta {
-            changed_tracks: vec![track.clone(), stress_track.clone()],
-            current_track_ids: vec![track.id.clone(), stress_track.id.clone()],
-            current_album_ids: vec![album.id.clone(), stress_album.id.clone()],
-            dirty_albums: vec![album, stress_album],
-            cue_track_sources: vec![cue_source.clone()],
-            ..LocalLibraryDelta::default()
-        },
-    )
-    .expect("commit stress cue delta");
-
-    let source = case
-        .load_track_source_object(&case.id, &stress_track.id)
-        .expect("load stress track source object")
-        .expect("stress source object");
-    assert_eq!(source.source_object_kind, "cue_track");
-    assert_eq!(
-        source.source_object_id,
-        format!(
-            "{}\u{1f}stress:{}",
-            cue_source.source_object_id,
-            stress_track.id.as_str()
-        )
-    );
-    assert_eq!(source.entity_id.as_deref(), Some(stress_track.id.as_str()));
-    assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
-    assert_eq!(source.cue_path.as_deref(), Some("/music/album.cue"));
-    assert_eq!(source.segment_start_ms, Some(12345));
-    assert_eq!(source.segment_end_ms, Some(67890));
-}
-
-#[test]
-fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
-    let case = StoreCase::open();
-    let parent_id = case
-        .upsert_local_file_source_object(
-            &case.id,
-            &LocalFileSourceObject {
-                source_path: "/music/album.flac".to_string(),
-                root_path: "/music".to_string(),
-                relative_path: "album.flac".to_string(),
-                sync_generation: 1,
-            },
-        )
-        .expect("upsert backing source");
-    let stale_id = case
-        .upsert_local_file_source_object(
-            &case.id,
-            &LocalFileSourceObject {
-                source_path: "/music/album.cue#track=01".to_string(),
-                root_path: "/music".to_string(),
-                relative_path: "album.cue#track=01".to_string(),
-                sync_generation: 1,
-            },
-        )
-        .expect("upsert stale source");
-    let track_id = TrackId::new("track-cue-1");
-    case.upsert_cue_track_source_object(
-        &case.id,
-        &CueTrackSourceObject {
-            source_object_id: "local:cue:track:1".to_string(),
-            track_id: track_id.clone(),
-            source_path: "/music/album.flac".to_string(),
-            parent_source_object_id: parent_id,
-            cue_path: "/music/album.cue".to_string(),
-            cue_revision: "cue-revision-one".to_string(),
-            cue_track_index: 1,
-            segment_start_ms: 12345,
-            segment_end_ms: 67890,
-            sync_generation: 1,
-        },
-    )
-    .expect("upsert cue source");
-    case.connection
-        .execute(
-            "
-            UPDATE entities
-            SET source_object_id = ?3
-            WHERE source_id = ?1
-              AND entity_kind = 'track'
-              AND entity_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), track_id.as_str(), stale_id],
-        )
-        .expect("reset entity pointer");
-
-    let source = case
-        .load_track_source_object(&case.id, &track_id)
-        .expect("load source")
-        .expect("source");
-
-    assert_eq!(source.source_object_kind, "cue_track");
-    assert_eq!(source.segment_start_ms, Some(12345));
-    assert_eq!(source.segment_end_ms, Some(67890));
-}
-
-#[test]
-fn cue_track_source_object_requires_local_file_parent() {
-    let case = StoreCase::open();
-    let error = case
-        .upsert_cue_track_source_object(
-            &case.id,
-            &CueTrackSourceObject {
-                source_object_id: "local:cue:track:1".to_string(),
-                track_id: TrackId::new("track-cue-1"),
-                source_path: "/music/album.flac".to_string(),
-                parent_source_object_id: "local:file:missing".to_string(),
-                cue_path: "/music/album.cue".to_string(),
-                cue_revision: "cue-revision-one".to_string(),
-                cue_track_index: 1,
-                segment_start_ms: 12345,
-                segment_end_ms: 67890,
-                sync_generation: 7,
-            },
-        )
-        .expect_err("missing parent should fail");
-    assert!(matches!(error, StoreError::InvalidSourceObject(_)));
 }
 
 #[test]
@@ -4232,19 +3988,21 @@ fn schema_collection_playlist() {
             tracks[3].clone(),
         ],
     );
-    case.upsert_albums(&case.id, &albums, generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.upsert_genres(&case.id, std::slice::from_ref(&genre), generation)
-        .expect("upsert genre");
-    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
-        .expect("upsert playlist");
-    case.upsert_playlist_entries(&case.id, &playlist.id, &entries, generation)
-        .expect("upsert playlist entries");
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: albums.clone(),
+            tracks: tracks.clone(),
+            genres: vec![genre],
+            playlists: vec![PlaylistDetail {
+                playlist,
+                tracks: entries.iter().map(|entry| entry.track.clone()).collect(),
+                entries,
+            }],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let genre_page = case.load_genres(&case.id, 0, 20).expect("load genres");
     let playlist_page = case
@@ -4349,17 +4107,16 @@ fn schema_repair_genre() {
         .map(|(index, album)| track(index as u32 + 1, album))
         .collect::<Vec<_>>();
 
-    case.upsert_albums(&case.id, &albums, generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.upsert_genres(
-        &case.id,
-        &[first_genre.clone(), second_genre.clone()],
+    case.commit_library(
         generation,
-    )
-    .expect("upsert genres");
-    case.finish_sync(generation, "complete sync");
+        LibraryObservation {
+            albums: albums.clone(),
+            tracks,
+            genres: vec![first_genre.clone(), second_genre.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
     case.connection
         .execute(
             "
@@ -4452,14 +4209,15 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
     external_album.musicbrainz_release_group_id =
         Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
 
-    case.upsert_albums(
-        &case.id,
-        &[source_album.clone(), external_album.clone()],
+    case.commit_library(
         generation,
-    )
-    .expect("upsert albums");
-    case.upsert_tracks(&case.id, &[source_track.clone()], generation)
-        .expect("upsert tracks");
+        LibraryObservation {
+            albums: vec![source_album.clone(), external_album.clone()],
+            tracks: vec![source_track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     assert_eq!(
         selected_image_origin(
@@ -4471,8 +4229,12 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
         ),
         "source"
     );
-
-    case.finish_sync(generation, "complete sync");
+    assert_eq!(
+        case.load_raw_track_image_refs(&case.id)
+            .expect("load source observations")
+            .get(&source_track.id),
+        Some(&source_track.image_ref)
+    );
 
     assert_eq!(
         selected_image_origin(
@@ -4494,28 +4256,38 @@ fn selected_image_origin_marks_source_fallback_and_external_refs() {
         ),
         "external"
     );
+    let raw_albums = case
+        .load_raw_album_image_refs(&case.id)
+        .expect("load source observations");
+    assert_eq!(raw_albums.get(&source_album.id), Some(&None));
+    assert_eq!(raw_albums.get(&external_album.id), Some(&None));
 }
 
 #[test]
-fn remote_track_selected_art_prefers_album_cover() {
+fn remote_track_source_art_survives_album_fallback() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let album_image = image_ref("provider-album-cover", "album-tag");
     let mut album = album(1);
-    album.image_ref = Some(album_image.clone());
+    album.image_ref = Some(album_image);
     let mut track = track(1, &album);
-    track.image_ref = Some(image_ref("provider-song-cover", "song-tag"));
+    let track_image = image_ref("provider-song-cover", "song-tag");
+    track.image_ref = Some(track_image.clone());
 
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album],
+            tracks: vec![track.clone()],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
     let tracks = case.load_tracks(&case.id, 0, 25).expect("load tracks");
-    assert_eq!(tracks.items[0].image_ref, Some(album_image));
+    assert_eq!(tracks.items[0].image_ref, Some(track_image));
     assert_eq!(
         selected_image_origin(&case, &case.id, "tracks", "track_id", track.id.as_str()),
-        "fallback"
+        "source"
     );
     assert_eq!(
         case.connection
@@ -4532,28 +4304,7 @@ fn remote_track_selected_art_prefers_album_cover() {
                 |row| row.get::<_, String>(0),
             )
             .expect("selected track content key"),
-        "provider-album-cover\u{1f}album-tag"
-    );
-    let cover_path =
-        std::env::temp_dir().join(format!("rufin-provider-cover-{}", std::process::id()));
-    fs::write(&cover_path, [1_u8]).expect("write provider cover");
-    case.save_cover_cache_entry(&CoverCacheEntry {
-        source_id: case.id.clone(),
-        item_id: "provider-album-cover".to_string(),
-        image_tag: "album-tag".to_string(),
-        size: 256,
-        path: cover_path.to_string_lossy().into_owned(),
-    })
-    .expect("save provider cover row");
-    assert!(
-        !case
-            .selected_source_cover_cache_missing(&case.id)
-            .expect("cover ready")
-    );
-    fs::remove_file(&cover_path).expect("remove provider cover");
-    assert!(
-        case.selected_source_cover_cache_missing(&case.id)
-            .expect("cover missing")
+        "provider-song-cover\u{1f}song-tag"
     );
 }
 
@@ -4568,13 +4319,16 @@ fn source_artist_image_seeds_album_before_external_identity() {
     album.musicbrainz_release_group_id = Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
     let track = track(1, &album);
 
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
-        .expect("upsert artist");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.finish_sync(generation, "complete sync");
+    case.commit_library(
+        generation,
+        LibraryObservation {
+            albums: vec![album.clone()],
+            tracks: vec![track.clone()],
+            artists: vec![artist],
+            ..LibraryObservation::default()
+        },
+        "commit library",
+    );
 
     let detail = case
         .load_album_detail(&case.id, &album.id)

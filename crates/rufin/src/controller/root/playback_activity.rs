@@ -448,7 +448,8 @@ mod tests {
                 ControllerEvent::LibraryDelta(delta) => return *delta,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::SourceSelectionChanged { .. }
-                | ControllerEvent::LibrarySyncStatus(_)
+                | ControllerEvent::SourceSyncChanged(_)
+                | ControllerEvent::LibraryCommitted(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::SmartPlaylistChanged { .. }
@@ -469,7 +470,8 @@ mod tests {
                 | ControllerEvent::CoverReady { .. }
                 | ControllerEvent::CoverUnavailable { .. }
                 | ControllerEvent::CoverDeferred { .. }
-                | ControllerEvent::LoginStatus(_) => {}
+                | ControllerEvent::SourceNotice(_)
+                | ControllerEvent::SourceTransitionFailed { .. } => {}
                 ControllerEvent::FavoriteChangeFailed { error, .. } => {
                     panic!("favorite change failed: {error}");
                 }
