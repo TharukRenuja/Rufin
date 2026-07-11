@@ -13,6 +13,7 @@ impl AppController {
         path_replace_from: Option<String>,
         path_replace_to: Option<String>,
     ) {
+        let controller = self.clone();
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
@@ -30,29 +31,20 @@ impl AppController {
             let path_replace_to =
                 trimmed_optional(path_replace_to.as_deref()).unwrap_or_else(|| root_path.clone());
             let matched_source_id = source_id.clone();
-            let generation = match store.with_store(|store| {
+            let changed = match store.with_store(|store| {
                 store.save_source_local_access(&SourceLocalAccess {
-                    source_id,
+                    source_id: source_id.clone(),
                     root_path: root_path.clone(),
                     path_replace_from: trimmed_optional(path_replace_from.as_deref()),
                     path_replace_to: Some(path_replace_to),
-                })?;
-                Ok(store.sync_state(&matched_source_id)?.generation)
+                })
             }) {
-                Ok(generation) => generation,
+                Ok(changed) => changed,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
                 }
             };
-            if let Err(error) = runtime.block_on(refresh_local_track_matches(
-                &store,
-                &matched_source_id,
-                generation,
-                None,
-            )) {
-                warn!(%error, "failed to refresh local track matches");
-            }
             clear_next_preload(&next_preload);
             prepare_next_stream_from_handles(
                 store.clone(),
@@ -64,6 +56,9 @@ impl AppController {
                 events.clone(),
             );
             emit_snapshot(&store, &events);
+            if changed && sync_target_is_current(&store, &matched_source_id) {
+                controller.refresh_source_freshness();
+            }
         });
     }
 
@@ -90,13 +85,13 @@ impl AppController {
             + Send
             + 'static,
     {
+        let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
-        let sync_context = self.sync_context();
-        let store = sync_context.store.clone();
-        let runtime = Arc::clone(&sync_context.runtime);
-        let secrets = Arc::clone(&sync_context.secrets);
-        let events = sync_context.events.clone();
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
         let active_source = Arc::clone(&self.active_source);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
@@ -104,7 +99,6 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
@@ -116,9 +110,8 @@ impl AppController {
                 Ok(Some(saved)) => saved,
                 Ok(None) => {
                     if current() {
-                        let _sent = events.send(ControllerEvent::LoginStatus(
-                            "No changes to save.".to_string(),
-                        ));
+                        let _sent =
+                            events.send(ControllerEvent::SourceNotice(SourceNotice::NoChanges));
                     }
                     return;
                 }
@@ -128,9 +121,9 @@ impl AppController {
                 }
             };
             let authentication_started = || {
-                let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                    "Checking {source_name} server..."
-                )));
+                let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Checking {
+                    source_name: source_name.to_string(),
+                }));
             };
             let prepared = match prepare(&runtime, &store, &secrets, saved, &authentication_started)
             {
@@ -149,9 +142,7 @@ impl AppController {
             }) = prepared
             else {
                 if current() {
-                    let _sent = events.send(ControllerEvent::LoginStatus(
-                        "No changes to save.".to_string(),
-                    ));
+                    let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::NoChanges));
                 }
                 return;
             };
@@ -179,11 +170,8 @@ impl AppController {
             }
             let reauthenticated = credential.is_some();
             let selected = source_is_selected(&store, &saved.source.id);
-            if (reauthenticated || selected)
-                && let Err(error) = cancel_sync_if_running(&sync_context.sync_in_flight, &source_id)
-            {
-                emit_error(error);
-                return;
+            if reauthenticated || identity_changed {
+                controller.forget_source_sync(&source_id);
             }
             let mut active_guard = if selected {
                 match active_source.write() {
@@ -243,16 +231,10 @@ impl AppController {
                 }
             }
             if selected {
-                refresh_source_freshness_watcher(sync_context.clone(), source_freshness_watcher);
+                controller.refresh_source_freshness();
             }
-            let _sent = events.send(ControllerEvent::LoginStatus(
-                "Source settings saved.".to_string(),
-            ));
-            if selected {
-                start_background_sync_thread(sync_context, saved);
-            } else if identity_changed || reauthenticated {
-                start_sync_thread_with_snapshots(sync_context, saved, SyncPresentation::Silent);
-            } else {
+            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::SettingsSaved));
+            if !selected {
                 emit_snapshot(&store, &events);
             }
             drop(transition_commit);
@@ -268,10 +250,9 @@ impl AppController {
         let next_preload = Arc::clone(&self.next_preload);
         let events = self.events.clone();
         thread::spawn(move || {
-            if let Err(error) = store.with_store(|store| {
-                store.delete_source_local_access(&source_id)?;
-                store.delete_track_local_matches(&source_id)
-            }) {
+            if let Err(error) =
+                store.with_store(|store| store.clear_source_local_access(&source_id))
+            {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
@@ -454,8 +435,15 @@ mod tests {
                 store.save_source(saved)?;
                 let generation = store.begin_sync(&saved.source.id)?;
                 let album = library_album(1, "Example Artist", "Example Album", None);
-                store.upsert_albums(&saved.source.id, &[album], generation)?;
-                store.complete_sync(&saved.source.id, generation)?;
+                commit_cached_library(
+                    store,
+                    &saved.source.id,
+                    generation,
+                    CachedLibraryObservation {
+                        albums: vec![album],
+                        ..CachedLibraryObservation::default()
+                    },
+                )?;
                 let queue = QueueEngine::new(saved.source.id.clone());
                 store.save_queue_snapshot(&queue.snapshot())?;
                 Ok(())

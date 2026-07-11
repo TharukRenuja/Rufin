@@ -451,6 +451,24 @@ impl Store {
         &self,
         source_id: &SourceId,
     ) -> StoreResult<usize> {
+        let mut bound = self.connection.execute(
+            "
+            UPDATE albums
+            SET image_item_id = NULL,
+                image_tag = NULL,
+                image_origin = 'unknown'
+            WHERE source_id = ?1
+              AND image_origin = 'fallback'
+              AND NOT EXISTS (
+                  SELECT 1 FROM tracks
+                  WHERE tracks.source_id = albums.source_id
+                    AND tracks.album_id = albums.album_id
+                    AND tracks.image_item_id IS NOT NULL
+                    AND tracks.image_origin IN ('source', 'unknown', 'external')
+              )
+            ",
+            params![source_id.as_str()],
+        )?;
         let mut fallback_statement = self.connection.prepare(
             "
             WITH candidates AS (
@@ -463,10 +481,7 @@ impl Store {
                 JOIN tracks t
                   ON t.source_id = a.source_id AND t.album_id = a.album_id
                 WHERE a.source_id = ?1
-                  AND (
-                      a.image_item_id IS NULL
-                      OR a.image_item_id LIKE 'external:%'
-                  )
+                  AND a.image_origin != 'source'
                   AND t.image_item_id IS NOT NULL
                   AND t.image_origin IN ('source', 'unknown', 'external')
                   AND (
@@ -523,7 +538,6 @@ impl Store {
             return Ok(0);
         }
 
-        let mut bound = 0;
         let mut update_statement = self.connection.prepare(
             "
             UPDATE albums
@@ -532,13 +546,11 @@ impl Store {
                 image_origin = 'fallback'
             WHERE source_id = ?1
               AND album_id = ?2
-              AND (
-                  image_item_id IS NULL
-                  OR image_item_id LIKE 'external:%'
-              )
+              AND image_origin != 'source'
               AND (
                   image_item_id IS NOT ?3
                   OR image_tag IS NOT ?4
+                  OR image_origin != 'fallback'
               )
             ",
         )?;
@@ -741,6 +753,13 @@ impl Store {
         source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<HashMap<AlbumId, ImageRef>> {
+        self.read_snapshot(|store| store.load_album_image_refs_inner(source_id, album_ids))
+    }
+    fn load_album_image_refs_inner(
+        &self,
+        source_id: &SourceId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<HashMap<AlbumId, ImageRef>> {
         let mut unique_ids = Vec::<AlbumId>::new();
         for album_id in album_ids {
             if !unique_ids.iter().any(|existing| existing == album_id) {
@@ -903,9 +922,25 @@ impl Store {
         &self,
         source_id: &SourceId,
     ) -> StoreResult<usize> {
-        self.connection
-            .execute(
-                "
+        let cleared = self.connection.execute(
+            "
+            UPDATE tracks
+            SET image_item_id = NULL,
+                image_tag = NULL,
+                image_origin = 'unknown'
+            WHERE source_id = ?1
+              AND image_origin = 'fallback'
+              AND NOT EXISTS (
+                  SELECT 1 FROM albums
+                  WHERE albums.source_id = tracks.source_id
+                    AND albums.album_id = tracks.album_id
+                    AND albums.image_item_id IS NOT NULL
+              )
+            ",
+            params![source_id.as_str()],
+        )?;
+        let bound = self.connection.execute(
+            "
                 UPDATE tracks
                 SET image_item_id = (
                         SELECT a.image_item_id
@@ -930,51 +965,34 @@ impl Store {
                         AND a.album_id = tracks.album_id
                         AND a.image_item_id IS NOT NULL
                   )
+                  AND image_origin != 'source'
                   AND (
-                      image_item_id IS NULL
-                      OR (
-                          EXISTS (
-                              SELECT 1
-                              FROM sources s
-                              WHERE s.source_id = tracks.source_id
-                                AND s.kind != 'local'
-                          )
-                          AND (
-                              image_item_id IS NOT (
-                                  SELECT a.image_item_id
-                                  FROM albums a
-                                  WHERE a.source_id = tracks.source_id
-                                    AND a.album_id = tracks.album_id
-                                    AND a.image_item_id IS NOT NULL
-                              )
-                              OR image_tag IS NOT (
-                                  SELECT a.image_tag
-                                  FROM albums a
-                                  WHERE a.source_id = tracks.source_id
-                                    AND a.album_id = tracks.album_id
-                                    AND a.image_item_id IS NOT NULL
-                              )
-                          )
+                      image_item_id IS NOT (
+                          SELECT a.image_item_id
+                          FROM albums a
+                          WHERE a.source_id = tracks.source_id
+                            AND a.album_id = tracks.album_id
+                            AND a.image_item_id IS NOT NULL
                       )
+                      OR image_tag IS NOT (
+                          SELECT a.image_tag
+                          FROM albums a
+                          WHERE a.source_id = tracks.source_id
+                            AND a.album_id = tracks.album_id
+                            AND a.image_item_id IS NOT NULL
+                      )
+                      OR image_origin != 'fallback'
                   )
                 ",
-                params![source_id.as_str()],
-            )
-            .map_err(Into::into)
+            params![source_id.as_str()],
+        )?;
+        Ok(cleared + bound)
     }
 
     pub(super) fn refresh_selected_cover_content_refs(
         &self,
         source_id: &SourceId,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            DELETE FROM entity_content_refs WHERE source_id = ?1 AND content_kind = 'cover'
-              AND entity_kind IN ('album', 'track')
-              AND source_id IN (SELECT source_id FROM sources WHERE kind != 'local')
-            ",
-            params![source_id.as_str()],
-        )?;
         self.connection.execute(
             "
             INSERT INTO entity_content_refs
@@ -990,6 +1008,40 @@ impl Store {
                    CURRENT_TIMESTAMP
             FROM tracks WHERE source_id = ?1 AND image_item_id IS NOT NULL
               AND EXISTS (SELECT 1 FROM sources s WHERE s.source_id = tracks.source_id AND s.kind != 'local')
+            ON CONFLICT(source_id, entity_kind, entity_id, content_kind, source) DO UPDATE SET
+                content_key = excluded.content_key,
+                updated_at = excluded.updated_at
+            WHERE entity_content_refs.content_key != excluded.content_key
+            ",
+            params![source_id.as_str()],
+        )?;
+        self.connection.execute(
+            "
+            DELETE FROM entity_content_refs AS content
+            WHERE content.source_id = ?1
+              AND content.content_kind = 'cover'
+              AND content.entity_kind IN ('album', 'track')
+              AND EXISTS (
+                  SELECT 1 FROM sources
+                  WHERE sources.source_id = content.source_id AND sources.kind != 'local'
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM albums
+                  WHERE content.entity_kind = 'album'
+                    AND albums.source_id = content.source_id
+                    AND albums.album_id = content.entity_id
+                    AND albums.image_item_id IS NOT NULL
+                    AND albums.image_origin = content.source
+                    AND albums.image_item_id || char(31) || COALESCE(albums.image_tag, '') = content.content_key
+                  UNION ALL
+                  SELECT 1 FROM tracks
+                  WHERE content.entity_kind = 'track'
+                    AND tracks.source_id = content.source_id
+                    AND tracks.track_id = content.entity_id
+                    AND tracks.image_item_id IS NOT NULL
+                    AND tracks.image_origin = content.source
+                    AND tracks.image_item_id || char(31) || COALESCE(tracks.image_tag, '') = content.content_key
+              )
             ",
             params![source_id.as_str()],
         )?;
@@ -1064,15 +1116,22 @@ impl Store {
                 image_origin = 'fallback'
             WHERE source_id = ?1
               AND artist_id = ?2
-              AND (
-                  image_item_id IS NULL
-                  OR image_item_id LIKE 'external:%'
-              )
+              AND image_origin != 'source'
               AND (
                   image_item_id IS NOT ?3
                   OR image_tag IS NOT ?4
+                  OR image_origin != 'fallback'
               )
             "
+        ))?;
+        let mut clear = self.connection.prepare(&format!(
+            "UPDATE {table}
+             SET image_item_id = NULL,
+                 image_tag = NULL,
+                 image_origin = 'unknown'
+             WHERE source_id = ?1
+               AND artist_id = ?2
+               AND image_origin = 'fallback'"
         ))?;
         loop {
             let mut artists =
@@ -1080,26 +1139,25 @@ impl Store {
             if artists.is_empty() {
                 break;
             }
+            let page_len = artists.len();
+            for artist in &mut artists {
+                artist.image_ref = None;
+            }
             self.attach_artist_fallback_image_refs(source_id, &mut artists, album_artist)?;
-            let mut unchanged = 0;
             for artist in artists {
-                let Some(image_ref) = artist.image_ref else {
-                    unchanged += 1;
-                    continue;
-                };
-                let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
-                let changed = statement.execute(params![
-                    source_id.as_str(),
-                    artist.id.as_str(),
-                    image_item_id,
-                    image_tag,
-                ])?;
-                bound += changed;
-                if changed == 0 {
-                    unchanged += 1;
+                if let Some(image_ref) = artist.image_ref {
+                    let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
+                    bound += statement.execute(params![
+                        source_id.as_str(),
+                        artist.id.as_str(),
+                        image_item_id,
+                        image_tag,
+                    ])?;
+                } else {
+                    bound += clear.execute(params![source_id.as_str(), artist.id.as_str()])?;
                 }
             }
-            offset += unchanged;
+            offset += page_len;
         }
         Ok(bound)
     }
@@ -1124,10 +1182,7 @@ impl Store {
                    a.user_rating, a.image_item_id, a.image_tag
             FROM {table} a
             WHERE a.source_id = ?1
-              AND (
-                  a.image_item_id IS NULL
-                  OR a.image_item_id LIKE 'external:%'
-              )
+              AND a.image_origin != 'source'
               {artist_filter}
             ORDER BY a.name COLLATE NOCASE
             LIMIT ?2 OFFSET ?3

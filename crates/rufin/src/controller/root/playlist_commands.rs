@@ -461,9 +461,7 @@ fn write_playlist_snapshot_for_owner(
     owner: SourceFeatureOwner,
 ) -> StoreResult<()> {
     let mode = playlist_write_mode_for_owner(store, source_id, owner)?;
-    store.upsert_playlists_with_mode(source_id, std::slice::from_ref(playlist), mode)?;
-    store.upsert_playlist_entries_with_mode(source_id, &playlist.id, entries, mode)?;
-    Ok(())
+    store.replace_playlist_snapshot(source_id, playlist, entries, mode)
 }
 
 fn playlist_write_mode_for_owner(

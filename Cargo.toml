@@ -9,6 +9,7 @@ members = [
     "crates/source-subsonic",
     "crates/secrets",
     "crates/library",
+    "crates/library-sync",
     "crates/xtask",
 ]
 resolver = "2"
@@ -41,6 +42,7 @@ gstreamer-play = "0.25.0"
 gtk = { package = "gtk4", version = "0.11.3" }
 ksni = "0.3.4"
 library = { path = "crates/library" }
+library-sync = { path = "crates/library-sync" }
 lofty = "0.24.0"
 md5 = "0.8.0"
 mpris-server = "0.10.0"

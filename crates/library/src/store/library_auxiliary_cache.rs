@@ -38,6 +38,14 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Genre>> {
+        self.read_snapshot(|store| store.load_genres_inner(source_id, offset, limit))
+    }
+    fn load_genres_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Genre>> {
         let total = self.count_linked_genres(source_id)?;
         let mut statement = self.connection.prepare(
             "
@@ -69,6 +77,17 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_genres_matching(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Genre>> {
+        self.read_snapshot(|store| {
+            store.load_genres_matching_inner(source_id, query, offset, limit)
+        })
+    }
+    fn load_genres_matching_inner(
         &self,
         source_id: &SourceId,
         query: &str,
@@ -116,6 +135,14 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Mood>> {
+        self.read_snapshot(|store| store.load_moods_inner(source_id, offset, limit))
+    }
+    fn load_moods_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Mood>> {
         let total = self.count_moods(source_id)?;
         let mut statement = self.connection.prepare(
             "
@@ -142,6 +169,15 @@ impl Store {
     }
 
     pub fn load_moods_matching(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Mood>> {
+        self.read_snapshot(|store| store.load_moods_matching_inner(source_id, query, offset, limit))
+    }
+    fn load_moods_matching_inner(
         &self,
         source_id: &SourceId,
         query: &str,
@@ -178,6 +214,16 @@ impl Store {
     }
 
     pub fn load_tracks_by_genre_name(
+        &self,
+        source_id: &SourceId,
+        genre_name: &str,
+        limit: usize,
+    ) -> StoreResult<Vec<Track>> {
+        self.read_snapshot(|store| {
+            store.load_tracks_by_genre_name_inner(source_id, genre_name, limit)
+        })
+    }
+    fn load_tracks_by_genre_name_inner(
         &self,
         source_id: &SourceId,
         genre_name: &str,
@@ -313,6 +359,14 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Playlist>> {
+        self.read_snapshot(|store| store.load_playlists_inner(source_id, offset, limit))
+    }
+    fn load_playlists_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
         let total = self.count("playlists", source_id)?;
         let mut statement = self.connection.prepare(
             "
@@ -332,6 +386,17 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_playlists_matching(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
+        self.read_snapshot(|store| {
+            store.load_playlists_matching_inner(source_id, query, offset, limit)
+        })
+    }
+    fn load_playlists_matching_inner(
         &self,
         source_id: &SourceId,
         query: &str,
@@ -427,7 +492,27 @@ impl Store {
         })
     }
 
-    pub fn upsert_playlist_entries_delta(
+    pub fn replace_playlist_snapshot(
+        &self,
+        source_id: &SourceId,
+        playlist: &Playlist,
+        entries: &[PlaylistEntry],
+        mode: PlaylistWriteMode,
+    ) -> StoreResult<()> {
+        self.write_batch(|_| {
+            let cache_revision = matches!(mode, PlaylistWriteMode::NativeSync { .. })
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
+            self.upsert_playlists_with_mode(source_id, std::slice::from_ref(playlist), mode)?;
+            self.upsert_playlist_entries_with_mode(source_id, &playlist.id, entries, mode)?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn upsert_playlist_entries_delta(
         &self,
         source_id: &SourceId,
         playlist_id: &PlaylistId,
@@ -436,6 +521,13 @@ impl Store {
     ) -> StoreResult<LibraryDelta> {
         let before_playlist = self.load_playlist_for_delta(source_id, playlist_id)?;
         let before = self.playlist_entry_keys(source_id, playlist_id)?;
+        let wanted = entries
+            .iter()
+            .map(|entry| (entry.entry_id.clone(), entry.track.id.clone()))
+            .collect::<Vec<_>>();
+        if before == wanted {
+            return Ok(LibraryDelta::default());
+        }
         self.upsert_playlist_entries(source_id, playlist_id, entries, generation)?;
         let after = self.playlist_entry_keys(source_id, playlist_id)?;
         let after_playlist = self.load_playlist_for_delta(source_id, playlist_id)?;
@@ -531,6 +623,13 @@ impl Store {
         source_id: &SourceId,
         playlist_id: &PlaylistId,
     ) -> StoreResult<Option<PlaylistDetail>> {
+        self.read_snapshot(|store| store.load_playlist_detail_inner(source_id, playlist_id))
+    }
+    fn load_playlist_detail_inner(
+        &self,
+        source_id: &SourceId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Option<PlaylistDetail>> {
         let playlist = self
             .connection
             .query_row(
@@ -590,6 +689,13 @@ impl Store {
         }))
     }
     pub fn load_genre_detail(
+        &self,
+        source_id: &SourceId,
+        genre_id: &GenreId,
+    ) -> StoreResult<Option<CachedGenreDetail>> {
+        self.read_snapshot(|store| store.load_genre_detail_inner(source_id, genre_id))
+    }
+    fn load_genre_detail_inner(
         &self,
         source_id: &SourceId,
         genre_id: &GenreId,
@@ -681,6 +787,13 @@ impl Store {
     }
 
     pub fn load_mood_detail(
+        &self,
+        source_id: &SourceId,
+        mood_id: &MoodId,
+    ) -> StoreResult<Option<CachedMoodDetail>> {
+        self.read_snapshot(|store| store.load_mood_detail_inner(source_id, mood_id))
+    }
+    fn load_mood_detail_inner(
         &self,
         source_id: &SourceId,
         mood_id: &MoodId,
@@ -813,6 +926,9 @@ impl Store {
         Ok(refs.into_iter().flatten().collect())
     }
     pub fn load_favorite_tracks(&self, source_id: &SourceId) -> StoreResult<Vec<Track>> {
+        self.read_snapshot(|store| store.load_favorite_tracks_inner(source_id))
+    }
+    fn load_favorite_tracks_inner(&self, source_id: &SourceId) -> StoreResult<Vec<Track>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
@@ -879,6 +995,9 @@ impl Store {
         owner: SourceFeatureOwner,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let cache_revision = (owner == SourceFeatureOwner::Native)
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
             Self::set_favorite_for_owner(
                 connection,
                 source_id,
@@ -886,7 +1005,11 @@ impl Store {
                 album_id.as_str(),
                 favorite,
                 owner,
-            )
+            )?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
         })
     }
     pub fn set_track_favorite(
@@ -909,6 +1032,9 @@ impl Store {
         owner: SourceFeatureOwner,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let cache_revision = (owner == SourceFeatureOwner::Native)
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
             Self::set_favorite_for_owner(
                 connection,
                 source_id,
@@ -916,7 +1042,11 @@ impl Store {
                 track_id.as_str(),
                 favorite,
                 owner,
-            )
+            )?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
         })
     }
     pub fn set_artist_favorite(
@@ -951,6 +1081,9 @@ impl Store {
         owner: SourceFeatureOwner,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let cache_revision = (owner == SourceFeatureOwner::Native)
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
             Self::set_favorite_for_owner(
                 connection,
                 source_id,
@@ -966,7 +1099,11 @@ impl Store {
                 artist_id.as_str(),
                 favorite,
                 owner,
-            )
+            )?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
         })
     }
     fn set_favorite_for_owner(
@@ -983,8 +1120,7 @@ impl Store {
                 Self::write_favorite_column(connection, source_id, kind, item_id, favorite)
             }
             SourceFeatureOwner::Store => {
-                Self::upsert_favorite_override(connection, source_id, kind, item_id, favorite)?;
-                Self::write_favorite_column(connection, source_id, kind, item_id, favorite)
+                Self::upsert_favorite_override(connection, source_id, kind, item_id, favorite)
             }
         }
     }
@@ -1062,32 +1198,40 @@ impl Store {
         name: &str,
         owner: SourceFeatureOwner,
     ) -> StoreResult<()> {
-        let changed = self.connection.execute(
-            "UPDATE playlists SET name = ?3 WHERE source_id = ?1 AND playlist_id = ?2 AND owner = ?4",
-            params![
-                source_id.as_str(),
-                playlist_id.as_str(),
-                name,
-                playlist_owner_to_str(owner),
-            ],
-        )?;
-        if changed == 0 {
-            return Err(StoreError::InvalidPlaylistOwner(format!(
-                "playlist {} is not owned by {}",
-                playlist_id.as_str(),
-                playlist_owner_to_str(owner)
-            )));
-        }
-        self.connection.execute(
-            "DELETE FROM library_fts WHERE source_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
-            params![source_id.as_str(), playlist_id.as_str()],
-        )?;
-        self.connection.execute(
-            "INSERT INTO library_fts (source_id, item_type, item_id, title, subtitle)
-             VALUES (?1, 'playlist', ?2, ?3, '')",
-            params![source_id.as_str(), playlist_id.as_str(), name],
-        )?;
-        Ok(())
+        self.write_batch(|_| {
+            let cache_revision = (owner == SourceFeatureOwner::Native)
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
+            let changed = self.connection.execute(
+                "UPDATE playlists SET name = ?3 WHERE source_id = ?1 AND playlist_id = ?2 AND owner = ?4",
+                params![
+                    source_id.as_str(),
+                    playlist_id.as_str(),
+                    name,
+                    playlist_owner_to_str(owner),
+                ],
+            )?;
+            if changed == 0 {
+                return Err(StoreError::InvalidPlaylistOwner(format!(
+                    "playlist {} is not owned by {}",
+                    playlist_id.as_str(),
+                    playlist_owner_to_str(owner)
+                )));
+            }
+            self.connection.execute(
+                "DELETE FROM library_fts WHERE source_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
+                params![source_id.as_str(), playlist_id.as_str()],
+            )?;
+            self.connection.execute(
+                "INSERT INTO library_fts (source_id, item_type, item_id, title, subtitle)
+                 VALUES (?1, 'playlist', ?2, ?3, '')",
+                params![source_id.as_str(), playlist_id.as_str(), name],
+            )?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn delete_playlist(
@@ -1104,24 +1248,22 @@ impl Store {
         playlist_id: &PlaylistId,
         owner: SourceFeatureOwner,
     ) -> StoreResult<()> {
-        ensure_playlist_owner(&self.connection, source_id, playlist_id, owner)?;
-        self.connection.execute(
-            "DELETE FROM playlist_tracks WHERE source_id = ?1 AND playlist_id = ?2",
-            params![source_id.as_str(), playlist_id.as_str()],
-        )?;
-        self.connection.execute(
-            "DELETE FROM playlists WHERE source_id = ?1 AND playlist_id = ?2 AND owner = ?3",
-            params![
-                source_id.as_str(),
-                playlist_id.as_str(),
-                playlist_owner_to_str(owner),
-            ],
-        )?;
-        self.connection.execute(
-            "DELETE FROM library_fts WHERE source_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
-            params![source_id.as_str(), playlist_id.as_str()],
-        )?;
-        Ok(())
+        self.write_batch(|_| {
+            let cache_revision = (owner == SourceFeatureOwner::Native)
+                .then(|| self.source_cache_revision(source_id))
+                .transpose()?;
+            ensure_playlist_owner(&self.connection, source_id, playlist_id, owner)?;
+            delete_playlist_rows(
+                &self.connection,
+                source_id,
+                std::slice::from_ref(playlist_id),
+                owner,
+            )?;
+            if let Some(cache_revision) = cache_revision {
+                self.advance_source_cache_revision(source_id, cache_revision)?;
+            }
+            Ok(())
+        })
     }
     pub fn save_lyrics(&self, source_id: &SourceId, lyrics: &Lyrics) -> StoreResult<()> {
         let value = serde_json::to_string(lyrics)?;
@@ -1179,6 +1321,14 @@ impl Store {
         Ok(deleted > 0)
     }
     pub fn search_library(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        limit: usize,
+    ) -> StoreResult<SearchResults> {
+        self.read_snapshot(|store| store.search_library_inner(source_id, query, limit))
+    }
+    fn search_library_inner(
         &self,
         source_id: &SourceId,
         query: &str,
@@ -1248,58 +1398,6 @@ impl Store {
             )
             .optional()
             .map_err(StoreError::from)
-    }
-    pub fn selected_source_cover_cache_missing(&self, source_id: &SourceId) -> StoreResult<bool> {
-        let library_rows = self.connection.query_row(
-            "
-            SELECT (SELECT COUNT(*) FROM albums WHERE source_id = ?1)
-                 + (SELECT COUNT(*) FROM tracks WHERE source_id = ?1)
-            ",
-            params![source_id.as_str()],
-            |row| row.get::<_, i64>(0),
-        )?;
-        if library_rows == 0 {
-            return Ok(true);
-        }
-
-        let mut statement = self.connection.prepare(
-            "
-            WITH selected_refs AS (
-                SELECT image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
-                FROM albums
-                WHERE source_id = ?1 AND image_item_id IS NOT NULL
-                  AND image_item_id NOT LIKE 'external:%'
-                UNION
-                SELECT image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
-                FROM tracks
-                WHERE source_id = ?1 AND image_item_id IS NOT NULL
-                  AND image_item_id NOT LIKE 'external:%'
-            )
-            SELECT refs.item_id, refs.image_tag, cache.path
-            FROM selected_refs refs
-            LEFT JOIN cover_cache cache
-              ON cache.source_id = ?1
-             AND cache.item_id = refs.item_id
-             AND cache.image_tag = refs.image_tag
-             AND cache.size IN (256, 512)
-            ",
-        )?;
-        let mut refs = HashMap::<(String, String), bool>::new();
-        let rows = statement.query_map(params![source_id.as_str()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                optional_string_column(row, 2)?,
-            ))
-        })?;
-        for row in rows {
-            let (item_id, image_tag, path) = row?;
-            let file_exists = path.as_deref().is_some_and(|path| Path::new(path).exists());
-            refs.entry((item_id, image_tag))
-                .and_modify(|exists| *exists |= file_exists)
-                .or_insert(file_exists);
-        }
-        Ok(refs.values().any(|exists| !exists))
     }
     pub fn load_external_cover_cache_entry_by_content(
         &self,
@@ -2266,18 +2364,6 @@ pub(super) fn refresh_collection_refs(
     connection: &Connection,
     source_id: &SourceId,
 ) -> StoreResult<()> {
-    connection.execute(
-        "
-        DELETE FROM collection_cover_refs
-        WHERE source_id = ?1
-          AND collection_type IN (?2, ?3)
-        ",
-        params![
-            source_id.as_str(),
-            COLLECTION_COVER_GENRE,
-            COLLECTION_COVER_PLAYLIST,
-        ],
-    )?;
     let genres = genre_cover_sources(connection, source_id)?;
     for (genre_id, genre_name) in genres {
         let image_refs = genre_cover_refs(connection, source_id, &genre_id, &genre_name)?;
@@ -2293,6 +2379,30 @@ pub(super) fn refresh_collection_refs(
     for playlist_id in playlist_ids {
         refresh_playlist_refs(connection, source_id, &PlaylistId::new(playlist_id))?;
     }
+    connection.execute(
+        "
+        DELETE FROM collection_cover_refs
+        WHERE source_id = ?1
+          AND (
+              (collection_type = ?2 AND NOT EXISTS (
+                  SELECT 1 FROM genres
+                  WHERE genres.source_id = collection_cover_refs.source_id
+                    AND genres.genre_id = collection_cover_refs.collection_id
+              ))
+              OR
+              (collection_type = ?3 AND NOT EXISTS (
+                  SELECT 1 FROM playlists
+                  WHERE playlists.source_id = collection_cover_refs.source_id
+                    AND playlists.playlist_id = collection_cover_refs.collection_id
+              ))
+          )
+        ",
+        params![
+            source_id.as_str(),
+            COLLECTION_COVER_GENRE,
+            COLLECTION_COVER_PLAYLIST,
+        ],
+    )?;
     Ok(())
 }
 
@@ -2523,6 +2633,56 @@ fn ensure_playlist_owner(
             playlist_id.as_str()
         ))),
     }
+}
+
+pub(super) fn delete_playlist_rows(
+    connection: &Connection,
+    source_id: &SourceId,
+    playlist_ids: &[PlaylistId],
+    owner: SourceFeatureOwner,
+) -> StoreResult<()> {
+    for playlist_id in playlist_ids {
+        let owned = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM playlists
+             WHERE source_id = ?1 AND playlist_id = ?2 AND owner = ?3)",
+            params![
+                source_id.as_str(),
+                playlist_id.as_str(),
+                playlist_owner_to_str(owner),
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !owned {
+            continue;
+        }
+        connection.execute(
+            "DELETE FROM playlist_tracks WHERE source_id = ?1 AND playlist_id = ?2",
+            params![source_id.as_str(), playlist_id.as_str()],
+        )?;
+        connection.execute(
+            "DELETE FROM playlists WHERE source_id = ?1 AND playlist_id = ?2 AND owner = ?3",
+            params![
+                source_id.as_str(),
+                playlist_id.as_str(),
+                playlist_owner_to_str(owner),
+            ],
+        )?;
+        connection.execute(
+            "DELETE FROM collection_cover_refs
+             WHERE source_id = ?1 AND collection_type = ?2 AND collection_id = ?3",
+            params![
+                source_id.as_str(),
+                COLLECTION_COVER_PLAYLIST,
+                playlist_id.as_str(),
+            ],
+        )?;
+        connection.execute(
+            "DELETE FROM library_fts
+             WHERE source_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
+            params![source_id.as_str(), playlist_id.as_str()],
+        )?;
+    }
+    Ok(())
 }
 
 fn playlist_top_genres_json(

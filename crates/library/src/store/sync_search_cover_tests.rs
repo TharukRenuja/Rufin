@@ -208,23 +208,19 @@ fn sync_prune_success() {
     let album_one = album(1);
     let album_two = album(2);
     let first_generation = store.begin_sync(&saved.source.id).expect("begin first");
-    store
-        .upsert_albums(
-            &saved.source.id,
-            &[album_one.clone(), album_two],
-            first_generation,
-        )
-        .expect("upsert first");
-    store
-        .complete_sync(&saved.source.id, first_generation)
-        .expect("complete first");
+    LibraryObservation {
+        albums: vec![album_one.clone(), album_two],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source.id, first_generation)
+    .expect("commit first");
     let second_generation = store.begin_sync(&saved.source.id).expect("begin second");
-    store
-        .upsert_albums(&saved.source.id, &[album_one], second_generation)
-        .expect("upsert second");
-    store
-        .complete_sync(&saved.source.id, second_generation)
-        .expect("complete second");
+    LibraryObservation {
+        albums: vec![album_one],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source.id, second_generation)
+    .expect("commit second");
     let albums = store
         .load_albums(&saved.source.id, 0, 10)
         .expect("load albums");
@@ -259,7 +255,25 @@ fn stale_sync_generation_cannot_write_or_complete() {
     );
 
     let complete_error = store
-        .complete_sync(&saved.source.id, stale)
+        .commit_library_sync(
+            &saved.source.id,
+            stale,
+            0,
+            LibrarySync {
+                albums: Vec::new(),
+                tracks: Vec::new(),
+                artists: Vec::new(),
+                album_artists: Vec::new(),
+                genres: Vec::new(),
+                playlists: Vec::new(),
+                home_sections: Vec::new(),
+                mappings: Vec::new(),
+                coverage: SyncCoverage::All {
+                    music_folders: Vec::new(),
+                },
+                local_access: None,
+            },
+        )
         .expect_err("stale generation completion");
     assert!(matches!(
         complete_error,
@@ -548,9 +562,6 @@ fn sync_prune_misses() {
     let generation = store.begin_sync(&saved.source.id).expect("begin sync");
     let mut album = album(1);
     album.image_ref = Some(ImageRef::new("album-one", Some("tag-one".to_string())));
-    store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
     for entry in [
         cover_entry(&saved.source.id),
         CoverCacheEntry {
@@ -585,9 +596,12 @@ fn sync_prune_misses() {
         )
         .expect("save external miss");
 
-    store
-        .complete_sync(&saved.source.id, generation)
-        .expect("complete sync");
+    LibraryObservation {
+        albums: vec![album],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source.id, generation)
+    .expect("commit library");
 
     assert!(
         store
@@ -806,9 +820,6 @@ fn sync_keep_cache() {
     let mut album = album(1);
     album.image_ref = Some(ImageRef::new("album-one", None));
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    store
         .save_cover_cache_entry(&CoverCacheEntry {
             source_id: saved.source.id.clone(),
             item_id: "album-one".to_string(),
@@ -818,9 +829,12 @@ fn sync_keep_cache() {
         })
         .expect("save untagged cover");
 
-    store
-        .complete_sync(&saved.source.id, generation)
-        .expect("complete sync");
+    LibraryObservation {
+        albums: vec![album],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source.id, generation)
+    .expect("commit library");
 
     assert!(
         store

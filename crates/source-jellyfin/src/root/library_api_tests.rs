@@ -4,8 +4,31 @@ use source::{
     MusicSource, PlaylistCreator, PlaylistDeleter, PlaylistEntryMover, PlaylistEntryRemover,
     PlaylistReader, PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider,
 };
+use std::time::Duration;
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+async fn mount_playlist(server: &MockServer, track_count: usize) {
+    Mock::given(method("GET"))
+        .and(path("/Items/playlist-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Id": "playlist-one",
+            "Name": "Late Set",
+            "Type": "Playlist",
+            "ChildCount": track_count
+        })))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+fn playlist_item(number: usize) -> serde_json::Value {
+    serde_json::json!({
+        "Id": format!("track-{number}"),
+        "Type": "Audio",
+        "PlaylistItemId": format!("entry-{number}")
+    })
+}
 #[tokio::test]
 async fn library_map_session() {
     let server = MockServer::start().await;
@@ -913,7 +936,7 @@ async fn library_track_ordered() {
             "Id": "playlist-one",
             "Name": "Late Set",
             "Type": "Playlist",
-            "ChildCount": 501,
+            "ChildCount": 2,
             "RunTimeTicks": 9000000000i64,
             "ImageTags": { "Primary": "playlist-tag" }
         })))
@@ -924,7 +947,7 @@ async fn library_track_ordered() {
         .and(query_param("StartIndex", "0"))
         .and(query_param("Limit", "500"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "TotalRecordCount": 501,
+            "TotalRecordCount": 2,
             "Items": [{
                 "Id": "track-one",
                 "Name": "First Motion",
@@ -946,7 +969,7 @@ async fn library_track_ordered() {
         .and(query_param("StartIndex", "1"))
         .and(query_param("Limit", "500"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "TotalRecordCount": 501,
+            "TotalRecordCount": 2,
             "Items": [{
                 "Id": "track-two",
                 "Name": "Second Motion",
@@ -959,16 +982,6 @@ async fn library_track_ordered() {
                 "RunTimeTicks": 2200000000i64,
                 "PlaylistItemId": "entry-two"
             }]
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/Playlists/playlist-one/Items"))
-        .and(query_param("StartIndex", "2"))
-        .and(query_param("Limit", "500"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "TotalRecordCount": 2,
-            "Items": []
         })))
         .mount(&server)
         .await;
@@ -1001,6 +1014,88 @@ async fn library_track_ordered() {
         })
     );
     assert_eq!(detail.tracks[1].title, "Second Motion");
+}
+
+#[tokio::test]
+async fn playlist_detail_rejects_a_truncated_total() {
+    let server = MockServer::start().await;
+    mount_playlist(&server, 2).await;
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .and(query_param("StartIndex", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 2,
+            "Items": [playlist_item(0)]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .and(query_param("StartIndex", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 2,
+            "Items": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let result = provider
+        .playlist_detail(&PlaylistId::new("jellyfin:playlist:playlist-one"))
+        .await;
+
+    assert!(matches!(result, Err(SourceError::Other(_))));
+}
+
+#[tokio::test]
+async fn playlist_detail_rejects_an_overrun_total() {
+    let server = MockServer::start().await;
+    mount_playlist(&server, 2).await;
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .and(query_param("StartIndex", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [playlist_item(0), playlist_item(1)]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let result = provider
+        .playlist_detail(&PlaylistId::new("jellyfin:playlist:playlist-one"))
+        .await;
+
+    assert!(matches!(result, Err(SourceError::Other(_))));
+}
+
+#[tokio::test]
+async fn playlist_detail_rejects_an_ignored_offset() {
+    let server = MockServer::start().await;
+    mount_playlist(&server, 500).await;
+    let items = (0..500).map(playlist_item).collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .and(query_param("Limit", "500"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "Items": items
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        provider.playlist_detail(&PlaylistId::new("jellyfin:playlist:playlist-one")),
+    )
+    .await
+    .expect("playlist read finished");
+
+    assert!(matches!(result, Err(SourceError::Other(_))));
 }
 #[tokio::test]
 async fn library_use_favorite() {

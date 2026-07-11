@@ -10,7 +10,7 @@ use crate::sources::{
 };
 
 #[derive(Clone, Debug)]
-struct SnapshotSourceReconciliation {
+struct SnapshotSourceResolution {
     selected_source: LibrarySourceSelection,
     saved: SavedSource,
 }
@@ -70,13 +70,6 @@ fn snapshot_source_local_access_summary(
 ) -> Result<SourceLocalAccessSnapshot, String> {
     let access = store.with_store(|store| store.source_local_access(&saved.source.id))?;
     let status = local_access_status_for_server(store, access.as_ref())?;
-    let sync_state = store
-        .with_store(|store| store.sync_state(&saved.source.id))
-        .ok();
-    let sync_status = sync_state
-        .as_ref()
-        .map(sync_status_text)
-        .unwrap_or_else(|| "Cached library ready".to_string());
     let cached_album_count = store
         .with_store(|store| {
             store
@@ -108,7 +101,6 @@ fn snapshot_source_local_access_summary(
         access,
         status,
         selected_music_folder_name,
-        sync_status,
         cached_album_count,
         cached_track_count,
     })
@@ -119,7 +111,7 @@ fn resolve_snapshot_source(
     settings: &AppSettings,
     saved_sources: &[SavedSource],
     remote_saved_sources: &[SavedSource],
-) -> Result<Option<SnapshotSourceReconciliation>, String> {
+) -> Result<Option<SnapshotSourceResolution>, String> {
     let local_source_configured = local_source_configured(store, settings, saved_sources);
     let persisted_active = store.with_store(|store| store.active_source())?;
     let selected_source = resolve_selected_source(
@@ -139,7 +131,7 @@ fn resolve_snapshot_source(
         &selected_source,
     )?;
 
-    Ok(Some(SnapshotSourceReconciliation {
+    Ok(Some(SnapshotSourceResolution {
         selected_source,
         saved,
     }))
@@ -231,7 +223,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let remote_saved_sources = snapshot_remote_servers(&saved_sources);
     let sources = snapshot_source_identities(&remote_saved_sources);
     let source_local_access = snapshot_source_local_access(store, &remote_saved_sources)?;
-    let Some(reconciled_source) = resolve_snapshot_source(
+    let Some(resolved_source) = resolve_snapshot_source(
         store,
         &source_settings,
         &saved_sources,
@@ -244,10 +236,10 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         snapshot.source_local_access = source_local_access;
         return Ok(snapshot);
     };
-    let SnapshotSourceReconciliation {
+    let SnapshotSourceResolution {
         selected_source,
         saved,
-    } = reconciled_source;
+    } = resolved_source;
     load_active_source_snapshot(
         store,
         source_settings,
@@ -265,8 +257,6 @@ pub(in crate::controller) fn load_runtime_snapshot(
     let mut snapshot = load_snapshot(store)?;
     if active_source_needs_auth(store, &snapshot, secrets)? {
         snapshot.first_run = true;
-        snapshot.sync_status = "Connect once more to continue using this server.".to_string();
-        snapshot.last_error = None;
     }
     Ok(snapshot)
 }
@@ -328,42 +318,27 @@ fn bind_projection_refs(projection: &mut ActiveSourceProjection, metadata_settin
 }
 
 fn load_active_source_projection(
-    store: &StoreHandle,
+    store: &Store,
     saved: &SavedSource,
     metadata_settings: &AppSettings,
-) -> Result<ActiveSourceProjection, String> {
-    let source_is_persisted = store
-        .with_store(|store| store.saved_source(&saved.source.id))?
-        .is_some();
-    if source_is_persisted {
-        store.with_store(|store| store.repair_artwork_projections(&saved.source.id))?;
-        store.with_store(|store| store.ensure_collection_cover_refs(&saved.source.id))?;
-    }
-    let home_sections = store.with_store(|store| store.load_home_sections(&saved.source.id))?;
-    let prefetched_explore = store.with_store(|store| {
-        store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)
-    })?;
-    let album_page =
-        store.with_store(|store| store.load_albums(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT))?;
-    let track_page =
-        store.with_store(|store| store.load_tracks(&saved.source.id, 0, SNAPSHOT_TRACK_LIMIT))?;
-    let artist_page = store
-        .with_store(|store| store.load_artists(&saved.source.id, false, 0, SNAPSHOT_GRID_LIMIT))?;
-    let album_artist_page = store
-        .with_store(|store| store.load_artists(&saved.source.id, true, 0, SNAPSHOT_GRID_LIMIT))?;
-    let genre_page =
-        store.with_store(|store| store.load_genres(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT))?;
-    let playlist_page =
-        store.with_store(|store| store.load_playlists(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT))?;
+) -> StoreResult<ActiveSourceProjection> {
+    let home_sections = store.load_home_sections(&saved.source.id)?;
+    let prefetched_explore =
+        store.load_home_section_prefetch(&saved.source.id, HomeSectionKind::Explore)?;
+    let album_page = store.load_albums(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT)?;
+    let track_page = store.load_tracks(&saved.source.id, 0, SNAPSHOT_TRACK_LIMIT)?;
+    let artist_page = store.load_artists(&saved.source.id, false, 0, SNAPSHOT_GRID_LIMIT)?;
+    let album_artist_page = store.load_artists(&saved.source.id, true, 0, SNAPSHOT_GRID_LIMIT)?;
+    let genre_page = store.load_genres(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT)?;
+    let playlist_page = store.load_playlists(&saved.source.id, 0, SNAPSHOT_GRID_LIMIT)?;
     let playlist_ids = playlist_page
         .items
         .iter()
         .map(|playlist| playlist.id.clone())
         .collect::<Vec<_>>();
-    let playlist_entry_keys = store.with_store(|store| {
-        store.playlist_entry_keys_for_playlists(&saved.source.id, &playlist_ids)
-    })?;
-    let favorites = store.with_store(|store| store.load_favorite_tracks(&saved.source.id))?;
+    let playlist_entry_keys =
+        store.playlist_entry_keys_for_playlists(&saved.source.id, &playlist_ids)?;
+    let favorites = store.load_favorite_tracks(&saved.source.id)?;
     let mut projection = ActiveSourceProjection {
         cached_album_count: album_page.total,
         cached_track_count: track_page.total,
@@ -386,15 +361,27 @@ fn load_active_source_projection(
     scrub_projection_refs(saved, &mut projection, external_ref_policy);
     bind_projection_refs(&mut projection, metadata_settings);
     scrub_projection_refs(saved, &mut projection, external_ref_policy);
-    album_track_refs(store, saved, &mut projection.albums)?;
-    track_album_refs(store, saved, &mut projection.tracks, &projection.albums)?;
+    album_track_refs_from_store(store, saved, &mut projection.albums)?;
+    track_album_refs_from_store(
+        store,
+        saved,
+        metadata_settings,
+        &mut projection.tracks,
+        &projection.albums,
+    )?;
     for section in &mut projection.home_sections {
-        home_local_refs(store, saved, section)?;
+        home_local_refs_from_store(store, saved, metadata_settings, section)?;
     }
     if let Some(section) = &mut projection.prefetched_explore {
-        home_local_refs(store, saved, section)?;
+        home_local_refs_from_store(store, saved, metadata_settings, section)?;
     }
-    track_album_refs(store, saved, &mut projection.favorites, &projection.albums)?;
+    track_album_refs_from_store(
+        store,
+        saved,
+        metadata_settings,
+        &mut projection.favorites,
+        &projection.albums,
+    )?;
     Ok(projection)
 }
 
@@ -402,36 +389,62 @@ fn load_active_source_snapshot(
     store: &StoreHandle,
     source_settings: AppSettings,
     sources: Vec<SourceIdentity>,
-    source_local_access: Vec<SourceLocalAccessSnapshot>,
+    mut source_local_access: Vec<SourceLocalAccessSnapshot>,
     selected_source: LibrarySourceSelection,
     saved: SavedSource,
 ) -> Result<LibrarySnapshot, String> {
-    let (local_access, local_access_status) = if matches!(
-        configured_source_selection(&saved),
-        LibrarySourceSelection::Source(_)
-    ) && let Some(summary) = source_local_access
-        .iter()
+    let metadata_settings = load_settings_from_store(store);
+    let (
+        local_access,
+        local_access_status,
+        music_folders,
+        selected_music_folder_id,
+        sync_state,
+        projection,
+    ) = store.with_store_session(|store| {
+        store
+            .read_snapshot(|store| {
+                let local_access = store.source_local_access(&saved.source.id)?;
+                let local_access_status =
+                    local_access_status_from_store(store, local_access.as_ref())?;
+                Ok((
+                    local_access,
+                    local_access_status,
+                    store.list_music_folders(&saved.source.id)?,
+                    store.selected_music_folder_id(&saved.source.id)?,
+                    store.sync_state(&saved.source.id).ok(),
+                    load_active_source_projection(store, &saved, &metadata_settings)?,
+                ))
+            })
+            .map_err(|error| error.to_string())
+    })?;
+    if let Some(summary) = source_local_access
+        .iter_mut()
         .find(|summary| summary.source_id == saved.source.id)
     {
-        (summary.access.clone(), summary.status.clone())
-    } else {
-        let local_access = store.with_store(|store| store.source_local_access(&saved.source.id))?;
-        let local_access_status = local_access_status_for_server(store, local_access.as_ref())?;
-        (local_access, local_access_status)
-    };
-    let music_folders = store.with_store(|store| store.list_music_folders(&saved.source.id))?;
-    let selected_music_folder_id =
-        store.with_store(|store| store.selected_music_folder_id(&saved.source.id))?;
-    let metadata_settings = load_settings_from_store(store);
-    let sync_state = store
-        .with_store(|store| store.sync_state(&saved.source.id))
-        .ok();
-    let projection = load_active_source_projection(store, &saved, &metadata_settings)?;
-    let status = sync_state
-        .as_ref()
-        .map(sync_status_text)
-        .unwrap_or_else(|| "Cached library ready".to_string());
-    let last_error = sync_state.and_then(|state| state.last_error);
+        summary.access = local_access.clone();
+        summary.status = local_access_status.clone();
+        summary.cached_album_count = projection.cached_album_count;
+        summary.cached_track_count = projection.cached_track_count;
+        summary.selected_music_folder_name =
+            selected_music_folder_id.as_ref().and_then(|selected| {
+                music_folders
+                    .iter()
+                    .find(|folder| &folder.id == selected)
+                    .map(|folder| folder.name.clone())
+            });
+    }
+    let cache = sync_state.map_or(LibraryCacheState::NoCache { revision: 0 }, |state| {
+        if state.last_all_completed_at.is_some() {
+            LibraryCacheState::Committed {
+                revision: state.cache_revision,
+            }
+        } else {
+            LibraryCacheState::NoCache {
+                revision: state.cache_revision,
+            }
+        }
+    });
 
     Ok(LibrarySnapshot {
         source: Some(saved.source),
@@ -444,8 +457,7 @@ fn load_active_source_snapshot(
         music_folders,
         selected_music_folder_id,
         first_run: false,
-        sync_status: status,
-        last_error,
+        cache,
         cached_album_count: projection.cached_album_count,
         cached_track_count: projection.cached_track_count,
         cached_artist_count: projection.cached_artist_count,

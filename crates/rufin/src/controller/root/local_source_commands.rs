@@ -8,14 +8,13 @@ impl AppController {
         self.add_library_folders(vec![root_path]);
     }
     pub(crate) fn add_library_folders(&self, root_paths: Vec<PathBuf>) {
+        let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
-        let sync_context = self.sync_context();
-        let store = sync_context.store.clone();
-        let events = sync_context.events.clone();
-        let secrets = Arc::clone(&sync_context.secrets);
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
-        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -26,7 +25,10 @@ impl AppController {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                        source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
+                        error,
+                    });
                 }
             };
             if root_paths.is_empty() {
@@ -74,7 +76,10 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                    source_id: Some(saved.source.id.clone()),
+                    error,
+                });
             };
             let persistence = match SourcePersistenceSnapshot::capture(&store, &saved.source.id) {
                 Ok(persistence) => persistence,
@@ -101,20 +106,7 @@ impl AppController {
                     return;
                 }
             };
-            if let Some(previous_active_id) = persistence.previous_active_id.as_ref()
-                && let Err(error) =
-                    cancel_sync_if_running(&sync_context.sync_in_flight, previous_active_id)
-            {
-                emit_error(error);
-                return;
-            }
-            if persistence.previous_active_id.as_ref() != Some(&saved.source.id)
-                && let Err(error) =
-                    cancel_sync_if_running(&sync_context.sync_in_flight, &saved.source.id)
-            {
-                emit_error(error);
-                return;
-            }
+            controller.forget_source_sync(&saved.source.id);
             let mut active_guard = match active_source.write() {
                 Ok(active) => active,
                 Err(_) => {
@@ -148,24 +140,18 @@ impl AppController {
                 return;
             }
             emit_snapshot(&store, &events);
-            start_sync_thread_with_snapshots(
-                sync_context.clone(),
-                saved,
-                SyncPresentation::UserVisible,
-            );
-            refresh_source_freshness_watcher(sync_context, source_freshness_watcher);
+            controller.refresh_source_freshness();
             drop(transition_commit);
         });
     }
     pub fn remove_local_library_folder(&self, path: String) {
+        let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
-        let sync_context = self.sync_context();
-        let store = sync_context.store.clone();
-        let events = sync_context.events.clone();
-        let secrets = Arc::clone(&sync_context.secrets);
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
-        let source_freshness_watcher = Arc::clone(&self.source_freshness_watcher);
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let next_preload = Arc::clone(&self.next_preload);
@@ -176,7 +162,10 @@ impl AppController {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                        source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
+                        error,
+                    });
                 }
             };
             let transition_commit = match source_transitions.commit(transition_generation) {
@@ -188,7 +177,10 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                    source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
+                    error,
+                });
             };
             let mut sources = store.load_settings().sources;
             let before = sources.local_folders.len();
@@ -210,12 +202,7 @@ impl AppController {
                     return;
                 }
             };
-            if let Err(error) =
-                cancel_sync_if_running(&sync_context.sync_in_flight, &saved.source.id)
-            {
-                emit_error(error);
-                return;
-            }
+            controller.forget_source_sync(&saved.source.id);
             let selected_local = matches!(sources.selected, Some(LibrarySourceSelection::Local));
             if selected_local && sources.local_folders.is_empty() {
                 sources.selected = None;
@@ -314,18 +301,11 @@ impl AppController {
                 }
             }
             emit_runtime_snapshot(&store, &secrets, &events);
-            if !no_local_folders {
-                if selected_local {
-                    start_sync_thread_with_snapshots(
-                        sync_context.clone(),
-                        saved,
-                        SyncPresentation::Silent,
-                    );
-                } else {
-                    start_silent_sync_thread(sync_context.clone(), saved);
-                }
+            if selected_local {
+                controller.refresh_source_freshness();
+            } else if !no_local_folders {
+                controller.request_inactive_source_sync(saved.source.id);
             }
-            refresh_source_freshness_watcher(sync_context, source_freshness_watcher);
             drop(transition_commit);
         });
     }

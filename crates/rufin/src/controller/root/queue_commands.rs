@@ -1192,23 +1192,20 @@ mod tests {
                 store.save_source(&saved)?;
                 store.set_active_source(&saved.source.id)?;
                 let generation = store.begin_sync(&saved.source.id)?;
-                store.upsert_tracks(
+                commit_cached_library(
+                    store,
                     &saved.source.id,
-                    &[repeated_track.clone(), other_track.clone()],
                     generation,
+                    CachedLibraryObservation {
+                        tracks: vec![repeated_track.clone(), other_track.clone()],
+                        playlists: vec![PlaylistDetail {
+                            playlist: playlist.clone(),
+                            tracks: entries.iter().map(|entry| entry.track.clone()).collect(),
+                            entries: entries.clone(),
+                        }],
+                        ..CachedLibraryObservation::default()
+                    },
                 )?;
-                store.upsert_playlists(
-                    &saved.source.id,
-                    std::slice::from_ref(&playlist),
-                    generation,
-                )?;
-                store.upsert_playlist_entries(
-                    &saved.source.id,
-                    &playlist.id,
-                    &entries,
-                    generation,
-                )?;
-                store.complete_sync(&saved.source.id, generation)?;
                 Ok(())
             })
             .expect("seed store");

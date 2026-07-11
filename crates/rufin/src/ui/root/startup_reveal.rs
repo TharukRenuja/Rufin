@@ -160,27 +160,32 @@ impl Shell {
         let spinner = gtk::Spinner::new();
         spinner.start();
         wrapper.append(&spinner);
-        let status = if self.state.source_switch_preparing.get() {
-            Some(tr("Switching library..."))
-        } else {
-            startup_loading_status_label(self.state.library.borrow().sync_status.as_str())
-        };
+        let status = self.library_loading_status();
         if let Some(status) = status {
-            let (title, detail) = startup_loading_status_parts(&status);
-            let label = gtk::Label::new(Some(&title));
+            let label = gtk::Label::new(Some(&status));
             label.add_css_class("dim-label");
             label.add_css_class("startup-loading-status");
             label.set_wrap(true);
             wrapper.append(&label);
-            if let Some(detail) = detail {
-                let detail_label = gtk::Label::new(Some(&detail));
-                detail_label.add_css_class("dim-label");
-                detail_label.add_css_class("startup-loading-status-detail");
-                detail_label.set_wrap(true);
-                wrapper.append(&detail_label);
-            }
         }
         wrapper.upcast()
+    }
+
+    fn library_loading_status(&self) -> Option<String> {
+        let load = self.state.library_load.borrow();
+        match &*load {
+            LibraryLoad::Switching { .. } => Some(tr("Switching library...")),
+            LibraryLoad::Connecting { stage, .. } => Some(stage.clone()),
+            LibraryLoad::Failed { message, .. } => Some(message.clone()),
+            LibraryLoad::WaitingForFirstCommit { source_id } => self
+                .state
+                .source_syncs
+                .borrow()
+                .get(source_id)
+                .map(source_sync_progress_text)
+                .or_else(|| Some(library_preparing_status())),
+            LibraryLoad::Ready => None,
+        }
     }
     pub(in crate::ui) fn schedule_startup_route_reveal(self: &Rc<Self>) {
         if self.state.startup_route_revealed.get() || self.login_screen_active() {
@@ -323,17 +328,11 @@ impl Shell {
         self.finish_first_run_app_reveal();
     }
     pub(in crate::ui) fn finish_first_run_app_reveal(self: &Rc<Self>) {
-        if self.state.first_run_connection_pending.get() {
-            self.state.library.borrow_mut().sync_status = tr(LIBRARY_SYNC_COMPLETE_STATUS);
-            self.render_current_route();
-        }
-
         self.finish_first_run_cover_prime_gate();
 
         let shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
-            shell.state.first_run_connection_pending.set(false);
-            shell.state.first_run_connection_ready.set(false);
+            *shell.state.library_load.borrow_mut() = LibraryLoad::Ready;
             shell.log_layout_snapshot("first_run_reveal_before_stack_switch");
             shell.update_layout();
             shell.window.queue_resize();
@@ -481,49 +480,4 @@ impl Shell {
             home_showcase_seed: self.state.home_showcase_seed.get(),
         }
     }
-}
-
-pub(in crate::ui) fn startup_loading_status_label(sync_status: &str) -> Option<String> {
-    let status = sync_status.trim();
-    if status.is_empty()
-        || status == LIBRARY_SYNC_COMPLETE_STATUS
-        || status == "Cached library ready"
-        || status.starts_with("Library cache ready for ")
-        || status == tr(LIBRARY_SYNC_COMPLETE_STATUS)
-    {
-        None
-    } else {
-        Some(status.to_string())
-    }
-}
-
-pub(in crate::ui) fn startup_loading_status_parts(status: &str) -> (String, Option<String>) {
-    const DETAIL_MARKER: &str = " This may take some time. ";
-    let Some((title, detail)) = status.split_once(DETAIL_MARKER) else {
-        return (status.to_string(), None);
-    };
-    (
-        format!("{title} This may take some time."),
-        (!detail.trim().is_empty()).then(|| detail.trim().to_string()),
-    )
-}
-
-pub(in crate::ui) fn connection_progress_status_label(sync_status: &str) -> Option<String> {
-    let Some(status) = startup_loading_status_label(sync_status) else {
-        return Some(library_preparing_status());
-    };
-    let (_title, detail) = startup_loading_status_parts(&status);
-    Some(detail.unwrap_or_else(|| {
-        if connection_progress_status_is_cache_headline(&status) {
-            library_preparing_status()
-        } else {
-            status
-        }
-    }))
-}
-
-fn connection_progress_status_is_cache_headline(status: &str) -> bool {
-    status == "Caching library..."
-        || status == "Caching local library..."
-        || status == tr("Caching local library...")
 }

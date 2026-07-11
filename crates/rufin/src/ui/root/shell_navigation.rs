@@ -267,9 +267,6 @@ pub(in crate::ui) fn detail_route_wrapper(spacing: i32) -> gtk::Box {
     wrapper.set_vexpand(true);
     wrapper
 }
-pub(in crate::ui) fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
-    first_run
-}
 pub(in crate::ui) fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)

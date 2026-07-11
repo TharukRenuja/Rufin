@@ -25,12 +25,5 @@ pub(in crate::controller) fn prepare_source_tracks(
     settings: &AppSettings,
     tracks: &mut [Track],
 ) -> Result<(), String> {
-    prepare_cached_tracks(store, saved, settings, tracks)?;
-    if !tracks.is_empty() {
-        store.with_store(|store| {
-            let generation = store.sync_state(&saved.source.id)?.generation;
-            store.upsert_tracks(&saved.source.id, tracks, generation)
-        })?;
-    }
-    Ok(())
+    prepare_cached_tracks(store, saved, settings, tracks)
 }

@@ -9,18 +9,15 @@ use domain::{
 };
 use library::{SavedSource, SourceLocalAccess, Store, StoreResult};
 use source::{
-    FavoriteMutator, FolderBrowser, GeneratedTrackProvider, ImageProvider, LyricsProvider,
-    MusicFolderProvider, MusicSource, PlaybackReporter, PlaylistCreator, PlaylistDeleter,
+    FavoriteMutator, FolderBrowser, GeneratedTrackProvider, ImageProvider, LibraryChangeResolver,
+    LyricsProvider, MusicSource, PlaybackReporter, PlaylistCreator, PlaylistDeleter,
     PlaylistEntryMover, PlaylistEntryRemover, PlaylistReader, PlaylistRenamer, PlaylistTrackAdder,
-    RandomTrackProvider, RecentAlbumProvider, RecentTrackProvider, StreamResolver, TrackChangeFeed,
+    RandomTrackProvider, StreamResolver,
 };
 use tokio::runtime::Runtime;
 use tracing::info;
 
-use crate::controller::{
-    CancellationToken, SourceSyncReadiness, StoreHandle, SyncContext, SyncJobOutcome,
-    SyncProgressReporter,
-};
+use crate::controller::StoreHandle;
 
 pub(crate) type LibraryCore = Arc<dyn MusicSource + Send + Sync>;
 pub(crate) type Streams = Arc<dyn StreamResolver + Send + Sync>;
@@ -35,13 +32,10 @@ pub(crate) type PlaylistEntryRemovals = Arc<dyn PlaylistEntryRemover + Send + Sy
 pub(crate) type PlaylistEntryMoves = Arc<dyn PlaylistEntryMover + Send + Sync>;
 pub(crate) type RandomTracks = Arc<dyn RandomTrackProvider + Send + Sync>;
 pub(crate) type GeneratedTracks = Arc<dyn GeneratedTrackProvider + Send + Sync>;
-pub(crate) type MusicFolders = Arc<dyn MusicFolderProvider + Send + Sync>;
 pub(crate) type Folders = Arc<dyn FolderBrowser + Send + Sync>;
 pub(crate) type NativeLyrics = Arc<dyn LyricsProvider + Send + Sync>;
 pub(crate) type NativePlaybackReporting = Arc<dyn PlaybackReporter + Send + Sync>;
-pub(crate) type RecentTracks = Arc<dyn RecentTrackProvider + Send + Sync>;
-pub(crate) type RecentAlbums = Arc<dyn RecentAlbumProvider + Send + Sync>;
-pub(crate) type TrackChanges = Arc<dyn TrackChangeFeed + Send + Sync>;
+pub(crate) type LibraryChangeResolverHandle = Arc<dyn LibraryChangeResolver + Send + Sync>;
 pub(crate) type GeneratedTrackExecutor = Arc<
     dyn Fn(
             &StoreHandle,
@@ -54,28 +48,20 @@ pub(crate) type GeneratedTrackExecutor = Arc<
         + Send
         + Sync,
 >;
-pub(crate) type FullIngest = Arc<
+pub(crate) type LibrarySyncOperation = Arc<
     dyn Fn(
-            &SyncContext,
+            &StoreHandle,
+            &Runtime,
+            &library_sync::ReconcileScope,
             i64,
-            SyncProgressReporter,
-            &CancellationToken,
-        ) -> Result<SyncJobOutcome, String>
+            &mut dyn FnMut(library_sync::Progress),
+            &library_sync::CancellationToken,
+        ) -> library_sync::SyncResult<library_sync::SyncOutcome>
         + Send
         + Sync,
 >;
 pub(crate) type HomeSectionLoader = Arc<
     dyn Fn(&StoreHandle, &Runtime, HomeSectionKind) -> Result<HomeSection, String> + Send + Sync,
->;
-pub(crate) type ReadinessEvaluator =
-    Arc<dyn Fn(&StoreHandle, bool) -> Result<SourceSyncReadiness, String> + Send + Sync>;
-pub(crate) type InitialCoverCacheRequirement = Arc<dyn Fn(&StoreHandle) -> bool + Send + Sync>;
-pub(crate) type CachedReconciliation =
-    Arc<dyn Fn(SyncContext, SavedSource, Arc<ActiveSource>) + Send + Sync>;
-pub(crate) type FreshnessWatcherFactory = Arc<
-    dyn Fn(SyncContext, SavedSource, Arc<ActiveSource>) -> Option<Box<dyn FreshnessWatcher>>
-        + Send
-        + Sync,
 >;
 pub(crate) type AudioFileLookup =
     Arc<dyn Fn(&Store, &SourceId, &TrackId) -> StoreResult<Option<PathBuf>> + Send + Sync>;
@@ -221,24 +207,11 @@ pub(crate) struct AutoDjCandidateOperation {
     pub(crate) fallback: AutoDjFallbackExecutor,
 }
 
-#[derive(Clone)]
-pub(crate) struct FreshnessOperations {
-    pub(crate) available: Arc<dyn Fn() -> bool + Send + Sync>,
-    pub(crate) reconcile_cached: CachedReconciliation,
-    pub(crate) start_watcher: FreshnessWatcherFactory,
-}
-
-pub(crate) trait FreshnessWatcher: Send {
-    fn active(&self) -> &Arc<ActiveSource>;
-}
-
 /// Everything the selected source can do, including which inputs each action accepts
 pub(crate) struct ActiveSource {
     pub(crate) identity: SourceIdentity,
-    pub(crate) ingest: FullIngest,
-    pub(crate) readiness: ReadinessEvaluator,
-    pub(crate) initial_cover_cache_required: InitialCoverCacheRequirement,
-    pub(crate) freshness: Option<FreshnessOperations>,
+    pub(crate) sync: LibrarySyncOperation,
+    pub(crate) freshness: Option<library_sync::Freshness>,
     pub(crate) home_section: HomeSectionLoader,
     pub(crate) playback_file: AudioFileLookup,
     pub(crate) sidecar_file: AudioFileLookup,
@@ -281,13 +254,6 @@ pub(crate) fn current_active_source(slot: &ActiveSourceSlot) -> Option<Arc<Activ
     slot.read().ok().and_then(|active| active.as_ref().cloned())
 }
 
-pub(crate) fn active_source_instance_is_current(
-    slot: &ActiveSourceSlot,
-    expected: &Arc<ActiveSource>,
-) -> bool {
-    current_active_source(slot).is_some_and(|active| Arc::ptr_eq(&active, expected))
-}
-
 pub(crate) fn with_active_source_instance<T>(
     slot: &ActiveSourceSlot,
     expected: &Arc<ActiveSource>,
@@ -300,7 +266,7 @@ pub(crate) fn with_active_source_instance<T>(
         .as_ref()
         .is_some_and(|active| Arc::ptr_eq(active, expected))
     {
-        return Err("The selected source changed during reconciliation.".to_string());
+        return Err("The selected source changed during sync.".to_string());
     }
     operation()
 }

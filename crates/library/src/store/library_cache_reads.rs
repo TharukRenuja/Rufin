@@ -4,6 +4,9 @@ use super::*;
 
 impl Store {
     pub fn load_home_sections(&self, source_id: &SourceId) -> StoreResult<Vec<HomeSection>> {
+        self.read_snapshot(|store| store.load_home_sections_inner(source_id))
+    }
+    fn load_home_sections_inner(&self, source_id: &SourceId) -> StoreResult<Vec<HomeSection>> {
         let sections = home_section_kinds()
             .into_iter()
             .map(|kind| {
@@ -19,7 +22,35 @@ impl Store {
             .filter(|section| !section.albums.is_empty() || !section.tracks.is_empty())
             .collect())
     }
+    pub(super) fn load_home_membership_from(
+        &self,
+        table: &str,
+        source_id: &SourceId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Vec<(String, i64, String)>> {
+        let sql = format!(
+            "
+            SELECT item_type, position, item_id
+            FROM {table}
+            WHERE source_id = ?1
+              AND section_kind = ?2
+            ORDER BY item_type, position, item_id
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        collect_rows(statement.query_map(
+            params![source_id.as_str(), home_section_kind_key(kind)],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?)
+    }
     pub fn load_home_section_prefetch(
+        &self,
+        source_id: &SourceId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Option<HomeSection>> {
+        self.read_snapshot(|store| store.load_home_section_prefetch_inner(source_id, kind))
+    }
+    fn load_home_section_prefetch_inner(
         &self,
         source_id: &SourceId,
         kind: HomeSectionKind,
@@ -162,6 +193,14 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
+        self.read_snapshot(|store| store.load_albums_inner(source_id, offset, limit))
+    }
+    fn load_albums_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
             self.count_albums_in_music_folder(source_id, folder_id)?
@@ -228,6 +267,13 @@ impl Store {
         source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<Vec<Album>> {
+        self.read_snapshot(|store| store.load_albums_by_ids_inner(source_id, album_ids))
+    }
+    fn load_albums_by_ids_inner(
+        &self,
+        source_id: &SourceId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<Vec<Album>> {
         let mut unique_ids = Vec::<AlbumId>::new();
         for album_id in album_ids {
             if !unique_ids.iter().any(|existing| existing == album_id) {
@@ -272,6 +318,16 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<Vec<Album>> {
+        self.read_snapshot(|store| {
+            store.load_albums_without_image_ref_inner(source_id, offset, limit)
+        })
+    }
+    fn load_albums_without_image_ref_inner(
+        &self,
+        source_id: &SourceId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Vec<Album>> {
         let sql = format!(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year, a.release_date,
@@ -301,6 +357,17 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
+        self.read_snapshot(|store| {
+            store.load_albums_matching_inner(source_id, query, offset, limit)
+        })
+    }
+    fn load_albums_matching_inner(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
         let Some(pattern) = like_pattern(query) else {
             return self.load_albums(source_id, offset, limit);
         };
@@ -313,6 +380,13 @@ impl Store {
         self.load_albums_like(source_id, &pattern, offset, limit)
     }
     pub fn load_album_detail(
+        &self,
+        source_id: &SourceId,
+        album_id: &AlbumId,
+    ) -> StoreResult<Option<(Album, Vec<Track>)>> {
+        self.read_snapshot(|store| store.load_album_detail_inner(source_id, album_id))
+    }
+    fn load_album_detail_inner(
         &self,
         source_id: &SourceId,
         album_id: &AlbumId,
@@ -398,6 +472,13 @@ impl Store {
         source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<HashMap<AlbumId, Vec<Track>>> {
+        self.read_snapshot(|store| store.load_tracks_for_albums_inner(source_id, album_ids))
+    }
+    fn load_tracks_for_albums_inner(
+        &self,
+        source_id: &SourceId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<HashMap<AlbumId, Vec<Track>>> {
         let mut by_album = HashMap::<AlbumId, Vec<Track>>::new();
         if album_ids.is_empty() {
             return Ok(by_album);
@@ -436,6 +517,13 @@ impl Store {
         Ok(by_album)
     }
     pub fn load_artist_detail(
+        &self,
+        source_id: &SourceId,
+        artist_id: &ArtistId,
+    ) -> StoreResult<Option<CachedArtistDetail>> {
+        self.read_snapshot(|store| store.load_artist_detail_inner(source_id, artist_id))
+    }
+    fn load_artist_detail_inner(
         &self,
         source_id: &SourceId,
         artist_id: &ArtistId,
@@ -633,6 +721,18 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
+        self.read_snapshot(|store| {
+            store.load_tracks_sorted_inner(source_id, sort_key, descending, offset, limit)
+        })
+    }
+    fn load_tracks_sorted_inner(
+        &self,
+        source_id: &SourceId,
+        sort_key: LibraryField,
+        descending: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
             self.count_tracks_in_music_folder(source_id, folder_id)?
@@ -695,6 +795,13 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_track(
+        &self,
+        source_id: &SourceId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<Track>> {
+        self.read_snapshot(|store| store.load_track_inner(source_id, track_id))
+    }
+    fn load_track_inner(
         &self,
         source_id: &SourceId,
         track_id: &TrackId,
@@ -825,6 +932,17 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
+        self.read_snapshot(|store| {
+            store.load_tracks_matching_inner(source_id, query, offset, limit)
+        })
+    }
+    fn load_tracks_matching_inner(
+        &self,
+        source_id: &SourceId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
         let Some(pattern) = like_pattern(query) else {
             return self.load_tracks(source_id, offset, limit);
         };
@@ -837,6 +955,15 @@ impl Store {
         self.load_tracks_like(source_id, &pattern, offset, limit)
     }
     pub fn load_artists(
+        &self,
+        source_id: &SourceId,
+        album_artist: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Artist>> {
+        self.read_snapshot(|store| store.load_artists_inner(source_id, album_artist, offset, limit))
+    }
+    fn load_artists_inner(
         &self,
         source_id: &SourceId,
         album_artist: bool,
@@ -904,6 +1031,18 @@ impl Store {
         )?)
     }
     pub fn load_artists_matching(
+        &self,
+        source_id: &SourceId,
+        album_artist: bool,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Artist>> {
+        self.read_snapshot(|store| {
+            store.load_artists_matching_inner(source_id, album_artist, query, offset, limit)
+        })
+    }
+    fn load_artists_matching_inner(
         &self,
         source_id: &SourceId,
         album_artist: bool,

@@ -12,13 +12,14 @@ pub(crate) const fn msgid(message: &'static str) -> &'static str {
 pub use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
     HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
-    LocalCueTrackSource, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
-    LocalManifestEntry, LocalManifestScan, LocalScanCounters, Mood, MoodId, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, SmartPlaylist, SmartPlaylistBuiltin,
+    LocalCueDependency, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
+    LocalManifestCoverKind, LocalManifestEntry, LocalManifestScan, LocalScanCounters, Mood, MoodId,
+    MusicFolder, MusicFolderId, Playlist, PlaylistId, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
     SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
-    SourceIdentity, Track, TrackId, format_duration, normalize_release_types,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceEntityKind,
+    SourceId, SourceIdentity, SourceObjectMapping, Track, TrackId, format_duration,
+    normalize_release_types,
 };
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,

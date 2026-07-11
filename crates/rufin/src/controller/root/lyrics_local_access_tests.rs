@@ -1,5 +1,6 @@
 use super::*;
-use domain::LocalManifestEntry;
+use domain::{LocalCueTrackSource, LocalFileFacts, LocalManifestEntry};
+use source::MusicSource;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
@@ -688,31 +689,55 @@ pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
         .with_store(|store| {
             store.save_source(&saved)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            store.upsert_tracks(&saved.source.id, &[track.clone()], generation)?;
-            let parent_id = store.upsert_local_file_source_object(
+            let manifest_path = dir.join("album.cue#track=01");
+            let manifest = LocalManifestEntry {
+                facts: LocalFileFacts {
+                    path: manifest_path,
+                    root_path: dir.clone(),
+                    relative_path: "album.cue#track=01".to_string(),
+                    file_size: 0,
+                    mtime_seconds: 0,
+                    mtime_nanos: 0,
+                    inode: None,
+                    device: None,
+                },
+                track: track.clone(),
+                album_artist: track.artist.clone(),
+                musicbrainz_album_id: None,
+                musicbrainz_release_group_id: None,
+                cover: None,
+                metadata_hash: "metadata".to_string(),
+                search_hash: "search".to_string(),
+            };
+            let base_cache_revision = store.source_cache_revision(&saved.source.id)?;
+            store.commit_local_library_delta(
                 &saved.source.id,
-                &library::LocalFileSourceObject {
-                    source_path: audio.to_string_lossy().into_owned(),
-                    root_path: dir.to_string_lossy().into_owned(),
-                    relative_path: "album.flac".to_string(),
-                    sync_generation: 1,
+                generation,
+                base_cache_revision,
+                true,
+                library::LocalLibraryDelta {
+                    tracks: vec![track.clone()],
+                    manifest: library::LocalManifestDelta {
+                        upserted_entries: vec![manifest],
+                        ..library::LocalManifestDelta::default()
+                    },
+                    cue_track_sources: vec![LocalCueTrackSource {
+                        source_object_id: "local:cue:track:one".to_string(),
+                        track_id: track_id.clone(),
+                        source_path: audio.to_string_lossy().into_owned(),
+                        root_path: dir.to_string_lossy().into_owned(),
+                        relative_path: "album.flac".to_string(),
+                        cue_path: dir.join("album.cue").to_string_lossy().into_owned(),
+                        cue_revision: "cue-revision-one".to_string(),
+                        cue_track_index: 1,
+                        segment_start_ms: 0,
+                        segment_end_ms: 30_000,
+                        sync_generation: generation,
+                    }],
+                    ..library::LocalLibraryDelta::default()
                 },
             )?;
-            store.upsert_cue_track_source_object(
-                &saved.source.id,
-                &library::CueTrackSourceObject {
-                    source_object_id: "local:cue:track:one".to_string(),
-                    track_id: track_id.clone(),
-                    source_path: audio.to_string_lossy().into_owned(),
-                    parent_source_object_id: parent_id,
-                    cue_path: dir.join("album.cue").to_string_lossy().into_owned(),
-                    cue_revision: "cue-revision-one".to_string(),
-                    cue_track_index: 1,
-                    segment_start_ms: 0,
-                    segment_end_ms: 30_000,
-                    sync_generation: 1,
-                },
-            )
+            Ok(())
         })
         .expect("cue source");
 
@@ -1087,15 +1112,21 @@ pub(in crate::controller) fn lyrics_match_path() {
     let track = restored_track();
     store
         .with_store(|store| {
-            store.upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)?;
-            store.replace_track_local_matches(
+            commit_cached_library(
+                store,
                 &saved.source.id,
-                &[(
-                    track.id.clone(),
-                    audio.to_string_lossy().into_owned(),
-                    "metadata".to_string(),
-                )],
+                generation,
+                CachedLibraryObservation {
+                    tracks: vec![track.clone()],
+                    local_matches: vec![(
+                        track.id.clone(),
+                        audio.to_string_lossy().into_owned(),
+                        "metadata".to_string(),
+                    )],
+                    ..CachedLibraryObservation::default()
+                },
             )
+            .map(|_| ())
         })
         .expect("seed track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
@@ -1150,69 +1181,6 @@ pub(in crate::controller) fn lyrics_use_prefix() {
     let _cleanup = fs::remove_dir_all(local_root);
 }
 #[test]
-pub(in crate::controller) fn access_match_use() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let root = self::unique_test_dir("local-access-manifest");
-    let audio = root.join("Album/Filename Fallback.mp3");
-    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
-    fs::write(&audio, []).expect("audio");
-    let generation = begin_sync_with_access(
-        &store,
-        &saved,
-        &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
-            root_path: root.to_string_lossy().into_owned(),
-            path_replace_from: None,
-            path_replace_to: Some(root.to_string_lossy().into_owned()),
-        },
-    );
-    let mut remote = restored_track();
-    remote.title = "Manifest Title".to_string();
-    remote.album = "Manifest Album".to_string();
-    remote.artist = "Manifest Artist".to_string();
-    remote.duration_seconds = 0;
-    let mut local = remote.clone();
-    local.id = TrackId::new("local:track:manifest");
-    local.album_id = AlbumId::new("local:album:manifest");
-    local.local_path = Some(audio.to_string_lossy().into_owned());
-    let manifest = LocalManifestEntry {
-        facts: local_manifest_file_facts(&root, &audio),
-        track: local,
-        album_artist: "Manifest Artist".to_string(),
-        musicbrainz_album_id: None,
-        musicbrainz_release_group_id: None,
-        cover: None,
-        metadata_hash: "metadata".to_string(),
-        search_hash: "search".to_string(),
-    };
-    store
-        .with_store(|store| {
-            store.upsert_tracks(&saved.source.id, &[remote.clone()], generation)?;
-            store.replace_local_manifest(&saved.source.id, generation, &[manifest])
-        })
-        .expect("seed tracks and manifest");
-    let runtime = Runtime::new().expect("runtime");
-
-    let count = runtime
-        .block_on(super::refresh_local_track_matches(
-            &store,
-            &saved.source.id,
-            generation,
-            None,
-        ))
-        .expect("refresh local matches");
-
-    assert_eq!(count, 1);
-    assert_eq!(
-        store
-            .with_store(|store| store.track_local_match_path(&saved.source.id, &remote.id))
-            .expect("match path"),
-        Some(audio.to_string_lossy().into_owned())
-    );
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
 pub(in crate::controller) fn lyrics_local_access_status() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_source();
@@ -1252,19 +1220,21 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     unmatched.local_path = Some("/server/music/Album/Missing.flac".to_string());
     store
         .with_store(|store| {
-            store.upsert_tracks(
+            commit_cached_library(
+                store,
                 &saved.source.id,
-                &[direct, prefix, metadata.clone(), unmatched],
                 generation,
-            )?;
-            store.replace_track_local_matches(
-                &saved.source.id,
-                &[(
-                    metadata.id.clone(),
-                    metadata_audio.to_string_lossy().into_owned(),
-                    "metadata".to_string(),
-                )],
+                CachedLibraryObservation {
+                    tracks: vec![direct, prefix, metadata.clone(), unmatched],
+                    local_matches: vec![(
+                        metadata.id.clone(),
+                        metadata_audio.to_string_lossy().into_owned(),
+                        "metadata".to_string(),
+                    )],
+                    ..CachedLibraryObservation::default()
+                },
             )
+            .map(|_| ())
         })
         .expect("seed tracks");
     let snapshot = super::load_snapshot(&store).expect("load snapshot");
@@ -1275,34 +1245,6 @@ pub(in crate::controller) fn lyrics_local_access_status() {
     assert_eq!(snapshot.local_access_status.unmatched_count, 0);
     assert!(snapshot.local_access_status.sample_source_path.is_some());
     let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn lyrics_match_duration() {
-    let album = AlbumId::fake(1);
-    let mut remote = restored_track();
-    remote.album_id = album.clone();
-    remote.title = "First Motion".to_string();
-    remote.album = "Blue Rooms".to_string();
-    remote.artist = "Astral Kin".to_string();
-    remote.duration_seconds = 210;
-    remote.disc_number = 1;
-    remote.track_number = 7;
-    let mut local = remote.clone();
-    local.id = TrackId::new("local:track:one");
-    local.local_path = Some("/home/me/Music/Blue Rooms/07 First Motion.flac".to_string());
-    local.duration_seconds = 212;
-    let matches = super::conservative_local_matches(&[remote.clone()], &[local.clone()]);
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0, remote.id);
-    assert_eq!(
-        matches[0].1,
-        "/home/me/Music/Blue Rooms/07 First Motion.flac"
-    );
-    let local_one = local.clone();
-    let mut duplicate = local;
-    duplicate.id = TrackId::new("local:track:two");
-    duplicate.local_path = Some("/home/me/Music/Other/07 First Motion.flac".to_string());
-    assert!(super::conservative_local_matches(&[remote], &[local_one, duplicate]).is_empty());
 }
 #[test]
 pub(in crate::controller) fn lyrics_include_access() {

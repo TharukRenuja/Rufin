@@ -1,21 +1,20 @@
 use super::identity::{
-    delete_track_entity_rows, delete_track_entity_rows_not_in_temp,
-    ensure_local_file_source_parent, local_file_source_object_id, source_object_from_row,
-    upsert_source_object_on_connection, upsert_track_entity_data_on_connection,
+    delete_local_track_entity_rows, delete_source_track_entity_rows, local_file_source_object_id,
+    source_object_from_row, upsert_source_object_on_connection,
 };
-use super::sources::{
-    COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_origin_for_source_ref,
-    image_ref_from_row, image_ref_parts, u32_from_i64,
-};
+use super::sources::{COLLECTION_COVER_GENRE, collect_rows, image_ref_from_row, u32_from_i64};
 use super::*;
 
 #[derive(Clone, Debug, Default)]
+pub struct LocalManifestDelta {
+    pub upserted_entries: Vec<LocalManifestEntry>,
+    pub deleted_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct LocalLibraryDelta {
-    pub changed_tracks: Vec<Track>,
-    pub metadata_tracks: Vec<Track>,
-    pub artwork_tracks: Vec<Track>,
+    pub tracks: Vec<Track>,
     pub deleted_track_ids: Vec<TrackId>,
-    pub current_track_ids: Vec<TrackId>,
     pub current_album_ids: Vec<AlbumId>,
     pub current_artist_ids: Vec<ArtistId>,
     pub current_album_artist_ids: Vec<ArtistId>,
@@ -25,32 +24,32 @@ pub struct LocalLibraryDelta {
     pub dirty_album_artists: Vec<Artist>,
     pub dirty_genres: Vec<Genre>,
     pub home_sections: Vec<HomeSection>,
-    pub manifest_entries: Vec<LocalManifestEntry>,
+    pub manifest: LocalManifestDelta,
     pub cue_track_sources: Vec<LocalCueTrackSource>,
+    pub cue_dependencies: Vec<LocalCueDependency>,
+}
+
+pub(super) struct TrackDeletion {
+    pub(super) playlist_ids: Vec<PlaylistId>,
+    pub(super) home_changed: bool,
+    pub(super) folders_changed: bool,
+}
+
+pub(super) enum TrackEntitySource {
+    Local,
+    Source,
 }
 
 impl Store {
-    pub fn commit_local_access_scan(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-        matches: &[(TrackId, String, String)],
-        manifest: &[LocalManifestEntry],
-    ) -> StoreResult<()> {
-        self.write_batch(|_| {
-            self.require_current_sync_generation(source_id, generation)?;
-            self.replace_track_local_matches(source_id, matches)?;
-            self.replace_local_manifest(source_id, generation, manifest)
-        })
-    }
-
     pub fn load_raw_track_image_refs(
         &self,
         source_id: &SourceId,
     ) -> StoreResult<HashMap<TrackId, Option<ImageRef>>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT track_id, image_item_id, image_tag
+            SELECT track_id,
+                   CASE WHEN image_origin = 'source' THEN image_item_id END,
+                   CASE WHEN image_origin = 'source' THEN image_tag END
             FROM tracks
             WHERE source_id = ?1
             ",
@@ -73,7 +72,9 @@ impl Store {
     ) -> StoreResult<HashMap<AlbumId, Option<ImageRef>>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT album_id, image_item_id, image_tag
+            SELECT album_id,
+                   CASE WHEN image_origin = 'source' THEN image_item_id END,
+                   CASE WHEN image_origin = 'source' THEN image_tag END
             FROM albums
             WHERE source_id = ?1
             ",
@@ -102,7 +103,9 @@ impl Store {
         };
         let mut statement = self.connection.prepare(&format!(
             "
-            SELECT artist_id, image_item_id, image_tag
+            SELECT artist_id,
+                   CASE WHEN image_origin = 'source' THEN image_item_id END,
+                   CASE WHEN image_origin = 'source' THEN image_tag END
             FROM {table}
             WHERE source_id = ?1
             "
@@ -219,253 +222,23 @@ impl Store {
             .collect())
     }
 
-    pub fn replace_local_manifest(
+    pub fn load_local_cue_dependencies(
         &self,
         source_id: &SourceId,
-        generation: i64,
-        entries: &[LocalManifestEntry],
-    ) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            self.require_current_sync_generation(source_id, generation)?;
-            clear_local_manifest_on_connection(connection, source_id)?;
-            let mut insert_file = connection.prepare(
-                "
-                INSERT INTO local_file_manifest (
-                    source_id, manifest_version, path, root_path, relative_path,
-                    file_size, mtime_seconds, mtime_nanos, inode, device, content_hash,
-                    track_id, album_id, source_format, metadata_hash, search_hash,
-                    artwork_revision, scan_generation, last_tag_read_at, last_seen_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL,
-                        ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, CURRENT_TIMESTAMP)
-                ",
-            )?;
-            let mut insert_track = connection.prepare(
-                "
-                INSERT INTO local_track_manifest_data (
-                    source_id, manifest_version, track_id, track_json, album_artist,
-                    musicbrainz_album_id, musicbrainz_release_group_id, cover_kind,
-                    cover_path, cover_embedded_index, cover_revision, metadata_hash,
-                    search_hash, updated_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
-                ",
-            )?;
-            let mut update_entity_source = connection.prepare(
-                "
-                UPDATE entities
-                SET source = 'local',
-                    source_object_id = ?3,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE source_id = ?1
-                  AND entity_kind = 'track'
-                  AND entity_id = ?2
-                ",
-            )?;
-            let mut insert_artwork = connection.prepare(
-                "
-                INSERT INTO local_artwork_manifest (
-                    source_id, cover_item_id, manifest_version, source_kind, source_path,
-                    source_size, mtime_seconds, mtime_nanos, content_hash, revision,
-                    scan_generation
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)
-                ON CONFLICT(source_id, cover_item_id) DO UPDATE SET
-                    manifest_version = excluded.manifest_version,
-                    source_kind = excluded.source_kind,
-                    source_path = excluded.source_path,
-                    source_size = excluded.source_size,
-                    mtime_seconds = excluded.mtime_seconds,
-                    mtime_nanos = excluded.mtime_nanos,
-                    content_hash = excluded.content_hash,
-                    revision = excluded.revision,
-                    scan_generation = excluded.scan_generation
-                ",
-            )?;
-            for entry in entries {
-                let track_json = serde_json::to_string(&entry.track)?;
-                let (cover_kind, cover_path, embedded_index, cover_revision) =
-                    local_manifest_cover_parts(entry.cover.as_ref());
-                insert_file.execute(params![
-                    source_id.as_str(),
-                    LOCAL_MANIFEST_VERSION,
-                    entry.facts.path.to_string_lossy().as_ref(),
-                    entry.facts.root_path.to_string_lossy().as_ref(),
-                    entry.facts.relative_path.as_str(),
-                    i64_from_u64(entry.facts.file_size),
-                    entry.facts.mtime_seconds,
-                    i64::from(entry.facts.mtime_nanos),
-                    entry.facts.inode.map(i64_from_u64),
-                    entry.facts.device.map(i64_from_u64),
-                    entry.track.id.as_str(),
-                    entry.track.album_id.as_str(),
-                    entry.track.source_format.as_deref(),
-                    entry.metadata_hash.as_str(),
-                    entry.search_hash.as_str(),
-                    cover_revision,
-                    generation,
-                ])?;
-                insert_track.execute(params![
-                    source_id.as_str(),
-                    LOCAL_MANIFEST_VERSION,
-                    entry.track.id.as_str(),
-                    track_json,
-                    entry.album_artist.as_str(),
-                    entry.musicbrainz_album_id.as_deref(),
-                    entry.musicbrainz_release_group_id.as_deref(),
-                    cover_kind,
-                    cover_path,
-                    embedded_index,
-                    cover_revision,
-                    entry.metadata_hash.as_str(),
-                    entry.search_hash.as_str(),
-                ])?;
-                let root_path = entry.facts.root_path.to_string_lossy();
-                let source_object_id =
-                    local_file_source_object_id(root_path.as_ref(), &entry.facts.relative_path);
-                upsert_source_object_on_connection(
-                    connection,
-                    source_id,
-                    &SourceObject {
-                        source_object_id: source_object_id.clone(),
-                        entity_kind: None,
-                        entity_id: None,
-                        source_object_kind: "local_file".to_string(),
-                        source_path: Some(entry.facts.path.to_string_lossy().into_owned()),
-                        parent_source_object_id: None,
-                        cue_path: None,
-                        cue_revision: None,
-                        cue_track_index: None,
-                        segment_start_ms: None,
-                        segment_end_ms: None,
-                        sync_generation: generation,
-                    },
-                )?;
-                update_entity_source.execute(params![
-                    source_id.as_str(),
-                    entry.track.id.as_str(),
-                    source_object_id.as_str(),
-                ])?;
-                if let Some(cover) = &entry.cover {
-                    let facts = local_artwork_source_facts(&cover.source_path);
-                    insert_artwork.execute(params![
-                        source_id.as_str(),
-                        cover.item_id.as_str(),
-                        LOCAL_MANIFEST_VERSION,
-                        local_manifest_cover_kind_key(cover.kind),
-                        cover.source_path.to_string_lossy().as_ref(),
-                        facts.as_ref().map(|facts| i64_from_u64(facts.file_size)),
-                        facts.as_ref().map(|facts| facts.mtime_seconds),
-                        facts.as_ref().map(|facts| i64::from(facts.mtime_nanos)),
-                        cover.revision.as_str(),
-                        generation,
-                    ])?;
-                }
-            }
-            Ok(())
-        })
-    }
-
-    pub fn upsert_local_file_source_object(
-        &self,
-        source_id: &SourceId,
-        source: &LocalFileSourceObject,
-    ) -> StoreResult<String> {
-        let source_object_id =
-            local_file_source_object_id(&source.root_path, &source.relative_path);
-        self.write_batch(|connection| {
-            upsert_source_object_on_connection(
-                connection,
-                source_id,
-                &SourceObject {
-                    source_object_id: source_object_id.clone(),
-                    entity_kind: None,
-                    entity_id: None,
-                    source_object_kind: "local_file".to_string(),
-                    source_path: Some(source.source_path.clone()),
-                    parent_source_object_id: None,
-                    cue_path: None,
-                    cue_revision: None,
-                    cue_track_index: None,
-                    segment_start_ms: None,
-                    segment_end_ms: None,
-                    sync_generation: source.sync_generation,
-                },
-            )
-        })?;
-        Ok(source_object_id)
-    }
-
-    pub fn upsert_cue_track_source_object(
-        &self,
-        source_id: &SourceId,
-        source: &CueTrackSourceObject,
-    ) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            ensure_local_file_source_parent(
-                connection,
-                source_id,
-                &source.parent_source_object_id,
-            )?;
-            upsert_source_object_on_connection(
-                connection,
-                source_id,
-                &SourceObject {
-                    source_object_id: source.source_object_id.clone(),
-                    entity_kind: Some("track".to_string()),
-                    entity_id: Some(source.track_id.as_str().to_string()),
-                    source_object_kind: "cue_track".to_string(),
-                    source_path: Some(source.source_path.clone()),
-                    parent_source_object_id: Some(source.parent_source_object_id.clone()),
-                    cue_path: Some(source.cue_path.clone()),
-                    cue_revision: Some(source.cue_revision.clone()),
-                    cue_track_index: Some(source.cue_track_index),
-                    segment_start_ms: Some(source.segment_start_ms),
-                    segment_end_ms: Some(source.segment_end_ms),
-                    sync_generation: source.sync_generation,
-                },
-            )?;
-            connection.execute(
-                "
-                INSERT INTO entities (
-                    source_id, entity_kind, entity_id, source, source_object_id, updated_at
-                )
-                VALUES (?1, 'track', ?2, 'local', ?3, CURRENT_TIMESTAMP)
-                ON CONFLICT(source_id, entity_kind, entity_id) DO UPDATE SET
-                    source = 'local',
-                    source_object_id = excluded.source_object_id,
-                    updated_at = excluded.updated_at
-                ",
-                params![
-                    source_id.as_str(),
-                    source.track_id.as_str(),
-                    source.source_object_id.as_str(),
-                ],
-            )?;
-            Ok(())
-        })
-    }
-
-    pub fn load_source_object(
-        &self,
-        source_id: &SourceId,
-        source_object_id: &str,
-    ) -> StoreResult<Option<SourceObject>> {
-        self.connection
-            .query_row(
-                "
-                SELECT source_object_id, entity_kind, entity_id, source_object_kind, source_path,
-                       parent_source_object_id, cue_path, cue_revision, cue_track_index,
-                       segment_start_ms, segment_end_ms, sync_generation
-                FROM source_objects
-                WHERE source_id = ?1
-                  AND source_object_id = ?2
-                ",
-                params![source_id.as_str(), source_object_id],
-                source_object_from_row,
-            )
-            .optional()
-            .map_err(StoreError::from)
+    ) -> StoreResult<Vec<LocalCueDependency>> {
+        let mut statement = self.connection.prepare(
+            "SELECT cue_path, source_path
+             FROM source_objects
+             WHERE source_id = ?1
+               AND source_object_kind = 'cue_dependency'
+             ORDER BY cue_path, source_path",
+        )?;
+        collect_rows(statement.query_map(params![source_id.as_str()], |row| {
+            Ok(LocalCueDependency {
+                cue_path: PathBuf::from(row.get::<_, String>(0)?),
+                source_path: PathBuf::from(row.get::<_, String>(1)?),
+            })
+        })?)
     }
 
     pub fn load_track_source_object(
@@ -499,6 +272,8 @@ impl Store {
                 JOIN source_objects source
                   ON source.source_id = entity.source_id
                  AND source.source_object_id = entity.source_object_id
+                 AND source.entity_kind = entity.entity_kind
+                 AND source.entity_id = entity.entity_id
                 WHERE entity.source_id = ?1
                   AND entity.entity_kind = 'track'
                   AND entity.entity_id = ?2
@@ -516,186 +291,68 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    pub fn delete_local_track_rows(
+    pub(super) fn delete_track_rows(
         &self,
         source_id: &SourceId,
         track_ids: &[TrackId],
-    ) -> StoreResult<()> {
+        entity_source: TrackEntitySource,
+    ) -> StoreResult<TrackDeletion> {
         if track_ids.is_empty() {
-            return Ok(());
+            return Ok(TrackDeletion {
+                playlist_ids: Vec::new(),
+                home_changed: false,
+                folders_changed: false,
+            });
         }
         self.write_batch(|connection| {
             let affected_playlist_ids =
-                delete_native_playlist_track_ids(connection, source_id, track_ids)?;
+                delete_playlist_track_ids(connection, source_id, track_ids)?;
+            let folders_changed =
+                track_rows_exist(connection, "track_music_folders", source_id, track_ids)?;
             for table in [
                 "track_music_folders",
                 "track_genres",
+                "track_moods",
                 "track_artist_links",
+                "track_local_matches",
                 "tracks",
             ] {
                 delete_track_ids(connection, table, source_id, track_ids)?;
             }
-            for table in ["home_section_items", "home_section_prefetch_items"] {
-                delete_home_track_ids(connection, table, source_id, track_ids)?;
+            let home_changed =
+                delete_home_track_ids(connection, "home_section_items", source_id, track_ids)? > 0;
+            delete_home_track_ids(
+                connection,
+                "home_section_prefetch_items",
+                source_id,
+                track_ids,
+            )?;
+            match entity_source {
+                TrackEntitySource::Local => {
+                    delete_local_track_entity_rows(connection, source_id, track_ids)?;
+                }
+                TrackEntitySource::Source => {
+                    delete_source_track_entity_rows(connection, source_id, track_ids)?;
+                }
             }
-            delete_track_entity_rows(connection, source_id, track_ids)?;
             delete_track_fts_rows(connection, source_id, track_ids)?;
-            for playlist_id in affected_playlist_ids {
+            for playlist_id in &affected_playlist_ids {
                 super::library_auxiliary_cache::refresh_playlist_stats(
                     connection,
                     source_id,
-                    &playlist_id,
+                    playlist_id,
                 )?;
                 super::library_auxiliary_cache::refresh_playlist_refs(
                     connection,
                     source_id,
-                    &playlist_id,
+                    playlist_id,
                 )?;
             }
-            Ok(())
-        })
-    }
-
-    pub fn update_local_track_image_refs(
-        &self,
-        source_id: &SourceId,
-        tracks: &[Track],
-        generation: i64,
-    ) -> StoreResult<()> {
-        if tracks.is_empty() {
-            return Ok(());
-        }
-        self.write_batch(|connection| {
-            self.require_current_sync_generation(source_id, generation)?;
-            let mut update_track = connection.prepare(
-                "
-                UPDATE tracks
-                SET image_item_id = ?3,
-                    image_tag = ?4,
-                    image_origin = ?5,
-                    sync_generation = ?6
-                WHERE source_id = ?1 AND track_id = ?2
-                ",
-            )?;
-            for track in tracks {
-                let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
-                update_track.execute(params![
-                    source_id.as_str(),
-                    track.id.as_str(),
-                    image_item_id,
-                    image_tag,
-                    image_origin,
-                    generation,
-                ])?;
-            }
-            Ok(())
-        })
-    }
-
-    pub fn update_local_track_metadata_rows(
-        &self,
-        source_id: &SourceId,
-        tracks: &[Track],
-        generation: i64,
-    ) -> StoreResult<()> {
-        if tracks.is_empty() {
-            return Ok(());
-        }
-        self.write_batch(|connection| {
-            self.require_current_sync_generation(source_id, generation)?;
-            let mut missing_tracks = Vec::new();
-            {
-                let mut update_track = connection.prepare(
-                    "
-                    UPDATE tracks
-                    SET album_id = ?3,
-                        title = ?4,
-                        artist = ?5,
-                        artist_id = ?6,
-                        album = ?7,
-                        year = ?8,
-                        release_date = ?9,
-                        date_added = ?10,
-                        last_played = ?11,
-                        play_count = ?12,
-                        user_rating = ?13,
-                        duration_seconds = ?14,
-                        favorite = ?15,
-                        disc_number = ?16,
-                        track_number = ?17,
-                        image_item_id = ?18,
-                        image_tag = ?19,
-                        image_origin = ?20,
-                        local_path = ?21,
-                        source_format = ?22,
-                        comment = ?23,
-                        skip_count = ?24,
-                        sync_generation = ?25
-                    WHERE source_id = ?1 AND track_id = ?2
-                    ",
-                )?;
-                for track in tracks {
-                    let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
-                    let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
-                    let updated = update_track.execute(params![
-                        source_id.as_str(),
-                        track.id.as_str(),
-                        track.album_id.as_str(),
-                        track.title,
-                        track.artist,
-                        track.artist_id.as_ref().map(ArtistId::as_str),
-                        track.album,
-                        i64::from(track.year),
-                        track.release_date.as_deref(),
-                        track.date_added.as_deref(),
-                        track.last_played.as_deref(),
-                        track.play_count.map(i64::from),
-                        track.user_rating.map(i64::from),
-                        i64::from(track.duration_seconds),
-                        bool_to_i64(track.favorite),
-                        i64::from(track.disc_number),
-                        i64::from(track.track_number),
-                        image_item_id,
-                        image_tag,
-                        image_origin,
-                        track.local_path.as_deref(),
-                        track.source_format.as_deref(),
-                        track.comment.as_deref(),
-                        track.skip_count.map(i64::from),
-                        generation,
-                    ])?;
-                    if updated == 0 {
-                        missing_tracks.push(track.clone());
-                    } else {
-                        upsert_track_entity_data_on_connection(connection, source_id, track)?;
-                    }
-                }
-            }
-            self.upsert_tracks(source_id, &missing_tracks, generation)?;
-            Ok(())
-        })
-    }
-
-    pub fn complete_unchanged_local_sync(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<Vec<CoverCacheEntry>> {
-        self.write_batch(|_| {
-            self.require_current_sync_generation(source_id, generation)?;
-            self.connection.execute(
-                "
-                UPDATE sync_state
-                SET status = 'idle',
-                    generation = ?2,
-                    last_completed_at = CURRENT_TIMESTAMP,
-                    last_error = NULL
-                WHERE source_id = ?1
-                ",
-                params![source_id.as_str(), generation],
-            )?;
-            self.prune_stale_image_cache_entries(source_id)
+            Ok(TrackDeletion {
+                playlist_ids: affected_playlist_ids,
+                home_changed,
+                folders_changed,
+            })
         })
     }
 
@@ -703,80 +360,447 @@ impl Store {
         &self,
         source_id: &SourceId,
         generation: i64,
+        base_cache_revision: i64,
+        complete_coverage: bool,
         delta: LocalLibraryDelta,
-    ) -> StoreResult<Vec<CoverCacheEntry>> {
-        self.write_batch(|connection| {
-            self.require_current_sync_generation(source_id, generation)?;
-            self.upsert_tracks(source_id, &delta.changed_tracks, generation)?;
-            self.update_local_track_metadata_rows(source_id, &delta.metadata_tracks, generation)?;
-            self.update_local_track_image_refs(source_id, &delta.artwork_tracks, generation)?;
-            self.delete_local_track_rows(source_id, &delta.deleted_track_ids)?;
-            prune_stale_local_track_rows(connection, source_id, &delta.current_track_ids)?;
-            self.upsert_albums(source_id, &delta.dirty_albums, generation)?;
-            self.upsert_artists(source_id, &delta.dirty_artists, false, generation)?;
-            self.upsert_artists(source_id, &delta.dirty_album_artists, true, generation)?;
-            self.upsert_genres(source_id, &delta.dirty_genres, generation)?;
-            self.upsert_home_sections(source_id, &delta.home_sections, generation)?;
-            prune_stale_local_aggregate_rows(connection, source_id, &delta)?;
-            let pruned_cover_entries = self.complete_local_sync(source_id, generation)?;
-            self.replace_local_manifest(source_id, generation, &delta.manifest_entries)?;
-            for cue_source in &delta.cue_track_sources {
-                let parent_id = self.upsert_local_file_source_object(
+    ) -> StoreResult<SyncCommit> {
+        self.finish_library_sync(
+            source_id,
+            generation,
+            base_cache_revision,
+            complete_coverage,
+            || {
+                self.apply_local_library_delta(
+                    &self.connection,
                     source_id,
-                    &LocalFileSourceObject {
-                        source_path: cue_source.source_path.clone(),
-                        root_path: cue_source.root_path.clone(),
-                        relative_path: cue_source.relative_path.clone(),
-                        sync_generation: generation,
-                    },
-                )?;
-                self.upsert_cue_track_source_object(
-                    source_id,
-                    &CueTrackSourceObject {
-                        source_object_id: cue_source.source_object_id.clone(),
-                        track_id: cue_source.track_id.clone(),
-                        source_path: cue_source.source_path.clone(),
-                        parent_source_object_id: parent_id,
-                        cue_path: cue_source.cue_path.clone(),
-                        cue_revision: cue_source.cue_revision.clone(),
-                        cue_track_index: cue_source.cue_track_index,
-                        segment_start_ms: cue_source.segment_start_ms,
-                        segment_end_ms: cue_source.segment_end_ms,
-                        sync_generation: generation,
-                    },
-                )?;
+                    generation,
+                    complete_coverage,
+                    delta,
+                )
+            },
+        )
+    }
+
+    fn apply_local_library_delta(
+        &self,
+        connection: &Connection,
+        source_id: &SourceId,
+        generation: i64,
+        complete_coverage: bool,
+        delta: LocalLibraryDelta,
+    ) -> StoreResult<LibraryDelta> {
+        let mut changes = LibraryDeltaCollector::new();
+        changes.merge(self.upsert_home_sections_delta(
+            source_id,
+            &delta.home_sections,
+            generation,
+        )?);
+        changes.merge(self.upsert_tracks_delta(source_id, &delta.tracks, generation)?);
+        let mut deleted_tracks = Vec::new();
+        for track_id in &delta.deleted_track_ids {
+            if self.load_track_for_delta(source_id, track_id)?.is_some() {
+                deleted_tracks.push(track_id.clone());
             }
-            upsert_local_stress_cue_track_source_objects_on_connection(
+        }
+        let deletion = self.delete_track_rows(
+            source_id,
+            &delta.deleted_track_ids,
+            TrackEntitySource::Local,
+        )?;
+        changes.merge(LibraryDelta {
+            tracks: TrackDelta {
+                deleted: deleted_tracks,
+                ..TrackDelta::default()
+            },
+            playlists: PlaylistDelta {
+                entries: deletion.playlist_ids.clone(),
+                cover_refs: deletion.playlist_ids,
+                ..PlaylistDelta::default()
+            },
+            home_changed: deletion.home_changed,
+            folders_changed: deletion.folders_changed,
+            ..LibraryDelta::default()
+        });
+        changes.merge(self.upsert_albums_delta(source_id, &delta.dirty_albums, generation)?);
+        changes.merge(self.upsert_artists_delta(
+            source_id,
+            &delta.dirty_artists,
+            false,
+            generation,
+        )?);
+        changes.merge(self.upsert_artists_delta(
+            source_id,
+            &delta.dirty_album_artists,
+            true,
+            generation,
+        )?);
+        changes.merge(self.upsert_genres_delta(source_id, &delta.dirty_genres, generation)?);
+        changes.merge(prune_stale_local_aggregate_rows(
+            connection, source_id, &delta,
+        )?);
+        apply_local_manifest_delta_on_connection(
+            connection,
+            source_id,
+            generation,
+            &delta.manifest,
+        )?;
+        let changed_manifest_track_ids = delta
+            .manifest
+            .upserted_entries
+            .iter()
+            .map(|entry| entry.track.id.clone())
+            .collect::<HashSet<_>>();
+        let changed_cue_sources = delta
+            .cue_track_sources
+            .iter()
+            .filter(|source| changed_manifest_track_ids.contains(&source.track_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for cue_source in &changed_cue_sources {
+            upsert_local_cue_source_on_connection(connection, source_id, generation, cue_source)?;
+        }
+        if complete_coverage {
+            replace_local_cue_dependencies_on_connection(
                 connection,
                 source_id,
                 generation,
-                &delta.cue_track_sources,
+                &delta.cue_dependencies,
             )?;
-            Ok(pruned_cover_entries)
-        })
+        }
+        Ok(changes.finish())
+    }
+}
+
+fn replace_local_cue_dependencies_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+    generation: i64,
+    dependencies: &[LocalCueDependency],
+) -> StoreResult<()> {
+    connection.execute(
+        "DELETE FROM source_objects
+         WHERE source_id = ?1 AND source_object_kind = 'cue_dependency'",
+        params![source_id.as_str()],
+    )?;
+    for dependency in dependencies {
+        let cue_path = dependency.cue_path.to_string_lossy();
+        let source_path = dependency.source_path.to_string_lossy();
+        upsert_source_object_on_connection(
+            connection,
+            source_id,
+            &SourceObject {
+                source_object_id: format!("local:cue-dependency:{cue_path}\u{1f}{source_path}"),
+                entity_kind: None,
+                entity_id: None,
+                source_object_kind: "cue_dependency".to_string(),
+                source_path: Some(source_path.into_owned()),
+                parent_source_object_id: None,
+                cue_path: Some(cue_path.into_owned()),
+                cue_revision: None,
+                cue_track_index: None,
+                segment_start_ms: None,
+                segment_end_ms: None,
+                sync_generation: generation,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn upsert_local_cue_source_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+    generation: i64,
+    source: &LocalCueTrackSource,
+) -> StoreResult<()> {
+    let parent_id = local_file_source_object_id(&source.root_path, &source.relative_path);
+    upsert_source_object_on_connection(
+        connection,
+        source_id,
+        &SourceObject {
+            source_object_id: parent_id.clone(),
+            entity_kind: None,
+            entity_id: None,
+            source_object_kind: "local_file".to_string(),
+            source_path: Some(source.source_path.clone()),
+            parent_source_object_id: None,
+            cue_path: None,
+            cue_revision: None,
+            cue_track_index: None,
+            segment_start_ms: None,
+            segment_end_ms: None,
+            sync_generation: generation,
+        },
+    )?;
+    upsert_source_object_on_connection(
+        connection,
+        source_id,
+        &SourceObject {
+            source_object_id: source.source_object_id.clone(),
+            entity_kind: Some("track".to_string()),
+            entity_id: Some(source.track_id.as_str().to_string()),
+            source_object_kind: "cue_track".to_string(),
+            source_path: Some(source.source_path.clone()),
+            parent_source_object_id: Some(parent_id),
+            cue_path: Some(source.cue_path.clone()),
+            cue_revision: Some(source.cue_revision.clone()),
+            cue_track_index: Some(source.cue_track_index),
+            segment_start_ms: Some(source.segment_start_ms),
+            segment_end_ms: Some(source.segment_end_ms),
+            sync_generation: generation,
+        },
+    )?;
+    connection.execute(
+        "
+        INSERT INTO entities (source_id, entity_kind, entity_id, source, source_object_id)
+        VALUES (?1, 'track', ?2, 'local', ?3)
+        ON CONFLICT(source_id, entity_kind, entity_id) DO UPDATE SET
+            source = 'local',
+            source_object_id = excluded.source_object_id,
+            updated_at = CURRENT_TIMESTAMP
+        ",
+        params![
+            source_id.as_str(),
+            source.track_id.as_str(),
+            source.source_object_id.as_str(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn apply_local_manifest_delta_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+    generation: i64,
+    delta: &LocalManifestDelta,
+) -> StoreResult<()> {
+    let mut changed_paths = HashSet::new();
+    let mut changed_track_ids = HashSet::new();
+    for entry in &delta.upserted_entries {
+        let path = entry.facts.path.to_string_lossy().into_owned();
+        if !changed_paths.insert(path.clone()) {
+            return Err(StoreError::InvalidSyncBatch(format!(
+                "duplicate Local manifest path: {path}"
+            )));
+        }
+        if !changed_track_ids.insert(entry.track.id.clone()) {
+            return Err(StoreError::InvalidSyncBatch(format!(
+                "duplicate Local manifest track: {}",
+                entry.track.id.as_str()
+            )));
+        }
+    }
+    let mut deleted_paths = HashSet::new();
+    for path in &delta.deleted_paths {
+        let path = path.to_string_lossy().into_owned();
+        if !deleted_paths.insert(path.clone()) {
+            return Err(StoreError::InvalidSyncBatch(format!(
+                "duplicate deleted Local manifest path: {path}"
+            )));
+        }
+        if changed_paths.contains(&path) {
+            return Err(StoreError::InvalidSyncBatch(format!(
+                "Local manifest path is both changed and deleted: {path}"
+            )));
+        }
     }
 
-    fn complete_local_sync(
-        &self,
-        source_id: &SourceId,
-        generation: i64,
-    ) -> StoreResult<Vec<CoverCacheEntry>> {
-        self.refresh_collection_cover_refs(source_id)?;
-        self.refresh_smart_playlist_cover_refs(source_id)?;
-        let pruned_cover_entries = self.prune_stale_image_cache_entries(source_id)?;
-        self.connection.execute(
-            "
-            UPDATE sync_state
-            SET status = 'idle',
-                generation = ?2,
-                last_completed_at = CURRENT_TIMESTAMP,
-                last_error = NULL
-            WHERE source_id = ?1
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        Ok(pruned_cover_entries)
+    let mut delete_file =
+        connection.prepare("DELETE FROM local_file_manifest WHERE source_id = ?1 AND path = ?2")?;
+    for path in &delta.deleted_paths {
+        delete_file.execute(params![source_id.as_str(), path.to_string_lossy().as_ref()])?;
     }
+    drop(delete_file);
+
+    upsert_local_manifest_entries_on_connection(
+        connection,
+        source_id,
+        generation,
+        &delta.upserted_entries,
+    )?;
+    connection.execute(
+        "
+        DELETE FROM local_track_manifest_data
+        WHERE source_id = ?1
+          AND track_id NOT IN (
+              SELECT track_id
+              FROM local_file_manifest
+              WHERE source_id = ?1
+          )
+        ",
+        params![source_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM local_artwork_manifest AS artwork
+        WHERE artwork.source_id = ?1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM local_track_manifest_data AS track
+              WHERE track.source_id = artwork.source_id
+                AND track.cover_kind = artwork.source_kind
+                AND track.cover_path = artwork.source_path
+                AND track.cover_revision = artwork.revision
+          )
+        ",
+        params![source_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM source_objects AS object
+        WHERE object.source_id = ?1
+          AND object.source_object_kind = 'local_file'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM local_file_manifest AS manifest
+              WHERE manifest.source_id = object.source_id
+                AND object.source_object_id =
+                    'local:file:' || manifest.root_path || char(31) || manifest.relative_path
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM source_objects AS child
+              WHERE child.source_id = object.source_id
+                AND child.parent_source_object_id = object.source_object_id
+                AND child.source_object_kind = 'cue_track'
+          )
+        ",
+        params![source_id.as_str()],
+    )?;
+    Ok(())
+}
+
+fn upsert_local_manifest_entries_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+    generation: i64,
+    entries: &[LocalManifestEntry],
+) -> StoreResult<()> {
+    let mut upsert_file = connection.prepare(
+        "
+        INSERT OR REPLACE INTO local_file_manifest (
+            source_id, manifest_version, path, root_path, relative_path,
+            file_size, mtime_seconds, mtime_nanos, inode, device, content_hash,
+            track_id, album_id, source_format, metadata_hash, search_hash,
+            artwork_revision, scan_generation, last_tag_read_at, last_seen_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL,
+                ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, CURRENT_TIMESTAMP)
+        ",
+    )?;
+    let mut upsert_track = connection.prepare(
+        "
+        INSERT OR REPLACE INTO local_track_manifest_data (
+            source_id, manifest_version, track_id, track_json, album_artist,
+            musicbrainz_album_id, musicbrainz_release_group_id, cover_kind,
+            cover_path, cover_embedded_index, cover_revision, metadata_hash,
+            search_hash, updated_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
+        ",
+    )?;
+    let mut update_entity_source = connection.prepare(
+        "
+        UPDATE entities
+        SET source = 'local',
+            source_object_id = ?3,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE source_id = ?1
+          AND entity_kind = 'track'
+          AND entity_id = ?2
+        ",
+    )?;
+    let mut upsert_artwork = connection.prepare(
+        "
+        INSERT OR REPLACE INTO local_artwork_manifest (
+            source_id, cover_item_id, manifest_version, source_kind, source_path,
+            source_size, mtime_seconds, mtime_nanos, content_hash, revision,
+            scan_generation
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)
+        ",
+    )?;
+    for entry in entries {
+        let track_json = serde_json::to_string(&entry.track)?;
+        let (cover_kind, cover_path, embedded_index, cover_revision) =
+            local_manifest_cover_parts(entry.cover.as_ref());
+        upsert_file.execute(params![
+            source_id.as_str(),
+            LOCAL_MANIFEST_VERSION,
+            entry.facts.path.to_string_lossy().as_ref(),
+            entry.facts.root_path.to_string_lossy().as_ref(),
+            entry.facts.relative_path.as_str(),
+            i64_from_u64(entry.facts.file_size),
+            entry.facts.mtime_seconds,
+            i64::from(entry.facts.mtime_nanos),
+            entry.facts.inode.map(i64_from_u64),
+            entry.facts.device.map(i64_from_u64),
+            entry.track.id.as_str(),
+            entry.track.album_id.as_str(),
+            entry.track.source_format.as_deref(),
+            entry.metadata_hash.as_str(),
+            entry.search_hash.as_str(),
+            cover_revision,
+            generation,
+        ])?;
+        upsert_track.execute(params![
+            source_id.as_str(),
+            LOCAL_MANIFEST_VERSION,
+            entry.track.id.as_str(),
+            track_json,
+            entry.album_artist.as_str(),
+            entry.musicbrainz_album_id.as_deref(),
+            entry.musicbrainz_release_group_id.as_deref(),
+            cover_kind,
+            cover_path,
+            embedded_index,
+            cover_revision,
+            entry.metadata_hash.as_str(),
+            entry.search_hash.as_str(),
+        ])?;
+        let root_path = entry.facts.root_path.to_string_lossy();
+        let source_object_id =
+            local_file_source_object_id(root_path.as_ref(), &entry.facts.relative_path);
+        upsert_source_object_on_connection(
+            connection,
+            source_id,
+            &SourceObject {
+                source_object_id: source_object_id.clone(),
+                entity_kind: None,
+                entity_id: None,
+                source_object_kind: "local_file".to_string(),
+                source_path: Some(entry.facts.path.to_string_lossy().into_owned()),
+                parent_source_object_id: None,
+                cue_path: None,
+                cue_revision: None,
+                cue_track_index: None,
+                segment_start_ms: None,
+                segment_end_ms: None,
+                sync_generation: generation,
+            },
+        )?;
+        update_entity_source.execute(params![
+            source_id.as_str(),
+            entry.track.id.as_str(),
+            source_object_id.as_str(),
+        ])?;
+        if let Some(cover) = &entry.cover {
+            let facts = local_artwork_source_facts(&cover.source_path);
+            upsert_artwork.execute(params![
+                source_id.as_str(),
+                cover.item_id.as_str(),
+                LOCAL_MANIFEST_VERSION,
+                local_manifest_cover_kind_key(cover.kind),
+                cover.source_path.to_string_lossy().as_ref(),
+                facts.as_ref().map(|facts| i64_from_u64(facts.file_size)),
+                facts.as_ref().map(|facts| facts.mtime_seconds),
+                facts.as_ref().map(|facts| i64::from(facts.mtime_nanos)),
+                cover.revision.as_str(),
+                generation,
+            ])?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn clear_local_manifest_on_connection(
@@ -792,7 +816,7 @@ pub(super) fn clear_local_manifest_on_connection(
         connection.execute(&sql, params![source_id.as_str()])?;
     }
     connection.execute(
-        "DELETE FROM source_objects WHERE source_id = ?1 AND source_object_kind IN ('local_file', 'cue_track')",
+        "DELETE FROM source_objects WHERE source_id = ?1 AND source_object_kind IN ('local_file', 'cue_track', 'cue_dependency')",
         params![source_id.as_str()],
     )?;
     Ok(())
@@ -843,158 +867,6 @@ fn local_artwork_source_facts(path: &Path) -> Option<LocalArtworkSourceFacts> {
     })
 }
 
-fn upsert_local_stress_cue_track_source_objects_on_connection(
-    connection: &Connection,
-    source_id: &SourceId,
-    generation: i64,
-    cue_track_sources: &[LocalCueTrackSource],
-) -> StoreResult<()> {
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = (connection, source_id, generation, cue_track_sources);
-        Ok(())
-    }
-    #[cfg(debug_assertions)]
-    {
-        const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
-        if cue_track_sources.is_empty() {
-            return Ok(());
-        }
-        connection.execute_batch(
-            "
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_cue_sources (
-                base_source_object_id TEXT PRIMARY KEY,
-                base_track_id TEXT NOT NULL,
-                source_path TEXT NOT NULL,
-                parent_source_object_id TEXT NOT NULL,
-                cue_path TEXT NOT NULL,
-                cue_revision TEXT NOT NULL,
-                cue_track_index INTEGER NOT NULL,
-                segment_start_ms INTEGER NOT NULL,
-                segment_end_ms INTEGER NOT NULL
-            ) WITHOUT ROWID;
-            CREATE TEMP TABLE IF NOT EXISTS temp_local_stress_track_base_ids (
-                track_id TEXT PRIMARY KEY,
-                base_track_id TEXT NOT NULL
-            ) WITHOUT ROWID;
-            DELETE FROM temp_local_stress_cue_sources;
-            DELETE FROM temp_local_stress_track_base_ids;
-            ",
-        )?;
-        {
-            let mut insert = connection.prepare(
-                "
-                INSERT INTO temp_local_stress_cue_sources (
-                    base_source_object_id, base_track_id, source_path, parent_source_object_id,
-                    cue_path, cue_revision, cue_track_index, segment_start_ms, segment_end_ms
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                ON CONFLICT(base_source_object_id) DO UPDATE SET
-                    base_track_id = excluded.base_track_id,
-                    source_path = excluded.source_path,
-                    parent_source_object_id = excluded.parent_source_object_id,
-                    cue_path = excluded.cue_path,
-                    cue_revision = excluded.cue_revision,
-                    cue_track_index = excluded.cue_track_index,
-                    segment_start_ms = excluded.segment_start_ms,
-                    segment_end_ms = excluded.segment_end_ms
-                ",
-            )?;
-            for cue_source in cue_track_sources {
-                insert.execute(params![
-                    cue_source.source_object_id.as_str(),
-                    cue_source.track_id.as_str(),
-                    cue_source.source_path.as_str(),
-                    local_file_source_object_id(&cue_source.root_path, &cue_source.relative_path),
-                    cue_source.cue_path.as_str(),
-                    cue_source.cue_revision.as_str(),
-                    cue_source.cue_track_index,
-                    cue_source.segment_start_ms,
-                    cue_source.segment_end_ms,
-                ])?;
-            }
-        }
-        connection.execute(
-            "
-            INSERT INTO temp_local_stress_track_base_ids (track_id, base_track_id)
-            SELECT track_id, substr(suffix, instr(suffix, ':') + 1)
-            FROM (
-                SELECT track_id, substr(track_id, ?2) AS suffix
-                FROM tracks
-                WHERE source_id = ?1
-                  AND track_id LIKE ?3 || '%'
-            )
-            WHERE instr(suffix, ':') > 0
-              AND substr(suffix, instr(suffix, ':') + 1) != ''
-            ON CONFLICT(track_id) DO UPDATE SET
-                base_track_id = excluded.base_track_id
-            ",
-            params![
-                source_id.as_str(),
-                i64::try_from(LOCAL_STRESS_TRACK_ID_PREFIX.len() + 1).unwrap_or(i64::MAX),
-                LOCAL_STRESS_TRACK_ID_PREFIX,
-            ],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO source_objects (
-                source_id, source_object_id, entity_kind, entity_id, source_object_kind, source_path,
-                parent_source_object_id, cue_path, cue_revision, cue_track_index,
-                segment_start_ms, segment_end_ms, metadata_json, sync_generation, updated_at
-            )
-            SELECT ?1,
-                   cue.base_source_object_id || char(31) || 'stress:' || stress.track_id,
-                   'track', stress.track_id, 'cue_track', cue.source_path,
-                   cue.parent_source_object_id, cue.cue_path, cue.cue_revision,
-                   cue.cue_track_index, cue.segment_start_ms, cue.segment_end_ms,
-                   '{}', ?2, CURRENT_TIMESTAMP
-            FROM temp_local_stress_cue_sources cue
-            JOIN temp_local_stress_track_base_ids stress
-              ON stress.base_track_id = cue.base_track_id
-            WHERE 1
-            ON CONFLICT(source_id, source_object_id) DO UPDATE SET
-                entity_kind = excluded.entity_kind,
-                entity_id = excluded.entity_id,
-                source_object_kind = excluded.source_object_kind,
-                source_path = excluded.source_path,
-                parent_source_object_id = excluded.parent_source_object_id,
-                cue_path = excluded.cue_path,
-                cue_revision = excluded.cue_revision,
-                cue_track_index = excluded.cue_track_index,
-                segment_start_ms = excluded.segment_start_ms,
-                segment_end_ms = excluded.segment_end_ms,
-                metadata_json = excluded.metadata_json,
-                sync_generation = excluded.sync_generation,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        connection.execute(
-            "
-            INSERT INTO entities (
-                source_id, entity_kind, entity_id, source, source_object_id, updated_at
-            )
-            SELECT ?1,
-                   'track',
-                   stress.track_id,
-                   'local',
-                   cue.base_source_object_id || char(31) || 'stress:' || stress.track_id,
-                   CURRENT_TIMESTAMP
-            FROM temp_local_stress_cue_sources cue
-            JOIN temp_local_stress_track_base_ids stress
-              ON stress.base_track_id = cue.base_track_id
-            WHERE 1
-            ON CONFLICT(source_id, entity_kind, entity_id) DO UPDATE SET
-                source = excluded.source,
-                source_object_id = excluded.source_object_id,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str()],
-        )?;
-        Ok(())
-    }
-}
-
 struct LocalArtworkSourceFacts {
     file_size: u64,
     mtime_seconds: i64,
@@ -1024,7 +896,7 @@ fn delete_track_ids(
     Ok(())
 }
 
-fn delete_native_playlist_track_ids(
+fn delete_playlist_track_ids(
     connection: &Connection,
     source_id: &SourceId,
     track_ids: &[TrackId],
@@ -1079,7 +951,37 @@ fn delete_native_playlist_track_ids(
         values.push(Value::Text(source_id.as_str().to_string()));
         connection.execute(&sql, params_from_iter(values))?;
     }
+    affected_playlist_ids.sort();
     Ok(affected_playlist_ids)
+}
+
+fn track_rows_exist(
+    connection: &Connection,
+    table: &str,
+    source_id: &SourceId,
+    track_ids: &[TrackId],
+) -> StoreResult<bool> {
+    for chunk in track_ids.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT EXISTS (
+                 SELECT 1 FROM {table}
+                 WHERE source_id = ? AND track_id IN ({placeholders})
+             )"
+        );
+        let mut values = vec![Value::Text(source_id.as_str().to_string())];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
+        if connection.query_row(&sql, params_from_iter(values), |row| row.get(0))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn delete_home_track_ids(
@@ -1087,7 +989,8 @@ fn delete_home_track_ids(
     table: &str,
     source_id: &SourceId,
     track_ids: &[TrackId],
-) -> StoreResult<()> {
+) -> StoreResult<usize> {
+    let mut deleted = 0;
     for chunk in track_ids.chunks(400) {
         let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
@@ -1101,9 +1004,9 @@ fn delete_home_track_ids(
                 .iter()
                 .map(|track_id| Value::Text(track_id.as_str().to_string())),
         );
-        connection.execute(&sql, params_from_iter(values))?;
+        deleted += connection.execute(&sql, params_from_iter(values))?;
     }
-    Ok(())
+    Ok(deleted)
 }
 
 fn delete_track_fts_rows(
@@ -1133,12 +1036,23 @@ fn prune_stale_local_aggregate_rows(
     connection: &Connection,
     source_id: &SourceId,
     delta: &LocalLibraryDelta,
-) -> StoreResult<()> {
+) -> StoreResult<LibraryDelta> {
+    let mut pruned = LibraryDelta::default();
     replace_temp_id_set(
         connection,
         "local_current_album_ids",
         delta.current_album_ids.iter().map(AlbumId::as_str),
     )?;
+    pruned.albums.deleted = ids_not_in_temp(
+        connection,
+        "albums",
+        "album_id",
+        source_id,
+        "local_current_album_ids",
+    )?
+    .into_iter()
+    .map(AlbumId::new)
+    .collect();
     delete_rows_not_in_temp(
         connection,
         "album_genres",
@@ -1167,6 +1081,16 @@ fn prune_stale_local_aggregate_rows(
         "local_current_artist_ids",
         delta.current_artist_ids.iter().map(ArtistId::as_str),
     )?;
+    pruned.artists.deleted = ids_not_in_temp(
+        connection,
+        "artists",
+        "artist_id",
+        source_id,
+        "local_current_artist_ids",
+    )?
+    .into_iter()
+    .map(ArtistId::new)
+    .collect();
     delete_rows_not_in_temp(
         connection,
         "artists",
@@ -1181,6 +1105,16 @@ fn prune_stale_local_aggregate_rows(
         "local_current_album_artist_ids",
         delta.current_album_artist_ids.iter().map(ArtistId::as_str),
     )?;
+    pruned.album_artists.deleted = ids_not_in_temp(
+        connection,
+        "album_artists",
+        "artist_id",
+        source_id,
+        "local_current_album_artist_ids",
+    )?
+    .into_iter()
+    .map(ArtistId::new)
+    .collect();
     delete_rows_not_in_temp(
         connection,
         "album_artists",
@@ -1200,6 +1134,16 @@ fn prune_stale_local_aggregate_rows(
         "local_current_genre_ids",
         delta.current_genre_ids.iter().map(GenreId::as_str),
     )?;
+    pruned.genres.deleted = ids_not_in_temp(
+        connection,
+        "genres",
+        "genre_id",
+        source_id,
+        "local_current_genre_ids",
+    )?
+    .into_iter()
+    .map(GenreId::new)
+    .collect();
     delete_rows_not_in_temp(
         connection,
         "genres",
@@ -1213,36 +1157,7 @@ fn prune_stale_local_aggregate_rows(
         COLLECTION_COVER_GENRE,
         "local_current_genre_ids",
     )?;
-    Ok(())
-}
-
-fn prune_stale_local_track_rows(
-    connection: &Connection,
-    source_id: &SourceId,
-    current_track_ids: &[TrackId],
-) -> StoreResult<()> {
-    replace_temp_id_set(
-        connection,
-        "local_current_track_ids",
-        current_track_ids.iter().map(TrackId::as_str),
-    )?;
-    for table in [
-        "track_music_folders",
-        "track_genres",
-        "track_artist_links",
-        "tracks",
-    ] {
-        delete_rows_not_in_temp(
-            connection,
-            table,
-            "track_id",
-            source_id,
-            "local_current_track_ids",
-        )?;
-    }
-    delete_track_entity_rows_not_in_temp(connection, source_id, "local_current_track_ids")?;
-    delete_fts_not_in_temp(connection, source_id, "track", "local_current_track_ids")?;
-    Ok(())
+    Ok(pruned)
 }
 
 fn replace_temp_id_set<'a>(
@@ -1279,6 +1194,26 @@ fn delete_rows_not_in_temp(
     );
     connection.execute(&sql, params![source_id.as_str()])?;
     Ok(())
+}
+
+fn ids_not_in_temp(
+    connection: &Connection,
+    table: &str,
+    id_column: &str,
+    source_id: &SourceId,
+    temp_table: &str,
+) -> StoreResult<Vec<String>> {
+    let sql = format!(
+        "
+        SELECT {id_column}
+        FROM {table}
+        WHERE source_id = ?1
+          AND {id_column} NOT IN (SELECT id FROM {temp_table})
+        ORDER BY {id_column}
+        "
+    );
+    let mut statement = connection.prepare(&sql)?;
+    collect_rows(statement.query_map(params![source_id.as_str()], |row| row.get(0))?)
 }
 
 fn delete_fts_not_in_temp(

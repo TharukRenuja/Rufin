@@ -34,9 +34,6 @@ impl AppController {
                 Err(error) => {
                     warn!(%error, source_id = %saved.source.id, "failed to activate selected source");
                     snapshot.first_run = true;
-                    snapshot.sync_status =
-                        "Connect once more to continue using this server.".to_string();
-                    snapshot.last_error = None;
                     None
                 }
             }
@@ -79,10 +76,9 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-            source_freshness_watcher: Arc::new(Mutex::new(None)),
+            sync_coordinator: Arc::new(Mutex::new(library_sync::SyncCoordinator::new())),
             external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
             events,
-            sync_in_flight: InFlightGuards::new("Sync"),
             home_refresh_in_flight: InFlightGuards::new("Home refresh"),
             explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
             cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
@@ -144,10 +140,9 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-            source_freshness_watcher: Arc::new(Mutex::new(None)),
+            sync_coordinator: Arc::new(Mutex::new(library_sync::SyncCoordinator::new())),
             external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
             events,
-            sync_in_flight: InFlightGuards::new("Sync"),
             home_refresh_in_flight: InFlightGuards::new("Home refresh"),
             explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
             cover_in_flight: Arc::new(Mutex::new(HashMap::new())),

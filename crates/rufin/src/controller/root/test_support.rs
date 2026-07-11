@@ -88,10 +88,9 @@ pub(in crate::controller) fn controller_from_store_for_test(
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
         external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
-        source_freshness_watcher: Arc::new(Mutex::new(None)),
+        sync_coordinator: Arc::new(Mutex::new(library_sync::SyncCoordinator::new())),
         external_cover_retry_generation: Arc::new(AtomicU64::new(0)),
         events,
-        sync_in_flight: InFlightGuards::new("Sync"),
         home_refresh_in_flight: InFlightGuards::new("Home refresh"),
         explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
         cover_in_flight: Arc::new(Mutex::new(HashMap::new())),
@@ -342,53 +341,6 @@ pub(in crate::controller) fn unique_test_dir(label: &str) -> PathBuf {
     ))
 }
 
-pub(in crate::controller) fn local_manifest_file_facts(
-    root: &std::path::Path,
-    path: &std::path::Path,
-) -> domain::LocalFileFacts {
-    let metadata = fs::metadata(path).expect("metadata");
-    let modified = metadata.modified().expect("modified time");
-    let duration = modified
-        .duration_since(UNIX_EPOCH)
-        .expect("modified after epoch");
-    domain::LocalFileFacts {
-        path: path.to_path_buf(),
-        root_path: root.to_path_buf(),
-        relative_path: path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned(),
-        file_size: metadata.len(),
-        mtime_seconds: duration.as_secs().min(i64::MAX as u64) as i64,
-        mtime_nanos: duration.subsec_nanos(),
-        inode: local_manifest_inode(&metadata),
-        device: local_manifest_device(&metadata),
-    }
-}
-
-#[cfg(unix)]
-fn local_manifest_inode(metadata: &fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.ino())
-}
-
-#[cfg(not(unix))]
-fn local_manifest_inode(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
-
-#[cfg(unix)]
-fn local_manifest_device(metadata: &fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.dev())
-}
-
-#[cfg(not(unix))]
-fn local_manifest_device(_metadata: &fs::Metadata) -> Option<u64> {
-    None
-}
-
 pub(in crate::controller) fn test_image_ref(number: u32) -> ImageRef {
     ImageRef::new(
         format!("jellyfin:album:{number}"),
@@ -451,6 +403,246 @@ pub(in crate::controller) fn disk_store_database_path(store: &StoreHandle) -> Pa
     }
 }
 
+#[derive(Default)]
+pub(in crate::controller) struct CachedLibraryObservation {
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+    pub artists: Vec<Artist>,
+    pub album_artists: Vec<Artist>,
+    pub genres: Vec<Genre>,
+    pub music_folders: Vec<(MusicFolder, Vec<Track>)>,
+    pub playlists: Vec<PlaylistDetail>,
+    pub home_sections: Vec<HomeSection>,
+    pub local_matches: Vec<(TrackId, String, String)>,
+}
+
+pub(in crate::controller) fn commit_cached_library(
+    store: &Store,
+    source_id: &SourceId,
+    generation: i64,
+    mut observation: CachedLibraryObservation,
+) -> StoreResult<SyncCommit> {
+    for track in &observation.tracks {
+        if observation
+            .albums
+            .iter()
+            .any(|album| album.id == track.album_id)
+        {
+            continue;
+        }
+        observation.albums.push(Album {
+            id: track.album_id.clone(),
+            title: track.album.clone(),
+            artist: track.artist.clone(),
+            artist_id: track.artist_id.clone(),
+            album_artist_credits: track.album_artist_credits.clone(),
+            artist_credits: track.artist_credits.clone(),
+            year: track.year,
+            release_date: track.release_date.clone(),
+            date_added: track.date_added.clone(),
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 0,
+            duration_seconds: 0,
+            favorite: false,
+            color_seed: 0,
+            image_ref: track.image_ref.clone(),
+            genres: track.genres.clone(),
+            release_types: Vec::new(),
+            is_compilation: None,
+            musicbrainz_album_id: None,
+            musicbrainz_release_group_id: None,
+        });
+    }
+
+    let mut artists = observation
+        .artists
+        .drain(..)
+        .map(|artist| (artist.id.clone(), artist))
+        .collect::<HashMap<_, _>>();
+    let mut album_artists = observation
+        .album_artists
+        .drain(..)
+        .map(|artist| (artist.id.clone(), artist))
+        .collect::<HashMap<_, _>>();
+    for album in &observation.albums {
+        if let Some(artist_id) = &album.artist_id {
+            album_artists
+                .entry(artist_id.clone())
+                .or_insert_with(|| test_artist(artist_id.clone(), album.artist.clone()));
+        }
+        add_test_credits(&mut artists, &album.artist_credits);
+        add_test_credits(&mut album_artists, &album.album_artist_credits);
+    }
+    for track in &observation.tracks {
+        if let Some(artist_id) = &track.artist_id {
+            artists
+                .entry(artist_id.clone())
+                .or_insert_with(|| test_artist(artist_id.clone(), track.artist.clone()));
+        }
+        add_test_credits(&mut artists, &track.artist_credits);
+        add_test_credits(&mut album_artists, &track.album_artist_credits);
+    }
+    observation.artists = artists.into_values().collect();
+    observation
+        .artists
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    observation.album_artists = album_artists.into_values().collect();
+    observation
+        .album_artists
+        .sort_by(|left, right| left.id.cmp(&right.id));
+
+    let mut genres = observation
+        .genres
+        .drain(..)
+        .map(|genre| (genre.name.clone(), genre))
+        .collect::<HashMap<_, _>>();
+    for name in observation
+        .albums
+        .iter()
+        .flat_map(|album| &album.genres)
+        .chain(observation.tracks.iter().flat_map(|track| &track.genres))
+    {
+        genres.entry(name.clone()).or_insert_with(|| Genre {
+            id: GenreId::new(name.clone()),
+            name: name.clone(),
+            album_count: 0,
+            track_count: 0,
+            duration_seconds: 0,
+            image_refs: Vec::new(),
+            image_ref: None,
+        });
+    }
+    observation.genres = genres.into_values().collect();
+    observation
+        .genres
+        .sort_by(|left, right| left.id.cmp(&right.id));
+
+    let folders = observation
+        .music_folders
+        .iter()
+        .map(|(folder, tracks)| library::MusicFolderSnapshot {
+            folder: folder.clone(),
+            track_ids: tracks.iter().map(|track| track.id.clone()).collect(),
+        })
+        .collect::<Vec<_>>();
+    let mappings = [
+        (
+            SourceEntityKind::Album,
+            observation
+                .albums
+                .iter()
+                .map(|album| album.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::Track,
+            observation
+                .tracks
+                .iter()
+                .map(|track| track.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::Artist,
+            observation
+                .artists
+                .iter()
+                .map(|artist| artist.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::AlbumArtist,
+            observation
+                .album_artists
+                .iter()
+                .map(|artist| artist.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::Genre,
+            observation
+                .genres
+                .iter()
+                .map(|genre| genre.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::Playlist,
+            observation
+                .playlists
+                .iter()
+                .map(|detail| detail.playlist.id.as_str())
+                .collect(),
+        ),
+        (
+            SourceEntityKind::MusicFolder,
+            folders
+                .iter()
+                .map(|folder| folder.folder.id.as_str())
+                .collect(),
+        ),
+    ]
+    .into_iter()
+    .flat_map(|(entity_kind, ids): (SourceEntityKind, Vec<&str>)| {
+        ids.into_iter().map(move |entity_id| SourceObjectMapping {
+            source_object_id: entity_id.to_string(),
+            entity_kind,
+            entity_id: entity_id.to_string(),
+        })
+    })
+    .collect();
+    let local_access =
+        (!observation.local_matches.is_empty()).then_some(library::LocalAccessUpdate {
+            manifest: library::LocalManifestDelta::default(),
+            matches: observation.local_matches,
+        });
+    let base_cache_revision = store.source_cache_revision(source_id)?;
+    store.commit_library_sync(
+        source_id,
+        generation,
+        base_cache_revision,
+        library::LibrarySync {
+            albums: observation.albums,
+            tracks: observation.tracks,
+            artists: observation.artists,
+            album_artists: observation.album_artists,
+            genres: observation.genres,
+            playlists: observation.playlists,
+            home_sections: observation.home_sections,
+            mappings,
+            coverage: library::SyncCoverage::All {
+                music_folders: folders,
+            },
+            local_access,
+        },
+    )
+}
+
+fn add_test_credits(artists: &mut HashMap<ArtistId, Artist>, credits: &[domain::ArtistCredit]) {
+    for credit in credits {
+        artists
+            .entry(credit.id.clone())
+            .or_insert_with(|| test_artist(credit.id.clone(), credit.name.clone()));
+    }
+}
+
+fn test_artist(id: ArtistId, name: String) -> Artist {
+    Artist {
+        id,
+        name,
+        album_count: 0,
+        track_count: 0,
+        favorite: false,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        musicbrainz_artist_id: None,
+        image_ref: None,
+    }
+}
+
 pub(in crate::controller) fn seed_cached_library(
     store: &StoreHandle,
     saved: &SavedSource,
@@ -463,16 +655,18 @@ pub(in crate::controller) fn seed_cached_library(
             store.save_source(saved)?;
             store.set_active_source(&saved.source.id)?;
             let generation = store.begin_sync(&saved.source.id)?;
-            if !albums.is_empty() {
-                store.upsert_albums(&saved.source.id, albums, generation)?;
-            }
-            if !tracks.is_empty() {
-                store.upsert_tracks(&saved.source.id, tracks, generation)?;
-            }
-            if !home_sections.is_empty() {
-                store.upsert_home_sections(&saved.source.id, home_sections, generation)?;
-            }
-            store.complete_sync(&saved.source.id, generation)
+            commit_cached_library(
+                store,
+                &saved.source.id,
+                generation,
+                CachedLibraryObservation {
+                    albums: albums.to_vec(),
+                    tracks: tracks.to_vec(),
+                    home_sections: home_sections.to_vec(),
+                    ..CachedLibraryObservation::default()
+                },
+            )
+            .map(|_| ())
         })
         .expect("seed library cache");
 }
@@ -638,9 +832,9 @@ pub(in crate::controller) fn wait_for_playlist_changed(
         _ => None,
     })
 }
-pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
+pub(in crate::controller) fn wait_for_notice(events: &Receiver<ControllerEvent>) -> SourceNotice {
     wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::LoginStatus(status) => Some(status),
+        ControllerEvent::SourceNotice(notice) => Some(notice),
         _ => None,
     })
 }

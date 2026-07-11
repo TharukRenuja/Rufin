@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
     HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
-    SourceId, Track, TrackId, normalize_release_types,
+    SourceEntityKind, SourceId, Track, TrackId, normalize_release_types,
 };
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -10,17 +10,17 @@ use serde::de::{self, DeserializeOwned, Visitor};
 use source::{
     AlbumDetail, FavoriteItemId, FavoriteMutator, FolderBrowser, FolderDetail,
     GeneratedTrackProvider, GeneratedTrackSeed, GeneratedTracksRequest, GenreDetail, ImageBytes,
-    ImageProvider, LyricLine, Lyrics, LyricsProvider, LyricsSearch, LyricsSource,
-    MusicFolderProvider, MusicSource, PagedRequest, PagedResponse, PlaybackReport,
-    PlaybackReportKind, PlaybackReporter, PlayedFilter, PlaylistCreator, PlaylistDeleter,
-    PlaylistDetail, PlaylistEntry, PlaylistEntryMover, PlaylistEntryRemover, PlaylistReader,
-    PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider, RandomTrackRequest,
-    RecentAlbumProvider, SearchResults, SourceError, SourceIdentity, SourceResult,
+    ImageProvider, LibraryFreshnessProbe, LibraryProbeResult, LyricLine, Lyrics, LyricsProvider,
+    LyricsSearch, LyricsSource, MusicFolderProvider, MusicSource, PagedRequest, PagedResponse,
+    PlaybackReport, PlaybackReportKind, PlaybackReporter, PlayedFilter, PlaylistCreator,
+    PlaylistDeleter, PlaylistDetail, PlaylistEntry, PlaylistEntryMover, PlaylistEntryRemover,
+    PlaylistReader, PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider, RandomTrackRequest,
+    SearchResults, SourceError, SourceIdentity, SourceObjectKeyProvider, SourceResult,
     StreamDescriptor, StreamRequest, StreamResolver,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::instrument;
 
@@ -85,6 +85,12 @@ pub struct SubsonicSource {
     username: String,
     credential: Arc<SubsonicCredential>,
     identity: SourceIdentity,
+    scan_probe: Arc<Mutex<ScanProbeState>>,
+}
+#[derive(Clone, Copy, Debug, Default)]
+struct ScanProbeState {
+    last_idle_count: Option<i64>,
+    saw_busy: bool,
 }
 impl SubsonicSource {
     #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, source_kind = request.flavor.source_id(), trust_invalid_cert = request.trust_invalid_cert))]
@@ -128,6 +134,7 @@ impl SubsonicSource {
             username: session.username,
             credential: Arc::new(credential),
             identity: session.source,
+            scan_probe: Arc::new(Mutex::new(ScanProbeState::default())),
         })
     }
 

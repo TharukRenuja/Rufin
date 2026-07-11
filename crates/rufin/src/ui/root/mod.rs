@@ -62,9 +62,9 @@ mod style_contract;
 mod tray;
 
 use crate::controller::{
-    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LibrarySyncStatus,
-    LyricsSearchResult, PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus,
-    grouped_cover_refs_for_items, smart_playlist_definition_fingerprint,
+    AppController, ControllerEvent, DiscoveredServer, LibraryCacheState, LibraryCommitUpdate,
+    LibrarySnapshot, LyricsSearchResult, PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus,
+    SourceNotice, grouped_cover_refs_for_items, smart_playlist_definition_fingerprint,
     track_cover_refs_for_items,
 };
 use crate::external_metadata;
@@ -79,9 +79,9 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
     HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Mood, MusicFolderId, PlaySourceDescriptor, Playlist,
-    PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route,
-    RouteStack, SearchKind, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
+    LibraryListSettings, LibrarySourceSelection, Mood, MusicFolderId, PlaySourceDescriptor,
+    Playlist, PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode,
+    Route, RouteStack, SearchKind, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
@@ -324,7 +324,6 @@ pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const HOME_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const GRID_COVER_LIMIT: usize = 192;
 pub(in crate::ui) const WARM_SETTLE_MS: u64 = RESPONSIVE_RENDER_DELAY_MS * 5;
-pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "rufin-favorite-add-symbolic";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "rufin-favorite-remove-symbolic";
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
@@ -384,6 +383,36 @@ pub(in crate::ui) struct AddServerDialogHandle {
     on_connect_started: Option<Rc<dyn Fn()>>,
     flow: Rc<RefCell<Rc<dyn login::SourceSetupFlow>>>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum LibraryLoad {
+    Ready,
+    Connecting {
+        stage: String,
+        first_run: bool,
+    },
+    Switching {
+        target: LibrarySourceSelection,
+    },
+    WaitingForFirstCommit {
+        source_id: SourceId,
+    },
+    Failed {
+        source_id: Option<SourceId>,
+        message: String,
+    },
+}
+
+impl LibraryLoad {
+    pub(in crate::ui) fn source_setup_active(&self) -> bool {
+        matches!(self, Self::Connecting { .. } | Self::Failed { .. })
+    }
+
+    pub(in crate::ui) fn blocks_library(&self) -> bool {
+        !matches!(self, Self::Ready | Self::Failed { .. })
+    }
+}
+
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
     settings: RefCell<AppSettings>,
@@ -409,8 +438,8 @@ pub(in crate::ui) struct AppState {
     preferences_dialog: RefCell<Option<adw::Dialog>>,
     fetched_release_notes: RefCell<Vec<release_notes::ReleaseNote>>,
     reconnect_toasts_shown: RefCell<HashSet<SourceId>>,
-    library_sync_toast: RefCell<Option<adw::Toast>>,
-    library_sync_toast_suppressed: Cell<bool>,
+    source_syncs: RefCell<HashMap<SourceId, library_sync::SourceSyncChanged>>,
+    source_sync_toasts: RefCell<HashMap<SourceId, adw::Toast>>,
     control_feedback_generation: Rc<Cell<u64>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
@@ -460,13 +489,9 @@ pub(in crate::ui) struct AppState {
     startup_route_revealed: Cell<bool>,
     startup_route_render_pending: Cell<bool>,
     startup_route_content_prepared: Cell<bool>,
-    source_switch_preparing: Cell<bool>,
-    local_source_preparing: Cell<bool>,
-    local_source_sync_seen: Cell<bool>,
+    library_load: RefCell<LibraryLoad>,
     startup_cover_prime_generation: Cell<u64>,
     startup_cover_prime_pending: RefCell<HashSet<String>>,
-    first_run_connection_pending: Cell<bool>,
-    first_run_connection_ready: Cell<bool>,
     first_run_cover_prime_generation: Cell<u64>,
     first_run_cover_prime_pending: RefCell<HashSet<String>>,
     cover_warm_token: Cell<u64>,
@@ -791,6 +816,14 @@ pub fn build(app: &adw::Application) {
     );
     let first_run = library.first_run;
     let defer_initial_route = !first_run;
+    let initial_load = library
+        .source
+        .as_ref()
+        .filter(|_| !library.cache.is_committed() && !first_run)
+        .map(|source| LibraryLoad::WaitingForFirstCommit {
+            source_id: source.id.clone(),
+        })
+        .unwrap_or(LibraryLoad::Ready);
     let language_preference = i18n::effective_language_preference(&settings.language);
     i18n::set_language_preference(&language_preference);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
@@ -826,8 +859,8 @@ pub fn build(app: &adw::Application) {
         preferences_dialog: RefCell::new(None),
         fetched_release_notes: RefCell::new(Vec::new()),
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
-        library_sync_toast: RefCell::new(None),
-        library_sync_toast_suppressed: Cell::new(false),
+        source_syncs: RefCell::new(HashMap::new()),
+        source_sync_toasts: RefCell::new(HashMap::new()),
         control_feedback_generation: Rc::new(Cell::new(0)),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
@@ -877,13 +910,9 @@ pub fn build(app: &adw::Application) {
         startup_route_revealed: Cell::new(!defer_initial_route),
         startup_route_render_pending: Cell::new(false),
         startup_route_content_prepared: Cell::new(!defer_initial_route),
-        source_switch_preparing: Cell::new(false),
-        local_source_preparing: Cell::new(false),
-        local_source_sync_seen: Cell::new(false),
+        library_load: RefCell::new(initial_load),
         startup_cover_prime_generation: Cell::new(0),
         startup_cover_prime_pending: RefCell::new(HashSet::new()),
-        first_run_connection_pending: Cell::new(false),
-        first_run_connection_ready: Cell::new(false),
         first_run_cover_prime_generation: Cell::new(0),
         first_run_cover_prime_pending: RefCell::new(HashSet::new()),
         cover_warm_token: Cell::new(0),
@@ -1167,14 +1196,14 @@ pub fn build(app: &adw::Application) {
         shell.controller.request_waveform_for_current();
     }
 
-    schedule_startup_sync(&shell);
+    shell.controller.refresh_source_freshness();
 
     #[cfg(unix)]
     tray::present_initial_window(&shell);
     #[cfg(not(unix))]
     shell.window.present();
     schedule_release_toast(&shell);
-    if defer_initial_route {
+    if defer_initial_route && !shell.state.library_load.borrow().blocks_library() {
         shell.schedule_startup_route_reveal();
     }
     let layout_shell = Rc::clone(&shell);

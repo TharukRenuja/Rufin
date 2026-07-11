@@ -1,6 +1,7 @@
 use super::*;
 
 use source::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 const JELLYFIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -16,6 +17,48 @@ const JELLYFIN_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
     },
     redact_error_url: None,
 };
+
+impl JellyfinSource {
+    pub(super) async fn read_playlist_items(
+        &self,
+        raw_playlist_id: &str,
+    ) -> SourceResult<Option<Vec<JellyfinItem>>> {
+        let mut pages = PageState::default();
+        let mut entry_ids = BTreeSet::new();
+        let mut items = Vec::new();
+        loop {
+            let mut url = endpoint(
+                &self.base_url,
+                &format!("Playlists/{raw_playlist_id}/Items"),
+            )?;
+            let request = pages.request(COLLECTION_PAGE_SIZE);
+            url.query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("StartIndex", &request.offset.to_string())
+                .append_pair("Limit", &request.limit.to_string())
+                .append_pair("Fields", ITEM_FIELDS);
+            let response = self.get_json::<ItemQueryResult>(url).await?;
+            let count = response.items.len();
+            let Some(finished) = pages.add(count, response.total_record_count) else {
+                return Ok(None);
+            };
+            for item in response.items {
+                let entry_id = item
+                    .playlist_item_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or(&item.id);
+                if entry_id.is_empty() || !entry_ids.insert(entry_id.to_string()) {
+                    return Ok(None);
+                }
+                items.push(item);
+            }
+            if finished {
+                return Ok(Some(items));
+            }
+        }
+    }
+}
 
 #[async_trait(?Send)]
 impl MusicSource for JellyfinSource {
@@ -271,24 +314,6 @@ impl MusicFolderProvider for JellyfinSource {
 }
 
 #[async_trait(?Send)]
-impl RecentTrackProvider for JellyfinSource {
-    async fn recent_tracks(&self, limit: usize) -> SourceResult<Vec<Track>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let response = self
-            .item_page_sorted(
-                "Audio",
-                PagedRequest::new(0, limit.clamp(1, 500)),
-                "DateCreated,SortName",
-                "Descending",
-            )
-            .await?;
-        Ok(response.items.into_iter().map(track_from_item).collect())
-    }
-}
-
-#[async_trait(?Send)]
 impl FolderBrowser for JellyfinSource {
     async fn folder(
         &self,
@@ -447,21 +472,15 @@ impl PlaylistReader for JellyfinSource {
             .append_pair("UserId", &self.user_id);
         let playlist = playlist_from_item(self.get_json::<JellyfinItem>(playlist_url).await?);
 
-        let mut entries = Vec::new();
-        let mut offset = 0;
-        loop {
-            let mut url = endpoint(
-                &self.base_url,
-                &format!("Playlists/{raw_playlist_id}/Items"),
-            )?;
-            url.query_pairs_mut()
-                .append_pair("UserId", &self.user_id)
-                .append_pair("StartIndex", &offset.to_string())
-                .append_pair("Limit", "500")
-                .append_pair("Fields", ITEM_FIELDS);
-            let response = self.get_json::<ItemQueryResult>(url).await?;
-            let item_count = response.items.len();
-            entries.extend(response.items.into_iter().map(|item| {
+        let items = self
+            .read_playlist_items(raw_playlist_id)
+            .await?
+            .ok_or_else(|| {
+                SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
+            })?;
+        let entries = items
+            .into_iter()
+            .map(|item| {
                 let entry_id = item
                     .playlist_item_id
                     .clone()
@@ -471,13 +490,12 @@ impl PlaylistReader for JellyfinSource {
                     entry_id,
                     track: track_from_item(item),
                 }
-            }));
-            offset += item_count;
-            let total = response.total_record_count.unwrap_or(0);
-            if item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < 500)
-            {
-                break;
-            }
+            })
+            .collect::<Vec<_>>();
+        if usize::try_from(playlist.track_count).ok() != Some(entries.len()) {
+            return Err(SourceError::Other(
+                "Jellyfin returned an incomplete playlist".to_string(),
+            ));
         }
 
         let tracks = entries.iter().map(|entry| entry.track.clone()).collect();

@@ -7,8 +7,8 @@ use crate::item::{
 use async_trait::async_trait;
 use domain::{
     Album, AlbumId, Artist, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, SourceId, Track,
-    TrackId,
+    HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, SourceEntityKind,
+    SourceId, SourceObjectMapping, Track, TrackId,
 };
 #[cfg(test)]
 use domain::{ArtistCredit, ArtistId};
@@ -17,18 +17,21 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use source::{
     AlbumDetail, FavoriteItemId, FavoriteMutator, FolderBrowser, FolderDetail,
     GeneratedTrackProvider, GeneratedTrackSeed, GeneratedTrackStrategy, GeneratedTracksRequest,
-    GenreDetail, ImageBytes, ImageProvider, LyricLine, Lyrics, LyricsProvider, LyricsSearch,
-    LyricsSource, MusicFolderProvider, MusicSource, PagedRequest, PagedResponse, PlaybackReport,
-    PlaybackReportKind, PlaybackReporter, PlayedFilter, PlaylistCreator, PlaylistDeleter,
-    PlaylistDetail, PlaylistEntry, PlaylistEntryMover, PlaylistEntryRemover, PlaylistReader,
-    PlaylistRenamer, PlaylistTrackAdder, RandomTrackProvider, RandomTrackRequest,
-    RecentTrackProvider, SearchResults, SourceError, SourceIdentity, SourceResult,
-    StreamDescriptor, StreamRequest, StreamResolver, TrackChange, TrackChangeFeed,
+    GenreDetail, ImageBytes, ImageProvider, LibraryChange, LibraryChangeFeed,
+    LibraryChangeResolution, LibraryChangeResolver, LibraryObjectObservation, LyricLine, Lyrics,
+    LyricsProvider, LyricsSearch, LyricsSource, MusicFolderProvider, MusicSource, PageState,
+    PagedRequest, PagedResponse, PlaybackReport, PlaybackReportKind, PlaybackReporter,
+    PlayedFilter, PlaylistCreator, PlaylistDeleter, PlaylistDetail, PlaylistEntry,
+    PlaylistEntryMover, PlaylistEntryRemover, PlaylistReader, PlaylistRenamer, PlaylistTrackAdder,
+    RandomTrackProvider, RandomTrackRequest, SearchResults, SourceError, SourceIdentity,
+    SourceObjectChanges, SourceObjectKeyProvider, SourceResult, StreamDescriptor, StreamRequest,
+    StreamResolver,
 };
 use std::sync::Arc;
 use tracing::instrument;
 
 mod client;
+mod library_changes;
 mod source_impl;
 mod websocket;
 
@@ -39,6 +42,8 @@ use source_impl::*;
 #[cfg(test)]
 mod library_api_tests;
 #[cfg(test)]
+mod library_change_tests;
+#[cfg(test)]
 mod lyrics_playback_tests;
 #[cfg(test)]
 use lyrics_playback_tests::provider;
@@ -47,6 +52,7 @@ const CLIENT_NAME: &str = "Rufin";
 const DEVICE_NAME: &str = "Rufin";
 const DEFAULT_DEVICE_ID: &str = "rufin-native";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const COLLECTION_PAGE_SIZE: usize = 500;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JellyfinClientConfig {
     pub base_url: String,

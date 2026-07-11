@@ -630,6 +630,8 @@ pub(super) fn track_metadata_hash(
     let duration_seconds = track.duration_seconds.to_string();
     let disc_number = track.disc_number.to_string();
     let track_number = track.track_number.to_string();
+    let bpm = track.bpm.map(|value| value.to_string()).unwrap_or_default();
+    let moods = track.moods.join("\u{1f}");
     hash_parts(vec![
         track.title.as_str(),
         track.artist.as_str(),
@@ -647,6 +649,8 @@ pub(super) fn track_metadata_hash(
         track.local_path.as_deref().unwrap_or(""),
         track.source_format.as_deref().unwrap_or(""),
         track.comment.as_deref().unwrap_or(""),
+        bpm.as_str(),
+        moods.as_str(),
         track.musicbrainz_recording_id.as_deref().unwrap_or(""),
         track.musicbrainz_release_track_id.as_deref().unwrap_or(""),
         musicbrainz_album_id.unwrap_or(""),

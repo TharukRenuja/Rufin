@@ -1,8 +1,6 @@
 use super::sources::album_release_types_json;
 use super::*;
 
-const LOCAL_STRESS_TRACK_ID_PREFIX: &str = "local:stress-track:";
-
 pub fn local_file_source_object_id(root_path: &str, relative_path: &str) -> String {
     format!("local:file:{root_path}\u{1f}{relative_path}")
 }
@@ -20,9 +18,8 @@ pub(super) fn upsert_source_object_on_connection(
             cue_track_index, segment_start_ms, segment_end_ms, metadata_json,
             sync_generation, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '{}', ?13, CURRENT_TIMESTAMP)
-        ON CONFLICT(source_id, source_object_id) DO UPDATE SET
-            entity_kind = excluded.entity_kind,
+        VALUES (?1, ?2, COALESCE(?3, ''), ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '{}', ?13, CURRENT_TIMESTAMP)
+        ON CONFLICT(source_id, source_object_id, entity_kind) DO UPDATE SET
             entity_id = excluded.entity_id,
             source_object_kind = excluded.source_object_kind,
             source_path = excluded.source_path,
@@ -55,37 +52,12 @@ pub(super) fn upsert_source_object_on_connection(
     Ok(())
 }
 
-pub(super) fn ensure_local_file_source_parent(
-    connection: &Connection,
-    source_id: &SourceId,
-    source_object_id: &str,
-) -> StoreResult<()> {
-    let exists = connection.query_row(
-        "
-        SELECT EXISTS(
-            SELECT 1
-            FROM source_objects
-            WHERE source_id = ?1
-              AND source_object_id = ?2
-              AND source_object_kind = 'local_file'
-        )
-        ",
-        params![source_id.as_str(), source_object_id],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if exists {
-        Ok(())
-    } else {
-        Err(StoreError::InvalidSourceObject(format!(
-            "cue parent source object is not a local file: {source_object_id}"
-        )))
-    }
-}
-
 pub(super) fn source_object_from_row(row: &Row<'_>) -> rusqlite::Result<SourceObject> {
     Ok(SourceObject {
         source_object_id: row.get(0)?,
-        entity_kind: row.get(1)?,
+        entity_kind: row
+            .get::<_, Option<String>>(1)?
+            .filter(|kind| !kind.is_empty()),
         entity_id: row.get(2)?,
         source_object_kind: row.get(3)?,
         source_path: row.get(4)?,
@@ -99,11 +71,48 @@ pub(super) fn source_object_from_row(row: &Row<'_>) -> rusqlite::Result<SourceOb
     })
 }
 
-pub(super) fn delete_track_entity_rows(
+impl Store {
+    pub fn source_object_mappings(
+        &self,
+        source_id: &SourceId,
+        source_object_id: &str,
+    ) -> StoreResult<Vec<SourceObjectMapping>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT entity_kind, entity_id
+            FROM source_objects
+            WHERE source_id = ?1
+              AND source_object_id = ?2
+              AND entity_kind != ''
+            ORDER BY entity_kind, entity_id
+            ",
+        )?;
+        let rows = statement.query_map(params![source_id.as_str(), source_object_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(entity_kind, entity_id)| {
+                Ok(SourceObjectMapping {
+                    source_object_id: source_object_id.to_string(),
+                    entity_kind: SourceEntityKind::parse(&entity_kind).ok_or_else(|| {
+                        StoreError::InvalidSourceObject(format!(
+                            "unknown entity kind: {entity_kind}"
+                        ))
+                    })?,
+                    entity_id,
+                })
+            })
+            .collect()
+    }
+}
+
+pub(super) fn delete_local_track_entity_rows(
     connection: &Connection,
     source_id: &SourceId,
     track_ids: &[TrackId],
 ) -> StoreResult<()> {
+    delete_track_entity_rows_with_source(connection, source_id, track_ids, "local")?;
     for chunk in track_ids.chunks(400) {
         let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
@@ -114,9 +123,44 @@ pub(super) fn delete_track_entity_rows(
                 .iter()
                 .map(|track_id| Value::Text(track_id.as_str().to_string())),
         );
+        let sql = format!(
+            "DELETE FROM source_objects WHERE source_id = ? AND entity_kind = 'track' AND entity_id IN ({placeholders}) AND source_object_kind IN ('local_file', 'cue_track')"
+        );
+        connection.execute(&sql, params_from_iter(values))?;
+    }
+    Ok(())
+}
+
+pub(super) fn delete_source_track_entity_rows(
+    connection: &Connection,
+    source_id: &SourceId,
+    track_ids: &[TrackId],
+) -> StoreResult<()> {
+    delete_track_entity_rows_with_source(connection, source_id, track_ids, "source")
+}
+
+fn delete_track_entity_rows_with_source(
+    connection: &Connection,
+    source_id: &SourceId,
+    track_ids: &[TrackId],
+    source: &str,
+) -> StoreResult<()> {
+    for chunk in track_ids.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut values = vec![
+            Value::Text(source_id.as_str().to_string()),
+            Value::Text(source.to_string()),
+        ];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
         for (table, column) in track_entity_tables() {
             let sql = format!(
-                "DELETE FROM {table} WHERE source_id = ? AND entity_kind = 'track' AND {column} IN ({placeholders})"
+                "DELETE FROM {table} WHERE source_id = ? AND source = ? AND entity_kind = 'track' AND {column} IN ({placeholders})"
             );
             connection.execute(&sql, params_from_iter(values.clone()))?;
         }
@@ -124,26 +168,7 @@ pub(super) fn delete_track_entity_rows(
     Ok(())
 }
 
-pub(super) fn delete_track_entity_rows_not_in_temp(
-    connection: &Connection,
-    source_id: &SourceId,
-    temp_table: &str,
-) -> StoreResult<()> {
-    for (table, column) in track_entity_tables() {
-        let sql = format!(
-            "
-            DELETE FROM {table}
-            WHERE source_id = ?1
-              AND entity_kind = 'track'
-              AND {column} NOT IN (SELECT id FROM {temp_table})
-            "
-        );
-        connection.execute(&sql, params![source_id.as_str()])?;
-    }
-    Ok(())
-}
-
-fn track_entity_tables() -> [(&'static str, &'static str); 7] {
+fn track_entity_tables() -> [(&'static str, &'static str); 6] {
     [
         ("entity_content_refs", "entity_id"),
         ("entity_facts", "entity_id"),
@@ -151,7 +176,6 @@ fn track_entity_tables() -> [(&'static str, &'static str); 7] {
         ("entity_identity_keys", "entity_id"),
         ("entity_links", "entity_id"),
         ("entities", "entity_id"),
-        ("source_objects", "entity_id"),
     ]
 }
 
@@ -432,9 +456,7 @@ pub(super) fn upsert_track_entity_data_on_connection(
         track.id.as_str(),
         "musicbrainz:recording",
     )?;
-    let stress_track =
-        cfg!(debug_assertions) && track.id.as_str().starts_with(LOCAL_STRESS_TRACK_ID_PREFIX);
-    if !stress_track && let Some(path) = clean_identity_value(track.local_path.as_deref()) {
+    if let Some(path) = clean_identity_value(track.local_path.as_deref()) {
         upsert_identity_key_on_connection(
             connection,
             source_id,

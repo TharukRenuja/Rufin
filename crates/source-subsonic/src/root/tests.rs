@@ -6,6 +6,48 @@ use source::{
 use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[tokio::test]
+async fn scan_count_is_a_lightweight_change_signal() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getScanStatus.view"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "scanStatus": { "scanning": false, "count": 9 }
+            }
+        })))
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    assert_eq!(
+        provider.probe().await.expect("first probe"),
+        LibraryProbeResult::Unknown
+    );
+    assert_eq!(
+        provider.probe().await.expect("unchanged probe"),
+        LibraryProbeResult::Unchanged
+    );
+    provider
+        .scan_probe
+        .lock()
+        .expect("scan probe")
+        .last_idle_count = Some(8);
+    assert_eq!(
+        provider.probe().await.expect("changed probe"),
+        LibraryProbeResult::Changed
+    );
+
+    provider.scan_probe.lock().expect("scan probe").saw_busy = true;
+    assert_eq!(
+        provider.probe().await.expect("completed scan"),
+        LibraryProbeResult::Changed
+    );
+}
+
 #[tokio::test]
 async fn login_map_session() {
     let server = MockServer::start().await;

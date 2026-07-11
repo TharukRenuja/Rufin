@@ -27,6 +27,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 23,
         run: migrate_to_artist_relation_backfill_schema,
     },
+    SchemaMigration {
+        from_version: 24,
+        run: migrate_to_library_sync_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
@@ -34,6 +38,7 @@ const TRACK_MOOD_BPM_SCHEMA_VERSION: i64 = 20;
 const PLAYLIST_OWNER_SCHEMA_VERSION: i64 = 21;
 const FAVORITE_OVERRIDE_SCHEMA_VERSION: i64 = 22;
 const SOURCE_IDENTITY_SCHEMA_VERSION: i64 = 23;
+const ARTIST_RELATION_SCHEMA_VERSION: i64 = 24;
 const SCHEMA_TABLES: &[&str] = &[
     "queue_snapshots",
     "sources",
@@ -119,6 +124,16 @@ const FAVORITE_OVERRIDE_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("item_favorite_overrides", "updated_at"),
 ];
 const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+    ("item_favorite_overrides", "updated_at"),
+    ("sources", "kind"),
+    ("source_objects", "source_object_kind"),
+    ("sync_state", "cache_revision"),
+    ("sync_state", "last_all_completed_at"),
+];
+const PRE_CACHE_REVISION_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("genres", "duration_seconds"),
     ("tracks", "bpm"),
     ("playlists", "owner"),
@@ -460,6 +475,45 @@ fn migrate_to_artist_relation_backfill_schema(store: &Store) -> StoreResult<()> 
     Ok(())
 }
 
+fn migrate_to_library_sync_schema(store: &Store) -> StoreResult<()> {
+    store.connection.execute_batch(
+        "
+        DROP INDEX IF EXISTS source_objects_entity_idx;
+        DROP INDEX IF EXISTS source_objects_parent_idx;
+        ALTER TABLE source_objects RENAME TO source_objects_v24;
+        ",
+    )?;
+    store.create_source_object_schema()?;
+    store.connection.execute_batch(
+        "
+        INSERT INTO source_objects (
+            source_id, source_object_id, entity_kind, entity_id, source_object_kind,
+            source_path, parent_source_object_id, cue_path, cue_revision,
+            cue_track_index, segment_start_ms, segment_end_ms, metadata_json,
+            sync_generation, updated_at
+        )
+        SELECT source_id, source_object_id, COALESCE(entity_kind, ''), entity_id,
+               source_object_kind, source_path, parent_source_object_id, cue_path,
+               cue_revision, cue_track_index, segment_start_ms, segment_end_ms,
+               metadata_json, sync_generation, updated_at
+        FROM source_objects_v24;
+        DROP TABLE source_objects_v24;
+        ",
+    )?;
+    store.ensure_column("sync_state", "cache_revision", "INTEGER NOT NULL DEFAULT 0")?;
+    store.ensure_column("sync_state", "last_all_completed_at", "TEXT")?;
+    store.connection.execute(
+        "
+        UPDATE sync_state
+        SET last_all_completed_at = last_completed_at
+        WHERE last_all_completed_at IS NULL
+          AND last_completed_at IS NOT NULL
+        ",
+        [],
+    )?;
+    Ok(())
+}
+
 fn collapse_provider_provenance_duplicates(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
@@ -640,9 +694,9 @@ impl Store {
                 SUPPORTED_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], FAVORITE_OVERRIDE_SCHEMA_COLUMNS)?),
-            SOURCE_IDENTITY_SCHEMA_VERSION => Ok(self
+            SOURCE_IDENTITY_SCHEMA_VERSION | ARTIST_RELATION_SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
-                && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
+                && self.schema_has_required_parts(&[], PRE_CACHE_REVISION_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -814,9 +868,11 @@ impl Store {
             CREATE TABLE IF NOT EXISTS sync_state (
                 source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
                 generation INTEGER NOT NULL DEFAULT 0,
+                cache_revision INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'idle',
                 last_started_at TEXT,
                 last_completed_at TEXT,
+                last_all_completed_at TEXT,
                 last_error TEXT
             );
             CREATE TABLE IF NOT EXISTS albums (
@@ -1086,6 +1142,8 @@ impl Store {
                 ON playlists(source_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS playlist_tracks_order_idx
                 ON playlist_tracks(source_id, playlist_id, position, entry_id);
+            CREATE INDEX IF NOT EXISTS playlist_tracks_track_idx
+                ON playlist_tracks(source_id, track_id, playlist_id);
             CREATE INDEX IF NOT EXISTS item_favorite_overrides_lookup_idx
                 ON item_favorite_overrides(source_id, item_kind, favorite, item_id);
             CREATE INDEX IF NOT EXISTS tracks_source_album_idx
@@ -1144,6 +1202,8 @@ impl Store {
             "use_jellyfin_instant_mix",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+        self.ensure_column("sync_state", "cache_revision", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("sync_state", "last_all_completed_at", "TEXT")?;
         self.ensure_image_origin_columns()?;
         self.create_entity_identity_schema()?;
         self.connection
@@ -1168,44 +1228,9 @@ impl Store {
         Ok(())
     }
     fn create_entity_identity_schema(&self) -> StoreResult<()> {
+        self.create_source_object_schema()?;
         self.connection.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS source_objects (
-                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-                source_object_id TEXT NOT NULL,
-                entity_kind TEXT,
-                entity_id TEXT,
-                source_object_kind TEXT NOT NULL,
-                source_path TEXT,
-                parent_source_object_id TEXT,
-                cue_path TEXT,
-                cue_revision TEXT,
-                cue_track_index INTEGER,
-                segment_start_ms INTEGER,
-                segment_end_ms INTEGER,
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                sync_generation INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK (
-                    source_object_kind != 'cue_track'
-                    OR (
-                        entity_kind IS NOT NULL
-                        AND entity_id IS NOT NULL
-                        AND parent_source_object_id IS NOT NULL
-                        AND cue_path IS NOT NULL
-                        AND cue_revision IS NOT NULL
-                        AND cue_track_index IS NOT NULL
-                        AND segment_start_ms IS NOT NULL
-                        AND segment_end_ms IS NOT NULL
-                    )
-                ),
-                PRIMARY KEY (source_id, source_object_id)
-            );
-            CREATE INDEX IF NOT EXISTS source_objects_entity_idx
-                ON source_objects(source_id, entity_kind, entity_id);
-            CREATE INDEX IF NOT EXISTS source_objects_parent_idx
-                ON source_objects(source_id, parent_source_object_id);
-
             CREATE TABLE IF NOT EXISTS entities (
                 source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
                 entity_kind TEXT NOT NULL,
@@ -1314,6 +1339,48 @@ impl Store {
         self.backfill_entity_identity_schema()?;
         Ok(())
     }
+    fn create_source_object_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS source_objects (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                source_object_id TEXT NOT NULL,
+                entity_kind TEXT NOT NULL DEFAULT '',
+                entity_id TEXT,
+                source_object_kind TEXT NOT NULL,
+                source_path TEXT,
+                parent_source_object_id TEXT,
+                cue_path TEXT,
+                cue_revision TEXT,
+                cue_track_index INTEGER,
+                segment_start_ms INTEGER,
+                segment_end_ms INTEGER,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                sync_generation INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    source_object_kind != 'cue_track'
+                    OR (
+                        entity_kind != ''
+                        AND entity_id IS NOT NULL
+                        AND parent_source_object_id IS NOT NULL
+                        AND cue_path IS NOT NULL
+                        AND cue_revision IS NOT NULL
+                        AND cue_track_index IS NOT NULL
+                        AND segment_start_ms IS NOT NULL
+                        AND segment_end_ms IS NOT NULL
+                    )
+                ),
+                PRIMARY KEY (source_id, source_object_id, entity_kind)
+            );
+            CREATE INDEX IF NOT EXISTS source_objects_entity_idx
+                ON source_objects(source_id, entity_kind, entity_id);
+            CREATE INDEX IF NOT EXISTS source_objects_parent_idx
+                ON source_objects(source_id, parent_source_object_id);
+            ",
+        )?;
+        Ok(())
+    }
     fn backfill_entity_identity_schema(&self) -> StoreResult<()> {
         self.connection.execute_batch(
             "
@@ -1322,7 +1389,7 @@ impl Store {
                 source_path, metadata_json, sync_generation, updated_at
             )
             SELECT source_id, 'local:file:' || root_path || char(31) || relative_path,
-                   NULL, NULL, 'local_file',
+                   '', NULL, 'local_file',
                    path, '{}', scan_generation, CURRENT_TIMESTAMP
             FROM local_file_manifest;
 
@@ -1633,27 +1700,8 @@ impl Store {
         )?;
         collect_rows(statement.query_map([], saved_source_from_row)?)
     }
-    pub fn save_source_local_access(&self, access: &SourceLocalAccess) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO source_local_access (
-                source_id, root_path, path_replace_from, path_replace_to, updated_at
-            )
-            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id) DO UPDATE SET
-                root_path = excluded.root_path,
-                path_replace_from = excluded.path_replace_from,
-                path_replace_to = excluded.path_replace_to,
-                updated_at = excluded.updated_at
-            ",
-            params![
-                access.source_id.as_str(),
-                access.root_path.as_str(),
-                access.path_replace_from.as_deref(),
-                access.path_replace_to.as_deref(),
-            ],
-        )?;
-        Ok(())
+    pub fn save_source_local_access(&self, access: &SourceLocalAccess) -> StoreResult<bool> {
+        self.write_source_local_access(&access.source_id, Some(access))
     }
     pub fn source_local_access(
         &self,
@@ -1680,6 +1728,12 @@ impl Store {
             .map_err(StoreError::from)
     }
     pub fn local_access_status_facts(
+        &self,
+        access: &SourceLocalAccess,
+    ) -> StoreResult<LocalAccessStatusFacts> {
+        self.read_snapshot(|store| store.local_access_status_facts_inner(access))
+    }
+    fn local_access_status_facts_inner(
         &self,
         access: &SourceLocalAccess,
     ) -> StoreResult<LocalAccessStatusFacts> {
@@ -1804,12 +1858,54 @@ impl Store {
             total_track_count,
         })
     }
-    pub fn delete_source_local_access(&self, source_id: &SourceId) -> StoreResult<()> {
-        self.connection.execute(
-            "DELETE FROM source_local_access WHERE source_id = ?1",
-            params![source_id.as_str()],
-        )?;
-        Ok(())
+    pub fn clear_source_local_access(&self, source_id: &SourceId) -> StoreResult<bool> {
+        self.write_source_local_access(source_id, None)
+    }
+
+    fn write_source_local_access(
+        &self,
+        source_id: &SourceId,
+        replacement: Option<&SourceLocalAccess>,
+    ) -> StoreResult<bool> {
+        self.write_batch(|connection| {
+            let current = self.source_local_access(source_id)?;
+            let mapping_changed = current.as_ref() != replacement;
+            let stale_projection = replacement.is_none()
+                && local_access_projections_exist_on_connection(connection, source_id)?;
+            if !mapping_changed && !stale_projection {
+                return Ok(false);
+            }
+            let cache_revision = self.source_cache_revision(source_id)?;
+            if let Some(access) = replacement {
+                connection.execute(
+                    "
+                    INSERT INTO source_local_access (
+                        source_id, root_path, path_replace_from, path_replace_to, updated_at
+                    )
+                    VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                    ON CONFLICT(source_id) DO UPDATE SET
+                        root_path = excluded.root_path,
+                        path_replace_from = excluded.path_replace_from,
+                        path_replace_to = excluded.path_replace_to,
+                        updated_at = excluded.updated_at
+                    ",
+                    params![
+                        access.source_id.as_str(),
+                        access.root_path.as_str(),
+                        access.path_replace_from.as_deref(),
+                        access.path_replace_to.as_deref(),
+                    ],
+                )?;
+            } else {
+                connection.execute(
+                    "DELETE FROM source_local_access WHERE source_id = ?1",
+                    params![source_id.as_str()],
+                )?;
+            }
+            clear_local_access_projections_on_connection(connection, source_id)?;
+            self.advance_source_cache_revision(source_id, cache_revision)?;
+            Ok(true)
+        })
     }
     pub fn upsert_music_folders(
         &self,
@@ -1922,11 +2018,11 @@ impl Store {
             Ok(())
         })
     }
-    pub fn replace_track_local_matches(
+    pub(super) fn replace_track_local_matches(
         &self,
         source_id: &SourceId,
         matches: &[(TrackId, String, String)],
-    ) -> StoreResult<()> {
+    ) -> StoreResult<bool> {
         let mut incoming = matches.to_vec();
         incoming.sort_by(|left, right| {
             left.0
@@ -1935,7 +2031,7 @@ impl Store {
                 .then_with(|| left.2.cmp(&right.2))
         });
         if self.track_local_matches_with_kind(source_id)? == incoming {
-            return Ok(());
+            return Ok(false);
         }
         self.write_batch(|connection| {
             connection.execute(
@@ -1958,10 +2054,10 @@ impl Store {
                     match_kind.as_str(),
                 ])?;
             }
-            Ok(())
+            Ok(true)
         })
     }
-    fn track_local_matches_with_kind(
+    pub(super) fn track_local_matches_with_kind(
         &self,
         source_id: &SourceId,
     ) -> StoreResult<Vec<(TrackId, String, String)>> {
@@ -1980,13 +2076,6 @@ impl Store {
                 row.get::<_, String>(2)?,
             ))
         })?)
-    }
-    pub fn delete_track_local_matches(&self, source_id: &SourceId) -> StoreResult<()> {
-        self.connection.execute(
-            "DELETE FROM track_local_matches WHERE source_id = ?1",
-            params![source_id.as_str()],
-        )?;
-        Ok(())
     }
     pub fn track_local_match_path(
         &self,
@@ -2026,7 +2115,8 @@ impl Store {
         self.connection
             .query_row(
                 "
-                SELECT source_id, generation, status, last_started_at, last_completed_at, last_error
+                SELECT source_id, generation, cache_revision, status, last_started_at,
+                       last_completed_at, last_all_completed_at, last_error
                 FROM sync_state
                 WHERE source_id = ?1
                 ",
@@ -2035,10 +2125,12 @@ impl Store {
                     Ok(SyncState {
                         source_id: SourceId::new(row.get::<_, String>(0)?),
                         generation: row.get(1)?,
-                        status: row.get(2)?,
-                        last_started_at: row.get(3)?,
-                        last_completed_at: row.get(4)?,
-                        last_error: row.get(5)?,
+                        cache_revision: row.get(2)?,
+                        status: row.get(3)?,
+                        last_started_at: row.get(4)?,
+                        last_completed_at: row.get(5)?,
+                        last_all_completed_at: row.get(6)?,
+                        last_error: row.get(7)?,
                     })
                 },
             )
@@ -2058,6 +2150,44 @@ impl Store {
             )
             .optional()
             .map(|value| value.flatten())
+            .map_err(StoreError::from)
+    }
+    pub fn all_sync_completed_age_seconds(&self, source_id: &SourceId) -> StoreResult<Option<i64>> {
+        self.connection
+            .query_row(
+                "
+                SELECT CAST(strftime('%s', 'now') AS INTEGER)
+                     - CAST(strftime('%s', last_all_completed_at) AS INTEGER)
+                FROM sync_state
+                WHERE source_id = ?1 AND last_all_completed_at IS NOT NULL
+                ",
+                params![source_id.as_str()],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(StoreError::from)
+    }
+    pub fn source_cache_revision(&self, source_id: &SourceId) -> StoreResult<i64> {
+        self.connection
+            .query_row(
+                "SELECT cache_revision FROM sync_state WHERE source_id = ?1",
+                params![source_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(StoreError::from)
+    }
+    pub fn recover_interrupted_syncs(&self) -> StoreResult<usize> {
+        self.connection
+            .execute(
+                "
+                UPDATE sync_state
+                SET status = 'error',
+                    last_error = 'Previous sync was interrupted.'
+                WHERE status = 'running'
+                ",
+                [],
+            )
             .map_err(StoreError::from)
     }
     pub fn begin_sync(&self, source_id: &SourceId) -> StoreResult<i64> {
@@ -2113,6 +2243,84 @@ impl Store {
             })
         }
     }
+    pub(super) fn require_source_cache_revision(
+        &self,
+        source_id: &SourceId,
+        revision: i64,
+    ) -> StoreResult<()> {
+        let current = self.source_cache_revision(source_id)?;
+        if current == revision {
+            Ok(())
+        } else {
+            Err(StoreError::StaleCacheRevision {
+                source_id: source_id.as_str().to_string(),
+                revision,
+                current,
+            })
+        }
+    }
+    pub(super) fn advance_source_cache_revision(
+        &self,
+        source_id: &SourceId,
+        expected: i64,
+    ) -> StoreResult<i64> {
+        let updated = self.connection.execute(
+            "
+            UPDATE sync_state
+            SET cache_revision = cache_revision + 1
+            WHERE source_id = ?1 AND cache_revision = ?2
+            ",
+            params![source_id.as_str(), expected],
+        )?;
+        if updated == 1 {
+            Ok(expected + 1)
+        } else {
+            self.require_source_cache_revision(source_id, expected)?;
+            Err(StoreError::StaleCacheRevision {
+                source_id: source_id.as_str().to_string(),
+                revision: expected,
+                current: expected,
+            })
+        }
+    }
+}
+
+fn clear_local_access_projections_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+) -> StoreResult<()> {
+    connection.execute(
+        "DELETE FROM track_local_matches WHERE source_id = ?1",
+        params![source_id.as_str()],
+    )?;
+    super::local_manifest::clear_local_manifest_on_connection(connection, source_id)
+}
+
+fn local_access_projections_exist_on_connection(
+    connection: &Connection,
+    source_id: &SourceId,
+) -> StoreResult<bool> {
+    connection
+        .query_row(
+            "
+            SELECT EXISTS (
+                SELECT 1 FROM track_local_matches WHERE source_id = ?1
+            ) OR EXISTS (
+                SELECT 1 FROM local_file_manifest WHERE source_id = ?1
+            ) OR EXISTS (
+                SELECT 1 FROM local_track_manifest_data WHERE source_id = ?1
+            ) OR EXISTS (
+                SELECT 1 FROM local_artwork_manifest WHERE source_id = ?1
+            ) OR EXISTS (
+                SELECT 1 FROM source_objects
+                WHERE source_id = ?1
+                  AND source_object_kind IN ('local_file', 'cue_track')
+            )
+            ",
+            params![source_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(StoreError::from)
 }
 
 fn usize_from_count(value: i64) -> usize {
@@ -2175,9 +2383,11 @@ pub(super) fn clear_source_cache(connection: &Connection, source_id: &SourceId) 
         "
         UPDATE sync_state
         SET generation = 0,
+            cache_revision = cache_revision + 1,
             status = 'idle',
             last_started_at = NULL,
             last_completed_at = NULL,
+            last_all_completed_at = NULL,
             last_error = NULL
         WHERE source_id = ?1
         ",
@@ -2216,5 +2426,44 @@ mod tests {
         );
         assert!(schema_migration_path(1, 4, MIGRATIONS).is_none());
         assert!(schema_migration_path(4, 3, MIGRATIONS).is_none());
+    }
+
+    #[test]
+    fn startup_recovers_an_interrupted_sync_without_changing_the_cache() {
+        let store = Store::open_memory().expect("open Store");
+        let source_id = SourceId::new("test:interrupted");
+        store
+            .save_source(&SavedSource {
+                source: SourceIdentity {
+                    id: source_id.clone(),
+                    kind: "test".to_string(),
+                    name: "Interrupted".to_string(),
+                    base_url: String::new(),
+                },
+                user_id: String::new(),
+                username: String::new(),
+                trust_invalid_cert: false,
+                use_jellyfin_instant_mix: false,
+            })
+            .expect("save source");
+        let generation = store.begin_sync(&source_id).expect("begin sync");
+        let revision = store
+            .source_cache_revision(&source_id)
+            .expect("cache revision");
+
+        assert_eq!(store.recover_interrupted_syncs().expect("recover sync"), 1);
+
+        let state = store.sync_state(&source_id).expect("sync state");
+        assert_eq!(state.generation, generation);
+        assert_eq!(state.cache_revision, revision);
+        assert_eq!(state.status, "error");
+        assert_eq!(
+            state.last_error.as_deref(),
+            Some("Previous sync was interrupted.")
+        );
+        assert_eq!(
+            store.recover_interrupted_syncs().expect("second recovery"),
+            0
+        );
     }
 }

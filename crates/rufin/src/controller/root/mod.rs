@@ -16,21 +16,22 @@ use domain::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
     ExternalLyricsProvider, FolderPathItem, GeneratedTrackSeed, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibraryField, LibraryListSettings, LibrarySourceSelection,
-    LocalLibraryFolder, LocalManifestScan, Mood, MoodId, MusicFolder, MusicFolderId,
-    PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail,
-    PlaylistEntrySortDescriptor, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion,
-    QueueInsertionSource, QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind,
-    SecretStorageMode, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistSortDescriptor, SourceFeatureOwner,
-    SourceId, SourceIdentity, SourceOrder, SourcePlaylistOperation, StreamDescriptor,
-    StreamQuality, Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableSettings,
+    LocalLibraryFolder, Mood, MoodId, MusicFolder, MusicFolderId, PlaySourceDescriptor,
+    PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail, PlaylistEntrySortDescriptor,
+    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource,
+    QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
+    SmartPlaylistId, SmartPlaylistSortDescriptor, SourceFeatureOwner, SourceId, SourceIdentity,
+    SourceOrder, SourcePlaylistOperation, StreamDescriptor, StreamQuality, Track, TrackId,
+    TrackSortDescriptor, TrackSortKey, TrackTableSettings,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
-    LibraryDelta, LibraryDeltaCollector, LocalLibraryDelta, PlaylistWriteMode, SavedSource,
-    SourceLocalAccess, Store, StoreBackedSourceItem, StoreBackedSourceWindow, StoreError,
-    StoreResult, SyncState,
+    LibraryDelta, PlaylistWriteMode, SavedSource, SourceLocalAccess, Store, StoreBackedSourceItem,
+    StoreBackedSourceWindow, StoreError, StoreResult, SyncCommit,
 };
+#[cfg(test)]
+use library::{SourceEntityKind, SourceObjectMapping};
 use playback::{
     LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState,
     PlaybackTrack, PreparedPlaybackItem, generate_waveform_peaks_cancellable,
@@ -46,19 +47,18 @@ use secrets::{
 };
 use serde::{Deserialize, Serialize};
 use source::{
-    FavoriteItemId, FolderDetail, Lyrics, LyricsSearch, MusicFolderProvider, MusicSource,
-    PagedRequest, PlaybackReport, PlaybackReportKind, PlaylistEntry, PlaylistReader, SearchResults,
-    StreamRequest, TrackChange,
+    FavoriteItemId, FolderDetail, Lyrics, LyricsSearch, PlaybackReport, PlaybackReportKind,
+    PlaylistEntry, SearchResults, StreamRequest,
 };
 #[cfg(test)]
 use source::{LyricLine, LyricsSource, PlayedFilter};
-use source_local::{LOCAL_SOURCE_ID, LocalScanProgress, LocalScanStage, LocalSource};
+use source_local::{LOCAL_SOURCE_ID, LocalSource};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::Hash;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -66,9 +66,8 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, warn};
 
-mod active_source_reconciliation;
 mod auto_dj;
 pub(crate) use auto_dj::{cached_auto_dj_operation, native_auto_dj_operation};
 mod auto_dj_commands;
@@ -79,8 +78,6 @@ mod controller_settings;
 mod controller_startup;
 mod folder_search_commands;
 mod library_mutations;
-mod local_library_stress;
-mod local_library_watcher;
 mod local_source_commands;
 mod lyrics_commands;
 pub(in crate::controller) mod play_activation;
@@ -96,7 +93,6 @@ mod queue_commands;
 mod queue_mutation;
 mod queue_state;
 mod refresh_commands;
-mod remote_library_watcher;
 mod settings_controller;
 mod source_cache_commands;
 mod source_image_policy;
@@ -106,10 +102,9 @@ pub(in crate::controller) use source_lifecycle_commands::{
 };
 mod source_local_access_commands;
 mod source_presentation;
-mod source_readiness;
 mod source_refs;
 mod source_selection;
-mod sync_command;
+mod source_sync;
 mod sync_requests;
 
 #[cfg(test)]
@@ -123,10 +118,8 @@ mod startup_sync_tests;
 #[cfg(test)]
 mod test_support;
 
-pub(crate) use active_source_reconciliation::*;
 pub(crate) use cached_reads::*;
 pub(crate) use controller_startup::*;
-pub(crate) use local_library_watcher::local_freshness_operations;
 pub(crate) use play_activation::{
     FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
@@ -139,29 +132,18 @@ pub(in crate::controller) use playback_waveforms::{
     waveform_cache_key, waveform_cache_key_for_queue,
 };
 pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
-pub(crate) use remote_library_watcher::{event_freshness_operations, poll_freshness_operations};
 pub(in crate::controller) use source_image_policy::is_local_source_image_ref;
-use source_image_policy::{
-    is_local_album_id, is_local_artist_id, is_local_track_id, scrub_home_refs,
-    scrub_source_image_ref, source_image_ref_allowed,
-};
+use source_image_policy::{scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed};
 pub(in crate::controller) use source_image_policy::{
     scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
     scrub_selected_genre_image_refs, scrub_selected_mood_image_refs,
     scrub_selected_playlist_image_refs, scrub_selected_track_image_refs, scrub_smart_refs,
 };
 use source_presentation::{load_runtime_snapshot, load_snapshot};
-pub(crate) use source_readiness::{
-    SourceSyncReadiness, filesystem_initial_cover_requirement, incremental_readiness_evaluator,
-    local_readiness_evaluator, source_initial_cover_requirement,
-};
-#[cfg(test)]
-use source_readiness::{SyncRequiredReason, active_source_readiness};
-use source_readiness::{active_source_needs_sync, active_source_startup_readiness};
 pub(in crate::controller) use source_refs::track_album_refs_with_settings;
 use source_refs::{
-    album_track_refs, home_image_refs, home_local_refs, queue_track_refs, sync_status_text,
-    track_album_refs,
+    album_track_refs, album_track_refs_from_store, home_image_refs, home_image_refs_from_store,
+    home_local_refs_from_store, queue_track_refs, track_album_refs, track_album_refs_from_store,
 };
 pub(crate) use source_refs::{grouped_cover_refs_for_items, track_cover_refs_for_items};
 pub(in crate::controller) use sync_requests::*;
@@ -171,7 +153,6 @@ pub(in crate::controller) use test_support::*;
 const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
 pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 40_000;
-const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_PROVIDER_CANDIDATE_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 4;
@@ -198,8 +179,7 @@ pub struct LibrarySnapshot {
     pub music_folders: Vec<MusicFolder>,
     pub selected_music_folder_id: Option<MusicFolderId>,
     pub first_run: bool,
-    pub sync_status: String,
-    pub last_error: Option<String>,
+    pub cache: LibraryCacheState,
     pub cached_album_count: usize,
     pub cached_track_count: usize,
     pub cached_artist_count: usize,
@@ -218,6 +198,24 @@ pub struct LibrarySnapshot {
     pub favorites: Vec<Track>,
     pub search: SearchResults,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LibraryCacheState {
+    NoCache { revision: i64 },
+    Committed { revision: i64 },
+}
+
+impl LibraryCacheState {
+    pub fn revision(self) -> i64 {
+        match self {
+            Self::NoCache { revision } | Self::Committed { revision } => revision,
+        }
+    }
+
+    pub fn is_committed(self) -> bool {
+        matches!(self, Self::Committed { .. })
+    }
+}
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LibraryCounts {
     pub albums: usize,
@@ -232,14 +230,18 @@ pub struct LibraryHomeUpdate {
     pub sections: Vec<HomeSection>,
     pub prefetched_explore: Option<HomeSection>,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LibrarySyncStatus {
-    pub source_id: SourceId,
-    pub sync_status: String,
-    pub last_error: Option<String>,
-    pub counts: LibraryCounts,
-    pub home: Option<LibraryHomeUpdate>,
-    pub delta: LibraryDelta,
+#[derive(Clone, Debug)]
+pub enum LibraryCommitProjection {
+    Initial(Box<LibrarySnapshot>),
+    Current {
+        counts: LibraryCounts,
+        home: Option<LibraryHomeUpdate>,
+    },
+}
+#[derive(Clone, Debug)]
+pub struct LibraryCommitUpdate {
+    pub commit: library_sync::LibraryCommitted,
+    pub projection: Option<Result<LibraryCommitProjection, String>>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchRequestKey {
@@ -255,7 +257,6 @@ pub struct SourceLocalAccessSnapshot {
     pub access: Option<SourceLocalAccess>,
     pub status: LocalAccessStatus,
     pub selected_music_folder_name: Option<String>,
-    pub sync_status: String,
     pub cached_album_count: usize,
     pub cached_track_count: usize,
 }
@@ -332,8 +333,7 @@ impl LibrarySnapshot {
             music_folders: Vec::new(),
             selected_music_folder_id: None,
             first_run: true,
-            sync_status: String::new(),
-            last_error: None,
+            cache: LibraryCacheState::NoCache { revision: 0 },
             cached_album_count: 0,
             cached_track_count: 0,
             cached_artist_count: 0,
@@ -354,13 +354,31 @@ impl LibrarySnapshot {
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceNotice {
+    Checking {
+        source_name: String,
+    },
+    Connected,
+    SettingsSaved,
+    NoChanges,
+    CacheCleared,
+    CoverProgress {
+        source_id: SourceId,
+        processed: usize,
+        total: usize,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
     SourceSelectionChanged {
         selected_source: LibrarySourceSelection,
     },
-    LibrarySyncStatus(Box<LibrarySyncStatus>),
+    SourceSyncChanged(library_sync::SourceSyncChanged),
+    LibraryCommitted(Box<LibraryCommitUpdate>),
     LibraryDelta(Box<LibraryDelta>),
     HomeSectionsUpdated {
         snapshot: Box<LibrarySnapshot>,
@@ -445,7 +463,11 @@ pub enum ControllerEvent {
         status: ServerDiscoveryStatus,
         running: bool,
     },
-    LoginStatus(String),
+    SourceNotice(SourceNotice),
+    SourceTransitionFailed {
+        source_id: Option<SourceId>,
+        error: String,
+    },
     Error(String),
 }
 
@@ -471,10 +493,9 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(SourceId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
-    source_freshness_watcher: Arc<Mutex<Option<Box<dyn crate::sources::FreshnessWatcher>>>>,
+    sync_coordinator: Arc<Mutex<library_sync::SyncCoordinator>>,
     pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<SourceId>,
     home_refresh_in_flight: InFlightGuards<SourceId>,
     explore_prefetch_in_flight: InFlightGuards<SourceId>,
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
@@ -536,11 +557,7 @@ where
     K: Eq + Hash,
 {
     name: &'static str,
-    inner: Arc<Mutex<HashMap<K, CancellationToken>>>,
-}
-#[derive(Clone, Debug)]
-pub(crate) struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
+    inner: Arc<Mutex<HashSet<K>>>,
 }
 pub(in crate::controller) struct InFlightPermit<K>
 where
@@ -548,26 +565,6 @@ where
 {
     guards: InFlightGuards<K>,
     key: Option<K>,
-    token: CancellationToken,
-}
-impl CancellationToken {
-    pub(in crate::controller) fn new() -> Self {
-        Self {
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub(in crate::controller) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-
-    pub(in crate::controller) fn cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-
-    fn same_instance(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.cancelled, &other.cancelled)
-    }
 }
 impl<K> InFlightGuards<K>
 where
@@ -576,36 +573,8 @@ where
     fn new(name: &'static str) -> Self {
         Self {
             name,
-            inner: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(Mutex::new(HashSet::new())),
         }
-    }
-
-    fn contains_or_blocked(&self, key: &K) -> bool {
-        self.inner
-            .lock()
-            .map(|running| running.contains_key(key))
-            .unwrap_or(true)
-    }
-
-    fn cancel(&self, key: &K) -> Result<bool, String> {
-        self.inner
-            .lock()
-            .map(|running| {
-                let Some(token) = running.get(key) else {
-                    return false;
-                };
-                token.cancel();
-                true
-            })
-            .map_err(|_| self.poisoned_message())
-    }
-
-    #[cfg(test)]
-    fn cancellation_requested(&self, key: &K) -> bool {
-        self.inner
-            .lock()
-            .map(|running| running.get(key).is_some_and(CancellationToken::cancelled))
-            .unwrap_or(true)
     }
 
     fn poisoned_message(&self) -> String {
@@ -618,24 +587,13 @@ where
 {
     fn acquire(&self, key: K) -> Result<Option<InFlightPermit<K>>, String> {
         let mut running = self.inner.lock().map_err(|_| self.poisoned_message())?;
-        if running.get(&key).is_some_and(|token| !token.cancelled()) {
+        if !running.insert(key.clone()) {
             return Ok(None);
         }
-        let token = CancellationToken::new();
-        running.insert(key.clone(), token.clone());
         Ok(Some(InFlightPermit {
             guards: self.clone(),
             key: Some(key),
-            token,
         }))
-    }
-}
-impl<K> InFlightPermit<K>
-where
-    K: Eq + Hash,
-{
-    fn cancellation_token(&self) -> CancellationToken {
-        self.token.clone()
     }
 }
 impl<K> Drop for InFlightPermit<K>
@@ -648,12 +606,7 @@ where
         };
         match self.guards.inner.lock() {
             Ok(mut running) => {
-                if running
-                    .get(&key)
-                    .is_some_and(|current| current.same_instance(&self.token))
-                {
-                    running.remove(&key);
-                }
+                running.remove(&key);
             }
             Err(_) => {
                 warn!(
@@ -669,32 +622,13 @@ pub(in crate::controller) struct HomeRefreshContext {
     runtime: Arc<Runtime>,
     active_source: ActiveSourceSlot,
     events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<SourceId>,
     home_refresh_in_flight: InFlightGuards<SourceId>,
-}
-#[derive(Clone)]
-pub(crate) struct SyncContext {
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    active_source: ActiveSourceSlot,
-    secrets: Arc<dyn SecretStore>,
-    events: Sender<ControllerEvent>,
-    queue: Arc<Mutex<Option<QueueEngine>>>,
-    queue_persist_generation: Arc<AtomicU64>,
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    auto_dj_enabled: Arc<Mutex<bool>>,
-    sync_in_flight: InFlightGuards<SourceId>,
-    cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
-    external_cover_retry_generation: Arc<AtomicU64>,
-    external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
-    cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 pub(in crate::controller) struct ExplorePrefetchContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     active_source: ActiveSourceSlot,
     events: Sender<ControllerEvent>,
-    sync_in_flight: InFlightGuards<SourceId>,
     explore_prefetch_in_flight: InFlightGuards<SourceId>,
 }
 #[derive(Clone, Copy, Debug)]
@@ -727,7 +661,10 @@ impl StoreHandle {
         if let Some(parent) = cache_database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Store::open(&cache_database_path).map_err(|error| error.to_string())?;
+        let store = Store::open(&cache_database_path).map_err(|error| error.to_string())?;
+        store
+            .recover_interrupted_syncs()
+            .map_err(|error| error.to_string())?;
 
         let settings_path = app_settings_path();
         let settings = match fs::read_to_string(&settings_path) {
@@ -761,42 +698,57 @@ impl StoreHandle {
         &self,
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, String> {
-        match self {
-            Self::Path {
-                cache_database_path,
-                ..
-            } => {
-                let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
-                operation(&store).map_err(|error| error.to_string())
-            }
-            #[cfg(test)]
-            Self::Memory { store, .. } => {
-                let store = store
-                    .lock()
-                    .map_err(|_| "store lock was poisoned".to_string())?;
-                operation(&store).map_err(|error| error.to_string())
-            }
-        }
+        self.with_store_result(
+            operation,
+            |error| error.to_string(),
+            |error| error.to_string(),
+            || "store lock was poisoned".to_string(),
+        )
     }
 
     pub(in crate::controller) fn with_store_session<T>(
         &self,
         operation: impl FnOnce(&Store) -> Result<T, String>,
     ) -> Result<T, String> {
+        self.with_store_result(
+            operation,
+            |error| error.to_string(),
+            |error| error,
+            || "store lock was poisoned".to_string(),
+        )
+    }
+
+    pub(in crate::controller) fn with_store_sync<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> library_sync::SyncResult<T>,
+    ) -> library_sync::SyncResult<T> {
+        self.with_store_result(
+            operation,
+            library_sync::SyncError::from,
+            |error| error,
+            || library_sync::SyncError::Unavailable("Store lock was poisoned"),
+        )
+    }
+
+    fn with_store_result<T, O, E>(
+        &self,
+        operation: impl FnOnce(&Store) -> Result<T, O>,
+        store_error: impl Fn(StoreError) -> E,
+        operation_error: impl Fn(O) -> E,
+        _poisoned: impl Fn() -> E,
+    ) -> Result<T, E> {
         match self {
             Self::Path {
                 cache_database_path,
                 ..
             } => {
-                let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
-                operation(&store)
+                let store = Store::open(cache_database_path).map_err(store_error)?;
+                operation(&store).map_err(operation_error)
             }
             #[cfg(test)]
             Self::Memory { store, .. } => {
-                let store = store
-                    .lock()
-                    .map_err(|_| "store lock was poisoned".to_string())?;
-                operation(&store)
+                let store = store.lock().map_err(|_| _poisoned())?;
+                operation(&store).map_err(operation_error)
             }
         }
     }

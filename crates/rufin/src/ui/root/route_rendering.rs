@@ -437,6 +437,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
             !delta.albums.added.is_empty()
                 || !delta.albums.deleted.is_empty()
                 || !delta.albums.fields.is_empty()
+                || !delta.albums.stats.is_empty()
                 || !delta.albums.links.is_empty()
                 || !delta.albums.cover_refs.is_empty()
         }
@@ -458,6 +459,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
             !delta.artists.added.is_empty()
                 || !delta.artists.deleted.is_empty()
                 || !delta.artists.fields.is_empty()
+                || !delta.artists.stats.is_empty()
                 || !delta.artists.links.is_empty()
                 || !delta.artists.cover_refs.is_empty()
         }
@@ -477,6 +479,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
             !delta.album_artists.added.is_empty()
                 || !delta.album_artists.deleted.is_empty()
                 || !delta.album_artists.fields.is_empty()
+                || !delta.album_artists.stats.is_empty()
                 || !delta.album_artists.links.is_empty()
                 || !delta.album_artists.cover_refs.is_empty()
         }
@@ -484,6 +487,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
             !delta.genres.added.is_empty()
                 || !delta.genres.deleted.is_empty()
                 || !delta.genres.fields.is_empty()
+                || !delta.genres.stats.is_empty()
                 || !delta.genres.links.is_empty()
                 || !delta.genres.cover_refs.is_empty()
         }
@@ -588,6 +592,7 @@ fn merge_pending_sync_route_delta(pending: &mut Option<LibraryDelta>, delta: Lib
 #[cfg(test)]
 mod tests {
     use super::*;
+    use domain::GenreId;
 
     #[test]
     fn row_library_routes_do_not_rerender_for_width() {
@@ -727,6 +732,20 @@ mod tests {
         let mut delta = LibraryDelta::default();
         delta.tracks.added.push(TrackId::fake(2));
         assert!(route_delta_affects(&Route::Tracks, &delta));
+    }
+
+    #[test]
+    fn changed_collection_counts_refresh_collection_routes() {
+        let mut delta = LibraryDelta::default();
+        delta.albums.stats.push(AlbumId::fake(1));
+        delta.artists.stats.push(ArtistId::fake(2));
+        delta.album_artists.stats.push(ArtistId::fake(3));
+        delta.genres.stats.push(GenreId::fake(4));
+
+        assert!(route_delta_affects(&Route::Albums, &delta));
+        assert!(route_delta_affects(&Route::Artists, &delta));
+        assert!(route_delta_affects(&Route::AlbumArtists, &delta));
+        assert!(route_delta_affects(&Route::Genres, &delta));
     }
 
     #[test]

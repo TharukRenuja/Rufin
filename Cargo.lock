@@ -1864,6 +1864,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "library-sync"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "domain",
+ "library",
+ "source",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2619,9 +2631,9 @@ dependencies = [
  "ksni",
  "libadwaita",
  "library",
+ "library-sync",
  "md5",
  "mpris-server",
- "notify",
  "playback",
  "reqwest",
  "rusqlite",
@@ -3030,6 +3042,8 @@ dependencies = [
  "domain",
  "futures-util",
  "getrandom 0.4.3",
+ "library",
+ "library-sync",
  "reqwest",
  "serde",
  "serde_json",
@@ -3048,10 +3062,12 @@ dependencies = [
  "async-trait",
  "domain",
  "lofty",
+ "notify",
  "percent-encoding",
  "source",
  "tempfile",
  "tokio",
+ "tracing",
  "url",
  "walkdir",
 ]

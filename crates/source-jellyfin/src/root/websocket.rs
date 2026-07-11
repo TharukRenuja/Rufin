@@ -50,13 +50,17 @@ impl JellyfinSource {
 }
 
 #[async_trait(?Send)]
-impl TrackChangeFeed for JellyfinSource {
+impl LibraryChangeFeed for JellyfinSource {
     async fn listen(
         &self,
-        on_change: &mut dyn FnMut(TrackChange) -> bool,
+        on_ready: &mut dyn FnMut() -> bool,
+        on_change: &mut dyn FnMut(LibraryChange) -> bool,
         should_stop: &dyn Fn() -> bool,
     ) -> SourceResult<()> {
         let mut socket = self.connect_library_socket().await?;
+        if !on_ready() {
+            return Ok(());
+        }
         let mut keep_alive = interval(KEEP_ALIVE_INTERVAL);
         loop {
             if should_stop() {
@@ -73,12 +77,11 @@ impl TrackChangeFeed for JellyfinSource {
                     match message.map_err(websocket_error)? {
                         Message::Text(text) => {
                             match library_socket_message(&text)? {
-                                JellyfinSocketMessage::LibraryChanged(change) if !change.is_empty() => {
+                                JellyfinSocketMessage::Change(change) => {
                                     if !on_change(change) {
                                         return Ok(());
                                     }
                                 }
-                                JellyfinSocketMessage::LibraryChanged(_) => {}
                                 JellyfinSocketMessage::ForceKeepAlive => {
                                     send_keep_alive(&mut socket).await?;
                                 }
@@ -96,36 +99,6 @@ impl TrackChangeFeed for JellyfinSource {
             }
         }
     }
-
-    async fn changed_tracks(&self, native_ids: &[String]) -> SourceResult<Vec<Track>> {
-        if native_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut tracks = Vec::new();
-        for chunk in native_ids.chunks(100).filter(|chunk| !chunk.is_empty()) {
-            let mut url = endpoint(&self.base_url, "Items")?;
-            url.query_pairs_mut()
-                .append_pair("UserId", &self.user_id)
-                .append_pair("Recursive", "true")
-                .append_pair("IncludeItemTypes", "Audio")
-                .append_pair("Ids", &chunk.join(","))
-                .append_pair("Fields", ITEM_FIELDS)
-                .append_pair("EnableTotalRecordCount", "false");
-            tracks.extend(
-                self.get_json::<ItemQueryResult>(url)
-                    .await?
-                    .items
-                    .into_iter()
-                    .filter(is_audio_item)
-                    .map(track_from_item),
-            );
-        }
-        Ok(tracks)
-    }
-
-    fn track_id_from_native(&self, native_id: &str) -> TrackId {
-        TrackId::new(jellyfin_id("track", native_id))
-    }
 }
 
 #[derive(Deserialize)]
@@ -136,20 +109,28 @@ struct SocketMessage {
     data: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
-struct LibraryUpdateInfo {
-    #[serde(rename = "ItemsAdded", default)]
-    items_added: Vec<String>,
-    #[serde(rename = "ItemsUpdated", default)]
-    items_updated: Vec<String>,
-    #[serde(rename = "ItemsRemoved", default)]
-    items_removed: Vec<String>,
-}
-
+#[derive(Debug, Eq, PartialEq)]
 enum JellyfinSocketMessage {
-    LibraryChanged(TrackChange),
+    Change(LibraryChange),
     ForceKeepAlive,
     Other,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct LibraryChangedData {
+    #[serde(default)]
+    items_added: Vec<String>,
+    #[serde(default)]
+    items_updated: Vec<String>,
+    #[serde(default)]
+    items_removed: Vec<String>,
+    #[serde(default)]
+    folders_added_to: Vec<String>,
+    #[serde(default)]
+    folders_removed_from: Vec<String>,
+    #[serde(default)]
+    collection_folders: Vec<String>,
 }
 
 fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
@@ -160,16 +141,26 @@ fn library_socket_message(text: &str) -> SourceResult<JellyfinSocketMessage> {
             let Some(data) = message.data else {
                 return Ok(JellyfinSocketMessage::Other);
             };
-            let info = serde_json::from_value::<LibraryUpdateInfo>(data)
+            let data = serde_json::from_value::<LibraryChangedData>(data)
                 .map_err(|error| SourceError::Other(error.to_string()))?;
-            let mut fetch_native_ids = clean_raw_item_ids(info.items_added);
-            push_unique_raw_item_ids(&mut fetch_native_ids, &info.items_updated);
-            let removed_native_ids = clean_raw_item_ids(info.items_removed);
-            fetch_native_ids.retain(|id| !removed_native_ids.contains(id));
-            Ok(JellyfinSocketMessage::LibraryChanged(TrackChange {
-                fetch_native_ids,
-                removed_native_ids,
-            }))
+            let changes = SourceObjectChanges::new(
+                data.items_added
+                    .into_iter()
+                    .chain(data.items_updated)
+                    .chain(data.items_removed),
+            );
+            if !data.folders_added_to.is_empty()
+                || !data.folders_removed_from.is_empty()
+                || !data.collection_folders.is_empty()
+            {
+                return Ok(JellyfinSocketMessage::Change(LibraryChange::Full));
+            }
+            if !changes.is_empty() {
+                return Ok(JellyfinSocketMessage::Change(LibraryChange::Objects(
+                    changes,
+                )));
+            }
+            Ok(JellyfinSocketMessage::Other)
         }
         "ForceKeepAlive" => Ok(JellyfinSocketMessage::ForceKeepAlive),
         _ => Ok(JellyfinSocketMessage::Other),
@@ -195,36 +186,54 @@ fn websocket_error(error: tokio_tungstenite::tungstenite::Error) -> SourceError 
     SourceError::Other(error.to_string())
 }
 
-fn clean_raw_item_ids(ids: Vec<String>) -> Vec<String> {
-    let mut cleaned = Vec::new();
-    push_unique_raw_item_ids(&mut cleaned, &ids);
-    cleaned
-}
-
-fn push_unique_raw_item_ids(target: &mut Vec<String>, ids: &[String]) {
-    for id in ids {
-        let id = id.trim();
-        if !id.is_empty() && !target.iter().any(|existing| existing == id) {
-            target.push(id.to_string());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn library_changed_message_extracts_item_ids() {
+    fn folder_context_widens_item_changes_to_full() {
         let message = library_socket_message(
-            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":[" one ","one"],"ItemsUpdated":["two","three"],"ItemsRemoved":["three"]}}"#,
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":["item-one"],"ItemsUpdated":["item-two","item-one"],"ItemsRemoved":["item-three"],"FoldersAddedTo":["folder-one"]}}"#,
         )
         .expect("parse message");
 
-        let JellyfinSocketMessage::LibraryChanged(change) = message else {
-            panic!("expected library change");
-        };
-        assert_eq!(change.fetch_native_ids, vec!["one", "two"]);
-        assert_eq!(change.removed_native_ids, vec!["three"]);
+        assert_eq!(message, JellyfinSocketMessage::Change(LibraryChange::Full));
+    }
+
+    #[test]
+    fn library_update_unions_item_ids_without_folder_context() {
+        let message = library_socket_message(
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":["item-one"],"ItemsUpdated":["item-two","item-one"],"ItemsRemoved":["item-three"]}}"#,
+        )
+        .expect("parse message");
+
+        assert_eq!(
+            message,
+            JellyfinSocketMessage::Change(LibraryChange::Objects(SourceObjectChanges::new([
+                "item-one".to_string(),
+                "item-two".to_string(),
+                "item-three".to_string(),
+            ])))
+        );
+    }
+
+    #[test]
+    fn folder_only_library_update_requires_full_resolution() {
+        let message = library_socket_message(
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":[],"ItemsUpdated":[],"ItemsRemoved":[],"CollectionFolders":["music-one"]}}"#,
+        )
+        .expect("parse message");
+
+        assert_eq!(message, JellyfinSocketMessage::Change(LibraryChange::Full));
+    }
+
+    #[test]
+    fn empty_library_update_emits_no_change() {
+        let message = library_socket_message(
+            r#"{"MessageType":"LibraryChanged","Data":{"ItemsAdded":[],"ItemsUpdated":[],"ItemsRemoved":[]}}"#,
+        )
+        .expect("parse message");
+
+        assert_eq!(message, JellyfinSocketMessage::Other);
     }
 }

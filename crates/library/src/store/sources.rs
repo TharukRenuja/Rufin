@@ -253,6 +253,32 @@ pub(super) fn replace_collection_refs(
     collection_id: &str,
     image_refs: &[ImageRef],
 ) -> StoreResult<()> {
+    let mut seen = HashSet::<(String, Option<String>)>::new();
+    let wanted = image_refs
+        .iter()
+        .filter(|image_ref| seen.insert((image_ref.item_id.clone(), image_ref.tag.clone())))
+        .take(4)
+        .cloned()
+        .collect::<Vec<_>>();
+    let existing = {
+        let mut statement = connection.prepare(
+            "
+            SELECT image_item_id, image_tag
+            FROM collection_cover_refs
+            WHERE source_id = ?1
+              AND collection_type = ?2
+              AND collection_id = ?3
+            ORDER BY position
+            ",
+        )?;
+        collect_rows(statement.query_map(
+            params![source_id.as_str(), collection_type, collection_id],
+            |row| collection_cover_ref_from_row(row, 0, 1),
+        )?)?
+    };
+    if existing == wanted {
+        return Ok(());
+    }
     connection.execute(
         "
         DELETE FROM collection_cover_refs
@@ -275,15 +301,7 @@ pub(super) fn replace_collection_refs(
             updated_at = excluded.updated_at
         ",
     )?;
-    let mut seen = HashSet::<(String, Option<String>)>::new();
-    let mut position = 0usize;
-    for image_ref in image_refs {
-        if !seen.insert((image_ref.item_id.clone(), image_ref.tag.clone())) {
-            continue;
-        }
-        if position >= 4 {
-            break;
-        }
+    for (position, image_ref) in wanted.iter().enumerate() {
         let (image_item_id, image_tag) = image_ref_parts(Some(image_ref));
         insert.execute(params![
             source_id.as_str(),
@@ -293,7 +311,6 @@ pub(super) fn replace_collection_refs(
             image_item_id,
             image_tag,
         ])?;
-        position += 1;
     }
     Ok(())
 }
@@ -1645,52 +1662,6 @@ fn merge_album_artist_alias(
     apply_album_artist_alias(connection, source_id, canonical_id, alias_id)
 }
 
-pub(super) fn repair_linked_genres(
-    connection: &Connection,
-    source_id: &SourceId,
-    generation: i64,
-) -> StoreResult<()> {
-    let mut statement = connection.prepare(
-        "
-        SELECT genre_name
-        FROM (
-            SELECT genre_name
-            FROM album_genres
-            WHERE source_id = ?1
-            UNION
-            SELECT genre_name
-            FROM track_genres
-            WHERE source_id = ?1
-        ) linked
-        WHERE TRIM(linked.genre_name) != ''
-          AND NOT EXISTS (
-              SELECT 1
-              FROM genres g
-              WHERE g.source_id = ?1 AND g.name = linked.genre_name
-          )
-        ORDER BY linked.genre_name COLLATE NOCASE
-        ",
-    )?;
-    let genre_names = collect_rows(
-        statement.query_map(params![source_id.as_str()], |row| row.get::<_, String>(0))?,
-    )?;
-    let mut insert = connection.prepare(
-        "
-        INSERT INTO genres (
-            source_id, genre_id, name, album_count, track_count, duration_seconds, sync_generation
-        )
-        VALUES (?1, ?2, ?3, 0, 0, 0, ?4)
-        ON CONFLICT(source_id, genre_id) DO UPDATE SET
-            name = excluded.name,
-            sync_generation = excluded.sync_generation
-        ",
-    )?;
-    for name in genre_names {
-        let genre_id = format!("linked:genre:{:08x}", stable_seed(&name));
-        insert.execute(params![source_id.as_str(), genre_id, name, generation])?;
-    }
-    Ok(())
-}
 pub(super) fn refresh_artist_fts(
     connection: &Connection,
     source_id: &SourceId,
@@ -1835,6 +1806,27 @@ pub(super) fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
         HomeSectionKind::RecentlyPlayed => "recently_played",
         HomeSectionKind::RecentlyReleased => "recently_released",
     }
+}
+pub(super) fn home_membership(section: &HomeSection) -> Vec<(String, i64, String)> {
+    section
+        .albums
+        .iter()
+        .enumerate()
+        .map(|(position, album)| {
+            (
+                "album".to_string(),
+                position.min(i64::MAX as usize) as i64,
+                album.id.as_str().to_string(),
+            )
+        })
+        .chain(section.tracks.iter().enumerate().map(|(position, track)| {
+            (
+                "track".to_string(),
+                position.min(i64::MAX as usize) as i64,
+                track.id.as_str().to_string(),
+            )
+        }))
+        .collect()
 }
 pub(super) fn fts_query(query: &str) -> Option<String> {
     let tokens = query

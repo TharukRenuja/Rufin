@@ -18,6 +18,30 @@ const SUBSONIC_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 #[async_trait(?Send)]
+impl LibraryFreshnessProbe for SubsonicSource {
+    async fn probe(&self) -> SourceResult<LibraryProbeResult> {
+        let body: ScanStatusBody = self.get_json("getScanStatus", &[]).await?;
+        let mut state = self
+            .scan_probe
+            .lock()
+            .map_err(|_| SourceError::Other("scan probe state is unavailable".to_string()))?;
+        if body.scan_status.scanning {
+            state.saw_busy = true;
+            return Ok(LibraryProbeResult::Busy);
+        }
+        let previous = state.last_idle_count.replace(body.scan_status.count);
+        let completed_scan = std::mem::take(&mut state.saw_busy);
+        if previous.is_none() {
+            Ok(LibraryProbeResult::Unknown)
+        } else if completed_scan || previous != Some(body.scan_status.count) {
+            Ok(LibraryProbeResult::Changed)
+        } else {
+            Ok(LibraryProbeResult::Unchanged)
+        }
+    }
+}
+
+#[async_trait(?Send)]
 impl MusicSource for SubsonicSource {
     fn identity(&self) -> &SourceIdentity {
         &self.identity
@@ -376,27 +400,6 @@ impl MusicFolderProvider for SubsonicSource {
                 .collect(),
             0,
         ))
-    }
-}
-
-#[async_trait(?Send)]
-impl RecentAlbumProvider for SubsonicSource {
-    async fn recent_albums(&self, limit: usize) -> SourceResult<Vec<Album>> {
-        let body: AlbumListBody = self
-            .get_json(
-                "getAlbumList2",
-                &[
-                    ("type", "newest".to_string()),
-                    ("size", limit.clamp(1, 500).to_string()),
-                ],
-            )
-            .await?;
-        Ok(body
-            .album_list
-            .album
-            .into_iter()
-            .map(|album| album_from_dto(self, album))
-            .collect())
     }
 }
 
