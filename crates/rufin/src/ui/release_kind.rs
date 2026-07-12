@@ -1,4 +1,4 @@
-use domain::{Album, normalize_release_types};
+use ::library::{Album, normalize_release_types};
 
 use crate::i18n::msgid;
 
@@ -70,7 +70,7 @@ impl AlbumReleaseKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::AlbumId;
+    use ::library::AlbumId;
 
     #[test]
     fn release_kind_detail_labels_follow_release_metadata() {

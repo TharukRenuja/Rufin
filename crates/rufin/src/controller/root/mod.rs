@@ -1,41 +1,34 @@
-use super::covers;
 pub use super::discovery::{DiscoveredServer, ServerDiscoveryStatus};
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
-use crate::external_scrobbling::{self, ExternalScrobbleState};
+use crate::StoredSettings;
 #[cfg(test)]
-pub(in crate::controller) use crate::sources::local_configured_source as local_source_saved;
-use crate::sources::{
+pub(in crate::controller) use crate::source_setup::local_configured_source as local_source_saved;
+use crate::source_setup::{
     ActiveSource, ActiveSourceSlot, OperationOwner, current_active_source,
     map_server_path_to_local, selected_active_source,
 };
-use crate::{cover_art_policy, external_metadata};
 use directories::ProjectDirs;
-#[cfg(test)]
-use domain::ThemePreference;
 use domain::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, AutoDjReason,
-    ExternalLyricsProvider, FolderPathItem, GeneratedTrackSeed, Genre, GenreId, HomeSection,
-    HomeSectionKind, ImageRef, LibraryField, LibraryListSettings, LibrarySourceSelection,
-    LocalLibraryFolder, Mood, MoodId, MusicFolder, MusicFolderId, PlaySourceDescriptor,
-    PlaySourceKey, PlaybackSettings, Playlist, PlaylistDetail, PlaylistEntrySortDescriptor,
-    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueInsertion, QueueInsertionSource,
-    QueueItemInput, QueueReplacement, QueueSnapshot, RepeatMode, SearchKind, SecretStorageMode,
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
-    SmartPlaylistId, SmartPlaylistSortDescriptor, SourceFeatureOwner, SourceId, SourceIdentity,
-    SourceOrder, SourcePlaylistOperation, StreamDescriptor, StreamQuality, Track, TrackId,
-    TrackSortDescriptor, TrackSortKey, TrackTableSettings,
+    FolderPathItem, LibrarySourceSelection, LocalLibraryFolder, SearchKind, SecretStorageMode,
+};
+#[cfg(test)]
+use library::ImageRef;
+use library::{
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Mood, MoodId,
+    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistId, SmartPlaylist,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
+    SourceFeatureOwner, SourceId, Track, TrackId,
 };
 use library::{
-    CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, CoverCacheEntry, EntityDelta,
-    LibraryDelta, PlaylistWriteMode, SavedSource, SourceLocalAccess, Store, StoreBackedSourceItem,
-    StoreBackedSourceWindow, StoreError, StoreResult, SyncCommit,
+    CachedArtistDetail, CachedGenreDetail, CachedMoodDetail, EntityDelta, LibraryDelta,
+    PlaylistWriteMode, SourceLocalAccess, Store, StoreError, StoreResult, StoredSource, SyncCommit,
 };
+use library::{FavoriteItemId, FolderDetail, PlaylistEntry, SearchResults};
 #[cfg(test)]
-use library::{SourceEntityKind, SourceObjectMapping};
-use playback::{
-    LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState,
-    PlaybackTrack, PreparedPlaybackItem, generate_waveform_peaks_cancellable,
-};
+use library::{PlaylistDetail, SourceEntityKind, SourceObjectMapping};
+#[cfg(test)]
+use metadata::{LyricLine, LyricsSource};
+use metadata::{Lyrics, LyricsSearchResult};
 #[cfg(test)]
 use secrets::MemorySecretStore;
 #[cfg(unix)]
@@ -45,14 +38,11 @@ use secrets::UnavailableSecretStore;
 use secrets::{
     CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore, SwitchableSecretStore,
 };
-use serde::{Deserialize, Serialize};
-use source::{
-    FavoriteItemId, FolderDetail, Lyrics, LyricsSearch, PlaybackReport, PlaybackReportKind,
-    PlaylistEntry, SearchResults, StreamRequest,
-};
+use sources::StreamRequest;
 #[cfg(test)]
-use source::{LyricLine, LyricsSource, PlayedFilter};
-use source_local::{LOCAL_SOURCE_ID, LocalSource};
+use sources::local::LOCAL_SOURCE_ID;
+use sources::local::LocalSource;
+use sources::{GeneratedTrackSeed, SourceIdentity, SourcePlaylistOperation, StreamDescriptor};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::Hash;
@@ -60,7 +50,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 #[cfg(test)]
 use std::time::Duration;
@@ -70,7 +60,7 @@ use tracing::{debug, info, warn};
 
 mod auto_dj;
 pub(crate) use auto_dj::{cached_auto_dj_operation, native_auto_dj_operation};
-mod auto_dj_commands;
+mod bounded_runner;
 mod cached_library_api;
 mod cached_reads;
 mod controller_bootstrap;
@@ -80,35 +70,30 @@ mod folder_search_commands;
 mod library_mutations;
 mod local_source_commands;
 mod lyrics_commands;
-pub(in crate::controller) mod play_activation;
-mod playback_activity;
-mod playback_advance;
+use lyrics_commands::metadata_runner;
+#[cfg(test)]
+use lyrics_commands::{load_cached_lyrics, save_cached_lyrics};
 mod playback_commands;
+mod playback_product;
 mod playback_queue;
-mod playback_reporting;
-mod playback_runtime;
 mod playback_waveforms;
 mod playlist_commands;
 mod queue_commands;
-mod queue_mutation;
-mod queue_state;
+use queue_commands::library_track_sort;
 mod refresh_commands;
 mod settings_controller;
 mod source_cache_commands;
-mod source_image_policy;
 mod source_lifecycle_commands;
 pub(in crate::controller) use source_lifecycle_commands::{
     SourcePersistenceSnapshot, save_source_settings,
 };
 mod source_local_access_commands;
 mod source_presentation;
-mod source_refs;
+mod source_report_worker;
 mod source_selection;
 mod source_sync;
-mod sync_requests;
+mod stream_requests;
 
-#[cfg(test)]
-mod cover_playback_tests;
 #[cfg(test)]
 mod local_radio_tests;
 #[cfg(test)]
@@ -118,50 +103,28 @@ mod startup_sync_tests;
 #[cfg(test)]
 mod test_support;
 
+use bounded_runner::BoundedRunner;
 pub(crate) use cached_reads::*;
 pub(crate) use controller_startup::*;
-pub(crate) use play_activation::{
-    FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
-    MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
-    PlayTarget, normalize_loaded_source_activation,
-};
-use playback_activity::PlaybackActivityState;
+use playback_product::PlaybackProduct;
+pub use playback_product::{PlaybackNotice, PlaybackProjection};
 pub(in crate::controller) use playback_queue::*;
-pub(in crate::controller) use playback_waveforms::{
-    cached_waveform_peaks, request_waveform_for_prepared_item, set_waveform_cache_key,
-    waveform_cache_key, waveform_cache_key_for_queue,
-};
-pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
-pub(in crate::controller) use source_image_policy::is_local_source_image_ref;
-use source_image_policy::{scrub_home_refs, scrub_source_image_ref, source_image_ref_allowed};
-pub(in crate::controller) use source_image_policy::{
-    scrub_selected_album_image_refs, scrub_selected_artist_image_refs,
-    scrub_selected_genre_image_refs, scrub_selected_mood_image_refs,
-    scrub_selected_playlist_image_refs, scrub_selected_track_image_refs, scrub_smart_refs,
-};
+use playback_waveforms::WaveformKey;
 use source_presentation::{load_runtime_snapshot, load_snapshot};
-pub(in crate::controller) use source_refs::track_album_refs_with_settings;
-use source_refs::{
-    album_track_refs, album_track_refs_from_store, home_image_refs, home_image_refs_from_store,
-    home_local_refs_from_store, queue_track_refs, track_album_refs, track_album_refs_from_store,
-};
-pub(crate) use source_refs::{grouped_cover_refs_for_items, track_cover_refs_for_items};
-pub(in crate::controller) use sync_requests::*;
+use source_report_worker::SourceReportWorker;
+pub(in crate::controller) use stream_requests::*;
 #[cfg(test)]
 pub(in crate::controller) use test_support::*;
 
-const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
 pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 40_000;
-pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_PROVIDER_CANDIDATE_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 4;
-const AUTO_DJ_HISTORY_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 2;
 const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const CONFIG_SECRETS_FILE_NAME: &str = "secrets.json";
 const STORE_DIR_NAME: &str = "store";
-const COVER_CACHE_DIR_NAME: &str = "covers";
+const ARTWORK_CACHE_DIR_NAME: &str = "covers";
 const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
 const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
 const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
@@ -270,55 +233,10 @@ pub struct LocalAccessStatus {
     pub unmatched_count: usize,
     pub total_track_count: usize,
 }
-#[derive(Clone, Debug)]
-pub struct PlaybackSnapshot {
-    pub current_source_id: Option<SourceId>,
-    pub current: Option<QueueEntry>,
-    pub state: PlaybackState,
-    pub position_seconds: u32,
-    pub position_millis: u64,
-    pub duration_seconds: u32,
-    pub volume: f64,
-    pub muted: bool,
-    pub repeat_mode: RepeatMode,
-    pub shuffle_enabled: bool,
-    pub auto_dj_enabled: bool,
-    pub buffering_percent: Option<u8>,
-    pub last_error: Option<String>,
-    pub waveform_cache_key: Option<String>,
-    pub waveform_peaks: Option<Arc<Vec<(f64, f64)>>>,
-}
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LyricsSearchResult {
-    pub provider: ExternalLyricsProvider,
-    pub id: String,
-    pub track_name: String,
-    pub artist_name: String,
-    pub album_name: String,
-    pub duration_seconds: u32,
-    pub synced_lyrics: Option<String>,
-    pub plain_lyrics: Option<String>,
-}
-impl Default for PlaybackSnapshot {
-    fn default() -> Self {
-        Self {
-            current_source_id: None,
-            current: None,
-            state: PlaybackState::Stopped,
-            position_seconds: 0,
-            position_millis: 0,
-            duration_seconds: 0,
-            volume: 1.0,
-            muted: false,
-            repeat_mode: RepeatMode::All,
-            shuffle_enabled: false,
-            auto_dj_enabled: false,
-            buffering_percent: None,
-            last_error: None,
-            waveform_cache_key: None,
-            waveform_peaks: None,
-        }
-    }
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaveformProjection {
+    pub key: Option<String>,
+    pub peaks: Option<Arc<Vec<(f64, f64)>>>,
 }
 impl LibrarySnapshot {
     fn first_run() -> Self {
@@ -357,18 +275,11 @@ impl LibrarySnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceNotice {
-    Checking {
-        source_name: String,
-    },
+    Checking { source_name: String },
     Connected,
     SettingsSaved,
     NoChanges,
     CacheCleared,
-    CoverProgress {
-        source_id: SourceId,
-        processed: usize,
-        total: usize,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -406,21 +317,24 @@ pub enum ControllerEvent {
         previous_favorite: bool,
         error: String,
     },
-    Queue(Box<Option<QueueSnapshot>>),
-    Playback(Box<PlaybackSnapshot>),
-    Visualizer(Vec<f64>),
+    QueuePage(playback::QueuePage),
+    PlaybackProduct(Box<PlaybackProjection>),
+    Waveform(WaveformProjection),
     Lyrics {
-        track_id: TrackId,
+        media_key: playback::MediaKey,
+        generation: u64,
         lyrics: Box<Option<Lyrics>>,
     },
     LyricsSearchResults {
-        track_id: TrackId,
+        media_key: playback::MediaKey,
+        generation: u64,
         artist_name: String,
         track_name: String,
         results: Vec<LyricsSearchResult>,
     },
     LyricsSearchFailed {
-        track_id: TrackId,
+        media_key: playback::MediaKey,
+        generation: u64,
         artist_name: String,
         track_name: String,
         error: String,
@@ -434,6 +348,8 @@ pub enum ControllerEvent {
         error: String,
     },
     LyricsSaved {
+        media_key: playback::MediaKey,
+        generation: u64,
         path: PathBuf,
         lyrics: Lyrics,
     },
@@ -447,17 +363,7 @@ pub enum ControllerEvent {
         path: Vec<FolderPathItem>,
         error: String,
     },
-    CoverReady {
-        key: String,
-        path: PathBuf,
-    },
-    CoverUnavailable {
-        key: String,
-        external_retry_generation: Option<u64>,
-    },
-    CoverDeferred {
-        key: String,
-    },
+    Artwork(::artwork::ArtworkEvent),
     ServerDiscovery {
         servers: Vec<DiscoveredServer>,
         status: ServerDiscoveryStatus,
@@ -479,28 +385,16 @@ pub struct AppController {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     secret_switch: Arc<SwitchableSecretStore>,
     settings: settings_controller::SettingsController,
-    queue: Arc<Mutex<Option<QueueEngine>>>,
+    playback_product: Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
     source_transitions: Arc<SourceTransitions>,
-    play_activation_generation: Arc<AtomicU64>,
-    queue_persist_generation: Arc<AtomicU64>,
-    playback_request_generation: Arc<AtomicU64>,
-    next_preload: Arc<Mutex<NextPreloadState>>,
+    lyrics_request_generation: Arc<AtomicU64>,
+    waveform_request_key: Arc<Mutex<Option<WaveformKey>>>,
     waveform_warm_generation: Arc<AtomicU64>,
-    playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    playback_activity: Arc<Mutex<PlaybackActivityState>>,
-    auto_dj_enabled: Arc<Mutex<bool>>,
-    last_progress_snapshot: Arc<Mutex<Option<(SourceId, u32)>>>,
-    last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
-    external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
     sync_coordinator: Arc<Mutex<library_sync::SyncCoordinator>>,
-    pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
+    pub(in crate::controller) artwork: ::artwork::Artwork,
     pub(in crate::controller) events: Sender<ControllerEvent>,
     home_refresh_in_flight: InFlightGuards<SourceId>,
     explore_prefetch_in_flight: InFlightGuards<SourceId>,
-    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
-    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<SourceId, u64>>>,
-    pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 
 /// Ignore outdated source work before it starts. Once a source change starts,
@@ -541,8 +435,7 @@ pub(crate) type ControllerBootstrap = (
     AppController,
     Receiver<ControllerEvent>,
     LibrarySnapshot,
-    Option<QueueSnapshot>,
-    PlaybackSnapshot,
+    Option<PlaybackProjection>,
 );
 
 pub(crate) fn smart_playlist_definition_fingerprint(
@@ -641,12 +534,12 @@ pub(crate) enum StoreHandle {
     Path {
         cache_database_path: PathBuf,
         settings_path: PathBuf,
-        settings: Arc<Mutex<AppSettings>>,
+        settings: Arc<Mutex<StoredSettings>>,
     },
     #[cfg(test)]
     Memory {
         store: Arc<Mutex<Store>>,
-        settings: Arc<Mutex<AppSettings>>,
+        settings: Arc<Mutex<StoredSettings>>,
     },
 }
 impl StoreHandle {
@@ -669,7 +562,7 @@ impl StoreHandle {
         let settings_path = app_settings_path();
         let settings = match fs::read_to_string(&settings_path) {
             Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string())?,
-            Err(error) if error.kind() == ErrorKind::NotFound => AppSettings::default(),
+            Err(error) if error.kind() == ErrorKind::NotFound => StoredSettings::default(),
             Err(error) => return Err(error.to_string()),
         };
         let handle = Self::Path {
@@ -685,7 +578,7 @@ impl StoreHandle {
         Store::open_memory()
             .map(|store| Self::Memory {
                 store: Arc::new(Mutex::new(store)),
-                settings: Arc::new(Mutex::new(AppSettings::default())),
+                settings: Arc::new(Mutex::new(StoredSettings::default())),
             })
             .map_err(|error| error.to_string())
     }
@@ -776,7 +669,7 @@ impl StoreHandle {
         }
     }
 
-    pub(crate) fn load_settings(&self) -> AppSettings {
+    pub(crate) fn load_settings(&self) -> StoredSettings {
         match self {
             Self::Path { settings, .. } => settings
                 .lock()
@@ -791,7 +684,7 @@ impl StoreHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
+    pub(crate) fn save_settings(&self, settings: &StoredSettings) -> Result<(), String> {
         match self {
             Self::Path {
                 settings_path,
@@ -828,7 +721,7 @@ impl StoreHandle {
 
     pub(crate) fn update_settings<T>(
         &self,
-        update: impl FnOnce(&mut AppSettings) -> Result<T, String>,
+        update: impl FnOnce(&mut StoredSettings) -> Result<T, String>,
     ) -> Result<T, String> {
         match self {
             Self::Path {

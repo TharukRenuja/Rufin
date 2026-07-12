@@ -1,7 +1,5 @@
-use crate::{
-    domain::{AlbumId, ArtistId, FolderId, GenreId, MoodId, PlaylistId, SmartPlaylistId},
-    msgid,
-};
+use crate::msgid;
+use library::{AlbumId, ArtistId, FolderId, GenreId, MoodId, PlaylistId, SmartPlaylistId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -157,7 +155,7 @@ mod tests {
 
     #[test]
     fn route_support_id() {
-        let album_route = Route::AlbumDetail(crate::domain::AlbumId::new("jellyfin:album:abc"));
+        let album_route = Route::AlbumDetail(library::AlbumId::new("jellyfin:album:abc"));
         let mut stack = RouteStack::new(Route::Home);
 
         stack.navigate(album_route.clone());
@@ -170,7 +168,7 @@ mod tests {
         let root = Route::Folders { path: Vec::new() };
         let nested = Route::Folders {
             path: vec![super::FolderPathItem {
-                id: crate::domain::FolderId::new("jellyfin:folder:music"),
+                id: library::FolderId::new("jellyfin:folder:music"),
                 name: "Music".to_string(),
             }],
         };

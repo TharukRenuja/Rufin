@@ -13,7 +13,8 @@ pub(in crate::ui) struct LibraryRouteLoadTiming {
 }
 
 struct EmbeddedTrackPanelOptions {
-    source_descriptor: Option<PlaySourceDescriptor>,
+    source_descriptor: Option<PlayContextDescriptor>,
+    favorites_only: bool,
     content_inset: i32,
     max_visible_rows: Option<usize>,
     selection_handle: Option<TrackTableSelectionHandle>,
@@ -21,7 +22,8 @@ struct EmbeddedTrackPanelOptions {
 
 pub(in crate::ui) struct SearchableTrackOptions {
     pub(in crate::ui) on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
-    pub(in crate::ui) source_descriptor: Option<PlaySourceDescriptor>,
+    pub(in crate::ui) source_descriptor: Option<PlayContextDescriptor>,
+    pub(in crate::ui) favorites_only: bool,
     pub(in crate::ui) content_inset: i32,
     pub(in crate::ui) width_mode: ColumnViewWidthMode,
     pub(in crate::ui) selection_handle: Option<TrackTableSelectionHandle>,
@@ -50,7 +52,7 @@ impl Shell {
                         .take(GRID_ROUTE_PAGE_SIZE)
                         .cloned()
                         .collect::<Vec<_>>();
-                    source::PagedResponse::new(albums, self.state.library.borrow().albums.len())
+                    library::PagedResponse::new(albums, self.state.library.borrow().albums.len())
                 })
         };
         let initial_load_ms = initial_started.elapsed().as_millis() as u64;
@@ -73,7 +75,7 @@ impl Shell {
 
     pub(in crate::ui) fn library_albums_view_from_page(
         self: &Rc<Self>,
-        page: source::PagedResponse<Album>,
+        page: library::PagedResponse<Album>,
         timing: LibraryRouteLoadTiming,
     ) -> gtk::Widget {
         let view_started = Instant::now();
@@ -88,7 +90,6 @@ impl Shell {
             self.album_tracks_for_layout(&albums.borrow(), &settings),
         ));
         let album_tracks_ms = tracks_started.elapsed().as_millis() as u64;
-        warm_album_covers_for_settings(self, &albums.borrow(), LibraryListKey::Albums, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let model_started = Instant::now();
         populate_album_collection_model(
@@ -132,12 +133,6 @@ impl Shell {
                     let settings = shell.library_settings(LibraryListKey::Albums);
                     *album_tracks.borrow_mut() =
                         shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                    warm_album_covers_for_settings(
-                        &shell,
-                        &albums.borrow(),
-                        LibraryListKey::Albums,
-                        &settings,
-                    );
                     populate_album_collection_model(
                         &model,
                         &albums.borrow(),
@@ -178,12 +173,6 @@ impl Shell {
                         *albums.borrow_mut() = page.items;
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(
-                            &shell,
-                            &albums.borrow(),
-                            LibraryListKey::Albums,
-                            &settings,
-                        );
                         populate_album_collection_model(
                             &model,
                             &albums.borrow(),
@@ -241,12 +230,6 @@ impl Shell {
                         albums.borrow_mut().extend(items.iter().cloned());
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(
-                            &shell,
-                            &albums.borrow(),
-                            LibraryListKey::Albums,
-                            &settings,
-                        );
                         append_album_collection_model(
                             &model,
                             items,
@@ -283,28 +266,20 @@ impl Shell {
                 album_collection_widget(self, model.clone(), LibraryListKey::Albums)
             });
         let content_ms = content_started.elapsed().as_millis() as u64;
-        let configure_scroller = {
+        let configure_scroller = detail_virtual.clone().map(|detail_virtual| {
             let shell = Rc::clone(self);
             let model = model.clone();
-            let settings = settings.clone();
-            let detail_virtual = detail_virtual.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                if settings.layout != LibraryLayout::Detail {
-                    connect_album_viewport_cover_warm(&shell, scroller, &model, &settings);
-                } else {
-                    if let Some(list) = &detail_virtual {
-                        connect_album_detail_virtual_list(
-                            &shell,
-                            scroller,
-                            &model,
-                            LibraryListKey::Albums,
-                            list,
-                        );
-                    }
-                    connect_album_detail_scroll_probe(scroller, &model);
-                }
+                connect_album_detail_virtual_list(
+                    &shell,
+                    scroller,
+                    &model,
+                    LibraryListKey::Albums,
+                    &detail_virtual,
+                );
+                connect_album_detail_scroll_probe(scroller, &model);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
+        });
         let shell_started = Instant::now();
         let view = self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Albums,
@@ -313,7 +288,7 @@ impl Shell {
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(configure_scroller),
+            configure_scroller,
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
         let total_ms = view_started.elapsed().as_millis() as u64;
@@ -382,7 +357,7 @@ impl Shell {
                     .take(TRACK_ROUTE_PAGE_SIZE)
                     .cloned()
                     .collect::<Vec<_>>();
-                source::PagedResponse::new(tracks, self.state.library.borrow().cached_track_count)
+                library::PagedResponse::new(tracks, self.state.library.borrow().cached_track_count)
             });
         self.library_tracks_page(page.items, page.total)
     }
@@ -420,7 +395,7 @@ impl Shell {
                     } else {
                         &library.artists
                     };
-                    source::PagedResponse::new(
+                    library::PagedResponse::new(
                         fallback
                             .iter()
                             .take(GRID_ROUTE_PAGE_SIZE)
@@ -451,7 +426,7 @@ impl Shell {
     pub(in crate::ui) fn library_artist_list_view_from_page(
         self: &Rc<Self>,
         album_artist: bool,
-        page: source::PagedResponse<Artist>,
+        page: library::PagedResponse<Artist>,
         timing: LibraryRouteLoadTiming,
     ) -> gtk::Widget {
         let view_started = Instant::now();
@@ -472,9 +447,6 @@ impl Shell {
         let artists = Rc::new(RefCell::new(page.items));
         let artist_count = artists.borrow().len();
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let warm_started = Instant::now();
-        warm_artist_covers_for_settings(self, &artists.borrow(), key, &settings);
-        let warm_ms = warm_started.elapsed().as_millis() as u64;
         let model_started = Instant::now();
         populate_artist_model(&model, &artists.borrow(), &settings);
         let model_ms = model_started.elapsed().as_millis() as u64;
@@ -509,12 +481,6 @@ impl Shell {
                         .collect::<Vec<_>>();
                     let count = values.len();
                     *artists.borrow_mut() = values;
-                    warm_artist_covers_for_settings(
-                        &shell,
-                        &artists.borrow(),
-                        key,
-                        &shell.library_settings(key),
-                    );
                     populate_artist_model(&model, &artists.borrow(), &shell.library_settings(key));
                     cursor.offset.set(count);
                     cursor.total.set(count);
@@ -553,7 +519,6 @@ impl Shell {
                         let count = page.items.len();
                         let total = page.total;
                         *artists.borrow_mut() = page.items;
-                        warm_artist_covers_for_settings(&shell, &artists.borrow(), key, &settings);
                         populate_artist_model(&model, &artists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
                         log_route_page_timing(RoutePageTiming {
@@ -603,12 +568,6 @@ impl Shell {
                         let total = page.total;
                         let mut items = page.items;
                         sort_artists(&mut items, &shell.library_settings(key));
-                        warm_artist_covers_for_settings(
-                            &shell,
-                            &items,
-                            key,
-                            &shell.library_settings(key),
-                        );
                         artists.borrow_mut().extend(items.iter().cloned());
                         append_artists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, total);
@@ -630,15 +589,6 @@ impl Shell {
                 }
             }) as Rc<dyn Fn()>
         };
-        let configure_scroller = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_artist_viewport_cover_warm(&shell, scroller, &model, key, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
-
         let content_started = Instant::now();
         let content = artist_collection_widget(self, model, key);
         let content_ms = content_started.elapsed().as_millis() as u64;
@@ -650,7 +600,7 @@ impl Shell {
             search,
             content,
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(configure_scroller),
+            configure_scroller: None,
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
         let total_ms = view_started.elapsed().as_millis() as u64;
@@ -664,7 +614,6 @@ impl Shell {
             complete_page,
             initial_load_ms = timing.initial_load_ms,
             complete_load_ms = timing.complete_load_ms,
-            warm_ms,
             model_ms,
             content_ms,
             shell_ms,
@@ -711,7 +660,7 @@ impl Shell {
                                 .take(GRID_ROUTE_PAGE_SIZE)
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            source::PagedResponse::new(playlists, library.playlists.len())
+                            library::PagedResponse::new(playlists, library.playlists.len())
                         })
                 })
             }),
@@ -727,9 +676,7 @@ impl Shell {
             sort_items: Rc::new(sort_playlists),
             populate_model: Rc::new(populate_playlist_model),
             append_model: Rc::new(append_playlists_to_model),
-            warm_items: Rc::new(warm_playlist_covers_for_settings),
             build_content: Rc::new(playlist_collection_widget),
-            configure_scroller: Rc::new(connect_playlist_viewport_cover_warm),
             after_replace: None,
         }
         .view(self)
@@ -742,7 +689,7 @@ impl Shell {
             empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
             initial_page: Rc::new(|shell| {
                 let items = shell.smart_playlists_for_route();
-                source::PagedResponse::new(items.clone(), items.len())
+                library::PagedResponse::new(items.clone(), items.len())
             }),
             load_page: None,
             load_matching_page: None,
@@ -750,9 +697,7 @@ impl Shell {
             sort_items: Rc::new(sort_smart_playlists),
             populate_model: Rc::new(populate_smart_playlist_model),
             append_model: Rc::new(append_boxed_items_to_model),
-            warm_items: Rc::new(warm_smart_settings),
             build_content: Rc::new(smart_playlist_collection_widget),
-            configure_scroller: Rc::new(connect_smart_warm),
             after_replace: Some(Rc::new(|shell, playlists| {
                 shell.state.smart_playlists.replace(playlists.to_vec());
             })),
@@ -768,7 +713,7 @@ impl Shell {
             .cached_smart_playlists_page(0, 1_000)
             .unwrap_or_else(|error| {
                 warn!(%error, "failed to load cached smart playlists page");
-                source::PagedResponse::new(Vec::new(), 0)
+                library::PagedResponse::new(Vec::new(), 0)
             });
         self.state.smart_playlists_loaded.set(true);
         page.items
@@ -778,7 +723,7 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
+        source_descriptor: Option<PlayContextDescriptor>,
         content_inset: i32,
     ) -> gtk::Widget {
         self.library_tracks_panel_with_source_options(
@@ -787,6 +732,7 @@ impl Shell {
             context,
             EmbeddedTrackPanelOptions {
                 source_descriptor,
+                favorites_only: false,
                 content_inset,
                 max_visible_rows: None,
                 selection_handle: None,
@@ -798,7 +744,7 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
+        source_descriptor: Option<PlayContextDescriptor>,
         content_inset: i32,
         selection_handle: TrackTableSelectionHandle,
     ) -> gtk::Widget {
@@ -808,6 +754,7 @@ impl Shell {
             context,
             EmbeddedTrackPanelOptions {
                 source_descriptor,
+                favorites_only: false,
                 content_inset,
                 max_visible_rows: None,
                 selection_handle: Some(selection_handle),
@@ -818,8 +765,9 @@ impl Shell {
         self: &Rc<Self>,
         tracks: Vec<Track>,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
+        source_descriptor: Option<PlayContextDescriptor>,
         selection_handle: Option<TrackTableSelectionHandle>,
+        favorites_only: bool,
     ) -> gtk::Widget {
         self.library_tracks_panel_with_source_options(
             tracks,
@@ -827,6 +775,7 @@ impl Shell {
             context,
             EmbeddedTrackPanelOptions {
                 source_descriptor,
+                favorites_only,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 max_visible_rows: Some(5),
                 selection_handle,
@@ -857,6 +806,7 @@ impl Shell {
             SearchableTrackOptions {
                 on_visible_count_changed: Some(resize),
                 source_descriptor: options.source_descriptor,
+                favorites_only: options.favorites_only,
                 content_inset: options.content_inset,
                 width_mode,
                 selection_handle: options.selection_handle,
@@ -895,7 +845,7 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
+        source_descriptor: Option<PlayContextDescriptor>,
     ) -> gtk::Widget {
         self.library_tracks_scrolling_panel_with_selection(
             tracks,
@@ -910,15 +860,16 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
-        source_descriptor: Option<PlaySourceDescriptor>,
+        source_descriptor: Option<PlayContextDescriptor>,
         selection_handle: Option<TrackTableSelectionHandle>,
     ) -> gtk::Widget {
-        let (_empty, search, view, model, settings) = self.searchable_track_collection(
+        let (_empty, search, view, _model, _settings) = self.searchable_track_collection(
             tracks,
             key,
             SearchableTrackOptions {
                 on_visible_count_changed: None,
                 source_descriptor,
+                favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 width_mode: ColumnViewWidthMode::RouteScroller,
                 selection_handle,
@@ -935,7 +886,6 @@ impl Shell {
 
         let scroller = gtk::ScrolledWindow::new();
         configure_library_route_scroller(self, &scroller);
-        connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
         scroller.set_child(Some(&library_route_inset(view)));
         wrapper.append(&route_scroller_widget(scroller));
         wrapper.upcast()
@@ -948,20 +898,21 @@ impl Shell {
         empty_body: &str,
     ) -> gtk::Widget {
         let source_descriptor = match key {
-            LibraryListKey::FavoriteTracks => Some(PlaySourceDescriptor::FavoriteTracks {
-                selected_music_folder_id: selected_music_folder_id(self),
+            LibraryListKey::FavoriteTracks => Some(PlayContextDescriptor::Favorites {
+                music_folder_id: selected_music_folder_id(self),
             }),
-            LibraryListKey::Tracks => Some(PlaySourceDescriptor::GlobalTracks {
-                selected_music_folder_id: selected_music_folder_id(self),
+            LibraryListKey::Tracks => Some(PlayContextDescriptor::Global {
+                music_folder_id: selected_music_folder_id(self),
             }),
             _ => None,
         };
-        let (empty, search, view, model, settings) = self.searchable_track_collection(
+        let (empty, search, view, _model, _settings) = self.searchable_track_collection(
             tracks,
             key,
             SearchableTrackOptions {
                 on_visible_count_changed: None,
                 source_descriptor,
+                favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
                 width_mode: ColumnViewWidthMode::RouteScroller,
                 selection_handle: None,
@@ -984,7 +935,6 @@ impl Shell {
         } else {
             let scroller = gtk::ScrolledWindow::new();
             configure_library_route_scroller(self, &scroller);
-            connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
             scroller.set_child(Some(&library_route_inset(view)));
             wrapper.append(&route_scroller_widget(scroller));
         }
@@ -1010,12 +960,6 @@ impl Shell {
         let settings = self.library_settings(key);
         let visible_tracks = tracks_for_settings(source_tracks.as_ref(), &settings, "", false);
         let visible_count = visible_tracks.len();
-        if track_route_tracks_key(key, options.width_mode).is_some() {
-            self.state
-                .route_track_refs
-                .replace(track_image_refs(&visible_tracks));
-        }
-        warm_track_covers_for_settings(self, &visible_tracks, &settings);
         replace_tracks_in_model(&model, visible_tracks);
         if let Some(on_visible_count_changed) = options.on_visible_count_changed.as_ref() {
             on_visible_count_changed(visible_count);
@@ -1028,7 +972,6 @@ impl Shell {
             let model = model.clone();
             let source_tracks = Rc::clone(&source_tracks);
             let on_visible_count_changed = options.on_visible_count_changed.clone();
-            let width_mode = options.width_mode;
             let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
                 *query.borrow_mut() = entry.text().trim().to_string();
@@ -1040,13 +983,6 @@ impl Shell {
                     false,
                 );
                 let visible_count = visible_tracks.len();
-                if track_route_tracks_key(key, width_mode).is_some() {
-                    shell
-                        .state
-                        .route_track_refs
-                        .replace(track_image_refs(&visible_tracks));
-                }
-                warm_track_covers_for_settings(&shell, &visible_tracks, &settings);
                 replace_tracks_in_model(&model, visible_tracks);
                 shell.refresh_current_route_now_playing_selections();
                 if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
@@ -1055,7 +991,14 @@ impl Shell {
             });
         }
         let play_context = options.source_descriptor.map(|descriptor| {
-            track_collection_play_context(self, descriptor, key, Rc::clone(&query), false)
+            track_collection_play_context(
+                self,
+                descriptor,
+                key,
+                Rc::clone(&query),
+                options.favorites_only,
+                false,
+            )
         });
         let view = track_collection_widget(
             self,
@@ -1068,16 +1011,6 @@ impl Shell {
         );
         (empty, search, view, model, settings)
     }
-}
-
-fn track_route_tracks_key(
-    key: LibraryListKey,
-    width_mode: ColumnViewWidthMode,
-) -> Option<LibraryListKey> {
-    if width_mode != ColumnViewWidthMode::RouteScroller {
-        return None;
-    }
-    matches!(key, LibraryListKey::FavoriteTracks).then_some(key)
 }
 
 fn install_embedded_track_scroll_latch(scroller: &gtk::ScrolledWindow) {

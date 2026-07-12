@@ -229,8 +229,7 @@ pub(crate) fn i18n_template_to(output: &Path) -> Result<()> {
 
 fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Path) -> Result<()> {
     let mut rust_files = Vec::new();
-    collect_files_with_extension(root, &root.join("crates/rufin/src"), "rs", &mut rust_files)?;
-    collect_files_with_extension(root, &root.join("crates/domain/src"), "rs", &mut rust_files)?;
+    collect_files_with_extension(root, &root.join("crates"), "rs", &mut rust_files)?;
     rust_files.sort();
 
     let mut source_list = fs::File::create(sources)?;

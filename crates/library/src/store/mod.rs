@@ -5,24 +5,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use domain::{
-    Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, LibraryField, LocalCueDependency, LocalCueTrackSource, LocalFileFacts,
-    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Lyrics, LyricsSource, Mood,
-    MoodId, MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
-    PlaylistId, QueueEntryId, QueueSnapshot, SearchResults, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
-    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+use crate::{
+    Album, AlbumArtwork, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
+    HomeSectionKind, ImageRef, LocalCueDependency, LocalCueTrackSource, LocalFileFacts,
+    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId, MusicFolder,
+    MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
+    RandomTrackQuery, SearchResults, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
+    SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceEntityKind, SourceFeatureOwner,
-    SourceId, SourceIdentity, SourceObjectMapping, Track, TrackId, normalize_release_types,
+    SourceId, SourceObjectMapping, Track, TrackId, TrackSort, normalize_release_types,
 };
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Row, params, params_from_iter, types::Value,
+};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 25;
+const SCHEMA_VERSION: i64 = 28;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
-const CACHE_KEY_PART_MAX_LEN: usize = 180;
-const CACHE_KEY_HASH_LEN: usize = 16;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -38,8 +38,14 @@ pub enum StoreError {
     IncompleteSchemaVersion(i64),
     #[error("invalid source object: {0}")]
     InvalidSourceObject(String),
-    #[error("unsupported store-backed source window")]
-    UnsupportedSourceWindow,
+    #[error("unsupported play context")]
+    UnsupportedPlayContext,
+    #[error("folder play context is source-owned and cannot be materialized from Store")]
+    UnsupportedFolderPlayContext,
+    #[error("the selected play-context anchor is no longer available")]
+    PlayContextAnchorNotFound,
+    #[error("the smart-playlist definition changed before play-context materialization")]
+    StaleSmartPlaylistDefinition,
     #[error("invalid playlist owner: {0}")]
     InvalidPlaylistOwner(String),
     #[error("invalid favorite item kind: {0}")]
@@ -60,6 +66,19 @@ pub enum StoreError {
         revision: i64,
         current: i64,
     },
+}
+
+impl StoreError {
+    pub fn is_contention(&self) -> bool {
+        matches!(
+            self,
+            Self::Sqlite(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                )
+        )
+    }
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -140,12 +159,11 @@ impl PlaylistWriteMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SavedSource {
-    pub source: SourceIdentity,
-    pub user_id: String,
-    pub username: String,
-    pub trust_invalid_cert: bool,
-    pub use_jellyfin_instant_mix: bool,
+pub struct StoredSource {
+    pub source_id: SourceId,
+    pub kind: String,
+    pub name: String,
+    pub provider_payload: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -180,15 +198,6 @@ pub struct SyncState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoverCacheEntry {
-    pub source_id: SourceId,
-    pub item_id: String,
-    pub image_tag: String,
-    pub size: u32,
-    pub path: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceObject {
     pub source_object_id: String,
     pub entity_kind: Option<String>,
@@ -202,16 +211,6 @@ pub struct SourceObject {
     pub segment_start_ms: Option<i64>,
     pub segment_end_ms: Option<i64>,
     pub sync_generation: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AlbumReleaseTypeLookupCandidate {
-    pub album_id: AlbumId,
-    pub title: String,
-    pub artist: String,
-    pub musicbrainz_album_id: Option<String>,
-    pub musicbrainz_release_group_id: Option<String>,
-    pub lookup_key: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -441,20 +440,8 @@ pub struct Store {
     connection: Connection,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoreBackedSourceItem {
-    pub track: Track,
-    pub source_index: usize,
-    pub source_item_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoreBackedSourceWindow {
-    pub start_rank: usize,
-    pub total_source_items: usize,
-    pub items: Vec<StoreBackedSourceItem>,
-}
-
+mod activity;
+mod artwork_projection;
 mod identity;
 mod library_auxiliary_cache;
 mod library_cache_reads;
@@ -464,15 +451,17 @@ mod library_metadata;
 mod library_search_helpers;
 mod library_track_sort;
 mod local_manifest;
+mod play_context;
+mod playback_checkpoint;
 mod smart_playlists;
-mod source_windows;
 mod sources;
 mod store_lifecycle_schema;
 mod sync;
 
+pub use activity::{ActivityOutcome, LEGACY_ACTIVITY_PERIOD, TrackActivitySummary};
 pub use identity::local_file_source_object_id;
 pub use local_manifest::{LocalLibraryDelta, LocalManifestDelta};
-pub use sources::{image_cache_key, lyrics_cache_key};
+pub use playback_checkpoint::PlaybackCheckpointRecord;
 pub use sync::{
     LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, SyncCommit, SyncCoverage,
     TrackFolderMembership,

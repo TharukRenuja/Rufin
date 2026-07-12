@@ -686,7 +686,7 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{PlaylistId, SmartPlaylistId};
+    use library::{PlaylistId, SmartPlaylistId};
     use std::path::PathBuf;
 
     #[test]

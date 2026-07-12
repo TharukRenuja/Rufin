@@ -31,6 +31,18 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 24,
         run: migrate_to_library_sync_schema,
     },
+    SchemaMigration {
+        from_version: 25,
+        run: migrate_to_provider_payload_schema,
+    },
+    SchemaMigration {
+        from_version: 26,
+        run: migrate_to_playback_owner_schema,
+    },
+    SchemaMigration {
+        from_version: 27,
+        run: migrate_to_artwork_owner_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
@@ -39,14 +51,58 @@ const PLAYLIST_OWNER_SCHEMA_VERSION: i64 = 21;
 const FAVORITE_OVERRIDE_SCHEMA_VERSION: i64 = 22;
 const SOURCE_IDENTITY_SCHEMA_VERSION: i64 = 23;
 const ARTIST_RELATION_SCHEMA_VERSION: i64 = 24;
+const LIBRARY_SYNC_SCHEMA_VERSION: i64 = 25;
+const PROVIDER_PAYLOAD_SCHEMA_VERSION: i64 = 26;
+const PLAYBACK_OWNER_SCHEMA_VERSION: i64 = 27;
 const SCHEMA_TABLES: &[&str] = &[
-    "queue_snapshots",
+    "playback_checkpoints",
     "sources",
     "source_local_access",
     "source_music_folders",
     "track_music_folders",
     "track_local_matches",
-    "track_activity",
+    "track_activity_period",
+    "source_library_preferences",
+    "active_source",
+    "sync_state",
+    "albums",
+    "tracks",
+    "artists",
+    "album_artists",
+    "genres",
+    "playlists",
+    "smart_playlists",
+    "smart_playlist_seed_state",
+    "album_genres",
+    "track_genres",
+    "track_moods",
+    "album_artist_links",
+    "track_artist_links",
+    "playlist_tracks",
+    "item_favorite_overrides",
+    "home_section_items",
+    "home_section_prefetch_items",
+    "lyrics_cache",
+    "library_fts",
+    "local_file_manifest",
+    "local_track_manifest_data",
+    "local_artwork_manifest",
+    "source_objects",
+    "entities",
+    "entity_identity_keys",
+    "entity_grouping_keys",
+    "entity_facts",
+    "entity_resolver_state",
+    "entity_links",
+];
+const PRE_ARTWORK_OWNER_SCHEMA_TABLES: &[&str] = &[
+    "playback_checkpoints",
+    "sources",
+    "source_local_access",
+    "source_music_folders",
+    "track_music_folders",
+    "track_local_matches",
+    "track_activity_period",
     "source_library_preferences",
     "active_source",
     "sync_state",
@@ -99,6 +155,22 @@ const SUPPORTED_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("source_objects", "cue_track_index"),
     ("source_objects", "segment_start_ms"),
     ("source_objects", "segment_end_ms"),
+    ("entity_links", "namespace"),
+];
+const PRE_ARTWORK_OWNER_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("albums", "release_types_json"),
+    ("albums", "musicbrainz_album_id"),
+    ("albums", "musicbrainz_release_group_id"),
+    ("tracks", "source_format"),
+    ("tracks", "comment"),
+    ("tracks", "skip_count"),
+    ("playlists", "top_genres_json"),
+    ("local_track_manifest_data", "musicbrainz_album_id"),
+    ("local_track_manifest_data", "musicbrainz_release_group_id"),
+    ("source_objects", "cue_path"),
+    ("source_objects", "cue_track_index"),
+    ("source_objects", "segment_start_ms"),
+    ("source_objects", "segment_end_ms"),
     ("entity_content_refs", "content_kind"),
     ("entity_links", "namespace"),
     ("content_cache_entries", "cache_scope"),
@@ -123,12 +195,52 @@ const FAVORITE_OVERRIDE_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("playlists", "owner"),
     ("item_favorite_overrides", "updated_at"),
 ];
+const PRE_SOURCE_IDENTITY_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("servers", "server_id"),
+    ("servers", "provider"),
+    ("servers", "name"),
+    ("servers", "base_url"),
+    ("servers", "user_id"),
+    ("servers", "username"),
+    ("servers", "trust_invalid_cert"),
+];
+const PROVIDER_PAYLOAD_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+    ("item_favorite_overrides", "updated_at"),
+    ("sources", "kind"),
+    ("sources", "provider_payload"),
+    ("source_objects", "source_object_kind"),
+    ("sync_state", "cache_revision"),
+    ("sync_state", "last_all_completed_at"),
+];
 const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("genres", "duration_seconds"),
     ("tracks", "bpm"),
     ("playlists", "owner"),
     ("item_favorite_overrides", "updated_at"),
     ("sources", "kind"),
+    ("sources", "provider_payload"),
+    ("source_objects", "source_object_kind"),
+    ("sync_state", "cache_revision"),
+    ("sync_state", "last_all_completed_at"),
+    ("playback_checkpoints", "revision"),
+    ("playback_checkpoints", "payload"),
+    ("track_activity_period", "period"),
+    ("track_activity_period", "qualified_plays"),
+];
+const LIBRARY_SYNC_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+    ("item_favorite_overrides", "updated_at"),
+    ("sources", "kind"),
+    ("sources", "base_url"),
+    ("sources", "user_id"),
+    ("sources", "username"),
+    ("sources", "trust_invalid_cert"),
+    ("sources", "use_jellyfin_instant_mix"),
     ("source_objects", "source_object_kind"),
     ("sync_state", "cache_revision"),
     ("sync_state", "last_all_completed_at"),
@@ -139,9 +251,14 @@ const PRE_CACHE_REVISION_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("playlists", "owner"),
     ("item_favorite_overrides", "updated_at"),
     ("sources", "kind"),
+    ("sources", "base_url"),
+    ("sources", "user_id"),
+    ("sources", "username"),
+    ("sources", "trust_invalid_cert"),
+    ("sources", "use_jellyfin_instant_mix"),
     ("source_objects", "source_object_kind"),
 ];
-const IMAGE_ORIGIN_TABLES: &[&str] = &[
+const PRE_ARTWORK_IMAGE_ORIGIN_TABLES: &[&str] = &[
     "albums",
     "tracks",
     "artists",
@@ -228,7 +345,16 @@ fn schema_migration_path(
     Some(path)
 }
 
+fn schema_table_before_playback_owner(table: &'static str) -> &'static str {
+    match table {
+        "playback_checkpoints" => "queue_snapshots",
+        "track_activity_period" => "track_activity",
+        _ => table,
+    }
+}
+
 fn schema_table_before_source_identity(table: &'static str) -> &'static str {
+    let table = schema_table_before_playback_owner(table);
     match table {
         "sources" => "servers",
         "source_local_access" => "server_local_access",
@@ -239,8 +365,15 @@ fn schema_table_before_source_identity(table: &'static str) -> &'static str {
     }
 }
 
+fn schema_tables_before_playback_owner() -> Vec<&'static str> {
+    PRE_ARTWORK_OWNER_SCHEMA_TABLES
+        .iter()
+        .map(|table| schema_table_before_playback_owner(table))
+        .collect()
+}
+
 fn schema_tables_before_track_moods() -> Vec<&'static str> {
-    SCHEMA_TABLES
+    PRE_ARTWORK_OWNER_SCHEMA_TABLES
         .iter()
         .map(|table| schema_table_before_source_identity(table))
         .filter(|table| !matches!(*table, "track_moods" | "item_favorite_overrides"))
@@ -248,7 +381,7 @@ fn schema_tables_before_track_moods() -> Vec<&'static str> {
 }
 
 fn schema_tables_before_favorite_overrides() -> Vec<&'static str> {
-    SCHEMA_TABLES
+    PRE_ARTWORK_OWNER_SCHEMA_TABLES
         .iter()
         .map(|table| schema_table_before_source_identity(table))
         .filter(|table| *table != "item_favorite_overrides")
@@ -256,7 +389,7 @@ fn schema_tables_before_favorite_overrides() -> Vec<&'static str> {
 }
 
 fn schema_tables_before_source_identity() -> Vec<&'static str> {
-    SCHEMA_TABLES
+    PRE_ARTWORK_OWNER_SCHEMA_TABLES
         .iter()
         .map(|table| schema_table_before_source_identity(table))
         .collect()
@@ -514,6 +647,123 @@ fn migrate_to_library_sync_schema(store: &Store) -> StoreResult<()> {
     Ok(())
 }
 
+fn migrate_to_provider_payload_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column(
+        "sources",
+        "use_jellyfin_instant_mix",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    store.ensure_column("sources", "provider_payload", "TEXT NOT NULL DEFAULT '{}'")?;
+    store.connection.execute_batch(
+        "
+        UPDATE sources
+        SET provider_payload = json_object(
+            'version', 1,
+            'base_url', base_url,
+            'user_id', user_id,
+            'username', username,
+            'trust_invalid_cert', json(
+                CASE WHEN trust_invalid_cert = 1 THEN 'true' ELSE 'false' END
+            ),
+            'use_jellyfin_instant_mix', json(
+                CASE WHEN use_jellyfin_instant_mix = 1 THEN 'true' ELSE 'false' END
+            )
+        );
+        ALTER TABLE sources DROP COLUMN base_url;
+        ALTER TABLE sources DROP COLUMN user_id;
+        ALTER TABLE sources DROP COLUMN username;
+        ALTER TABLE sources DROP COLUMN trust_invalid_cert;
+        ALTER TABLE sources DROP COLUMN use_jellyfin_instant_mix;
+        ",
+    )?;
+    Ok(())
+}
+
+fn migrate_to_playback_owner_schema(store: &Store) -> StoreResult<()> {
+    store.connection.execute_batch(
+        "
+        CREATE TABLE playback_checkpoints (
+            source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL,
+            selected_occurrence_id TEXT,
+            progress_millis INTEGER NOT NULL,
+            repeat_mode TEXT NOT NULL,
+            shuffle_enabled INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO playback_checkpoints (
+            source_id, revision, selected_occurrence_id, progress_millis,
+            repeat_mode, shuffle_enabled, payload, updated_at
+        )
+        SELECT q.source_id,
+               0,
+               json_extract(
+                   q.value,
+                   '$.entries[' || json_extract(q.value, '$.current_index') || '].id'
+               ),
+               COALESCE(json_extract(q.value, '$.progress_seconds'), 0) * 1000,
+               COALESCE(json_extract(q.value, '$.repeat_mode'), 'Off'),
+               COALESCE(json_extract(q.value, '$.shuffle.enabled'), 0),
+               q.value,
+               q.updated_at
+        FROM queue_snapshots q
+        JOIN sources s ON s.source_id = q.source_id;
+
+        CREATE TABLE track_activity_period (
+            source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+            period TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            qualified_plays INTEGER NOT NULL DEFAULT 0,
+            skips INTEGER NOT NULL DEFAULT 0,
+            last_played_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (source_id, period, track_id)
+        );
+        INSERT INTO track_activity_period (
+            source_id, period, track_id, qualified_plays, skips,
+            last_played_at, updated_at
+        )
+        SELECT source_id, 'legacy', track_id, play_count, skip_count,
+               last_played, updated_at
+        FROM track_activity;
+
+        DROP INDEX IF EXISTS track_activity_source_skip_idx;
+        DROP TABLE queue_snapshots;
+        DROP TABLE track_activity;
+        ",
+    )?;
+    Ok(())
+}
+
+fn migrate_to_artwork_owner_schema(store: &Store) -> StoreResult<()> {
+    for table in PRE_ARTWORK_IMAGE_ORIGIN_TABLES {
+        store.connection.execute(
+            &format!(
+                "UPDATE {table}
+                 SET image_item_id = NULL, image_tag = NULL
+                 WHERE image_origin IN ('fallback', 'external')"
+            ),
+            [],
+        )?;
+    }
+    for table in PRE_ARTWORK_IMAGE_ORIGIN_TABLES {
+        store
+            .connection
+            .execute(&format!("ALTER TABLE {table} DROP COLUMN image_origin"), [])?;
+    }
+    store.connection.execute_batch(
+        "
+        DROP TABLE IF EXISTS entity_content_refs;
+        DROP TABLE IF EXISTS content_cache_entries;
+        DROP TABLE IF EXISTS cover_cache;
+        DROP TABLE IF EXISTS external_image_lookup_misses;
+        DROP TABLE IF EXISTS collection_cover_refs;
+        ",
+    )?;
+    Ok(())
+}
+
 fn collapse_provider_provenance_duplicates(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
@@ -669,34 +919,57 @@ impl Store {
         self.schema_is_complete_for_version(SCHEMA_VERSION)
     }
     fn schema_is_complete_for_version(&self, version: i64) -> StoreResult<bool> {
+        if (MIN_SUPPORTED_SCHEMA_VERSION..SOURCE_IDENTITY_SCHEMA_VERSION).contains(&version)
+            && !self.schema_has_required_parts(&[], PRE_SOURCE_IDENTITY_SCHEMA_COLUMNS)?
+        {
+            return Ok(false);
+        }
         match version {
             MIN_SUPPORTED_SCHEMA_VERSION => self.schema_has_required_parts(
                 &schema_tables_before_track_moods(),
-                SUPPORTED_SCHEMA_COLUMNS,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             ),
             GENRE_DURATION_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
                 &schema_tables_before_track_moods(),
-                SUPPORTED_SCHEMA_COLUMNS,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], GENRE_DURATION_SCHEMA_COLUMNS)?),
             TRACK_MOOD_BPM_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
                 &schema_tables_before_favorite_overrides(),
-                SUPPORTED_SCHEMA_COLUMNS,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], TRACK_MOOD_BPM_SCHEMA_COLUMNS)?),
             PLAYLIST_OWNER_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
                 &schema_tables_before_favorite_overrides(),
-                SUPPORTED_SCHEMA_COLUMNS,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], PLAYLIST_OWNER_SCHEMA_COLUMNS)?),
             FAVORITE_OVERRIDE_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
                 &schema_tables_before_source_identity(),
-                SUPPORTED_SCHEMA_COLUMNS,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], FAVORITE_OVERRIDE_SCHEMA_COLUMNS)?),
-            SOURCE_IDENTITY_SCHEMA_VERSION | ARTIST_RELATION_SCHEMA_VERSION => Ok(self
-                .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
-                && self.schema_has_required_parts(&[], PRE_CACHE_REVISION_SCHEMA_COLUMNS)?),
+            SOURCE_IDENTITY_SCHEMA_VERSION | ARTIST_RELATION_SCHEMA_VERSION => {
+                Ok(self.schema_has_required_parts(
+                    &schema_tables_before_playback_owner(),
+                    PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
+                )? && self.schema_has_required_parts(&[], PRE_CACHE_REVISION_SCHEMA_COLUMNS)?)
+            }
+            LIBRARY_SYNC_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_playback_owner(),
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], LIBRARY_SYNC_SCHEMA_COLUMNS)?),
+            PROVIDER_PAYLOAD_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_playback_owner(),
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], PROVIDER_PAYLOAD_SCHEMA_COLUMNS)?),
+            PLAYBACK_OWNER_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                PRE_ARTWORK_OWNER_SCHEMA_TABLES,
+                PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -800,20 +1073,21 @@ impl Store {
     pub(super) fn initialize_schema(&self) -> StoreResult<()> {
         self.connection.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS queue_snapshots (
-                source_id TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS playback_checkpoints (
+                source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
+                revision INTEGER NOT NULL,
+                selected_occurrence_id TEXT,
+                progress_millis INTEGER NOT NULL,
+                repeat_mode TEXT NOT NULL,
+                shuffle_enabled INTEGER NOT NULL,
+                payload TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS sources (
                 source_id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
                 name TEXT NOT NULL,
-                base_url TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                trust_invalid_cert INTEGER NOT NULL DEFAULT 0,
-                use_jellyfin_instant_mix INTEGER NOT NULL DEFAULT 0,
+                provider_payload TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -846,15 +1120,15 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_id, track_id)
             );
-            CREATE TABLE IF NOT EXISTS track_activity (
+            CREATE TABLE IF NOT EXISTS track_activity_period (
                 source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                period TEXT NOT NULL,
                 track_id TEXT NOT NULL,
-                play_count INTEGER NOT NULL DEFAULT 0,
-                last_played TEXT,
-                skip_count INTEGER NOT NULL DEFAULT 0,
-                play_recorded_session TEXT,
+                qualified_plays INTEGER NOT NULL DEFAULT 0,
+                skips INTEGER NOT NULL DEFAULT 0,
+                last_played_at TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, track_id)
+                PRIMARY KEY (source_id, period, track_id)
             );
             CREATE TABLE IF NOT EXISTS source_library_preferences (
                 source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
@@ -893,7 +1167,6 @@ impl Store {
                 color_seed INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 release_types_json TEXT NOT NULL DEFAULT '[]',
                 is_compilation INTEGER,
                 musicbrainz_album_id TEXT,
@@ -921,7 +1194,6 @@ impl Store {
                 track_number INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 local_path TEXT,
                 source_format TEXT,
                 comment TEXT,
@@ -942,7 +1214,6 @@ impl Store {
                 user_rating INTEGER,
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (source_id, artist_id)
             );
@@ -958,7 +1229,6 @@ impl Store {
                 user_rating INTEGER,
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (source_id, artist_id)
             );
@@ -971,7 +1241,6 @@ impl Store {
                 duration_seconds INTEGER NOT NULL DEFAULT 0,
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (source_id, genre_id)
             );
@@ -984,7 +1253,6 @@ impl Store {
                 top_genres_json TEXT NOT NULL DEFAULT '[]',
                 image_item_id TEXT,
                 image_tag TEXT,
-                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 owner TEXT NOT NULL DEFAULT 'native' CHECK (owner IN ('native', 'store')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (source_id, playlist_id)
@@ -1061,16 +1329,6 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_id, item_kind, item_id)
             );
-            CREATE TABLE IF NOT EXISTS collection_cover_refs (
-                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-                collection_type TEXT NOT NULL,
-                collection_id TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                image_item_id TEXT NOT NULL,
-                image_tag TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, collection_type, collection_id, position)
-            );
             CREATE TABLE IF NOT EXISTS home_section_items (
                 source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
                 section_kind TEXT NOT NULL,
@@ -1096,24 +1354,6 @@ impl Store {
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_id, track_id)
-            );
-            CREATE TABLE IF NOT EXISTS cover_cache (
-                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-                item_id TEXT NOT NULL,
-                image_tag TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                path TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, item_id, image_tag, size)
-            );
-            CREATE TABLE IF NOT EXISTS external_image_lookup_misses (
-                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-                item_id TEXT NOT NULL,
-                image_tag TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                reason TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, item_id, image_tag, size)
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(
                 source_id UNINDEXED,
@@ -1152,8 +1392,6 @@ impl Store {
                 ON tracks(source_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS tracks_source_comment_nocase_idx
                 ON tracks(source_id, comment COLLATE NOCASE);
-            CREATE INDEX IF NOT EXISTS track_activity_source_skip_idx
-                ON track_activity(source_id, skip_count DESC);
             CREATE INDEX IF NOT EXISTS smart_playlists_source_position_idx
                 ON smart_playlists(source_id, position, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS home_section_items_order_idx
@@ -1166,8 +1404,6 @@ impl Store {
                 ON track_genres(source_id, genre_name, track_id);
             CREATE INDEX IF NOT EXISTS track_moods_source_mood_idx
                 ON track_moods(source_id, mood_name, track_id);
-            CREATE INDEX IF NOT EXISTS collection_cover_refs_lookup_idx
-                ON collection_cover_refs(source_id, collection_type, collection_id, position);
             CREATE INDEX IF NOT EXISTS album_artist_links_source_artist_idx
                 ON album_artist_links(source_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS track_artist_links_source_artist_idx
@@ -1197,14 +1433,8 @@ impl Store {
         )?;
         self.create_favorite_override_schema()?;
         self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
-        self.ensure_column(
-            "sources",
-            "use_jellyfin_instant_mix",
-            "INTEGER NOT NULL DEFAULT 0",
-        )?;
         self.ensure_column("sync_state", "cache_revision", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("sync_state", "last_all_completed_at", "TEXT")?;
-        self.ensure_image_origin_columns()?;
         self.create_entity_identity_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1295,19 +1525,6 @@ impl Store {
                 )
             );
 
-            CREATE TABLE IF NOT EXISTS entity_content_refs (
-                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
-                entity_kind TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                content_kind TEXT NOT NULL,
-                content_key TEXT NOT NULL,
-                source TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, entity_kind, entity_id, content_kind, source)
-            );
-            CREATE INDEX IF NOT EXISTS entity_content_key_idx
-                ON entity_content_refs(content_kind, content_key);
-
             CREATE TABLE IF NOT EXISTS entity_links (
                 source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
                 entity_kind TEXT NOT NULL,
@@ -1323,17 +1540,6 @@ impl Store {
             CREATE INDEX IF NOT EXISTS entity_links_namespace_idx
                 ON entity_links(source_id, entity_kind, namespace);
 
-            CREATE TABLE IF NOT EXISTS content_cache_entries (
-                cache_scope TEXT NOT NULL,
-                content_kind TEXT NOT NULL,
-                content_key TEXT NOT NULL,
-                variant TEXT NOT NULL,
-                status TEXT NOT NULL,
-                path_or_value TEXT,
-                source TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (cache_scope, content_kind, content_key, variant)
-            );
             ",
         )?;
         self.backfill_entity_identity_schema()?;
@@ -1542,102 +1748,32 @@ impl Store {
         }
         Ok(())
     }
-    fn ensure_image_origin_columns(&self) -> StoreResult<()> {
-        for table in IMAGE_ORIGIN_TABLES {
-            self.ensure_column(
-                table,
-                "image_origin",
-                "TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external'))",
-            )?;
-        }
-        Ok(())
-    }
-    pub fn load_queue_snapshot(&self, source_id: &SourceId) -> StoreResult<Option<QueueSnapshot>> {
-        let value = self
-            .connection
-            .query_row(
-                "SELECT value FROM queue_snapshots WHERE source_id = ?1",
-                params![source_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        value
-            .map(|json| serde_json::from_str(&json).map_err(StoreError::from))
-            .transpose()
-    }
-    pub fn save_queue_snapshot(&self, snapshot: &QueueSnapshot) -> StoreResult<()> {
-        let value = serde_json::to_string(snapshot)?;
-        self.connection.execute(
-            "
-            INSERT INTO queue_snapshots (source_id, value, updated_at)
-            VALUES (?1, ?2, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-            ",
-            params![snapshot.source_id.as_str(), value],
-        )?;
-        Ok(())
-    }
-    pub fn save_queue_progress(
-        &self,
-        source_id: &SourceId,
-        entry_id: &QueueEntryId,
-        track_id: &TrackId,
-        progress_seconds: u32,
-    ) -> StoreResult<bool> {
-        let updated = self.connection.execute(
-            "
-            UPDATE queue_snapshots
-            SET
-                value = json_set(value, '$.progress_seconds', ?4),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE source_id = ?1
-                AND json_extract(value, '$.current_index') IS NOT NULL
-                AND json_extract(
-                    value,
-                    '$.entries[' || json_extract(value, '$.current_index') || '].id'
-                ) = ?2
-                AND json_extract(
-                    value,
-                    '$.entries[' || json_extract(value, '$.current_index') || '].track_id'
-                ) = ?3
-            ",
-            params![
-                source_id.as_str(),
-                entry_id.as_str(),
-                track_id.as_str(),
-                i64::from(progress_seconds)
-            ],
-        )?;
-        Ok(updated > 0)
-    }
-    pub fn save_source(&self, saved: &SavedSource) -> StoreResult<()> {
-        save_source_on_connection(&self.connection, saved)
+    pub fn save_source(&self, source: &StoredSource) -> StoreResult<()> {
+        save_source_on_connection(&self.connection, source)
     }
     pub fn save_source_settings_update(
         &self,
-        saved: &SavedSource,
+        source: &StoredSource,
         clear_identity_cache: bool,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
-            save_source_on_connection(connection, saved)?;
+            save_source_on_connection(connection, source)?;
             if clear_identity_cache {
-                clear_source_cache(connection, &saved.source.id)?;
+                clear_source_cache(connection, &source.source_id)?;
             }
             Ok(())
         })
     }
     pub fn save_source_activation(
         &self,
-        saved: &SavedSource,
+        source: &StoredSource,
         clear_identity_cache: bool,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
-            save_source_on_connection(connection, saved)?;
-            self.set_active_source(&saved.source.id)?;
+            save_source_on_connection(connection, source)?;
+            self.set_active_source(&source.source_id)?;
             if clear_identity_cache {
-                clear_source_cache(connection, &saved.source.id)?;
+                clear_source_cache(connection, &source.source_id)?;
             }
             Ok(())
         })
@@ -1658,47 +1794,44 @@ impl Store {
             .execute("DELETE FROM active_source WHERE singleton = 1", [])?;
         Ok(())
     }
-    pub fn active_source(&self) -> StoreResult<Option<SavedSource>> {
+    pub fn active_source(&self) -> StoreResult<Option<StoredSource>> {
         self.connection
             .query_row(
                 "
-                SELECT s.source_id, s.kind, s.name, s.base_url, s.user_id,
-                       s.username, s.trust_invalid_cert, s.use_jellyfin_instant_mix
+                SELECT s.source_id, s.kind, s.name, s.provider_payload
                 FROM active_source a
                 JOIN sources s ON s.source_id = a.source_id
                 WHERE a.singleton = 1
                 ",
                 [],
-                saved_source_from_row,
+                stored_source_from_row,
             )
             .optional()
             .map_err(StoreError::from)
     }
-    pub fn saved_source(&self, source_id: &SourceId) -> StoreResult<Option<SavedSource>> {
+    pub fn stored_source(&self, source_id: &SourceId) -> StoreResult<Option<StoredSource>> {
         self.connection
             .query_row(
                 "
-                SELECT source_id, kind, name, base_url, user_id, username,
-                       trust_invalid_cert, use_jellyfin_instant_mix
+                SELECT source_id, kind, name, provider_payload
                 FROM sources
                 WHERE source_id = ?1
                 ",
                 params![source_id.as_str()],
-                saved_source_from_row,
+                stored_source_from_row,
             )
             .optional()
             .map_err(StoreError::from)
     }
-    pub fn list_sources(&self) -> StoreResult<Vec<SavedSource>> {
+    pub fn list_sources(&self) -> StoreResult<Vec<StoredSource>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT source_id, kind, name, base_url, user_id, username,
-                   trust_invalid_cert, use_jellyfin_instant_mix
+            SELECT source_id, kind, name, provider_payload
             FROM sources
             ORDER BY name
             ",
         )?;
-        collect_rows(statement.query_map([], saved_source_from_row)?)
+        collect_rows(statement.query_map([], stored_source_from_row)?)
     }
     pub fn save_source_local_access(&self, access: &SourceLocalAccess) -> StoreResult<bool> {
         self.write_source_local_access(&access.source_id, Some(access))
@@ -2329,34 +2462,25 @@ fn usize_from_count(value: i64) -> usize {
 
 pub(super) fn save_source_on_connection(
     connection: &Connection,
-    saved: &SavedSource,
+    source: &StoredSource,
 ) -> StoreResult<()> {
     connection.execute(
         "
         INSERT INTO sources (
-            source_id, kind, name, base_url, user_id, username,
-            trust_invalid_cert, use_jellyfin_instant_mix, updated_at
+            source_id, kind, name, provider_payload, updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+        VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
         ON CONFLICT(source_id) DO UPDATE SET
             kind = excluded.kind,
             name = excluded.name,
-            base_url = excluded.base_url,
-            user_id = excluded.user_id,
-            username = excluded.username,
-            trust_invalid_cert = excluded.trust_invalid_cert,
-            use_jellyfin_instant_mix = excluded.use_jellyfin_instant_mix,
+            provider_payload = excluded.provider_payload,
             updated_at = excluded.updated_at
         ",
         params![
-            saved.source.id.as_str(),
-            saved.source.kind,
-            saved.source.name,
-            saved.source.base_url,
-            saved.user_id,
-            saved.username,
-            bool_to_i64(saved.trust_invalid_cert),
-            bool_to_i64(saved.use_jellyfin_instant_mix),
+            source.source_id.as_str(),
+            source.kind,
+            source.name,
+            source.provider_payload,
         ],
     )?;
     connection.execute(
@@ -2364,7 +2488,7 @@ pub(super) fn save_source_on_connection(
         INSERT OR IGNORE INTO sync_state (source_id)
         VALUES (?1)
         ",
-        params![saved.source.id.as_str()],
+        params![source.source_id.as_str()],
     )?;
     Ok(())
 }
@@ -2372,7 +2496,7 @@ pub(super) fn save_source_on_connection(
 pub(super) fn clear_source_cache(connection: &Connection, source_id: &SourceId) -> StoreResult<()> {
     clear_library_cache_on_connection(connection, source_id)?;
     connection.execute(
-        "DELETE FROM queue_snapshots WHERE source_id = ?1",
+        "DELETE FROM playback_checkpoints WHERE source_id = ?1",
         params![source_id.as_str()],
     )?;
     connection.execute(
@@ -2433,17 +2557,11 @@ mod tests {
         let store = Store::open_memory().expect("open Store");
         let source_id = SourceId::new("test:interrupted");
         store
-            .save_source(&SavedSource {
-                source: SourceIdentity {
-                    id: source_id.clone(),
-                    kind: "test".to_string(),
-                    name: "Interrupted".to_string(),
-                    base_url: String::new(),
-                },
-                user_id: String::new(),
-                username: String::new(),
-                trust_invalid_cert: false,
-                use_jellyfin_instant_mix: false,
+            .save_source(&StoredSource {
+                source_id: source_id.clone(),
+                kind: "test".to_string(),
+                name: "Interrupted".to_string(),
+                provider_payload: "{}".to_string(),
             })
             .expect("save source");
         let generation = store.begin_sync(&source_id).expect("begin sync");

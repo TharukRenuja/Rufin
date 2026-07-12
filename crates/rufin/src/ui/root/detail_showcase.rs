@@ -268,14 +268,13 @@ pub(in crate::ui) fn detail_action_row() -> gtk::Box {
 
 pub(in crate::ui) fn detail_cover_button(
     shell: &Rc<Shell>,
-    image_ref: Option<&ImageRef>,
+    candidates: CandidateSet,
     seed: u32,
     size: i32,
     fetch_size: u32,
     cover_class: &str,
 ) -> gtk::Button {
-    shell.prime_cached_cover(image_ref, fetch_size, size);
-    let cover = shell.cover_tile_for(image_ref, seed, size, fetch_size);
+    let cover = shell.cover_tile_for_candidates(candidates.clone(), seed, size, fetch_size);
     cover.add_css_class("detail-showcase-cover");
     cover.add_css_class(cover_class);
 
@@ -288,27 +287,19 @@ pub(in crate::ui) fn detail_cover_button(
     button.set_child(Some(&cover));
 
     let shell = Rc::clone(shell);
-    let image_ref = image_ref.cloned();
     button.connect_clicked(move |_| {
-        shell.present_full_artwork(image_ref.as_ref(), seed);
+        shell.present_full_artwork(candidates.clone(), seed);
     });
     button
 }
 
 impl Shell {
-    fn present_full_artwork(self: &Rc<Self>, image_ref: Option<&ImageRef>, seed: u32) {
+    fn present_full_artwork(self: &Rc<Self>, candidates: CandidateSet, seed: u32) {
         let size = full_artwork_size(self.window.width(), self.window.height());
         let fetch_size = cover_fetch_size_for_display(size);
         let tile = ArtworkTile::new_sized(size, size, seed);
         let cover = tile.widget();
-        self.bind_cover_tile_for_dimensions(
-            &tile,
-            image_ref,
-            seed,
-            GRID_COVER_SIZE as i32,
-            GRID_COVER_SIZE,
-        );
-        self.bind_cover_tile_for_dimensions(&tile, image_ref, seed, size, fetch_size);
+        self.bind_artwork_tile(&tile, candidates, seed, size, fetch_size);
         cover.add_css_class("full-artwork-cover");
         cover.set_halign(gtk::Align::Center);
         cover.set_valign(gtk::Align::Center);

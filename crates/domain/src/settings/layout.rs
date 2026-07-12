@@ -1,10 +1,8 @@
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::sidebar::*;
-use crate::{
-    domain::{HomeBlockKind, HomeSectionKind, SourceId},
-    msgid,
-};
+use crate::msgid;
+use library::SourceId;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
@@ -12,33 +10,11 @@ pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 450;
 pub const MIN_RESTORED_WINDOW_HEIGHT: i32 = 400;
 pub const MAX_RESTORED_WINDOW_WIDTH: i32 = 3_400;
 pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 2_000;
-pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
-pub const MIN_CROSSFADE_SECONDS: u8 = 1;
-pub const MAX_CROSSFADE_SECONDS: u8 = 30;
 pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MIN_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
-pub(super) const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
-pub(super) fn default_lyrics_panel_visible() -> bool {
-    true
-}
-pub(super) fn default_discord_client_id() -> String {
-    DEFAULT_DISCORD_CLIENT_ID.to_string()
-}
-pub(super) fn default_discord_link_type() -> DiscordLinkType {
-    DiscordLinkType::MusicBrainz
-}
 pub(super) fn default_true() -> bool {
     true
-}
-pub(super) fn default_volume() -> f64 {
-    1.0
-}
-pub(super) fn default_crossfade_seconds() -> u8 {
-    5
-}
-pub(super) fn default_auto_dj_refill_threshold() -> u8 {
-    DEFAULT_AUTO_DJ_REFILL_THRESHOLD
 }
 fn default_narrow_layout_enabled() -> bool {
     true
@@ -321,26 +297,6 @@ fn default_sidebar_route_items() -> Vec<SidebarRouteItemSettings> {
         })
         .collect()
 }
-pub(super) fn default_home_sections() -> Vec<HomeSectionKind> {
-    vec![
-        HomeSectionKind::Explore,
-        HomeSectionKind::MostPlayed,
-        HomeSectionKind::NewlyAdded,
-        HomeSectionKind::RecentlyPlayed,
-        HomeSectionKind::RecentlyReleased,
-    ]
-}
-pub(super) fn default_home_blocks() -> Vec<HomeBlockKind> {
-    vec![
-        HomeBlockKind::Showcase,
-        HomeBlockKind::Explore,
-        HomeBlockKind::MostPlayed,
-        HomeBlockKind::NewlyAdded,
-        HomeBlockKind::RecentlyPlayed,
-        HomeBlockKind::RecentlyReleased,
-        HomeBlockKind::Genres,
-    ]
-}
 pub const SYSTEM_LANGUAGE_PREFERENCE: &str = "system";
 pub fn default_language_preference() -> String {
     SYSTEM_LANGUAGE_PREFERENCE.to_string()
@@ -367,154 +323,6 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
-}
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
-pub enum DiscordDisplayType {
-    #[serde(rename = "artist")]
-    Artist,
-    #[serde(rename = "application")]
-    #[default]
-    Application,
-    #[serde(rename = "song")]
-    Song,
-}
-impl<'de> Deserialize<'de> for DiscordDisplayType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        match value.as_str() {
-            "artist" => Ok(Self::Artist),
-            "application" | "app" => Ok(Self::Application),
-            "song" => Ok(Self::Song),
-            legacy if legacy.as_bytes() == LEGACY_APPLICATION_DISPLAY_BYTES => {
-                Ok(Self::Application)
-            }
-            other => Err(de::Error::unknown_variant(
-                other,
-                &["artist", "application", "song"],
-            )),
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub enum DiscordLinkType {
-    #[serde(rename = "last_fm")]
-    LastFm,
-    #[serde(rename = "musicbrainz")]
-    MusicBrainz,
-    #[serde(rename = "musicbrainz_last_fm")]
-    MusicBrainzLastFm,
-    #[serde(rename = "none")]
-    #[default]
-    None,
-}
-fn default_librefm_api_key() -> String {
-    "rufin".to_string()
-}
-fn default_librefm_api_secret() -> String {
-    "rufin".to_string()
-}
-fn default_now_playing_enabled() -> bool {
-    true
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct AudioscrobblerScrobbleSettings {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub api_secret: String,
-    #[serde(default)]
-    pub session_key: String,
-    #[serde(default = "default_now_playing_enabled")]
-    pub now_playing_enabled: bool,
-}
-impl Default for AudioscrobblerScrobbleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            username: String::new(),
-            api_key: String::new(),
-            api_secret: String::new(),
-            session_key: String::new(),
-            now_playing_enabled: true,
-        }
-    }
-}
-impl AudioscrobblerScrobbleSettings {
-    fn sanitize(&mut self) {
-        self.username = self.username.trim().to_string();
-        self.api_key = self.api_key.trim().to_string();
-        self.api_secret = self.api_secret.trim().to_string();
-        self.session_key = self.session_key.trim().to_string();
-    }
-
-    fn with_librefm_defaults() -> Self {
-        Self {
-            api_key: default_librefm_api_key(),
-            api_secret: default_librefm_api_secret(),
-            ..Self::default()
-        }
-    }
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ListenBrainzScrobbleSettings {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub user_token: String,
-    #[serde(default = "default_now_playing_enabled")]
-    pub now_playing_enabled: bool,
-}
-impl Default for ListenBrainzScrobbleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            user_token: String::new(),
-            now_playing_enabled: true,
-        }
-    }
-}
-impl ListenBrainzScrobbleSettings {
-    fn sanitize(&mut self) {
-        self.user_token = self.user_token.trim().to_string();
-    }
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ScrobblingSettings {
-    #[serde(default)]
-    pub lastfm: AudioscrobblerScrobbleSettings,
-    #[serde(default)]
-    pub librefm: AudioscrobblerScrobbleSettings,
-    #[serde(default)]
-    pub listenbrainz: ListenBrainzScrobbleSettings,
-}
-impl Default for ScrobblingSettings {
-    fn default() -> Self {
-        Self {
-            lastfm: AudioscrobblerScrobbleSettings::default(),
-            librefm: AudioscrobblerScrobbleSettings::with_librefm_defaults(),
-            listenbrainz: ListenBrainzScrobbleSettings::default(),
-        }
-    }
-}
-impl ScrobblingSettings {
-    pub fn sanitize(&mut self) {
-        self.lastfm.sanitize();
-        self.librefm.sanitize();
-        if self.librefm.api_key.is_empty() {
-            self.librefm.api_key = default_librefm_api_key();
-        }
-        if self.librefm.api_secret.is_empty() {
-            self.librefm.api_secret = default_librefm_api_secret();
-        }
-        self.listenbrainz.sanitize();
-    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum LibraryLayout {
@@ -642,6 +450,7 @@ pub enum LibraryField {
     PlayCount,
     UserRating,
     Genre,
+    Bpm,
     TrackNumber,
     DiscNumber,
     SongCount,
@@ -666,6 +475,7 @@ impl LibraryField {
             Self::PlayCount => msgid("Plays"),
             Self::UserRating => msgid("Rating"),
             Self::Genre => msgid("Genre"),
+            Self::Bpm => msgid("BPM"),
             Self::TrackNumber => msgid("Track"),
             Self::DiscNumber => msgid("Disc"),
             Self::SongCount => msgid("Number of songs"),
@@ -935,6 +745,7 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::PlayCount,
             LibraryField::UserRating,
             LibraryField::Genre,
+            LibraryField::Bpm,
             LibraryField::DiscNumber,
             LibraryField::TrackNumber,
             LibraryField::Duration,

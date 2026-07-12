@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
+use ::library::{Genre, GenreId};
 use adw::prelude::*;
-use domain::{Genre, GenreId};
-use source::PlayedFilter;
+use sources::PlayedFilter;
 
 use crate::controller::{RandomPlayAction, RandomPlayRequest};
 use crate::i18n::tr;
-use crate::sources::RandomTrackDomain;
+use crate::source_setup::RandomTrackDomain;
 
 use super::{
     PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, present_light_dismiss_dialog, text_button,
@@ -95,10 +95,10 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
     let play_next = text_button(PLAY_NEXT_ICON, "Play Next");
     let play_now = text_button(PLAY_ICON, "Play");
     play_now.add_css_class("suggested-action");
-    let add_last = text_button(PLAY_LATER_ICON, "Add Last");
+    let play_later = text_button(PLAY_LATER_ICON, "Play Later");
     actions.append(&play_next);
     actions.append(&play_now);
-    actions.append(&add_last);
+    actions.append(&play_later);
     content.append(&actions);
 
     toolbar.set_content(Some(&content));
@@ -124,7 +124,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
         RandomPlayAction::PlayNow,
     );
     connect_action(
-        &add_last,
+        &play_later,
         shell,
         &dialog,
         &controls,

@@ -8,11 +8,11 @@ impl AppController {
                 Ok(store
                     .list_sources()?
                     .into_iter()
-                    .find(|saved| saved.source.id == source_id))
+                    .find(|saved| saved.source_id == source_id))
             })
             .unwrap_or(None);
         if let Some(saved) = saved {
-            self.request_manual_source_sync(saved.source.id);
+            self.request_manual_source_sync(saved.source_id);
         } else {
             let _sent = self.events.send(ControllerEvent::Error(
                 "The selected server is no longer saved.".to_string(),
@@ -60,11 +60,11 @@ impl AppController {
         start_home_promotion(
             self.store.clone(),
             self.events.clone(),
-            saved.source.id,
+            saved.source_id,
             section,
         );
     }
-    pub(in crate::controller) fn start_explore_prefetch_for_saved(&self, saved: SavedSource) {
+    pub(in crate::controller) fn start_explore_prefetch_for_saved(&self, saved: StoredSource) {
         start_explore_prefetch_thread(
             ExplorePrefetchContext {
                 store: self.store.clone(),
@@ -78,7 +78,7 @@ impl AppController {
     }
     pub(in crate::controller) fn start_home_refresh_for_saved(
         &self,
-        saved: SavedSource,
+        saved: StoredSource,
         target: HomeRefreshTarget,
     ) {
         start_home_refresh_thread(

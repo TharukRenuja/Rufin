@@ -2,10 +2,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ::library::CachedArtistDetail;
+use ::library::play_context::{ArtistTrackScope, PlayContextDescriptor};
+use ::library::{Album, AlbumId, Artist, ArtistId, Track};
 use adw::prelude::*;
-use domain::{
-    Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, Route, Track,
-};
+use artwork::CandidateSet;
+use domain::Route;
 
 use crate::i18n::msgid;
 
@@ -26,22 +27,15 @@ impl Shell {
                 .source
                 .as_ref()
                 .map(|server| server.id.to_string());
-            let queue_source_id = self
-                .state
-                .queue
-                .borrow()
-                .as_ref()
-                .map(|queue| queue.source_id.to_string());
             let player_source_id = self
                 .state
                 .player
                 .borrow()
-                .current_source_id
                 .as_ref()
-                .map(ToString::to_string);
+                .map(|player| player.transport.source_id.to_string());
             warn!(
                 artist_id = artist_id.as_str(),
-                active_source_id, queue_source_id, player_source_id, "cached artist route missing"
+                active_source_id, player_source_id, "cached artist route missing"
             );
             return self.placeholder_view("Artist", "The selected cached artist was not found.");
         };
@@ -76,19 +70,17 @@ impl Shell {
             content.append(&section_heading(msgid("Favorite tracks")));
             let favorite_artist_id = artist.id.clone();
             let selected_music_folder_id = selected_music_folder_id(self);
-            let source_descriptor = PlaySourceDescriptor::HomeCollection {
-                section_id: "artist-favorites".to_string(),
-                source: Box::new(PlaySourceDescriptor::ArtistTracks {
-                    artist_id: favorite_artist_id,
-                    scope: ArtistTrackScope::AllCredits,
-                    selected_music_folder_id,
-                }),
+            let source_descriptor = PlayContextDescriptor::Artist {
+                artist_id: favorite_artist_id,
+                scope: ArtistTrackScope::AllCredits,
+                music_folder_id: selected_music_folder_id,
             };
             content.append(&self.compact_artist_tracks_table(
                 favorite_tracks,
                 "artist-favorites",
                 Some(source_descriptor),
                 Some(Rc::clone(&favorite_track_selection)),
+                true,
             ));
         }
 
@@ -193,10 +185,10 @@ impl Shell {
             detail.tracks,
             LibraryListKey::ArtistTracks,
             "artist-tracks",
-            Some(PlaySourceDescriptor::ArtistTracks {
+            Some(PlayContextDescriptor::Artist {
                 artist_id: detail.artist.id,
                 scope: ArtistTrackScope::AllCredits,
-                selected_music_folder_id: selected_music_folder_id(self),
+                music_folder_id: selected_music_folder_id(self),
             }),
         ));
 
@@ -216,11 +208,10 @@ impl Shell {
         let seed = stable_seed(artist.id.as_str());
         let external_links = artist_external_links(self, artist, tracks);
 
-        let image_ref = super::library::artist_cover_image_ref(self, artist);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
         let cover = detail_cover_button(
             self,
-            image_ref.as_ref(),
+            CandidateSet::artist(artist),
             seed,
             cover_size,
             cover_fetch_size,
@@ -645,7 +636,7 @@ mod tests {
         let mut primary_track = test_track("Artist", Some(artist_id.clone()));
         primary_track.album_id = primary.id.clone();
         let mut featured_track = test_track("Artist", Some(artist_id.clone()));
-        featured_track.id = domain::TrackId::fake(2);
+        featured_track.id = ::library::TrackId::fake(2);
         featured_track.album_id = appears_on.id.clone();
         featured_track.album = appears_on.title.clone();
 
@@ -767,7 +758,7 @@ mod tests {
 
     fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Track {
         Track {
-            id: domain::TrackId::fake(1),
+            id: ::library::TrackId::fake(1),
             album_id: AlbumId::fake(1),
             title: "Track".to_string(),
             artist: artist.to_string(),
@@ -786,6 +777,7 @@ mod tests {
             disc_number: 1,
             track_number: 1,
             image_ref: None,
+            album_artwork: None,
             genres: Vec::new(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,

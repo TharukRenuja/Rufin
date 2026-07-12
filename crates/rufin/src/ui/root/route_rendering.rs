@@ -33,7 +33,6 @@ impl RouteView {
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         self.cancel_route_loads();
-        self.reset_route_covers();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
@@ -68,6 +67,7 @@ impl Shell {
         let render_started = Instant::now();
         let prepare_started = Instant::now();
         self.prepare_route_host();
+        self.reset_route_covers();
         let prepare_ms = prepare_started.elapsed().as_millis() as u64;
         let view_started = Instant::now();
         let view = match route.clone() {
@@ -288,14 +288,6 @@ impl Shell {
             .current_route_boundary
             .replace(Some(boundary.clone()));
         self.route_host.append(&boundary);
-        self.prime_route_visible_cover_window(route);
-        {
-            let shell = Rc::clone(self);
-            let route = route.clone();
-            glib::idle_add_local_once(move || {
-                shell.prime_route_visible_cover_window(&route);
-            });
-        }
     }
 
     fn cancel_route_loads(&self) {
@@ -592,7 +584,7 @@ fn merge_pending_sync_route_delta(pending: &mut Option<LibraryDelta>, delta: Lib
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::GenreId;
+    use ::library::GenreId;
 
     #[test]
     fn row_library_routes_do_not_rerender_for_width() {

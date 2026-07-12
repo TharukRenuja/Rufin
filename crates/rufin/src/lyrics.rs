@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
-use source::{LyricLine, Lyrics};
+use metadata::{LyricLine, Lyrics};
 
 const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
 const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
@@ -502,7 +502,7 @@ mod tests {
         lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
         should_highlight_all_lyrics_lines,
     };
-    use source::LyricLine;
+    use metadata::LyricLine;
     use std::time::{Duration, Instant};
 
     #[test]

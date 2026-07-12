@@ -3,7 +3,7 @@ use super::*;
 impl Shell {
     pub(in crate::ui) fn genre_detail_view(
         self: &Rc<Self>,
-        genre_id: domain::GenreId,
+        genre_id: ::library::GenreId,
     ) -> gtk::Widget {
         let detail = self
             .genre_detail_from_memory(&genre_id)
@@ -40,14 +40,8 @@ impl Shell {
                 format_duration_units(detail.genre.duration_seconds),
             ));
         }
-        let cover_refs = if detail.genre.image_refs.is_empty() {
-            grouped_cover_refs_for_items(&detail.albums, &detail.tracks)
-        } else {
-            detail.genre.image_refs.clone()
-        };
-        let mut genre = detail.genre;
-        genre.image_refs = cover_refs;
-        let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
+        let genre = detail.genre;
+        let artwork = CandidateSet::genre_slots(&genre);
         let kind_row = self.genre_detail_kind_row(&genre);
         let action_tracks = Rc::new(detail.tracks.clone());
         let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
@@ -62,9 +56,9 @@ impl Shell {
             selection_handle: Some(track_selection),
             tracks: detail.tracks,
             table_context: "genre-detail",
-            source_descriptor: Some(PlaySourceDescriptor::GenreTracks {
+            source_descriptor: Some(PlayContextDescriptor::Genre {
                 genre_id,
-                selected_music_folder_id: selected_music_folder_id(self),
+                music_folder_id: selected_music_folder_id(self),
             }),
         })
     }
@@ -96,7 +90,7 @@ impl Shell {
 
     fn genre_detail_actions(
         self: &Rc<Self>,
-        genre_id: domain::GenreId,
+        genre_id: ::library::GenreId,
         tracks: Rc<Vec<Track>>,
     ) -> gtk::Box {
         let actions = detail_action_row();
@@ -119,7 +113,7 @@ impl Shell {
 
     fn genre_detail_from_memory(
         self: &Rc<Self>,
-        genre_id: &domain::GenreId,
+        genre_id: &::library::GenreId,
     ) -> Option<CachedGenreDetail> {
         let library = self.state.library.borrow();
         if library.cached_track_count > library.tracks.len() {

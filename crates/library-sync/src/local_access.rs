@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use domain::{LocalManifestScan, Track, TrackId};
-use library::LocalManifestDelta;
+use library::{LocalManifestDelta, Track, TrackId};
+use sources::local::LocalManifestScan;
 
 #[derive(Hash, Eq, PartialEq)]
 struct MatchKey {
@@ -133,7 +133,7 @@ fn normalize(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use domain::{AlbumId, TrackId};
+    use library::{AlbumId, TrackId};
 
     use super::*;
 
@@ -158,6 +158,7 @@ mod tests {
             disc_number: 1,
             track_number: 7,
             image_ref: None,
+            album_artwork: None,
             genres: Vec::new(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,

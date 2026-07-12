@@ -232,7 +232,7 @@ fn unix_timestamp_date(timestamp: i64) -> String {
         .unwrap_or_default()
 }
 
-fn release_notification_due(settings: &AppSettings, latest: &str, current: &str) -> bool {
+fn release_notification_due(settings: &StoredSettings, latest: &str, current: &str) -> bool {
     crate::external_activity::release_update_check(settings)
         && release_version_is_newer(latest, current)
         && settings.release_notification_seen_version.as_deref() != Some(latest)
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn release_notification_uses_seen_version_and_current_version() {
-        let mut settings = AppSettings::default();
+        let mut settings = StoredSettings::default();
 
         assert!(release_notification_due(&settings, "2.0.0", "1.9.0"));
         assert!(!release_notification_due(&settings, "2.0.0", "2.0.0"));

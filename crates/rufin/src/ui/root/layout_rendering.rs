@@ -94,9 +94,10 @@ pub(in crate::ui) const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 4] = [
 ];
 #[derive(Clone)]
 pub(in crate::ui) struct LoadedTrackPlayContext {
-    descriptor: PlaySourceDescriptor,
+    descriptor: PlayContextDescriptor,
     settings: Rc<dyn Fn() -> LibraryListSettings>,
     query: Rc<RefCell<String>>,
+    favorites_only: bool,
     favorite_first: bool,
 }
 impl LoadedTrackPlayContext {
@@ -112,6 +113,7 @@ impl LoadedTrackPlayContext {
             (
                 (self.settings)(),
                 self.query.borrow().to_string(),
+                self.favorites_only,
                 self.favorite_first,
             ),
             total_items,
@@ -130,9 +132,10 @@ pub(in crate::ui) fn selected_music_folder_id(shell: &Rc<Shell>) -> Option<Music
 }
 pub(in crate::ui) fn track_collection_play_context(
     shell: &Rc<Shell>,
-    descriptor: PlaySourceDescriptor,
+    descriptor: PlayContextDescriptor,
     key: LibraryListKey,
     query: Rc<RefCell<String>>,
+    favorites_only: bool,
     favorite_first: bool,
 ) -> LoadedTrackPlayContext {
     let shell = Rc::clone(shell);
@@ -140,6 +143,7 @@ pub(in crate::ui) fn track_collection_play_context(
         descriptor,
         settings: Rc::new(move || shell.library_settings(key)),
         query,
+        favorites_only,
         favorite_first,
     }
 }
@@ -148,12 +152,12 @@ fn source_query(query: &str) -> Option<String> {
     let query = query.trim();
     (!query.is_empty()).then(|| query.to_string())
 }
-fn playlist_entry_sort_descriptor(sort: PlaylistEntrySort) -> PlaylistEntrySortDescriptor {
+fn playlist_entry_sort_descriptor(sort: PlaylistEntrySort) -> PlaylistSort {
     match sort {
-        PlaylistEntrySort::Order => PlaylistEntrySortDescriptor::Position,
-        PlaylistEntrySort::Title => PlaylistEntrySortDescriptor::Title,
-        PlaylistEntrySort::Artist => PlaylistEntrySortDescriptor::Artist,
-        PlaylistEntrySort::Album => PlaylistEntrySortDescriptor::Album,
+        PlaylistEntrySort::Order => PlaylistSort::Position,
+        PlaylistEntrySort::Title => PlaylistSort::Title,
+        PlaylistEntrySort::Artist => PlaylistSort::Artist,
+        PlaylistEntrySort::Album => PlaylistSort::Album,
     }
 }
 #[derive(Clone, Debug)]
@@ -728,7 +732,6 @@ fn playlist_entry_play_count_column(
         None,
     )
 }
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn playlist_entry_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
@@ -909,9 +912,9 @@ fn playlist_entry_title_column(
         else {
             return;
         };
-        shell.bind_cover_tile_for(
+        shell.bind_artwork_tile(
             &cell.cover,
-            entry.track.image_ref.as_ref(),
+            CandidateSet::track(&entry.track),
             stable_seed(entry.track.id.as_str()),
             PLAYLIST_ENTRY_COVER_WIDTH,
             THUMB_COVER_SIZE,

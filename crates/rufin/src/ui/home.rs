@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use ::library::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind};
 use adw::prelude::*;
-use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route};
+use domain::Route;
 use gtk::{gio, glib};
 
 use crate::controller::LibrarySnapshot;
@@ -413,8 +414,8 @@ impl Shell {
 mod tests {
     use super::*;
     use crate::controller::LocalAccessStatus;
-    use domain::AlbumId;
-    use source::SearchResults;
+    use ::library::AlbumId;
+    use library::SearchResults;
 
     #[test]
     fn home_use_candidate() {

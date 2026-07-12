@@ -132,7 +132,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag, t.local_path, t.source_format
+                       t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format
                 FROM {table} h
                 JOIN tracks t
                   ON t.source_id = h.source_id
@@ -166,7 +166,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag
+                       t.image_item_id, t.image_tag, t.bpm
                 FROM {table} h
                 JOIN tracks t
                   ON t.source_id = h.source_id
@@ -416,7 +416,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND t.album_id = ?2
@@ -442,7 +442,8 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag, t.local_path, t.source_format
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm, t.local_path,
+                       t.source_format
                 FROM tracks t
                 WHERE t.source_id = ?1 AND t.album_id = ?2
                 ORDER BY t.disc_number, t.track_number, t.title COLLATE NOCASE
@@ -492,7 +493,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?
                   AND t.album_id IN ({placeholders})
@@ -598,7 +599,7 @@ impl Store {
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
                    t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
-                   t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm
             FROM tracks t
             LEFT JOIN albums a
                 ON a.source_id = t.source_id AND a.album_id = t.album_id
@@ -638,6 +639,8 @@ impl Store {
             None if albums.is_empty() && tracks.is_empty() => return Ok(None),
             None => synthesize_artist_from_links(artist_id, &albums, &appears_on, &tracks),
         };
+        let mut artist = artist;
+        self.attach_artist_representative_albums(source_id, std::slice::from_mut(&mut artist))?;
         Ok(Some(CachedArtistDetail {
             artist,
             albums,
@@ -711,12 +714,100 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        self.load_tracks_sorted(source_id, LibraryField::Title, false, offset, limit)
+        self.load_tracks_sorted(source_id, TrackSort::Title, false, offset, limit)
+    }
+    pub fn load_cached_random_tracks(
+        &self,
+        source_id: &SourceId,
+        cursor: &str,
+        request: &RandomTrackQuery,
+    ) -> StoreResult<Vec<Track>> {
+        self.read_snapshot(|store| {
+            let limit = request.limit.clamp(1, 500);
+            let mut tracks =
+                store.load_cached_random_track_segment(source_id, cursor, request, false, limit)?;
+            if tracks.len() < limit {
+                let remaining = limit - tracks.len();
+                tracks.extend(store.load_cached_random_track_segment(
+                    source_id, cursor, request, true, remaining,
+                )?);
+            }
+            store.attach_track_metadata(source_id, &mut tracks)?;
+            Ok(tracks)
+        })
+    }
+    fn load_cached_random_track_segment(
+        &self,
+        source_id: &SourceId,
+        cursor: &str,
+        request: &RandomTrackQuery,
+        wrapped: bool,
+        limit: usize,
+    ) -> StoreResult<Vec<Track>> {
+        let cursor_comparison = if wrapped { "<" } else { ">=" };
+        let mut filters = vec![
+            "t.source_id = ?".to_string(),
+            format!("t.track_id {cursor_comparison} ?"),
+        ];
+        let mut values = vec![
+            Value::Text(source_id.as_str().to_string()),
+            Value::Text(cursor.to_string()),
+        ];
+        if let Some(min_year) = request.min_year {
+            filters.push("t.year >= ?".to_string());
+            values.push(Value::Integer(i64::from(min_year)));
+        }
+        if let Some(max_year) = request.max_year {
+            filters.push("t.year <= ?".to_string());
+            values.push(Value::Integer(i64::from(max_year)));
+        }
+        if request.genre_id.is_some() || request.genre_name.is_some() {
+            let mut genre_filters = vec![
+                "tg.source_id = t.source_id".to_string(),
+                "tg.track_id = t.track_id".to_string(),
+            ];
+            if let Some(genre_name) = request.genre_name.as_deref() {
+                genre_filters.push("tg.genre_name = ?".to_string());
+                values.push(Value::Text(genre_name.to_string()));
+            }
+            if let Some(genre_id) = request.genre_id.as_ref() {
+                genre_filters.push(
+                    "EXISTS (SELECT 1 FROM genres g \
+                     WHERE g.source_id = tg.source_id \
+                       AND g.name = tg.genre_name \
+                       AND g.genre_id = ?)"
+                        .to_string(),
+                );
+                values.push(Value::Text(genre_id.as_str().to_string()));
+            }
+            filters.push(format!(
+                "EXISTS (SELECT 1 FROM track_genres tg WHERE {})",
+                genre_filters.join(" AND ")
+            ));
+        }
+        values.push(Value::Integer(limit as i64));
+        let sql = format!(
+            "
+            SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                   t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                   t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
+                   t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format, t.comment,
+                   t.skip_count
+            FROM tracks t
+            WHERE {filters}
+            ORDER BY t.track_id
+            LIMIT ?
+            ",
+            favorite = effective_track_favorite_sql("t"),
+            filters = filters.join(" AND "),
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)
     }
     pub fn load_tracks_sorted(
         &self,
         source_id: &SourceId,
-        sort_key: LibraryField,
+        sort_key: TrackSort,
         descending: bool,
         offset: usize,
         limit: usize,
@@ -728,7 +819,7 @@ impl Store {
     fn load_tracks_sorted_inner(
         &self,
         source_id: &SourceId,
-        sort_key: LibraryField,
+        sort_key: TrackSort,
         descending: bool,
         offset: usize,
         limit: usize,
@@ -746,7 +837,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag
+                       t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND EXISTS (
@@ -777,7 +868,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                 ORDER BY {order_by}
@@ -814,7 +905,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {} AS favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag, t.local_path, t.source_format
+                       t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format
                 FROM tracks t
                 WHERE t.source_id = ?1 AND t.track_id = ?2
                 ",
@@ -828,6 +919,43 @@ impl Store {
             self.attach_track_metadata(source_id, std::slice::from_mut(track))?;
         }
         Ok(track)
+    }
+    pub fn load_tracks_by_ids(
+        &self,
+        source_id: &SourceId,
+        track_ids: &[TrackId],
+    ) -> StoreResult<Vec<Track>> {
+        if track_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.read_snapshot(|store| {
+            let requested_json =
+                serde_json::to_string(&track_ids.iter().map(TrackId::as_str).collect::<Vec<_>>())?;
+            let sql = format!(
+                "
+                WITH requested(position, track_id) AS (
+                    SELECT CAST(key AS INTEGER), CAST(value AS TEXT)
+                    FROM json_each(?2)
+                )
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format, t.comment,
+                       t.skip_count
+                FROM requested r
+                JOIN tracks t
+                  ON t.source_id = ?1 AND t.track_id = r.track_id
+                ORDER BY r.position
+                ",
+                favorite = effective_track_favorite_sql("t"),
+            );
+            let mut statement = store.connection.prepare(&sql)?;
+            let mut tracks = collect_rows(
+                statement.query_map(params![source_id.as_str(), requested_json], track_from_row)?,
+            )?;
+            store.attach_track_metadata(source_id, &mut tracks)?;
+            Ok(tracks)
+        })
     }
     pub fn load_track_ids_with_prefix(
         &self,
@@ -915,7 +1043,7 @@ impl Store {
             SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                    t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                    t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
-                   t.image_item_id, t.image_tag, t.local_path, t.source_format
+                   t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format
             FROM tracks t
             WHERE t.source_id = ?1
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number, t.title COLLATE NOCASE
@@ -991,10 +1119,11 @@ impl Store {
             favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![source_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)?;
+        self.attach_artist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_artists_without_image_ref(

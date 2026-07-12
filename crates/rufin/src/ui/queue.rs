@@ -3,8 +3,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use domain::{ImageRef, QueueEntry, QueueEntryId, RightSidebarMode, Route, format_duration};
+use artwork::CandidateSet;
+use domain::{RightSidebarMode, Route, format_duration};
 use gtk::{gio, glib};
+use playback::{OccurrenceId, QueuePage, QueuePageQuery, SequenceEntry};
 
 use crate::controller::AppController;
 use crate::i18n::{msgid, tr};
@@ -15,10 +17,12 @@ use super::{
     Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_action, context_menu_box,
     context_menu_can_add_to_playlist, context_menu_picker_button, context_menu_submenu_action,
     favorite_button_is_active, favorite_icon_button, install_context_menu_openers,
-    radio_context_submenu, set_favorite_button_active, track_from_queue_entry,
+    radio_context_submenu, set_favorite_button_active,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
+const QUEUE_SEARCH_DELAY_MS: u64 = 120;
+const QUEUE_SCROLL_EDGE_TOLERANCE: f64 = 1.0;
 const QUEUE_FULLSCREEN_HORIZONTAL_MARGIN: i32 = 72;
 const QUEUE_FULLSCREEN_COLUMN_SPACING: i32 = 16;
 const QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING: i32 = 12;
@@ -46,9 +50,10 @@ pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui::root) struct QueuePanelRenderState {
-    filter: String,
-    row_ids: Vec<QueueEntryId>,
-    row_image_refs: Vec<Option<ImageRef>>,
+    query: Option<QueuePageQuery>,
+    page_start: usize,
+    row_ids: Vec<OccurrenceId>,
+    row_artwork: Vec<String>,
     row_indices: Vec<usize>,
     row_count: usize,
     current_row: Option<usize>,
@@ -67,7 +72,7 @@ enum QueuePanelLayout {
 enum QueuePanelItem {
     Entry {
         index: usize,
-        entry: Box<QueueEntry>,
+        entry: Box<SequenceEntry>,
         current: bool,
         reorderable: bool,
         layout: QueuePanelLayout,
@@ -95,7 +100,8 @@ impl QueuePanelModelState {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum QueueScrollBehavior {
     Preserve,
-    Reset,
+    Start,
+    End,
 }
 
 impl Shell {
@@ -116,7 +122,15 @@ impl Shell {
     }
 
     pub(super) fn render_queue_panel(self: &Rc<Self>) {
-        self.render_queue_panel_with_scroll(QueueScrollBehavior::Preserve);
+        if self.state.resolved_right_sidebar.get() != RightSidebarMode::Hidden {
+            self.render_queue_panel_into(&self.queue_panel, QueuePanelLayout::Sidebar);
+        }
+        if self.state.fullscreen_player_visible.get() {
+            self.render_queue_panel_into(
+                &self.fullscreen_player.queue_panel,
+                QueuePanelLayout::Fullscreen,
+            );
+        }
     }
 
     pub(super) fn invalidate_queue_panel_render_state(&self) {
@@ -124,38 +138,9 @@ impl Shell {
         self.state.queue_fullscreen_render_state.borrow_mut().take();
     }
 
-    fn render_queue_panel_reset_scroll(self: &Rc<Self>) {
-        self.render_queue_panel_with_scroll(QueueScrollBehavior::Reset);
-    }
-
-    fn render_queue_panel_with_scroll(self: &Rc<Self>, scroll_behavior: QueueScrollBehavior) {
-        let queue_filter = self.state.queue_filter.borrow().trim().to_lowercase();
-        if self.state.resolved_right_sidebar.get() != RightSidebarMode::Hidden {
-            self.render_queue_panel_into(
-                &self.queue_panel,
-                &queue_filter,
-                QueuePanelLayout::Sidebar,
-                scroll_behavior,
-            );
-        }
-        if self.state.fullscreen_player_visible.get() {
-            self.render_queue_panel_into(
-                &self.fullscreen_player.queue_panel,
-                "",
-                QueuePanelLayout::Fullscreen,
-                scroll_behavior,
-            );
-        }
-    }
-
-    fn render_queue_panel_into(
-        self: &Rc<Self>,
-        panel: &gtk::Box,
-        queue_filter: &str,
-        layout: QueuePanelLayout,
-        scroll_behavior: QueueScrollBehavior,
-    ) {
-        let queue_scroller = queue_panel_scroller(panel).unwrap_or_else(new_queue_scroller);
+    fn render_queue_panel_into(self: &Rc<Self>, panel: &gtk::Box, layout: QueuePanelLayout) {
+        let queue_scroller =
+            queue_panel_scroller(panel).unwrap_or_else(|| new_queue_scroller(self));
         let adjustment = queue_scroller.vadjustment();
         let previous_scroll = adjustment.value();
         let fullscreen_widths = (layout == QueuePanelLayout::Fullscreen).then(|| {
@@ -164,9 +149,18 @@ impl Shell {
                 self.window.width(),
             ))
         });
-        let queue_snapshot = self.state.queue.borrow();
-        let render_state =
-            queue_panel_render_state(&queue_snapshot, queue_filter, fullscreen_widths);
+        let current_occurrence = self
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.queue.current_occurrence.clone());
+        let queue_page = self.state.queue.borrow();
+        let render_state = queue_panel_render_state(
+            queue_page.as_ref(),
+            current_occurrence.as_ref(),
+            fullscreen_widths,
+        );
         let state_cell = match layout {
             QueuePanelLayout::Sidebar => &self.state.queue_sidebar_render_state,
             QueuePanelLayout::Fullscreen => &self.state.queue_fullscreen_render_state,
@@ -179,6 +173,13 @@ impl Shell {
                 .clone()
         };
         ensure_queue_panel_view(self, panel, &queue_scroller, &model);
+        let scroll_behavior = state_cell
+            .borrow()
+            .as_ref()
+            .and_then(|state| state.render.as_ref())
+            .map_or(QueueScrollBehavior::Preserve, |previous| {
+                queue_page_scroll_behavior(previous, &render_state)
+            });
 
         if scroll_behavior == QueueScrollBehavior::Preserve {
             let updated_current = {
@@ -188,7 +189,11 @@ impl Shell {
                         && previous.same_rows_as(&render_state)
                     {
                         update_queue_current_rows(&state.model, &previous, &render_state);
-                        reveal_queue_current_row_later(&queue_scroller, render_state.current_row);
+                        reveal_queue_current_row_later(
+                            self,
+                            &queue_scroller,
+                            render_state.current_row,
+                        );
                         state.render = Some(render_state.clone());
                         true
                     } else {
@@ -203,7 +208,12 @@ impl Shell {
             }
         }
 
-        let rows = queue_panel_items(&queue_snapshot, &render_state, layout, fullscreen_widths);
+        let rows = queue_panel_items(
+            queue_page.as_ref(),
+            &render_state,
+            layout,
+            fullscreen_widths,
+        );
         replace_queue_model(&model, rows);
         clear_queue_panel_static_children(panel);
         if render_state.show_header {
@@ -214,11 +224,14 @@ impl Shell {
         }
         match scroll_behavior {
             QueueScrollBehavior::Preserve => {
-                restore_queue_scroll_position(&queue_scroller, previous_scroll);
-                reveal_queue_current_row_later(&queue_scroller, render_state.current_row);
+                restore_queue_scroll_position(self, &queue_scroller, previous_scroll);
+                reveal_queue_current_row_later(self, &queue_scroller, render_state.current_row);
             }
-            QueueScrollBehavior::Reset => {
-                restore_queue_scroll_position(&queue_scroller, 0.0);
+            QueueScrollBehavior::Start => {
+                restore_queue_scroll_position(self, &queue_scroller, 0.0);
+            }
+            QueueScrollBehavior::End => {
+                restore_queue_scroll_end_later(self, &queue_scroller);
             }
         }
         if let Some(state) = state_cell.borrow_mut().as_mut() {
@@ -249,7 +262,7 @@ impl Shell {
     fn queue_row(
         self: &Rc<Self>,
         index: usize,
-        entry: &QueueEntry,
+        entry: &SequenceEntry,
         current: bool,
         reorderable: bool,
         layout: QueuePanelLayout,
@@ -270,38 +283,38 @@ impl Shell {
         row.set_height_request(QUEUE_ROW_HEIGHT);
         row.set_valign(gtk::Align::Center);
         row.set_focusable(true);
-        let accessible_label = format!("{} {}", entry.title, entry.artist);
+        let accessible_label = format!("{} {}", entry.track.title, entry.track.artist);
         row.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
         if current {
             row.add_css_class("queue-row-current");
         }
         if reorderable {
-            row.append(&queue_drag_handle(&entry.id));
+            row.append(&queue_drag_handle(&entry.occurrence));
         }
-        let cover = self.cover_tile_for(
-            entry.image_ref.as_ref(),
-            index as u32 * 7 + entry.duration_seconds,
+        let cover = self.cover_tile_for_candidates(
+            CandidateSet::track(&entry.track),
+            index as u32 * 7 + entry.track.duration_seconds,
             50,
             THUMB_COVER_SIZE,
         );
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         labels.set_hexpand(true);
         labels.set_valign(gtk::Align::Center);
-        let title = gtk::Label::new(Some(&entry.title));
+        let title = gtk::Label::new(Some(&entry.track.title));
         title.add_css_class("queue-title");
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let artist = queue_link_label(&entry.artist);
+        let artist = queue_link_label(&entry.track.artist);
         labels.append(&title);
         labels.append(&artist);
-        if let Some(artist_id) = entry.artist_id.clone() {
+        if let Some(artist_id) = entry.track.artist_id.clone() {
             add_queue_label_link_style(&artist);
             let shell = Rc::clone(self);
             add_queue_label_click(&artist, move || {
                 shell.navigate(Route::ArtistDetail(artist_id.clone()))
             });
         }
-        let year_text = (entry.year != 0).then(|| entry.year.to_string());
+        let year_text = (entry.track.year != 0).then(|| entry.track.year.to_string());
         let year = gtk::Label::new(year_text.as_deref());
         year.add_css_class("muted");
         year.set_xalign(1.0);
@@ -311,7 +324,7 @@ impl Shell {
         row.append(&labels);
         row.append(&year);
         if reorderable {
-            install_queue_row_drop(&row, &self.controller, entry.id.clone(), index);
+            install_queue_row_drop(&row, &self.controller, entry.occurrence.clone(), index);
         }
         install_queue_row_context_menu(&row, self, entry);
         row.upcast()
@@ -320,7 +333,7 @@ impl Shell {
     fn fullscreen_queue_row(
         self: &Rc<Self>,
         index: usize,
-        entry: &QueueEntry,
+        entry: &SequenceEntry,
         current: bool,
         reorderable: bool,
         widths: QueueFullscreenColumnWidths,
@@ -332,7 +345,7 @@ impl Shell {
         row.set_halign(gtk::Align::Fill);
         row.set_valign(gtk::Align::Center);
         row.set_focusable(true);
-        let accessible_label = format!("{} {}", entry.title, entry.artist);
+        let accessible_label = format!("{} {}", entry.track.title, entry.track.artist);
         row.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
         if current {
             row.add_css_class("queue-row-current");
@@ -340,29 +353,32 @@ impl Shell {
 
         let columns = fullscreen_queue_row_box();
         if reorderable {
-            columns.append(&queue_drag_handle(&entry.id));
+            columns.append(&queue_drag_handle(&entry.occurrence));
         }
-        let cover = self.cover_tile_for(
-            entry.image_ref.as_ref(),
-            index as u32 * 7 + entry.duration_seconds,
+        let cover = self.cover_tile_for_candidates(
+            CandidateSet::track(&entry.track),
+            index as u32 * 7 + entry.track.duration_seconds,
             QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH,
             THUMB_COVER_SIZE,
         );
 
         let (labels, artist) = queue_identity_cell(entry, widths.title);
         let duration = fullscreen_queue_fixed_cell(
-            &format_duration(entry.duration_seconds),
+            &format_duration(entry.track.duration_seconds),
             QUEUE_DURATION_COLUMN_WIDTH,
         );
 
         columns.append(&cover);
         columns.append(&labels);
         if widths.show_album {
-            columns.append(&fullscreen_queue_text_cell(&entry.album, widths.album));
+            columns.append(&fullscreen_queue_text_cell(
+                &entry.track.album,
+                widths.album,
+            ));
         }
         columns.append(&duration);
         if widths.show_year {
-            let year_text = (entry.year != 0).then(|| entry.year.to_string());
+            let year_text = (entry.track.year != 0).then(|| entry.track.year.to_string());
             columns.append(&fullscreen_queue_fixed_cell(
                 year_text.as_deref().unwrap_or(""),
                 QUEUE_YEAR_COLUMN_WIDTH,
@@ -371,7 +387,7 @@ impl Shell {
         columns.append(&self.queue_favorite_cell(entry));
         row.append(&columns);
 
-        if let Some(artist_id) = entry.artist_id.clone() {
+        if let Some(artist_id) = entry.track.artist_id.clone() {
             add_queue_label_link_style(&artist);
             let shell = Rc::clone(self);
             add_queue_label_click(&artist, move || {
@@ -380,13 +396,13 @@ impl Shell {
         }
 
         if reorderable {
-            install_queue_row_drop(&row, &self.controller, entry.id.clone(), index);
+            install_queue_row_drop(&row, &self.controller, entry.occurrence.clone(), index);
         }
         install_queue_row_context_menu(&row, self, entry);
         row.upcast()
     }
 
-    fn queue_favorite_cell(self: &Rc<Self>, entry: &QueueEntry) -> gtk::Widget {
+    fn queue_favorite_cell(self: &Rc<Self>, entry: &SequenceEntry) -> gtk::Widget {
         let cell = gtk::CenterBox::new();
         cell.add_css_class("queue-favorite-cell");
         cell.set_width_request(QUEUE_FAVORITE_COLUMN_WIDTH);
@@ -394,14 +410,17 @@ impl Shell {
 
         let button = favorite_icon_button("Favorite");
         button.add_css_class("queue-favorite-button");
-        set_favorite_button_active(&button, entry.favorite);
+        set_favorite_button_active(
+            &button,
+            self.projected_track_favorite(&entry.track.id, entry.track.favorite),
+        );
 
         let shell = Rc::clone(self);
-        let track_id = entry.track_id.clone();
+        let track_id = entry.track.id.clone();
         button.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Track(track_id.clone()),
+                library::FavoriteItemId::Track(track_id.clone()),
                 favorite,
                 Some(button),
             );
@@ -412,11 +431,56 @@ impl Shell {
     }
 }
 
+impl Shell {
+    pub(super) fn request_queue_page(&self, query: QueuePageQuery) {
+        if self.state.queue_page_request.borrow().as_ref() == Some(&query) {
+            return;
+        }
+        if self.controller.request_queue_page(query.clone()) {
+            *self.state.queue_page_request.borrow_mut() = Some(query);
+        }
+    }
+
+    fn queue_page_matches_filter(&self, page: &QueuePage) -> bool {
+        let filter = self.state.queue_filter.borrow();
+        if filter.trim().is_empty() {
+            !page.query.is_filtered()
+        } else {
+            page.query == QueuePageQuery::search(&filter)
+        }
+    }
+
+    fn request_queue_filter_page(&self) {
+        if self.state.queue_search_source.borrow().is_some() {
+            return;
+        }
+        let filter = self.state.queue_filter.borrow().clone();
+        self.request_queue_page(QueuePageQuery::search(&filter));
+    }
+
+    fn accept_queue_page(&self, page: QueuePage) {
+        self.state.queue_page_request.borrow_mut().take();
+        *self.state.queue.borrow_mut() = Some(page);
+    }
+
+    pub(super) fn apply_queue_page_projection(&self, page: QueuePage) -> bool {
+        if !self.queue_page_matches_filter(&page) {
+            self.request_queue_filter_page();
+            return false;
+        }
+        self.apply_pending_playlist_entry_selection(Some(&page));
+        self.accept_queue_page(page);
+        true
+    }
+}
+
 impl QueuePanelRenderState {
     fn same_rows_as(&self, next: &Self) -> bool {
-        self.filter == next.filter
+        self.query == next.query
+            && self.page_start == next.page_start
             && self.row_ids == next.row_ids
-            && self.row_image_refs == next.row_image_refs
+            && self.row_artwork == next.row_artwork
+            && self.row_indices == next.row_indices
             && self.row_count == next.row_count
             && self.show_header == next.show_header
             && self.empty_text == next.empty_text
@@ -425,46 +489,31 @@ impl QueuePanelRenderState {
 }
 
 fn queue_panel_render_state(
-    queue_snapshot: &Option<domain::QueueSnapshot>,
-    queue_filter: &str,
+    queue_page: Option<&QueuePage>,
+    current_occurrence: Option<&OccurrenceId>,
     fullscreen_widths: Option<QueueFullscreenColumnWidths>,
 ) -> QueuePanelRenderState {
-    let has_filter = !queue_filter.is_empty();
+    let filter = queue_page
+        .and_then(|page| page.query.search_text())
+        .unwrap_or_default();
+    let has_filter = !filter.is_empty();
     let mut queue_has_entries = false;
     let mut row_ids = Vec::new();
-    let mut row_image_refs = Vec::new();
+    let mut row_artwork = Vec::new();
     let mut row_indices = Vec::new();
     let mut row_count = 0usize;
     let mut current_row = None;
-    if let Some(snapshot) = queue_snapshot {
-        queue_has_entries = !snapshot.entries.is_empty();
-        let current_id = snapshot
-            .current_index
-            .and_then(|index| snapshot.entries.get(index))
-            .map(|entry| entry.id.clone());
-        if has_filter {
-            for (entry_index, entry) in snapshot.entries.iter().enumerate() {
-                if !queue_entry_matches_filter(entry, queue_filter) {
-                    continue;
-                }
-                if current_id.as_ref() == Some(&entry.id) {
-                    current_row = Some(row_count);
-                }
-                row_ids.push(entry.id.clone());
-                row_image_refs.push(entry.image_ref.clone());
-                row_indices.push(entry_index);
-                row_count += 1;
+    if let Some(page) = queue_page {
+        queue_has_entries = page.total != 0;
+        row_count = page.rows.len();
+        for (row_position, row) in page.rows.iter().enumerate() {
+            let entry = row.entry.as_ref();
+            if current_occurrence == Some(&entry.occurrence) {
+                current_row = Some(row_position);
             }
-        } else {
-            row_count = snapshot.entries.len();
-            for (entry_index, entry) in snapshot.entries.iter().enumerate() {
-                if current_id.as_ref() == Some(&entry.id) {
-                    current_row = Some(entry_index);
-                }
-                row_ids.push(entry.id.clone());
-                row_image_refs.push(entry.image_ref.clone());
-                row_indices.push(entry_index);
-            }
+            row_ids.push(entry.occurrence.clone());
+            row_artwork.push(CandidateSet::track(&entry.track).to_string());
+            row_indices.push(row.absolute_index);
         }
     }
     let empty_text = (row_count == 0).then(|| {
@@ -475,15 +524,43 @@ fn queue_panel_render_state(
         }
     });
     QueuePanelRenderState {
-        filter: queue_filter.to_string(),
+        query: queue_page.map(|page| page.query.clone()),
+        page_start: queue_page.map_or(0, |page| page.start),
         show_header: row_count != 0,
         row_ids,
-        row_image_refs,
+        row_artwork,
         row_indices,
         row_count,
         current_row,
         empty_text,
         fullscreen_widths,
+    }
+}
+
+fn queue_page_scroll_behavior(
+    previous: &QueuePanelRenderState,
+    next: &QueuePanelRenderState,
+) -> QueueScrollBehavior {
+    if previous.query == next.query
+        || next
+            .query
+            .as_ref()
+            .is_some_and(QueuePageQuery::follows_current)
+    {
+        QueueScrollBehavior::Preserve
+    } else if next
+        .query
+        .as_ref()
+        .is_some_and(|query| !query.is_filtered())
+        && previous
+            .query
+            .as_ref()
+            .is_some_and(|query| !query.is_filtered())
+        && next.page_start < previous.page_start
+    {
+        QueueScrollBehavior::End
+    } else {
+        QueueScrollBehavior::Start
     }
 }
 
@@ -537,20 +614,27 @@ fn replace_queue_model_item_current(model: &gio::ListStore, position: u32, curre
 }
 
 fn queue_panel_items(
-    queue_snapshot: &Option<domain::QueueSnapshot>,
+    queue_page: Option<&QueuePage>,
     state: &QueuePanelRenderState,
     layout: QueuePanelLayout,
     fullscreen_widths: Option<QueueFullscreenColumnWidths>,
 ) -> Vec<QueuePanelItem> {
     let mut items = Vec::new();
-    if let Some(snapshot) = queue_snapshot {
-        for (row_position, entry_index) in state.row_indices.iter().enumerate() {
-            if let Some(entry) = snapshot.entries.get(*entry_index) {
+    if let Some(page) = queue_page {
+        for (row_position, absolute_index) in state.row_indices.iter().enumerate() {
+            if let Some(row) = page
+                .rows
+                .iter()
+                .find(|row| row.absolute_index == *absolute_index)
+            {
                 items.push(QueuePanelItem::Entry {
-                    index: *entry_index,
-                    entry: Box::new(entry.clone()),
+                    index: *absolute_index,
+                    entry: Box::new(row.entry.as_ref().clone()),
                     current: state.current_row == Some(row_position),
-                    reorderable: state.filter.is_empty(),
+                    reorderable: state
+                        .query
+                        .as_ref()
+                        .is_some_and(|query| !query.is_filtered()),
                     layout,
                     fullscreen_widths,
                 });
@@ -621,7 +705,7 @@ fn queue_list_view(shell: &Rc<Shell>, model: &gio::ListStore) -> gtk::ListView {
         };
         let controller = controller.clone();
         glib::idle_add_local_once(move || {
-            controller.activate_queue_entry(entry.id.clone());
+            controller.activate_queue_entry(entry.occurrence.clone());
         });
     });
     list
@@ -667,8 +751,23 @@ fn queue_empty_row(text: &str) -> gtk::Widget {
 pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
     let filter_shell = Rc::clone(shell);
     shell.queue_search.connect_search_changed(move |entry| {
-        *filter_shell.state.queue_filter.borrow_mut() = entry.text().trim().to_string();
-        filter_shell.render_queue_panel_reset_scroll();
+        let text = entry.text().trim().to_string();
+        *filter_shell.state.queue_filter.borrow_mut() = text.clone();
+        if let Some(source) = filter_shell.state.queue_search_source.borrow_mut().take() {
+            source.remove();
+        }
+        if text.is_empty() {
+            filter_shell.request_queue_page(QueuePageQuery::current());
+            return;
+        }
+        let search_shell = Rc::clone(&filter_shell);
+        let source =
+            glib::timeout_add_local_once(Duration::from_millis(QUEUE_SEARCH_DELAY_MS), move || {
+                search_shell.state.queue_search_source.borrow_mut().take();
+                let text = search_shell.state.queue_filter.borrow().clone();
+                search_shell.request_queue_page(QueuePageQuery::search(&text));
+            });
+        *filter_shell.state.queue_search_source.borrow_mut() = Some(source);
     });
 
     let controller = shell.controller.clone();
@@ -677,20 +776,44 @@ pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
         .connect_clicked(move |_| controller.clear_queue());
 }
 
-fn queue_entry_matches_filter(entry: &QueueEntry, filter: &str) -> bool {
-    filter.is_empty()
-        || entry.title.to_lowercase().contains(filter)
-        || entry.artist.to_lowercase().contains(filter)
-        || entry.album.to_lowercase().contains(filter)
-        || (entry.year != 0 && entry.year.to_string().contains(filter))
-}
-
-fn new_queue_scroller() -> gtk::ScrolledWindow {
+fn new_queue_scroller(shell: &Rc<Shell>) -> gtk::ScrolledWindow {
     let scroller = gtk::ScrolledWindow::new();
     scroller.add_css_class("queue-scroller");
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
+    connect_queue_page_edges(shell, &scroller);
     scroller
+}
+
+fn connect_queue_page_edges(shell: &Rc<Shell>, scroller: &gtk::ScrolledWindow) {
+    let adjustment = scroller.vadjustment();
+    let last_value = Cell::new(adjustment.value());
+    let shell = Rc::clone(shell);
+    adjustment.connect_value_changed(move |adjustment| {
+        let value = adjustment.value();
+        let previous_value = last_value.replace(value);
+        if shell.state.queue_scroll_programmatic.get() || value == previous_value {
+            return;
+        }
+        let lower = adjustment.lower();
+        let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+        let query = {
+            let queue = shell.state.queue.borrow();
+            let Some(page) = queue.as_ref() else {
+                return;
+            };
+            if value > previous_value && upper - value <= QUEUE_SCROLL_EDGE_TOLERANCE {
+                page.next_query()
+            } else if value < previous_value && value - lower <= QUEUE_SCROLL_EDGE_TOLERANCE {
+                page.previous_query()
+            } else {
+                None
+            }
+        };
+        if let Some(query) = query {
+            shell.request_queue_page(query);
+        }
+    });
 }
 
 fn queue_panel_scroller(panel: &gtk::Box) -> Option<gtk::ScrolledWindow> {
@@ -704,24 +827,46 @@ fn queue_panel_scroller(panel: &gtk::Box) -> Option<gtk::ScrolledWindow> {
     None
 }
 
-fn restore_queue_scroll_position(scroller: &gtk::ScrolledWindow, value: f64) {
+fn restore_queue_scroll_position(shell: &Shell, scroller: &gtk::ScrolledWindow, value: f64) {
     let adjustment = scroller.vadjustment();
     let lower = adjustment.lower();
     let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+    shell.state.queue_scroll_programmatic.set(true);
     adjustment.set_value(value.clamp(lower, upper));
+    shell.state.queue_scroll_programmatic.set(false);
 }
 
-fn reveal_queue_current_row_later(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) {
-    let idle_scroller = scroller.clone();
-    glib::idle_add_local_once(move || reveal_queue_current_row(&idle_scroller, current_row));
-
-    let settled_scroller = scroller.clone();
-    glib::timeout_add_local_once(Duration::from_millis(80), move || {
-        reveal_queue_current_row(&settled_scroller, current_row)
+fn restore_queue_scroll_end_later(shell: &Rc<Shell>, scroller: &gtk::ScrolledWindow) {
+    let shell = Rc::clone(shell);
+    let scroller = scroller.clone();
+    glib::idle_add_local_once(move || {
+        restore_queue_scroll_position(&shell, &scroller, f64::MAX);
     });
 }
 
-fn reveal_queue_current_row(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) {
+fn reveal_queue_current_row_later(
+    shell: &Rc<Shell>,
+    scroller: &gtk::ScrolledWindow,
+    current_row: Option<usize>,
+) {
+    let idle_shell = Rc::clone(shell);
+    let idle_scroller = scroller.clone();
+    glib::idle_add_local_once(move || {
+        reveal_queue_current_row(&idle_shell, &idle_scroller, current_row);
+    });
+
+    let settled_shell = Rc::clone(shell);
+    let settled_scroller = scroller.clone();
+    glib::timeout_add_local_once(Duration::from_millis(80), move || {
+        reveal_queue_current_row(&settled_shell, &settled_scroller, current_row)
+    });
+}
+
+fn reveal_queue_current_row(
+    shell: &Shell,
+    scroller: &gtk::ScrolledWindow,
+    current_row: Option<usize>,
+) {
     let Some(current_row) = current_row else {
         return;
     };
@@ -734,7 +879,7 @@ fn reveal_queue_current_row(scroller: &gtk::ScrolledWindow, current_row: Option<
     else {
         return;
     };
-    restore_queue_scroll_position(scroller, target);
+    restore_queue_scroll_position(shell, scroller, target);
 }
 
 fn queue_current_row_scroll_target(
@@ -878,19 +1023,19 @@ fn fullscreen_queue_fixed_cell(text: &str, width: i32) -> gtk::Label {
     label
 }
 
-fn queue_identity_cell(entry: &QueueEntry, width: i32) -> (gtk::Box, gtk::Label) {
+fn queue_identity_cell(entry: &SequenceEntry, width: i32) -> (gtk::Box, gtk::Label) {
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_width_request(width);
     labels.set_hexpand(false);
     labels.set_halign(gtk::Align::Fill);
     labels.set_valign(gtk::Align::Center);
 
-    let title = gtk::Label::new(Some(&entry.title));
+    let title = gtk::Label::new(Some(&entry.track.title));
     title.add_css_class("queue-title");
     title.set_xalign(0.0);
     title.set_width_request(width);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let artist = queue_link_label(&entry.artist);
+    let artist = queue_link_label(&entry.track.artist);
     artist.set_width_request(width);
     labels.append(&title);
     labels.append(&artist);
@@ -995,7 +1140,7 @@ fn split_queue_text_width(width: i32, show_year: bool) -> QueueFullscreenColumnW
     }
 }
 
-fn queue_drag_handle(entry_id: &QueueEntryId) -> gtk::Widget {
+fn queue_drag_handle(entry_id: &OccurrenceId) -> gtk::Widget {
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
     drag.set_tooltip_text(Some(&tr("Drag to reorder")));
@@ -1015,7 +1160,7 @@ fn queue_drag_handle(entry_id: &QueueEntryId) -> gtk::Widget {
 fn install_queue_row_drop(
     target_row: &gtk::Box,
     controller: &AppController,
-    entry_id: QueueEntryId,
+    entry_id: OccurrenceId,
     target_index: usize,
 ) {
     let target_id = entry_id;
@@ -1026,7 +1171,7 @@ fn install_queue_row_drop(
         let Ok(drag_id) = value.get::<String>() else {
             return false;
         };
-        let drag_id = QueueEntryId::new(drag_id);
+        let drag_id = OccurrenceId::new(drag_id);
         if drag_id == target_id {
             return false;
         }
@@ -1037,7 +1182,7 @@ fn install_queue_row_drop(
     target_row.add_controller(drop_target);
 }
 
-fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &QueueEntry) {
+fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &SequenceEntry) {
     let shell = Rc::clone(shell);
     let entry = entry.clone();
     install_context_menu_openers(
@@ -1053,11 +1198,11 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
 fn show_queue_row_context_menu(
     row: &gtk::Widget,
     shell: &Rc<Shell>,
-    entry: &QueueEntry,
+    entry: &SequenceEntry,
     pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
     let main_menu = context_menu_box();
-    let track = track_from_queue_entry(entry);
+    let track = entry.track.clone();
     main_menu.append(&context_menu_action(
         "Remove from Queue",
         "queue.remove",
@@ -1070,25 +1215,19 @@ fn show_queue_row_context_menu(
         PLAY_NEXT_ICON,
     ));
 
-    if track.is_some() {
-        main_menu.append(&context_menu_action(
-            "Play Later",
-            "queue.play-last",
-            PLAY_LATER_ICON,
-        ));
-    }
-    if track.is_some() {
-        main_menu.append(&context_menu_submenu_action(
-            msgid("Track radio"),
-            "queue.play-radio",
-            RADIO_ICON,
-            &radio_context_submenu("queue"),
-        ));
-    }
-    if let Some(track) = track.as_ref()
-        && context_menu_can_add_to_playlist(shell)
-    {
-        let track_source: Rc<dyn Fn() -> Vec<domain::Track>> = Rc::new({
+    main_menu.append(&context_menu_action(
+        "Play Later",
+        "queue.play-last",
+        PLAY_LATER_ICON,
+    ));
+    main_menu.append(&context_menu_submenu_action(
+        msgid("Track radio"),
+        "queue.play-radio",
+        RADIO_ICON,
+        &radio_context_submenu("queue"),
+    ));
+    if context_menu_can_add_to_playlist(shell) {
+        let track_source: Rc<dyn Fn() -> Vec<library::Track>> = Rc::new({
             let track = track.clone();
             move || vec![track.clone()]
         });
@@ -1100,7 +1239,7 @@ fn show_queue_row_context_menu(
         ));
     }
 
-    if entry.favorite {
+    if entry.track.favorite {
         main_menu.append(&context_menu_action(
             "Remove from Favorites",
             "queue.favorite",
@@ -1121,20 +1260,18 @@ fn show_queue_row_context_menu(
             ARTIST_ICON,
         ));
     }
-    let album_route = entry.album_id.clone().map(Route::AlbumDetail);
-    if album_route.is_some() {
-        main_menu.append(&context_menu_action(
-            "Go to Album",
-            "queue.go-album",
-            ALBUM_ICON,
-        ));
-    }
+    let album_route = Route::AlbumDetail(entry.track.album_id.clone());
+    main_menu.append(&context_menu_action(
+        "Go to Album",
+        "queue.go-album",
+        ALBUM_ICON,
+    ));
 
     let surface = ContextMenuSurface::new(row, "queue", "queue-context-menu", None, &main_menu);
     surface.popover().set_pointing_to(pointing_to.as_ref());
 
     let controller = shell.controller.clone();
-    let entry_id = entry.id.clone();
+    let entry_id = entry.occurrence.clone();
 
     surface.add_action("remove", {
         let remove_controller = controller.clone();
@@ -1159,46 +1296,44 @@ fn show_queue_row_context_menu(
         }
     });
 
-    if let Some(track) = track.clone() {
-        surface.add_action("play-last", {
-            let last_controller = controller.clone();
-            let track = track.clone();
-            move || {
-                last_controller.play_last(vec![track.clone()]);
-            }
-        });
+    surface.add_action("play-last", {
+        let last_controller = controller.clone();
+        let track = track.clone();
+        move || {
+            last_controller.play_last(vec![track.clone()]);
+        }
+    });
 
-        surface.add_action("play-radio", {
-            let radio_controller = controller.clone();
-            let track = track.clone();
-            move || {
-                radio_controller.play_track_radio(track.clone());
-            }
-        });
+    surface.add_action("play-radio", {
+        let radio_controller = controller.clone();
+        let track = track.clone();
+        move || {
+            radio_controller.play_track_radio(track.clone());
+        }
+    });
 
-        surface.add_action("play-radio-next", {
-            let radio_controller = controller.clone();
-            let track = track.clone();
-            move || {
-                radio_controller.play_track_radio_next(track.clone());
-            }
-        });
+    surface.add_action("play-radio-next", {
+        let radio_controller = controller.clone();
+        let track = track.clone();
+        move || {
+            radio_controller.play_track_radio_next(track.clone());
+        }
+    });
 
-        surface.add_action("play-radio-last", {
-            let radio_controller = controller.clone();
-            move || {
-                radio_controller.play_track_radio_last(track.clone());
-            }
-        });
-    }
+    surface.add_action("play-radio-last", {
+        let radio_controller = controller.clone();
+        move || {
+            radio_controller.play_track_radio_last(track.clone());
+        }
+    });
 
     surface.add_action("favorite", {
         let favorite_shell = Rc::clone(shell);
-        let favorite_track_id = entry.track_id.clone();
-        let favorite_value = !entry.favorite;
+        let favorite_track_id = entry.track.id.clone();
+        let favorite_value = !entry.track.favorite;
         move || {
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Track(favorite_track_id.clone()),
+                library::FavoriteItemId::Track(favorite_track_id.clone()),
                 favorite_value,
                 None,
             );
@@ -1215,22 +1350,20 @@ fn show_queue_row_context_menu(
             }
         });
     }
-    if let Some(album_route) = album_route {
-        surface.add_action("go-album", {
-            let action_shell = Rc::clone(shell);
-            move || {
-                let shell = Rc::clone(&action_shell);
-                let route = album_route.clone();
-                glib::idle_add_local_once(move || shell.navigate(route));
-            }
-        });
-    }
+    surface.add_action("go-album", {
+        let action_shell = Rc::clone(shell);
+        move || {
+            let shell = Rc::clone(&action_shell);
+            let route = album_route.clone();
+            glib::idle_add_local_once(move || shell.navigate(route));
+        }
+    });
 
     surface.popup();
 }
 
-fn queue_artist_route(entry: &QueueEntry) -> Option<Route> {
-    entry.artist_id.clone().map(Route::ArtistDetail)
+fn queue_artist_route(entry: &SequenceEntry) -> Option<Route> {
+    entry.track.artist_id.clone().map(Route::ArtistDetail)
 }
 
 fn queue_link_label(text: &str) -> gtk::Label {
@@ -1280,96 +1413,62 @@ fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::layout::MIN_APP_WINDOW_WIDTH;
-    use super::*;
-    use domain::{QueueSnapshot, RepeatMode, ShuffleState, SourceId, TrackId};
+    use std::sync::Arc;
 
-    fn queue_entry(number: usize, title: &str) -> QueueEntry {
-        QueueEntry {
-            id: QueueEntryId::new(format!("queue-{number}")),
-            track_id: TrackId::fake(number),
-            album_id: None,
-            title: title.to_string(),
-            artist: "Artist".to_string(),
-            artist_id: None,
-            album: "Album".to_string(),
-            year: 2026,
-            duration_seconds: 180,
-            favorite: false,
-            image_ref: None,
-            local_path: None,
-            source_format: None,
-            origin: None,
+    use super::super::layout::MIN_APP_WINDOW_WIDTH;
+    use super::super::shell_tests::test_track;
+    use super::*;
+    use ::library::TrackId;
+    use playback::{Provenance, QueuePageRow};
+
+    fn queue_entry(number: usize, title: &str) -> SequenceEntry {
+        let mut track = test_track("Artist", None);
+        track.id = TrackId::fake(number);
+        track.title = title.to_string();
+        track.track_number = number as u16;
+        SequenceEntry {
+            occurrence: OccurrenceId::new(format!("queue-{number}")),
+            track,
+            provenance: Provenance::Manual,
         }
     }
 
-    fn queue_snapshot(entries: Vec<QueueEntry>) -> Option<QueueSnapshot> {
-        Some(QueueSnapshot {
-            source_id: SourceId::fake(1),
-            entries,
-            current_index: Some(0),
-            repeat_mode: RepeatMode::All,
-            shuffle: ShuffleState::default(),
-            shuffle_order: Vec::new(),
-            progress_seconds: 0,
-        })
-    }
-
-    #[test]
-    fn queue_render_state_keeps_all_row_ids() {
-        let entries = (0..1_000)
-            .map(|number| queue_entry(number, &format!("Track {number}")))
-            .collect::<Vec<_>>();
-        let snapshot = queue_snapshot(entries);
-
-        let state = queue_panel_render_state(&snapshot, "", None);
-
-        assert_eq!(state.row_count, 1_000);
-        assert_eq!(state.row_ids.len(), 1_000);
-        assert_eq!(state.row_indices.first().copied(), Some(0));
-        assert_eq!(state.row_indices.last().copied(), Some(999));
-        assert_eq!(state.current_row, Some(0));
-    }
-
-    #[test]
-    fn filtered_queue_render_state_keeps_all_matching_row_ids() {
-        let entries = (0..1_000)
-            .map(|number| {
-                let title = if number % 100 == 0 {
-                    format!("Needle {number}")
-                } else {
-                    format!("Track {number}")
-                };
-                queue_entry(number, &title)
-            })
-            .collect::<Vec<_>>();
-        let snapshot = queue_snapshot(entries);
-
-        let state = queue_panel_render_state(&snapshot, "needle", None);
-
-        assert_eq!(state.row_count, 10);
-        assert_eq!(state.row_ids.len(), 10);
-        assert_eq!(state.row_indices.first().copied(), Some(0));
-        assert_eq!(state.row_indices.last().copied(), Some(900));
-        assert_eq!(state.current_row, Some(0));
+    fn queue_page(start: usize, total: usize, entries: Vec<SequenceEntry>) -> QueuePage {
+        QueuePage {
+            revision: 1,
+            query: QueuePageQuery::at(start),
+            start,
+            total,
+            current_absolute_index: None,
+            rows: entries
+                .into_iter()
+                .enumerate()
+                .map(|(offset, entry)| QueuePageRow {
+                    absolute_index: start + offset,
+                    entry: Arc::new(entry),
+                })
+                .collect(),
+        }
     }
 
     #[test]
     fn queue_current_change_replaces_only_old_and_new_model_rows() {
-        let entries = (0..1_000)
-            .map(|number| queue_entry(number, &format!("Track {number}")))
-            .collect::<Vec<_>>();
-        let mut previous_snapshot = queue_snapshot(entries.clone());
-        let mut next_snapshot = queue_snapshot(entries);
-        previous_snapshot.as_mut().expect("snapshot").current_index = Some(10);
-        next_snapshot.as_mut().expect("snapshot").current_index = Some(900);
+        let page = queue_page(
+            400,
+            1_000,
+            (400..500)
+                .map(|number| queue_entry(number, &format!("Track {number}")))
+                .collect::<Vec<_>>(),
+        );
+        let previous_occurrence = page.rows[10].entry.occurrence.clone();
+        let next_occurrence = page.rows[90].entry.occurrence.clone();
 
-        let previous = queue_panel_render_state(&previous_snapshot, "", None);
-        let next = queue_panel_render_state(&next_snapshot, "", None);
+        let previous = queue_panel_render_state(Some(&page), Some(&previous_occurrence), None);
+        let next = queue_panel_render_state(Some(&page), Some(&next_occurrence), None);
 
         assert_eq!(
             queue_current_update_positions(&previous, &next),
-            vec![10, 900]
+            vec![10, 90]
         );
     }
 

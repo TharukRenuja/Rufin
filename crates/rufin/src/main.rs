@@ -1,14 +1,14 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod controller;
-mod cover_art_policy;
 mod external_activity;
-mod external_metadata;
-mod external_scrobbling;
 mod i18n;
 mod lyrics;
-mod sources;
+mod settings;
+mod source_setup;
 mod ui;
+
+pub(crate) use settings::StoredSettings;
 
 use adw::prelude::*;
 use clap::Parser;

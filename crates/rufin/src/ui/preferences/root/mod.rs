@@ -5,19 +5,26 @@ use super::super::{
     present_light_dismiss_dialog,
 };
 use super::library;
-use crate::{
-    external_scrobbling::{self, AudioscrobblerSession},
-    i18n::{self, tr, tr_with},
-};
+use crate::i18n::{self, tr, tr_with};
+use ::library::HomeBlockKind;
 use adw::prelude::*;
-use domain::ExternalLyricsProvider;
 use domain::{
-    AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
-    HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
-    MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS,
-    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
-    SecretStorageMode, SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
+    LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_NARROW_LAYOUT_THRESHOLD,
+    MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_NARROW_LAYOUT_THRESHOLD, RightSidebarMode, SecretStorageMode,
+    SidebarRouteItem, SidebarRouteItemSettings,
 };
+use metadata::ExternalLyricsProvider;
+use playback::{
+    EQUALIZER_BAND_COUNT, MAX_CROSSFADE_SECONDS, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode,
+    ReplayGainMode,
+};
+use rich_presence::{DisplayType, LinkType};
+use scrobbling::{
+    AudioscrobblerSession, AudioscrobblerSettings, lastfm_auth_url, librefm_auth_url,
+    request_lastfm_auth_token, request_lastfm_session, request_librefm_auth_token,
+    request_librefm_session,
+};
+use sources::StreamQuality;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -494,8 +501,8 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let prefer_server_row = adw::SwitchRow::builder()
         .title(tr("Prefer server lyrics"))
-        .active(settings.prefer_server_lyrics)
-        .sensitive(settings.external_lyrics_enabled)
+        .active(settings.metadata.prefer_server_lyrics)
+        .sensitive(settings.metadata.external_lyrics_enabled)
         .build();
     let prefer_server_shell = Rc::clone(shell);
     prefer_server_row.connect_active_notify(move |row| {
@@ -504,7 +511,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let external_metadata_row = adw::SwitchRow::builder()
         .title(tr("External metadata lookup"))
-        .active(settings.external_metadata_enabled)
+        .active(settings.metadata.external_metadata_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
     external_metadata_row.connect_active_notify(move |row| {
@@ -513,7 +520,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
-        .active(settings.external_lyrics_enabled)
+        .active(settings.metadata.external_lyrics_enabled)
         .build();
 
     let provider_rows = ExternalLyricsProvider::all()
@@ -521,8 +528,13 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         .map(|provider| {
             let row = adw::SwitchRow::builder()
                 .title(provider.title())
-                .active(settings.external_lyrics_providers.contains(&provider))
-                .sensitive(settings.external_lyrics_enabled)
+                .active(
+                    settings
+                        .metadata
+                        .external_lyrics_providers
+                        .contains(&provider),
+                )
+                .sensitive(settings.metadata.external_lyrics_enabled)
                 .build();
             let provider_shell = Rc::clone(shell);
             row.connect_active_notify(move |row| {
@@ -613,7 +625,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         .build();
     let presence_row = adw::SwitchRow::builder()
         .title(tr("Rich presence"))
-        .active(settings.discord_presence_enabled)
+        .active(settings.rich_presence.enabled)
         .build();
     let presence_shell = Rc::clone(shell);
     presence_row.connect_active_notify(move |row| {
@@ -630,7 +642,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let display_row = adw::ComboRow::builder()
         .title(tr("Status display"))
         .model(&display_options)
-        .selected(discord_display_index(settings.discord_display_type))
+        .selected(discord_display_index(settings.rich_presence.display_type))
         .build();
     let display_shell = Rc::clone(shell);
     display_row.connect_selected_notify(move |row| {
@@ -647,10 +659,10 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
     let link_options = gtk::StringList::new(&link_refs);
     let link_row = adw::ComboRow::builder()
-        .title(tr("Metadata source"))
-        .subtitle(tr("Source to use for cover images and song/artist links"))
+        .title(tr("Link source"))
+        .subtitle(tr("Service to use for song and artist links"))
         .model(&link_options)
-        .selected(discord_link_index(settings.discord_link_type))
+        .selected(discord_link_index(settings.rich_presence.link_type))
         .build();
     let link_shell = Rc::clone(shell);
     link_row.connect_selected_notify(move |row| {
@@ -660,7 +672,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let paused_row = adw::SwitchRow::builder()
         .title(tr("Show paused status"))
-        .active(settings.discord_show_paused)
+        .active(settings.rich_presence.show_paused)
         .build();
     let paused_shell = Rc::clone(shell);
     paused_row.connect_active_notify(move |row| {
@@ -671,7 +683,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let listening_row = adw::SwitchRow::builder()
         .title(tr("Use listening activity"))
         .subtitle(tr("Set the Discord activity type to Listening"))
-        .active(settings.discord_show_as_listening)
+        .active(settings.rich_presence.show_as_listening)
         .build();
     let listening_shell = Rc::clone(shell);
     listening_row.connect_active_notify(move |row| {
@@ -681,24 +693,13 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let state_icon_row = adw::SwitchRow::builder()
         .title(tr("Show playback icon"))
-        .active(settings.discord_show_state_icon)
+        .active(settings.rich_presence.show_state_icon)
         .build();
     let state_icon_shell = Rc::clone(shell);
     state_icon_row.connect_active_notify(move |row| {
         state_icon_shell.set_discord_show_state_icon(row.is_active());
     });
     discord_group.add(&state_icon_row);
-
-    let lastfm_row = adw::PasswordEntryRow::builder()
-        .title(tr("Last.fm API key"))
-        .show_apply_button(true)
-        .build();
-    lastfm_row.set_text(&settings.lastfm_api_key);
-    let lastfm_shell = Rc::clone(shell);
-    lastfm_row.connect_apply(move |row| {
-        lastfm_shell.set_lastfm_api_key(row.text().to_string());
-    });
-    discord_group.add(&lastfm_row);
 
     page.add(&discord_group);
 

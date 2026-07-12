@@ -19,40 +19,54 @@ pub(in crate::ui) struct NativeNowPlayingNotification {
 }
 
 impl Shell {
-    pub(in crate::ui) fn notify_now_playing(self: &Rc<Self>, snapshot: &PlaybackSnapshot) {
+    pub(in crate::ui) fn notify_now_playing(self: &Rc<Self>, player: Option<&PlaybackView>) {
+        self.notify_now_playing_inner(player, false);
+    }
+
+    pub(in crate::ui) fn refresh_now_playing_notification(
+        self: &Rc<Self>,
+        player: Option<&PlaybackView>,
+    ) {
+        self.notify_now_playing_inner(player, true);
+    }
+
+    fn notify_now_playing_inner(
+        self: &Rc<Self>,
+        player: Option<&PlaybackView>,
+        refresh_current: bool,
+    ) {
         let settings = self.state.settings.borrow().clone();
-        if now_playing_notification_should_withdraw(&settings, snapshot) {
+        if now_playing_notification_should_withdraw(&settings, player) {
             self.withdraw_now_playing_notification();
             return;
         }
-        if !now_playing_notification_can_send(&settings, snapshot) {
+        if !now_playing_notification_can_send(&settings, player) {
             return;
         }
-        let Some(entry) = snapshot.current.as_ref() else {
+        let Some(player) = player else {
             return;
         };
-        let title = entry.title.clone();
-        let body = format!("{} - {}", entry.artist, entry.album);
-        let track_id = entry.track_id.clone();
-        let artwork_lookup = self.current_playback_artwork_lookup(entry, THUMB_COVER_SIZE);
-        let controller = self.controller.clone();
+        let Some(run) = player.transport.run else {
+            return;
+        };
+        if !refresh_current && self.state.now_playing_notification_run.get() == Some(run) {
+            return;
+        }
+        self.state.now_playing_notification_run.set(Some(run));
+        let Some(entry) = player.transport.current.as_ref() else {
+            return;
+        };
+        let title = entry.track.title.clone();
+        let body = format!("{} - {}", entry.track.artist, entry.track.album);
+        let artwork_path = self
+            .current_playback_cached_artwork_path(
+                &player.transport.source_id,
+                entry,
+                THUMB_COVER_SIZE,
+            )
+            .map(|artwork| artwork.path);
         let shell = Rc::clone(self);
         glib::spawn_future_local(async move {
-            let artwork_path = match artwork_lookup {
-                Some(lookup) => gtk::gio::spawn_blocking(move || {
-                    let key_controller = controller.clone();
-                    let fallback_controller = controller;
-                    playback_artwork_path_from_lookup_context(
-                        lookup,
-                        |key| key_controller.cached_cover_path_for_key(key),
-                        |image_ref, size| fallback_controller.cached_cover_path(image_ref, size),
-                    )
-                })
-                .await
-                .ok()
-                .flatten(),
-                None => None,
-            };
             let notifications_enabled = {
                 let settings = shell.state.settings.borrow();
                 crate::external_activity::notifications(&settings)
@@ -61,7 +75,8 @@ impl Shell {
                 shell.withdraw_now_playing_notification();
                 return;
             }
-            if !now_playing_notification_matches_current(&shell.state.player.borrow(), &track_id) {
+            if !now_playing_notification_matches_current(shell.state.player.borrow().as_ref(), run)
+            {
                 return;
             }
 
@@ -76,7 +91,7 @@ impl Shell {
             let replaces_id = shell.state.now_playing_native_notification_id.get();
             match send_native_now_playing_notification(&native_notification, replaces_id).await {
                 Ok(notification_id) => {
-                    if now_playing_notification_is_still_sendable(&shell, &track_id) {
+                    if now_playing_notification_is_still_sendable(&shell, run) {
                         shell
                             .application
                             .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
@@ -94,7 +109,7 @@ impl Shell {
                         shell.state.now_playing_native_notification_id.set(0);
                         close_native_now_playing_notification(replaces_id).await;
                     }
-                    if now_playing_notification_is_still_sendable(&shell, &track_id) {
+                    if now_playing_notification_is_still_sendable(&shell, run) {
                         send_gio_now_playing_notification(
                             &shell.application,
                             title,
@@ -112,6 +127,7 @@ impl Shell {
         self.application
             .withdraw_notification(NOW_PLAYING_NOTIFICATION_ID);
         let notification_id = self.state.now_playing_native_notification_id.replace(0);
+        self.state.now_playing_notification_run.set(None);
         if notification_id != 0 {
             glib::spawn_future_local(async move {
                 close_native_now_playing_notification(notification_id).await;
@@ -120,13 +136,13 @@ impl Shell {
     }
 }
 
-fn now_playing_notification_is_still_sendable(shell: &Shell, track_id: &TrackId) -> bool {
+fn now_playing_notification_is_still_sendable(shell: &Shell, run: playback::RunId) -> bool {
     let notifications_enabled = {
         let settings = shell.state.settings.borrow();
         crate::external_activity::notifications(&settings)
     };
     notifications_enabled
-        && now_playing_notification_matches_current(&shell.state.player.borrow(), track_id)
+        && now_playing_notification_matches_current(shell.state.player.borrow().as_ref(), run)
 }
 
 pub(in crate::ui) fn now_playing_notification_artwork_uri(path: &Path) -> Option<String> {
@@ -232,35 +248,36 @@ async fn send_gio_now_playing_notification(
 }
 
 pub(in crate::ui) fn now_playing_notification_can_send(
-    settings: &AppSettings,
-    snapshot: &PlaybackSnapshot,
+    settings: &StoredSettings,
+    player: Option<&PlaybackView>,
 ) -> bool {
     crate::external_activity::notifications(settings)
-        && matches!(
-            snapshot.state,
-            PlaybackState::Playing | PlaybackState::Buffering
-        )
-        && snapshot.current.is_some()
+        && player.is_some_and(|player| {
+            matches!(
+                player.transport.state,
+                TransportStatus::Playing | TransportStatus::Buffering
+            ) && player.transport.current.is_some()
+        })
 }
 
 pub(in crate::ui) fn now_playing_notification_should_withdraw(
-    settings: &AppSettings,
-    snapshot: &PlaybackSnapshot,
+    settings: &StoredSettings,
+    player: Option<&PlaybackView>,
 ) -> bool {
     !crate::external_activity::notifications(settings)
-        || snapshot.current.is_none()
-        || snapshot.state == PlaybackState::Stopped
+        || player.is_none_or(|player| {
+            player.transport.current.is_none() || player.transport.state == TransportStatus::Stopped
+        })
 }
 
 pub(in crate::ui) fn now_playing_notification_matches_current(
-    snapshot: &PlaybackSnapshot,
-    track_id: &TrackId,
+    player: Option<&PlaybackView>,
+    run: playback::RunId,
 ) -> bool {
-    matches!(
-        snapshot.state,
-        PlaybackState::Playing | PlaybackState::Buffering
-    ) && snapshot
-        .current
-        .as_ref()
-        .is_some_and(|current| current.track_id == track_id.clone())
+    player.is_some_and(|player| {
+        matches!(
+            player.transport.state,
+            TransportStatus::Playing | TransportStatus::Buffering
+        ) && player.transport.run == Some(run)
+    })
 }

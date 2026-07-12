@@ -26,7 +26,7 @@ pub(in crate::ui) fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
     child
 }
 pub(in crate::ui) fn configure_library_route_scroller(
-    shell: &Rc<Shell>,
+    _shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
 ) {
     scroller.add_css_class("library-route-scroller");
@@ -35,11 +35,6 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller.set_overlay_scrolling(true);
     scroller.set_hexpand(true);
     scroller.set_vexpand(true);
-
-    let adjustment_shell = Rc::clone(shell);
-    scroller.vadjustment().connect_value_changed(move |_| {
-        adjustment_shell.pause_cover_warm_for_interaction();
-    });
 }
 
 pub(in crate::ui) fn album_collection_widget(
@@ -125,8 +120,8 @@ pub(super) fn track_model_play_action(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     play_context: LoadedTrackPlayContext,
-    preferred_position: Option<u32>,
-    fallback_track: Track,
+    position: u32,
+    track: Track,
 ) -> Rc<dyn Fn()> {
     let controller = shell.controller.clone();
     let model = model.clone();
@@ -135,49 +130,34 @@ pub(super) fn track_model_play_action(
             &controller,
             &model,
             Some(&play_context),
-            preferred_position,
-            fallback_track.clone(),
+            position,
+            track.clone(),
         );
     })
 }
+
 fn play_track_from_model(
     controller: &crate::controller::AppController,
     model: &gio::ListStore,
     play_context: Option<&LoadedTrackPlayContext>,
-    preferred_position: Option<u32>,
-    fallback_track: Track,
+    position: u32,
+    track: Track,
 ) {
     let Some(play_context) = play_context else {
-        controller.play_now(fallback_track);
+        controller.play_now(track);
         return;
     };
-    let anchor_index = preferred_position
-        .and_then(|position| {
-            let position = position as usize;
-            item_at::<Track>(model, position as u32)
-                .is_some_and(|track| track.id == fallback_track.id)
-                .then_some(position)
-        })
-        .or_else(|| {
-            (0..model.n_items()).find_map(|position| {
-                item_at::<Track>(model, position)
-                    .is_some_and(|track| track.id == fallback_track.id)
-                    .then_some(position as usize)
-            })
-        });
-    let Some(anchor_index) = anchor_index else {
-        controller.play_now(fallback_track);
-        return;
-    };
-    let played = play_context.play_window(
+    let anchor_index = position as usize;
+    let track_id = track.id;
+    play_context.play_window(
         controller,
         model.n_items() as usize,
         anchor_index,
-        |index| item_at::<Track>(model, index as u32),
+        |index| {
+            let candidate = item_at::<Track>(model, index as u32)?;
+            (index != anchor_index || candidate.id == track_id).then_some(candidate)
+        },
     );
-    if !played {
-        controller.play_now(fallback_track);
-    }
 }
 
 pub(in crate::ui) fn album_grid(
@@ -276,7 +256,7 @@ pub(in crate::ui) fn track_grid(
                 &controller,
                 &activate_model,
                 play_context.as_ref(),
-                Some(position),
+                position,
                 track,
             );
         },
@@ -553,7 +533,7 @@ pub(in crate::ui) fn track_table(
             &controller,
             &activate_model,
             options.play_context.as_ref(),
-            Some(position),
+            position,
             track,
         );
     });
@@ -593,10 +573,6 @@ pub(in crate::ui) fn capped_library_table_content_height(
     let visible_rows = row_count.max(1).min(max_visible_rows.unwrap_or(max_rows));
     LIBRARY_TABLE_HEADER_HEIGHT + visible_rows as i32 * LIBRARY_TABLE_ROW_HEIGHT
 }
-pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
-    route_content_width(shell) < 760
-}
-
 pub(in crate::ui) fn smart_playlist_drag_handle(playlist_id: &SmartPlaylistId) -> gtk::Image {
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
     drag.add_css_class("dim-label");
@@ -683,11 +659,4 @@ pub(super) fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
     card.set_halign(gtk::Align::Center);
     card.set_valign(gtk::Align::Start);
     card
-}
-
-pub(in crate::ui) fn artist_cover_image_ref(
-    _shell: &Rc<Shell>,
-    artist: &Artist,
-) -> Option<ImageRef> {
-    artist.image_ref.clone()
 }

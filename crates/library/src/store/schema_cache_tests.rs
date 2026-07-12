@@ -1,15 +1,15 @@
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-use super::sources::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 use crate::{
-    LocalLibraryDelta, LocalManifestDelta, PlaylistWriteMode, SourceEntityKind,
-    SourceObjectMapping, StoreError, local_file_source_object_id,
+    ActivityOutcome, LEGACY_ACTIVITY_PERIOD, LocalLibraryDelta, LocalManifestDelta, PagedResponse,
+    PlaybackCheckpointRecord, PlaylistWriteMode, SourceEntityKind, SourceObjectMapping, StoreError,
+    TrackActivitySummary, local_file_source_object_id,
 };
-use domain::{
+use crate::{
     AlbumId, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, LocalCueTrackSource,
     LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
-    SourceFeatureOwner, SourceId, TrackId,
+    SmartPlaylistBuiltin, SourceFeatureOwner, SourceId, TrackId,
 };
 
 const OLD_SOURCE_ID_COLUMN_TABLES: &[&str] = &[
@@ -57,7 +57,153 @@ const OLD_SOURCE_ID_COLUMN_TABLES: &[&str] = &[
     "entity_links",
 ];
 
+fn simulate_pre_artwork_owner_schema(connection: &rusqlite::Connection) {
+    for table in [
+        "albums",
+        "tracks",
+        "artists",
+        "album_artists",
+        "genres",
+        "playlists",
+    ] {
+        if !table_has_column(connection, table, "image_origin") {
+            connection
+                .execute(
+                    &format!(
+                        "ALTER TABLE {table} ADD COLUMN image_origin TEXT NOT NULL DEFAULT 'unknown'"
+                    ),
+                    [],
+                )
+                .expect("restore image origin column");
+        }
+    }
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS cover_cache (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                item_id TEXT NOT NULL,
+                image_tag TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_id, item_id, image_tag, size)
+            );
+            CREATE TABLE IF NOT EXISTS external_image_lookup_misses (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                item_id TEXT NOT NULL,
+                image_tag TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_id, item_id, image_tag, size)
+            );
+            CREATE TABLE IF NOT EXISTS collection_cover_refs (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                collection_type TEXT NOT NULL,
+                collection_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                image_item_id TEXT NOT NULL,
+                image_tag TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_id, collection_type, collection_id, position)
+            );
+            CREATE TABLE IF NOT EXISTS entity_content_refs (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                content_kind TEXT NOT NULL,
+                content_key TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_id, entity_kind, entity_id, content_kind, source)
+            );
+            CREATE TABLE IF NOT EXISTS content_cache_entries (
+                cache_scope TEXT NOT NULL,
+                content_kind TEXT NOT NULL,
+                content_key TEXT NOT NULL,
+                variant TEXT NOT NULL,
+                status TEXT NOT NULL,
+                path_or_value TEXT,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cache_scope, content_kind, content_key, variant)
+            );
+            ",
+        )
+        .expect("restore pre-artwork-owner schema");
+}
+
+fn simulate_pre_playback_owner_schema(connection: &rusqlite::Connection) {
+    simulate_pre_artwork_owner_schema(connection);
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE queue_snapshots (
+                source_id TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO queue_snapshots (source_id, value, updated_at)
+            SELECT source_id, payload, updated_at
+            FROM playback_checkpoints;
+
+            CREATE TABLE track_activity (
+                source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                play_count INTEGER NOT NULL DEFAULT 0,
+                last_played TEXT,
+                skip_count INTEGER NOT NULL DEFAULT 0,
+                play_recorded_session TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_id, track_id)
+            );
+            INSERT INTO track_activity (
+                source_id, track_id, play_count, last_played, skip_count,
+                play_recorded_session, updated_at
+            )
+            SELECT source_id, track_id, SUM(qualified_plays), MAX(last_played_at),
+                   SUM(skips), NULL, MAX(updated_at)
+            FROM track_activity_period
+            GROUP BY source_id, track_id;
+
+            DROP TABLE playback_checkpoints;
+            DROP TABLE track_activity_period;
+            ",
+        )
+        .expect("simulate pre-playback-owner schema");
+}
+
+fn simulate_pre_provider_payload_schema(connection: &rusqlite::Connection) {
+    simulate_pre_playback_owner_schema(connection);
+    connection
+        .execute_batch(
+            "
+            ALTER TABLE sources ADD COLUMN base_url TEXT NOT NULL DEFAULT '';
+            ALTER TABLE sources ADD COLUMN user_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE sources ADD COLUMN username TEXT NOT NULL DEFAULT '';
+            ALTER TABLE sources ADD COLUMN trust_invalid_cert INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE sources ADD COLUMN use_jellyfin_instant_mix INTEGER NOT NULL DEFAULT 0;
+            UPDATE sources
+            SET base_url = COALESCE(json_extract(provider_payload, '$.base_url'), ''),
+                user_id = COALESCE(json_extract(provider_payload, '$.user_id'), ''),
+                username = COALESCE(json_extract(provider_payload, '$.username'), ''),
+                trust_invalid_cert = CASE
+                    WHEN json_extract(provider_payload, '$.trust_invalid_cert') = 1 THEN 1
+                    ELSE 0
+                END,
+                use_jellyfin_instant_mix = CASE
+                    WHEN json_extract(provider_payload, '$.use_jellyfin_instant_mix') = 1 THEN 1
+                    ELSE 0
+                END;
+            ALTER TABLE sources DROP COLUMN provider_payload;
+            ",
+        )
+        .expect("simulate pre-provider-payload schema");
+}
+
 fn simulate_pre_source_identity_schema(connection: &rusqlite::Connection) {
+    simulate_pre_provider_payload_schema(connection);
     connection
         .execute_batch(
             "
@@ -130,7 +276,27 @@ fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert!(
+        store
+            .table_has_column("sources", "provider_payload")
+            .expect("column lookup"),
+        "sources.provider_payload should exist"
+    );
+    for column in [
+        "base_url",
+        "user_id",
+        "username",
+        "trust_invalid_cert",
+        "use_jellyfin_instant_mix",
+    ] {
+        assert!(
+            !store
+                .table_has_column("sources", column)
+                .expect("column lookup"),
+            "sources.{column} should not exist"
+        );
+    }
     for column in ["cache_revision", "last_all_completed_at"] {
         assert!(
             store
@@ -181,9 +347,7 @@ fn current_schema_initializes_empty_database() {
         "entity_grouping_keys",
         "entity_facts",
         "entity_resolver_state",
-        "entity_content_refs",
         "entity_links",
-        "content_cache_entries",
     ] {
         assert!(
             store.table_exists(table).expect("table lookup"),
@@ -228,6 +392,18 @@ fn current_schema_initializes_empty_database() {
         "playlists.owner should exist"
     );
     for table in [
+        "cover_cache",
+        "external_image_lookup_misses",
+        "collection_cover_refs",
+        "entity_content_refs",
+        "content_cache_entries",
+    ] {
+        assert!(
+            !store.table_exists(table).expect("table lookup"),
+            "{table} should not exist"
+        );
+    }
+    for table in [
         "albums",
         "tracks",
         "artists",
@@ -236,10 +412,10 @@ fn current_schema_initializes_empty_database() {
         "playlists",
     ] {
         assert!(
-            store
+            !store
                 .table_has_column(table, "image_origin")
                 .expect("column lookup"),
-            "{table}.image_origin should exist"
+            "{table}.image_origin should not exist"
         );
     }
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
@@ -251,15 +427,243 @@ fn current_schema_initializes_empty_database() {
 }
 
 #[test]
+fn version_27_removes_artwork_mirrors_without_losing_owned_facts() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "artwork-owner-migration"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = stored_source_with_id("local:server:artwork-migration");
+    let albums = (1..=4).map(album_with_image).collect::<Vec<_>>();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+        store
+            .upsert_albums(&saved.source_id, &albums, generation)
+            .expect("save albums");
+        store
+            .connection
+            .execute(
+                "
+                INSERT INTO local_artwork_manifest (
+                    source_id, cover_item_id, manifest_version, source_kind, source_path,
+                    source_size, mtime_seconds, mtime_nanos, content_hash, revision,
+                    scan_generation
+                )
+                VALUES (?1, 'local-cover-one', 1, 'file', '/music/cover.jpg',
+                        123, 456, 789, 'content-hash', 'file-revision', ?2)
+                ",
+                rusqlite::params![saved.source_id.as_str(), generation],
+            )
+            .expect("save Local artwork fact");
+    }
+
+    let connection = rusqlite::Connection::open(&path).expect("open version 27 database");
+    simulate_pre_artwork_owner_schema(&connection);
+    connection
+        .execute_batch(
+            "
+            UPDATE albums SET image_origin = 'source' WHERE album_id = 'album-1';
+            UPDATE albums SET image_origin = 'unknown' WHERE album_id = 'album-2';
+            UPDATE albums SET image_origin = 'fallback' WHERE album_id = 'album-3';
+            UPDATE albums SET image_origin = 'external' WHERE album_id = 'album-4';
+            ",
+        )
+        .expect("restore version 27 artwork schema");
+    connection
+        .execute(
+            "INSERT INTO cover_cache VALUES (?1, 'item', 'tag', 300, '/cache/cover', CURRENT_TIMESTAMP)",
+            rusqlite::params![saved.source_id.as_str()],
+        )
+        .expect("seed cover cache");
+    connection
+        .execute(
+            "INSERT INTO external_image_lookup_misses VALUES (?1, 'item', 'tag', 300, 'missing', CURRENT_TIMESTAMP)",
+            rusqlite::params![saved.source_id.as_str()],
+        )
+        .expect("seed external miss");
+    connection
+        .execute(
+            "INSERT INTO collection_cover_refs VALUES (?1, 'genre', 'genre:1', 0, 'item', 'tag', CURRENT_TIMESTAMP)",
+            rusqlite::params![saved.source_id.as_str()],
+        )
+        .expect("seed collection mirror");
+    connection
+        .execute(
+            "INSERT INTO entity_content_refs VALUES (?1, 'album', 'album:1', 'cover', 'key', 'source', CURRENT_TIMESTAMP)",
+            rusqlite::params![saved.source_id.as_str()],
+        )
+        .expect("seed content ref");
+    connection
+        .execute(
+            "INSERT INTO content_cache_entries VALUES ('artwork', 'cover', 'key', '300', 'ready', '/cache/cover', 'source', CURRENT_TIMESTAMP)",
+            [],
+        )
+        .expect("seed content cache");
+    connection
+        .pragma_update(None, "user_version", 27)
+        .expect("mark version 27");
+    drop(connection);
+
+    let store = Store::open(&path).expect("migrate artwork owner schema");
+    assert_eq!(store.schema_version().expect("schema version"), 28);
+    let migrated = store
+        .load_albums(&saved.source_id, 0, 10)
+        .expect("load migrated albums")
+        .items;
+    assert_eq!(migrated[0].image_ref, albums[0].image_ref);
+    assert_eq!(migrated[1].image_ref, albums[1].image_ref);
+    assert_eq!(migrated[2].image_ref, None);
+    assert_eq!(migrated[3].image_ref, None);
+    for table in [
+        "cover_cache",
+        "external_image_lookup_misses",
+        "collection_cover_refs",
+        "entity_content_refs",
+        "content_cache_entries",
+    ] {
+        assert!(!store.table_exists(table).expect("table lookup"), "{table}");
+    }
+    for table in [
+        "albums",
+        "tracks",
+        "artists",
+        "album_artists",
+        "genres",
+        "playlists",
+    ] {
+        assert!(
+            !store
+                .table_has_column(table, "image_origin")
+                .expect("column lookup"),
+            "{table}"
+        );
+    }
+    let local_fact = store
+        .connection
+        .query_row(
+            "
+            SELECT source_kind, source_path, revision, scan_generation
+            FROM local_artwork_manifest
+            WHERE source_id = ?1 AND cover_item_id = 'local-cover-one'
+            ",
+            rusqlite::params![saved.source_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .expect("load Local artwork fact");
+    assert_eq!(
+        local_fact,
+        (
+            "file".to_string(),
+            "/music/cover.jpg".to_string(),
+            "file-revision".to_string(),
+            1
+        )
+    );
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn version_25_migrates_sources_to_opaque_provider_payload() {
+    let store = Store::open_memory().expect("open store");
+    let mut jellyfin = stored_source_with_id("jellyfin:server:migration");
+    jellyfin.name = "Jellyfin Migration".to_string();
+    jellyfin.provider_payload = r#"{"version":1,"base_url":"https://music.example","user_id":"user","username":"demo","trust_invalid_cert":true,"use_jellyfin_instant_mix":true}"#
+        .to_string();
+    let mut unknown = stored_source_with_id("future:source:migration");
+    unknown.kind = "future-provider".to_string();
+    unknown.name = "Unknown Migration".to_string();
+    unknown.provider_payload = r#"{"version":1,"base_url":"file:///music","user_id":"","username":"","trust_invalid_cert":false,"use_jellyfin_instant_mix":false}"#
+        .to_string();
+
+    store.save_source(&jellyfin).expect("save Jellyfin source");
+    store.save_source(&unknown).expect("save unknown source");
+    store
+        .set_active_source(&unknown.source_id)
+        .expect("set active source");
+    let local_access = SourceLocalAccess {
+        source_id: unknown.source_id.clone(),
+        root_path: "/music".to_string(),
+        path_replace_from: Some("/server/music".to_string()),
+        path_replace_to: Some("/music".to_string()),
+    };
+    store
+        .save_source_local_access(&local_access)
+        .expect("save local access");
+
+    simulate_pre_provider_payload_schema(&store.connection);
+    store
+        .connection
+        .pragma_update(None, "user_version", 25)
+        .expect("simulate version 25");
+
+    store.migrate().expect("migrate version 25");
+
+    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(
+        store
+            .stored_source(&jellyfin.source_id)
+            .expect("load Jellyfin source"),
+        Some(jellyfin)
+    );
+    assert_eq!(
+        store
+            .stored_source(&unknown.source_id)
+            .expect("load unknown source"),
+        Some(unknown.clone())
+    );
+    assert_eq!(store.active_source().expect("active source"), Some(unknown));
+    assert_eq!(
+        store
+            .source_local_access(&local_access.source_id)
+            .expect("load local access"),
+        Some(local_access)
+    );
+    for column in [
+        "base_url",
+        "user_id",
+        "username",
+        "trust_invalid_cert",
+        "use_jellyfin_instant_mix",
+    ] {
+        assert!(
+            !store
+                .table_has_column("sources", column)
+                .expect("column lookup"),
+            "sources.{column} should be removed"
+        );
+    }
+    let foreign_key_violations = store
+        .connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("foreign key check");
+    assert_eq!(foreign_key_violations, 0);
+}
+
+#[test]
 fn version_24_migrates_sync_state_and_source_objects() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save source");
     store
         .connection
         .execute(
             "UPDATE sync_state SET last_completed_at = '2026-07-01 12:00:00' WHERE source_id = ?1",
-            rusqlite::params![saved.source.id.as_str()],
+            rusqlite::params![saved.source_id.as_str()],
         )
         .expect("seed completion time");
     let old_mapping = SourceObjectMapping {
@@ -269,7 +673,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
     };
     seed_source_object_mappings(
         &store,
-        &saved.source.id,
+        &saved.source_id,
         std::slice::from_ref(&old_mapping),
         4,
     );
@@ -283,9 +687,10 @@ fn version_24_migrates_sync_state_and_source_objects() {
                 source_path, sync_generation
             ) VALUES (?1, ?2, '', 'local_file', '/music/track.flac', 4)
             ",
-            rusqlite::params![saved.source.id.as_str(), local_source_object_id.as_str()],
+            rusqlite::params![saved.source_id.as_str(), local_source_object_id.as_str()],
         )
         .expect("seed local source object");
+    simulate_pre_provider_payload_schema(&store.connection);
     store
         .connection
         .execute_batch(
@@ -349,8 +754,8 @@ fn version_24_migrates_sync_state_and_source_objects() {
 
     store.migrate().expect("migrate version 24");
 
-    assert_eq!(store.schema_version().expect("schema version"), 25);
-    let state = store.sync_state(&saved.source.id).expect("sync state");
+    assert_eq!(store.schema_version().expect("schema version"), 28);
+    let state = store.sync_state(&saved.source_id).expect("sync state");
     assert_eq!(state.cache_revision, 0);
     assert_eq!(
         state.last_all_completed_at.as_deref(),
@@ -358,7 +763,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
     );
     assert_eq!(
         store
-            .source_object_mappings(&saved.source.id, &old_mapping.source_object_id)
+            .source_object_mappings(&saved.source_id, &old_mapping.source_object_id)
             .expect("load migrated source object"),
         vec![old_mapping]
     );
@@ -366,7 +771,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
         .connection
         .query_row(
             "SELECT entity_kind, source_object_kind FROM source_objects WHERE source_id = ?1 AND source_object_id = ?2",
-            rusqlite::params![saved.source.id.as_str(), local_source_object_id],
+            rusqlite::params![saved.source_id.as_str(), local_source_object_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .expect("load migrated local source object");
@@ -376,7 +781,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
 #[test]
 fn one_source_object_maps_to_both_artist_roles() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save source");
     let source_object_id = "provider-artist-1";
     let mappings = vec![
@@ -392,11 +797,11 @@ fn one_source_object_maps_to_both_artist_roles() {
         },
     ];
 
-    seed_source_object_mappings(&store, &saved.source.id, &mappings, 7);
+    seed_source_object_mappings(&store, &saved.source_id, &mappings, 7);
 
     assert_eq!(
         store
-            .source_object_mappings(&saved.source.id, source_object_id)
+            .source_object_mappings(&saved.source_id, source_object_id)
             .expect("load source object mappings"),
         vec![mappings[1].clone(), mappings[0].clone()]
     );
@@ -415,7 +820,6 @@ fn schema_create_indexes() {
         ("playlist_tracks", "playlist_tracks_order_idx"),
         ("album_genres", "album_genres_source_genre_idx"),
         ("track_genres", "track_genres_source_genre_idx"),
-        ("collection_cover_refs", "collection_cover_refs_lookup_idx"),
         ("album_artist_links", "album_artist_links_source_artist_idx"),
         ("track_artist_links", "track_artist_links_source_artist_idx"),
         ("track_music_folders", "track_music_folders_folder_idx"),
@@ -590,53 +994,6 @@ fn entity_fact_count(
         .expect("count entity facts")
 }
 
-fn content_ref_count(
-    store: &Store,
-    source_id: &SourceId,
-    entity_kind: &str,
-    entity_id: &str,
-    content_kind: &str,
-) -> i64 {
-    store
-        .connection
-        .query_row(
-            "
-            SELECT COUNT(*)
-            FROM entity_content_refs
-            WHERE source_id = ?1
-              AND entity_kind = ?2
-              AND entity_id = ?3
-              AND content_kind = ?4
-            ",
-            rusqlite::params![source_id.as_str(), entity_kind, entity_id, content_kind],
-            |row| row.get(0),
-        )
-        .expect("count content refs")
-}
-
-fn selected_image_origin(
-    store: &Store,
-    source_id: &SourceId,
-    table: &str,
-    id_column: &str,
-    id: &str,
-) -> String {
-    store
-        .connection
-        .query_row(
-            &format!(
-                "
-                SELECT image_origin
-                FROM {table}
-                WHERE source_id = ?1 AND {id_column} = ?2
-                "
-            ),
-            rusqlite::params![source_id.as_str(), id],
-            |row| row.get(0),
-        )
-        .expect("selected image origin")
-}
-
 #[test]
 fn file_store_reset() {
     let path = std::env::temp_dir().join(format!(
@@ -679,7 +1036,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -731,7 +1088,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
@@ -740,29 +1097,32 @@ fn user_version_ten() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn schema_reopen_servers() {
+fn schema_reopen_preserves_opaque_source_payload() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
         std::process::id(),
         "preserve-current"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let mut saved = stored_source_with_id("future:source:opaque");
+    saved.kind = "future-provider".to_string();
+    saved.provider_payload =
+        "{\n  \"version\": 99, \"future\": [3, 2, 1], \"extension\": true\n}".to_string();
     {
         let store = Store::open(&path).expect("open store");
-        store.save_source(&saved).expect("save server");
+        store.save_source(&saved).expect("save source");
         store
-            .set_active_source(&saved.source.id)
-            .expect("set active server");
+            .set_active_source(&saved.source_id)
+            .expect("set active source");
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
     );
-    assert_eq!(store.active_source().expect("active server"), Some(saved));
+    assert_eq!(store.active_source().expect("active source"), Some(saved));
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -776,15 +1136,15 @@ fn schema_upgrade_servers() {
         "v18-upgrade"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     let genre_name = "Genre 1".to_string();
     {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save server");
         store
-            .set_active_source(&saved.source.id)
+            .set_active_source(&saved.source_id)
             .expect("set active server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let mut album = album(1);
         album.genres = vec![genre_name.clone()];
         let mut first_track = track(1, &album);
@@ -802,7 +1162,7 @@ fn schema_upgrade_servers() {
             genres: vec![cached_genre],
             ..LibraryObservation::default()
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit library");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
@@ -811,6 +1171,7 @@ fn schema_upgrade_servers() {
         .execute_batch(
             "
                 ALTER TABLE genres DROP COLUMN duration_seconds;
+                ALTER TABLE servers DROP COLUMN use_jellyfin_instant_mix;
                 PRAGMA user_version = 18;
                 ",
         )
@@ -818,7 +1179,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -834,7 +1195,7 @@ fn schema_upgrade_servers() {
         "genres.duration_seconds should exist after migration"
     );
     let genres = store
-        .load_genres(&saved.source.id, 0, 10)
+        .load_genres(&saved.source_id, 0, 10)
         .expect("load genres")
         .items;
     assert_eq!(genres[0].duration_seconds, 420);
@@ -852,28 +1213,44 @@ fn schema_upgrade_preserves_queue_snapshot_json() {
         "queue-snapshot-source-identity"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     let track = track(1, &album(1));
-    let mut queue = QueueEngine::new(saved.source.id.clone());
-    queue.append(&track);
-    let snapshot = queue.snapshot();
+    let occurrence_id = "queue-entry:legacy-track";
     {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save source");
-        store
-            .save_queue_snapshot(&snapshot)
-            .expect("save queue snapshot");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
     simulate_pre_source_identity_schema(&connection);
-    let mut legacy_value = serde_json::to_value(&snapshot).expect("serialize queue snapshot");
-    let legacy_object = legacy_value.as_object_mut().expect("queue snapshot object");
-    let source_id = legacy_object.remove("source_id").expect("source_id field");
-    legacy_object.insert("server_id".to_string(), source_id);
+    let legacy_payload = serde_json::json!({
+        "server_id": saved.source_id,
+        "entries": [{
+            "id": occurrence_id,
+            "track_id": track.id,
+            "album_id": track.album_id,
+            "title": track.title,
+            "artist": track.artist,
+            "artist_id": track.artist_id,
+            "album": track.album,
+            "year": track.year,
+            "duration_seconds": track.duration_seconds,
+            "favorite": track.favorite,
+            "image_ref": track.image_ref,
+            "local_path": track.local_path,
+            "source_format": track.source_format,
+            "origin": { "Manual": {} }
+        }],
+        "current_index": 0,
+        "repeat_mode": "All",
+        "shuffle": { "enabled": false, "seed": 0 },
+        "shuffle_order": [0],
+        "progress_seconds": 0
+    })
+    .to_string();
     connection
         .execute(
-            "UPDATE queue_snapshots SET value = ?1 WHERE server_id = ?2",
-            rusqlite::params![legacy_value.to_string(), saved.source.id.as_str()],
+            "INSERT INTO queue_snapshots (server_id, value) VALUES (?1, ?2)",
+            rusqlite::params![saved.source_id.as_str(), legacy_payload],
         )
         .expect("write legacy queue snapshot value");
     connection
@@ -882,13 +1259,20 @@ fn schema_upgrade_preserves_queue_snapshot_json() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    let snapshot = store
-        .load_queue_snapshot(&saved.source.id)
-        .expect("load upgraded queue")
-        .expect("queue snapshot");
-    assert_eq!(snapshot.source_id, saved.source.id);
-    assert_eq!(snapshot.entries.len(), 1);
-    assert_eq!(snapshot.entries[0].track_id, track.id);
+    let checkpoint = store
+        .load_playback_checkpoint(&saved.source_id)
+        .expect("load upgraded checkpoint")
+        .expect("playback checkpoint");
+    assert_eq!(checkpoint.source_id, saved.source_id);
+    assert_eq!(checkpoint.revision, 0);
+    assert_eq!(
+        checkpoint.selected_occurrence_id.as_deref(),
+        Some(occurrence_id)
+    );
+    assert_eq!(checkpoint.progress_millis, 0);
+    assert_eq!(checkpoint.repeat_mode, "All");
+    assert!(!checkpoint.shuffle_enabled);
+    assert_eq!(checkpoint.payload, legacy_payload);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -896,67 +1280,56 @@ fn schema_upgrade_preserves_queue_snapshot_json() {
 }
 
 #[test]
-fn schema_upgrade_collapses_provider_content_ref_duplicates() {
+fn schema_upgrade_moves_lifetime_activity_to_legacy_period() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
         std::process::id(),
-        "content-ref-provenance-duplicates"
+        "activity-period-migration"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save source");
     }
     let connection = rusqlite::Connection::open(&path).expect("open previous connection");
-    simulate_pre_source_identity_schema(&connection);
+    simulate_pre_playback_owner_schema(&connection);
     connection
         .execute(
             "
-            INSERT INTO entity_content_refs (
-                server_id, entity_kind, entity_id, content_kind, content_key, source
+            INSERT INTO track_activity (
+                source_id, track_id, play_count, last_played, skip_count,
+                play_recorded_session
             )
-            VALUES (?1, 'album', 'album-1', 'cover', 'cover-key', 'provider')
+            VALUES (?1, ?2, 5, '2026-06-30T20:00:00Z', 2, 'retired-session')
             ",
-            rusqlite::params![saved.source.id.as_str()],
+            rusqlite::params![saved.source_id.as_str(), TrackId::fake(1).as_str()],
         )
-        .expect("insert provider content ref");
+        .expect("seed legacy activity");
     connection
-        .execute(
-            "
-            INSERT INTO entity_content_refs (
-                server_id, entity_kind, entity_id, content_kind, content_key, source
-            )
-            VALUES (?1, 'album', 'album-1', 'cover', 'cover-key', 'source')
-            ",
-            rusqlite::params![saved.source.id.as_str()],
-        )
-        .expect("insert source content ref");
-    connection
-        .execute_batch("PRAGMA user_version = 22;")
+        .execute_batch("PRAGMA user_version = 26;")
         .expect("simulate previous schema");
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
-    let rows = store
+    let summary = store
+        .track_activity_summary(&saved.source_id, &TrackId::fake(1))
+        .expect("load migrated activity");
+    assert_eq!(summary.qualified_plays, 5);
+    assert_eq!(summary.skips, 2);
+    assert_eq!(
+        summary.last_played_at.as_deref(),
+        Some("2026-06-30T20:00:00Z")
+    );
+    let period = store
         .connection
         .query_row(
-            "
-            SELECT COUNT(*)
-            FROM entity_content_refs
-            WHERE source_id = ?1
-              AND entity_kind = 'album'
-              AND entity_id = 'album-1'
-              AND content_kind = 'cover'
-              AND content_key = 'cover-key'
-              AND source = 'source'
-            ",
-            rusqlite::params![saved.source.id.as_str()],
-            |row| row.get::<_, i64>(0),
+            "SELECT period FROM track_activity_period WHERE source_id = ?1 AND track_id = ?2",
+            rusqlite::params![saved.source_id.as_str(), TrackId::fake(1).as_str()],
+            |row| row.get::<_, String>(0),
         )
-        .expect("content ref count");
-    assert_eq!(rows, 1);
+        .expect("load migrated activity period");
+    assert_eq!(period, LEGACY_ACTIVITY_PERIOD);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -971,7 +1344,7 @@ fn schema_upgrade_backfills_artist_label_links() {
         "artist-label-link-backfill"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     let mut album = album(4);
     album.artist_id = None;
     let mut track = track(1, &album);
@@ -982,15 +1355,16 @@ fn schema_upgrade_backfills_artist_label_links() {
     {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save source");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         LibraryObservation {
             albums: vec![album.clone()],
             tracks: vec![track.clone()],
             artists: vec![artist.clone()],
             ..LibraryObservation::default()
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit library");
+        simulate_pre_provider_payload_schema(&store.connection);
         store
             .connection
             .execute_batch("PRAGMA user_version = 23;")
@@ -998,7 +1372,7 @@ fn schema_upgrade_backfills_artist_label_links() {
     }
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     let track_link_count: i64 = store
         .connection
         .query_row(
@@ -1010,7 +1384,7 @@ fn schema_upgrade_backfills_artist_label_links() {
               AND artist_id = ?3
             ",
             rusqlite::params![
-                saved.source.id.as_str(),
+                saved.source_id.as_str(),
                 track.id.as_str(),
                 artist.id.as_str()
             ],
@@ -1028,7 +1402,7 @@ fn schema_upgrade_backfills_artist_label_links() {
               AND artist_id = ?3
             ",
             rusqlite::params![
-                saved.source.id.as_str(),
+                saved.source_id.as_str(),
                 album.id.as_str(),
                 artist.id.as_str()
             ],
@@ -1038,7 +1412,7 @@ fn schema_upgrade_backfills_artist_label_links() {
     assert_eq!(track_link_count, 1);
     assert_eq!(album_link_count, 1);
     let detail = store
-        .load_artist_detail(&saved.source.id, &artist.id)
+        .load_artist_detail(&saved.source_id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(detail.albums.len(), 1);
@@ -1059,9 +1433,9 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
         "playlist-owner-migration"
     ));
     let _cleanup = fs::remove_file(&path);
-    let mut local = saved_source_with_id("local:server:test");
-    local.source.kind = "local".to_string();
-    let remote = saved_source_with_id("jellyfin:server:test");
+    let mut local = stored_source_with_id("local:server:test");
+    local.kind = "local".to_string();
+    let remote = stored_source_with_id("jellyfin:server:test");
     let local_playlist = playlist(1, None);
     let remote_playlist = playlist(2, None);
     {
@@ -1069,21 +1443,21 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
         store.save_source(&local).expect("save local");
         store.save_source(&remote).expect("save remote");
         let local_generation = store
-            .begin_sync(&local.source.id)
+            .begin_sync(&local.source_id)
             .expect("begin local sync");
         let remote_generation = store
-            .begin_sync(&remote.source.id)
+            .begin_sync(&remote.source_id)
             .expect("begin remote sync");
         store
             .upsert_playlists(
-                &local.source.id,
+                &local.source_id,
                 std::slice::from_ref(&local_playlist),
                 local_generation,
             )
             .expect("upsert pre-migration local playlist");
         store
             .upsert_playlists(
-                &remote.source.id,
+                &remote.source_id,
                 std::slice::from_ref(&remote_playlist),
                 remote_generation,
             )
@@ -1104,13 +1478,13 @@ fn schema_twenty_local_playlists_migrate_to_store_owner() {
     let store = Store::open(&path).expect("open upgraded store");
     assert_eq!(
         store
-            .playlist_owner(&local.source.id, &local_playlist.id)
+            .playlist_owner(&local.source_id, &local_playlist.id)
             .expect("local playlist owner"),
         Some(SourceFeatureOwner::Store)
     );
     assert_eq!(
         store
-            .playlist_owner(&remote.source.id, &remote_playlist.id)
+            .playlist_owner(&remote.source_id, &remote_playlist.id)
             .expect("remote playlist owner"),
         Some(SourceFeatureOwner::Native)
     );
@@ -1128,9 +1502,9 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
         "favorite-override-migration"
     ));
     let _cleanup = fs::remove_file(&path);
-    let mut local = saved_source_with_id("local:server:favorites");
-    local.source.kind = "local".to_string();
-    let remote = saved_source_with_id("jellyfin:server:favorites");
+    let mut local = stored_source_with_id("local:server:favorites");
+    local.kind = "local".to_string();
+    let remote = stored_source_with_id("jellyfin:server:favorites");
     let mut local_album = album(1);
     local_album.favorite = true;
     let mut remote_album = album(2);
@@ -1148,42 +1522,42 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
         store.save_source(&local).expect("save local");
         store.save_source(&remote).expect("save remote");
         let local_generation = store
-            .begin_sync(&local.source.id)
+            .begin_sync(&local.source_id)
             .expect("begin local sync");
         let remote_generation = store
-            .begin_sync(&remote.source.id)
+            .begin_sync(&remote.source_id)
             .expect("begin remote sync");
         store
             .upsert_albums(
-                &local.source.id,
+                &local.source_id,
                 std::slice::from_ref(&local_album),
                 local_generation,
             )
             .expect("upsert local album");
         store
             .upsert_albums(
-                &remote.source.id,
+                &remote.source_id,
                 std::slice::from_ref(&remote_album),
                 remote_generation,
             )
             .expect("upsert remote album");
         store
             .upsert_tracks(
-                &local.source.id,
+                &local.source_id,
                 std::slice::from_ref(&local_track),
                 local_generation,
             )
             .expect("upsert local track");
         store
             .upsert_tracks(
-                &remote.source.id,
+                &remote.source_id,
                 std::slice::from_ref(&remote_track),
                 remote_generation,
             )
             .expect("upsert remote track");
         store
             .upsert_artists(
-                &local.source.id,
+                &local.source_id,
                 std::slice::from_ref(&local_artist),
                 false,
                 local_generation,
@@ -1191,7 +1565,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             .expect("upsert local artist");
         store
             .upsert_artists(
-                &remote.source.id,
+                &remote.source_id,
                 std::slice::from_ref(&remote_artist),
                 false,
                 remote_generation,
@@ -1211,7 +1585,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     let local_override_count = store
         .connection
         .query_row(
@@ -1220,7 +1594,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             FROM item_favorite_overrides
             WHERE source_id = ?1
             ",
-            rusqlite::params![local.source.id.as_str()],
+            rusqlite::params![local.source_id.as_str()],
             |row| row.get::<_, i64>(0),
         )
         .expect("local override count");
@@ -1232,7 +1606,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
             FROM item_favorite_overrides
             WHERE source_id = ?1
             ",
-            rusqlite::params![remote.source.id.as_str()],
+            rusqlite::params![remote.source_id.as_str()],
             |row| row.get::<_, i64>(0),
         )
         .expect("remote override count");
@@ -1252,7 +1626,7 @@ fn schema_seventeen_resets() {
         "v17-reset"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     {
         let store = Store::open(&path).expect("open current store");
         store.save_source(&saved).expect("save server");
@@ -1264,7 +1638,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1280,19 +1654,19 @@ fn future_user_version() {
         "future"
     ));
     let _cleanup = fs::remove_file(&path);
-    let saved = saved_source();
+    let saved = stored_source();
     {
         let store = Store::open(&path).expect("open store");
         store.save_source(&saved).expect("save server");
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 26)
+        .pragma_update(None, "user_version", 29)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1318,6 +1692,39 @@ fn store_configures_busy_timeout() {
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 5_000);
 }
 #[test]
+fn store_recognizes_writer_contention_by_sqlite_code() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "writer-contention"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let holder = Store::open(&path).expect("open lock holder");
+    holder
+        .connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold writer slot");
+    let contender = rusqlite::Connection::open(&path).expect("open contender");
+    contender
+        .busy_timeout(std::time::Duration::ZERO)
+        .expect("disable contender wait");
+
+    let error = contender
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect_err("writer slot should be busy");
+    assert!(StoreError::from(error).is_contention());
+
+    holder
+        .connection
+        .execute_batch("ROLLBACK")
+        .expect("release writer slot");
+    drop(contender);
+    drop(holder);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+#[test]
 fn store_fast_read_has_no_busy_timeout() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
@@ -1327,11 +1734,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 25);
+        assert_eq!(store.schema_version().expect("schema version"), 28);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1347,7 +1754,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 25);
+        assert_eq!(store.schema_version().expect("schema version"), 28);
     }
 
     let store = Store::open_file(&path).expect("open current store");
@@ -1356,106 +1763,261 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 25);
+    assert_eq!(store.schema_version().expect("schema version"), 28);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn schema_trip_server() {
+fn playback_checkpoint_round_trips_opaque_payload() {
     let store = Store::open_memory().expect("open store");
-    let source_id = SourceId::fake(1);
-    let mut queue = QueueEngine::new(source_id.clone());
-    queue.append(&track(1, &album(1)));
+    let source = stored_source();
+    store.save_source(&source).expect("save source");
+    let checkpoint = PlaybackCheckpointRecord {
+        source_id: source.source_id.clone(),
+        revision: 7,
+        selected_occurrence_id: Some("occurrence-2".to_string()),
+        progress_millis: 12_345,
+        repeat_mode: "One".to_string(),
+        shuffle_enabled: true,
+        payload: r#"{"session":"opaque"}"#.to_string(),
+    };
     store
-        .save_queue_snapshot(&queue.snapshot())
-        .expect("save queue snapshot");
+        .save_playback_checkpoint(&checkpoint)
+        .expect("save playback checkpoint");
+
     assert_eq!(
         store
-            .load_queue_snapshot(&source_id)
-            .expect("load queue snapshot"),
-        Some(queue.snapshot())
+            .load_playback_checkpoint(&source.source_id)
+            .expect("load playback checkpoint"),
+        Some(checkpoint)
     );
     assert_eq!(
         store
-            .load_queue_snapshot(&SourceId::fake(2))
-            .expect("load queue snapshot"),
+            .load_playback_checkpoint(&SourceId::fake(2))
+            .expect("load missing checkpoint"),
         None
     );
 }
 
 #[test]
-fn queue_progress_updates_saved_current_entry() {
+fn deleting_a_playback_checkpoint_is_source_scoped() {
     let store = Store::open_memory().expect("open store");
-    let source_id = SourceId::fake(1);
-    let mut queue = QueueEngine::new(source_id.clone());
-    queue.append(&track(1, &album(1)));
-    queue.append(&track(2, &album(2)));
-    queue.next_track();
-    store
-        .save_queue_snapshot(&queue.snapshot())
-        .expect("save queue snapshot");
+    let first = stored_source_with_id("source:first");
+    let second = stored_source_with_id("source:second");
+    for source in [&first, &second] {
+        store.save_source(source).expect("save source");
+        store
+            .save_playback_checkpoint(&PlaybackCheckpointRecord {
+                source_id: source.source_id.clone(),
+                revision: 1,
+                selected_occurrence_id: None,
+                progress_millis: 0,
+                repeat_mode: "Off".to_string(),
+                shuffle_enabled: false,
+                payload: "opaque".to_string(),
+            })
+            .expect("save playback checkpoint");
+    }
 
-    let current = queue.current().expect("current entry");
     assert!(
         store
-            .save_queue_progress(&source_id, &current.id, &current.track_id, 73)
-            .expect("save queue progress")
+            .delete_playback_checkpoint(&first.source_id)
+            .expect("delete playback checkpoint")
     );
-
-    let saved = store
-        .load_queue_snapshot(&source_id)
-        .expect("load queue snapshot")
-        .expect("saved queue");
-    assert_eq!(saved.entries, queue.snapshot().entries);
-    assert_eq!(saved.current_index, queue.snapshot().current_index);
-    assert_eq!(saved.progress_seconds, 73);
-
+    assert!(
+        store
+            .load_playback_checkpoint(&first.source_id)
+            .expect("load deleted checkpoint")
+            .is_none()
+    );
+    assert!(
+        store
+            .load_playback_checkpoint(&second.source_id)
+            .expect("load retained checkpoint")
+            .is_some()
+    );
     assert!(
         !store
-            .save_queue_progress(
-                &source_id,
-                &queue.entries()[0].id,
-                &queue.entries()[0].track_id,
-                99
-            )
-            .expect("ignore stale queue progress")
+            .delete_playback_checkpoint(&first.source_id)
+            .expect("delete missing checkpoint")
     );
+}
+
+#[test]
+fn playback_progress_requires_matching_revision_and_occurrence() {
+    let store = Store::open_memory().expect("open store");
+    let source = stored_source();
+    store.save_source(&source).expect("save source");
+    let checkpoint = PlaybackCheckpointRecord {
+        source_id: source.source_id.clone(),
+        revision: 7,
+        selected_occurrence_id: Some("occurrence-2".to_string()),
+        progress_millis: 12_345,
+        repeat_mode: "Off".to_string(),
+        shuffle_enabled: false,
+        payload: "opaque payload".to_string(),
+    };
+    store
+        .save_playback_checkpoint(&checkpoint)
+        .expect("save playback checkpoint");
+
+    assert!(
+        store
+            .save_playback_progress(&source.source_id, 7, "occurrence-2", 73_000)
+            .expect("save playback progress")
+    );
+    for (revision, occurrence) in [(6, "occurrence-2"), (7, "occurrence-1")] {
+        assert!(
+            !store
+                .save_playback_progress(&source.source_id, revision, occurrence, 99_000,)
+                .expect("ignore stale playback progress")
+        );
+    }
+    let saved = store
+        .load_playback_checkpoint(&source.source_id)
+        .expect("load playback checkpoint")
+        .expect("saved playback checkpoint");
+    assert_eq!(saved.progress_millis, 73_000);
+    assert_eq!(saved.payload, checkpoint.payload);
+}
+
+#[test]
+fn playback_state_updates_scalars_and_rejects_delayed_structure() {
+    let store = Store::open_memory().expect("open store");
+    let source = stored_source();
+    store.save_source(&source).expect("save source");
+    let checkpoint = PlaybackCheckpointRecord {
+        source_id: source.source_id.clone(),
+        revision: 7,
+        selected_occurrence_id: Some("occurrence-2".to_string()),
+        progress_millis: 12_345,
+        repeat_mode: "Off".to_string(),
+        shuffle_enabled: false,
+        payload: "opaque payload".to_string(),
+    };
+    store
+        .save_playback_checkpoint(&checkpoint)
+        .expect("save playback checkpoint");
+
+    assert!(
+        store
+            .save_playback_state(
+                &source.source_id,
+                7,
+                Some("occurrence-4"),
+                44_000,
+                "All",
+                true,
+            )
+            .expect("save playback state")
+    );
+    assert!(
+        !store
+            .save_playback_state(&source.source_id, 6, None, 0, "One", false)
+            .expect("ignore stale playback state")
+    );
+    for revision in [7, 6] {
+        store
+            .save_playback_checkpoint(&PlaybackCheckpointRecord {
+                source_id: source.source_id.clone(),
+                revision,
+                selected_occurrence_id: Some("occurrence-2".to_string()),
+                progress_millis: 0,
+                repeat_mode: "Off".to_string(),
+                shuffle_enabled: false,
+                payload: format!("delayed revision {revision}"),
+            })
+            .expect("ignore delayed structural checkpoint");
+    }
+    let saved = store
+        .load_playback_checkpoint(&source.source_id)
+        .expect("load playback checkpoint")
+        .expect("saved playback checkpoint");
+    assert_eq!(
+        saved.selected_occurrence_id.as_deref(),
+        Some("occurrence-4")
+    );
+    assert_eq!(saved.progress_millis, 44_000);
+    assert_eq!(saved.repeat_mode, "All");
+    assert!(saved.shuffle_enabled);
+    assert_eq!(saved.payload, checkpoint.payload);
+}
+
+#[test]
+fn activity_outcomes_upsert_periods_and_aggregate_lifetime() {
+    let store = Store::open_memory().expect("open store");
+    let source = stored_source();
+    let track_id = TrackId::fake(1);
+    store.save_source(&source).expect("save source");
+    for outcome in [
+        ActivityOutcome {
+            source_id: source.source_id.clone(),
+            period: "2026-06".to_string(),
+            track_id: track_id.clone(),
+            qualified_plays: 1,
+            skips: 0,
+            last_played_at: Some(1_782_849_600),
+        },
+        ActivityOutcome {
+            source_id: source.source_id.clone(),
+            period: "2026-07".to_string(),
+            track_id: track_id.clone(),
+            qualified_plays: 1,
+            skips: 1,
+            last_played_at: Some(1_783_850_400),
+        },
+        ActivityOutcome {
+            source_id: source.source_id.clone(),
+            period: "2026-07".to_string(),
+            track_id: track_id.clone(),
+            qualified_plays: 0,
+            skips: 1,
+            last_played_at: None,
+        },
+    ] {
+        store
+            .record_activity_outcome(&outcome)
+            .expect("record activity outcome");
+    }
+
     assert_eq!(
         store
-            .load_queue_snapshot(&source_id)
-            .expect("load queue snapshot")
-            .expect("saved queue")
-            .progress_seconds,
-        73
+            .track_activity_summary(&source.source_id, &track_id)
+            .expect("load activity summary"),
+        TrackActivitySummary {
+            qualified_plays: 2,
+            skips: 2,
+            last_played_at: Some("2026-07-12 10:00:00".to_string()),
+        }
     );
 }
 
 #[test]
 fn schema_trip_token() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
     store
-        .set_active_source(&saved.source.id)
+        .set_active_source(&saved.source_id)
         .expect("set active server");
     assert_eq!(store.active_source().expect("active server"), Some(saved));
 }
 #[test]
 fn schema_load_source() {
     let store = Store::open_memory().expect("open store");
-    let playback = saved_source_with_id("server:playback");
-    let active = saved_source_with_id("server:active");
+    let playback = stored_source_with_id("server:playback");
+    let active = stored_source_with_id("server:active");
     store.save_source(&playback).expect("save playback server");
     store.save_source(&active).expect("save active server");
     store
-        .set_active_source(&active.source.id)
+        .set_active_source(&active.source_id)
         .expect("set active server");
 
     assert_eq!(
         store
-            .saved_source(&playback.source.id)
+            .stored_source(&playback.source_id)
             .expect("load requested server"),
         Some(playback)
     );
@@ -1786,10 +2348,12 @@ fn local_deletion_keeps_durable_track_state_and_external_mappings() {
             ) VALUES (
                 '{}', 'track', '{}', 'external_fact', 'true', 'musicbrainz', 'resolved'
             );
-            INSERT INTO entity_content_refs (
-                source_id, entity_kind, entity_id, content_kind, content_key, source
+            INSERT INTO entity_links (
+                source_id, entity_kind, entity_id, namespace, url, label, source, status
             ) VALUES (
-                '{}', 'track', '{}', 'lyrics', 'external-lyrics-one', 'musicbrainz'
+                '{}', 'track', '{}', 'external:track',
+                'https://example.invalid/track/external-track-one', NULL,
+                'musicbrainz', 'resolved'
             );
             ",
             case.id.as_str(),
@@ -1800,8 +2364,15 @@ fn local_deletion_keeps_durable_track_state_and_external_mappings() {
             entry.track.id.as_str(),
         ))
         .expect("save external entity state");
-    case.record_local_track_played(&case.id, &entry.track.id, "session-one")
-        .expect("record local play");
+    case.record_activity_outcome(&ActivityOutcome {
+        source_id: case.id.clone(),
+        period: "2026-07".to_string(),
+        track_id: entry.track.id.clone(),
+        qualified_plays: 1,
+        skips: 0,
+        last_played_at: Some(1_783_850_400),
+    })
+    .expect("record local play");
     case.set_track_favorite_for_owner(&case.id, &entry.track.id, true, SourceFeatureOwner::Store)
         .expect("save favorite override");
 
@@ -1841,11 +2412,7 @@ fn local_deletion_keeps_durable_track_state_and_external_mappings() {
             .len(),
         1
     );
-    for table in [
-        "entity_identity_keys",
-        "entity_facts",
-        "entity_content_refs",
-    ] {
+    for table in ["entity_identity_keys", "entity_facts", "entity_links"] {
         let count = case
             .connection
             .query_row(
@@ -1863,7 +2430,7 @@ fn local_deletion_keeps_durable_track_state_and_external_mappings() {
         .query_row(
             "
             SELECT
-                (SELECT COUNT(*) FROM track_activity WHERE source_id = ?1 AND track_id = ?2) +
+                (SELECT COUNT(*) FROM track_activity_period WHERE source_id = ?1 AND track_id = ?2) +
                 (SELECT COUNT(*) FROM item_favorite_overrides WHERE source_id = ?1 AND item_kind = 'track' AND item_id = ?2)
             ",
             rusqlite::params![case.id.as_str(), entry.track.id.as_str()],
@@ -1928,8 +2495,15 @@ fn schema_local_track_observations_preserve_app_owned_state() {
         PlaylistWriteMode::StoreOwned,
     )
     .expect("upsert store playlist entries");
-    case.record_local_track_played(&case.id, &metadata_track.id, "session-one")
-        .expect("record local play");
+    case.record_activity_outcome(&ActivityOutcome {
+        source_id: case.id.clone(),
+        period: "2026-07".to_string(),
+        track_id: metadata_track.id.clone(),
+        qualified_plays: 1,
+        skips: 0,
+        last_played_at: Some(1_783_850_400),
+    })
+    .expect("record local play");
     case.set_album_favorite_for_owner(&case.id, &album.id, true, SourceFeatureOwner::Store)
         .expect("favorite album override");
     case.set_track_favorite_for_owner(&case.id, &changed_track.id, true, SourceFeatureOwner::Store)
@@ -2058,15 +2632,10 @@ fn schema_local_track_observations_preserve_app_owned_state() {
         incoming_metadata_track.duration_seconds
     );
     let activity = case
-        .connection
-        .query_row(
-            "SELECT play_count, last_played IS NOT NULL FROM track_activity
-             WHERE source_id = ?1 AND track_id = ?2",
-            rusqlite::params![case.id.as_str(), metadata_track.id.as_str()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
-        )
+        .track_activity_summary(&case.id, &metadata_track.id)
         .expect("load track activity");
-    assert_eq!(activity, (1, true));
+    assert_eq!(activity.qualified_plays, 1);
+    assert!(activity.last_played_at.is_some());
 }
 
 #[test]
@@ -2349,180 +2918,7 @@ fn schema_artist_prefetch() {
     );
 }
 #[test]
-fn artist_image_use() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let album = album_with_image(1);
-    let track = track(1, &album);
-    let artist = artist(1, None);
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album.clone()],
-            tracks: vec![track],
-            artists: vec![artist.clone()],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-    let loaded = case
-        .load_artists(&case.id, false, 0, 10)
-        .expect("load artists")
-        .items
-        .remove(0);
-    let matching = case
-        .load_artists_matching(&case.id, false, "Artist 1", 0, 10)
-        .expect("search artists")
-        .items
-        .remove(0);
-    let global_search = case
-        .search_library(&case.id, "Artist 1", 10)
-        .expect("search library");
-    let detail = case
-        .load_artist_detail(&case.id, &artist.id)
-        .expect("load artist detail")
-        .expect("artist detail");
-    assert_eq!(loaded.image_ref, album.image_ref);
-    assert_eq!(matching.image_ref, album.image_ref);
-    assert_eq!(global_search.artists[0].image_ref, album.image_ref);
-    assert_eq!(detail.artist.image_ref, album.image_ref);
-}
-#[test]
-fn album_external_fallback_repairs_to_track_source_ref() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let track_ref = image_ref("track-source-cover", "track-source-tag");
-    let mut album = album(1);
-    album.image_ref = Some(image_ref(
-        "external:mb-release-group:group-one",
-        "external-tag-one",
-    ));
-    let mut track = track(1, &album);
-    track.image_ref = Some(track_ref.clone());
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album],
-            tracks: vec![track],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    let loaded = case
-        .load_albums(&case.id, 0, 10)
-        .expect("load albums")
-        .items
-        .remove(0);
-
-    assert_eq!(loaded.image_ref.as_ref(), Some(&track_ref));
-}
-#[test]
-fn album_source_ref_survives_track_fallback_repair() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let album_ref = image_ref("album-source-cover", "album-source-tag");
-    let track_ref = image_ref("track-source-cover", "track-source-tag");
-    let mut album = album(1);
-    album.image_ref = Some(album_ref.clone());
-    let mut track = track(1, &album);
-    track.image_ref = Some(track_ref);
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album],
-            tracks: vec![track],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    let loaded = case
-        .load_albums(&case.id, 0, 10)
-        .expect("load albums")
-        .items
-        .remove(0);
-
-    assert_eq!(loaded.image_ref.as_ref(), Some(&album_ref));
-}
-#[test]
-fn artist_source_fallback_wins_over_external_album_ref() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
-    let mut single = album(1);
-    single.title = "Example Single".to_string();
-    single.year = 2000;
-    single.image_ref = Some(external_ref);
-    let mut album = album_with_image(2);
-    album.title = "Example Album".to_string();
-    album.year = 2001;
-    let tracks = vec![track(1, &single), track(2, &album)];
-    let artist = artist(1, None);
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![single, album.clone()],
-            tracks,
-            artists: vec![artist.clone()],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    let loaded = case
-        .load_artists(&case.id, false, 0, 10)
-        .expect("load artists")
-        .items
-        .remove(0);
-    let detail = case
-        .load_artist_detail(&case.id, &artist.id)
-        .expect("load artist detail")
-        .expect("artist detail");
-
-    assert_eq!(loaded.image_ref, album.image_ref);
-    assert_eq!(detail.artist.image_ref, album.image_ref);
-}
-#[test]
-fn artist_external_fallback_repairs_to_source_ref() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
-    let mut single = album(1);
-    single.title = "Example Single".to_string();
-    single.year = 2000;
-    single.image_ref = Some(external_ref.clone());
-    let mut album = album_with_image(2);
-    album.title = "Example Album".to_string();
-    album.year = 2001;
-    let tracks = vec![track(1, &single), track(2, &album)];
-    let artist = artist(1, Some(external_ref));
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![single, album.clone()],
-            tracks,
-            artists: vec![artist.clone()],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    let loaded = case
-        .load_artists(&case.id, false, 0, 10)
-        .expect("load artists")
-        .items
-        .remove(0);
-    let detail = case
-        .load_artist_detail(&case.id, &artist.id)
-        .expect("load artist detail")
-        .expect("artist detail");
-
-    assert_eq!(loaded.image_ref, album.image_ref);
-    assert_eq!(detail.artist.image_ref, album.image_ref);
-}
-#[test]
-fn schema_win_fallback() {
+fn artist_direct_image_ref_round_trips() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let album = album_with_image(1);
@@ -2546,40 +2942,6 @@ fn schema_win_fallback() {
         .expect("artist detail");
     assert_eq!(loaded.image_ref, Some(artist_image.clone()));
     assert_eq!(detail.artist.image_ref, Some(artist_image));
-}
-#[test]
-fn album_artist_image() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let album_artist_id = ArtistId::fake(8);
-    let mut album = album_with_image(8);
-    album.artist_id = Some(ArtistId::fake(99));
-    album.album_artist_credits = vec![credit(album_artist_id.clone(), "Linked Album Artist")];
-    let mut album_artist = artist(8, None);
-    album_artist.name = "Linked Album Artist".to_string();
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album.clone()],
-            album_artists: vec![album_artist],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-    let loaded = case
-        .load_artists(&case.id, true, 0, 10)
-        .expect("load album artists")
-        .items
-        .into_iter()
-        .find(|artist| artist.id == album_artist_id)
-        .expect("album artist");
-    let matching = case
-        .load_artists_matching(&case.id, true, "Linked Album Artist", 0, 10)
-        .expect("search album artists")
-        .items
-        .remove(0);
-    assert_eq!(loaded.image_ref, album.image_ref);
-    assert_eq!(matching.image_ref, album.image_ref);
 }
 
 #[test]
@@ -3410,49 +3772,6 @@ fn schema_native_playlist_upsert_rejects_store_owned_collision() {
 }
 
 #[test]
-fn schema_trip_page() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let mut album = album(1);
-    album.release_types = vec!["album".to_string(), "ep".to_string()];
-    album.is_compilation = Some(false);
-    album.musicbrainz_album_id = Some("mb-album-one".to_string());
-    album.musicbrainz_release_group_id = Some("mb-group-one".to_string());
-    let tracks = vec![track(1, &album), track(2, &album)];
-    let selected_ref = ImageRef::new(
-        "external:mb-release-group:mb-group-one",
-        Some("external-v2-46c4966fcc822df3".to_string()),
-    );
-    let mut expected_album = album.clone();
-    expected_album.image_ref = Some(selected_ref.clone());
-    let expected_tracks = tracks
-        .iter()
-        .cloned()
-        .map(|mut track| {
-            track.image_ref = Some(selected_ref.clone());
-            track
-        })
-        .collect::<Vec<_>>();
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album.clone()],
-            tracks,
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-    let albums = case.load_albums(&case.id, 0, 25).expect("load albums");
-    let detail = case
-        .load_album_detail(&case.id, &album.id)
-        .expect("load detail")
-        .expect("detail");
-    assert_eq!(albums.total, 1);
-    assert_eq!(albums.items, vec![expected_album.clone()]);
-    assert_eq!(detail.0, expected_album);
-    assert_eq!(detail.1, expected_tracks);
-}
-#[test]
 fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
@@ -3480,22 +3799,22 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     );
 
     let candidates = case
-        .load_album_release_type_lookup_candidates(&case.id, 10)
+        .load_album_identity_candidates(&case.id, 10)
         .expect("load candidates");
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].album_id, release_group_album.id);
-    assert_eq!(candidates[0].lookup_key, "release-group:group-one");
+    assert_eq!(candidates[0].identity_key, "release-group:group-one");
     assert_eq!(candidates[1].album_id, release_album.id);
-    assert_eq!(candidates[1].lookup_key, "release:release-two");
+    assert_eq!(candidates[1].identity_key, "release:release-two");
 
-    case.save_album_release_type_lookup_miss(
+    case.save_album_identity_miss(
         &case.id,
         &release_group_album.id,
         "release-group:group-one",
         "not found",
     )
     .expect("save miss");
-    case.update_album_release_metadata(
+    case.update_album_identity_metadata(
         &case.id,
         &release_album.id,
         &["single".to_string()],
@@ -3504,7 +3823,7 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     .expect("update release metadata");
 
     assert!(
-        case.load_album_release_type_lookup_candidates(&case.id, 10)
+        case.load_album_identity_candidates(&case.id, 10)
             .expect("reload candidates")
             .is_empty()
     );
@@ -3594,14 +3913,6 @@ fn projection_writes_populate_entity_identity_rows() {
             "musicbrainz:artist",
             "artist-one"
         ),
-        1
-    );
-    assert_eq!(
-        content_ref_count(&case, &case.id, "album", album.id.as_str(), "cover"),
-        1
-    );
-    assert_eq!(
-        content_ref_count(&case, &case.id, "track", track.id.as_str(), "cover"),
         1
     );
 }
@@ -3964,7 +4275,7 @@ fn schema_trip_model() {
 }
 
 #[test]
-fn schema_collection_playlist() {
+fn collection_album_artwork_is_ordered_and_live() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let mut albums = (1..=5).map(album_with_image).collect::<Vec<_>>();
@@ -4009,15 +4320,22 @@ fn schema_collection_playlist() {
         .load_playlists(&case.id, 0, 20)
         .expect("load playlists");
     assert_eq!(
-        genre_page.items[0].image_refs,
+        genre_page.items[0]
+            .representative_albums
+            .iter()
+            .filter_map(|album| album.image_ref.clone())
+            .collect::<Vec<_>>(),
         albums
             .iter()
-            .take(4)
             .filter_map(|album| album.image_ref.clone())
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        playlist_page.items[0].image_refs,
+        playlist_page.items[0]
+            .representative_albums
+            .iter()
+            .filter_map(|album| album.image_ref.clone())
+            .collect::<Vec<_>>(),
         vec![
             tracks[0].image_ref.clone().expect("first cover"),
             tracks[1].image_ref.clone().expect("second cover"),
@@ -4030,131 +4348,110 @@ fn schema_collection_playlist() {
     changed_album.image_ref = Some(image_ref("changed-cover", "changed-tag"));
     case.upsert_albums(&case.id, std::slice::from_ref(&changed_album), generation)
         .expect("change album");
-    let cached_again = case
-        .load_genres(&case.id, 0, 20)
-        .expect("load cached genres");
-    assert_eq!(
-        cached_again.items[0].image_refs,
-        genre_page.items[0].image_refs
-    );
-}
-
-#[test]
-fn schema_repair_cache() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let mut albums = (1..=4).map(album_with_image).collect::<Vec<_>>();
-    let mut genre = genre(1, None);
-    for album in &mut albums {
-        album.genres = vec![genre.name.clone()];
-    }
-    let tracks = albums
+    let updated = case.load_genres(&case.id, 0, 20).expect("reload genres");
+    let mut expected = genre_page.items[0]
+        .representative_albums
         .iter()
-        .enumerate()
-        .map(|(index, album)| track(index as u32 + 1, album))
+        .filter_map(|album| album.image_ref.clone())
         .collect::<Vec<_>>();
-    let playlist = playlist(1, Some(image_ref("playlist-cover", "playlist-tag")));
-
-    case.upsert_albums(&case.id, &albums, generation)
-        .expect("upsert albums");
-    case.upsert_tracks(&case.id, &tracks, generation)
-        .expect("upsert tracks");
-    case.upsert_genres(&case.id, std::slice::from_ref(&genre), generation)
-        .expect("upsert genre");
-    case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
-        .expect("upsert playlist");
-
-    genre.image_refs.clear();
+    expected[0] = changed_album.image_ref.expect("changed cover");
     assert_eq!(
-        case.load_genres(&case.id, 0, 20)
-            .expect("load stale genres")
-            .items[0]
-            .image_refs,
-        genre.image_refs
-    );
-
-    case.ensure_collection_cover_refs(&case.id)
-        .expect("ensure cover refs");
-    assert_eq!(
-        case.load_genres(&case.id, 0, 20)
-            .expect("load repaired genres")
-            .items[0]
-            .image_refs,
-        albums
+        updated.items[0]
+            .representative_albums
             .iter()
-            .take(4)
             .filter_map(|album| album.image_ref.clone())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        expected,
+        "relationship artwork should be derived from current facts"
     );
 }
 
 #[test]
-fn schema_repair_genre() {
+fn coverless_album_relationships_keep_external_identity_inputs() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
-    let mut albums = (1..=8).map(album_with_image).collect::<Vec<_>>();
-    let first_genre = genre(1, None);
-    let second_genre = genre(2, None);
-    for album in &mut albums[..4] {
-        album.genres = vec![first_genre.name.clone()];
-    }
-    for album in &mut albums[4..] {
-        album.genres = vec![second_genre.name.clone()];
-    }
-    let tracks = albums
-        .iter()
-        .enumerate()
-        .map(|(index, album)| track(index as u32 + 1, album))
-        .collect::<Vec<_>>();
-
+    let mut album = album(1);
+    album.genres = vec!["Ambient".to_string()];
+    album.musicbrainz_album_id = Some("11111111-1111-1111-1111-111111111111".to_string());
+    album.musicbrainz_release_group_id = Some("22222222-2222-2222-2222-222222222222".to_string());
+    let mut track = track(1, &album);
+    track.moods = vec!["Focus".to_string()];
+    track.play_count = Some(1);
+    let artist = artist(1, None);
+    let mut genre = genre(1, None);
+    genre.name = album.genres[0].clone();
+    let playlist = playlist(1, None);
+    let entries = schema_track_test(&playlist.id, std::slice::from_ref(&track));
     case.commit_library(
         generation,
         LibraryObservation {
-            albums: albums.clone(),
-            tracks,
-            genres: vec![first_genre.clone(), second_genre.clone()],
+            albums: vec![album.clone()],
+            tracks: vec![track.clone()],
+            artists: vec![artist],
+            genres: vec![genre],
+            playlists: vec![PlaylistDetail {
+                playlist,
+                tracks: vec![track],
+                entries,
+            }],
             ..LibraryObservation::default()
         },
         "commit library",
     );
-    case.connection
-        .execute(
-            "
-            DELETE FROM collection_cover_refs
-            WHERE source_id = ?1
-              AND collection_type = ?2
-              AND collection_id = ?3
-            ",
-            rusqlite::params![
-                case.id.as_str(),
-                COLLECTION_COVER_GENRE,
-                second_genre.id.as_str()
-            ],
-        )
-        .expect("drop one genre cover cache row");
 
-    let partial = case
-        .load_genres(&case.id, 0, 20)
-        .expect("load partially cached genres");
-    assert!(partial.items[0].image_refs.len() >= 4);
-    assert!(
-        partial.items[1].image_refs.is_empty(),
-        "second genre should simulate an interrupted cover-ref cache"
-    );
-
-    case.ensure_collection_cover_refs(&case.id)
-        .expect("ensure cover refs");
-    let repaired = case
-        .load_genres(&case.id, 0, 20)
-        .expect("load repaired genres");
+    let loaded_track = case
+        .load_track(&case.id, &TrackId::fake(1))
+        .expect("load track")
+        .expect("track");
+    let loaded_album = loaded_track.album_artwork.expect("album artwork facts");
+    assert_eq!(loaded_album.image_ref, None);
+    assert_eq!(loaded_album.title, album.title);
+    assert_eq!(loaded_album.artist, album.artist);
     assert_eq!(
-        repaired.items[1].image_refs,
-        albums[4..]
-            .iter()
-            .take(4)
-            .filter_map(|album| album.image_ref.clone())
-            .collect::<Vec<_>>()
+        loaded_album.musicbrainz_album_id,
+        album.musicbrainz_album_id
     );
+    assert_eq!(
+        loaded_album.musicbrainz_release_group_id,
+        album.musicbrainz_release_group_id
+    );
+
+    let artist_page = case
+        .load_artists(&case.id, false, 0, 10)
+        .expect("load artists");
+    let genre_page = case.load_genres(&case.id, 0, 10).expect("load genres");
+    let mood_page = case.load_moods(&case.id, 0, 10).expect("load moods");
+    let playlist_page = case
+        .load_playlists(&case.id, 0, 10)
+        .expect("load playlists");
+    let smart_page = case
+        .load_smart_playlists(&case.id, 0, 10)
+        .expect("load smart playlists");
+    let smart = smart_page
+        .items
+        .iter()
+        .find(|playlist| playlist.builtin == Some(SmartPlaylistBuiltin::MostPlayed))
+        .expect("most played");
+
+    for representatives in [
+        artist_page.items[0].representative_albums.as_slice(),
+        genre_page.items[0].representative_albums.as_slice(),
+        mood_page.items[0].representative_albums.as_slice(),
+        playlist_page.items[0].representative_albums.as_slice(),
+        smart.representative_albums.as_slice(),
+    ] {
+        assert_eq!(representatives.len(), 1);
+        assert_eq!(representatives[0].id, album.id);
+        assert_eq!(representatives[0].image_ref, None);
+        assert_eq!(
+            representatives[0].musicbrainz_album_id,
+            album.musicbrainz_album_id
+        );
+        assert_eq!(
+            representatives[0].musicbrainz_release_group_id,
+            album.musicbrainz_release_group_id
+        );
+    }
 }
 
 fn schema_track_test(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<PlaylistEntry> {
@@ -4168,14 +4465,15 @@ fn schema_track_test(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<Playlist
         .collect()
 }
 #[test]
-fn schema_track_missing() {
+fn canonical_album_art_is_derived_without_persisting_fallback() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let album = album(1);
     let fallback_image = image_ref("album-track-cover", "album-track-tag");
     let mut first_track = track(1, &album);
     first_track.image_ref = Some(fallback_image.clone());
-    let second_track = track(2, &album);
+    let mut second_track = track(2, &album);
+    second_track.image_ref = Some(image_ref("later-track-cover", "later-track-tag"));
     case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     case.upsert_tracks(
@@ -4191,269 +4489,54 @@ fn schema_track_missing() {
         .expect("load detail")
         .expect("detail");
 
-    assert_eq!(albums.items[0].image_ref, Some(fallback_image.clone()));
-    assert_eq!(detail.0.image_ref, Some(fallback_image));
-    assert_eq!(detail.1, vec![first_track, second_track]);
+    assert_eq!(
+        case.load_raw_album_image_refs(&case.id)
+            .expect("load physical album art")
+            .get(&album.id),
+        Some(&None)
+    );
+    assert_eq!(albums.items[0].image_ref.as_ref(), Some(&fallback_image));
+    assert_eq!(detail.0.image_ref.as_ref(), Some(&fallback_image));
+    assert_eq!(
+        detail
+            .1
+            .iter()
+            .map(|track| track.image_ref.clone())
+            .collect::<Vec<_>>(),
+        vec![first_track.image_ref, second_track.image_ref]
+    );
+    assert!(detail.1.iter().all(|track| {
+        track
+            .album_artwork
+            .as_ref()
+            .and_then(|artwork| artwork.image_ref.as_ref())
+            == Some(&fallback_image)
+    }));
+    let serialized = serde_json::to_value(&detail.1[0]).expect("serialize hydrated track");
+    assert!(serialized.get("album_artwork").is_none());
 }
 
 #[test]
-fn selected_image_origin_marks_source_fallback_and_external_refs() {
+fn canonical_album_art_uses_related_source_artist_without_persisting_it() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
-
-    let source_album = album(1);
-    let track_image = image_ref("track-source-cover", "track-source-tag");
-    let mut source_track = track(1, &source_album);
-    source_track.image_ref = Some(track_image);
-    let mut external_album = album(2);
-    external_album.musicbrainz_release_group_id =
-        Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
-
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![source_album.clone(), external_album.clone()],
-            tracks: vec![source_track.clone()],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    assert_eq!(
-        selected_image_origin(
-            &case,
-            &case.id,
-            "tracks",
-            "track_id",
-            source_track.id.as_str(),
-        ),
-        "source"
-    );
-    assert_eq!(
-        case.load_raw_track_image_refs(&case.id)
-            .expect("load source observations")
-            .get(&source_track.id),
-        Some(&source_track.image_ref)
-    );
-
-    assert_eq!(
-        selected_image_origin(
-            &case,
-            &case.id,
-            "albums",
-            "album_id",
-            source_album.id.as_str(),
-        ),
-        "fallback"
-    );
-    assert_eq!(
-        selected_image_origin(
-            &case,
-            &case.id,
-            "albums",
-            "album_id",
-            external_album.id.as_str(),
-        ),
-        "external"
-    );
-    let raw_albums = case
-        .load_raw_album_image_refs(&case.id)
-        .expect("load source observations");
-    assert_eq!(raw_albums.get(&source_album.id), Some(&None));
-    assert_eq!(raw_albums.get(&external_album.id), Some(&None));
-}
-
-#[test]
-fn remote_track_source_art_survives_album_fallback() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-    let album_image = image_ref("provider-album-cover", "album-tag");
-    let mut album = album(1);
-    album.image_ref = Some(album_image);
-    let mut track = track(1, &album);
-    let track_image = image_ref("provider-song-cover", "song-tag");
-    track.image_ref = Some(track_image.clone());
-
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album],
-            tracks: vec![track.clone()],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-    let tracks = case.load_tracks(&case.id, 0, 25).expect("load tracks");
-    assert_eq!(tracks.items[0].image_ref, Some(track_image));
-    assert_eq!(
-        selected_image_origin(&case, &case.id, "tracks", "track_id", track.id.as_str()),
-        "source"
-    );
-    assert_eq!(
-        case.connection
-            .query_row(
-                "
-                SELECT content_key
-                FROM entity_content_refs
-                WHERE source_id = ?1
-                  AND entity_kind = 'track'
-                  AND entity_id = ?2
-                  AND content_kind = 'cover'
-                ",
-                rusqlite::params![case.id.as_str(), track.id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .expect("selected track content key"),
-        "provider-song-cover\u{1f}song-tag"
-    );
-}
-
-#[test]
-fn source_artist_image_seeds_album_before_external_identity() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-
-    let artist_image = image_ref("artist-source-cover", "artist-source-tag");
+    let album = album(1);
+    let artist_image = image_ref("artist-folder-cover", "artist-folder-tag");
     let artist = artist(1, Some(artist_image.clone()));
-    let mut album = album(1);
-    album.musicbrainz_release_group_id = Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
-    let track = track(1, &album);
-
-    case.commit_library(
-        generation,
-        LibraryObservation {
-            albums: vec![album.clone()],
-            tracks: vec![track.clone()],
-            artists: vec![artist],
-            ..LibraryObservation::default()
-        },
-        "commit library",
-    );
-
-    let detail = case
-        .load_album_detail(&case.id, &album.id)
-        .expect("load detail")
-        .expect("detail");
-
-    assert_eq!(detail.0.image_ref, Some(artist_image.clone()));
-    assert_eq!(detail.1[0].image_ref, Some(artist_image));
-    assert_eq!(
-        selected_image_origin(&case, &case.id, "albums", "album_id", album.id.as_str(),),
-        "fallback"
-    );
-    assert_eq!(
-        selected_image_origin(&case, &case.id, "tracks", "track_id", track.id.as_str(),),
-        "fallback"
-    );
-}
-
-#[test]
-fn fallback_artist_image_does_not_seed_album_fallback() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-
-    let album = album(1);
-    let artist = artist(1, None);
-    let track = track(1, &album);
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
+    case.upsert_artists(&case.id, &[artist], false, generation)
         .expect("upsert artist");
     case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.connection
-        .execute(
-            "
-            UPDATE artists
-            SET image_item_id = 'derived-artist-cover',
-                image_tag = 'derived-artist-tag',
-                image_origin = 'fallback'
-            WHERE source_id = ?1 AND artist_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), artist.id.as_str()],
-        )
-        .expect("mark derived artist image");
 
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
+    let projected = case.load_albums(&case.id, 0, 1).expect("load albums");
 
-    let album_image: Option<String> = case
-        .connection
-        .query_row(
-            "
-            SELECT image_item_id
-            FROM albums
-            WHERE source_id = ?1 AND album_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), album.id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("album image");
-
-    assert_eq!(album_image, None);
-}
-
-#[test]
-fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
-    let case = StoreCase::open();
-    let generation = case.start_sync("begin sync");
-
-    let album = album(1);
-    let artist = artist(1, None);
-    let track = track(1, &album);
-    case.upsert_artists(&case.id, std::slice::from_ref(&artist), false, generation)
-        .expect("upsert artist");
-    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    case.upsert_tracks(&case.id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    case.connection
-        .execute(
-            "
-            UPDATE tracks
-            SET image_item_id = 'derived-track-cover',
-                image_tag = 'derived-track-tag',
-                image_origin = 'fallback'
-            WHERE source_id = ?1 AND track_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), track.id.as_str()],
-        )
-        .expect("mark derived track image");
-
-    case.refresh_library_counts(&case.id)
-        .expect("refresh counts");
-
-    let album_image: Option<String> = case
-        .connection
-        .query_row(
-            "
-            SELECT image_item_id
-            FROM albums
-            WHERE source_id = ?1 AND album_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), album.id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("album image");
-    let artist_image: Option<String> = case
-        .connection
-        .query_row(
-            "
-            SELECT image_item_id
-            FROM artists
-            WHERE source_id = ?1 AND artist_id = ?2
-            ",
-            rusqlite::params![case.id.as_str(), artist.id.as_str()],
-            |row| row.get(0),
-        )
-        .expect("artist image");
-
-    assert_eq!(album_image, None);
-    assert_eq!(artist_image, None);
     assert_eq!(
-        selected_image_origin(&case, &case.id, "albums", "album_id", album.id.as_str(),),
-        "unknown"
+        case.load_raw_album_image_refs(&case.id)
+            .expect("load physical album art")
+            .get(&album.id),
+        Some(&None)
     );
+    assert_eq!(projected.items[0].image_ref, Some(artist_image));
 }
 
 #[test]
@@ -4502,13 +4585,13 @@ fn schema_keep_boundaries() {
         .expect("upsert tracks");
 
     let full_page = case
-        .load_tracks_sorted(&case.id, LibraryField::Album, false, 0, 10)
+        .load_tracks_sorted(&case.id, TrackSort::Album, false, 0, 10)
         .expect("load full sorted page");
     let first_page = case
-        .load_tracks_sorted(&case.id, LibraryField::Album, false, 0, 2)
+        .load_tracks_sorted(&case.id, TrackSort::Album, false, 0, 2)
         .expect("load first sorted page");
     let second_page = case
-        .load_tracks_sorted(&case.id, LibraryField::Album, false, 2, 2)
+        .load_tracks_sorted(&case.id, TrackSort::Album, false, 2, 2)
         .expect("load second sorted page");
     let combined_ids = first_page
         .items
@@ -4534,7 +4617,7 @@ fn schema_keep_boundaries() {
     assert_eq!(combined_ids, full_ids);
 
     let search_page = case
-        .load_tracks_matching_sorted(&case.id, "Needle", LibraryField::Album, false, 0, 10)
+        .load_tracks_matching_sorted(&case.id, "Needle", TrackSort::Album, false, 0, 10)
         .expect("load sorted search page");
     assert_eq!(
         search_page
@@ -4543,6 +4626,62 @@ fn schema_keep_boundaries() {
             .map(|track| track.id.clone())
             .collect::<Vec<_>>(),
         full_ids
+    );
+}
+
+#[test]
+fn bpm_sort_projects_values_with_stable_null_last_order() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin bpm sort sync");
+    let album = album(1);
+    let mut tracks = (1..=4)
+        .map(|number| track(number, &album))
+        .collect::<Vec<_>>();
+    for track in &mut tracks {
+        track.title = "Needle!".to_string();
+        track.track_number = 1;
+    }
+    tracks[0].bpm = Some(120);
+    tracks[1].bpm = Some(90);
+    tracks[2].bpm = None;
+    tracks[3].bpm = Some(120);
+    case.upsert_albums(&case.id, &[album], generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, &tracks, generation)
+        .expect("upsert tracks");
+
+    let assert_order = |page: PagedResponse<Track>, expected: &[usize]| {
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|track| (track.id.clone(), track.bpm))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|index| (tracks[*index].id.clone(), tracks[*index].bpm))
+                .collect::<Vec<_>>()
+        );
+    };
+
+    assert_order(
+        case.load_tracks_sorted(&case.id, TrackSort::Bpm, false, 0, 10)
+            .expect("load BPM-sorted tracks"),
+        &[1, 0, 3, 2],
+    );
+    assert_order(
+        case.load_tracks_sorted(&case.id, TrackSort::Bpm, true, 0, 10)
+            .expect("load descending BPM-sorted tracks"),
+        &[3, 0, 1, 2],
+    );
+    assert_order(
+        case.load_tracks_matching_sorted(&case.id, "Needle", TrackSort::Bpm, false, 0, 10)
+            .expect("load FTS BPM-sorted tracks"),
+        &[1, 0, 3, 2],
+    );
+    assert_order(
+        case.load_tracks_matching_sorted(&case.id, "!", TrackSort::Bpm, false, 0, 10)
+            .expect("load LIKE BPM-sorted tracks"),
+        &[1, 0, 3, 2],
     );
 }
 #[test]
@@ -4598,10 +4737,20 @@ fn paged_search_read() {
         .load_playlists_matching(&case.id, "Playlist 505", 0, 10)
         .expect("search playlists");
     assert_eq!(album_page.items, vec![albums[504].clone()]);
-    assert_eq!(track_page.items, vec![tracks[1004].clone()]);
+    assert_eq!(track_page.items[0].id, tracks[1004].id);
     assert_eq!(artist_page.items, vec![artists[504].clone()]);
     assert_eq!(album_artist_page.items, vec![album_artists[504].clone()]);
-    assert_eq!(genre_page.items, vec![genres[504].clone()]);
+    assert_eq!(genre_page.items.len(), 1);
+    assert_eq!(genre_page.items[0].id, genres[504].id);
+    assert_eq!(genre_page.items[0].name, genres[504].name);
+    assert_eq!(
+        genre_page.items[0]
+            .representative_albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>(),
+        vec![albums[504].id.clone()]
+    );
     assert_eq!(playlist_page.items, vec![playlists[504].clone()]);
 }
 #[test]
@@ -4633,8 +4782,25 @@ fn playlist_detail_stores_ordered_tracks() {
         .load_playlist_detail(&case.id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
-    assert_eq!(detail.playlist, playlist);
-    assert_eq!(detail.tracks, vec![track_two, track_one]);
+    assert_eq!(detail.playlist.id, playlist.id);
+    assert_eq!(detail.playlist.name, playlist.name);
+    assert_eq!(
+        detail
+            .playlist
+            .representative_albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>(),
+        vec![album.id]
+    );
+    assert_eq!(
+        detail
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![track_two.id, track_one.id]
+    );
 }
 
 #[test]

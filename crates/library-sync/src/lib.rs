@@ -2,15 +2,14 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::time::Duration;
 
-use domain::{SourceEntityKind, SourceId};
 use library::{
-    LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, SourceObjectMapping, Store, StoreError,
-    SyncCommit, SyncCoverage, TrackFolderMembership,
+    LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, PagedResponse, SourceEntityKind, SourceId,
+    SourceObjectMapping, Store, StoreError, SyncCommit, SyncCoverage, TrackFolderMembership,
 };
-use source::{
+use sources::{
     LibraryChangeResolution, LibraryChangeResolver, LibraryObjectObservation, MusicFolderProvider,
-    MusicSource, PageState, PagedRequest, PagedResponse, PlaylistReader, SourceError,
-    SourceObjectChanges, SourceObjectKeyProvider,
+    MusicSource, PageState, PagedRequest, PlaylistReader, SourceError, SourceObjectChanges,
+    SourceObjectKeyProvider,
 };
 use thiserror::Error;
 
@@ -570,7 +569,7 @@ async fn read_pages<T, Fetch, PageFuture, Observe>(
 ) -> SyncResult<()>
 where
     Fetch: FnMut(PagedRequest) -> PageFuture,
-    PageFuture: Future<Output = source::SourceResult<PagedResponse<T>>>,
+    PageFuture: Future<Output = sources::SourceResult<PagedResponse<T>>>,
     Observe: FnMut(&[T]) -> SyncResult<()>,
 {
     let mut pages = PageState::default();
@@ -603,7 +602,7 @@ where
 
 async fn await_source<T, F>(cancelled: &dyn Fn() -> bool, operation: F) -> SyncResult<T>
 where
-    F: Future<Output = source::SourceResult<T>>,
+    F: Future<Output = sources::SourceResult<T>>,
 {
     tokio::pin!(operation);
     loop {
@@ -636,12 +635,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use domain::{
+    use library::{
         Album, AlbumDetail, AlbumId, Artist, Genre, GenreDetail, GenreId, HomeSection,
-        LocalFileFacts, LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId,
-        Playlist, PlaylistDetail, PlaylistId, SearchResults, SourceIdentity, Track, TrackId,
+        LocalFileFacts, LocalManifestEntry, MusicFolder, MusicFolderId, Playlist, PlaylistDetail,
+        PlaylistId, SearchResults, Track, TrackId,
     };
-    use library::{SavedSource, SourceLocalAccess};
+    use library::{SourceLocalAccess, StoredSource};
+    use sources::SourceIdentity;
+    use sources::local::LocalManifestScan;
 
     use super::*;
 
@@ -655,7 +656,7 @@ mod tests {
             &self,
             _changes: &SourceObjectChanges,
             _known: &[SourceObjectMapping],
-        ) -> source::SourceResult<LibraryChangeResolution> {
+        ) -> sources::SourceResult<LibraryChangeResolution> {
             Ok(self.resolution.clone())
         }
     }
@@ -790,6 +791,7 @@ mod tests {
             disc_number: 1,
             track_number: 1,
             image_ref: None,
+            album_artwork: None,
             genres: Vec::new(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,
@@ -810,8 +812,8 @@ mod tests {
             track_count: 0,
             duration_seconds: 0,
             top_genres: Vec::new(),
-            image_refs: Vec::new(),
             image_ref: None,
+            representative_albums: Vec::new(),
         }
     }
 
@@ -821,14 +823,14 @@ mod tests {
             &self.identity
         }
 
-        async fn home_sections(&self) -> source::SourceResult<Vec<HomeSection>> {
+        async fn home_sections(&self) -> sources::SourceResult<Vec<HomeSection>> {
             Ok(Vec::new())
         }
 
         async fn albums(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Album>> {
+        ) -> sources::SourceResult<PagedResponse<Album>> {
             let read = self.album_reads.fetch_add(1, Ordering::Relaxed);
             let page = match self.album_pages {
                 AlbumPages::KnownTotal => self.page(&self.albums, request, self.albums.len()),
@@ -859,14 +861,14 @@ mod tests {
             Ok(page)
         }
 
-        async fn album_detail(&self, _album_id: &AlbumId) -> source::SourceResult<AlbumDetail> {
+        async fn album_detail(&self, _album_id: &AlbumId) -> sources::SourceResult<AlbumDetail> {
             Err(SourceError::NotFound)
         }
 
         async fn tracks(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Track>> {
+        ) -> sources::SourceResult<PagedResponse<Track>> {
             self.track_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&self.tracks, request, self.tracks.len()))
         }
@@ -874,7 +876,7 @@ mod tests {
         async fn artists(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Artist>> {
+        ) -> sources::SourceResult<PagedResponse<Artist>> {
             self.artist_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[], request, 0))
         }
@@ -882,7 +884,7 @@ mod tests {
         async fn album_artists(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Artist>> {
+        ) -> sources::SourceResult<PagedResponse<Artist>> {
             self.album_artist_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[], request, 0))
         }
@@ -890,27 +892,27 @@ mod tests {
         async fn genres(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Genre>> {
+        ) -> sources::SourceResult<PagedResponse<Genre>> {
             self.genre_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[], request, 0))
         }
 
-        async fn genre_detail(&self, _genre_id: &GenreId) -> source::SourceResult<GenreDetail> {
+        async fn genre_detail(&self, _genre_id: &GenreId) -> sources::SourceResult<GenreDetail> {
             Err(SourceError::NotFound)
         }
 
-        async fn track(&self, _track_id: &TrackId) -> source::SourceResult<Track> {
+        async fn track(&self, _track_id: &TrackId) -> sources::SourceResult<Track> {
             Err(SourceError::NotFound)
         }
 
-        async fn search(&self, _query: &str) -> source::SourceResult<SearchResults> {
+        async fn search(&self, _query: &str) -> sources::SourceResult<SearchResults> {
             Ok(SearchResults::default())
         }
     }
 
     #[async_trait(?Send)]
     impl MusicFolderProvider for AlbumSource {
-        async fn music_folders(&self) -> source::SourceResult<Vec<MusicFolder>> {
+        async fn music_folders(&self) -> sources::SourceResult<Vec<MusicFolder>> {
             self.music_folder_reads.fetch_add(1, Ordering::Relaxed);
             Ok(vec![music_folder()])
         }
@@ -919,7 +921,7 @@ mod tests {
             &self,
             _folder_id: &MusicFolderId,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Track>> {
+        ) -> sources::SourceResult<PagedResponse<Track>> {
             self.folder_track_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[], request, 0))
         }
@@ -930,7 +932,7 @@ mod tests {
         async fn playlists(
             &self,
             request: PagedRequest,
-        ) -> source::SourceResult<PagedResponse<Playlist>> {
+        ) -> sources::SourceResult<PagedResponse<Playlist>> {
             self.playlist_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[playlist()], request, 1))
         }
@@ -938,7 +940,7 @@ mod tests {
         async fn playlist_detail(
             &self,
             playlist_id: &PlaylistId,
-        ) -> source::SourceResult<PlaylistDetail> {
+        ) -> sources::SourceResult<PlaylistDetail> {
             self.playlist_detail_reads.fetch_add(1, Ordering::Relaxed);
             Ok(PlaylistDetail {
                 playlist: Playlist {
@@ -956,36 +958,29 @@ mod tests {
             &self,
             _entity_kind: SourceEntityKind,
             entity_id: &str,
-        ) -> source::SourceResult<String> {
+        ) -> sources::SourceResult<String> {
             Ok(entity_id.to_string())
         }
     }
 
     fn save_source(store: &Store, source: &AlbumSource) {
         store
-            .save_source(&SavedSource {
-                source: source.identity.clone(),
-                user_id: "user".to_string(),
-                username: "user".to_string(),
-                trust_invalid_cert: false,
-                use_jellyfin_instant_mix: false,
+            .save_source(&StoredSource {
+                source_id: source.identity.id.clone(),
+                kind: source.identity.kind.clone(),
+                name: source.identity.name.clone(),
+                provider_payload: "{}".to_string(),
             })
             .expect("save source");
     }
 
     fn save_empty_source(store: &Store, source_id: &SourceId) {
         store
-            .save_source(&SavedSource {
-                source: SourceIdentity {
-                    id: source_id.clone(),
-                    kind: "test".to_string(),
-                    name: "Test".to_string(),
-                    base_url: "https://music.example".to_string(),
-                },
-                user_id: "user".to_string(),
-                username: "user".to_string(),
-                trust_invalid_cert: false,
-                use_jellyfin_instant_mix: false,
+            .save_source(&StoredSource {
+                source_id: source_id.clone(),
+                kind: "test".to_string(),
+                name: "Test".to_string(),
+                provider_payload: "{}".to_string(),
             })
             .expect("save source");
     }

@@ -19,6 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait.workspace = true
+artwork.workspace = true
 clap = { workspace = true, features = ["derive"] }
 directories.workspace = true
 gdk-pixbuf.workspace = true
@@ -29,13 +30,14 @@ md5.workspace = true
 reqwest = { workspace = true, features = ["blocking", "form", "json"] }
 domain.workspace = true
 playback.workspace = true
-source.workspace = true
-source-jellyfin.workspace = true
-source-local.workspace = true
-source-subsonic.workspace = true
+playback-gstreamer.workspace = true
+rich-presence.workspace = true
+scrobbling.workspace = true
+sources.workspace = true
 secrets.workspace = true
 library.workspace = true
 library-sync.workspace = true
+metadata.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }

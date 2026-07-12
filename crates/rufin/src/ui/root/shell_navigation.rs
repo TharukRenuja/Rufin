@@ -18,62 +18,6 @@ pub(in crate::ui) fn route_scroller_widget(scroller: gtk::ScrolledWindow) -> gtk
     scroller.upcast()
 }
 
-pub(in crate::ui) fn find_largest_scrolled_window(
-    widget: &gtk::Widget,
-) -> Option<gtk::ScrolledWindow> {
-    let mut best = None;
-    collect_scrolled_window(widget, 0, &mut best);
-    best.map(|(scroller, _)| scroller)
-}
-fn collect_scrolled_window(
-    widget: &gtk::Widget,
-    depth: usize,
-    best: &mut Option<(gtk::ScrolledWindow, ScrollerScore)>,
-) {
-    if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
-        let adjustment = scroller.vadjustment();
-        let score = ScrollerScore {
-            owner: scroller.has_css_class(ROUTE_SCROLL_OWNER_CLASS),
-            vertical: scroller.vscrollbar_policy() != gtk::PolicyType::Never,
-            range: (adjustment.upper() - adjustment.page_size()).max(0.0),
-            depth,
-        };
-        if best
-            .as_ref()
-            .is_none_or(|(_, best_score)| scroller_score_is_better(score, *best_score))
-        {
-            *best = Some((scroller, score));
-        }
-    }
-
-    let mut child = widget.first_child();
-    while let Some(widget) = child {
-        collect_scrolled_window(&widget, depth.saturating_add(1), best);
-        child = widget.next_sibling();
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ScrollerScore {
-    owner: bool,
-    vertical: bool,
-    range: f64,
-    depth: usize,
-}
-
-fn scroller_score_is_better(candidate: ScrollerScore, current: ScrollerScore) -> bool {
-    (
-        candidate.owner,
-        candidate.vertical,
-        candidate.range,
-        candidate.depth,
-    ) > (
-        current.owner,
-        current.vertical,
-        current.range,
-        current.depth,
-    )
-}
 pub(in crate::ui) fn replace_albums_in_model(
     model: &gio::ListStore,
     albums: impl IntoIterator<Item = Album>,
@@ -762,45 +706,4 @@ fn install_context_long_press(
         }
     });
     target.add_controller(press);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn route_scroller_wins_before_bounds() {
-        let wrapper = ScrollerScore {
-            owner: false,
-            vertical: false,
-            range: 0.0,
-            depth: 1,
-        };
-        let route = ScrollerScore {
-            owner: false,
-            vertical: true,
-            range: 0.0,
-            depth: 2,
-        };
-
-        assert!(scroller_score_is_better(route, wrapper));
-    }
-
-    #[test]
-    fn route_owner_wins_over_nested_scroller() {
-        let nested = ScrollerScore {
-            owner: false,
-            vertical: true,
-            range: 2000.0,
-            depth: 5,
-        };
-        let route = ScrollerScore {
-            owner: true,
-            vertical: true,
-            range: 0.0,
-            depth: 2,
-        };
-
-        assert!(scroller_score_is_better(route, nested));
-    }
 }

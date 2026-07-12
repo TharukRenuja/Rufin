@@ -1,4 +1,30 @@
-use super::*;
+use super::{
+    ActiveSourceSlot, AppController, BoundedRunner, ControllerEvent, StoreHandle,
+    WaveformProjection, encode_key_part, resolve_stream_request, waveform_cache_path_for_key,
+};
+use library::{SourceId, TrackId};
+use playback::PreparedStream;
+use playback_gstreamer::generate_waveform_peaks_cancellable;
+use serde::{Deserialize, Serialize};
+use sources::{StreamQuality, StreamRequest};
+use std::{
+    collections::HashSet,
+    fs,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+        mpsc::Sender,
+    },
+    time::Duration,
+};
+use tokio::runtime::Runtime;
+use tracing::{debug, warn};
+
+const WAVEFORM_CACHE_VERSION: u8 = 2;
+const WAVEFORM_WARM_QUEUE_LIMIT: usize = 4;
+const WAVEFORM_WARM_DELAY: Duration = Duration::from_millis(750);
+
+static WAVEFORM_IN_FLIGHT: OnceLock<Mutex<HashSet<WaveformKey>>> = OnceLock::new();
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CachedWaveform {
@@ -7,104 +33,55 @@ struct CachedWaveform {
     peaks: Vec<(f64, f64)>,
 }
 
-const WAVEFORM_CACHE_VERSION: u8 = 1;
-const WAVEFORM_WARM_QUEUE_LIMIT: usize = 4;
-const WAVEFORM_WARM_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
-const CURRENT_WAVEFORM_GENERATION_DELAY: std::time::Duration =
-    std::time::Duration::from_millis(750);
-static WAVEFORM_FOREGROUND_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
-    std::sync::OnceLock::new();
-static WAVEFORM_WARM_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
-    std::sync::OnceLock::new();
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct WaveformKey {
+    source_id: SourceId,
+    track_id: TrackId,
+    duration_seconds: u32,
+}
+
+impl WaveformKey {
+    fn new(source_id: SourceId, track_id: TrackId, duration_seconds: u32) -> Self {
+        Self {
+            source_id,
+            track_id,
+            duration_seconds,
+        }
+    }
+
+    fn cache_key(&self) -> String {
+        let track_hash = format!("{:x}", md5::compute(self.track_id.as_str()));
+        format!(
+            "{}/{}-{}.json",
+            encode_key_part(self.source_id.as_str()),
+            track_hash,
+            self.duration_seconds
+        )
+    }
+}
+
+#[derive(Clone)]
+struct WaveformRequest {
+    key: WaveformKey,
+    stream_request: StreamRequest,
+    source_format: Option<String>,
+}
+
+struct WaveformGenerationRequest {
+    waveform: WaveformRequest,
+    stream: PreparedStream,
+}
 
 struct WaveformGenerationPermit {
-    cache_key: String,
-    kind: WaveformGenerationKind,
+    key: WaveformKey,
 }
 
 impl Drop for WaveformGenerationPermit {
     fn drop(&mut self) {
-        if let Some(in_flight) = self.kind.in_flight().get()
+        if let Some(in_flight) = WAVEFORM_IN_FLIGHT.get()
             && let Ok(mut in_flight) = in_flight.lock()
         {
-            in_flight.remove(&self.cache_key);
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum WaveformGenerationKind {
-    Foreground,
-    Warm,
-}
-
-impl WaveformGenerationKind {
-    fn in_flight(self) -> &'static std::sync::OnceLock<Mutex<HashSet<String>>> {
-        match self {
-            Self::Foreground => &WAVEFORM_FOREGROUND_IN_FLIGHT,
-            Self::Warm => &WAVEFORM_WARM_IN_FLIGHT,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct WaveformWarmRequest {
-    source_id: SourceId,
-    track_id: TrackId,
-    duration_seconds: u32,
-    source_format: Option<String>,
-    playback_settings: PlaybackSettings,
-}
-
-struct WaveformGenerationRequest {
-    cache_key: String,
-    track_id: TrackId,
-    duration_seconds: u32,
-    source_format: Option<String>,
-    uri: String,
-    redacted_uri: String,
-}
-
-#[derive(Clone)]
-enum WaveformCancellation {
-    Foreground {
-        playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-        cache_key: String,
-    },
-    Warm {
-        generation: Arc<AtomicU64>,
-        request_generation: u64,
-    },
-}
-
-impl WaveformCancellation {
-    fn foreground(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>, cache_key: &str) -> Self {
-        Self::Foreground {
-            playback_snapshot: Arc::clone(playback_snapshot),
-            cache_key: cache_key.to_string(),
-        }
-    }
-
-    fn warm(generation: &Arc<AtomicU64>, request_generation: u64) -> Self {
-        Self::Warm {
-            generation: Arc::clone(generation),
-            request_generation,
-        }
-    }
-
-    fn cancelled(&self) -> bool {
-        match self {
-            Self::Foreground {
-                playback_snapshot,
-                cache_key,
-            } => playback_snapshot
-                .lock()
-                .map(|snapshot| snapshot.waveform_cache_key.as_deref() != Some(cache_key))
-                .unwrap_or(true),
-            Self::Warm {
-                generation,
-                request_generation,
-            } => !waveform_warm_generation_matches(generation, *request_generation),
+            in_flight.remove(&self.key);
         }
     }
 }
@@ -113,102 +90,103 @@ struct WaveformWarmWorker {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     active_source: ActiveSourceSlot,
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     generation: Arc<AtomicU64>,
     request_generation: u64,
+    requested: Arc<Mutex<Option<WaveformKey>>>,
     events: Sender<ControllerEvent>,
 }
 
 impl AppController {
     pub fn request_waveform_for_current(&self) {
-        if !self.load_settings().seekbar_waveform_enabled {
-            return;
-        }
-        self.cancel_waveform_warm();
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let settings = self.load_settings();
+        let request = settings.seekbar_waveform_enabled.then(|| {
+            self.playback_product_if_present()
+                .and_then(|product| product.current_entry())
+                .map(|(source_id, entry, _position_millis)| {
+                    waveform_request(&source_id, &entry.track, settings.playback.stream_quality)
+                })
+        });
+        let Some(request) = request.flatten() else {
+            clear_requested_waveform(&self.waveform_request_key, &self.events);
+            self.cancel_waveform_warm();
             return;
         };
-        let playback_settings = self.load_settings().playback;
-        let cache_key = waveform_cache_key(&source_id, &entry.track_id, entry.duration_seconds);
-        self.update_playback_snapshot(|snapshot| {
-            set_waveform_cache_key(snapshot, Some(cache_key.clone()));
-        });
 
-        if publish_cached_waveform(
-            &self.playback_snapshot,
+        let cached = select_requested_waveform(
+            &self.waveform_request_key,
             &self.events,
-            &cache_key,
-            entry.duration_seconds,
-        ) {
+            request.key.clone(),
+        );
+        self.cancel_waveform_warm();
+        if cached {
             return;
         }
-        let Some(permit) =
-            acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Foreground)
-        else {
+        let Some(permit) = acquire_waveform_generation_permit(&request.key) else {
             return;
         };
 
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let requested = Arc::clone(&self.waveform_request_key);
         let events = self.events.clone();
-        thread::spawn(move || {
-            let _permit = permit;
-            let request = WaveformWarmRequest {
-                source_id,
-                track_id: entry.track_id,
-                duration_seconds: entry.duration_seconds,
-                source_format: entry.source_format,
-                playback_settings,
-            };
-            let Some((uri, redacted_uri)) =
-                waveform_source_for_track(&store, &runtime, &active_source, &request)
-            else {
-                return;
-            };
-            generate_and_publish_waveform(
-                Arc::clone(&playback_snapshot),
-                events,
-                WaveformCancellation::foreground(&playback_snapshot, &cache_key),
-                WaveformGenerationRequest {
-                    cache_key,
-                    track_id: request.track_id,
-                    duration_seconds: request.duration_seconds,
-                    source_format: request.source_format,
-                    uri,
-                    redacted_uri,
-                },
-            );
-        });
+        if let Err(error) = waveform_runner().and_then(|runner| {
+            runner.submit(move || {
+                let _permit = permit;
+                let Some(stream) =
+                    waveform_source_for_request(&store, &runtime, &active_source, &request)
+                else {
+                    return;
+                };
+                let generation = WaveformGenerationRequest {
+                    waveform: request,
+                    stream,
+                };
+                if let Some(peaks) = generate_and_cache_waveform(&generation, || {
+                    !requested_waveform_matches(&requested, &generation.waveform.key)
+                }) {
+                    publish_requested_waveform(
+                        &requested,
+                        &events,
+                        &generation.waveform.key,
+                        peaks,
+                    );
+                }
+            })
+        }) {
+            warn!(%error, "could not schedule current waveform");
+        }
     }
 
     pub fn warm_waveforms_for_queue(&self) {
+        let generation = self.waveform_warm_generation.fetch_add(1, Ordering::AcqRel) + 1;
         let settings = self.load_settings();
         if !settings.seekbar_waveform_enabled {
             return;
         }
-        let Some(queue_snapshot) = self.queue_snapshot() else {
+        let Some((source_id, tracks)) = self
+            .playback_product_if_present()
+            .and_then(|product| product.upcoming_tracks(WAVEFORM_WARM_QUEUE_LIMIT))
+        else {
             return;
         };
-        let requests = waveform_warm_requests(
-            &queue_snapshot,
-            &settings.playback,
-            WAVEFORM_WARM_QUEUE_LIMIT,
-        );
+        let requests = tracks
+            .into_iter()
+            .filter(|track| track.duration_seconds > 0)
+            .map(|track| waveform_request(&source_id, &track, settings.playback.stream_quality))
+            .collect::<Vec<_>>();
         if requests.is_empty() {
             return;
         }
-        let generation = self.waveform_warm_generation.fetch_add(1, Ordering::AcqRel) + 1;
         start_waveform_warm_worker(
             requests,
             WaveformWarmWorker {
                 store: self.store.clone(),
                 runtime: Arc::clone(&self.runtime),
                 active_source: Arc::clone(&self.active_source),
-                playback_snapshot: Arc::clone(&self.playback_snapshot),
                 generation: Arc::clone(&self.waveform_warm_generation),
                 request_generation: generation,
+                requested: Arc::clone(&self.waveform_request_key),
                 events: self.events.clone(),
             },
         );
@@ -219,162 +197,74 @@ impl AppController {
     }
 }
 
-pub(in crate::controller) fn request_waveform_for_prepared_item(
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    events: Sender<ControllerEvent>,
-    source_id: SourceId,
-    entry: QueueEntry,
-    item: PreparedPlaybackItem,
-) {
-    let cache_key = waveform_cache_key(&source_id, &entry.track_id, entry.duration_seconds);
-    if publish_cached_waveform(
-        &playback_snapshot,
-        &events,
-        &cache_key,
-        entry.duration_seconds,
-    ) {
-        return;
+fn waveform_request(
+    source_id: &SourceId,
+    track: &library::Track,
+    stream_quality: StreamQuality,
+) -> WaveformRequest {
+    WaveformRequest {
+        key: WaveformKey::new(source_id.clone(), track.id.clone(), track.duration_seconds),
+        stream_request: StreamRequest::new(track.id.clone(), stream_quality),
+        source_format: track.source_format.clone(),
     }
-    let Some(permit) =
-        acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Foreground)
-    else {
-        return;
-    };
-    thread::spawn(move || {
-        let _permit = permit;
-        thread::sleep(CURRENT_WAVEFORM_GENERATION_DELAY);
-        generate_and_publish_waveform(
-            Arc::clone(&playback_snapshot),
-            events,
-            WaveformCancellation::foreground(&playback_snapshot, &cache_key),
-            WaveformGenerationRequest {
-                cache_key,
-                track_id: entry.track_id,
-                duration_seconds: entry.duration_seconds,
-                source_format: entry.source_format,
-                uri: item.stream.uri().to_string(),
-                redacted_uri: item.stream.redacted_uri().to_string(),
-            },
-        );
-    });
 }
 
-fn generate_and_publish_waveform(
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    events: Sender<ControllerEvent>,
-    cancellation: WaveformCancellation,
-    request: WaveformGenerationRequest,
-) {
-    generate_and_publish_waveform_with(
-        playback_snapshot,
-        events,
-        cancellation,
-        request,
-        |uri, cancellation| generate_waveform_peaks_cancellable(uri, || cancellation.cancelled()),
-    );
+fn start_waveform_warm_worker(requests: Vec<WaveformRequest>, worker: WaveformWarmWorker) {
+    if let Err(error) = waveform_runner().and_then(|runner| {
+        runner.submit(move || {
+            for request in requests {
+                if !waveform_warm_can_continue(
+                    &worker.generation,
+                    worker.request_generation,
+                    &worker.requested,
+                    &request.key,
+                ) {
+                    return;
+                }
+                std::thread::sleep(WAVEFORM_WARM_DELAY);
+                if !waveform_warm_can_continue(
+                    &worker.generation,
+                    worker.request_generation,
+                    &worker.requested,
+                    &request.key,
+                ) {
+                    return;
+                }
+                warm_waveform_request(&worker, request);
+            }
+        })
+    }) {
+        warn!(%error, "could not schedule waveform warming");
+    }
 }
 
-fn generate_and_publish_waveform_with(
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    events: Sender<ControllerEvent>,
-    cancellation: WaveformCancellation,
-    request: WaveformGenerationRequest,
-    generate_peaks: impl FnOnce(&str, &WaveformCancellation) -> Result<Vec<(f64, f64)>, String>,
-) {
-    if cancellation.cancelled() {
-        return;
+fn waveform_runner() -> Result<&'static BoundedRunner, String> {
+    static RUNNER: OnceLock<Result<BoundedRunner, String>> = OnceLock::new();
+    match RUNNER.get_or_init(|| BoundedRunner::new("Waveform generation", "rufin-waveform", 4)) {
+        Ok(runner) => Ok(runner),
+        Err(error) => Err(error.clone()),
     }
-    if publish_cached_waveform(
-        &playback_snapshot,
-        &events,
-        &request.cache_key,
-        request.duration_seconds,
-    ) {
-        return;
-    }
-    if cancellation.cancelled() {
-        return;
-    }
-    if !waveform_generation_source_and_format_is_supported(
-        &request.uri,
-        request.source_format.as_deref(),
-    ) {
-        debug!(
-            track_id = %request.track_id,
-            "skipped unsupported waveform generation source"
-        );
-        return;
-    }
-    let peaks = match generate_peaks(&request.uri, &cancellation) {
-        Ok(peaks) => peaks,
-        Err(error) => {
-            if cancellation.cancelled() {
-                return;
-            }
-            warn!(%error, track_id = %request.track_id, uri = %request.redacted_uri, "failed to generate waveform");
-            return;
-        }
-    };
-    let Some(peaks) = sanitize_waveform_peaks(peaks) else {
-        return;
-    };
-    if cancellation.cancelled() {
-        return;
-    }
-    if let Err(error) = save_cached_waveform(&request.cache_key, request.duration_seconds, &peaks) {
-        warn!(%error, track_id = %request.track_id, "failed to cache waveform");
-    }
-    if cancellation.cancelled() {
-        return;
-    }
-    publish_waveform_peaks(&playback_snapshot, &events, &request.cache_key, peaks);
 }
 
-fn start_waveform_warm_worker(requests: Vec<WaveformWarmRequest>, worker: WaveformWarmWorker) {
-    thread::spawn(move || {
-        for request in requests {
-            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
-                return;
-            }
-            thread::sleep(WAVEFORM_WARM_DELAY);
-            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
-                return;
-            }
-            warm_waveform_request(&worker, request);
-            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
-                return;
-            }
-        }
-    });
-}
-
-fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmRequest) {
-    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformRequest) {
+    let cache_key = request.key.cache_key();
+    if load_cached_waveform(&cache_key, request.key.duration_seconds).is_some() {
         return;
     }
-    let cache_key = waveform_cache_key(
-        &request.source_id,
-        &request.track_id,
-        request.duration_seconds,
-    );
-    if load_cached_waveform(&cache_key, request.duration_seconds).is_some() {
-        return;
-    }
-    let Some(_permit) =
-        acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Warm)
-    else {
+    let Some(_permit) = acquire_waveform_generation_permit(&request.key) else {
         return;
     };
-    if load_cached_waveform(&cache_key, request.duration_seconds).is_some() {
+    if load_cached_waveform(&cache_key, request.key.duration_seconds).is_some()
+        || !waveform_warm_can_continue(
+            &worker.generation,
+            worker.request_generation,
+            &worker.requested,
+            &request.key,
+        )
+    {
         return;
     }
-    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
-        return;
-    }
-    if !waveform_warm_resolve_can_run(&worker.playback_snapshot) {
-        return;
-    }
-    let Some((uri, redacted_uri)) = waveform_source_for_track(
+    let Some(stream) = waveform_source_for_request(
         &worker.store,
         &worker.runtime,
         &worker.active_source,
@@ -382,106 +272,170 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmReque
     ) else {
         return;
     };
-    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
-        return;
+    let generation = WaveformGenerationRequest {
+        waveform: request,
+        stream,
+    };
+    if let Some(peaks) = generate_and_cache_waveform(&generation, || {
+        !waveform_warm_can_continue(
+            &worker.generation,
+            worker.request_generation,
+            &worker.requested,
+            &generation.waveform.key,
+        )
+    }) {
+        publish_requested_waveform(
+            &worker.requested,
+            &worker.events,
+            &generation.waveform.key,
+            peaks,
+        );
     }
-    if waveform_generation_source_is_remote(&uri)
-        && !remote_waveform_warm_can_run(&worker.playback_snapshot)
-    {
-        return;
-    }
-    generate_and_publish_waveform(
-        Arc::clone(&worker.playback_snapshot),
-        worker.events.clone(),
-        WaveformCancellation::warm(&worker.generation, worker.request_generation),
-        WaveformGenerationRequest {
-            cache_key,
-            track_id: request.track_id,
-            duration_seconds: request.duration_seconds,
-            source_format: request.source_format,
-            uri,
-            redacted_uri,
-        },
-    );
 }
 
-fn waveform_source_for_track(
+fn waveform_source_for_request(
     store: &StoreHandle,
     runtime: &Runtime,
     active_source: &ActiveSourceSlot,
-    request: &WaveformWarmRequest,
-) -> Option<(String, String)> {
-    let stream = resolve_stream(
+    request: &WaveformRequest,
+) -> Option<PreparedStream> {
+    let stream = resolve_stream_request(
         store,
         runtime,
         active_source,
-        &request.source_id,
-        &request.track_id,
-        &request.playback_settings,
+        &request.key.source_id,
+        &request.stream_request,
     )
     .map_err(|error| {
-        warn!(%error, "failed to resolve stream for waveform");
+        warn!(%error, track_id = %request.key.track_id, "failed to resolve stream for waveform");
         error
     })
     .ok()?;
-    Some((stream.uri().to_string(), stream.redacted_uri().to_string()))
+    Some(PreparedStream::from(stream))
 }
 
-fn waveform_warm_resolve_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>) -> bool {
-    playback_snapshot
-        .lock()
-        .map(|snapshot| {
-            snapshot.state != PlaybackState::Buffering && snapshot.buffering_percent.is_none()
-        })
-        .unwrap_or(false)
-}
-
-fn remote_waveform_warm_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>) -> bool {
-    waveform_warm_resolve_can_run(playback_snapshot)
-}
-
-fn waveform_warm_requests(
-    snapshot: &QueueSnapshot,
-    playback_settings: &PlaybackSettings,
-    limit: usize,
-) -> Vec<WaveformWarmRequest> {
-    let start = snapshot
-        .current_index
-        .map(|index| index.saturating_add(1))
-        .unwrap_or(0);
-    snapshot
-        .entries
-        .iter()
-        .skip(start)
-        .take(limit)
-        .filter(|entry| entry.duration_seconds > 0)
-        .map(|entry| WaveformWarmRequest {
-            source_id: snapshot.source_id.clone(),
-            track_id: entry.track_id.clone(),
-            duration_seconds: entry.duration_seconds,
-            source_format: entry.source_format.clone(),
-            playback_settings: playback_settings.clone(),
-        })
-        .collect()
-}
-
-fn acquire_waveform_generation_permit(
-    cache_key: &str,
-    kind: WaveformGenerationKind,
-) -> Option<WaveformGenerationPermit> {
-    let in_flight = kind.in_flight().get_or_init(|| Mutex::new(HashSet::new()));
-    let mut in_flight = in_flight.lock().ok()?;
-    if !in_flight.insert(cache_key.to_string()) {
+fn generate_and_cache_waveform(
+    request: &WaveformGenerationRequest,
+    cancelled: impl Fn() -> bool,
+) -> Option<Vec<(f64, f64)>> {
+    if cancelled() {
         return None;
     }
-    Some(WaveformGenerationPermit {
-        cache_key: cache_key.to_string(),
-        kind,
-    })
+    if !waveform_generation_source_and_format_is_supported(
+        request.stream.uri(),
+        request.waveform.source_format.as_deref(),
+    ) {
+        debug!(
+            track_id = %request.waveform.key.track_id,
+            "skipped unsupported waveform generation source"
+        );
+        return None;
+    }
+    let peaks = match generate_waveform_peaks_cancellable(&request.stream, &cancelled) {
+        Ok(peaks) => peaks,
+        Err(error) => {
+            if !cancelled() {
+                warn!(
+                    %error,
+                    track_id = %request.waveform.key.track_id,
+                    uri = %request.stream.redacted_uri(),
+                    "failed to generate waveform"
+                );
+            }
+            return None;
+        }
+    };
+    let peaks = sanitize_waveform_peaks(peaks)?;
+    if cancelled() {
+        return None;
+    }
+    let cache_key = request.waveform.key.cache_key();
+    if let Err(error) =
+        save_cached_waveform(&cache_key, request.waveform.key.duration_seconds, &peaks)
+    {
+        warn!(%error, track_id = %request.waveform.key.track_id, "failed to cache waveform");
+    }
+    Some(peaks)
 }
 
-fn waveform_warm_generation_matches(generation: &Arc<AtomicU64>, request_generation: u64) -> bool {
+fn select_requested_waveform(
+    requested: &Arc<Mutex<Option<WaveformKey>>>,
+    events: &Sender<ControllerEvent>,
+    key: WaveformKey,
+) -> bool {
+    let Ok(mut current) = requested.lock() else {
+        return false;
+    };
+    *current = Some(key.clone());
+    drop(current);
+    let cache_key = key.cache_key();
+    let peaks = load_cached_waveform(&cache_key, key.duration_seconds);
+    let cached = peaks.is_some();
+    publish_requested_projection(requested, events, &key, peaks);
+    cached
+}
+
+fn clear_requested_waveform(
+    requested: &Arc<Mutex<Option<WaveformKey>>>,
+    events: &Sender<ControllerEvent>,
+) {
+    let Ok(mut current) = requested.lock() else {
+        return;
+    };
+    *current = None;
+    drop(current);
+    if requested.lock().is_ok_and(|current| current.is_none()) {
+        let _sent = events.send(ControllerEvent::Waveform(WaveformProjection::default()));
+    }
+}
+
+fn publish_requested_waveform(
+    requested: &Arc<Mutex<Option<WaveformKey>>>,
+    events: &Sender<ControllerEvent>,
+    key: &WaveformKey,
+    peaks: Vec<(f64, f64)>,
+) {
+    publish_requested_projection(requested, events, key, Some(peaks));
+}
+
+fn publish_requested_projection(
+    requested: &Arc<Mutex<Option<WaveformKey>>>,
+    events: &Sender<ControllerEvent>,
+    key: &WaveformKey,
+    peaks: Option<Vec<(f64, f64)>>,
+) {
+    if !requested_waveform_matches(requested, key) {
+        return;
+    }
+    let _sent = events.send(ControllerEvent::Waveform(WaveformProjection {
+        key: Some(key.cache_key()),
+        peaks: peaks.map(Arc::new),
+    }));
+}
+
+fn acquire_waveform_generation_permit(key: &WaveformKey) -> Option<WaveformGenerationPermit> {
+    let in_flight = WAVEFORM_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut in_flight = in_flight.lock().ok()?;
+    if !in_flight.insert(key.clone()) {
+        return None;
+    }
+    Some(WaveformGenerationPermit { key: key.clone() })
+}
+
+fn waveform_warm_can_continue(
+    generation: &AtomicU64,
+    request_generation: u64,
+    requested: &Mutex<Option<WaveformKey>>,
+    key: &WaveformKey,
+) -> bool {
     generation.load(Ordering::Acquire) == request_generation
+        || requested_waveform_matches(requested, key)
+}
+
+fn requested_waveform_matches(requested: &Mutex<Option<WaveformKey>>, key: &WaveformKey) -> bool {
+    requested
+        .lock()
+        .is_ok_and(|requested| requested.as_ref() == Some(key))
 }
 
 fn waveform_generation_source_is_local(uri: &str) -> bool {
@@ -517,95 +471,6 @@ fn is_dsd_waveform_format(value: &str) -> bool {
         .split(|character: char| !character.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())
         .any(|part| matches!(part, "dsf" | "dff" | "dsdiff") || part.starts_with("dsd"))
-}
-
-fn publish_cached_waveform(
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    events: &Sender<ControllerEvent>,
-    cache_key: &str,
-    duration_seconds: u32,
-) -> bool {
-    let Some(peaks) = load_cached_waveform(cache_key, duration_seconds) else {
-        return false;
-    };
-    publish_waveform_peaks(playback_snapshot, events, cache_key, peaks);
-    true
-}
-
-fn publish_waveform_peaks(
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    events: &Sender<ControllerEvent>,
-    cache_key: &str,
-    peaks: Vec<(f64, f64)>,
-) {
-    let Ok(mut snapshot) = playback_snapshot.lock() else {
-        return;
-    };
-    if snapshot.waveform_cache_key.as_deref() != Some(cache_key) {
-        return;
-    }
-    snapshot.waveform_peaks = Some(Arc::new(peaks));
-    let event_snapshot = snapshot.clone();
-    drop(snapshot);
-    let _sent = events.send(ControllerEvent::Playback(Box::new(event_snapshot)));
-}
-
-pub(in crate::controller) fn waveform_cache_key(
-    source_id: &SourceId,
-    track_id: &TrackId,
-    duration_seconds: u32,
-) -> String {
-    let track_hash = format!("{:x}", md5::compute(track_id.as_str()));
-    format!(
-        "{}/{}-{}.json",
-        encode_key_part(source_id.as_str()),
-        track_hash,
-        duration_seconds
-    )
-}
-
-pub(in crate::controller) fn waveform_cache_key_for_queue(
-    queue: Option<&QueueEngine>,
-) -> Option<String> {
-    let queue = queue?;
-    let snapshot = queue.snapshot();
-    let entry = queue.current()?;
-    Some(waveform_cache_key(
-        &snapshot.source_id,
-        &entry.track_id,
-        entry.duration_seconds,
-    ))
-}
-
-pub(in crate::controller) fn set_waveform_cache_key(
-    snapshot: &mut PlaybackSnapshot,
-    key: Option<String>,
-) {
-    waveform_duration_key(snapshot, key, snapshot.duration_seconds);
-}
-
-pub(in crate::controller) fn waveform_duration_key(
-    snapshot: &mut PlaybackSnapshot,
-    key: Option<String>,
-    duration_seconds: u32,
-) {
-    if snapshot.waveform_cache_key != key {
-        snapshot.waveform_cache_key = key;
-        snapshot.waveform_peaks = None;
-    }
-    let Some(cache_key) = snapshot.waveform_cache_key.as_deref() else {
-        return;
-    };
-    if snapshot.waveform_peaks.is_none() {
-        snapshot.waveform_peaks = cached_waveform_peaks(cache_key, duration_seconds);
-    }
-}
-
-pub(in crate::controller) fn cached_waveform_peaks(
-    cache_key: &str,
-    duration_seconds: u32,
-) -> Option<Arc<Vec<(f64, f64)>>> {
-    load_cached_waveform(cache_key, duration_seconds).map(Arc::new)
 }
 
 fn load_cached_waveform(cache_key: &str, duration_seconds: u32) -> Option<Vec<(f64, f64)>> {
@@ -654,13 +519,16 @@ fn sanitize_waveform_peaks(peaks: Vec<(f64, f64)>) -> Option<Vec<(f64, f64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::{TryRecvError, channel};
 
     #[test]
-    fn playback_waveform_scoped() {
-        let source_id = SourceId::new("server/one");
-        let track_id = TrackId::new("album/track:one");
-
-        let key = waveform_cache_key(&source_id, &track_id, 123);
+    fn waveform_key_scopes_cache_by_source_track_and_duration() {
+        let key = WaveformKey::new(
+            SourceId::new("server/one"),
+            TrackId::new("album/track:one"),
+            123,
+        )
+        .cache_key();
 
         assert!(key.starts_with("server_one/"));
         assert!(key.ends_with("-123.json"));
@@ -668,172 +536,118 @@ mod tests {
     }
 
     #[test]
-    fn playback_clamp_amplitudes() {
-        let peaks = sanitize_waveform_peaks(vec![(0.5, 1.5), (f64::NAN, 0.2), (-1.0, 0.25)])
-            .expect("peaks");
-
-        assert_eq!(peaks, vec![(0.5, 1.0), (0.0, 0.25)]);
-        assert_eq!(sanitize_waveform_peaks(Vec::new()), None);
-    }
-
-    #[test]
-    fn playback_waveform_sources() {
-        assert!(waveform_generation_source_is_local(
-            "file:///music/track.flac"
-        ));
-        assert!(waveform_generation_source_is_supported(
-            "file:///music/track.flac"
-        ));
-        assert!(!waveform_generation_source_is_remote(
-            "file:///music/track.flac"
-        ));
-        assert!(!waveform_generation_source_is_local(
-            "https://music.example/stream"
-        ));
-        assert!(waveform_generation_source_is_supported(
-            "https://music.example/stream"
-        ));
-        assert!(waveform_generation_source_is_remote(
-            "https://music.example/stream"
-        ));
-        assert!(waveform_generation_source_is_remote(
-            "http://music.example/stream"
-        ));
-        assert!(!waveform_generation_source_is_remote(
-            "fake://music.example/stream"
-        ));
-        assert!(!waveform_generation_source_is_supported(
-            "fake://music.example/stream"
-        ));
-    }
-
-    #[test]
-    fn playback_waveform_key() {
-        let cache_key = "test-server/test-track-42.json";
-
-        let permit = acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm)
-            .expect("first warm permit");
-        assert!(
-            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm).is_none()
-        );
-        let foreground =
-            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Foreground)
-                .expect("foreground permit");
-        assert!(
-            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Foreground)
-                .is_none()
-        );
-
-        drop(permit);
-        assert!(
-            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm).is_some()
-        );
-        drop(foreground);
-    }
-
-    #[test]
-    fn playback_waveform_cancel_after_generation_skips_cache_and_publish() {
-        let source_id = SourceId::new("test-waveform-cancel");
-        let track_id = TrackId::new("track-cancel");
-        let duration_seconds = 42;
-        let cache_key = waveform_cache_key(&source_id, &track_id, duration_seconds);
-        let cache_path = waveform_cache_path_for_key(&cache_key).expect("waveform cache path");
-        let _removed = fs::remove_file(&cache_path);
-        let playback_snapshot = Arc::new(Mutex::new(PlaybackSnapshot {
-            waveform_cache_key: Some(cache_key.clone()),
-            ..PlaybackSnapshot::default()
-        }));
+    fn waveform_projection_requires_the_exact_requested_key() {
+        let requested = Arc::new(Mutex::new(Some(WaveformKey::new(
+            SourceId::new("source"),
+            TrackId::new("wanted"),
+            180,
+        ))));
+        let stale = WaveformKey::new(SourceId::new("source"), TrackId::new("stale"), 180);
+        let wanted = requested
+            .lock()
+            .expect("request key")
+            .clone()
+            .expect("wanted key");
         let (events, receiver) = channel();
 
-        generate_and_publish_waveform_with(
-            Arc::clone(&playback_snapshot),
-            events,
-            WaveformCancellation::foreground(&playback_snapshot, &cache_key),
-            WaveformGenerationRequest {
-                cache_key: cache_key.clone(),
-                track_id,
-                duration_seconds,
-                source_format: Some("flac".to_string()),
-                uri: "file:///tmp/waveform-cancel.flac".to_string(),
-                redacted_uri: "file:///tmp/waveform-cancel.flac".to_string(),
-            },
-            |_uri, _cancellation| {
-                playback_snapshot
-                    .lock()
-                    .expect("playback snapshot")
-                    .waveform_cache_key = None;
-                Ok(vec![(0.25, 0.75)])
-            },
-        );
+        publish_requested_waveform(&requested, &events, &stale, vec![(0.1, 0.2)]);
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
 
-        assert!(!cache_path.exists());
-        let _error = receiver
-            .try_recv()
-            .expect_err("waveform event should not be emitted");
-        assert!(
-            playback_snapshot
-                .lock()
-                .expect("playback snapshot")
-                .waveform_peaks
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn playback_cap_current() {
-        let source_id = SourceId::new("server-one");
-        let snapshot = QueueSnapshot {
-            source_id: source_id.clone(),
-            entries: (1..=5)
-                .map(|number| QueueEntry {
-                    id: QueueEntryId::new(format!("queue-{number}")),
-                    track_id: TrackId::new(format!("track-{number}")),
-                    album_id: None,
-                    title: format!("Track {number}"),
-                    artist: "Example Artist".to_string(),
-                    artist_id: None,
-                    album: "Example Album".to_string(),
-                    year: 2024,
-                    duration_seconds: 180 + number,
-                    favorite: false,
-                    image_ref: None,
-                    local_path: None,
-                    source_format: (number == 4).then(|| "flac".to_string()),
-                    origin: None,
-                })
-                .collect(),
-            current_index: Some(2),
-            repeat_mode: RepeatMode::All,
-            shuffle: domain::ShuffleState::default(),
-            shuffle_order: Vec::new(),
-            progress_seconds: 0,
+        publish_requested_waveform(&requested, &events, &wanted, vec![(0.3, 0.4)]);
+        let ControllerEvent::Waveform(projection) = receiver.recv().expect("waveform event") else {
+            panic!("unexpected controller event");
         };
-
-        let requests = waveform_warm_requests(&snapshot, &PlaybackSettings::default(), 2);
-
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].source_id, source_id);
-        assert_eq!(requests[0].track_id, TrackId::new("track-4"));
-        assert_eq!(requests[0].source_format.as_deref(), Some("flac"));
-        assert_eq!(requests[1].track_id, TrackId::new("track-5"));
-        assert_eq!(requests[1].source_format, None);
+        assert_eq!(projection.key, Some(wanted.cache_key()));
+        assert_eq!(projection.peaks.as_deref(), Some(&vec![(0.3, 0.4)]));
     }
 
     #[test]
-    fn playback_waveform_rejects_dsd_formats() {
-        assert!(!waveform_generation_format_is_supported(Some("dsf")));
-        assert!(!waveform_generation_format_is_supported(Some(
-            "audio/x-dsf"
-        )));
+    fn current_reuses_matching_warm_decode_and_cancels_other_warm_work() {
+        let warm_key = WaveformKey::new(
+            SourceId::new("warm-promotion"),
+            TrackId::new("matching"),
+            180,
+        );
+        let unrelated_key = WaveformKey::new(
+            SourceId::new("warm-promotion"),
+            TrackId::new("unrelated"),
+            180,
+        );
+        let next_current_key = WaveformKey::new(
+            SourceId::new("warm-promotion"),
+            TrackId::new("next-current"),
+            180,
+        );
+        let generation = AtomicU64::new(7);
+        let warm_generation = generation.load(Ordering::Acquire);
+        let requested = Arc::new(Mutex::new(None));
+        let warm_permit =
+            acquire_waveform_generation_permit(&warm_key).expect("matching warm decode");
+
+        *requested.lock().expect("requested waveform") = Some(warm_key.clone());
+        generation.fetch_add(1, Ordering::AcqRel);
+
+        assert!(waveform_warm_can_continue(
+            &generation,
+            warm_generation,
+            &requested,
+            &warm_key,
+        ));
+        assert!(!waveform_warm_can_continue(
+            &generation,
+            warm_generation,
+            &requested,
+            &unrelated_key,
+        ));
+        assert!(acquire_waveform_generation_permit(&warm_key).is_none());
+
+        let (events, receiver) = channel();
+        publish_requested_waveform(&requested, &events, &warm_key, vec![(0.2, 0.8)]);
+        let ControllerEvent::Waveform(projection) = receiver.recv().expect("waveform event") else {
+            panic!("unexpected controller event");
+        };
+        assert_eq!(projection.key, Some(warm_key.cache_key()));
+        assert_eq!(projection.peaks.as_deref(), Some(&vec![(0.2, 0.8)]));
+
+        *requested.lock().expect("requested waveform") = Some(next_current_key.clone());
+        generation.fetch_add(1, Ordering::AcqRel);
+        assert!(!waveform_warm_can_continue(
+            &generation,
+            warm_generation,
+            &requested,
+            &warm_key,
+        ));
+        let current_permit = acquire_waveform_generation_permit(&next_current_key)
+            .expect("new current starts immediately");
+
+        drop(current_permit);
+        drop(warm_permit);
+    }
+
+    #[test]
+    fn waveform_generation_accepts_local_and_remote_but_rejects_dsd() {
+        assert!(waveform_generation_source_and_format_is_supported(
+            "file:///music/track.flac",
+            Some("flac")
+        ));
+        assert!(waveform_generation_source_and_format_is_supported(
+            "https://music.example/stream",
+            None
+        ));
+        assert!(!waveform_generation_source_and_format_is_supported(
+            "fake://music.example/stream",
+            None
+        ));
+        assert!(!waveform_generation_source_and_format_is_supported(
+            "file:///music/track.dsf",
+            Some("audio/x-dsf")
+        ));
         assert!(!waveform_generation_format_is_supported(Some("DSD64")));
         assert!(!waveform_generation_format_is_supported(Some(".dff")));
-        assert!(waveform_generation_format_is_supported(Some("flac")));
-        assert!(waveform_generation_format_is_supported(Some("audio/flac")));
-        assert!(waveform_generation_format_is_supported(None));
     }
 
     #[test]
-    fn playback_reject_meta() {
+    fn waveform_cache_codec_rejects_other_versions_and_durations() {
         let current = serde_json::to_string(&CachedWaveform {
             version: WAVEFORM_CACHE_VERSION,
             duration_seconds: 42,
@@ -859,5 +673,14 @@ mod tests {
         );
         assert_eq!(cached_waveform_peaks_from_str(&stale_duration, 42), None);
         assert_eq!(cached_waveform_peaks_from_str(&stale_version, 42), None);
+    }
+
+    #[test]
+    fn waveform_peaks_are_finite_and_bounded() {
+        let peaks = sanitize_waveform_peaks(vec![(0.5, 1.5), (f64::NAN, 0.2), (-1.0, 0.25)])
+            .expect("peaks");
+
+        assert_eq!(peaks, vec![(0.5, 1.0), (0.0, 0.25)]);
+        assert_eq!(sanitize_waveform_peaks(Vec::new()), None);
     }
 }

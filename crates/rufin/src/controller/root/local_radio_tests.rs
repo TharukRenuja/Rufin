@@ -1,11 +1,12 @@
 use super::*;
 
-use domain::{AlbumId, ArtistCredit, ArtistId, GeneratedTrackSeed, ImageRef};
+use library::{AlbumId, ArtistCredit, ArtistId, ImageRef};
+use sources::GeneratedTrackSeed;
 use std::collections::{HashMap, HashSet};
 
 use super::test_support::{
-    controller_from_store_for_test, library_track, local_album_with_image_ref,
-    local_track_with_image_ref, seed_cached_library,
+    controller_from_store_for_test, local_album_with_image_ref, local_track_with_image_ref,
+    seed_cached_library,
 };
 
 #[test]
@@ -164,43 +165,4 @@ pub(in crate::controller) fn local_artist_radio_spreads_cached_candidates_across
             .iter()
             .all(|track| track.artist_id.as_ref() == Some(&artist))
     );
-}
-
-#[test]
-pub(in crate::controller) fn local_auto_dj_preserves_cached_track_paths() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let tracks = (1..=7)
-        .map(|number| {
-            let mut track = library_track(
-                number,
-                Some(ArtistId::fake(number)),
-                AlbumId::fake(number),
-                &format!("Artist {number}"),
-                &[],
-            );
-            track.local_path = Some(format!("/music/album-{number}/track.flac"));
-            track.source_format = Some("flac".to_string());
-            track
-        })
-        .collect::<Vec<_>>();
-    seed_cached_library(&store, &local, &[], &tracks, &[]);
-    let (controller, _events) = controller_from_store_for_test(store.clone());
-    let mut queue = QueueEngine::new(local.source.id.clone());
-    queue.play_now(&tracks[0]);
-    *controller.queue.lock().expect("queue") = Some(queue);
-    *controller.auto_dj_enabled.lock().expect("auto dj") = true;
-
-    assert!(controller.auto_dj_topup());
-
-    for track in &tracks {
-        let local_path = store
-            .with_store(|store| store.track_local_path(&local.source.id, &track.id))
-            .expect("local path");
-        let source_format = store
-            .with_store(|store| store.track_source_format(&local.source.id, &track.id))
-            .expect("source format");
-        assert_eq!(local_path, track.local_path);
-        assert_eq!(source_format, track.source_format);
-    }
 }

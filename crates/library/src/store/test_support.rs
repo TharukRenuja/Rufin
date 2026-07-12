@@ -1,14 +1,12 @@
-pub(super) use domain::{
+pub(super) use crate::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, LibraryField, LyricLine, Lyrics, LyricsSource, MusicFolder, MusicFolderId, Playlist,
-    PlaylistDetail, PlaylistEntry, PlaylistId, QueueEngine, SourceEntityKind, SourceFeatureOwner,
-    SourceId, SourceIdentity, Track, TrackId,
+    ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
+    SourceEntityKind, SourceFeatureOwner, SourceId, Track, TrackId, TrackSort,
 };
 
 pub(super) use super::{
-    CoverCacheEntry, LibrarySync, MusicFolderSnapshot, SavedSource, SourceLocalAccess,
-    SourceObjectMapping, Store, StoreResult, SyncCommit, SyncCoverage, image_cache_key,
-    lyrics_cache_key,
+    LibrarySync, MusicFolderSnapshot, SourceLocalAccess, SourceObjectMapping, Store, StoreResult,
+    StoredSource, SyncCommit, SyncCoverage,
 };
 
 pub(super) fn sqlite_sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
@@ -19,22 +17,17 @@ pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track])
     super::sources::synthesize_album_from_tracks(album_id, tracks)
 }
 
-pub(super) fn saved_source() -> SavedSource {
-    saved_source_with_id("jellyfin:server:test")
+pub(super) fn stored_source() -> StoredSource {
+    stored_source_with_id("jellyfin:server:test")
 }
 
-pub(super) fn saved_source_with_id(source_id: &str) -> SavedSource {
-    SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new(source_id),
-            kind: "jellyfin".to_string(),
-            name: "Test Server".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
+pub(super) fn stored_source_with_id(source_id: &str) -> StoredSource {
+    StoredSource {
+        source_id: SourceId::new(source_id),
+        kind: "jellyfin".to_string(),
+        name: "Test Server".to_string(),
+        provider_payload: r#"{"version":1,"base_url":"https://music.example","user_id":"user","username":"demo","trust_invalid_cert":false,"use_jellyfin_instant_mix":false}"#
+            .to_string(),
     }
 }
 
@@ -45,11 +38,11 @@ pub(super) struct StoreCase {
 
 impl StoreCase {
     pub(super) fn open() -> Self {
-        Self::with_server(saved_source())
+        Self::with_source(stored_source())
     }
 
     pub(super) fn with_source_id(source_id: &str) -> Self {
-        Self::with_server(saved_source_with_id(source_id))
+        Self::with_source(stored_source_with_id(source_id))
     }
 
     pub(super) fn start_sync(&self, label: &str) -> i64 {
@@ -67,12 +60,12 @@ impl StoreCase {
             .expect(label)
     }
 
-    fn with_server(saved: SavedSource) -> Self {
+    fn with_source(source: StoredSource) -> Self {
         let store = Store::open_memory().expect("open store");
-        store.save_source(&saved).expect("save server");
+        store.save_source(&source).expect("save source");
         Self {
             store,
-            id: saved.source.id,
+            id: source.source_id,
         }
     }
 }
@@ -269,6 +262,7 @@ pub(super) fn artist(number: u32, image_ref: Option<ImageRef>) -> Artist {
         user_rating: None,
         musicbrainz_artist_id: None,
         image_ref,
+        representative_albums: Vec::new(),
     }
 }
 
@@ -279,8 +273,8 @@ pub(super) fn genre(number: u32, image_ref: Option<ImageRef>) -> Genre {
         album_count: 1,
         track_count: 2,
         duration_seconds: 360,
-        image_refs: Vec::new(),
         image_ref,
+        representative_albums: Vec::new(),
     }
 }
 
@@ -292,8 +286,8 @@ pub(super) fn playlist(number: u32, image_ref: Option<ImageRef>) -> Playlist {
         track_count: 2,
         duration_seconds: 360,
         top_genres: Vec::new(),
-        image_refs: Vec::new(),
         image_ref,
+        representative_albums: Vec::new(),
     }
 }
 
@@ -329,16 +323,6 @@ pub(super) fn seed_cached_library(store: &Store, source_id: &SourceId) {
     .expect("commit library");
 }
 
-pub(super) fn cover_entry(source_id: &SourceId) -> CoverCacheEntry {
-    CoverCacheEntry {
-        source_id: source_id.clone(),
-        item_id: "album-one".to_string(),
-        image_tag: "tag-one".to_string(),
-        size: 256,
-        path: "/tmp/rufin-cover.jpg".to_string(),
-    }
-}
-
 pub(super) fn track(number: u32, album: &Album) -> Track {
     Track {
         id: TrackId::fake(number),
@@ -364,6 +348,7 @@ pub(super) fn track(number: u32, album: &Album) -> Track {
         disc_number: 1,
         track_number: number as u16,
         image_ref: album.image_ref.clone(),
+        album_artwork: None,
         genres: album.genres.clone(),
         musicbrainz_recording_id: None,
         musicbrainz_release_track_id: None,

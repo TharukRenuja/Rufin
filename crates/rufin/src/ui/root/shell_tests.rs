@@ -1,4 +1,3 @@
-use super::cover::{cover_artwork_id_for_key, cover_request_id_for_key};
 use super::lyrics_playback_state::{
     allow_loaded_lyrics_cache_revisit, clear_matching_lyrics_loading,
     loaded_lyrics_matches_current, lyrics_loading_matches_current,
@@ -15,39 +14,40 @@ use super::right_panel::{
     queue_lyrics_initial_position, queue_lyrics_position_for_height, queue_lyrics_saved_height,
 };
 use super::startup_reveal::{
-    StartupRevealAction, main_loop_stall_delay_ms, startup_prime_action,
-    startup_route_reveal_action, take_pending_warm,
+    StartupRevealAction, main_loop_stall_delay_ms, startup_route_reveal_action,
 };
 use super::{
-    AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort, auto_lyrics_request_for_settings,
-    auto_lyrics_skip_action_enabled, current_playback_track_id,
+    PlaylistEntryListState, PlaylistEntrySort, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, lyrics_result_subtitle,
     lyrics_result_subtitle_markup, lyrics_result_title_markup,
     lyrics_search_response_matches_query, lyrics_search_result_has_content, playlist_cover_size,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
     playlist_sort_width, queue_source_waits_for_snapshot, seekbar_target_seconds,
 };
-use crate::controller::{LibraryCounts, LibraryHomeUpdate, LyricsSearchResult, SearchRequestKey};
-use domain::ExternalLyricsProvider;
-use domain::{
-    Album, AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-    LibraryLayout, LibrarySourceSelection, MusicFolderId, Playlist, PlaylistId, QueueEntry,
-    QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, SmartPlaylist,
-    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
-    SmartPlaylistSortField, SourceId, SourceIdentity, Track, TrackId, TrackSortKey,
-    TrackTableSettings,
+use crate::StoredSettings;
+use crate::controller::{LibraryCounts, LibraryHomeUpdate, SearchRequestKey};
+use ::library::LibraryDelta;
+use ::library::{
+    Album, AlbumId, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef, MusicFolderId,
+    Playlist, PlaylistEntry, PlaylistId, SearchResults, SourceId, Track, TrackId,
 };
+use domain::{LibrarySourceSelection, Route, SearchKind, TrackSortKey, TrackTableSettings};
 use gdk_pixbuf::{Colorspace, Pixbuf};
-use library::LibraryDelta;
-use source::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
+use metadata::{ExternalLyricsProvider, LyricLine, Lyrics, LyricsSearchResult, LyricsSource};
+use playback::{
+    ControlsView, OccurrenceId, PlaybackView, Provenance, QueueSummaryView, RepeatMode,
+    SequenceEntry, TransportStatus, TransportView,
+};
+use sources::SourceIdentity;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[test]
 fn shell_hide_available() {
-    let mut settings = AppSettings::default();
+    let mut settings = StoredSettings::default();
 
     assert!(!super::tray::exit_tray_hide(&settings, true));
 
@@ -63,7 +63,7 @@ fn shell_hide_available() {
 
 #[test]
 fn shell_start_available() {
-    let mut settings = AppSettings::default();
+    let mut settings = StoredSettings::default();
 
     assert!(!super::tray::should_start_minimized(&settings, true));
 
@@ -75,112 +75,6 @@ fn shell_start_available() {
 
     assert!(super::tray::should_start_minimized(&settings, true));
     assert!(!super::tray::should_start_minimized(&settings, false));
-}
-
-#[test]
-pub(in crate::ui) fn shell_reuse_cover() {
-    let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
-
-    assert!(candidates.contains(&super::DETAIL_COVER_SIZE));
-    assert!(!candidates.contains(&super::GRID_COVER_SIZE));
-}
-#[test]
-pub(in crate::ui) fn shell_use_thumbnail() {
-    let source_id = SourceId::new("server:one");
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    let grid_key = library::image_cache_key(
-        &source_id,
-        &image_ref.item_id,
-        image_ref.tag.as_deref().expect("tag"),
-        super::GRID_COVER_SIZE,
-    );
-    let grid_path = PathBuf::from("/tmp/rufin-grid-cover.jpg");
-
-    let artwork = super::playback_artwork_path_from_lookup(
-        &source_id,
-        &image_ref,
-        super::THUMB_COVER_SIZE,
-        |key| (key == grid_key).then(|| grid_path.clone()),
-    )
-    .expect("playback artwork path");
-
-    assert_eq!(artwork.key, grid_key);
-    assert_eq!(artwork.path, grid_path);
-}
-
-#[test]
-pub(in crate::ui) fn shell_now_playing_artwork_uses_disk_cache_when_memory_is_cold() {
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    let disk_path = PathBuf::from("/tmp/rufin-disk-cover.jpg");
-    let missing_path = PathBuf::from("/tmp/rufin-missing-cover.jpg");
-    let lookup = super::PlaybackArtworkLookup {
-        image_ref: image_ref.clone(),
-        preferred_size: super::THUMB_COVER_SIZE,
-        candidate_keys: vec!["cover-96".to_string(), "cover-256".to_string()],
-        memory_path: None,
-    };
-
-    let path = super::playback_artwork_path_from_lookup_context(
-        lookup,
-        |key| (key == "cover-256").then(|| disk_path.clone()),
-        |_, _| Some(missing_path.clone()),
-    )
-    .expect("disk cover path");
-
-    assert_eq!(path, disk_path);
-}
-
-#[test]
-pub(in crate::ui) fn shell_now_playing_artwork_prefers_memory_cache() {
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    let memory_path = PathBuf::from("/tmp/rufin-memory-cover.jpg");
-    let disk_path = PathBuf::from("/tmp/rufin-disk-cover.jpg");
-    let lookup = super::PlaybackArtworkLookup {
-        image_ref,
-        preferred_size: super::THUMB_COVER_SIZE,
-        candidate_keys: vec!["cover-96".to_string()],
-        memory_path: Some(memory_path.clone()),
-    };
-
-    let path = super::playback_artwork_path_from_lookup_context(
-        lookup,
-        |_| Some(disk_path.clone()),
-        |_, _| None,
-    )
-    .expect("memory cover path");
-
-    assert_eq!(path, memory_path);
-}
-
-#[test]
-pub(in crate::ui) fn shell_accept_size() {
-    let source_id = SourceId::new("server:one");
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    let grid_key = library::image_cache_key(
-        &source_id,
-        &image_ref.item_id,
-        image_ref.tag.as_deref().expect("tag"),
-        super::GRID_COVER_SIZE,
-    );
-    let other_key = library::image_cache_key(
-        &SourceId::new("server:two"),
-        &image_ref.item_id,
-        image_ref.tag.as_deref().expect("tag"),
-        super::GRID_COVER_SIZE,
-    );
-
-    assert!(super::playback_artwork_key_matches(
-        &source_id,
-        &image_ref,
-        super::THUMB_COVER_SIZE,
-        &grid_key,
-    ));
-    assert!(!super::playback_artwork_key_matches(
-        &source_id,
-        &image_ref,
-        super::THUMB_COVER_SIZE,
-        &other_key,
-    ));
 }
 
 #[test]
@@ -198,64 +92,79 @@ pub(in crate::ui) fn shell_playback_portals() {
 #[test]
 pub(in crate::ui) fn shell_now_playing_notification_gates_send_and_withdraw() {
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    let mut settings = AppSettings {
+    let mut settings = StoredSettings {
         notifications_enabled: true,
-        ..AppSettings::default()
+        ..StoredSettings::default()
     };
-    let mut snapshot = super::PlaybackSnapshot {
-        current: Some(test_queue_entry("Current", image_ref)),
-        state: super::PlaybackState::Playing,
-        ..super::PlaybackSnapshot::default()
-    };
+    let mut playback = test_playback_view(
+        Some(test_sequence_entry("Current", image_ref)),
+        SourceId::fake(1),
+        TransportStatus::Playing,
+        0,
+    );
 
-    assert!(now_playing_notification_can_send(&settings, &snapshot));
+    assert!(now_playing_notification_can_send(
+        &settings,
+        Some(&playback)
+    ));
     assert!(!now_playing_notification_should_withdraw(
-        &settings, &snapshot
+        &settings,
+        Some(&playback)
     ));
 
-    snapshot.state = super::PlaybackState::Stopped;
-    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    playback.transport.state = TransportStatus::Stopped;
+    assert!(!now_playing_notification_can_send(
+        &settings,
+        Some(&playback)
+    ));
     assert!(now_playing_notification_should_withdraw(
-        &settings, &snapshot
+        &settings,
+        Some(&playback)
     ));
 
-    snapshot.state = super::PlaybackState::Paused;
-    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    playback.transport.state = TransportStatus::Paused;
+    assert!(!now_playing_notification_can_send(
+        &settings,
+        Some(&playback)
+    ));
     assert!(!now_playing_notification_should_withdraw(
-        &settings, &snapshot
+        &settings,
+        Some(&playback)
     ));
 
     settings.notifications_enabled = false;
-    assert!(!now_playing_notification_can_send(&settings, &snapshot));
+    assert!(!now_playing_notification_can_send(
+        &settings,
+        Some(&playback)
+    ));
     assert!(now_playing_notification_should_withdraw(
-        &settings, &snapshot
+        &settings,
+        Some(&playback)
     ));
 }
 
 #[test]
-pub(in crate::ui) fn shell_now_playing_notification_rejects_stale_completion() {
+pub(in crate::ui) fn shell_now_playing_notification_matches_run_not_track() {
     let current_ref = ImageRef::new("jellyfin:album:current", Some("tag-current".to_string()));
-    let mut snapshot = super::PlaybackSnapshot {
-        current: Some(test_queue_entry("Current", current_ref)),
-        state: super::PlaybackState::Playing,
-        ..super::PlaybackSnapshot::default()
-    };
-    let current_track_id = snapshot.current.as_ref().expect("current").track_id.clone();
+    let mut playback = test_playback_view(
+        Some(test_sequence_entry("Current", current_ref)),
+        SourceId::fake(1),
+        TransportStatus::Playing,
+        0,
+    );
+    let current_run = playback::RunId::new(7);
+    playback.transport.run = Some(current_run);
 
     assert!(now_playing_notification_matches_current(
-        &snapshot,
-        &current_track_id
+        Some(&playback),
+        current_run
     ));
 
-    let next_ref = ImageRef::new("jellyfin:album:next", Some("tag-next".to_string()));
-    snapshot.current = Some(QueueEntry {
-        track_id: TrackId::fake(9),
-        ..test_queue_entry("Next", next_ref)
-    });
+    playback.transport.run = Some(playback::RunId::new(8));
 
     assert!(!now_playing_notification_matches_current(
-        &snapshot,
-        &current_track_id
+        Some(&playback),
+        current_run
     ));
 }
 
@@ -374,11 +283,11 @@ pub(in crate::ui) fn shell_active_commit_invalidates_changed_pages() {
             source_id: server.id.clone(),
             revision: 7,
             delta: LibraryDelta {
-                tracks: library::TrackDelta {
+                tracks: ::library::TrackDelta {
                     fields: vec![track.id.clone()],
                     ..Default::default()
                 },
-                playlists: library::PlaylistDelta {
+                playlists: ::library::PlaylistDelta {
                     entries: vec![playlist.id.clone()],
                     ..Default::default()
                 },
@@ -509,7 +418,7 @@ pub(in crate::ui) fn shell_commit_ignores_inactive_or_stale_update() {
             source_id: server.id,
             revision: 5,
             delta: LibraryDelta {
-                reset: Some(library::LibraryReset::Source),
+                reset: Some(::library::LibraryReset::Source),
                 ..LibraryDelta::default()
             },
         },
@@ -526,22 +435,14 @@ pub(in crate::ui) fn shell_commit_ignores_inactive_or_stale_update() {
 pub(in crate::ui) fn shell_match_snapshot() {
     let old_source = SourceId::new("jellyfin:server:old");
     let next_source = SourceId::new("local:source");
-    let queue = QueueSnapshot {
-        source_id: next_source.clone(),
-        entries: Vec::new(),
-        current_index: None,
-        repeat_mode: RepeatMode::All,
-        shuffle: Default::default(),
-        shuffle_order: Vec::new(),
-        progress_seconds: 0,
-    };
+    let playback = test_playback_view(None, next_source.clone(), TransportStatus::Stopped, 0);
 
     assert!(queue_source_waits_for_snapshot(
-        Some(&queue),
+        Some(&playback),
         Some(&old_source)
     ));
     assert!(!queue_source_waits_for_snapshot(
-        Some(&queue),
+        Some(&playback),
         Some(&next_source)
     ));
     assert!(!queue_source_waits_for_snapshot(None, Some(&old_source)));
@@ -580,13 +481,6 @@ pub(in crate::ui) fn startup_route_reveal() {
     );
 }
 #[test]
-pub(in crate::ui) fn run_cover_prime() {
-    assert_eq!(
-        startup_prime_action(3, Duration::from_millis(super::PRIME_TIMEOUT_MS)),
-        StartupRevealAction::RevealExpired
-    );
-}
-#[test]
 pub(in crate::ui) fn main_loop_stall_delay() {
     assert_eq!(
         main_loop_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(80)),
@@ -596,123 +490,6 @@ pub(in crate::ui) fn main_loop_stall_delay() {
         main_loop_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(725)),
         625
     );
-}
-#[test]
-pub(in crate::ui) fn shell_cover_bind_keeps_same_artwork() {
-    assert_eq!(
-        super::artwork_bind_action(true, true, true, false),
-        super::ArtworkBindAction::Retain
-    );
-    assert_eq!(
-        super::artwork_bind_action(true, false, true, false),
-        super::ArtworkBindAction::RetainAndRequest
-    );
-    assert_eq!(
-        super::artwork_bind_action(false, false, true, false),
-        super::ArtworkBindAction::Request
-    );
-    assert_eq!(
-        super::artwork_bind_action(true, true, true, true),
-        super::ArtworkBindAction::Replace
-    );
-}
-
-#[test]
-pub(in crate::ui) fn shell_cover_artwork_id_ignores_size() {
-    let image_ref = ImageRef::new("kind:album:one", Some("tag-one".to_string()));
-    let grid = "source/provider%3Aalbum%3Aone/tag-one/256";
-    let detail = "source/provider%3Aalbum%3Aone/tag-one/512";
-
-    assert_eq!(
-        cover_artwork_id_for_key(grid, &image_ref),
-        cover_artwork_id_for_key(detail, &image_ref)
-    );
-    assert_ne!(
-        cover_request_id_for_key(grid, 180),
-        cover_request_id_for_key(grid, 220)
-    );
-}
-#[test]
-pub(in crate::ui) fn shell_clear_pending() {
-    let first = SourceId::new("source:first");
-    let second = SourceId::new("source:second");
-    let mut pending = Some((second.clone(), 2));
-
-    assert!(!take_pending_warm(&mut pending, &first, 1));
-    assert_eq!(pending, Some((second, 2)));
-
-    let mut pending = Some((first.clone(), 3));
-    assert!(!take_pending_warm(&mut pending, &first, 1));
-    assert_eq!(pending, Some((first.clone(), 3)));
-    assert!(take_pending_warm(&mut pending, &first, 3));
-    assert_eq!(pending, None);
-}
-
-#[test]
-pub(in crate::ui) fn shell_cover_rules() {
-    let first = test_image_ref("first");
-    let second = test_image_ref("second");
-    let duplicate = first.clone();
-
-    let selected = crate::cover_art_policy::selected_collection_refs(
-        &[first.clone(), second.clone(), duplicate],
-        None,
-        false,
-    );
-    let slots = crate::cover_art_policy::selected_collection_slots(&selected);
-    let slot_refs = slots
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        slot_refs,
-        vec![
-            first.item_id.as_str(),
-            second.item_id.as_str(),
-            first.item_id.as_str(),
-            second.item_id.as_str(),
-        ]
-    );
-}
-#[test]
-pub(in crate::ui) fn row_bottom_clamp() {
-    let (visible_start, visible_end) = super::visible_index_range_from_metrics(
-        100,
-        LibraryLayout::Row,
-        5_000.0,
-        500.0,
-        50,
-        4,
-        160,
-    );
-
-    assert_eq!((visible_start, visible_end), (90, 100));
-}
-#[test]
-pub(in crate::ui) fn shell_use_geometry() {
-    assert_eq!(
-        super::initial_visible_count_from_metrics(LibraryLayout::Row, 900, 720, 4, 160,),
-        17
-    );
-    assert_eq!(
-        super::initial_visible_count_from_metrics(LibraryLayout::Grid, 900, 720, 4, 248,),
-        20
-    );
-}
-#[test]
-pub(in crate::ui) fn grid_bottom_clamp() {
-    let (visible_start, visible_end) = super::visible_index_range_from_metrics(
-        100,
-        LibraryLayout::Grid,
-        6_000.0,
-        744.0,
-        50,
-        4,
-        248,
-    );
-
-    assert_eq!((visible_start, visible_end), (84, 100));
 }
 #[test]
 pub(in crate::ui) fn shell_clamp_height() {
@@ -737,68 +514,55 @@ pub(in crate::ui) fn shell_clamp_height() {
 #[test]
 pub(in crate::ui) fn shell_use_entry() {
     let track_id = TrackId::fake(7);
-    let snapshot = super::PlaybackSnapshot {
-        current: Some(QueueEntry {
-            id: QueueEntryId::new("queue-7"),
-            track_id: track_id.clone(),
-            album_id: None,
-            title: "Restored".to_string(),
-            artist: "Artist".to_string(),
-            artist_id: None,
-            album: "Album".to_string(),
-            year: 2026,
-            duration_seconds: 180,
-            favorite: false,
-            image_ref: None,
-            local_path: None,
-            source_format: None,
-            origin: None,
-        }),
-        ..super::PlaybackSnapshot::default()
-    };
+    let mut entry = test_sequence_entry("Restored", test_image_ref("restored"));
+    entry.track.id = track_id.clone();
+    let playback = Some(test_playback_view(
+        Some(entry),
+        SourceId::fake(1),
+        TransportStatus::Paused,
+        0,
+    ));
 
-    assert_eq!(current_playback_track_id(&snapshot), Some(track_id));
-    assert_eq!(
-        current_playback_track_id(&super::PlaybackSnapshot::default()),
-        None
-    );
+    assert_eq!(current_playback_track_id(&playback), Some(track_id));
+    assert_eq!(current_playback_track_id(&None), None);
 }
 
 #[test]
 pub(in crate::ui) fn shell_fullscreen_refresh_scopes_playback_ticks() {
-    let mut previous = super::PlaybackSnapshot {
-        current_source_id: Some(SourceId::fake(1)),
-        current: Some(test_queue_entry("Current", test_image_ref("current"))),
-        state: super::PlaybackState::Playing,
-        position_seconds: 1,
-        position_millis: 1_000,
-        ..super::PlaybackSnapshot::default()
-    };
+    let mut previous = test_playback_view(
+        Some(test_sequence_entry("Current", test_image_ref("current"))),
+        SourceId::fake(1),
+        TransportStatus::Playing,
+        1_000,
+    );
 
     let mut position_tick = previous.clone();
-    position_tick.position_millis = 1_500;
+    position_tick.transport.position_millis = 1_500;
     assert_eq!(
-        super::fullscreen_playback_refresh(&previous, &position_tick),
+        super::fullscreen_playback_refresh(Some(&previous), &position_tick),
         super::FullscreenPlaybackRefresh::None
     );
 
     let mut state_change = previous.clone();
-    state_change.state = super::PlaybackState::Paused;
+    state_change.transport.state = TransportStatus::Paused;
     assert_eq!(
-        super::fullscreen_playback_refresh(&previous, &state_change),
+        super::fullscreen_playback_refresh(Some(&previous), &state_change),
         super::FullscreenPlaybackRefresh::Visualizer
     );
 
     let mut current_change = previous.clone();
-    current_change.current = Some(test_queue_entry("Next", test_image_ref("next")));
+    current_change.transport.current = Some(Arc::new(test_sequence_entry(
+        "Next",
+        test_image_ref("next"),
+    )));
     assert_eq!(
-        super::fullscreen_playback_refresh(&previous, &current_change),
+        super::fullscreen_playback_refresh(Some(&previous), &current_change),
         super::FullscreenPlaybackRefresh::Static
     );
 
-    previous.current_source_id = Some(SourceId::fake(2));
+    previous.transport.source_id = SourceId::fake(2);
     assert_eq!(
-        super::fullscreen_playback_refresh(&position_tick, &previous),
+        super::fullscreen_playback_refresh(Some(&position_tick), &previous),
         super::FullscreenPlaybackRefresh::Static
     );
 }
@@ -969,147 +733,26 @@ fn sorted_artist_track_titles(favorite_first: bool) -> Vec<String> {
     tracks.into_iter().map(|track| track.title).collect()
 }
 #[test]
-pub(in crate::ui) fn shell_track_external() {
-    let track_id = TrackId::fake(11);
-    let mut settings = AppSettings {
-        external_lyrics_enabled: true,
-        ..AppSettings::default()
-    };
-    let remote_lyrics = Lyrics {
-        track_id: track_id.clone(),
-        source: LyricsSource::Remote,
-        external_provider: None,
-        lines: vec![LyricLine {
-            text: "remote line".to_string(),
-            start_millis: None,
-        }],
-    };
-
-    assert!(auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&remote_lyrics)
-    ));
-
-    settings
-        .suppressed_auto_lyrics_track_ids
-        .push(track_id.as_str().to_string());
-    assert!(!auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&remote_lyrics)
-    ));
-
-    settings.suppressed_auto_lyrics_track_ids.clear();
-    settings.external_lyrics_enabled = false;
-    assert!(!auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&remote_lyrics)
-    ));
-
-    settings.external_lyrics_enabled = true;
-    settings.private_mode = true;
-    assert!(!auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&remote_lyrics)
-    ));
-    assert!(!auto_lyrics_skip_action_enabled(&settings, None, None));
-    assert!(!auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        None
-    ));
-}
-#[test]
-pub(in crate::ui) fn shell_auto_lyrics() {
-    let track_id = TrackId::fake(13);
-    let settings = AppSettings {
-        external_lyrics_enabled: true,
-        ..AppSettings::default()
-    };
-    let server_lyrics = Lyrics {
-        track_id: track_id.clone(),
-        source: LyricsSource::Server,
-        external_provider: None,
-        lines: vec![LyricLine {
-            text: "server line".to_string(),
-            start_millis: None,
-        }],
-    };
-    let remote_lyrics = Lyrics {
-        track_id: track_id.clone(),
-        source: LyricsSource::Remote,
-        external_provider: None,
-        lines: vec![LyricLine {
-            text: "remote line".to_string(),
-            start_millis: None,
-        }],
-    };
-
-    assert!(!auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&server_lyrics)
-    ));
-    assert!(auto_lyrics_skip_action_enabled(
-        &settings,
-        Some(&track_id),
-        Some(&remote_lyrics)
-    ));
-}
-#[test]
-pub(in crate::ui) fn shell_keep_suppressed() {
-    let track_id = TrackId::fake(12);
-    let mut settings = AppSettings {
-        external_lyrics_enabled: true,
-        ..AppSettings::default()
-    };
-
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, true),
-        Some(AutoLyricsRequest::Default)
-    );
-
-    settings
-        .suppressed_auto_lyrics_track_ids
-        .push(track_id.as_str().to_string());
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, true),
-        Some(AutoLyricsRequest::ServerOnly)
-    );
-
-    settings.suppressed_auto_lyrics_track_ids.clear();
-    settings.external_lyrics_enabled = false;
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, true),
-        Some(AutoLyricsRequest::ServerOnly)
-    );
-
-    settings.external_lyrics_enabled = true;
-    settings.private_mode = true;
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, true),
-        Some(AutoLyricsRequest::ServerOnly)
-    );
-
-    settings.private_mode = false;
-    settings.lyrics_panel_visible = false;
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, false),
-        None
-    );
-    assert_eq!(
-        auto_lyrics_request_for_settings(&settings, &track_id, true),
-        Some(AutoLyricsRequest::Default)
-    );
-}
-#[test]
 pub(in crate::ui) fn shell_allow_cache() {
     let track_id = TrackId::fake(13);
     let previous_failed_track_id = TrackId::fake(14);
-    let mut attempted = HashSet::from([track_id.clone(), previous_failed_track_id.clone()]);
+    let media = playback::MediaKey {
+        source_id: SourceId::new("source-current"),
+        track_id: track_id.clone(),
+    };
+    let previous_failed_media = playback::MediaKey {
+        source_id: media.source_id.clone(),
+        track_id: previous_failed_track_id,
+    };
+    let same_track_other_source = playback::MediaKey {
+        source_id: SourceId::new("source-other"),
+        track_id: track_id.clone(),
+    };
+    let mut attempted = HashSet::from([
+        media.clone(),
+        previous_failed_media.clone(),
+        same_track_other_source.clone(),
+    ]);
     let lyrics = Lyrics {
         track_id: track_id.clone(),
         source: LyricsSource::Remote,
@@ -1120,17 +763,30 @@ pub(in crate::ui) fn shell_allow_cache() {
         }],
     };
 
-    allow_loaded_lyrics_cache_revisit(&mut attempted, Some(&lyrics));
+    allow_loaded_lyrics_cache_revisit(&mut attempted, &media, Some(&lyrics));
 
-    assert!(!attempted.contains(&track_id));
-    assert!(attempted.contains(&previous_failed_track_id));
-    allow_loaded_lyrics_cache_revisit(&mut attempted, None);
-    assert!(attempted.contains(&previous_failed_track_id));
+    assert!(!attempted.contains(&media));
+    assert!(attempted.contains(&previous_failed_media));
+    assert!(attempted.contains(&same_track_other_source));
+    allow_loaded_lyrics_cache_revisit(&mut attempted, &previous_failed_media, None);
+    assert!(attempted.contains(&previous_failed_media));
 }
 #[test]
 pub(in crate::ui) fn shell_lyrics_loading_current() {
     let current_track = TrackId::fake(15);
     let old_track = TrackId::fake(16);
+    let current_media = playback::MediaKey {
+        source_id: SourceId::new("source-current"),
+        track_id: current_track.clone(),
+    };
+    let old_media = playback::MediaKey {
+        source_id: current_media.source_id.clone(),
+        track_id: old_track,
+    };
+    let other_source_media = playback::MediaKey {
+        source_id: SourceId::new("source-other"),
+        track_id: current_track.clone(),
+    };
     let lyrics = Lyrics {
         track_id: current_track.clone(),
         source: LyricsSource::Server,
@@ -1142,31 +798,48 @@ pub(in crate::ui) fn shell_lyrics_loading_current() {
     };
 
     assert!(lyrics_loading_matches_current(
-        Some(&current_track),
-        Some(&current_track),
+        Some(&current_media),
+        Some(&current_media),
         None
     ));
     assert!(!lyrics_loading_matches_current(
-        Some(&current_track),
-        Some(&old_track),
+        Some(&current_media),
+        Some(&old_media),
         None
     ));
     assert!(!lyrics_loading_matches_current(
-        Some(&current_track),
-        Some(&current_track),
+        Some(&current_media),
+        Some(&other_source_media),
+        None
+    ));
+    assert!(!lyrics_loading_matches_current(
+        Some(&current_media),
+        Some(&current_media),
         Some(&lyrics)
     ));
 
-    let mut loading_track = Some(old_track.clone());
-    clear_matching_lyrics_loading(&mut loading_track, &current_track);
-    assert_eq!(loading_track, Some(old_track.clone()));
-    clear_matching_lyrics_loading(&mut loading_track, &old_track);
-    assert_eq!(loading_track, None);
+    let mut loading_media = Some(old_media.clone());
+    clear_matching_lyrics_loading(&mut loading_media, &current_media);
+    assert_eq!(loading_media, Some(old_media.clone()));
+    clear_matching_lyrics_loading(&mut loading_media, &old_media);
+    assert_eq!(loading_media, None);
 }
 #[test]
 pub(in crate::ui) fn shell_reject_stale_lyrics() {
     let old_track = TrackId::fake(12);
     let current_track = TrackId::fake(13);
+    let current_media = playback::MediaKey {
+        source_id: SourceId::new("source-current"),
+        track_id: current_track.clone(),
+    };
+    let old_media = playback::MediaKey {
+        source_id: current_media.source_id.clone(),
+        track_id: old_track.clone(),
+    };
+    let same_track_other_source = playback::MediaKey {
+        source_id: SourceId::new("source-other"),
+        track_id: current_track.clone(),
+    };
     let old_lyrics = Lyrics {
         track_id: old_track.clone(),
         source: LyricsSource::Remote,
@@ -1187,40 +860,36 @@ pub(in crate::ui) fn shell_reject_stale_lyrics() {
     };
 
     assert!(!loaded_lyrics_matches_current(
-        Some(&current_track),
-        &old_track,
+        Some(&current_media),
+        &old_media,
         Some(&old_lyrics)
     ));
     assert!(!loaded_lyrics_matches_current(
-        Some(&current_track),
-        &old_track,
+        Some(&current_media),
+        &old_media,
         None
     ));
     assert!(!loaded_lyrics_matches_current(
-        Some(&current_track),
-        &current_track,
+        Some(&current_media),
+        &current_media,
         Some(&old_lyrics)
     ));
-    assert!(loaded_lyrics_matches_current(
-        Some(&current_track),
-        &current_track,
+    assert!(!loaded_lyrics_matches_current(
+        Some(&current_media),
+        &same_track_other_source,
         Some(&current_lyrics)
     ));
     assert!(loaded_lyrics_matches_current(
-        Some(&current_track),
-        &current_track,
+        Some(&current_media),
+        &current_media,
+        Some(&current_lyrics)
+    ));
+    assert!(loaded_lyrics_matches_current(
+        Some(&current_media),
+        &current_media,
         None
     ));
-    assert!(!loaded_lyrics_matches_current(None, &old_track, None));
-}
-#[test]
-pub(in crate::ui) fn shell_filters_internal_controller_errors() {
-    assert!(!super::controller_error_is_user_visible(
-        "Element failed to change its state"
-    ));
-    assert!(super::controller_error_is_user_visible(
-        "No saved token found for the active server."
-    ));
+    assert!(!loaded_lyrics_matches_current(None, &old_media, None));
 }
 #[test]
 pub(in crate::ui) fn shell_ignore_field() {
@@ -1384,17 +1053,6 @@ pub(in crate::ui) fn test_server(suffix: &str) -> SourceIdentity {
         base_url: "http://localhost".to_string(),
     }
 }
-pub(in crate::ui) fn test_initial_route_metrics() -> super::InitialRouteCoverMetrics {
-    super::InitialRouteCoverMetrics {
-        route_height: 720,
-        app_height: 720,
-        grid_columns: 4,
-        grid_card_size: 160,
-        album_grid_columns: 2,
-        album_grid_card_size: 256,
-        home_showcase_seed: 0,
-    }
-}
 pub(in crate::ui) fn test_image_ref(suffix: &str) -> ImageRef {
     ImageRef::new(format!("local:cover:file%3A%2F%2F{suffix}"), None)
 }
@@ -1406,47 +1064,55 @@ pub(in crate::ui) fn test_playlist(name: &str, image_ref: ImageRef) -> Playlist 
         track_count: 1,
         duration_seconds: 180,
         top_genres: Vec::new(),
-        image_refs: vec![image_ref],
-        image_ref: None,
-    }
-}
-pub(in crate::ui) fn test_smart_playlist(name: &str, image_ref: ImageRef) -> SmartPlaylist {
-    SmartPlaylist {
-        id: SmartPlaylistId::fake(1),
-        name: name.to_string(),
-        position: 0,
-        builtin: None,
-        definition: SmartPlaylistDefinition {
-            root: SmartPlaylistRuleGroup {
-                mode: SmartPlaylistMatchMode::All,
-                rules: Vec::new(),
-            },
-            sort_field: SmartPlaylistSortField::Title,
-            descending: false,
-            limit: None,
-        },
-        track_count: 1,
-        duration_seconds: 180,
-        image_refs: vec![image_ref],
-        image_ref: None,
-    }
-}
-pub(in crate::ui) fn test_queue_entry(title: &str, image_ref: ImageRef) -> QueueEntry {
-    QueueEntry {
-        id: QueueEntryId::new(format!("queue:{title}")),
-        track_id: TrackId::fake(1),
-        album_id: None,
-        title: title.to_string(),
-        artist: "Artist".to_string(),
-        artist_id: None,
-        album: "Album".to_string(),
-        year: 2026,
-        duration_seconds: 180,
-        favorite: false,
         image_ref: Some(image_ref),
-        local_path: None,
-        source_format: None,
-        origin: None,
+        representative_albums: Vec::new(),
+    }
+}
+pub(in crate::ui) fn test_sequence_entry(title: &str, image_ref: ImageRef) -> SequenceEntry {
+    let mut track = test_track("Artist", None);
+    track.title = title.to_string();
+    track.image_ref = Some(image_ref);
+    SequenceEntry {
+        occurrence: OccurrenceId::new(format!("queue:{title}")),
+        track,
+        provenance: Provenance::Manual,
+    }
+}
+
+pub(in crate::ui) fn test_playback_view(
+    current: Option<SequenceEntry>,
+    source_id: SourceId,
+    state: TransportStatus,
+    position_millis: u64,
+) -> PlaybackView {
+    let current_occurrence = current.as_ref().map(|entry| entry.occurrence.clone());
+    let run = current.as_ref().map(|_| playback::RunId::new(1));
+    PlaybackView {
+        queue: QueueSummaryView {
+            revision: 1,
+            total: usize::from(current.is_some()),
+            current_occurrence,
+            current_index: current.as_ref().map(|_| 0),
+            next_occurrence: None,
+        },
+        transport: TransportView {
+            source_id,
+            run,
+            current: current.map(Arc::new),
+            state,
+            position_millis,
+            duration_millis: 180_000,
+            buffering_percent: None,
+            error: None,
+        },
+        controls: ControlsView {
+            repeat_mode: RepeatMode::Off,
+            shuffle_enabled: false,
+            auto_dj_enabled: false,
+            volume: 1.0,
+            muted: false,
+            audio_output: None,
+        },
     }
 }
 pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
@@ -1505,6 +1171,7 @@ pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Tr
         disc_number: 1,
         track_number: 1,
         image_ref: None,
+        album_artwork: None,
         genres: Vec::new(),
         musicbrainz_recording_id: None,
         musicbrainz_release_track_id: None,

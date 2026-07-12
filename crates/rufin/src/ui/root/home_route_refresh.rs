@@ -128,7 +128,7 @@ impl Shell {
     }
     pub(in crate::ui) fn update_prefetched_explore_from_snapshot(
         &self,
-        source_id: Option<domain::SourceId>,
+        source_id: Option<::library::SourceId>,
         prefetched: Option<PrefetchedHomeSection>,
         sections: &[HomeSection],
     ) {

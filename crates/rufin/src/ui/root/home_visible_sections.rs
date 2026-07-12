@@ -1,7 +1,6 @@
 use super::*;
 
 impl Shell {
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn register_home_section_view(
         &self,
         section_kind: HomeSectionKind,

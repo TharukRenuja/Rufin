@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use domain::SourceId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,34 +35,51 @@ pub enum SecretError {
 pub type SecretResult<T> = Result<T, SecretError>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum SecretKey {
-    ProviderToken(SourceId),
-    LastFmApiSecret,
-    LastFmSession,
-    LibreFmSession,
-    ListenBrainzToken,
+pub struct SecretKey {
+    config_key: String,
+    namespace: String,
+    kind: String,
+    label: String,
+    attribute: Option<(String, String)>,
+    legacy_attribute_name: Option<String>,
 }
 
 impl SecretKey {
-    fn provider_token(source_id: &SourceId) -> Self {
-        Self::ProviderToken(source_id.clone())
+    pub fn namespaced(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        Self {
+            config_key: format!("{namespace}:{kind}"),
+            namespace,
+            kind,
+            label: label.into(),
+            attribute: None,
+            legacy_attribute_name: None,
+        }
     }
 
-    fn config_key(&self) -> String {
-        match self {
-            Self::ProviderToken(source_id) => {
-                format!("provider-token:{}", source_id.as_str())
-            }
-            Self::LastFmApiSecret => "scrobbling:lastfm-api-secret".to_string(),
-            Self::LastFmSession => "scrobbling:lastfm-session".to_string(),
-            Self::LibreFmSession => "scrobbling:librefm-session".to_string(),
-            Self::ListenBrainzToken => "scrobbling:listenbrainz-token".to_string(),
+    fn provider_token(source_namespace: &str) -> Self {
+        Self {
+            config_key: format!("provider-token:{source_namespace}"),
+            namespace: "provider".to_string(),
+            kind: "provider-token".to_string(),
+            label: format!("Rufin provider token {source_namespace}"),
+            attribute: Some(("source_id".to_string(), source_namespace.to_string())),
+            legacy_attribute_name: Some("server_id".to_string()),
         }
+    }
+
+    fn config_key(&self) -> &str {
+        &self.config_key
     }
 
     fn scoped_config_key(&self, scope_id: &str) -> String {
         if scope_id.is_empty() {
-            return self.config_key();
+            return self.config_key().to_string();
         }
         format!("scope:{scope_id}:{}", self.config_key())
     }
@@ -74,16 +90,16 @@ pub trait SecretStore: Send + Sync {
     fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>>;
     fn delete_secret(&self, key: &SecretKey) -> SecretResult<()>;
 
-    fn save_token(&self, source_id: &SourceId, token: &str) -> SecretResult<()> {
-        self.save_secret(&SecretKey::provider_token(source_id), token)
+    fn save_token(&self, source_namespace: &str, token: &str) -> SecretResult<()> {
+        self.save_secret(&SecretKey::provider_token(source_namespace), token)
     }
 
-    fn load_token(&self, source_id: &SourceId) -> SecretResult<Option<String>> {
-        self.load_secret(&SecretKey::provider_token(source_id))
+    fn load_token(&self, source_namespace: &str) -> SecretResult<Option<String>> {
+        self.load_secret(&SecretKey::provider_token(source_namespace))
     }
 
-    fn delete_token(&self, source_id: &SourceId) -> SecretResult<()> {
-        self.delete_secret(&SecretKey::provider_token(source_id))
+    fn delete_token(&self, source_namespace: &str) -> SecretResult<()> {
+        self.delete_secret(&SecretKey::provider_token(source_namespace))
     }
 }
 
@@ -292,6 +308,8 @@ fn restrict_config_secret_file(path: &Path) -> std::io::Result<()> {
 
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -372,59 +390,29 @@ impl SecretServiceStore {
         let mut attributes = vec![
             ("application".to_string(), self.application.clone()),
             ("scope".to_string(), self.scope_id.clone()),
+            ("namespace".to_string(), key.namespace.clone()),
+            ("kind".to_string(), key.kind.clone()),
         ];
-        match key {
-            SecretKey::ProviderToken(source_id) => {
-                attributes.push(("namespace".to_string(), "provider".to_string()));
-                attributes.push(("kind".to_string(), "provider-token".to_string()));
-                attributes.push(("source_id".to_string(), source_id.as_str().to_string()));
-            }
-            SecretKey::LastFmApiSecret => {
-                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
-                attributes.push(("kind".to_string(), "lastfm-api-secret".to_string()));
-            }
-            SecretKey::LastFmSession => {
-                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
-                attributes.push(("kind".to_string(), "lastfm-session".to_string()));
-            }
-            SecretKey::LibreFmSession => {
-                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
-                attributes.push(("kind".to_string(), "librefm-session".to_string()));
-            }
-            SecretKey::ListenBrainzToken => {
-                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
-                attributes.push(("kind".to_string(), "listenbrainz-token".to_string()));
-            }
+        if let Some(attribute) = &key.attribute {
+            attributes.push(attribute.clone());
         }
         attributes
     }
 
     fn legacy_secret_attributes(&self, key: &SecretKey) -> Option<Vec<(String, String)>> {
-        match key {
-            SecretKey::ProviderToken(source_id) => {
-                let mut attributes = vec![
-                    ("application".to_string(), self.application.clone()),
-                    ("scope".to_string(), self.scope_id.clone()),
-                    ("namespace".to_string(), "provider".to_string()),
-                    ("kind".to_string(), "provider-token".to_string()),
-                ];
-                attributes.push(("server_id".to_string(), source_id.as_str().to_string()));
-                Some(attributes)
-            }
-            _ => None,
-        }
+        let legacy_attribute_name = key.legacy_attribute_name.as_ref()?;
+        let (_, attribute_value) = key.attribute.as_ref()?;
+        Some(vec![
+            ("application".to_string(), self.application.clone()),
+            ("scope".to_string(), self.scope_id.clone()),
+            ("namespace".to_string(), key.namespace.clone()),
+            ("kind".to_string(), key.kind.clone()),
+            (legacy_attribute_name.clone(), attribute_value.clone()),
+        ])
     }
 
     fn secret_label(&self, key: &SecretKey) -> String {
-        match key {
-            SecretKey::ProviderToken(source_id) => {
-                format!("Rufin provider token {}", source_id.as_str())
-            }
-            SecretKey::LastFmApiSecret => "Rufin Last.fm API secret".to_string(),
-            SecretKey::LastFmSession => "Rufin Last.fm session".to_string(),
-            SecretKey::LibreFmSession => "Rufin Libre.fm session".to_string(),
-            SecretKey::ListenBrainzToken => "Rufin ListenBrainz token".to_string(),
-        }
+        key.label.clone()
     }
 
     fn run<T, Fut>(&self, operation: Fut) -> SecretResult<T>
@@ -553,54 +541,63 @@ impl SecretStore for SecretServiceStore {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::SecretServiceStore;
     use super::{
         CachedSecretStore, ConfigSecretStore, MemorySecretStore, SecretError, SecretKey,
         SecretResult, SecretStore, SwitchableSecretStore,
     };
-    use domain::SourceId;
     use std::fs;
     use std::sync::{Arc, Mutex};
+
+    const SOURCE: &str = "source-1";
+
+    fn example_session_key() -> SecretKey {
+        SecretKey::namespaced("example", "session", "Rufin example session")
+    }
+
+    fn other_token_key() -> SecretKey {
+        SecretKey::namespaced("other", "token", "Rufin other token")
+    }
 
     #[test]
     fn memory_token_roundtrip() {
         let store = MemorySecretStore::new();
-        let source_id = SourceId::fake(1);
 
-        store.save_token(&source_id, "token").expect("save token");
+        store.save_token(SOURCE, "token").expect("save token");
         assert_eq!(
-            store.load_token(&source_id).expect("load token"),
+            store.load_token(SOURCE).expect("load token"),
             Some("token".to_string())
         );
-        store.delete_token(&source_id).expect("delete token");
-        assert_eq!(store.load_token(&source_id).expect("load token"), None);
+        store.delete_token(SOURCE).expect("delete token");
+        assert_eq!(store.load_token(SOURCE).expect("load token"), None);
     }
 
     #[test]
     fn memory_secret_namespacing() {
         let store = MemorySecretStore::new();
-        let source_id = SourceId::fake(1);
 
         store
-            .save_token(&source_id, "provider-token")
+            .save_token(SOURCE, "provider-token")
             .expect("save provider token");
         store
-            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
-            .expect("save scrobbling session");
+            .save_secret(&example_session_key(), "example-session")
+            .expect("save namespaced session");
 
         assert_eq!(
-            store.load_token(&source_id).expect("load provider token"),
+            store.load_token(SOURCE).expect("load provider token"),
             Some("provider-token".to_string())
         );
         assert_eq!(
             store
-                .load_secret(&SecretKey::LastFmSession)
-                .expect("load scrobbling session"),
-            Some("lastfm-session".to_string())
+                .load_secret(&example_session_key())
+                .expect("load namespaced session"),
+            Some("example-session".to_string())
         );
         assert_eq!(
             store
-                .load_secret(&SecretKey::ListenBrainzToken)
-                .expect("load listenbrainz token"),
+                .load_secret(&other_token_key())
+                .expect("load other token"),
             None
         );
     }
@@ -610,29 +607,32 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("secrets.json");
         let store = ConfigSecretStore::new(path.clone());
-        let source_id = SourceId::fake(1);
 
         store
-            .save_token(&source_id, "provider-secret-value")
+            .save_token(SOURCE, "provider-secret-value")
             .expect("save provider token");
         store
-            .save_secret(&SecretKey::LastFmSession, "scrobble-secret-value")
-            .expect("save scrobbling token");
+            .save_secret(&example_session_key(), "namespaced-secret-value")
+            .expect("save namespaced secret");
 
         assert_eq!(
-            store.load_token(&source_id).expect("load provider token"),
+            store.load_token(SOURCE).expect("load provider token"),
             Some("provider-secret-value".to_string())
         );
         assert_eq!(
             store
-                .load_secret(&SecretKey::LastFmSession)
-                .expect("load scrobbling token"),
-            Some("scrobble-secret-value".to_string())
+                .load_secret(&example_session_key())
+                .expect("load namespaced secret"),
+            Some("namespaced-secret-value".to_string())
         );
         let raw = fs::read_to_string(&path).expect("read config secrets");
         assert!(raw.contains("config-base64"));
         assert!(!raw.contains("provider-secret-value"));
-        assert!(!raw.contains("scrobble-secret-value"));
+        assert!(!raw.contains("namespaced-secret-value"));
+        let file: serde_json::Value = serde_json::from_str(&raw).expect("config secret json");
+        let stored = file["secrets"].as_object().expect("stored secrets");
+        assert!(stored.contains_key("provider-token:source-1"));
+        assert!(stored.contains_key("example:session"));
 
         #[cfg(unix)]
         {
@@ -651,15 +651,14 @@ mod tests {
     fn config_empty_scope_preserves_legacy_keys() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("secrets.json");
-        let source_id = SourceId::fake(1);
 
         ConfigSecretStore::new(path.clone())
-            .save_token(&source_id, "legacy-token")
+            .save_token(SOURCE, "legacy-token")
             .expect("save legacy token");
 
         assert_eq!(
             ConfigSecretStore::with_scope(path, "")
-                .load_token(&source_id)
+                .load_token(SOURCE)
                 .expect("load legacy token"),
             Some("legacy-token".to_string())
         );
@@ -669,27 +668,89 @@ mod tests {
     fn config_scopes_hide_old_tokens() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("secrets.json");
-        let source_id = SourceId::fake(1);
 
         ConfigSecretStore::new(path.clone())
-            .save_token(&source_id, "legacy-token")
+            .save_token(SOURCE, "legacy-token")
             .expect("save legacy token");
         ConfigSecretStore::with_scope(path.clone(), "new-scope")
-            .save_token(&source_id, "scoped-token")
+            .save_token(SOURCE, "scoped-token")
             .expect("save scoped token");
 
         assert_eq!(
             ConfigSecretStore::new(path.clone())
-                .load_token(&source_id)
+                .load_token(SOURCE)
                 .expect("load legacy token"),
             Some("legacy-token".to_string())
         );
         assert_eq!(
             ConfigSecretStore::with_scope(path, "other-scope")
-                .load_token(&source_id)
+                .load_token(SOURCE)
                 .expect("load other scope token"),
             None
         );
+    }
+
+    #[test]
+    fn scoped_namespaced_key_preserves_config_key_shape() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("secrets.json");
+        ConfigSecretStore::with_scope(path.clone(), "scope-1")
+            .save_secret(&example_session_key(), "session")
+            .expect("save scoped secret");
+
+        let raw = fs::read_to_string(path).expect("read config secrets");
+        let file: serde_json::Value = serde_json::from_str(&raw).expect("config secret json");
+        let stored = file["secrets"].as_object().expect("stored secrets");
+        assert_eq!(stored.len(), 1);
+        assert!(stored.contains_key("scope:scope-1:example:session"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secret_service_namespaced_attributes_preserve_shape() {
+        let store = SecretServiceStore::new("scope-1");
+        let key = example_session_key();
+
+        assert_eq!(
+            store.secret_attributes(&key),
+            vec![
+                ("application".to_string(), "Rufin".to_string()),
+                ("scope".to_string(), "scope-1".to_string()),
+                ("namespace".to_string(), "example".to_string()),
+                ("kind".to_string(), "session".to_string()),
+            ]
+        );
+        assert_eq!(store.legacy_secret_attributes(&key), None);
+        assert_eq!(store.secret_label(&key), "Rufin example session");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_attributes_preserve_current_and_legacy_lookup() {
+        let store = SecretServiceStore::new("scope-1");
+        let key = SecretKey::provider_token(SOURCE);
+
+        assert_eq!(
+            store.secret_attributes(&key),
+            vec![
+                ("application".to_string(), "Rufin".to_string()),
+                ("scope".to_string(), "scope-1".to_string()),
+                ("namespace".to_string(), "provider".to_string()),
+                ("kind".to_string(), "provider-token".to_string()),
+                ("source_id".to_string(), SOURCE.to_string()),
+            ]
+        );
+        assert_eq!(
+            store.legacy_secret_attributes(&key),
+            Some(vec![
+                ("application".to_string(), "Rufin".to_string()),
+                ("scope".to_string(), "scope-1".to_string()),
+                ("namespace".to_string(), "provider".to_string()),
+                ("kind".to_string(), "provider-token".to_string()),
+                ("server_id".to_string(), SOURCE.to_string()),
+            ])
+        );
+        assert_eq!(store.secret_label(&key), "Rufin provider token source-1");
     }
 
     #[derive(Default)]
@@ -722,19 +783,18 @@ mod tests {
     #[test]
     fn cached_token_reuse() {
         let inner = Arc::new(CountingSecretStore::default());
-        let source_id = SourceId::fake(1);
         inner
-            .save_token(&source_id, "provider-token")
+            .save_token(SOURCE, "provider-token")
             .expect("seed provider token");
         let store = CachedSecretStore::new(Arc::<CountingSecretStore>::clone(&inner));
 
         assert_eq!(
-            store.load_token(&source_id).expect("load provider token"),
+            store.load_token(SOURCE).expect("load provider token"),
             Some("provider-token".to_string())
         );
         assert_eq!(
             store
-                .load_token(&source_id)
+                .load_token(SOURCE)
                 .expect("load cached provider token"),
             Some("provider-token".to_string())
         );
@@ -745,48 +805,41 @@ mod tests {
     fn cached_store_mutations() {
         let inner = Arc::new(CountingSecretStore::default());
         let store = CachedSecretStore::new(Arc::<CountingSecretStore>::clone(&inner));
-        let source_id = SourceId::fake(1);
 
         store
-            .save_token(&source_id, "first-token")
+            .save_token(SOURCE, "first-token")
             .expect("save provider token");
         assert_eq!(
-            store.load_token(&source_id).expect("load provider token"),
+            store.load_token(SOURCE).expect("load provider token"),
             Some("first-token".to_string())
         );
         assert_eq!(inner.load_count(), 0);
 
-        store
-            .delete_token(&source_id)
-            .expect("delete provider token");
-        assert_eq!(
-            store.load_token(&source_id).expect("load after delete"),
-            None
-        );
+        store.delete_token(SOURCE).expect("delete provider token");
+        assert_eq!(store.load_token(SOURCE).expect("load after delete"), None);
         assert_eq!(inner.load_count(), 0);
     }
 
     #[test]
     fn switchable_store_replaces_cached_backend() {
-        let source_id = SourceId::fake(1);
         let first_inner = Arc::new(CountingSecretStore::default());
         first_inner
-            .save_token(&source_id, "first-token")
+            .save_token(SOURCE, "first-token")
             .expect("seed first token");
         let second_inner = Arc::new(CountingSecretStore::default());
         second_inner
-            .save_token(&source_id, "second-token")
+            .save_token(SOURCE, "second-token")
             .expect("seed second token");
         let store = SwitchableSecretStore::new(Arc::new(CachedSecretStore::new(first_inner)));
 
         assert_eq!(
-            store.load_token(&source_id).expect("load first token"),
+            store.load_token(SOURCE).expect("load first token"),
             Some("first-token".to_string())
         );
         let _previous = store.replace(Arc::new(CachedSecretStore::new(second_inner)));
 
         assert_eq!(
-            store.load_token(&source_id).expect("load second token"),
+            store.load_token(SOURCE).expect("load second token"),
             Some("second-token".to_string())
         );
     }

@@ -2,11 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use domain::{
-    Album, AlbumId, Artist, ArtistId, LibraryListKey, Route, Track, TrackId, TrackSortKey,
-};
+use ::library::{Album, AlbumId, Artist, ArtistId, FavoriteItemId, SearchResults, Track, TrackId};
+use domain::{LibraryListKey, Route, TrackSortKey};
 use gtk::glib;
-use source::{FavoriteItemId, SearchResults};
 
 use crate::controller::LibrarySnapshot;
 
@@ -266,8 +264,8 @@ fn favorite_track_source(library: &LibrarySnapshot, track_id: &TrackId) -> Optio
 mod tests {
     use super::*;
     use crate::controller::LocalAccessStatus;
-    use domain::{AlbumId, HomeSection, HomeSectionKind};
-    use source::SearchResults;
+    use library::SearchResults;
+    use library::{AlbumId, HomeSection, HomeSectionKind};
 
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
         LibrarySnapshot {
@@ -311,6 +309,7 @@ mod tests {
                 disc_number: 1,
                 track_number: 1,
                 image_ref: None,
+                album_artwork: None,
                 genres: Vec::new(),
                 musicbrainz_recording_id: None,
                 musicbrainz_release_track_id: None,

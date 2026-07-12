@@ -1,4 +1,4 @@
-use super::{AppSettings, Shell, tr};
+use super::{Shell, StoredSettings, tr};
 use adw::prelude::*;
 use gdk_pixbuf::{InterpType, Pixbuf};
 use gtk::glib;
@@ -189,11 +189,11 @@ pub(super) fn install_tray(shell: &Rc<Shell>) {
     });
 }
 
-pub(super) fn exit_tray_hide(settings: &AppSettings, tray_available: bool) -> bool {
+pub(super) fn exit_tray_hide(settings: &StoredSettings, tray_available: bool) -> bool {
     settings.tray_enabled && settings.exit_to_tray && tray_available
 }
 
-pub(super) fn should_start_minimized(settings: &AppSettings, tray_available: bool) -> bool {
+pub(super) fn should_start_minimized(settings: &StoredSettings, tray_available: bool) -> bool {
     settings.tray_enabled && settings.start_minimized && tray_available
 }
 

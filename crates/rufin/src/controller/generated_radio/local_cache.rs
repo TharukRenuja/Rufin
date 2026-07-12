@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use domain::{AlbumId, ArtistId, GeneratedTrackSeed, SourceId, Track, TrackId};
+use library::{AlbumId, ArtistId, SourceId, Track, TrackId};
+use sources::GeneratedTrackSeed;
 
 use crate::controller::StoreHandle;
 
@@ -325,8 +326,8 @@ fn local_generated_seed_key(seed: &GeneratedTrackSeed) -> String {
 
 fn fallback_artist_ids(
     primary_artist_id: Option<ArtistId>,
-    artist_credits: Vec<domain::ArtistCredit>,
-    album_artist_credits: Vec<domain::ArtistCredit>,
+    artist_credits: Vec<library::ArtistCredit>,
+    album_artist_credits: Vec<library::ArtistCredit>,
 ) -> Vec<ArtistId> {
     let mut seen = HashSet::new();
     let mut ids = Vec::new();

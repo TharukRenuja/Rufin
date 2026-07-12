@@ -1,18 +1,15 @@
 use super::*;
 
 pub(super) type CollectionPageLoader<T> =
-    Rc<dyn Fn(&Rc<Shell>, usize, usize) -> Result<source::PagedResponse<T>, String>>;
+    Rc<dyn Fn(&Rc<Shell>, usize, usize) -> Result<library::PagedResponse<T>, String>>;
 pub(super) type CollectionSearchPageLoader<T> =
-    Rc<dyn Fn(&Rc<Shell>, &str, usize, usize) -> Result<source::PagedResponse<T>, String>>;
+    Rc<dyn Fn(&Rc<Shell>, &str, usize, usize) -> Result<library::PagedResponse<T>, String>>;
 pub(super) type CollectionSearchMatcher<T> = Rc<dyn Fn(&T, &str) -> bool>;
 pub(super) type CollectionSorter<T> = Rc<dyn Fn(&mut [T], &LibraryListSettings)>;
 pub(super) type CollectionModelPopulator<T> =
     Rc<dyn Fn(&gio::ListStore, &[T], &LibraryListSettings)>;
 pub(super) type CollectionModelAppender<T> = Rc<dyn Fn(&gio::ListStore, Vec<T>)>;
-pub(super) type CollectionWarmer<T> = Rc<dyn Fn(&Rc<Shell>, &[T], &LibraryListSettings)>;
 pub(super) type CollectionContentBuilder = Rc<dyn Fn(&Rc<Shell>, gio::ListStore) -> gtk::Widget>;
-pub(super) type CollectionScrollerConfigurator =
-    Rc<dyn Fn(&Rc<Shell>, &gtk::ScrolledWindow, &gio::ListStore, &LibraryListSettings)>;
 pub(super) type CollectionReplaceHook<T> = Rc<dyn Fn(&Rc<Shell>, &[T])>;
 
 pub(super) struct CollectionRouteSpec<T: Clone + 'static> {
@@ -20,16 +17,14 @@ pub(super) struct CollectionRouteSpec<T: Clone + 'static> {
     pub(super) route: Route,
     pub(super) page_name: &'static str,
     pub(super) empty_body: &'static str,
-    pub(super) initial_page: Rc<dyn Fn(&Rc<Shell>) -> source::PagedResponse<T>>,
+    pub(super) initial_page: Rc<dyn Fn(&Rc<Shell>) -> library::PagedResponse<T>>,
     pub(super) load_page: Option<CollectionPageLoader<T>>,
     pub(super) load_matching_page: Option<CollectionSearchPageLoader<T>>,
     pub(super) matches_query: CollectionSearchMatcher<T>,
     pub(super) sort_items: CollectionSorter<T>,
     pub(super) populate_model: CollectionModelPopulator<T>,
     pub(super) append_model: CollectionModelAppender<T>,
-    pub(super) warm_items: CollectionWarmer<T>,
     pub(super) build_content: CollectionContentBuilder,
-    pub(super) configure_scroller: CollectionScrollerConfigurator,
     pub(super) after_replace: Option<CollectionReplaceHook<T>>,
 }
 
@@ -51,7 +46,7 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
     fn view_from_page(
         self: Rc<Self>,
         shell: &Rc<Shell>,
-        page: source::PagedResponse<T>,
+        page: library::PagedResponse<T>,
     ) -> gtk::Widget {
         let settings = shell.library_settings(self.key);
         let page_total = page.total;
@@ -60,7 +55,6 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
         let items = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         self.publish_replace(shell, &items.borrow());
-        (self.warm_items)(shell, &items.borrow(), &settings);
         (self.populate_model)(&model, &items.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -95,7 +89,6 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
                     *items.borrow_mut() = values;
                     let settings = shell.library_settings(spec.key);
                     spec.publish_replace(&shell, &items.borrow());
-                    (spec.warm_items)(&shell, &items.borrow(), &settings);
                     (spec.populate_model)(&model, &items.borrow(), &settings);
                     cursor.offset.set(count);
                     cursor.total.set(count);
@@ -127,7 +120,6 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
                         let total = page.total;
                         *items.borrow_mut() = page.items;
                         spec.publish_replace(&shell, &items.borrow());
-                        (spec.warm_items)(&shell, &items.borrow(), &settings);
                         (spec.populate_model)(&model, &items.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
                         log_route_page_timing(RoutePageTiming {
@@ -183,7 +175,6 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
                                 let mut loaded = page.items;
                                 let settings = shell.library_settings(spec.key);
                                 (spec.sort_items)(&mut loaded, &settings);
-                                (spec.warm_items)(&shell, &loaded, &settings);
                                 items.borrow_mut().extend(loaded.iter().cloned());
                                 (spec.append_model)(&model, loaded);
                                 finish_grid_page(&cursor, offset, count, total);
@@ -210,16 +201,6 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
                     }) as Rc<dyn Fn()>
                 })
         };
-        let configure_scroller = {
-            let spec = Rc::clone(&self);
-            let shell = Rc::clone(shell);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                (spec.configure_scroller)(&shell, scroller, &model, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
-
         shell.library_page_shell(LibraryPageShellOptions {
             key: self.key,
             empty: items.borrow().is_empty(),
@@ -227,7 +208,7 @@ impl<T: Clone + 'static> CollectionRouteSpec<T> {
             search,
             content: (self.build_content)(shell, model),
             load_next,
-            configure_scroller: Some(configure_scroller),
+            configure_scroller: None,
         })
     }
 

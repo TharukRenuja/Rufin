@@ -2,13 +2,14 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use ::library::FavoriteItemId;
 use adw::prelude::*;
-use domain::{RepeatMode, Route, SearchKind, format_duration};
+use artwork::CandidateSet;
+use domain::{Route, format_duration};
 use gtk::glib;
-use playback::PlaybackState;
+use playback::{PlaybackView, RepeatMode, TransportStatus};
 use tracing::info;
 
-use crate::controller::PlaybackSnapshot;
 use crate::i18n::{msgid, tr};
 
 use super::playback_outputs::present_audio_output_popover;
@@ -20,8 +21,7 @@ use super::player_icons::{
 };
 use super::{
     ArtworkTile, MORE_ICON, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
-    add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
-    favorite_button_is_active, favorite_icon_button, icon_button,
+    add_widget_click, favorite_button_is_active, favorite_icon_button, icon_button,
     install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
     set_active_class, set_favorite_button_active,
 };
@@ -74,6 +74,7 @@ const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = BOTTOM_PLAYER_SHOW_LYRICS_WIDTH;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
 const SEEK_PREVIEW_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
+const VOLUME_PERSIST_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BottomPlayerActions {
@@ -86,7 +87,6 @@ enum BottomPlayerActions {
 pub(super) struct PlayerControls {
     pub(super) root: gtk::CenterBox,
     pub(super) cover: ArtworkTile,
-    pub(super) cover_key: RefCell<Option<String>>,
     pub(super) title: gtk::Label,
     pub(super) menu_button: gtk::Button,
     pub(super) artist: gtk::Label,
@@ -438,147 +438,140 @@ fn set_waveform_source(context: &gtk::cairo::Context, color: &gtk::gdk::RGBA, op
 }
 
 impl Shell {
+    pub(in crate::ui) fn sync_bottom_player_favorite(&self) {
+        let player = self.state.player.borrow();
+        let current = player
+            .as_ref()
+            .and_then(|player| player.transport.current.as_ref());
+        let favorite = current.is_some_and(|entry| {
+            self.projected_track_favorite(&entry.track.id, entry.track.favorite)
+        });
+        set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+    }
+
     pub(in crate::ui) fn update_bottom_player(self: &Rc<Self>) {
         let player = self.state.player.borrow().clone();
+        let current = player
+            .as_ref()
+            .and_then(|player| player.transport.current.as_ref());
+        let source_id = player
+            .as_ref()
+            .map(|player| player.transport.source_id.clone());
+        let state = player
+            .as_ref()
+            .map(|player| player.transport.state)
+            .unwrap_or(TransportStatus::Stopped);
+        let duration_seconds = player
+            .as_ref()
+            .map(|player| {
+                (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32
+            })
+            .unwrap_or_default();
+        let position_seconds = player
+            .as_ref()
+            .map(|player| {
+                (player.transport.position_millis / 1_000).min(u64::from(u32::MAX)) as u32
+            })
+            .unwrap_or_default();
+        let repeat_mode = player
+            .as_ref()
+            .map(|player| player.controls.repeat_mode)
+            .unwrap_or(RepeatMode::Off);
         let controls = &self.player_controls;
         self.state.updating_player_controls.set(true);
 
-        let cover_seed = player
-            .current
-            .as_ref()
-            .map(|entry| entry.duration_seconds)
+        let cover_seed = current
+            .map(|entry| entry.track.duration_seconds)
             .unwrap_or(42);
         controls.cover.set_seed(cover_seed);
-        if let Some(image_ref) = player
-            .current
-            .as_ref()
-            .and_then(|entry| entry.image_ref.as_ref())
-        {
-            if let Some(key) = self.current_playback_cover_cache_key(image_ref, THUMB_COVER_SIZE) {
-                let pixbuf = self
-                    .cloned_decoded_cover(&key, BOTTOM_PLAYER_COVER_SIZE)
-                    .map(|cover| {
-                        self.touch_visible_decoded_cover(&key);
-                        cover.pixbuf
-                    });
-                let outcome = controls.cover.bind_selected_cover(
-                    cover_seed,
-                    cover_artwork_id_for_key(&key, image_ref),
-                    cover_request_id_for_key(&key, BOTTOM_PLAYER_COVER_SIZE),
-                    pixbuf,
-                );
-                if outcome.request_needed {
-                    self.request_bound_cover_for_tile(
-                        &controls.cover,
-                        key.clone(),
-                        image_ref.clone(),
-                        outcome.generation,
-                        BOTTOM_PLAYER_COVER_SIZE,
-                        THUMB_COVER_SIZE,
-                    );
-                }
-                *controls.cover_key.borrow_mut() = Some(key);
-            } else {
-                controls.cover.clear_image();
-                *controls.cover_key.borrow_mut() = None;
-            }
+        if let (Some(entry), Some(source_id)) = (current, source_id.as_ref()) {
+            self.bind_playback_artwork_tile(
+                &controls.cover,
+                source_id,
+                CandidateSet::track(&entry.track),
+                cover_seed,
+                BOTTOM_PLAYER_COVER_SIZE,
+                THUMB_COVER_SIZE,
+            );
         } else {
-            controls.cover.clear_image();
-            *controls.cover_key.borrow_mut() = None;
+            self.clear_artwork_tile(&controls.cover);
         }
 
         controls.play_icon_playing.set(matches!(
-            player.state,
-            PlaybackState::Playing | PlaybackState::Buffering
+            state,
+            TransportStatus::Playing | TransportStatus::Buffering
         ));
         controls.play_icon.queue_draw();
         controls
             .play_button
-            .set_tooltip_text(Some(&playback_state_label(player.state)));
+            .set_tooltip_text(Some(&playback_state_label(state)));
 
-        let title = player
-            .current
-            .as_ref()
-            .map(|entry| entry.title.as_str())
+        let title = current
+            .map(|entry| entry.track.title.as_str())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| crate::i18n::tr("Nothing playing"));
-        let artist = player
-            .current
-            .as_ref()
-            .map(|entry| entry.artist.as_str())
+        let artist = current
+            .map(|entry| entry.track.artist.as_str())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| crate::i18n::tr("Queue a track to begin"));
-        let album = player
-            .current
-            .as_ref()
-            .map(|entry| entry.album.as_str())
+        let album = current
+            .map(|entry| entry.track.album.as_str())
             .unwrap_or("");
         controls.title.set_text(&title);
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
-        controls.title.set_sensitive(player.current.is_some());
-        controls.menu_button.set_sensitive(player.current.is_some());
-        controls.artist.set_sensitive(
-            player
-                .current
-                .as_ref()
-                .is_some_and(|entry| !entry.artist.is_empty()),
-        );
-        controls.album.set_sensitive(
-            player
-                .current
-                .as_ref()
-                .is_some_and(|entry| !entry.album.is_empty()),
-        );
+        controls.title.set_sensitive(current.is_some());
+        controls.menu_button.set_sensitive(current.is_some());
+        controls
+            .artist
+            .set_sensitive(current.is_some_and(|entry| !entry.track.artist.is_empty()));
+        controls
+            .album
+            .set_sensitive(current.is_some_and(|entry| !entry.track.album.is_empty()));
 
-        set_active_class(&controls.shuffle_button, player.shuffle_enabled);
-        set_active_class(
-            &controls.repeat_button,
-            player.repeat_mode != domain::RepeatMode::Off,
-        );
-        set_repeat_button_icon(&controls.repeat_button, player.repeat_mode);
-        set_active_class(&controls.dj_button, player.auto_dj_enabled);
+        let shuffle_enabled = player
+            .as_ref()
+            .is_some_and(|player| player.controls.shuffle_enabled);
+        let auto_dj_enabled = player
+            .as_ref()
+            .is_some_and(|player| player.controls.auto_dj_enabled);
+        set_active_class(&controls.shuffle_button, shuffle_enabled);
+        set_active_class(&controls.repeat_button, repeat_mode != RepeatMode::Off);
+        set_repeat_button_icon(&controls.repeat_button, repeat_mode);
+        set_active_class(&controls.dj_button, auto_dj_enabled);
         controls
             .dj_button
-            .set_tooltip_text(Some(&if player.auto_dj_enabled {
+            .set_tooltip_text(Some(&if auto_dj_enabled {
                 tr("Auto DJ on")
             } else {
                 tr("Auto DJ")
             }));
-        set_favorite_button_active(
-            &controls.favorite_button,
-            player.current.as_ref().is_some_and(|entry| entry.favorite),
-        );
-        controls
-            .favorite_button
-            .set_sensitive(player.current.is_some());
+        controls.favorite_button.set_sensitive(current.is_some());
         controls
             .repeat_button
-            .set_tooltip_text(Some(&repeat_label(player.repeat_mode)));
+            .set_tooltip_text(Some(&repeat_label(repeat_mode)));
 
         let preview_seconds = self.state.seek_preview_seconds.get();
-        let displayed_seconds = preview_seconds.unwrap_or(player.position_seconds);
+        let displayed_seconds = preview_seconds.unwrap_or(position_seconds);
         controls
             .elapsed
             .set_text(&format_duration(displayed_seconds));
-        let max = f64::from(player.duration_seconds.max(1));
+        let max = f64::from(duration_seconds.max(1));
         controls.progress.set_range(0.0, max);
         controls
             .progress
-            .set_value(f64::from(displayed_seconds.min(player.duration_seconds)));
-        let position_fraction = if player.duration_seconds == 0 {
+            .set_value(f64::from(displayed_seconds.min(duration_seconds)));
+        let position_fraction = if duration_seconds == 0 {
             0.0
         } else {
-            f64::from(displayed_seconds.min(player.duration_seconds))
-                / f64::from(player.duration_seconds)
+            f64::from(displayed_seconds.min(duration_seconds)) / f64::from(duration_seconds)
         };
         controls.waveform.set_position_fraction(position_fraction);
         let waveform_enabled = self.state.settings.borrow().seekbar_waveform_enabled;
-        let waveform_key = waveform_enabled
-            .then(|| player.waveform_cache_key.clone())
-            .flatten();
+        let waveform = self.state.waveform.borrow();
+        let waveform_key = waveform_enabled.then(|| waveform.key.clone()).flatten();
         let waveform_peaks = waveform_enabled
-            .then(|| player.waveform_peaks.as_deref().map(Vec::as_slice))
+            .then(|| waveform.peaks.as_deref().map(Vec::as_slice))
             .flatten();
         let waveform_peak_count = waveform_peaks.map_or(0, <[_]>::len);
         let waveform_key_changed = controls.waveform_key.borrow().as_ref() != waveform_key.as_ref();
@@ -598,28 +591,32 @@ impl Shell {
         }
         controls
             .duration
-            .set_text(&format_duration(player.duration_seconds));
+            .set_text(&format_duration(duration_seconds));
 
-        let volume_icon = volume_icon_state(player.muted, player.volume);
+        let (muted, volume) = player
+            .as_ref()
+            .map(|player| (player.controls.muted, player.controls.volume))
+            .unwrap_or((false, 1.0));
+        let volume_icon = volume_icon_state(muted, volume);
         if controls.mute_icon_state.get() != volume_icon {
             controls.mute_icon_state.set(volume_icon);
             controls.mute_icon.queue_draw();
         }
-        controls.volume.set_value(player.volume);
+        controls.volume.set_value(volume);
         self.state.updating_player_controls.set(false);
     }
 
     pub(in crate::ui) fn maybe_clear_player_seek_preview(
         &self,
-        player: &PlaybackSnapshot,
+        player: &PlaybackView,
         track_changed: bool,
     ) {
         let Some(target_seconds) = self.state.seek_preview_seconds.get() else {
             return;
         };
         if track_changed
-            || player.current.is_none()
-            || seek_preview_matches_position(target_seconds, player.position_millis)
+            || player.transport.current.is_none()
+            || seek_preview_matches_position(target_seconds, player.transport.position_millis)
         {
             self.clear_player_seek_preview();
         }
@@ -731,7 +728,6 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     PlayerControls {
         root,
         cover,
-        cover_key: RefCell::new(None),
         title,
         menu_button,
         artist,
@@ -1294,12 +1290,13 @@ fn player_link(css_class: &str) -> gtk::Label {
     label
 }
 
-fn playback_state_label(state: PlaybackState) -> String {
+fn playback_state_label(state: TransportStatus) -> String {
     match state {
-        PlaybackState::Stopped => tr("Play"),
-        PlaybackState::Paused => tr("Resume"),
-        PlaybackState::Buffering => tr("Pause"),
-        PlaybackState::Playing => tr("Pause"),
+        TransportStatus::Stopped | TransportStatus::Failed => tr("Play"),
+        TransportStatus::Paused => tr("Resume"),
+        TransportStatus::Resolving | TransportStatus::Buffering | TransportStatus::Playing => {
+            tr("Pause")
+        }
     }
 }
 
@@ -1318,7 +1315,13 @@ fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
         .player_controls
         .elapsed
         .set_text(&format_duration(seconds));
-    let duration_seconds = shell.state.player.borrow().duration_seconds;
+    let duration_seconds = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32)
+        .unwrap_or_default();
     let position = if duration_seconds == 0 {
         0.0
     } else {
@@ -1331,12 +1334,18 @@ fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
 }
 
 fn preview_player_seek_fraction(shell: &Rc<Shell>, position: f64) {
-    let player = shell.state.player.borrow();
-    let duration_seconds = player.duration_seconds;
-    if player.current.is_none() || duration_seconds == 0 {
-        return;
-    }
-    drop(player);
+    let duration_seconds = {
+        let player = shell.state.player.borrow();
+        let Some(player) = player.as_ref() else {
+            return;
+        };
+        let duration_seconds =
+            (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32;
+        if player.transport.current.is_none() || duration_seconds == 0 {
+            return;
+        }
+        duration_seconds
+    };
     let seconds = seekbar_target_seconds(position * f64::from(duration_seconds), duration_seconds);
     preview_player_seek(shell, seconds);
 }
@@ -1410,7 +1419,15 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .shuffle_button
         .connect_clicked(move |_| {
-            let enabled = !feedback_shell.state.player.borrow().shuffle_enabled;
+            let Some(enabled) = feedback_shell
+                .state
+                .player
+                .borrow()
+                .as_ref()
+                .map(|player| !player.controls.shuffle_enabled)
+            else {
+                return;
+            };
             feedback_shell.controller.toggle_shuffle();
             feedback_shell.show_control_feedback_toast(if enabled {
                 tr("Shuffle on")
@@ -1424,7 +1441,16 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .repeat_button
         .connect_clicked(move |_| {
-            let title = match feedback_shell.state.player.borrow().repeat_mode {
+            let Some(repeat_mode) = feedback_shell
+                .state
+                .player
+                .borrow()
+                .as_ref()
+                .map(|player| player.controls.repeat_mode)
+            else {
+                return;
+            };
+            let title = match repeat_mode {
                 RepeatMode::Off => tr("Repeat all"),
                 RepeatMode::All => tr("Repeat one"),
                 RepeatMode::One => tr("Repeat off"),
@@ -1435,7 +1461,15 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
 
     let feedback_shell = Rc::clone(shell);
     shell.player_controls.dj_button.connect_clicked(move |_| {
-        let enabled = !feedback_shell.state.player.borrow().auto_dj_enabled;
+        let Some(enabled) = feedback_shell
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .map(|player| !player.controls.auto_dj_enabled)
+        else {
+            return;
+        };
         feedback_shell.controller.toggle_auto_dj();
         feedback_shell.show_control_feedback_toast(if enabled {
             tr("Auto DJ on")
@@ -1467,12 +1501,18 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .favorite_button
         .connect_clicked(move |button| {
-            let Some(entry) = favorite_shell.state.player.borrow().current.clone() else {
+            let Some(entry) = favorite_shell
+                .state
+                .player
+                .borrow()
+                .as_ref()
+                .and_then(|player| player.transport.current.clone())
+            else {
                 return;
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Track(entry.track_id),
+                FavoriteItemId::Track(entry.track.id.clone()),
                 favorite,
                 Some(button),
             );
@@ -1480,49 +1520,61 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
 
     let title_shell = Rc::clone(shell);
     add_label_click(&shell.player_controls.title, move || {
-        let Some(entry) = title_shell.state.player.borrow().current.clone() else {
+        let Some(entry) = title_shell
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.transport.current.clone())
+        else {
             return;
         };
-        if let Some(album_id) = entry.album_id {
-            title_shell.navigate(Route::AlbumDetail(album_id));
-        } else if !entry.album.trim().is_empty() {
-            title_shell.navigate(Route::Search {
-                query: entry.album,
-                kind: SearchKind::Albums,
-            });
-        }
+        title_shell.navigate(Route::AlbumDetail(entry.track.album_id.clone()));
     });
 
     let artist_shell = Rc::clone(shell);
     add_label_click(&shell.player_controls.artist, move || {
-        let Some(entry) = artist_shell.state.player.borrow().current.clone() else {
+        let Some(entry) = artist_shell
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.transport.current.clone())
+        else {
             return;
         };
-        if let Some(artist_id) = entry.artist_id {
+        if let Some(artist_id) = entry.track.artist_id.clone() {
             artist_shell.navigate(Route::ArtistDetail(artist_id));
         }
     });
 
     let album_shell = Rc::clone(shell);
     add_label_click(&shell.player_controls.album, move || {
-        let Some(entry) = album_shell.state.player.borrow().current.clone() else {
+        let Some(entry) = album_shell
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.transport.current.clone())
+        else {
             return;
         };
-        if let Some(album_id) = entry.album_id {
-            album_shell.navigate(Route::AlbumDetail(album_id));
-        } else if !entry.album.trim().is_empty() {
-            album_shell.navigate(Route::Search {
-                query: entry.album,
-                kind: SearchKind::Albums,
-            });
-        }
+        album_shell.navigate(Route::AlbumDetail(entry.track.album_id.clone()));
     });
 
-    let controller = shell.controller.clone();
-    shell
-        .player_controls
-        .mute_button
-        .connect_clicked(move |_| controller.toggle_mute());
+    let mute_shell = Rc::clone(shell);
+    shell.player_controls.mute_button.connect_clicked(move |_| {
+        let Some(muted) = mute_shell
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .map(|player| !player.controls.muted)
+        else {
+            return;
+        };
+        mute_shell.apply_user_muted(muted);
+    });
     let output_shell = Rc::clone(shell);
     shell
         .player_controls
@@ -1538,12 +1590,18 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             if seek_shell.state.updating_player_controls.get() {
                 return glib::Propagation::Proceed;
             }
-            let player = seek_shell.state.player.borrow();
-            let duration_seconds = player.duration_seconds;
-            if player.current.is_none() || duration_seconds == 0 {
-                return glib::Propagation::Stop;
-            }
-            drop(player);
+            let duration_seconds = {
+                let player = seek_shell.state.player.borrow();
+                let Some(player) = player.as_ref() else {
+                    return glib::Propagation::Stop;
+                };
+                let duration_seconds =
+                    (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32;
+                if player.transport.current.is_none() || duration_seconds == 0 {
+                    return glib::Propagation::Stop;
+                }
+                duration_seconds
+            };
 
             let seconds = seekbar_target_seconds(value, duration_seconds);
             preview_player_seek(&seek_shell, seconds);
@@ -1578,8 +1636,34 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             if volume_shell.state.updating_player_controls.get() {
                 return;
             }
-            volume_shell.controller.set_volume(scale.value());
+            volume_shell.apply_user_volume(scale.value());
         });
+}
+
+impl Shell {
+    pub(super) fn apply_user_volume(self: &Rc<Self>, volume: f64) {
+        let volume = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.state.settings.borrow_mut().playback.volume = volume;
+        self.controller.set_volume(volume);
+        if let Some(source) = self.state.volume_persist_source.borrow_mut().take() {
+            source.remove();
+        }
+        let shell = Rc::clone(self);
+        let source = glib::timeout_add_local_once(VOLUME_PERSIST_DELAY, move || {
+            *shell.state.volume_persist_source.borrow_mut() = None;
+            shell.controller.persist_volume(volume);
+        });
+        *self.state.volume_persist_source.borrow_mut() = Some(source);
+    }
+
+    pub(super) fn apply_user_muted(&self, muted: bool) {
+        self.state.settings.borrow_mut().playback.muted = muted;
+        self.controller.set_muted(muted);
+    }
 }
 
 fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {

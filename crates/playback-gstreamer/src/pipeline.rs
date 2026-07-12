@@ -1,0 +1,422 @@
+use super::analysis::VisualizerTap;
+use super::audio::AudioGraph;
+use super::engine::{PipelineId, PreparedRun, SharedBackendState, Slot, handle_about_to_finish};
+use super::*;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct SourceClock {
+    origin_millis: u64,
+    end_millis: Option<u64>,
+}
+
+impl SourceClock {
+    pub(super) fn from_stream(stream: &PreparedStream) -> Self {
+        Self {
+            origin_millis: stream.source_start_millis(),
+            end_millis: stream.source_end_millis(),
+        }
+    }
+
+    pub(super) fn physical_seek(self, logical_millis: u64) -> u64 {
+        let physical = self.origin_millis.saturating_add(logical_millis);
+        self.end_millis
+            .map_or(physical, |end_millis| physical.min(end_millis))
+    }
+
+    pub(super) fn logical_position(self, physical_millis: u64) -> u64 {
+        let logical = physical_millis.saturating_sub(self.origin_millis);
+        self.fixed_duration()
+            .map_or(logical, |duration| logical.min(duration))
+    }
+
+    pub(super) fn logical_duration(self, physical_duration_millis: u64) -> u64 {
+        self.fixed_duration().unwrap_or(physical_duration_millis)
+    }
+
+    pub(super) fn remaining(
+        self,
+        physical_position_millis: u64,
+        physical_duration_millis: u64,
+    ) -> u64 {
+        self.logical_duration(physical_duration_millis)
+            .saturating_sub(self.logical_position(physical_position_millis))
+    }
+
+    pub(super) fn end_millis(self) -> Option<u64> {
+        self.end_millis
+    }
+
+    pub(super) fn fixed_duration(self) -> Option<u64> {
+        self.end_millis
+            .map(|end_millis| end_millis.saturating_sub(self.origin_millis))
+    }
+}
+pub(super) struct PlayerPipeline {
+    name: String,
+    shared: Arc<Mutex<SharedBackendState>>,
+    session: Option<PipelineSession>,
+}
+#[derive(Debug, PartialEq)]
+pub(super) enum AboutToFinishAction {
+    Preload(Box<PreparedNext>),
+    Ignore,
+}
+struct PipelineSession {
+    id: PipelineId,
+    pipeline: gst::Element,
+    bus: gst::Bus,
+    clock: SourceClock,
+    about_to_finish_id: Option<glib::SignalHandlerId>,
+    audio_graph: Option<AudioGraph>,
+    visualizer_probe: Option<gst::PadProbeId>,
+}
+impl PlayerPipeline {
+    pub(super) fn new(name: &str, shared: Arc<Mutex<SharedBackendState>>) -> Self {
+        Self {
+            name: name.to_string(),
+            shared,
+            session: None,
+        }
+    }
+
+    pub(super) fn play_item(
+        &mut self,
+        id: PipelineId,
+        slot: Slot,
+        item: &PreparedRun,
+        settings: &BackendAudioSettings,
+        volume: f64,
+        muted: bool,
+        startup_state: gst::State,
+    ) -> Result<(), String> {
+        let session_name = format!("{}-{}", self.name, id.0);
+        let mut session = PipelineSession::new(
+            &session_name,
+            id,
+            slot,
+            Arc::clone(&self.shared),
+            &item.stream,
+        )?;
+        session.configure_audio(settings)?;
+        session.pipeline.set_property("uri", item.stream.uri());
+        session.set_output_volume(volume, muted);
+        if let Err(error) = session.set_state(startup_state) {
+            session.stop();
+            return Err(error);
+        }
+        session.set_output_volume(volume, muted);
+        self.session = Some(session);
+        Ok(())
+    }
+
+    pub(super) fn configure_audio(
+        &mut self,
+        settings: &BackendAudioSettings,
+    ) -> Result<(), String> {
+        if let Some(session) = self.session.as_mut() {
+            session.configure_audio(settings)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {
+        if let Some(session) = self.session.as_mut() {
+            session.set_visualizer_tap(tap);
+        }
+    }
+
+    pub(super) fn set_output_volume(&self, volume: f64, muted: bool) {
+        if let Some(session) = self.session.as_ref() {
+            session.set_output_volume(volume, muted);
+        }
+    }
+
+    pub(super) fn set_state(&self, state: gst::State) -> Result<(), String> {
+        let Some(session) = self.session.as_ref() else {
+            return Err(format!("GStreamer session {} is not active", self.name));
+        };
+        session.set_state(state)
+    }
+
+    pub(super) fn stop(&mut self) {
+        if let Some(mut session) = self.session.take() {
+            session.stop();
+        }
+    }
+
+    pub(super) fn seek_millis(&self, millis: u64) -> Result<(), String> {
+        let Some(session) = self.session.as_ref() else {
+            return Err(format!("GStreamer session {} is not active", self.name));
+        };
+        session.seek_millis(millis)
+    }
+
+    pub(super) fn seek_physical_millis(&self, millis: u64) -> Result<(), String> {
+        let Some(session) = self.session.as_ref() else {
+            return Err(format!("GStreamer session {} is not active", self.name));
+        };
+        session.seek_physical_millis(millis)
+    }
+
+    pub(super) fn physical_seek_target(&self, logical_millis: u64) -> u64 {
+        self.session.as_ref().map_or(logical_millis, |session| {
+            session.clock.physical_seek(logical_millis)
+        })
+    }
+
+    pub(super) fn logical_position(&self, physical_millis: u64) -> u64 {
+        self.session.as_ref().map_or(physical_millis, |session| {
+            session.clock.logical_position(physical_millis)
+        })
+    }
+
+    pub(super) fn logical_duration(&self, physical_millis: u64) -> u64 {
+        self.session.as_ref().map_or(physical_millis, |session| {
+            session.clock.logical_duration(physical_millis)
+        })
+    }
+
+    pub(super) fn logical_remaining(&self, physical_position: u64, physical_duration: u64) -> u64 {
+        self.session.as_ref().map_or_else(
+            || physical_duration.saturating_sub(physical_position),
+            |session| {
+                session
+                    .clock
+                    .remaining(physical_position, physical_duration)
+            },
+        )
+    }
+
+    pub(super) fn fixed_duration(&self) -> Option<u64> {
+        self.session
+            .as_ref()
+            .and_then(|session| session.clock.fixed_duration())
+    }
+
+    pub(super) fn set_source_clock(&mut self, stream: &PreparedStream) {
+        if let Some(session) = self.session.as_mut() {
+            session.clock = SourceClock::from_stream(stream);
+        }
+    }
+
+    pub(super) fn rearm_source_window(&mut self, stream: &PreparedStream) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Err(format!("GStreamer session {} is not active", self.name));
+        };
+        session.rearm_source_window(stream)
+    }
+
+    pub(super) fn has_session(&self) -> bool {
+        self.session.is_some()
+    }
+
+    pub(super) fn position(&self) -> Option<gst::ClockTime> {
+        self.session.as_ref().and_then(PipelineSession::position)
+    }
+
+    pub(super) fn duration(&self) -> Option<gst::ClockTime> {
+        self.session.as_ref().and_then(PipelineSession::duration)
+    }
+
+    pub(super) fn audio_output_factory(&self) -> Option<String> {
+        self.session
+            .as_ref()
+            .and_then(PipelineSession::audio_output_factory)
+    }
+
+    pub(super) fn set_uri(&self, uri: &str) -> Result<(), String> {
+        let Some(session) = self.session.as_ref() else {
+            return Err("GStreamer session is not active".to_string());
+        };
+        session.pipeline.set_property("uri", uri);
+        Ok(())
+    }
+
+    pub(super) fn pop_bus_message(&self) -> Option<(PipelineId, gst::Message)> {
+        self.session
+            .as_ref()
+            .and_then(|session| session.bus.pop().map(|message| (session.id, message)))
+    }
+
+    pub(super) fn message_source_is_pipeline(&self, message: &gst::Message) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            message
+                .src()
+                .is_some_and(|source| source == session.pipeline.upcast_ref::<gst::Object>())
+        })
+    }
+}
+impl PipelineSession {
+    pub(super) fn new(
+        name: &str,
+        id: PipelineId,
+        slot: Slot,
+        shared: Arc<Mutex<SharedBackendState>>,
+        stream: &PreparedStream,
+    ) -> Result<Self, String> {
+        let pipeline = make_playbin(name)?;
+        let bus = pipeline
+            .bus()
+            .ok_or_else(|| "GStreamer playbin did not expose a bus".to_string())?;
+        let fakesink = gst::ElementFactory::make("fakesink")
+            .name(format!("{name}-video-sink"))
+            .build()
+            .map_err(|error| error.to_string())?;
+        configure_playbin_for_audio(&pipeline);
+        pipeline.set_property("video-sink", &fakesink);
+
+        let pipeline_for_signal = pipeline.clone();
+        let shared_for_signal = Arc::clone(&shared);
+        let about_to_finish_id = pipeline.connect("about-to-finish", false, move |_| {
+            handle_about_to_finish(&pipeline_for_signal, &shared_for_signal, slot, id);
+            None
+        });
+
+        Ok(Self {
+            id,
+            pipeline,
+            bus,
+            clock: SourceClock::from_stream(stream),
+            about_to_finish_id: Some(about_to_finish_id),
+            audio_graph: None,
+            visualizer_probe: None,
+        })
+    }
+
+    pub(super) fn configure_audio(
+        &mut self,
+        settings: &BackendAudioSettings,
+    ) -> Result<(), String> {
+        if let Some(graph) = self.audio_graph.as_mut()
+            && graph.reconfigure(settings)?
+        {
+            return Ok(());
+        }
+        self.clear_visualizer_tap();
+        let graph = AudioGraph::new(settings)?;
+        self.pipeline.set_property("audio-sink", graph.root());
+        self.audio_graph = Some(graph);
+        Ok(())
+    }
+
+    pub(super) fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {
+        self.clear_visualizer_tap();
+        if let (Some(tap), Some(pad)) = (
+            tap,
+            self.audio_graph
+                .as_ref()
+                .and_then(AudioGraph::visualizer_pad),
+        ) {
+            self.visualizer_probe = tap.install(pad);
+        }
+    }
+
+    pub(super) fn clear_visualizer_tap(&mut self) {
+        if let (Some(pad), Some(probe)) = (
+            self.audio_graph
+                .as_ref()
+                .and_then(AudioGraph::visualizer_pad),
+            self.visualizer_probe.take(),
+        ) {
+            pad.remove_probe(probe);
+        } else {
+            self.visualizer_probe = None;
+        }
+    }
+
+    pub(super) fn set_output_volume(&self, volume: f64, muted: bool) {
+        self.pipeline.set_property("volume", volume.clamp(0.0, 1.0));
+        self.pipeline.set_property("mute", muted);
+    }
+
+    pub(super) fn set_state(&self, state: gst::State) -> Result<(), String> {
+        self.pipeline
+            .set_state(state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn stop(&mut self) {
+        if let Some(handler_id) = self.about_to_finish_id.take() {
+            self.pipeline.disconnect(handler_id);
+        }
+        self.clear_visualizer_tap();
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+
+    pub(super) fn seek_millis(&self, millis: u64) -> Result<(), String> {
+        self.seek_physical_millis(self.clock.physical_seek(millis))
+    }
+
+    pub(super) fn seek_physical_millis(&self, millis: u64) -> Result<(), String> {
+        let flags = gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE;
+        let result = if let Some(end_millis) = self.clock.end_millis() {
+            self.pipeline.seek(
+                1.0,
+                flags | gst::SeekFlags::SEGMENT,
+                gst::SeekType::Set,
+                gst::ClockTime::from_mseconds(millis.min(end_millis)),
+                gst::SeekType::Set,
+                gst::ClockTime::from_mseconds(end_millis),
+            )
+        } else {
+            self.pipeline
+                .seek_simple(flags, gst::ClockTime::from_mseconds(millis))
+        };
+        result.map_err(|error| error.to_string())
+    }
+
+    fn rearm_source_window(&mut self, stream: &PreparedStream) -> Result<(), String> {
+        let clock = SourceClock::from_stream(stream);
+        let start_millis = clock.physical_seek(0);
+        let previous = self.clock;
+        self.clock = clock;
+        if let Err(error) = self.seek_physical_millis(start_millis) {
+            self.clock = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn position(&self) -> Option<gst::ClockTime> {
+        self.pipeline.query_position::<gst::ClockTime>()
+    }
+
+    pub(super) fn duration(&self) -> Option<gst::ClockTime> {
+        self.pipeline.query_duration::<gst::ClockTime>()
+    }
+
+    pub(super) fn audio_output_factory(&self) -> Option<String> {
+        self.audio_graph
+            .as_ref()
+            .and_then(AudioGraph::output_factory)
+    }
+}
+impl Drop for PipelineSession {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+fn make_playbin(name: &str) -> Result<gst::Element, String> {
+    gst::ElementFactory::make("playbin3")
+        .name(name)
+        .build()
+        .or_else(|_| gst::ElementFactory::make("playbin").name(name).build())
+        .map_err(|error| error.to_string())
+}
+fn configure_playbin_for_audio(pipeline: &gst::Element) {
+    let current = pipeline.property_value("flags");
+    let Some(flags_class) = glib::FlagsClass::with_type(current.type_()) else {
+        return;
+    };
+    let Some(flags) = flags_class
+        .builder()
+        .set_by_nick("audio")
+        .set_by_nick("soft-volume")
+        .set_by_nick("buffering")
+        .build()
+    else {
+        return;
+    };
+    pipeline.set_property_from_value("flags", &flags);
+}

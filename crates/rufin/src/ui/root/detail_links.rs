@@ -1,7 +1,7 @@
-use domain::SourceIdentity;
+use sources::SourceIdentity;
 
-use crate::sources::resolve_source_registration;
-pub(in crate::ui) use crate::sources::{
+use crate::source_setup::resolve_source_registration;
+pub(in crate::ui) use crate::source_setup::{
     SourceEntityKind as DetailEntityKind, SourceEntityLink as DetailExternalLink,
 };
 
@@ -16,7 +16,8 @@ pub(in crate::ui) fn server_entity_link(
 
 #[cfg(test)]
 mod tests {
-    use domain::{SourceId, SourceIdentity};
+    use ::library::SourceId;
+    use sources::SourceIdentity;
 
     use super::*;
 

@@ -7,9 +7,10 @@ use std::{
 
 use directories::ProjectDirs;
 use domain::{
-    AppSettings, SYSTEM_LANGUAGE_PREFERENCE, default_language_preference,
-    sanitize_language_preference,
+    SYSTEM_LANGUAGE_PREFERENCE, default_language_preference, sanitize_language_preference,
 };
+
+use crate::StoredSettings;
 
 const DOMAIN: &str = "rufin";
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -90,7 +91,7 @@ pub fn startup_language_preference() -> String {
     let Ok(value) = fs::read_to_string(app_settings_path()) else {
         return effective_language_preference(&default_language_preference());
     };
-    let Ok(mut settings) = serde_json::from_str::<AppSettings>(&value) else {
+    let Ok(mut settings) = serde_json::from_str::<StoredSettings>(&value) else {
         return effective_language_preference(&default_language_preference());
     };
     settings.migrate_defaults();

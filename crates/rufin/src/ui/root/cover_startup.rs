@@ -1,7 +1,9 @@
 use crate::controller::LibraryCommitProjection;
 use crate::i18n::tr_with;
 
-use super::now_playing_notification::now_playing_notification_should_withdraw;
+use super::now_playing_notification::{
+    now_playing_notification_can_send, now_playing_notification_should_withdraw,
+};
 use super::*;
 
 const MOUSE_BACK_BUTTON: u32 = 8;
@@ -21,12 +23,17 @@ pub(in crate::ui) enum FullscreenPlaybackRefresh {
 }
 
 pub(in crate::ui) fn fullscreen_playback_refresh(
-    previous: &PlaybackSnapshot,
-    next: &PlaybackSnapshot,
+    previous: Option<&PlaybackView>,
+    next: &PlaybackView,
 ) -> FullscreenPlaybackRefresh {
-    if previous.current_source_id != next.current_source_id || previous.current != next.current {
+    let Some(previous) = previous else {
+        return FullscreenPlaybackRefresh::Static;
+    };
+    if previous.transport.source_id != next.transport.source_id
+        || previous.transport.current != next.transport.current
+    {
         FullscreenPlaybackRefresh::Static
-    } else if previous.state != next.state {
+    } else if previous.transport.state != next.transport.state {
         FullscreenPlaybackRefresh::Visualizer
     } else {
         FullscreenPlaybackRefresh::None
@@ -103,7 +110,8 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
     if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
         source.remove();
     }
-    if current_playback_track_id(&shell.state.player.borrow()).as_ref() != Some(&dialog.track_id) {
+    if current_playback_media_key(&shell.state.player.borrow()).as_ref() != Some(&dialog.media_key)
+    {
         dialog.dialog.close();
         return;
     }
@@ -124,15 +132,6 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
         .controller
         .search_lyrics_for_current(artist_name, track_name);
 }
-pub(in crate::ui) fn auto_lyrics_search_is_suppressed(
-    settings: &AppSettings,
-    track_id: &domain::TrackId,
-) -> bool {
-    settings
-        .suppressed_auto_lyrics_track_ids
-        .iter()
-        .any(|stored| stored == track_id.as_str())
-}
 pub(in crate::ui) fn lyrics_search_response_matches_query(
     received_artist_name: &str,
     received_track_name: &str,
@@ -145,15 +144,6 @@ pub(in crate::ui) fn lyrics_search_response_matches_query(
 pub(in crate::ui) fn lyrics_search_text_matches(received: &str, current: &str) -> bool {
     received.trim().to_lowercase() == current.trim().to_lowercase()
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum AutoLyricsRequest {
-    Default,
-    ServerOnly,
-}
-pub(in crate::ui) fn controller_error_is_user_visible(error: &str) -> bool {
-    !error.contains("Element failed to change its state")
-}
-
 fn source_notice_message(notice: &SourceNotice) -> String {
     match notice {
         SourceNotice::Checking { source_name } => tr_with(
@@ -164,58 +154,25 @@ fn source_notice_message(notice: &SourceNotice) -> String {
         SourceNotice::SettingsSaved => tr("Source settings saved."),
         SourceNotice::NoChanges => tr("No changes to save."),
         SourceNotice::CacheCleared => tr("Cached library cleared."),
-        SourceNotice::CoverProgress {
-            processed, total, ..
-        } => format!("Caching library artwork... {processed}/{total} covers checked"),
     }
 }
 pub(in crate::ui) fn queue_source_waits_for_snapshot(
-    queue: Option<&QueueSnapshot>,
-    active_source_id: Option<&domain::SourceId>,
+    player: Option<&PlaybackView>,
+    active_source_id: Option<&::library::SourceId>,
 ) -> bool {
-    queue.is_some_and(|queue| active_source_id != Some(&queue.source_id))
+    player.is_some_and(|player| active_source_id != Some(&player.transport.source_id))
 }
 pub(in crate::ui) fn queue_ready_for_library(
-    queue: Option<&QueueSnapshot>,
+    player: Option<&PlaybackView>,
     library: &LibrarySnapshot,
 ) -> bool {
-    let Some(queue) = queue else {
+    let Some(player) = player else {
         return true;
     };
     library
         .source
         .as_ref()
-        .is_some_and(|server| server.id == queue.source_id)
-}
-pub(in crate::ui) fn auto_lyrics_request_for_settings(
-    settings: &AppSettings,
-    track_id: &domain::TrackId,
-    lyrics_surface_visible: bool,
-) -> Option<AutoLyricsRequest> {
-    if !lyrics_surface_visible {
-        return None;
-    }
-    if !crate::external_activity::external_lyrics_lookup(settings)
-        || auto_lyrics_search_is_suppressed(settings, track_id)
-    {
-        Some(AutoLyricsRequest::ServerOnly)
-    } else {
-        Some(AutoLyricsRequest::Default)
-    }
-}
-pub(in crate::ui) fn auto_lyrics_skip_action_enabled(
-    settings: &AppSettings,
-    track_id: Option<&domain::TrackId>,
-    lyrics: Option<&Lyrics>,
-) -> bool {
-    let Some((track_id, lyrics)) = track_id.zip(lyrics) else {
-        return false;
-    };
-    if lyrics.source != LyricsSource::Remote {
-        return false;
-    }
-    crate::external_activity::external_lyrics_lookup(settings)
-        && !auto_lyrics_search_is_suppressed(settings, track_id)
+        .is_some_and(|server| server.id == player.transport.source_id)
 }
 pub(in crate::ui) fn clear_list_box(list: &gtk::ListBox) {
     while let Some(child) = list.first_child() {
@@ -284,6 +241,7 @@ pub(in crate::ui) fn initial_window_size(width: Option<i32>, height: Option<i32>
 pub(in crate::ui) fn install_window_state_persistence(shell: &Rc<Shell>) {
     let save_shell = Rc::clone(shell);
     shell.application.connect_shutdown(move |_| {
+        save_shell.controller.shutdown_playback();
         save_shell.save_window_state();
     });
 }
@@ -478,11 +436,18 @@ fn add_window_action(
 fn seek_by(shell: &Shell, delta_seconds: i32) {
     let Some(seconds) = ({
         let player = shell.state.player.borrow();
-        if player.current.is_none() || player.duration_seconds == 0 {
+        let Some(player) = player.as_ref() else {
+            return;
+        };
+        let duration_seconds =
+            (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32;
+        if player.transport.current.is_none() || duration_seconds == 0 {
             None
         } else {
-            let target = player.position_seconds as i32 + delta_seconds;
-            Some(target.clamp(0, player.duration_seconds as i32) as u32)
+            let position_seconds =
+                (player.transport.position_millis / 1_000).min(u64::from(u32::MAX)) as u32;
+            let target = position_seconds as i32 + delta_seconds;
+            Some(target.clamp(0, duration_seconds as i32) as u32)
         }
     }) else {
         return;
@@ -490,16 +455,29 @@ fn seek_by(shell: &Shell, delta_seconds: i32) {
     shell.controller.seek(seconds);
 }
 
-fn adjust_volume(shell: &Shell, delta: f64) {
-    let volume = {
-        let player = shell.state.player.borrow();
-        (player.volume + delta).clamp(0.0, 1.0)
+fn adjust_volume(shell: &Rc<Shell>, delta: f64) {
+    let Some(volume) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| (player.controls.volume + delta).clamp(0.0, 1.0))
+    else {
+        return;
     };
-    shell.controller.set_volume(volume);
+    shell.apply_user_volume(volume);
 }
 
 fn toggle_shuffle_shortcut(shell: &Shell) {
-    let enabled = !shell.state.player.borrow().shuffle_enabled;
+    let Some(enabled) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| !player.controls.shuffle_enabled)
+    else {
+        return;
+    };
     shell.controller.toggle_shuffle();
     let title = if enabled {
         tr("Shuffle on")
@@ -510,17 +488,34 @@ fn toggle_shuffle_shortcut(shell: &Shell) {
 }
 
 fn cycle_repeat_shortcut(shell: &Shell) {
-    let title = match shell.state.player.borrow().repeat_mode {
-        domain::RepeatMode::Off => tr("Repeat all"),
-        domain::RepeatMode::All => tr("Repeat one"),
-        domain::RepeatMode::One => tr("Repeat off"),
+    let Some(repeat_mode) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| player.controls.repeat_mode)
+    else {
+        return;
+    };
+    let title = match repeat_mode {
+        playback::RepeatMode::Off => tr("Repeat all"),
+        playback::RepeatMode::All => tr("Repeat one"),
+        playback::RepeatMode::One => tr("Repeat off"),
     };
     shell.controller.cycle_repeat();
     shell.show_control_feedback_toast(title);
 }
 
 fn toggle_auto_dj_shortcut(shell: &Shell) {
-    let enabled = !shell.state.player.borrow().auto_dj_enabled;
+    let Some(enabled) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| !player.controls.auto_dj_enabled)
+    else {
+        return;
+    };
     shell.controller.toggle_auto_dj();
     let title = if enabled {
         tr("Auto DJ on")
@@ -530,20 +525,34 @@ fn toggle_auto_dj_shortcut(shell: &Shell) {
     shell.show_control_feedback_toast(title);
 }
 
-fn toggle_mute_shortcut(shell: &Shell) {
-    let muted = !shell.state.player.borrow().muted;
-    shell.controller.toggle_mute();
+fn toggle_mute_shortcut(shell: &Rc<Shell>) {
+    let Some(muted) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .map(|player| !player.controls.muted)
+    else {
+        return;
+    };
+    shell.apply_user_muted(muted);
     let title = if muted { tr("Muted") } else { tr("Unmuted") };
     shell.show_control_feedback_toast(title);
 }
 
 fn toggle_favorite_shortcut(shell: &Rc<Shell>) {
-    let Some(entry) = shell.state.player.borrow().current.clone() else {
+    let Some(entry) = shell
+        .state
+        .player
+        .borrow()
+        .as_ref()
+        .and_then(|player| player.transport.current.clone())
+    else {
         return;
     };
     shell.set_favorite_with_feedback(
-        source::FavoriteItemId::Track(entry.track_id),
-        !entry.favorite,
+        ::library::FavoriteItemId::Track(entry.track.id.clone()),
+        !entry.track.favorite,
         Some(&shell.player_controls.favorite_button),
     );
 }
@@ -689,32 +698,32 @@ fn invalidate_sync_snapshot_pages(library: &mut LibrarySnapshot, delta: &Library
         library.genres.clear();
         library.playlists.clear();
         library.favorites.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
         return;
     }
     if !delta.tracks.is_empty() {
         library.tracks.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
     if !delta.albums.is_empty() {
         library.albums.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
     if !delta.artists.is_empty() {
         library.artists.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
     if !delta.album_artists.is_empty() {
         library.album_artists.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
     if !delta.genres.is_empty() {
         library.genres.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
     if playlist_snapshot_changed(delta) {
         library.playlists.clear();
-        library.search = source::SearchResults::default();
+        library.search = ::library::SearchResults::default();
     }
 }
 
@@ -864,25 +873,128 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     error,
                 } => {
                     shell.restore_failed_favorite_change(&item_id, previous_favorite);
-                    if !controller_error_is_user_visible(&error) {
-                        debug!(%error, "suppressed controller error");
-                        continue;
-                    }
-                    warn!(%error, "controller error");
-                    shell.show_preferences_toast(&error);
+                    warn!(%error, "favorite change failed");
                 }
-                ControllerEvent::Queue(queue) => {
-                    let next_queue = *queue;
-                    shell.apply_now_playing_track_id(next_queue.as_ref());
-                    shell.apply_pending_playlist_entry_selection(next_queue.as_ref());
+                ControllerEvent::QueuePage(queue_page) => {
+                    if shell.apply_queue_page_projection(queue_page) {
+                        shell.schedule_queue_panel_render();
+                    }
+                }
+                ControllerEvent::PlaybackProduct(projection) => {
+                    let projection = *projection;
+                    let previous_player = shell.state.player.borrow().clone();
+                    let previous_media = current_playback_media_key(&previous_player);
+                    let previous_track = previous_player
+                        .as_ref()
+                        .and_then(|player| player.transport.current.as_ref())
+                        .map(|entry| entry.track.id.clone());
+                    let next_player = projection.view;
+                    let next_media =
+                        next_player
+                            .transport
+                            .current
+                            .as_ref()
+                            .map(|entry| playback::MediaKey {
+                                source_id: next_player.transport.source_id.clone(),
+                                track_id: entry.track.id.clone(),
+                            });
+                    let next_track = next_player
+                        .transport
+                        .current
+                        .as_ref()
+                        .map(|entry| entry.track.id.clone());
+                    let notification_became_sendable = !now_playing_notification_can_send(
+                        &shell.state.settings.borrow(),
+                        previous_player.as_ref(),
+                    ) && now_playing_notification_can_send(
+                        &shell.state.settings.borrow(),
+                        Some(&next_player),
+                    );
+                    let lyrics_timing_changed = previous_media != next_media
+                        || previous_player
+                            .as_ref()
+                            .map(|player| player.transport.state)
+                            != Some(next_player.transport.state)
+                        || previous_player
+                            .as_ref()
+                            .map(|player| player.transport.position_millis)
+                            != Some(next_player.transport.position_millis);
+                    let fullscreen_refresh =
+                        fullscreen_playback_refresh(previous_player.as_ref(), &next_player);
+                    if let Some(queue_page) = projection.queue_page {
+                        shell.apply_queue_page_projection(queue_page);
+                    }
+                    if shell.state.queue_filter.borrow().trim().is_empty()
+                        && let Some(current_index) = next_player.queue.current_index
+                        && shell.state.queue.borrow().as_ref().is_none_or(|page| {
+                            page.query.follows_current()
+                                && (page.revision != next_player.queue.revision
+                                    || !page
+                                        .rows
+                                        .iter()
+                                        .any(|row| row.absolute_index == current_index))
+                        })
+                    {
+                        shell.request_queue_page(QueuePageQuery::current());
+                    }
+                    *shell.state.player.borrow_mut() = Some(next_player.clone());
+                    if previous_track != next_track {
+                        shell.refresh_current_route_now_playing_selections();
+                        shell.sync_bottom_player_favorite();
+                    }
+                    shell.maybe_clear_player_seek_preview(
+                        &next_player,
+                        previous_track != next_track,
+                    );
+                    shell.update_bottom_player();
+                    #[cfg(unix)]
+                    let mut mpris_discontinuity = None;
+                    let mut notification_started_run = None;
+                    let mut media_changed_key = None;
+                    for notice in projection.notices {
+                        match notice {
+                            crate::controller::PlaybackNotice::MediaChanged(media) => {
+                                media_changed_key = Some(media.key);
+                                shell.controller.request_waveform_for_current();
+                                shell.controller.warm_waveforms_for_queue();
+                            }
+                            crate::controller::PlaybackNotice::Visualizer { levels, .. } => {
+                                shell.apply_fullscreen_visualizer_levels(levels);
+                            }
+                            crate::controller::PlaybackNotice::PositionDiscontinuity(
+                                discontinuity,
+                            ) => {
+                                #[cfg(unix)]
+                                {
+                                    mpris_discontinuity = Some(discontinuity);
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    let _ = discontinuity;
+                                }
+                            }
+                            crate::controller::PlaybackNotice::RunStarted(run) => {
+                                notification_started_run = Some(run);
+                            }
+                        }
+                    }
+                    let lyrics_media_changed = match media_changed_key.as_ref() {
+                        Some(media_key) => previous_media.as_ref() != Some(media_key),
+                        None => previous_media.is_some() && next_media.is_none(),
+                    };
+                    if now_playing_notification_should_withdraw(
+                        &shell.state.settings.borrow(),
+                        Some(&next_player),
+                    ) {
+                        shell.withdraw_now_playing_notification();
+                    }
                     let waits_for_source_snapshot = {
                         let library = shell.state.library.borrow();
                         queue_source_waits_for_snapshot(
-                            next_queue.as_ref(),
+                            Some(&next_player),
                             library.source.as_ref().map(|server| &server.id),
                         )
                     };
-                    *shell.state.queue.borrow_mut() = next_queue;
                     if waits_for_source_snapshot {
                         if let Some(target) = shell.state.library.borrow().selected_source.clone() {
                             *shell.state.library_load.borrow_mut() =
@@ -902,62 +1014,20 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             LibraryLoad::Switching { target }
                                 if library.selected_source.as_ref() == Some(target)
                                     && library.cache.is_committed()
-                                    && queue_ready_for_library(
-                                        shell.state.queue.borrow().as_ref(),
-                                        &library,
-                                    )
+                                    && queue_ready_for_library(Some(&next_player), &library)
                         )
                     };
                     if switch_ready {
                         shell.finish_source_switch();
                         continue;
                     }
-                    shell.schedule_queue_panel_render();
-                }
-                ControllerEvent::Playback(player) => {
-                    let previous_player = shell.state.player.borrow().clone();
-                    let previous_track = previous_player
-                        .current
-                        .as_ref()
-                        .map(|entry| entry.track_id.clone());
-                    let mut next_snapshot = *player;
-                    if let (Some(previous), Some(next)) = (
-                        previous_player.current.as_ref(),
-                        next_snapshot.current.as_mut(),
-                    ) && previous.track_id == next.track_id
-                    {
-                        next.favorite = previous.favorite;
-                    }
-                    let next_track = next_snapshot
-                        .current
-                        .as_ref()
-                        .map(|entry| entry.track_id.clone());
-                    let lyrics_timing_changed = previous_track != next_track
-                        || previous_player.state != next_snapshot.state
-                        || previous_player.position_millis != next_snapshot.position_millis;
-                    let fullscreen_refresh =
-                        fullscreen_playback_refresh(&previous_player, &next_snapshot);
-                    let auto_dj_enabled = next_snapshot.auto_dj_enabled;
-                    *shell.state.player.borrow_mut() = next_snapshot.clone();
-                    shell.maybe_clear_player_seek_preview(
-                        &next_snapshot,
-                        previous_track != next_track,
-                    );
-                    shell.update_bottom_player();
-                    shell.sync_auto_dj(auto_dj_enabled);
-                    if now_playing_notification_should_withdraw(
-                        &shell.state.settings.borrow(),
-                        &next_snapshot,
-                    ) {
-                        shell.withdraw_now_playing_notification();
-                    }
                     if matches!(
                         &*shell.state.library_load.borrow(),
                         LibraryLoad::Switching { .. }
                     ) {
-                        if previous_track != next_track {
+                        if lyrics_media_changed {
                             *shell.state.lyrics.borrow_mut() = None;
-                            *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
+                            *shell.state.lyrics_loading_media.borrow_mut() = None;
                             shell.lyrics_pane.clear_follow_scroll_pause();
                             shell
                                 .fullscreen_player
@@ -967,9 +1037,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         }
                         continue;
                     }
-                    if previous_track != next_track {
+                    if lyrics_media_changed {
                         *shell.state.lyrics.borrow_mut() = None;
-                        *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
+                        *shell.state.lyrics_loading_media.borrow_mut() = None;
                         shell.lyrics_pane.clear_follow_scroll_pause();
                         shell
                             .fullscreen_player
@@ -977,7 +1047,12 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             .clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
                         shell.render_lyrics_panel();
-                        shell.notify_now_playing(&next_snapshot);
+                    }
+                    if notification_started_run
+                        .is_some_and(|run| next_player.transport.run == Some(run))
+                        || notification_became_sendable
+                    {
+                        shell.notify_now_playing(Some(&next_player));
                     }
                     match fullscreen_refresh {
                         FullscreenPlaybackRefresh::Static => shell.update_fullscreen_player(),
@@ -990,30 +1065,48 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.update_lyrics_highlight();
                     }
                     #[cfg(unix)]
-                    shell.update_mpris_player();
-                    shell.update_discord_presence(&next_snapshot);
+                    shell.update_mpris_player_after(mpris_discontinuity);
+                    shell.schedule_queue_panel_render();
                 }
-                ControllerEvent::Visualizer(levels) => {
-                    shell.apply_fullscreen_visualizer_levels(levels);
+                ControllerEvent::Waveform(waveform) => {
+                    *shell.state.waveform.borrow_mut() = waveform;
+                    shell.update_bottom_player();
                 }
-                ControllerEvent::Lyrics { track_id, lyrics } => {
-                    shell.apply_loaded_lyrics_for_track(track_id, *lyrics);
+                ControllerEvent::Lyrics {
+                    media_key,
+                    generation,
+                    lyrics,
+                } => {
+                    if shell.controller.lyrics_result_is_current(generation) {
+                        shell.apply_loaded_lyrics_for_media(media_key, *lyrics);
+                    }
                 }
                 ControllerEvent::LyricsSearchResults {
-                    track_id,
+                    media_key,
+                    generation,
                     artist_name,
                     track_name,
                     results,
                 } => {
-                    shell.apply_lyrics_search_results(track_id, artist_name, track_name, results);
+                    if shell.controller.lyrics_result_is_current(generation) {
+                        shell.apply_lyrics_search_results(
+                            media_key,
+                            artist_name,
+                            track_name,
+                            results,
+                        );
+                    }
                 }
                 ControllerEvent::LyricsSearchFailed {
-                    track_id,
+                    media_key,
+                    generation,
                     artist_name,
                     track_name,
                     error,
                 } => {
-                    shell.apply_lyrics_search_failed(track_id, artist_name, track_name, error);
+                    if shell.controller.lyrics_result_is_current(generation) {
+                        shell.apply_lyrics_search_failed(media_key, artist_name, track_name, error);
+                    }
                 }
                 ControllerEvent::SearchLoaded { key, results } => {
                     shell.apply_search_loaded(key, results);
@@ -1021,8 +1114,15 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 ControllerEvent::SearchFailed { key, error } => {
                     shell.apply_search_failed(key, error);
                 }
-                ControllerEvent::LyricsSaved { path, lyrics } => {
-                    shell.apply_lyrics_saved(path, lyrics);
+                ControllerEvent::LyricsSaved {
+                    media_key,
+                    generation,
+                    path,
+                    lyrics,
+                } => {
+                    if shell.controller.lyrics_result_is_current(generation) {
+                        shell.apply_lyrics_saved(media_key, path, lyrics);
+                    }
                 }
                 ControllerEvent::FolderLoaded {
                     request_id,
@@ -1038,32 +1138,42 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 } => {
                     shell.apply_folder_load_failed(request_id, path, error);
                 }
-                ControllerEvent::CoverReady { key, path } => {
-                    let update_playback_art =
-                        shell.current_playback_art_key_matches(&key, THUMB_COVER_SIZE);
-                    shell.apply_cover_ready(&key, &path);
+                ControllerEvent::Artwork(event) => {
+                    let ready_path = match &event {
+                        artwork::ArtworkEvent::Changed(projection) => match &projection.readiness {
+                            artwork::Readiness::Ready(image) => {
+                                Some(image.cache_path().to_path_buf())
+                            }
+                            _ => None,
+                        },
+                        artwork::ArtworkEvent::Invalidated(_) => None,
+                    };
+                    let update_playback_art = ready_path.as_ref().is_some_and(|ready_path| {
+                        shell
+                            .state
+                            .player
+                            .borrow()
+                            .as_ref()
+                            .and_then(|player| {
+                                player.transport.current.as_ref().and_then(|entry| {
+                                    shell.current_playback_cached_artwork_path(
+                                        &player.transport.source_id,
+                                        entry,
+                                        THUMB_COVER_SIZE,
+                                    )
+                                })
+                            })
+                            .is_some_and(|artwork| artwork.path == *ready_path)
+                    });
+                    shell.apply_artwork_event(event);
                     if update_playback_art {
                         let player = shell.state.player.borrow().clone();
-                        shell.notify_now_playing(&player);
+                        shell.refresh_now_playing_notification(player.as_ref());
                     }
                     #[cfg(unix)]
                     if update_playback_art {
                         shell.update_mpris_player();
                     }
-                }
-                ControllerEvent::CoverUnavailable {
-                    key,
-                    external_retry_generation,
-                } => {
-                    if external_retry_generation
-                        .is_some_and(|generation| !shell.controller.cover_retry_status(generation))
-                    {
-                        continue;
-                    }
-                    shell.apply_cover_unavailable(&key);
-                }
-                ControllerEvent::CoverDeferred { key } => {
-                    shell.apply_cover_deferred(&key);
                 }
                 ControllerEvent::ServerDiscovery {
                     servers,
@@ -1084,12 +1194,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::Error(error) => {
                     shell.clear_pending_playlist_entry_selection();
-                    if !controller_error_is_user_visible(&error) {
-                        debug!(%error, "suppressed controller error");
-                        continue;
-                    }
                     warn!(%error, "controller error");
-                    shell.show_preferences_toast(&error);
                 }
             }
         }
@@ -1124,18 +1229,12 @@ impl Shell {
                 };
                 self.render_current_route();
             }
-            SourceNotice::CoverProgress {
-                source_id,
-                processed,
-                total,
-            } => self.update_source_notice_toast(&source_id, &message, processed == total),
-            _ => self.show_preferences_toast(&message),
+            _ => self.show_notice_toast(&message),
         }
     }
 
     fn apply_source_transition_failed(self: &Rc<Self>, source_id: Option<SourceId>, error: String) {
         warn!(%error, "source transition failed");
-        self.show_preferences_toast(&error);
         let load = self.state.library_load.borrow().clone();
         match load {
             LibraryLoad::Connecting {
@@ -1221,7 +1320,7 @@ impl Shell {
                 if selected_source.as_ref() == Some(&target) && has_cache =>
             {
                 if queue_ready_for_library(
-                    self.state.queue.borrow().as_ref(),
+                    self.state.player.borrow().as_ref(),
                     &self.state.library.borrow(),
                 ) {
                     self.finish_source_switch();
@@ -1272,10 +1371,8 @@ impl Shell {
         self.render_lyrics_panel();
         self.update_bottom_player();
         self.update_fullscreen_player();
-        let player = self.state.player.borrow().clone();
         #[cfg(unix)]
         self.update_mpris_player();
-        self.update_discord_presence(&player);
         self.schedule_startup_route_reveal();
     }
 
@@ -1310,15 +1407,17 @@ impl Shell {
             }
             library_sync::SyncPhase::Failed => {
                 if let Some(failure) = change.failure {
+                    warn!(
+                        source_id = %change.source_id,
+                        error = %failure,
+                        "source sync failed"
+                    );
                     if active && !self.state.library.borrow().cache.is_committed() {
                         *self.state.library_load.borrow_mut() = LibraryLoad::Failed {
                             source_id: Some(change.source_id),
                             message: failure.clone(),
                         };
                         self.render_current_route();
-                    }
-                    if change.manual {
-                        self.show_preferences_toast(&failure);
                     }
                 }
             }
@@ -1390,6 +1489,7 @@ impl Shell {
         self.update_source_selector();
         self.apply_library_delta(commit.delta);
         if let Some((first_projection, error)) = projection_error {
+            warn!(%error, "failed to project committed library state");
             if first_projection {
                 *self.state.library_load.borrow_mut() = LibraryLoad::Failed {
                     source_id: Some(commit.source_id.clone()),
@@ -1398,7 +1498,6 @@ impl Shell {
                 self.render_current_route();
                 self.controller.reload_snapshot();
             }
-            self.show_preferences_toast(&error);
             return;
         }
         let load = self.state.library_load.borrow().clone();
@@ -1425,7 +1524,9 @@ impl Shell {
         }
         match library.selected_source.as_ref() {
             Some(LibrarySourceSelection::Source(source_id)) => source_id == &commit.source_id,
-            Some(LibrarySourceSelection::Local) => source.kind == source_local::LOCAL_SOURCE_ID,
+            Some(LibrarySourceSelection::Local) => {
+                commit.source_id.as_str() == crate::controller::LOCAL_SOURCE_IDENTITY_ID
+            }
             None => false,
         }
     }
@@ -1579,7 +1680,7 @@ impl Shell {
         );
     }
 
-    pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {
+    pub(in crate::ui) fn show_notice_toast(&self, message: &str) {
         self.toast_overlay.add_toast(adw::Toast::new(message));
     }
 
@@ -1612,148 +1713,6 @@ impl Shell {
         let toast = self.state.source_sync_toasts.borrow_mut().remove(source_id);
         if let Some(toast) = toast {
             toast.dismiss();
-        }
-    }
-
-    fn update_source_notice_toast(
-        self: &Rc<Self>,
-        source_id: &SourceId,
-        message: &str,
-        complete: bool,
-    ) {
-        if complete {
-            self.dismiss_source_sync_toast(source_id);
-        } else if !self.library_sync_status_visible_fullscreen() {
-            self.show_or_update_source_sync_toast(source_id, 0, message);
-        }
-    }
-}
-
-pub(in crate::ui) fn cover_prime_sizes(
-    shell: &Shell,
-    key: LibraryListKey,
-    settings: &LibraryListSettings,
-) -> Option<(u32, i32)> {
-    match settings.layout {
-        LibraryLayout::Grid => Some((
-            GRID_COVER_SIZE,
-            shell.collection_card_grid_metrics_for(key, settings).1,
-        )),
-        LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
-        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
-        LibraryLayout::Row => None,
-    }
-}
-
-pub(in crate::ui) fn visible_index_range(
-    shell: &Shell,
-    total: usize,
-    key: LibraryListKey,
-    settings: &LibraryListSettings,
-) -> (usize, usize) {
-    if total == 0 {
-        return (0, 0);
-    }
-    let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) else {
-        return (0, initial_visible_count(shell, key, settings).min(total));
-    };
-    let adjustment = scroller.vadjustment();
-    let offset = adjustment.value().max(0.0);
-    let page_size = effective_page_size(shell, &scroller, &adjustment);
-    let (columns, card_size) = shell.collection_card_grid_metrics_for(key, settings);
-    let grid_item_extent = library::collection_grid_item_extent(card_size, settings);
-    visible_index_range_from_metrics(
-        total,
-        settings.layout,
-        offset,
-        page_size,
-        library::LIBRARY_TABLE_ROW_HEIGHT.max(1),
-        columns,
-        grid_item_extent,
-    )
-}
-
-fn effective_page_size(
-    shell: &Shell,
-    scroller: &gtk::ScrolledWindow,
-    adjustment: &gtk::Adjustment,
-) -> f64 {
-    let fallback_height = scroller
-        .height()
-        .max(shell.route_host.height())
-        .max(shell.app_root.height())
-        .max(1);
-    adjustment.page_size().max(f64::from(fallback_height))
-}
-
-pub(in crate::ui) fn visible_index_range_from_metrics(
-    total: usize,
-    layout: LibraryLayout,
-    offset: f64,
-    page_size: f64,
-    row_height: i32,
-    grid_columns: usize,
-    grid_item_extent: i32,
-) -> (usize, usize) {
-    if total == 0 {
-        return (0, 0);
-    }
-    match layout {
-        LibraryLayout::Row => {
-            let row_height = f64::from(row_height.max(1));
-            let raw_start = (offset.max(0.0) / row_height).floor() as usize;
-            let count = (page_size.max(1.0) / row_height).ceil().max(1.0) as usize;
-            let count = count.min(total);
-            let start = raw_start.min(total.saturating_sub(count));
-            (start, start.saturating_add(count).min(total))
-        }
-        LibraryLayout::Grid | LibraryLayout::Detail => {
-            let columns = grid_columns.max(1);
-            let item_extent = f64::from(grid_item_extent.max(1));
-            let first_row = (offset.max(0.0) / item_extent).floor() as usize;
-            let rows = (page_size.max(1.0) / item_extent).ceil().max(1.0) as usize + 1;
-            let count = rows.saturating_mul(columns).max(columns).min(total);
-            let raw_start = first_row.saturating_mul(columns);
-            let start = raw_start.min(total.saturating_sub(count));
-            (start, start.saturating_add(count).min(total))
-        }
-    }
-}
-
-fn initial_visible_count(
-    shell: &Shell,
-    key: LibraryListKey,
-    settings: &LibraryListSettings,
-) -> usize {
-    let (columns, card_size) = shell.collection_card_grid_metrics_for(key, settings);
-    let grid_item_extent = library::collection_grid_item_extent(card_size, settings);
-    initial_visible_count_from_metrics(
-        settings.layout,
-        shell.route_host.height(),
-        shell.app_root.height(),
-        columns,
-        grid_item_extent,
-    )
-}
-
-pub(in crate::ui) fn initial_visible_count_from_metrics(
-    layout: LibraryLayout,
-    route_height: i32,
-    app_height: i32,
-    grid_columns: usize,
-    grid_item_extent: i32,
-) -> usize {
-    let viewport_height = route_height.max(app_height).max(1);
-    match layout {
-        LibraryLayout::Row => {
-            let row_height = library::LIBRARY_TABLE_ROW_HEIGHT.max(1);
-            (viewport_height / row_height).saturating_add(2).max(1) as usize
-        }
-        LibraryLayout::Grid | LibraryLayout::Detail => {
-            let columns = grid_columns.max(1);
-            let item_extent = grid_item_extent.max(1);
-            let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
-            rows.saturating_mul(columns)
         }
     }
 }

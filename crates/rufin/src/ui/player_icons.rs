@@ -1,8 +1,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use domain::RepeatMode;
 use gtk::prelude::*;
+use playback::RepeatMode;
 
 const TRANSPORT_ICON_SIZE: i32 = 23;
 const QUEUE_ICON_SIZE: i32 = 20;

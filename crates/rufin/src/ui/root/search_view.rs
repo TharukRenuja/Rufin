@@ -27,7 +27,7 @@ impl Shell {
         let albums = results.albums;
         if !albums.is_empty() {
             let section = HomeSection {
-                kind: domain::HomeSectionKind::Explore,
+                kind: ::library::HomeSectionKind::Explore,
                 albums,
                 tracks: Vec::new(),
             };
@@ -39,9 +39,9 @@ impl Shell {
                 results.tracks,
                 LibraryListKey::Tracks,
                 "search",
-                Some(PlaySourceDescriptor::SearchResults {
+                Some(PlayContextDescriptor::Search {
                     query: query.to_string(),
-                    selected_music_folder_id: selected_music_folder_id(self),
+                    music_folder_id: selected_music_folder_id(self),
                 }),
                 PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END,
             ));

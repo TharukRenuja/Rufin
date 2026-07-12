@@ -1,22 +1,6 @@
 use super::*;
 use crate::i18n::msgid;
 
-pub(in crate::ui) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
-    genres.sort_by(|left, right| {
-        apply_desc(
-            compare_genre(left, right, settings.sort_key),
-            settings.descending,
-        )
-    });
-}
-pub(in crate::ui) fn sort_moods(moods: &mut [Mood], settings: &LibraryListSettings) {
-    moods.sort_by(|left, right| {
-        apply_desc(
-            compare_mood(left, right, settings.sort_key),
-            settings.descending,
-        )
-    });
-}
 pub(in crate::ui) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
     playlists.sort_by(|left, right| {
         apply_desc(
@@ -91,22 +75,6 @@ pub(in crate::ui) fn compare_artist(
     }
     .then_with(|| cmp_string(&left.name, &right.name))
 }
-pub(in crate::ui) fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
-    match field {
-        LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
-        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
-        _ => cmp_string(&left.name, &right.name),
-    }
-    .then_with(|| cmp_string(&left.name, &right.name))
-}
-pub(in crate::ui) fn compare_mood(left: &Mood, right: &Mood, field: LibraryField) -> Ordering {
-    match field {
-        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
-        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
-        _ => cmp_string(&left.name, &right.name),
-    }
-    .then_with(|| cmp_string(&left.name, &right.name))
-}
 pub(in crate::ui) fn compare_playlist(
     left: &Playlist,
     right: &Playlist,
@@ -151,6 +119,7 @@ pub(in crate::ui) fn compare_track(left: &Track, right: &Track, field: LibraryFi
         LibraryField::PlayCount => cmp_option_u32(left.play_count, right.play_count),
         LibraryField::UserRating => cmp_option_u8(left.user_rating, right.user_rating),
         LibraryField::Genre => cmp_string(&left.genres.join(", "), &right.genres.join(", ")),
+        LibraryField::Bpm => left.bpm.cmp(&right.bpm),
         LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
         LibraryField::Favorite => left.favorite.cmp(&right.favorite),
         _ => cmp_string(&left.title, &right.title),
@@ -159,6 +128,7 @@ pub(in crate::ui) fn compare_track(left: &Track, right: &Track, field: LibraryFi
     .then(left.disc_number.cmp(&right.disc_number))
     .then(left.track_number.cmp(&right.track_number))
     .then_with(|| cmp_string(&left.title, &right.title))
+    .then_with(|| left.id.cmp(&right.id))
 }
 pub(in crate::ui) fn album_field_missing(album: &Album, field: LibraryField) -> bool {
     match field {
@@ -185,6 +155,7 @@ pub(in crate::ui) fn track_field_missing(track: &Track, field: LibraryField) -> 
         LibraryField::LastPlayed => track.last_played.is_none(),
         LibraryField::PlayCount => track.play_count.is_none(),
         LibraryField::UserRating => track.user_rating.is_none(),
+        LibraryField::Bpm => track.bpm.is_none(),
         _ => false,
     }
 }
@@ -250,22 +221,13 @@ pub(in crate::ui) fn track_field(track: &Track, field: LibraryField) -> String {
         LibraryField::PlayCount => option_count(track.play_count),
         LibraryField::UserRating => option_rating(track.user_rating),
         LibraryField::Genre => track.genres.join(", "),
+        LibraryField::Bpm => track.bpm.map(|bpm| bpm.to_string()).unwrap_or_default(),
         LibraryField::DiscNumber => track.disc_number.to_string(),
         LibraryField::TrackNumber => format!("{}-{:02}", track.disc_number, track.track_number),
         LibraryField::Duration => domain::format_duration(track.duration_seconds),
         LibraryField::Favorite => favorite_text(track.favorite),
         _ => String::new(),
     }
-}
-pub(in crate::ui) fn track_matches_query(track: &Track, query: &str) -> bool {
-    track.title.to_lowercase().contains(query)
-        || track.artist.to_lowercase().contains(query)
-        || joined_credits(&track.album_artist_credits)
-            .to_lowercase()
-            .contains(query)
-        || track.album.to_lowercase().contains(query)
-        || track.genres.join(" ").to_lowercase().contains(query)
-        || track.year.to_string().contains(query)
 }
 pub(in crate::ui) fn album_matches_query(album: &Album, query: &str) -> bool {
     album.title.to_lowercase().contains(query)
@@ -820,6 +782,7 @@ pub(in crate::ui) fn library_field_drag_id(field: LibraryField) -> &'static str 
         LibraryField::PlayCount => "PlayCount",
         LibraryField::UserRating => "UserRating",
         LibraryField::Genre => "Genre",
+        LibraryField::Bpm => "Bpm",
         LibraryField::TrackNumber => "TrackNumber",
         LibraryField::DiscNumber => "DiscNumber",
         LibraryField::SongCount => "SongCount",
@@ -844,6 +807,7 @@ pub(in crate::ui) fn library_field_from_drag_id(id: &str) -> Option<LibraryField
         LibraryField::PlayCount,
         LibraryField::UserRating,
         LibraryField::Genre,
+        LibraryField::Bpm,
         LibraryField::TrackNumber,
         LibraryField::DiscNumber,
         LibraryField::SongCount,
@@ -894,7 +858,10 @@ pub(in crate::ui) fn column_width(field: LibraryField) -> i32 {
         LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 118,
         LibraryField::PlayCount => play_count_column_width(),
         LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 96,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 68,
+        LibraryField::Year
+        | LibraryField::DiscNumber
+        | LibraryField::TrackNumber
+        | LibraryField::Bpm => 68,
         LibraryField::Duration => 76,
     }
 }
@@ -950,7 +917,7 @@ pub(in crate::ui) fn nonzero_year(year: u16) -> String {
         year.to_string()
     }
 }
-pub(in crate::ui) fn joined_credits(credits: &[domain::ArtistCredit]) -> String {
+pub(in crate::ui) fn joined_credits(credits: &[library::ArtistCredit]) -> String {
     credits
         .iter()
         .map(|credit| credit.name.trim())
@@ -965,23 +932,22 @@ mod tests {
 
     fn smart_playlist_with_stats(track_count: u32, duration_seconds: u32) -> SmartPlaylist {
         SmartPlaylist {
-            id: domain::SmartPlaylistId::new("smart:test"),
+            id: library::SmartPlaylistId::new("smart:test"),
             name: "Smart Mix".to_string(),
             position: 0,
             builtin: None,
-            definition: domain::SmartPlaylistDefinition {
-                root: domain::SmartPlaylistRuleGroup {
-                    mode: domain::SmartPlaylistMatchMode::All,
+            definition: library::SmartPlaylistDefinition {
+                root: library::SmartPlaylistRuleGroup {
+                    mode: library::SmartPlaylistMatchMode::All,
                     rules: Vec::new(),
                 },
-                sort_field: domain::SmartPlaylistSortField::Title,
+                sort_field: library::SmartPlaylistSortField::Title,
                 descending: false,
                 limit: None,
             },
             track_count,
             duration_seconds,
-            image_refs: Vec::new(),
-            image_ref: None,
+            representative_albums: Vec::new(),
         }
     }
 

@@ -1,0 +1,31 @@
+[package]
+name = "artwork"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Artwork selection, fetching, caching, and decoding for Rufin"
+repository.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+gdk-pixbuf.workspace = true
+library.workspace = true
+md5.workspace = true
+metadata.workspace = true
+reqwest = { workspace = true, features = ["blocking", "json"] }
+serde_json.workspace = true
+sources.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

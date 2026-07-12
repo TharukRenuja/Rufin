@@ -17,7 +17,7 @@ impl AppController {
             Some(saved) => match self.active_source.read() {
                 Ok(active) => active
                     .as_ref()
-                    .filter(|active| active.identity.id == saved.source.id)
+                    .filter(|active| active.identity.id == saved.source_id)
                     .cloned()
                     .map(|active| (saved, active)),
                 Err(_) => {
@@ -32,7 +32,7 @@ impl AppController {
         let (installed, cancelled) = match self.sync_coordinator.lock() {
             Ok(mut coordinator) => match target {
                 Some((saved, active)) => {
-                    let source_id = saved.source.id;
+                    let source_id = saved.source_id;
                     let (cancellation, cancelled) = coordinator.activate(source_id.clone());
                     (Some((active, source_id, cancellation)), cancelled)
                 }
@@ -164,14 +164,14 @@ impl AppController {
         emit_source_sync_running(self, &source_id, start.epoch, None);
         let target = self
             .store
-            .with_store(|store| store.saved_source(&source_id))
+            .with_store(|store| store.stored_source(&source_id))
             .and_then(|saved| {
                 saved.ok_or_else(|| "The selected source is no longer saved.".to_string())
             })
             .and_then(|saved| {
                 let active =
                     selected_active_source(&self.active_source, &source_id).or_else(|_| {
-                        crate::sources::activate_configured_source(
+                        crate::source_setup::activate_configured_source(
                             &self.store,
                             &self.secrets,
                             &saved,
@@ -230,7 +230,7 @@ fn start_verification_deadline(
 
 fn run_source_sync(
     controller: AppController,
-    saved: SavedSource,
+    saved: StoredSource,
     active: Arc<ActiveSource>,
     start: library_sync::Start,
 ) {
@@ -275,7 +275,6 @@ fn run_source_sync(
                     .map(|state| state.last_all_completed_at.is_some())
             })
             .unwrap_or_default();
-        let initial_covers = !cached_before;
         let result = (active.sync)(
             &controller.store,
             &controller.runtime,
@@ -292,12 +291,11 @@ fn run_source_sync(
                     &saved,
                     generation,
                     cached_before,
-                    initial_covers,
                     *commit,
                 );
                 let PreparedSourceSyncCommit { update, effects } = prepared;
                 publish_source_sync_commit(&controller, &source_id, start.epoch, update);
-                start_source_sync_effects(controller.clone(), saved, active, effects);
+                start_source_sync_effects(controller.clone(), saved, effects);
             }
             Ok(library_sync::SyncOutcome::Ignored) => {
                 finish_source_sync_without_commit(&controller, &source_id, start.epoch, generation);
@@ -329,34 +327,30 @@ struct PreparedSourceSyncCommit {
 struct SourceSyncEffects {
     generation: i64,
     cache_revision: i64,
-    initial_covers: bool,
     work: SourceSyncWork,
 }
 
 struct SourceSyncWork {
     refresh_queue_refs: bool,
-    lookup_album_identity: bool,
-    prefetch_covers: bool,
+    enrich_album_identity: bool,
 }
 
 fn prepare_source_sync_commit(
     controller: &AppController,
-    saved: &SavedSource,
+    saved: &StoredSource,
     generation: i64,
     cached_before: bool,
-    initial_covers: bool,
     commit: SyncCommit,
 ) -> PreparedSourceSyncCommit {
-    let selected = sync_target_is_current(&controller.store, &saved.source.id);
+    let selected = sync_target_is_current(&controller.store, &saved.source_id);
     prepare_source_sync_commit_with(
         saved,
         generation,
         cached_before,
         selected,
-        initial_covers,
         commit,
         (
-            || load_library_counts(&controller.store, &saved.source.id),
+            || load_library_counts(&controller.store, &saved.source_id),
             || load_home_update(&controller.store, saved),
             || load_runtime_snapshot(&controller.store, &controller.secrets),
         ),
@@ -364,11 +358,10 @@ fn prepare_source_sync_commit(
 }
 
 fn prepare_source_sync_commit_with<Counts, Home, Snapshot>(
-    saved: &SavedSource,
+    saved: &StoredSource,
     generation: i64,
     cached_before: bool,
     selected: bool,
-    initial_covers: bool,
     commit: SyncCommit,
     loaders: (Counts, Home, Snapshot),
 ) -> PreparedSourceSyncCommit
@@ -417,7 +410,7 @@ where
     PreparedSourceSyncCommit {
         update: LibraryCommitUpdate {
             commit: library_sync::LibraryCommitted {
-                source_id: saved.source.id.clone(),
+                source_id: saved.source_id.clone(),
                 revision: cache_revision,
                 delta,
             },
@@ -426,7 +419,6 @@ where
         effects: SourceSyncEffects {
             generation,
             cache_revision,
-            initial_covers,
             work,
         },
     }
@@ -444,83 +436,38 @@ fn source_sync_work(delta: &LibraryDelta) -> SourceSyncWork {
         || !delta.albums.links.is_empty()
         || !delta.albums.cover_refs.is_empty();
     let album_identity_changed = !delta.albums.added.is_empty() || !delta.albums.fields.is_empty();
-    let cover_sources_changed = album_identity_changed
-        || !delta.albums.cover_refs.is_empty()
-        || !delta.artists.added.is_empty()
-        || !delta.artists.cover_refs.is_empty()
-        || !delta.album_artists.added.is_empty()
-        || !delta.album_artists.cover_refs.is_empty();
     SourceSyncWork {
         refresh_queue_refs: reset
             || delta.local_matches_changed
             || track_refs_changed
             || album_refs_changed,
-        lookup_album_identity: reset || album_identity_changed,
-        prefetch_covers: reset || cover_sources_changed,
+        enrich_album_identity: reset || album_identity_changed,
     }
 }
 
 fn start_source_sync_effects(
     controller: AppController,
-    saved: SavedSource,
-    active: Arc<ActiveSource>,
+    saved: StoredSource,
     effects: SourceSyncEffects,
 ) {
     thread::spawn(move || {
         let current_revision = controller
             .store
-            .with_store(|store| store.source_cache_revision(&saved.source.id));
+            .with_store(|store| store.source_cache_revision(&saved.source_id));
         if current_revision != Ok(effects.cache_revision) {
             return;
         }
-        let selected = sync_target_is_current(&controller.store, &saved.source.id);
+        let selected = sync_target_is_current(&controller.store, &saved.source_id);
         if selected && effects.work.refresh_queue_refs {
             refresh_queue_refs(&controller, &saved);
         }
-        if selected && effects.work.lookup_album_identity {
-            start_album_identity_lookup(&controller, &saved);
-        }
-        if selected && effects.work.prefetch_covers {
-            covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
-                store: controller.store.clone(),
-                runtime: Arc::clone(&controller.runtime),
-                images: Arc::clone(&active.images),
-                events: controller.events.clone(),
-                cover_in_flight: Arc::clone(&controller.cover_in_flight),
-                external_cover_retry_generation: Arc::clone(
-                    &controller.external_cover_retry_generation,
-                ),
-                retry_generation: controller
-                    .external_cover_retry_generation
-                    .load(Ordering::SeqCst),
-                external_cover_prefetch_in_flight: Arc::clone(
-                    &controller.external_cover_prefetch_in_flight,
-                ),
-                cover_slots: Arc::clone(&controller.cover_slots),
-                saved: saved.clone(),
-            });
-        }
-        if selected && effects.initial_covers {
-            let _result =
-                covers::prefetch_initial_source_cover_cache(covers::SourceCoverPrefetchRequest {
-                    store: &controller.store,
-                    runtime: &controller.runtime,
-                    events: &controller.events,
-                    cover_in_flight: &controller.cover_in_flight,
-                    external_cover_retry_generation: &controller.external_cover_retry_generation,
-                    retry_generation: controller
-                        .external_cover_retry_generation
-                        .load(Ordering::SeqCst),
-                    cover_slots: &controller.cover_slots,
-                    saved: &saved,
-                    images: active.images.as_ref(),
-                    emit_status: false,
-                });
+        if selected && effects.work.enrich_album_identity {
+            start_album_identity_lookup(&controller, &saved, effects.cache_revision);
         }
         info!(
             generation = effects.generation,
             cache_revision = effects.cache_revision,
-            source_id = %saved.source.id,
+            source_id = %saved.source_id,
             "completed source sync effects"
         );
     });
@@ -695,7 +642,7 @@ mod tests {
         store
             .with_store(|store| {
                 store.save_source(&saved)?;
-                store.set_active_source(&saved.source.id)
+                store.set_active_source(&saved.source_id)
             })
             .expect("select source");
         let (controller, events) = controller_from_store_for_test(store);
@@ -721,7 +668,7 @@ mod tests {
             });
         }
 
-        controller.clear_source_cache(saved.source.id.clone());
+        controller.clear_source_cache(saved.source_id.clone());
 
         let _snapshot = wait_for_snapshot(&events);
         entered_rx
@@ -733,7 +680,7 @@ mod tests {
                     .sync_coordinator
                     .lock()
                     .expect("sync coordinator")
-                    .active_cancellation(&saved.source.id);
+                    .active_cancellation(&saved.source_id);
                 if lease.is_none() {
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -741,7 +688,7 @@ mod tests {
             })
             .expect("active freshness lease");
         assert!(controller.request_automatic_source_sync(
-            &saved.source.id,
+            &saved.source_id,
             &lease,
             library_sync::RequestKind::ActiveVerification,
             library_sync::ReconcileScope::All,
@@ -755,13 +702,13 @@ mod tests {
                 .expect("cache rebuild completion")
             {
                 ControllerEvent::SourceSyncChanged(change)
-                    if change.source_id == saved.source.id
+                    if change.source_id == saved.source_id
                         && change.phase == library_sync::SyncPhase::Idle =>
                 {
                     break;
                 }
                 ControllerEvent::SourceSyncChanged(change)
-                    if change.source_id == saved.source.id
+                    if change.source_id == saved.source_id
                         && change.phase == library_sync::SyncPhase::Running =>
                 {
                     assert!(!change.manual, "cache rebuild should stay silent");
@@ -783,30 +730,30 @@ mod tests {
             .expect("save source");
         let revision = controller
             .store
-            .with_store(|store| store.source_cache_revision(&saved.source.id))
+            .with_store(|store| store.source_cache_revision(&saved.source_id))
             .expect("cache revision");
         let start = controller
             .sync_coordinator
             .lock()
             .expect("sync coordinator")
             .request(
-                saved.source.id.clone(),
+                saved.source_id.clone(),
                 library_sync::RequestKind::Freshness,
-                library_sync::ReconcileScope::objects(source::SourceObjectChanges::new([
+                library_sync::ReconcileScope::objects(sources::SourceObjectChanges::new([
                     "movie-one".to_string(),
                 ])),
             )
             .expect("start sync");
         let generation = controller
             .store
-            .with_store(|store| store.begin_sync(&saved.source.id))
+            .with_store(|store| store.begin_sync(&saved.source_id))
             .expect("begin sync");
 
-        finish_source_sync_without_commit(&controller, &saved.source.id, start.epoch, generation);
+        finish_source_sync_without_commit(&controller, &saved.source_id, start.epoch, generation);
 
         let state = controller
             .store
-            .with_store(|store| store.sync_state(&saved.source.id))
+            .with_store(|store| store.sync_state(&saved.source_id))
             .expect("sync state");
         assert_eq!(state.status, "idle");
         assert_eq!(state.cache_revision, revision);
@@ -815,7 +762,7 @@ mod tests {
                 .sync_coordinator
                 .lock()
                 .expect("sync coordinator")
-                .running(&saved.source.id)
+                .running(&saved.source_id)
                 .is_none()
         );
         let emitted = events.try_iter().collect::<Vec<_>>();
@@ -827,7 +774,7 @@ mod tests {
         assert!(emitted.iter().any(|event| matches!(
             event,
             ControllerEvent::SourceSyncChanged(change)
-                if change.source_id == saved.source.id
+                if change.source_id == saved.source_id
                     && change.phase == library_sync::SyncPhase::Idle
         )));
     }
@@ -840,7 +787,7 @@ mod tests {
             .store
             .with_store(|store| {
                 store.save_source(&saved)?;
-                store.set_active_source(&saved.source.id)
+                store.set_active_source(&saved.source_id)
             })
             .expect("select source");
         let (lease, start) = {
@@ -848,11 +795,11 @@ mod tests {
                 .sync_coordinator
                 .lock()
                 .expect("sync coordinator");
-            let (lease, cancelled) = coordinator.activate(saved.source.id.clone());
+            let (lease, cancelled) = coordinator.activate(saved.source_id.clone());
             assert!(cancelled.is_none());
             let start = coordinator
                 .request_active(
-                    &saved.source.id,
+                    &saved.source_id,
                     &lease,
                     library_sync::RequestKind::Freshness,
                     library_sync::ReconcileScope::All,
@@ -870,13 +817,13 @@ mod tests {
                 .sync_coordinator
                 .lock()
                 .expect("sync coordinator")
-                .running(&saved.source.id)
+                .running(&saved.source_id)
                 .is_none()
         );
         assert!(events.try_iter().any(|event| matches!(
             event,
             ControllerEvent::SourceSyncChanged(change)
-                if change.source_id == saved.source.id
+                if change.source_id == saved.source_id
                     && change.epoch == start.epoch
                     && change.phase == library_sync::SyncPhase::Idle
         )));
@@ -891,7 +838,7 @@ mod tests {
             .lock()
             .expect("sync coordinator")
             .request(
-                saved.source.id.clone(),
+                saved.source_id.clone(),
                 library_sync::RequestKind::Freshness,
                 library_sync::ReconcileScope::All,
             )
@@ -908,10 +855,8 @@ mod tests {
             4,
             false,
             true,
-            false,
             SyncCommit {
                 delta: delta.clone(),
-                pruned_cover_entries: Vec::new(),
                 cache_revision: 9,
             },
             (
@@ -926,12 +871,12 @@ mod tests {
                 .sync_coordinator
                 .lock()
                 .expect("sync coordinator")
-                .finish(&saved.source.id, start.epoch),
+                .finish(&saved.source_id, start.epoch),
             library_sync::Finish::Finished { .. }
         ));
         assert!(!publish_source_sync_commit(
             &controller,
-            &saved.source.id,
+            &saved.source_id,
             start.epoch,
             prepared.update,
         ));
@@ -944,7 +889,7 @@ mod tests {
                 _ => None,
             })
             .expect("library commit event");
-        assert_eq!(update.commit.source_id, saved.source.id);
+        assert_eq!(update.commit.source_id, saved.source_id);
         assert_eq!(update.commit.revision, 9);
         assert_eq!(update.commit.delta, delta);
         let projection_error = match update.projection.as_ref() {
@@ -962,7 +907,7 @@ mod tests {
                 .sync_coordinator
                 .lock()
                 .expect("sync coordinator")
-                .running(&saved.source.id)
+                .running(&saved.source_id)
                 .is_none()
         );
     }

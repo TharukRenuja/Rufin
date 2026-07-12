@@ -1,6 +1,9 @@
-use domain::{Album, Artist, Genre, HomeSection, ImageRef, LocalManifestScan, SourceId, Track};
-use library::{LocalLibraryDelta, LocalManifestDelta, Store};
-use source::{MusicSource, PageState, PagedRequest};
+use library::{
+    Album, Artist, Genre, HomeSection, ImageRef, LocalCueDependency, LocalLibraryDelta,
+    LocalManifestDelta, PagedResponse, SourceId, Store, Track,
+};
+use sources::local::LocalManifestScan;
+use sources::{MusicSource, PageState, PagedRequest};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
@@ -23,7 +26,7 @@ struct LocalSnapshot {
 
 pub struct LocalObservation {
     change: LocalChange,
-    cue_dependencies: Vec<domain::LocalCueDependency>,
+    cue_dependencies: Vec<LocalCueDependency>,
 }
 
 enum LocalChange {
@@ -195,7 +198,7 @@ async fn collect_snapshot(
 async fn load_all<T, F, Fut>(cancelled: &dyn Fn() -> bool, mut page: F) -> SyncResult<Vec<T>>
 where
     F: FnMut(PagedRequest) -> Fut,
-    Fut: std::future::Future<Output = source::SourceResult<domain::PagedResponse<T>>>,
+    Fut: std::future::Future<Output = sources::SourceResult<PagedResponse<T>>>,
 {
     let mut items = Vec::new();
     let mut pages = PageState::default();

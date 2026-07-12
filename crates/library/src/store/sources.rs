@@ -19,47 +19,12 @@ pub(super) fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     value.push(suffix);
     PathBuf::from(value)
 }
-pub fn image_cache_key(source_id: &SourceId, item_id: &str, image_tag: &str, size: u32) -> String {
-    format!(
-        "{}/{}/{}/{}",
-        encode_key_part(source_id.as_str()),
-        encode_key_part(item_id),
-        encode_key_part(image_tag),
-        size
-    )
-}
-pub fn lyrics_cache_key(source_id: &SourceId, track_id: &str) -> String {
-    format!(
-        "{}/{}",
-        encode_key_part(source_id.as_str()),
-        encode_key_part(track_id)
-    )
-}
-pub(super) const COLLECTION_COVER_GENRE: &str = "genre";
-pub(super) const COLLECTION_COVER_PLAYLIST: &str = "playlist";
-pub(super) const COLLECTION_COVER_SMART_PLAYLIST: &str = "smart_playlist";
-pub(super) const IMAGE_ORIGIN_EXTERNAL: &str = "external";
-pub(super) const IMAGE_ORIGIN_SOURCE: &str = "source";
-pub(super) const IMAGE_ORIGIN_UNKNOWN: &str = "unknown";
-pub(super) fn image_origin_for_source_ref(image_ref: Option<&ImageRef>) -> &'static str {
-    match image_ref {
-        Some(image_ref) if image_ref.item_id.starts_with("external:") => IMAGE_ORIGIN_EXTERNAL,
-        Some(_) => IMAGE_ORIGIN_SOURCE,
-        None => IMAGE_ORIGIN_UNKNOWN,
-    }
-}
-pub(super) fn saved_source_from_row(row: &Row<'_>) -> rusqlite::Result<SavedSource> {
-    Ok(SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new(row.get::<_, String>(0)?),
-            kind: row.get(1)?,
-            name: row.get(2)?,
-            base_url: row.get(3)?,
-        },
-        user_id: row.get(4)?,
-        username: row.get(5)?,
-        trust_invalid_cert: row.get::<_, i64>(6)? == 1,
-        use_jellyfin_instant_mix: row.get::<_, i64>(7)? == 1,
+pub(super) fn stored_source_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSource> {
+    Ok(StoredSource {
+        source_id: SourceId::new(row.get::<_, String>(0)?),
+        kind: row.get(1)?,
+        name: row.get(2)?,
+        provider_payload: row.get(3)?,
     })
 }
 pub(super) fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
@@ -120,22 +85,19 @@ pub(super) fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Resul
         disc_number: u16_from_i64(row.get(offset + 14)?),
         track_number: u16_from_i64(row.get(offset + 15)?),
         image_ref: image_ref_from_row(row, offset + 16, offset + 17)?,
+        album_artwork: None,
         genres: Vec::new(),
         musicbrainz_recording_id: None,
         musicbrainz_release_track_id: None,
-        local_path: row.get::<_, Option<String>>(offset + 18).ok().flatten(),
-        source_format: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
-        comment: row.get::<_, Option<String>>(offset + 20).ok().flatten(),
+        bpm: row.get::<_, Option<i64>>(offset + 18)?.map(u16_from_i64),
+        local_path: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
+        source_format: row.get::<_, Option<String>>(offset + 20).ok().flatten(),
+        comment: row.get::<_, Option<String>>(offset + 21).ok().flatten(),
         skip_count: row
-            .get::<_, Option<i64>>(offset + 21)
-            .ok()
-            .flatten()
-            .map(u32_from_i64),
-        bpm: row
             .get::<_, Option<i64>>(offset + 22)
             .ok()
             .flatten()
-            .map(u16_from_i64),
+            .map(u32_from_i64),
         moods: Vec::new(),
     })
 }
@@ -151,6 +113,7 @@ pub(super) fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
         user_rating: optional_u8_from_row(row, 7)?,
         musicbrainz_artist_id: None,
         image_ref: image_ref_from_row(row, 8, 9)?,
+        representative_albums: Vec::new(),
     })
 }
 pub(super) fn optional_u32_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u32>> {
@@ -235,251 +198,6 @@ pub(super) fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Op
         Some(image_ref) => (Some(image_ref.item_id.as_str()), image_ref.tag.as_deref()),
         None => (None, None),
     }
-}
-pub(super) fn collection_cover_ref_from_row(
-    row: &Row<'_>,
-    item_index: usize,
-    tag_index: usize,
-) -> rusqlite::Result<ImageRef> {
-    Ok(ImageRef {
-        item_id: row.get(item_index)?,
-        tag: row.get(tag_index)?,
-    })
-}
-pub(super) fn replace_collection_refs(
-    connection: &Connection,
-    source_id: &SourceId,
-    collection_type: &str,
-    collection_id: &str,
-    image_refs: &[ImageRef],
-) -> StoreResult<()> {
-    let mut seen = HashSet::<(String, Option<String>)>::new();
-    let wanted = image_refs
-        .iter()
-        .filter(|image_ref| seen.insert((image_ref.item_id.clone(), image_ref.tag.clone())))
-        .take(4)
-        .cloned()
-        .collect::<Vec<_>>();
-    let existing = {
-        let mut statement = connection.prepare(
-            "
-            SELECT image_item_id, image_tag
-            FROM collection_cover_refs
-            WHERE source_id = ?1
-              AND collection_type = ?2
-              AND collection_id = ?3
-            ORDER BY position
-            ",
-        )?;
-        collect_rows(statement.query_map(
-            params![source_id.as_str(), collection_type, collection_id],
-            |row| collection_cover_ref_from_row(row, 0, 1),
-        )?)?
-    };
-    if existing == wanted {
-        return Ok(());
-    }
-    connection.execute(
-        "
-        DELETE FROM collection_cover_refs
-        WHERE source_id = ?1
-          AND collection_type = ?2
-          AND collection_id = ?3
-        ",
-        params![source_id.as_str(), collection_type, collection_id],
-    )?;
-    let mut insert = connection.prepare(
-        "
-        INSERT INTO collection_cover_refs (
-            source_id, collection_type, collection_id, position,
-            image_item_id, image_tag, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
-        ON CONFLICT(source_id, collection_type, collection_id, position) DO UPDATE SET
-            image_item_id = excluded.image_item_id,
-            image_tag = excluded.image_tag,
-            updated_at = excluded.updated_at
-        ",
-    )?;
-    for (position, image_ref) in wanted.iter().enumerate() {
-        let (image_item_id, image_tag) = image_ref_parts(Some(image_ref));
-        insert.execute(params![
-            source_id.as_str(),
-            collection_type,
-            collection_id,
-            position as i64,
-            image_item_id,
-            image_tag,
-        ])?;
-    }
-    Ok(())
-}
-pub(super) fn artist_fallback_image_refs_sql(
-    album_artist: bool,
-    values_placeholders: &str,
-) -> String {
-    if album_artist {
-        return format!(
-            "
-            WITH wanted(artist_id) AS (VALUES {values_placeholders}),
-                 candidates AS (
-                    SELECT w.artist_id, a.image_item_id, a.image_tag,
-                           0 AS priority, a.year, a.title
-                    FROM wanted w
-                    JOIN albums a
-                        ON a.artist_id = w.artist_id
-                    WHERE a.source_id = ?
-                      AND a.image_item_id IS NOT NULL
-                      AND a.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, a.image_item_id, a.image_tag,
-                           1 AS priority, a.year, a.title
-                    FROM wanted w
-                    JOIN album_artist_links aal
-                        ON aal.artist_id = w.artist_id
-                    JOIN albums a
-                        ON a.source_id = aal.source_id AND a.album_id = aal.album_id
-                    WHERE aal.source_id = ?
-                      AND a.image_item_id IS NOT NULL
-                      AND a.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, a.image_item_id, a.image_tag,
-                           2 AS priority, a.year, a.title
-                    FROM wanted w
-                    JOIN tracks t
-                        ON t.artist_id = w.artist_id
-                    JOIN albums a
-                        ON a.source_id = t.source_id AND a.album_id = t.album_id
-                    WHERE t.source_id = ?
-                      AND a.image_item_id IS NOT NULL
-                      AND a.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, a.image_item_id, a.image_tag,
-                           3 AS priority, a.year, a.title
-                    FROM wanted w
-                    JOIN track_artist_links tal
-                        ON tal.artist_id = w.artist_id
-                    JOIN albums a
-                        ON a.source_id = tal.source_id AND a.album_id = tal.album_id
-                    WHERE tal.source_id = ?
-                      AND a.image_item_id IS NOT NULL
-                      AND a.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, t.image_item_id, t.image_tag,
-                           4 AS priority, t.year, t.title
-                    FROM wanted w
-                    JOIN tracks t
-                        ON t.artist_id = w.artist_id
-                    WHERE t.source_id = ?
-                      AND t.image_item_id IS NOT NULL
-                      AND t.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, t.image_item_id, t.image_tag,
-                           5 AS priority, t.year, t.title
-                    FROM wanted w
-                    JOIN track_artist_links tal
-                        ON tal.artist_id = w.artist_id
-                    JOIN tracks t
-                        ON t.source_id = tal.source_id AND t.track_id = tal.track_id
-                    WHERE tal.source_id = ?
-                      AND t.image_item_id IS NOT NULL
-                      AND t.image_origin IN ('source', 'unknown', 'external')
-                    UNION ALL
-                    SELECT w.artist_id, a.image_item_id, a.image_tag,
-                           6 AS priority, a.year, a.title
-                    FROM wanted w
-                    JOIN album_artists aa
-                        ON aa.artist_id = w.artist_id
-                    JOIN album_artist_links aal
-                        ON aal.source_id = aa.source_id
-                       AND aal.name = aa.name
-                       AND aal.artist_id <> w.artist_id
-                    JOIN albums a
-                        ON a.source_id = aal.source_id AND a.album_id = aal.album_id
-                    WHERE aa.source_id = ?
-                      AND a.image_item_id IS NOT NULL
-                      AND a.image_origin IN ('source', 'unknown', 'external')
-                 )
-            SELECT artist_id, image_item_id, image_tag
-            FROM candidates
-            ORDER BY CASE WHEN image_item_id LIKE 'external:%' THEN 1 ELSE 0 END,
-                     priority, year, title COLLATE NOCASE
-            "
-        );
-    }
-
-    format!(
-        "
-        WITH wanted(artist_id) AS (VALUES {values_placeholders}),
-             candidates AS (
-                SELECT w.artist_id, a.image_item_id, a.image_tag,
-                       0 AS priority, a.year, a.title
-                FROM wanted w
-                JOIN albums a
-                    ON a.artist_id = w.artist_id
-              WHERE a.source_id = ?
-                AND a.image_item_id IS NOT NULL
-                AND a.image_origin IN ('source', 'unknown', 'external')
-                UNION ALL
-                SELECT w.artist_id, a.image_item_id, a.image_tag,
-                       1 AS priority, a.year, a.title
-                FROM wanted w
-                JOIN tracks t
-                    ON t.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.source_id = t.source_id AND a.album_id = t.album_id
-              WHERE t.source_id = ?
-                AND a.image_item_id IS NOT NULL
-                AND a.image_origin IN ('source', 'unknown', 'external')
-                UNION ALL
-                SELECT w.artist_id, a.image_item_id, a.image_tag,
-                       2 AS priority, a.year, a.title
-                FROM wanted w
-                JOIN track_artist_links tal
-                    ON tal.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.source_id = tal.source_id AND a.album_id = tal.album_id
-              WHERE tal.source_id = ?
-                AND a.image_item_id IS NOT NULL
-                AND a.image_origin IN ('source', 'unknown', 'external')
-                UNION ALL
-                SELECT w.artist_id, a.image_item_id, a.image_tag,
-                       3 AS priority, a.year, a.title
-                FROM wanted w
-                JOIN album_artist_links aal
-                    ON aal.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.source_id = aal.source_id AND a.album_id = aal.album_id
-              WHERE aal.source_id = ?
-                AND a.image_item_id IS NOT NULL
-                AND a.image_origin IN ('source', 'unknown', 'external')
-                UNION ALL
-                SELECT w.artist_id, t.image_item_id, t.image_tag,
-                       4 AS priority, t.year, t.title
-                FROM wanted w
-                JOIN tracks t
-                    ON t.artist_id = w.artist_id
-              WHERE t.source_id = ?
-                AND t.image_item_id IS NOT NULL
-                AND t.image_origin IN ('source', 'unknown', 'external')
-                UNION ALL
-                SELECT w.artist_id, t.image_item_id, t.image_tag,
-                       5 AS priority, t.year, t.title
-                FROM wanted w
-                JOIN track_artist_links tal
-                    ON tal.artist_id = w.artist_id
-                JOIN tracks t
-                    ON t.source_id = tal.source_id AND t.track_id = tal.track_id
-              WHERE tal.source_id = ?
-                AND t.image_item_id IS NOT NULL
-                AND t.image_origin IN ('source', 'unknown', 'external')
-             )
-        SELECT artist_id, image_item_id, image_tag
-        FROM candidates
-        ORDER BY CASE WHEN image_item_id LIKE 'external:%' THEN 1 ELSE 0 END,
-                 priority, year, title COLLATE NOCASE
-        "
-    )
 }
 pub(super) fn artist_list_filter(album_artist: bool) -> &'static str {
     if album_artist {
@@ -770,17 +488,6 @@ pub(super) fn track_matches_artist(track: &Track, artist_id: &ArtistId) -> bool 
     }
     false
 }
-pub(super) fn artist_fallback_image_ref(
-    albums: &[Album],
-    appears_on: &[Album],
-    tracks: &[Track],
-) -> Option<ImageRef> {
-    albums
-        .first()
-        .and_then(|album| album.image_ref.clone())
-        .or_else(|| appears_on.first().and_then(|album| album.image_ref.clone()))
-        .or_else(|| tracks.first().and_then(|track| track.image_ref.clone()))
-}
 pub(super) fn synthesize_artist_from_links(
     artist_id: &ArtistId,
     albums: &[Album],
@@ -822,7 +529,8 @@ pub(super) fn synthesize_artist_from_links(
         play_count: None,
         user_rating: None,
         musicbrainz_artist_id: None,
-        image_ref: artist_fallback_image_ref(albums, appears_on, tracks),
+        image_ref: None,
+        representative_albums: Vec::new(),
     }
 }
 pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
@@ -832,8 +540,8 @@ pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
         album_count: u32_from_i64(row.get(2)?),
         track_count: u32_from_i64(row.get(3)?),
         duration_seconds: u32_from_i64(row.get(4)?),
-        image_refs: Vec::new(),
         image_ref: image_ref_from_row(row, 5, 6)?,
+        representative_albums: Vec::new(),
     })
 }
 pub(super) fn mood_from_row(row: &Row<'_>) -> rusqlite::Result<Mood> {
@@ -842,8 +550,7 @@ pub(super) fn mood_from_row(row: &Row<'_>) -> rusqlite::Result<Mood> {
         name: row.get(1)?,
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
-        image_refs: Vec::new(),
-        image_ref: image_ref_from_row(row, 4, 5)?,
+        representative_albums: Vec::new(),
     })
 }
 pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
@@ -858,8 +565,8 @@ pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
         top_genres: string_vec_from_json(row.get(4)?, 4)?,
-        image_refs: Vec::new(),
         image_ref: image_ref_from_row(row, 6, 7)?,
+        representative_albums: Vec::new(),
     })
 }
 pub(super) fn stable_seed(value: &str) -> u32 {
@@ -1642,12 +1349,6 @@ fn merge_album_artist_alias(
                   AND alias.artist_id = ?3
                   AND alias.image_item_id IS NOT NULL
             ), image_tag),
-            image_origin = COALESCE((
-                SELECT image_origin FROM album_artists alias
-                WHERE alias.source_id = album_artists.source_id
-                  AND alias.artist_id = ?3
-                  AND alias.image_item_id IS NOT NULL
-            ), image_origin),
             sync_generation = ?4
         WHERE source_id = ?1
           AND artist_id = ?2
@@ -1716,7 +1417,6 @@ pub(super) fn clear_library_cache_on_connection(
         params![source_id.as_str()],
     )?;
     for table in [
-        "collection_cover_refs",
         "home_section_prefetch_items",
         "home_section_items",
         "genres",
@@ -1732,9 +1432,6 @@ pub(super) fn clear_library_cache_on_connection(
         "tracks",
         "albums",
         "lyrics_cache",
-        "cover_cache",
-        "external_image_lookup_misses",
-        "entity_content_refs",
         "entity_links",
         "entity_resolver_state",
         "entity_facts",
@@ -1775,7 +1472,6 @@ fn refresh_store_playlist_cache_after_source_clear(
             source_id,
             &playlist_id,
         )?;
-        super::library_auxiliary_cache::refresh_playlist_refs(connection, source_id, &playlist_id)?;
     }
     connection.execute(
         "
@@ -1873,31 +1569,4 @@ pub(super) fn u16_from_i64(value: i64) -> u16 {
 
 pub(super) fn u32_from_i64(value: i64) -> u32 {
     value.clamp(0, i64::from(u32::MAX)) as u32
-}
-
-pub(super) fn encode_key_part(value: &str) -> String {
-    let encoded: String = value
-        .chars()
-        .map(|character| match character {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
-            _ => '_',
-        })
-        .collect();
-
-    if encoded.len() <= CACHE_KEY_PART_MAX_LEN {
-        return encoded;
-    }
-
-    let prefix_len = CACHE_KEY_PART_MAX_LEN - CACHE_KEY_HASH_LEN - 1;
-    let prefix = encoded.chars().take(prefix_len).collect::<String>();
-    format!("{prefix}_{:016x}", stable_hash(value))
-}
-
-pub(super) fn stable_hash(value: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }

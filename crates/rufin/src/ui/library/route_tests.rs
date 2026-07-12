@@ -1,8 +1,9 @@
-use domain::{
-    Album, AlbumId, ImageRef, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-    Playlist, PlaylistId, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
+use ::library::{
+    Album, AlbumId, Playlist, PlaylistId, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId,
-    available_sort_fields,
+};
+use domain::{
+    LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
 };
 use std::collections::HashMap;
 #[test]
@@ -230,349 +231,6 @@ fn route_track_snapshot_limit_is_not_library_limit() {
 }
 
 #[test]
-fn route_warm_overscan() {
-    let ranges =
-        super::track_viewport_cover_ranges(2_000, 1_000, 13).expect("track viewport ranges");
-
-    assert_eq!(ranges.priority_start, 1_000);
-    assert_eq!(ranges.priority_end, 1_013);
-    assert_eq!(ranges.warm_before_start, 984);
-    assert_eq!(ranges.warm_before_end, 1_000);
-    assert_eq!(ranges.warm_after_start, 1_013);
-    assert_eq!(ranges.warm_after_end, 1_045);
-}
-
-#[test]
-fn track_interaction_viewport() {
-    let ranges = super::track_interaction_viewport_cover_ranges(2_000, 1_000, 13)
-        .expect("track interaction viewport ranges");
-
-    assert_eq!(ranges.priority_start, 952);
-    assert_eq!(ranges.priority_end, 1_109);
-    assert_eq!(ranges.warm_before_start, 936);
-    assert_eq!(ranges.warm_before_end, 952);
-    assert_eq!(ranges.warm_after_start, 1_109);
-    assert_eq!(ranges.warm_after_end, 1_141);
-}
-
-#[test]
-fn album_interaction_viewport() {
-    let ranges = super::viewport_cover_ranges(
-        265,
-        143,
-        18,
-        24,
-        48,
-        super::ALBUM_WARM_BEHIND,
-        super::ALBUM_WARM_AHEAD,
-    )
-    .expect("album interaction viewport ranges");
-
-    assert_eq!(ranges.priority_start, 119);
-    assert_eq!(ranges.priority_end, 209);
-    assert_eq!(ranges.warm_before_start, 103);
-    assert_eq!(ranges.warm_before_end, 119);
-    assert_eq!(ranges.warm_after_start, 209);
-    assert_eq!(ranges.warm_after_end, 241);
-}
-
-#[test]
-fn collection_grid_extent_uses_field_slots() {
-    let mut settings = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Artists)
-    };
-
-    settings.grid_fields.clear();
-    let title_only = super::collection_grid_item_extent(180, &settings);
-    settings.grid_fields = vec![LibraryField::AlbumCount, LibraryField::SongCount];
-    let with_fields = super::collection_grid_item_extent(180, &settings);
-
-    assert_eq!(title_only, 202);
-    assert_eq!(with_fields, 246);
-}
-
-#[test]
-fn route_prime_settle() {
-    let ranges = super::viewport_cover_ranges(129, 45, 15, 3 * 8, 3 * 24, 6, 18)
-        .expect("grid interaction viewport ranges");
-
-    assert_eq!(ranges.priority_start, 21);
-    assert_eq!(ranges.priority_end, 129);
-    assert_eq!(ranges.warm_before_start, 15);
-    assert_eq!(ranges.warm_before_end, 21);
-    assert_eq!(ranges.warm_after_start, 129);
-    assert_eq!(ranges.warm_after_end, 129);
-}
-#[test]
-fn route_clip_bounds() {
-    let ranges = super::track_viewport_cover_ranges(50, 45, 20).expect("bounded track ranges");
-
-    assert_eq!(ranges.priority_start, 30);
-    assert_eq!(ranges.priority_end, 50);
-    assert_eq!(ranges.warm_before_start, 14);
-    assert_eq!(ranges.warm_before_end, 30);
-    assert_eq!(ranges.warm_after_start, 50);
-    assert_eq!(ranges.warm_after_end, 50);
-    assert!(super::track_viewport_cover_ranges(0, 0, 20).is_none());
-}
-#[test]
-fn route_use_stale() {
-    assert_eq!(super::viewport_page_size(1.0, 1_044, 900), 1_044.0);
-    assert_eq!(super::viewport_page_size(760.0, 200, 600), 760.0);
-}
-#[test]
-fn route_prioritize_visible() {
-    let ranges = super::viewport_cover_ranges(
-        300,
-        252,
-        13,
-        super::ALBUM_PRIORITY_BEHIND,
-        super::ALBUM_PRIORITY_AHEAD,
-        super::ALBUM_WARM_BEHIND,
-        super::ALBUM_WARM_AHEAD,
-    )
-    .expect("album viewport ranges");
-
-    assert_eq!(ranges.priority_start, 252);
-    assert_eq!(ranges.priority_end, 265);
-    assert_eq!(ranges.warm_before_start, 236);
-    assert_eq!(ranges.warm_before_end, 252);
-    assert_eq!(ranges.warm_after_start, 265);
-    assert_eq!(ranges.warm_after_end, 297);
-}
-#[test]
-fn route_prioritize_overscan() {
-    let ranges = super::TrackViewportCoverRanges {
-        visible_start: 11,
-        visible_end: 12,
-        priority_start: 10,
-        priority_end: 13,
-        warm_before_start: 8,
-        warm_before_end: 10,
-        warm_after_start: 13,
-        warm_after_end: 15,
-    };
-
-    let batches = super::viewport_cover_batches(ranges, |start, end| {
-        (start..end)
-            .map(|index| ImageRef::new(format!("cover-{index}"), None))
-            .collect::<Vec<_>>()
-    });
-    let priority_ids = batches
-        .priority_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-    let warm_ids = batches
-        .warm_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-
-    assert_eq!(batches.visible_priority_len, 1);
-    assert_eq!(priority_ids, vec!["cover-11", "cover-10", "cover-12"]);
-    assert_eq!(warm_ids, vec!["cover-8", "cover-9", "cover-13", "cover-14"]);
-}
-
-#[test]
-fn route_warm_lane() {
-    let batches = super::ViewportCoverRefBatches {
-        visible_priority_len: 3,
-        priority_refs: (0..5)
-            .map(|index| ImageRef::new(format!("priority-{index}"), None))
-            .collect(),
-        warm_refs: (0..2)
-            .map(|index| ImageRef::new(format!("warm-{index}"), None))
-            .collect(),
-    };
-
-    let (batches, overflowed) = super::cap_viewport_priority_cover_refs(batches, 3);
-    let priority_ids = batches
-        .priority_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-    let warm_ids = batches
-        .warm_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-
-    assert!(overflowed);
-    assert_eq!(priority_ids, vec!["priority-0", "priority-1", "priority-2"]);
-    assert_eq!(
-        warm_ids,
-        vec!["priority-3", "priority-4", "warm-0", "warm-1"]
-    );
-}
-
-#[test]
-fn route_keep_priority() {
-    let batches = super::ViewportCoverRefBatches {
-        visible_priority_len: 5,
-        priority_refs: (0..8)
-            .map(|index| ImageRef::new(format!("priority-{index}"), None))
-            .collect(),
-        warm_refs: vec![ImageRef::new("warm-0", None)],
-    };
-
-    let (batches, overflowed) = super::cap_viewport_priority_cover_refs(batches, 3);
-    let priority_ids = batches
-        .priority_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-    let warm_ids = batches
-        .warm_refs
-        .iter()
-        .map(|image_ref| image_ref.item_id.as_str())
-        .collect::<Vec<_>>();
-
-    assert!(overflowed);
-    assert_eq!(
-        priority_ids,
-        vec![
-            "priority-0",
-            "priority-1",
-            "priority-2",
-            "priority-3",
-            "priority-4"
-        ]
-    );
-    assert_eq!(
-        warm_ids,
-        vec!["priority-5", "priority-6", "priority-7", "warm-0"]
-    );
-}
-#[test]
-fn playlist_viewport_cover() {
-    let first = ImageRef::new("playlist-first", None);
-    let second = ImageRef::new("playlist-second", None);
-    let fallback = ImageRef::new("playlist-fallback", None);
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    model.append(&gtk::glib::BoxedAnyObject::new(test_playlist_with_refs(
-        1,
-        "Regular",
-        vec![first.clone(), second.clone(), first.clone()],
-        Some(fallback.clone()),
-    )));
-
-    let refs = super::playlist_cover_refs(&model, 0, 1);
-
-    assert_eq!(refs, vec![first, second]);
-}
-
-#[test]
-fn smart_playlist_viewport() {
-    let first = ImageRef::new("smart-first", None);
-    let second = ImageRef::new("smart-second", None);
-    let fallback = ImageRef::new("smart-fallback", None);
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    model.append(&gtk::glib::BoxedAnyObject::new(
-        test_smart_playlist_with_refs(
-            1,
-            "Smart",
-            vec![first.clone(), second.clone(), first.clone()],
-            Some(fallback.clone()),
-        ),
-    ));
-
-    let refs = super::smart_cover_refs(&model, 0, 1);
-
-    assert_eq!(refs, vec![first, second]);
-}
-
-#[test]
-fn route_match_behavior() {
-    let playlist_ranges =
-        super::viewport_cover_ranges(120, 24, 12, 0, 0, 6, 18).expect("playlist ranges");
-    let genre_ranges =
-        super::viewport_cover_ranges(120, 24, 12, 0, 0, 6, 18).expect("genre ranges");
-
-    assert_eq!(playlist_ranges, genre_ranges);
-}
-
-#[test]
-fn route_track_set() {
-    let settings = LibraryListSettings {
-        layout: LibraryLayout::Row,
-        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
-    };
-    let mut duplicate = test_track_with_image(90, "Duplicate", "shared-cover");
-    duplicate.track_number = 90;
-    let mut duplicate_later = test_track_with_image(91, "Duplicate Later", "shared-cover");
-    duplicate_later.track_number = 91;
-    let tracks = (0..80)
-        .map(|index| {
-            test_track_with_image(
-                index,
-                &format!("Track {index:02}"),
-                &format!("cover-{index:02}"),
-            )
-        })
-        .chain(std::iter::once(duplicate))
-        .chain(std::iter::once(duplicate_later))
-        .collect::<Vec<_>>();
-
-    let refs = super::track_cover_refs_for_settings(&tracks, &settings);
-
-    assert_eq!(refs.len(), 81);
-    assert!(refs.iter().any(|image_ref| image_ref.item_id == "cover-79"));
-    assert_eq!(
-        refs.iter()
-            .filter(|image_ref| image_ref.item_id == "shared-cover")
-            .count(),
-        1
-    );
-}
-#[test]
-fn row_cover_warm_requires_cover_field() {
-    let mut settings = LibraryListSettings {
-        layout: LibraryLayout::Row,
-        row_fields: vec![LibraryField::TitleMerged, LibraryField::Album],
-        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
-    };
-
-    assert!(super::row_layout_uses_cover(&settings));
-    settings.row_fields = vec![LibraryField::Title, LibraryField::Album];
-    assert!(!super::row_layout_uses_cover(&settings));
-    settings.row_fields = vec![LibraryField::Image, LibraryField::Title];
-    assert!(super::row_layout_uses_cover(&settings));
-}
-#[test]
-fn track_viewport_refs_follow_model_order() {
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
-        1,
-        "First",
-        "cover-one",
-    )));
-    model.append(&gtk::glib::BoxedAnyObject::new(test_track(
-        2, "Missing", 1, 2,
-    )));
-    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
-        3,
-        "Duplicate",
-        "cover-one",
-    )));
-    model.append(&gtk::glib::BoxedAnyObject::new(test_track_with_image(
-        4,
-        "Second",
-        "cover-two",
-    )));
-
-    let refs = super::library_track_range(&model, 0, 4);
-
-    assert_eq!(
-        refs,
-        vec![
-            ImageRef::new("cover-one".to_string(), None),
-            ImageRef::new("cover-two".to_string(), None),
-        ]
-    );
-}
-#[test]
 fn disc_track_order() {
     let mut tracks = vec![
         test_track(1, "Second", 1, 2),
@@ -634,49 +292,12 @@ fn album_header_order() {
     ));
 }
 #[test]
-fn album_detail_cover_refs_use_lead_rows() {
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    let album = Album {
-        image_ref: Some(ImageRef::new("cover-one".to_string(), None)),
-        ..test_album(1, "A Album")
-    };
-    let duplicate = Album {
-        image_ref: Some(ImageRef::new("cover-one".to_string(), None)),
-        ..test_album(2, "B Album")
-    };
-    model.append(&gtk::glib::BoxedAnyObject::new(
-        super::AlbumDetailItem::Lead {
-            album,
-            inline_tracks: vec![test_track_with_image(1, "Track", "track-cover")],
-            last_in_album: false,
-        },
-    ));
-    model.append(&gtk::glib::BoxedAnyObject::new(
-        super::AlbumDetailItem::Track {
-            track: test_track_with_image(2, "Later Track", "track-cover"),
-            index: 1,
-            last_in_album: false,
-        },
-    ));
-    model.append(&gtk::glib::BoxedAnyObject::new(
-        super::AlbumDetailItem::Lead {
-            album: duplicate,
-            inline_tracks: Vec::new(),
-            last_in_album: true,
-        },
-    ));
-
-    let refs = super::album_cover_refs(&model, 0, 3);
-
-    assert_eq!(refs, vec![ImageRef::new("cover-one".to_string(), None)]);
-}
-#[test]
 fn route_expand_total() {
-    let page = source::PagedResponse::new(vec![1, 2], 5);
+    let page = library::PagedResponse::new(vec![1, 2], 5);
     let page = super::complete_cached_page(
         page,
         true,
-        |limit| Ok(source::PagedResponse::new((0..limit).collect(), limit)),
+        |limit| Ok(library::PagedResponse::new((0..limit).collect(), limit)),
         "numbers",
     );
 
@@ -685,7 +306,7 @@ fn route_expand_total() {
 }
 #[test]
 fn route_cache_page() {
-    let page = source::PagedResponse::new(vec![1, 2], 5);
+    let page = library::PagedResponse::new(vec![1, 2], 5);
     let page = super::complete_cached_page(
         page,
         false,
@@ -699,8 +320,8 @@ fn route_cache_page() {
 #[test]
 fn route_duration_fields_use_contextual_text() {
     let mut album = test_album(1, "Album");
-    let mut playlist = test_playlist_with_refs(1, "Playlist", Vec::new(), None);
-    let mut smart_playlist = test_smart_playlist_with_refs(1, "Smart Playlist", Vec::new(), None);
+    let mut playlist = test_playlist(1, "Playlist");
+    let mut smart_playlist = test_smart_playlist(1, "Smart Playlist");
     let mut track = test_track(1, "Track", 1, 1);
 
     album.duration_seconds = 308;
@@ -718,6 +339,54 @@ fn route_duration_fields_use_contextual_text() {
         "5m 8s"
     );
     assert_eq!(super::track_field(&track, LibraryField::Duration), "5:08");
+}
+
+#[test]
+fn route_bpm_is_blank_when_missing_and_sorts_stably() {
+    let mut low = test_track(1, "Same title", 1, 1);
+    let mut high_first = test_track(2, "Same title", 1, 1);
+    let mut high_second = test_track(3, "Same title", 1, 1);
+    let missing = test_track(4, "Same title", 1, 1);
+    low.bpm = Some(90);
+    high_first.bpm = Some(120);
+    high_second.bpm = Some(120);
+    let mut settings = LibraryListSettings {
+        sort_key: LibraryField::Bpm,
+        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+    };
+    let mut tracks = vec![
+        missing.clone(),
+        high_second.clone(),
+        high_first.clone(),
+        low.clone(),
+    ];
+
+    super::sort_tracks(&mut tracks, &settings, false);
+
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            low.id.clone(),
+            high_first.id.clone(),
+            high_second.id.clone(),
+            missing.id.clone(),
+        ]
+    );
+    assert_eq!(super::track_field(&tracks[0], LibraryField::Bpm), "90");
+    assert!(super::track_field(&tracks[3], LibraryField::Bpm).is_empty());
+
+    settings.descending = true;
+    super::sort_tracks(&mut tracks, &settings, false);
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![high_second.id, high_first.id, low.id, missing.id]
+    );
 }
 fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Track {
     Track {
@@ -740,6 +409,7 @@ fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Trac
         disc_number,
         track_number,
         image_ref: None,
+        album_artwork: None,
         genres: Vec::new(),
         musicbrainz_recording_id: None,
         musicbrainz_release_track_id: None,
@@ -749,12 +419,6 @@ fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Trac
         skip_count: None,
         bpm: None,
         moods: Vec::new(),
-    }
-}
-fn test_track_with_image(id: u32, title: &str, image_id: &str) -> Track {
-    Track {
-        image_ref: Some(ImageRef::new(image_id.to_string(), None)),
-        ..test_track(id, title, 1, id as u16)
     }
 }
 fn test_album(id: u32, title: &str) -> Album {
@@ -783,12 +447,7 @@ fn test_album(id: u32, title: &str) -> Album {
         musicbrainz_release_group_id: None,
     }
 }
-fn test_playlist_with_refs(
-    id: u32,
-    name: &str,
-    image_refs: Vec<ImageRef>,
-    image_ref: Option<ImageRef>,
-) -> Playlist {
+fn test_playlist(id: u32, name: &str) -> Playlist {
     Playlist {
         id: PlaylistId::fake(id),
         name: name.to_string(),
@@ -796,16 +455,11 @@ fn test_playlist_with_refs(
         track_count: 1,
         duration_seconds: 180,
         top_genres: Vec::new(),
-        image_refs,
-        image_ref,
+        image_ref: None,
+        representative_albums: Vec::new(),
     }
 }
-fn test_smart_playlist_with_refs(
-    id: u32,
-    name: &str,
-    image_refs: Vec<ImageRef>,
-    image_ref: Option<ImageRef>,
-) -> SmartPlaylist {
+fn test_smart_playlist(id: u32, name: &str) -> SmartPlaylist {
     SmartPlaylist {
         id: SmartPlaylistId::fake(id),
         name: name.to_string(),
@@ -822,7 +476,6 @@ fn test_smart_playlist_with_refs(
         },
         track_count: 1,
         duration_seconds: 180,
-        image_refs,
-        image_ref,
+        representative_albums: Vec::new(),
     }
 }

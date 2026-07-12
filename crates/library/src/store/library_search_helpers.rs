@@ -4,7 +4,7 @@ use super::*;
 
 struct SortedTrackSearchPage<'a> {
     query: &'a str,
-    sort_key: LibraryField,
+    sort_key: TrackSort,
     descending: bool,
     offset: usize,
     limit: usize,
@@ -28,7 +28,7 @@ impl Store {
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
                        t.play_count, t.user_rating, t.duration_seconds,
                        {favorite} AS favorite,
-                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM library_fts f
                 JOIN tracks t
                     ON t.source_id = f.source_id AND t.track_id = f.item_id
@@ -65,7 +65,7 @@ impl Store {
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
                        t.play_count, t.user_rating, t.duration_seconds,
                        {favorite} AS favorite,
-                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM library_fts f
                 JOIN tracks t
                     ON t.source_id = f.source_id AND t.track_id = f.item_id
@@ -100,7 +100,7 @@ impl Store {
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
                        t.play_count, t.user_rating, t.duration_seconds,
                        {favorite} AS favorite,
-                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM library_fts f
                 JOIN tracks t
                     ON t.source_id = f.source_id AND t.track_id = f.item_id
@@ -137,7 +137,7 @@ impl Store {
                        t.album, t.year, t.release_date, t.date_added, t.last_played,
                        t.play_count, t.user_rating, t.duration_seconds,
                        {favorite} AS favorite,
-                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM library_fts f
                 JOIN tracks t
                     ON t.source_id = f.source_id AND t.track_id = f.item_id
@@ -167,7 +167,7 @@ impl Store {
         &self,
         source_id: &SourceId,
         query: &str,
-        sort_key: LibraryField,
+        sort_key: TrackSort,
         descending: bool,
         offset: usize,
         limit: usize,
@@ -182,7 +182,7 @@ impl Store {
         &self,
         source_id: &SourceId,
         query: &str,
-        sort_key: LibraryField,
+        sort_key: TrackSort,
         descending: bool,
         offset: usize,
         limit: usize,
@@ -262,7 +262,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND (
@@ -300,7 +300,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND (
@@ -327,7 +327,7 @@ impl Store {
         &self,
         source_id: &SourceId,
         pattern: &str,
-        sort_key: LibraryField,
+        sort_key: TrackSort,
         descending: bool,
         offset: usize,
         limit: usize,
@@ -380,7 +380,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND (
@@ -418,7 +418,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag
+                       t.track_number, t.image_item_id, t.image_tag, t.bpm
                 FROM tracks t
                 WHERE t.source_id = ?1
                   AND (
@@ -490,7 +490,7 @@ impl Store {
             favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![
                 source_id.as_str(),
                 item_type,
@@ -500,6 +500,7 @@ impl Store {
             ],
             artist_from_row,
         )?)?;
+        self.attach_artist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn load_artists_like(
@@ -546,10 +547,11 @@ impl Store {
             favorite = effective_artist_favorite_sql("a", album_artist),
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![source_id.as_str(), pattern, limit as i64, offset as i64],
             artist_from_row,
         )?)?;
+        self.attach_artist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn search_playlists(
@@ -587,7 +589,7 @@ impl Store {
             params![source_id.as_str(), query, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
-        self.attach_playlist_cover_image_refs(source_id, &mut items)?;
+        self.attach_playlist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn load_playlists_like(
@@ -622,7 +624,7 @@ impl Store {
             params![source_id.as_str(), pattern, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
-        self.attach_playlist_cover_image_refs(source_id, &mut items)?;
+        self.attach_playlist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn configure_pragmas(&self, wal: bool) -> StoreResult<()> {

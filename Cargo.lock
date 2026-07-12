@@ -80,6 +80,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "artwork"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "gdk-pixbuf",
+ "library",
+ "md5",
+ "metadata",
+ "reqwest",
+ "serde_json",
+ "sources",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "ashpd"
 version = "0.13.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -617,6 +636,7 @@ dependencies = [
 name = "domain"
 version = "0.8.0"
 dependencies = [
+ "library",
  "serde",
  "serde_json",
 ]
@@ -1212,33 +1232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gstreamer-play"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3355c2c37bfd824cbd974bf0b8c004d71ca3755f825065957bc16356d79e6e34"
-dependencies = [
- "glib",
- "gstreamer",
- "gstreamer-play-sys",
- "gstreamer-video",
- "libc",
-]
-
-[[package]]
-name = "gstreamer-play-sys"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33810c828e426122ca8268071a090e08a9fbcc96e104f94c76353547c4c98a6f"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-sys",
- "gstreamer-video-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
 name = "gstreamer-sys"
 version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1247,36 +1240,6 @@ dependencies = [
  "cfg-if",
  "glib-sys",
  "gobject-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-video"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bf728cb21499561ea0d6ce584e550bf2b98b279cc7741067ee42f41f98b486e"
-dependencies = [
- "cfg-if",
- "futures-channel",
- "glib",
- "gstreamer",
- "gstreamer-base",
- "gstreamer-video-sys",
- "libc",
- "thiserror",
-]
-
-[[package]]
-name = "gstreamer-video-sys"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "109c2c997a90a5806a8d7fcb416755e3047d6bab8f580d2ededc9ab7ad553caf"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
  "libc",
  "system-deps",
 ]
@@ -1857,8 +1820,8 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 name = "library"
 version = "0.8.0"
 dependencies = [
- "domain",
  "rusqlite",
+ "serde",
  "serde_json",
  "thiserror",
 ]
@@ -1868,11 +1831,12 @@ name = "library-sync"
 version = "0.8.0"
 dependencies = [
  "async-trait",
- "domain",
  "library",
- "source",
+ "serde_json",
+ "sources",
  "thiserror",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]
@@ -1983,6 +1947,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "metadata"
+version = "0.8.0"
+dependencies = [
+ "library",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sources",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -2336,12 +2313,22 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "playback"
 version = "0.8.0"
 dependencies = [
- "domain",
+ "library",
+ "serde",
+ "serde_json",
+ "sources",
+ "thiserror",
+]
+
+[[package]]
+name = "playback-gstreamer"
+version = "0.8.0"
+dependencies = [
  "gstreamer",
  "gstreamer-audio",
- "gstreamer-play",
+ "playback",
  "rustfft",
- "thiserror",
+ "tempfile",
  "tracing",
 ]
 
@@ -2594,6 +2581,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rich-presence"
+version = "0.8.0"
+dependencies = [
+ "library",
+ "playback",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2621,6 +2620,7 @@ dependencies = [
 name = "rufin"
 version = "0.8.0"
 dependencies = [
+ "artwork",
  "async-trait",
  "clap",
  "directories",
@@ -2633,17 +2633,18 @@ dependencies = [
  "library",
  "library-sync",
  "md5",
+ "metadata",
  "mpris-server",
  "playback",
+ "playback-gstreamer",
  "reqwest",
+ "rich-presence",
  "rusqlite",
+ "scrobbling",
  "secrets",
  "serde",
  "serde_json",
- "source",
- "source-jellyfin",
- "source-local",
- "source-subsonic",
+ "sources",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2812,11 +2813,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrobbling"
+version = "0.8.0"
+dependencies = [
+ "md5",
+ "playback",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "secrets"
 version = "0.8.0"
 dependencies = [
  "base64",
- "domain",
  "oo7",
  "serde",
  "serde_json",
@@ -3020,72 +3032,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "source"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "domain",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "source-jellyfin"
+name = "sources"
 version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64",
- "domain",
  "futures-util",
  "getrandom 0.4.3",
  "library",
- "library-sync",
+ "lofty",
+ "md5",
+ "notify",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",
- "source",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "source-local"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "domain",
- "lofty",
- "notify",
- "percent-encoding",
- "source",
- "tempfile",
- "tokio",
- "tracing",
  "url",
  "walkdir",
-]
-
-[[package]]
-name = "source-subsonic"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "domain",
- "getrandom 0.4.3",
- "md5",
- "reqwest",
- "serde",
- "serde_json",
- "source",
- "tokio",
- "tracing",
  "wiremock",
 ]
 

@@ -294,33 +294,33 @@ pub(in crate::ui) fn right_sidebar_mode_from_index(index: u32) -> RightSidebarMo
         _ => RightSidebarMode::Hidden,
     }
 }
-pub(in crate::ui) fn discord_display_index(display_type: DiscordDisplayType) -> u32 {
+pub(in crate::ui) fn discord_display_index(display_type: DisplayType) -> u32 {
     match display_type {
-        DiscordDisplayType::Application => 0,
-        DiscordDisplayType::Song => 1,
-        DiscordDisplayType::Artist => 2,
+        DisplayType::Application => 0,
+        DisplayType::Song => 1,
+        DisplayType::Artist => 2,
     }
 }
-pub(in crate::ui) fn discord_display_from_index(index: u32) -> DiscordDisplayType {
+pub(in crate::ui) fn discord_display_from_index(index: u32) -> DisplayType {
     match index {
-        1 => DiscordDisplayType::Song,
-        2 => DiscordDisplayType::Artist,
-        _ => DiscordDisplayType::Application,
+        1 => DisplayType::Song,
+        2 => DisplayType::Artist,
+        _ => DisplayType::Application,
     }
 }
-pub(in crate::ui) fn discord_link_index(link_type: DiscordLinkType) -> u32 {
+pub(in crate::ui) fn discord_link_index(link_type: LinkType) -> u32 {
     match link_type {
-        DiscordLinkType::None => 0,
-        DiscordLinkType::LastFm => 1,
-        DiscordLinkType::MusicBrainz => 2,
-        DiscordLinkType::MusicBrainzLastFm => 3,
+        LinkType::None => 0,
+        LinkType::LastFm => 1,
+        LinkType::MusicBrainz => 2,
+        LinkType::MusicBrainzLastFm => 3,
     }
 }
-pub(in crate::ui) fn discord_link_from_index(index: u32) -> DiscordLinkType {
+pub(in crate::ui) fn discord_link_from_index(index: u32) -> LinkType {
     match index {
-        1 => DiscordLinkType::LastFm,
-        2 => DiscordLinkType::MusicBrainz,
-        3 => DiscordLinkType::MusicBrainzLastFm,
-        _ => DiscordLinkType::None,
+        1 => LinkType::LastFm,
+        2 => LinkType::MusicBrainz,
+        3 => LinkType::MusicBrainzLastFm,
+        _ => LinkType::None,
     }
 }

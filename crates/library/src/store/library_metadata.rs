@@ -1,10 +1,6 @@
 use super::sources::*;
 use super::*;
 
-const EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX: &str = "external:mb-release:";
-const EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX: &str = "external:mb-release-group:";
-const EXTERNAL_ALBUM_IDENTITY_TAG_VERSION: &str = "external-v2";
-
 impl Store {
     pub fn load_album_identity_candidates(
         &self,
@@ -78,35 +74,6 @@ impl Store {
             })
         })?;
         collect_rows(rows)
-    }
-
-    pub fn load_album_release_type_lookup_candidates(
-        &self,
-        source_id: &SourceId,
-        limit: usize,
-    ) -> StoreResult<Vec<AlbumReleaseTypeLookupCandidate>> {
-        Ok(self
-            .load_album_identity_candidates(source_id, limit)?
-            .into_iter()
-            .map(|candidate| AlbumReleaseTypeLookupCandidate {
-                album_id: candidate.album_id,
-                title: candidate.title,
-                artist: candidate.artist,
-                musicbrainz_album_id: candidate.musicbrainz_album_id,
-                musicbrainz_release_group_id: candidate.musicbrainz_release_group_id,
-                lookup_key: candidate.identity_key,
-            })
-            .collect())
-    }
-
-    pub fn update_album_release_metadata(
-        &self,
-        source_id: &SourceId,
-        album_id: &AlbumId,
-        release_types: &[String],
-        is_compilation: Option<bool>,
-    ) -> StoreResult<()> {
-        self.update_album_identity_metadata(source_id, album_id, release_types, is_compilation)
     }
 
     pub fn update_album_identity_metadata(
@@ -200,16 +167,6 @@ impl Store {
         Ok(())
     }
 
-    pub fn save_album_release_type_lookup_miss(
-        &self,
-        source_id: &SourceId,
-        album_id: &AlbumId,
-        lookup_key: &str,
-        reason: &str,
-    ) -> StoreResult<()> {
-        self.save_album_identity_miss(source_id, album_id, lookup_key, reason)
-    }
-
     pub fn save_album_identity_miss(
         &self,
         source_id: &SourceId,
@@ -295,7 +252,7 @@ impl Store {
     ) -> StoreResult<()> {
         self.attach_album_genres(source_id, albums)?;
         self.attach_album_release_metadata(source_id, albums)?;
-        self.album_track_fallback(source_id, albums)?;
+        self.attach_album_image_refs(source_id, albums)?;
         if albums.is_empty() {
             return Ok(());
         }
@@ -388,381 +345,15 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn album_track_fallback(
-        &self,
-        source_id: &SourceId,
-        albums: &mut [Album],
-    ) -> StoreResult<()> {
-        let missing_ids = albums
-            .iter()
-            .filter(|album| album.image_ref.is_none())
-            .map(|album| album.id.as_str().to_string())
-            .collect::<Vec<_>>();
-        if missing_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut fallback_by_album = HashMap::<String, ImageRef>::new();
-        for chunk in missing_ids.chunks(500) {
-            let placeholders = std::iter::repeat_n("?", chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!(
-                "
-                SELECT album_id, image_item_id, image_tag
-                FROM tracks
-                WHERE source_id = ?
-                  AND album_id IN ({placeholders})
-                  AND image_item_id IS NOT NULL
-                  AND image_origin IN ('source', 'unknown', 'external')
-                ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
-                "
-            );
-            let mut values = Vec::with_capacity(chunk.len() + 1);
-            values.push(source_id.as_str());
-            values.extend(chunk.iter().map(String::as_str));
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    ImageRef {
-                        item_id: row.get(1)?,
-                        tag: row.get(2)?,
-                    },
-                ))
-            })?;
-            for row in rows {
-                let (album_id, image_ref) = row?;
-                fallback_by_album.entry(album_id).or_insert(image_ref);
-            }
-        }
-
-        for album in albums {
-            if album.image_ref.is_none()
-                && let Some(image_ref) = fallback_by_album.remove(album.id.as_str())
-            {
-                album.image_ref = Some(image_ref);
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn bind_album_fallback_image_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<usize> {
-        let mut bound = self.connection.execute(
-            "
-            UPDATE albums
-            SET image_item_id = NULL,
-                image_tag = NULL,
-                image_origin = 'unknown'
-            WHERE source_id = ?1
-              AND image_origin = 'fallback'
-              AND NOT EXISTS (
-                  SELECT 1 FROM tracks
-                  WHERE tracks.source_id = albums.source_id
-                    AND tracks.album_id = albums.album_id
-                    AND tracks.image_item_id IS NOT NULL
-                    AND tracks.image_origin IN ('source', 'unknown', 'external')
-              )
-            ",
-            params![source_id.as_str()],
-        )?;
-        let mut fallback_statement = self.connection.prepare(
-            "
-            WITH candidates AS (
-                SELECT a.album_id, t.image_item_id, t.image_tag,
-                       CASE WHEN t.image_item_id LIKE 'external:%' THEN 1 ELSE 0 END AS external_rank,
-                       COALESCE(t.disc_number, 0) AS disc_number,
-                       COALESCE(t.track_number, 0) AS track_number,
-                       t.title, t.track_id
-                FROM albums a
-                JOIN tracks t
-                  ON t.source_id = a.source_id AND t.album_id = a.album_id
-                WHERE a.source_id = ?1
-                  AND a.image_origin != 'source'
-                  AND t.image_item_id IS NOT NULL
-                  AND t.image_origin IN ('source', 'unknown', 'external')
-                  AND (
-                      a.image_item_id IS NULL
-                      OR t.image_item_id NOT LIKE 'external:%'
-                  )
-            )
-            SELECT c.album_id, c.image_item_id, c.image_tag
-            FROM candidates c
-            WHERE NOT EXISTS (
-                  SELECT 1
-                  FROM candidates earlier
-                  WHERE earlier.album_id = c.album_id
-                    AND (
-                        earlier.external_rank < c.external_rank
-                        OR (
-                            earlier.external_rank = c.external_rank
-                            AND earlier.disc_number < c.disc_number
-                        )
-                        OR (
-                            earlier.external_rank = c.external_rank
-                            AND earlier.disc_number = c.disc_number
-                            AND earlier.track_number < c.track_number
-                        )
-                        OR (
-                            earlier.external_rank = c.external_rank
-                            AND earlier.disc_number = c.disc_number
-                            AND earlier.track_number = c.track_number
-                            AND earlier.title COLLATE NOCASE < c.title COLLATE NOCASE
-                        )
-                        OR (
-                            earlier.external_rank = c.external_rank
-                            AND earlier.disc_number = c.disc_number
-                            AND earlier.track_number = c.track_number
-                            AND earlier.title = c.title
-                            AND earlier.track_id < c.track_id
-                        )
-                    )
-            )
-            ORDER BY c.album_id
-            ",
-        )?;
-        let fallbacks = collect_rows(fallback_statement.query_map(
-            params![source_id.as_str()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    optional_string_column(row, 2)?,
-                ))
-            },
-        )?)?;
-        if fallbacks.is_empty() {
-            return Ok(0);
-        }
-
-        let mut update_statement = self.connection.prepare(
-            "
-            UPDATE albums
-            SET image_item_id = ?3,
-                image_tag = ?4,
-                image_origin = 'fallback'
-            WHERE source_id = ?1
-              AND album_id = ?2
-              AND image_origin != 'source'
-              AND (
-                  image_item_id IS NOT ?3
-                  OR image_tag IS NOT ?4
-                  OR image_origin != 'fallback'
-              )
-            ",
-        )?;
-        for (album_id, image_item_id, image_tag) in fallbacks {
-            bound += update_statement.execute(params![
-                source_id.as_str(),
-                album_id,
-                image_item_id,
-                image_tag,
-            ])?;
-        }
-        Ok(bound)
-    }
-
-    pub(super) fn bind_album_external_identity_image_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<usize> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT album_id, musicbrainz_release_group_id, musicbrainz_album_id
-            FROM albums
-            WHERE source_id = ?1
-              AND image_item_id IS NULL
-              AND (
-                  TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
-                  OR TRIM(COALESCE(musicbrainz_album_id, '')) <> ''
-              )
-            ORDER BY album_id
-            ",
-        )?;
-        let candidates =
-            collect_rows(statement.query_map(params![source_id.as_str()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    optional_string_column(row, 1)?,
-                    optional_string_column(row, 2)?,
-                ))
-            })?)?;
-        if candidates.is_empty() {
-            return Ok(0);
-        }
-
-        let mut bound = 0;
-        let mut update_statement = self.connection.prepare(
-            "
-            UPDATE albums
-            SET image_item_id = ?3,
-                image_tag = ?4,
-                image_origin = 'external'
-            WHERE source_id = ?1
-              AND album_id = ?2
-              AND image_item_id IS NULL
-            ",
-        )?;
-        for (album_id, release_group_id, release_id) in candidates {
-            let Some(image_ref) = external_album_identity_image_ref(
-                release_group_id.as_deref(),
-                release_id.as_deref(),
-            ) else {
-                continue;
-            };
-            let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
-            bound += update_statement.execute(params![
-                source_id.as_str(),
-                album_id,
-                image_item_id,
-                image_tag,
-            ])?;
-        }
-        Ok(bound)
-    }
-
-    pub(super) fn bind_album_artist_fallback_image_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<usize> {
-        let mut fallback_statement = self.connection.prepare(
-            "
-            WITH candidates AS (
-                SELECT a.album_id, ar.image_item_id, ar.image_tag,
-                       0 AS priority, 0 AS position, ar.name, ar.artist_id
-                FROM albums a
-                JOIN artists ar
-                  ON ar.source_id = a.source_id
-                 AND ar.artist_id = a.artist_id
-                WHERE a.source_id = ?1
-                  AND (
-                      a.image_item_id IS NULL
-                      OR a.image_item_id LIKE 'external:%'
-                  )
-                  AND ar.image_item_id IS NOT NULL
-                  AND ar.image_origin = 'source'
-                UNION ALL
-                SELECT a.album_id, aa.image_item_id, aa.image_tag,
-                       1 AS priority, aal.position, aa.name, aa.artist_id
-                FROM albums a
-                JOIN album_artist_links aal
-                  ON aal.source_id = a.source_id
-                 AND aal.album_id = a.album_id
-                JOIN album_artists aa
-                  ON aa.source_id = aal.source_id
-                 AND aa.artist_id = aal.artist_id
-                WHERE a.source_id = ?1
-                  AND (
-                      a.image_item_id IS NULL
-                      OR a.image_item_id LIKE 'external:%'
-                  )
-                  AND aa.image_item_id IS NOT NULL
-                  AND aa.image_origin = 'source'
-                UNION ALL
-                SELECT a.album_id, aa.image_item_id, aa.image_tag,
-                       2 AS priority, 0 AS position, aa.name, aa.artist_id
-                FROM albums a
-                JOIN album_artists aa
-                  ON aa.source_id = a.source_id
-                 AND aa.artist_id = a.artist_id
-                WHERE a.source_id = ?1
-                  AND (
-                      a.image_item_id IS NULL
-                      OR a.image_item_id LIKE 'external:%'
-                  )
-                  AND aa.image_item_id IS NOT NULL
-                  AND aa.image_origin = 'source'
-            )
-            SELECT c.album_id, c.image_item_id, c.image_tag
-            FROM candidates c
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM candidates earlier
-                WHERE earlier.album_id = c.album_id
-                  AND (
-                      earlier.priority < c.priority
-                      OR (
-                          earlier.priority = c.priority
-                          AND earlier.position < c.position
-                      )
-                      OR (
-                          earlier.priority = c.priority
-                          AND earlier.position = c.position
-                          AND earlier.name COLLATE NOCASE < c.name COLLATE NOCASE
-                      )
-                      OR (
-                          earlier.priority = c.priority
-                          AND earlier.position = c.position
-                          AND earlier.name = c.name
-                          AND earlier.artist_id < c.artist_id
-                      )
-                  )
-            )
-            ORDER BY c.album_id
-            ",
-        )?;
-        let fallbacks = collect_rows(fallback_statement.query_map(
-            params![source_id.as_str()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    optional_string_column(row, 2)?,
-                ))
-            },
-        )?)?;
-        if fallbacks.is_empty() {
-            return Ok(0);
-        }
-
-        let mut bound = 0;
-        let mut update_statement = self.connection.prepare(
-            "
-            UPDATE albums
-            SET image_item_id = ?3,
-                image_tag = ?4,
-                image_origin = 'fallback'
-            WHERE source_id = ?1
-              AND album_id = ?2
-              AND (
-                  image_item_id IS NULL
-                  OR image_item_id LIKE 'external:%'
-              )
-              AND (
-                  image_item_id IS NOT ?3
-                  OR image_tag IS NOT ?4
-              )
-            ",
-        )?;
-        for (album_id, image_item_id, image_tag) in fallbacks {
-            bound += update_statement.execute(params![
-                source_id.as_str(),
-                album_id,
-                image_item_id,
-                image_tag,
-            ])?;
-        }
-        Ok(bound)
-    }
-
-    pub fn load_album_image_refs(
+    pub(super) fn load_album_artwork_inner(
         &self,
         source_id: &SourceId,
         album_ids: &[AlbumId],
-    ) -> StoreResult<HashMap<AlbumId, ImageRef>> {
-        self.read_snapshot(|store| store.load_album_image_refs_inner(source_id, album_ids))
-    }
-    fn load_album_image_refs_inner(
-        &self,
-        source_id: &SourceId,
-        album_ids: &[AlbumId],
-    ) -> StoreResult<HashMap<AlbumId, ImageRef>> {
+    ) -> StoreResult<HashMap<AlbumId, AlbumArtwork>> {
+        let mut seen = HashSet::new();
         let mut unique_ids = Vec::<AlbumId>::new();
         for album_id in album_ids {
-            if !unique_ids.iter().any(|existing| existing == album_id) {
+            if seen.insert(album_id.clone()) {
                 unique_ids.push(album_id.clone());
             }
         }
@@ -770,18 +361,78 @@ impl Store {
             return Ok(HashMap::new());
         }
 
-        let mut image_refs = HashMap::<AlbumId, ImageRef>::new();
+        let mut artwork = HashMap::<AlbumId, AlbumArtwork>::new();
         for chunk in unique_ids.chunks(500) {
-            let placeholders = std::iter::repeat_n("?", chunk.len())
+            let placeholders = (0..chunk.len())
+                .map(|index| format!("(?{})", index + 2))
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = format!(
                 "
-                SELECT album_id, image_item_id, image_tag
-                FROM albums
-                WHERE source_id = ?
-                  AND album_id IN ({placeholders})
-                  AND image_item_id IS NOT NULL
+                WITH wanted(album_id) AS (VALUES {placeholders}),
+                candidates AS (
+                    SELECT a.album_id, a.image_item_id, a.image_tag,
+                           0 AS priority, 0 AS disc_number, 0 AS track_number,
+                           a.title AS title, a.album_id AS stable_id
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                      AND a.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT a.album_id, t.image_item_id, t.image_tag,
+                           1, COALESCE(t.disc_number, 0), COALESCE(t.track_number, 0),
+                           t.title, t.track_id
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    CROSS JOIN tracks t
+                    WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                      AND t.source_id = a.source_id AND t.album_id = a.album_id
+                      AND t.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT a.album_id, ar.image_item_id, ar.image_tag,
+                           2, 0, 0, ar.name, ar.artist_id
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    CROSS JOIN artists ar
+                    WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                      AND ar.source_id = a.source_id AND ar.artist_id = a.artist_id
+                      AND ar.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT a.album_id, aa.image_item_id, aa.image_tag,
+                           4, 0, 0, aa.name, aa.artist_id
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    CROSS JOIN album_artists aa
+                    WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                      AND aa.source_id = a.source_id AND aa.artist_id = a.artist_id
+                      AND aa.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT a.album_id, aa.image_item_id, aa.image_tag,
+                           3, 0, aal.position, aa.name, aa.artist_id
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    CROSS JOIN album_artist_links aal
+                    CROSS JOIN album_artists aa
+                    WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                      AND aal.source_id = a.source_id AND aal.album_id = a.album_id
+                      AND aa.source_id = aal.source_id AND aa.artist_id = aal.artist_id
+                      AND aa.image_item_id IS NOT NULL
+                ), ranked AS (
+                    SELECT album_id, image_item_id, image_tag,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY album_id
+                               ORDER BY priority, disc_number, track_number,
+                                        title COLLATE NOCASE, stable_id
+                           ) AS position
+                    FROM candidates
+                )
+                SELECT a.album_id, a.title, a.artist, r.image_item_id, r.image_tag,
+                       a.musicbrainz_album_id, a.musicbrainz_release_group_id
+                FROM wanted w
+                CROSS JOIN albums a
+                LEFT JOIN ranked r ON r.album_id = a.album_id AND r.position = 1
+                WHERE a.source_id = ?1 AND a.album_id = w.album_id
+                ORDER BY a.album_id
                 "
             );
             let mut values = Vec::with_capacity(chunk.len() + 1);
@@ -791,57 +442,146 @@ impl Store {
             let rows = statement.query_map(params_from_iter(values), |row| {
                 Ok((
                     AlbumId::new(row.get::<_, String>(0)?),
-                    ImageRef {
-                        item_id: row.get(1)?,
-                        tag: row.get(2)?,
+                    AlbumArtwork {
+                        id: AlbumId::new(row.get::<_, String>(0)?),
+                        title: row.get(1)?,
+                        artist: row.get(2)?,
+                        image_ref: image_ref_from_row(row, 3, 4)?,
+                        musicbrainz_album_id: optional_string_column(row, 5)?,
+                        musicbrainz_release_group_id: optional_string_column(row, 6)?,
                     },
                 ))
             })?;
             for row in rows {
-                let (album_id, image_ref) = row?;
-                image_refs.entry(album_id).or_insert(image_ref);
+                let (album_id, album_artwork) = row?;
+                artwork.entry(album_id).or_insert(album_artwork);
             }
+        }
+        Ok(artwork)
+    }
+
+    fn attach_album_image_refs(
+        &self,
+        source_id: &SourceId,
+        albums: &mut [Album],
+    ) -> StoreResult<()> {
+        let album_ids = albums
+            .iter()
+            .filter(|album| album.image_ref.is_none())
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>();
+        if album_ids.is_empty() {
+            return Ok(());
+        }
+        let mut artwork = self.load_album_artwork_inner(source_id, &album_ids)?;
+        for album in albums {
+            if album.image_ref.is_none()
+                && let Some(image_ref) = artwork
+                    .remove(&album.id)
+                    .and_then(|artwork| artwork.image_ref)
+            {
+                album.image_ref = Some(image_ref);
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn attach_artist_representative_albums(
+        &self,
+        source_id: &SourceId,
+        artists: &mut [Artist],
+    ) -> StoreResult<()> {
+        let artist_ids = artists
+            .iter()
+            .map(|artist| artist.id.as_str())
+            .collect::<Vec<_>>();
+        if artist_ids.is_empty() {
+            return Ok(());
         }
 
-        let missing_ids = unique_ids
-            .iter()
-            .filter(|album_id| !image_refs.contains_key(*album_id))
+        let wanted = serde_json::to_string(&artist_ids)?;
+        let mut statement = self.connection.prepare(
+            "
+            WITH wanted(artist_id) AS (
+                    SELECT CAST(value AS TEXT) FROM json_each(?2)
+                 ),
+                 candidates AS (
+                    SELECT w.artist_id, a.album_id, 0 AS priority, a.year, a.title
+                    FROM wanted w
+                    CROSS JOIN albums a
+                    WHERE a.source_id = ?1 AND a.artist_id = w.artist_id
+                    UNION ALL
+                    SELECT w.artist_id, a.album_id, 1 AS priority, a.year, a.title
+                    FROM wanted w
+                    CROSS JOIN album_artist_links aal
+                    CROSS JOIN albums a
+                    WHERE aal.source_id = ?1 AND aal.artist_id = w.artist_id
+                      AND a.source_id = aal.source_id AND a.album_id = aal.album_id
+                    UNION ALL
+                    SELECT w.artist_id, a.album_id, 2 AS priority, a.year, a.title
+                    FROM wanted w
+                    CROSS JOIN tracks t
+                    CROSS JOIN albums a
+                    WHERE t.source_id = ?1 AND t.artist_id = w.artist_id
+                      AND a.source_id = t.source_id AND a.album_id = t.album_id
+                    UNION ALL
+                    SELECT w.artist_id, a.album_id, 3 AS priority, a.year, a.title
+                    FROM wanted w
+                    CROSS JOIN track_artist_links tal
+                    CROSS JOIN tracks t
+                    CROSS JOIN albums a
+                    WHERE tal.source_id = ?1 AND tal.artist_id = w.artist_id
+                      AND t.source_id = tal.source_id AND t.track_id = tal.track_id
+                      AND a.source_id = t.source_id AND a.album_id = t.album_id
+                 ),
+                 distinct_candidates AS (
+                    SELECT artist_id, album_id, MIN(priority) AS priority,
+                           MIN(year) AS year, MIN(title) AS title
+                    FROM candidates
+                    GROUP BY artist_id, album_id
+                 ),
+                 ranked AS (
+                    SELECT artist_id, album_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artist_id
+                               ORDER BY priority, year, title COLLATE NOCASE, album_id
+                           ) AS position
+                    FROM distinct_candidates
+                 )
+            SELECT artist_id, album_id
+            FROM ranked
+            WHERE position <= 4
+            ORDER BY artist_id, position
+            ",
+        )?;
+        let rows = statement.query_map(params![source_id.as_str(), wanted], |row| {
+            Ok((
+                ArtistId::new(row.get::<_, String>(0)?),
+                AlbumId::new(row.get::<_, String>(1)?),
+            ))
+        })?;
+        let mut albums_by_artist = HashMap::<ArtistId, Vec<AlbumId>>::new();
+        for (artist_id, album_id) in collect_rows(rows)? {
+            albums_by_artist
+                .entry(artist_id)
+                .or_default()
+                .push(album_id);
+        }
+        let album_ids = albums_by_artist
+            .values()
+            .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        for chunk in missing_ids.chunks(500) {
-            let placeholders = std::iter::repeat_n("?", chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!(
-                "
-                SELECT album_id, image_item_id, image_tag
-                FROM tracks
-                WHERE source_id = ?
-                  AND album_id IN ({placeholders})
-                  AND image_item_id IS NOT NULL
-                  AND image_origin IN ('source', 'unknown', 'external')
-                ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
-                "
-            );
-            let mut values = Vec::with_capacity(chunk.len() + 1);
-            values.push(source_id.as_str());
-            values.extend(chunk.iter().map(AlbumId::as_str));
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((
-                    AlbumId::new(row.get::<_, String>(0)?),
-                    ImageRef {
-                        item_id: row.get(1)?,
-                        tag: row.get(2)?,
-                    },
-                ))
-            })?;
-            for row in rows {
-                let (album_id, image_ref) = row?;
-                image_refs.entry(album_id).or_insert(image_ref);
-            }
+        let artwork = self.load_album_artwork_inner(source_id, &album_ids)?;
+        for artist in artists {
+            artist.representative_albums = albums_by_artist
+                .remove(&artist.id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|album_id| artwork.get(&album_id).cloned())
+                .collect();
         }
-        Ok(image_refs)
+        Ok(())
     }
 
     pub(super) fn attach_track_genres(
@@ -893,6 +633,11 @@ impl Store {
         if tracks.is_empty() {
             return Ok(());
         }
+        let album_ids = tracks
+            .iter()
+            .map(|track| track.album_id.clone())
+            .collect::<Vec<_>>();
+        let album_artwork = self.load_album_artwork_inner(source_id, &album_ids)?;
         let track_ids = tracks
             .iter()
             .map(|track| track.id.as_str().to_string())
@@ -906,6 +651,9 @@ impl Store {
         let album_artist_credits =
             self.load_artist_links(source_id, "album_artist_links", "album_id", &album_ids)?;
         for track in tracks {
+            if let Some(artwork) = album_artwork.get(&track.album_id) {
+                track.album_artwork = Some(artwork.clone());
+            }
             track.artist_credits = artist_credits
                 .get(track.id.as_str())
                 .cloned()
@@ -918,282 +666,8 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn bind_track_album_fallback_image_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<usize> {
-        let cleared = self.connection.execute(
-            "
-            UPDATE tracks
-            SET image_item_id = NULL,
-                image_tag = NULL,
-                image_origin = 'unknown'
-            WHERE source_id = ?1
-              AND image_origin = 'fallback'
-              AND NOT EXISTS (
-                  SELECT 1 FROM albums
-                  WHERE albums.source_id = tracks.source_id
-                    AND albums.album_id = tracks.album_id
-                    AND albums.image_item_id IS NOT NULL
-              )
-            ",
-            params![source_id.as_str()],
-        )?;
-        let bound = self.connection.execute(
-            "
-                UPDATE tracks
-                SET image_item_id = (
-                        SELECT a.image_item_id
-                        FROM albums a
-                        WHERE a.source_id = tracks.source_id
-                          AND a.album_id = tracks.album_id
-                          AND a.image_item_id IS NOT NULL
-                    ),
-                    image_tag = (
-                        SELECT a.image_tag
-                        FROM albums a
-                        WHERE a.source_id = tracks.source_id
-                          AND a.album_id = tracks.album_id
-                          AND a.image_item_id IS NOT NULL
-                    ),
-                    image_origin = 'fallback'
-                WHERE source_id = ?1
-                  AND EXISTS (
-                      SELECT 1
-                      FROM albums a
-                      WHERE a.source_id = tracks.source_id
-                        AND a.album_id = tracks.album_id
-                        AND a.image_item_id IS NOT NULL
-                  )
-                  AND image_origin != 'source'
-                  AND (
-                      image_item_id IS NOT (
-                          SELECT a.image_item_id
-                          FROM albums a
-                          WHERE a.source_id = tracks.source_id
-                            AND a.album_id = tracks.album_id
-                            AND a.image_item_id IS NOT NULL
-                      )
-                      OR image_tag IS NOT (
-                          SELECT a.image_tag
-                          FROM albums a
-                          WHERE a.source_id = tracks.source_id
-                            AND a.album_id = tracks.album_id
-                            AND a.image_item_id IS NOT NULL
-                      )
-                      OR image_origin != 'fallback'
-                  )
-                ",
-            params![source_id.as_str()],
-        )?;
-        Ok(cleared + bound)
-    }
-
-    pub(super) fn refresh_selected_cover_content_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO entity_content_refs
-                (source_id, entity_kind, entity_id, content_kind, content_key, source, updated_at)
-            SELECT source_id, 'album', album_id, 'cover',
-                   image_item_id || char(31) || COALESCE(image_tag, ''), image_origin,
-                   CURRENT_TIMESTAMP
-            FROM albums WHERE source_id = ?1 AND image_item_id IS NOT NULL
-              AND EXISTS (SELECT 1 FROM sources s WHERE s.source_id = albums.source_id AND s.kind != 'local')
-            UNION ALL
-            SELECT source_id, 'track', track_id, 'cover',
-                   image_item_id || char(31) || COALESCE(image_tag, ''), image_origin,
-                   CURRENT_TIMESTAMP
-            FROM tracks WHERE source_id = ?1 AND image_item_id IS NOT NULL
-              AND EXISTS (SELECT 1 FROM sources s WHERE s.source_id = tracks.source_id AND s.kind != 'local')
-            ON CONFLICT(source_id, entity_kind, entity_id, content_kind, source) DO UPDATE SET
-                content_key = excluded.content_key,
-                updated_at = excluded.updated_at
-            WHERE entity_content_refs.content_key != excluded.content_key
-            ",
-            params![source_id.as_str()],
-        )?;
-        self.connection.execute(
-            "
-            DELETE FROM entity_content_refs AS content
-            WHERE content.source_id = ?1
-              AND content.content_kind = 'cover'
-              AND content.entity_kind IN ('album', 'track')
-              AND EXISTS (
-                  SELECT 1 FROM sources
-                  WHERE sources.source_id = content.source_id AND sources.kind != 'local'
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM albums
-                  WHERE content.entity_kind = 'album'
-                    AND albums.source_id = content.source_id
-                    AND albums.album_id = content.entity_id
-                    AND albums.image_item_id IS NOT NULL
-                    AND albums.image_origin = content.source
-                    AND albums.image_item_id || char(31) || COALESCE(albums.image_tag, '') = content.content_key
-                  UNION ALL
-                  SELECT 1 FROM tracks
-                  WHERE content.entity_kind = 'track'
-                    AND tracks.source_id = content.source_id
-                    AND tracks.track_id = content.entity_id
-                    AND tracks.image_item_id IS NOT NULL
-                    AND tracks.image_origin = content.source
-                    AND tracks.image_item_id || char(31) || COALESCE(tracks.image_tag, '') = content.content_key
-              )
-            ",
-            params![source_id.as_str()],
-        )?;
-        Ok(())
-    }
-
-    pub(super) fn attach_artist_fallback_image_refs(
-        &self,
-        source_id: &SourceId,
-        artists: &mut [Artist],
-        album_artist: bool,
-    ) -> StoreResult<()> {
-        let missing_ids = artists
-            .iter()
-            .filter(|artist| repairable_artist_image_ref(artist.image_ref.as_ref()))
-            .map(|artist| artist.id.as_str().to_string())
-            .collect::<Vec<_>>();
-        if missing_ids.is_empty() {
-            return Ok(());
-        }
-        let mut fallback_by_artist = HashMap::<String, ImageRef>::new();
-        for chunk in missing_ids.chunks(500) {
-            let values_placeholders = std::iter::repeat_n("(?)", chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = artist_fallback_image_refs_sql(album_artist, &values_placeholders);
-            let server_params = if album_artist { 7 } else { 6 };
-            let mut values = Vec::with_capacity(chunk.len() + server_params);
-            values.extend(chunk.iter().map(String::as_str));
-            values.extend(std::iter::repeat_n(source_id.as_str(), server_params));
-
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    ImageRef {
-                        item_id: row.get(1)?,
-                        tag: row.get(2)?,
-                    },
-                ))
-            })?;
-            for row in rows {
-                let (artist_id, image_ref) = row?;
-                fallback_by_artist.entry(artist_id).or_insert(image_ref);
-            }
-        }
-        for artist in artists {
-            if let Some(image_ref) = fallback_by_artist.remove(artist.id.as_str()) {
-                artist.image_ref = Some(image_ref);
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn bind_artist_fallback_image_refs(
-        &self,
-        source_id: &SourceId,
-        album_artist: bool,
-    ) -> StoreResult<usize> {
-        let table = if album_artist {
-            "album_artists"
-        } else {
-            "artists"
-        };
-        let mut bound = 0;
-        let mut offset = 0;
-        let mut statement = self.connection.prepare(&format!(
-            "
-            UPDATE {table}
-            SET image_item_id = ?3,
-                image_tag = ?4,
-                image_origin = 'fallback'
-            WHERE source_id = ?1
-              AND artist_id = ?2
-              AND image_origin != 'source'
-              AND (
-                  image_item_id IS NOT ?3
-                  OR image_tag IS NOT ?4
-                  OR image_origin != 'fallback'
-              )
-            "
-        ))?;
-        let mut clear = self.connection.prepare(&format!(
-            "UPDATE {table}
-             SET image_item_id = NULL,
-                 image_tag = NULL,
-                 image_origin = 'unknown'
-             WHERE source_id = ?1
-               AND artist_id = ?2
-               AND image_origin = 'fallback'"
-        ))?;
-        loop {
-            let mut artists =
-                self.load_artists_repairable_image_ref(source_id, album_artist, offset, 500)?;
-            if artists.is_empty() {
-                break;
-            }
-            let page_len = artists.len();
-            for artist in &mut artists {
-                artist.image_ref = None;
-            }
-            self.attach_artist_fallback_image_refs(source_id, &mut artists, album_artist)?;
-            for artist in artists {
-                if let Some(image_ref) = artist.image_ref {
-                    let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
-                    bound += statement.execute(params![
-                        source_id.as_str(),
-                        artist.id.as_str(),
-                        image_item_id,
-                        image_tag,
-                    ])?;
-                } else {
-                    bound += clear.execute(params![source_id.as_str(), artist.id.as_str()])?;
-                }
-            }
-            offset += page_len;
-        }
-        Ok(bound)
-    }
-
-    fn load_artists_repairable_image_ref(
-        &self,
-        source_id: &SourceId,
-        album_artist: bool,
-        offset: usize,
-        limit: usize,
-    ) -> StoreResult<Vec<Artist>> {
-        let table = if album_artist {
-            "album_artists"
-        } else {
-            "artists"
-        };
-        let artist_filter = artist_list_filter_for_alias(album_artist, "a");
-        let sql = format!(
-            "
-            SELECT a.artist_id, a.name, a.album_count, a.track_count,
-                   {favorite} AS favorite, a.last_played, a.play_count,
-                   a.user_rating, a.image_item_id, a.image_tag
-            FROM {table} a
-            WHERE a.source_id = ?1
-              AND a.image_origin != 'source'
-              {artist_filter}
-            ORDER BY a.name COLLATE NOCASE
-            LIMIT ?2 OFFSET ?3
-            ",
-            favorite = effective_artist_favorite_sql("a", album_artist),
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        collect_rows(statement.query_map(
-            params![source_id.as_str(), limit as i64, offset as i64],
-            artist_from_row,
-        )?)
+    pub fn hydrate_tracks(&self, source_id: &SourceId, tracks: &mut [Track]) -> StoreResult<()> {
+        self.read_snapshot(|store| store.attach_track_metadata(source_id, tracks))
     }
 
     pub(super) fn load_genre_links(
@@ -1301,64 +775,4 @@ impl Store {
         }
         Ok(by_item)
     }
-}
-
-fn repairable_artist_image_ref(image_ref: Option<&ImageRef>) -> bool {
-    image_ref
-        .map(|image_ref| image_ref.item_id.starts_with("external:"))
-        .unwrap_or(true)
-}
-
-fn external_album_identity_image_ref(
-    release_group_id: Option<&str>,
-    release_id: Option<&str>,
-) -> Option<ImageRef> {
-    if let Some(group_id) = release_group_id.and_then(valid_external_identity_value) {
-        return Some(musicbrainz_image_ref(
-            EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX,
-            group_id,
-        ));
-    }
-    release_id
-        .and_then(valid_external_identity_value)
-        .map(|release_id| musicbrainz_image_ref(EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX, release_id))
-}
-
-fn musicbrainz_image_ref(prefix: &str, id: &str) -> ImageRef {
-    let item_id = format!("{prefix}{id}");
-    let tag = format!(
-        "{EXTERNAL_ALBUM_IDENTITY_TAG_VERSION}-{:016x}",
-        stable_album_hash(id, prefix)
-    );
-    ImageRef::new(item_id, Some(tag))
-}
-
-fn valid_external_identity_value(value: &str) -> Option<&str> {
-    let value = value.trim();
-    if value.is_empty()
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return None;
-    }
-    Some(value)
-}
-
-fn stable_album_hash(artist: &str, album: &str) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    let mut hash = FNV_OFFSET;
-    for byte in artist
-        .as_bytes()
-        .iter()
-        .copied()
-        .chain([0])
-        .chain(album.as_bytes().iter().copied())
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
 }

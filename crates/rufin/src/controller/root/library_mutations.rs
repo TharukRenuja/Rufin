@@ -15,8 +15,6 @@ impl AppController {
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
         let events = self.events.clone();
-        let queue = Arc::clone(&self.queue);
-        let playback_snapshot = Arc::clone(&self.playback_snapshot);
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
@@ -31,7 +29,7 @@ impl AppController {
                 return;
             };
 
-            let active = match selected_active_source(&active_source, &saved.source.id) {
+            let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
                     emit_favorite_change_failed(&events, &item_id, !favorite, error);
@@ -56,7 +54,7 @@ impl AppController {
                 match &item_id {
                     FavoriteItemId::Album(album_id) => {
                         store.set_album_favorite_for_owner(
-                            &saved.source.id,
+                            &saved.source_id,
                             album_id,
                             favorite,
                             owner,
@@ -64,7 +62,7 @@ impl AppController {
                     }
                     FavoriteItemId::Track(track_id) => {
                         store.set_track_favorite_for_owner(
-                            &saved.source.id,
+                            &saved.source_id,
                             track_id,
                             favorite,
                             owner,
@@ -72,7 +70,7 @@ impl AppController {
                     }
                     FavoriteItemId::Artist(artist_id) => {
                         store.set_artist_favorite_for_owner(
-                            &saved.source.id,
+                            &saved.source_id,
                             artist_id,
                             favorite,
                             owner,
@@ -84,24 +82,6 @@ impl AppController {
             if let Err(error) = result {
                 emit_favorite_change_failed(&events, &item_id, !favorite, error);
                 return;
-            }
-
-            if let FavoriteItemId::Track(track_id) = &item_id {
-                if let Ok(mut queue) = queue.lock()
-                    && let Some(queue) = queue.as_mut()
-                {
-                    queue.set_track_favorite(track_id, favorite);
-                    let snapshot = queue.snapshot();
-                    let _saved = store.with_store(|store| store.save_queue_snapshot(&snapshot));
-                    let _sent = events.send(ControllerEvent::Queue(Box::new(Some(snapshot))));
-                }
-                if let Ok(mut snapshot) = playback_snapshot.lock()
-                    && let Some(current) = snapshot.current.as_mut()
-                    && current.track_id == *track_id
-                {
-                    current.favorite = favorite;
-                    let _sent = events.send(ControllerEvent::Playback(Box::new(snapshot.clone())));
-                }
             }
 
             match load_snapshot(&store) {
