@@ -1064,10 +1064,10 @@ msgstr ""
 msgid "MusicBrainz + Last.fm"
 msgstr ""
 
-msgid "Link source"
+msgid "Metadata source"
 msgstr ""
 
-msgid "Service to use for song and artist links"
+msgid "Source to use for cover images and song/artist links"
 msgstr ""
 
 msgid "Show paused status"

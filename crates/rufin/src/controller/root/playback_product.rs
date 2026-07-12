@@ -19,6 +19,8 @@ use playback_gstreamer::GStreamerPlaybackBackend;
 use scrobbling::Scrobbler;
 
 const STORE_ACTIVITY_CAPACITY: usize = 64;
+#[cfg(not(test))]
+const SLOW_RICH_PRESENCE_ARTWORK_MS: u128 = 5_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackNotice {
@@ -250,9 +252,11 @@ impl PlaybackStoreWriter {
         let target = match store {
             StoreHandle::Path {
                 cache_database_path,
+                write_gate,
                 ..
             } => PlaybackWriterStore::Disk(
-                Store::open(cache_database_path).map_err(|error| error.to_string())?,
+                Store::open_with_write_gate(cache_database_path, write_gate.clone())
+                    .map_err(|error| error.to_string())?,
             ),
             #[cfg(test)]
             StoreHandle::Memory { store, .. } => PlaybackWriterStore::Memory(Arc::clone(store)),
@@ -598,13 +602,28 @@ fn composed_rich_presence(artwork: ::artwork::Artwork) -> rich_presence::Presenc
         .name("rufin-rich-presence-artwork".to_string())
         .spawn(move || {
             while let Some(request) = requests.recv() {
-                let candidates =
-                    ::artwork::CandidateSet::album_text(request.artist(), request.album());
+                let queued_ms = request.queued_for().as_millis();
+                let lookup_started = Instant::now();
+                let candidates = ::artwork::CandidateSet::album_facts(
+                    request.artist(),
+                    request.album(),
+                    request.musicbrainz_release_group_id(),
+                    request.musicbrainz_album_id(),
+                );
                 let result = artwork.resolve_public_album_url(
                     &candidates,
-                    256,
-                    &::artwork::ExternalPolicy::new(false, true, request.lastfm_api_key()),
+                    250,
+                    &::artwork::ExternalPolicy::new(false, true, request.lastfm_api_key())
+                        .with_musicbrainz(request.allow_musicbrainz()),
                 );
+                let lookup_ms = lookup_started.elapsed().as_millis();
+                let total_ms = queued_ms.saturating_add(lookup_ms);
+                if total_ms >= SLOW_RICH_PRESENCE_ARTWORK_MS {
+                    warn!(
+                        queued_ms,
+                        lookup_ms, total_ms, "slow rich-presence artwork resolution"
+                    );
+                }
                 request.complete(result);
             }
         });

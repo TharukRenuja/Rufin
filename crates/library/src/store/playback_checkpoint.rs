@@ -42,8 +42,9 @@ impl Store {
     }
 
     pub fn save_playback_checkpoint(&self, record: &PlaybackCheckpointRecord) -> StoreResult<()> {
-        self.connection.execute(
-            "
+        self.write_batch(|connection| {
+            connection.execute(
+                "
             INSERT INTO playback_checkpoints (
                 source_id, revision, selected_occurrence_id, progress_millis,
                 repeat_mode, shuffle_enabled, payload, updated_at
@@ -59,27 +60,30 @@ impl Store {
                 updated_at = excluded.updated_at
             WHERE excluded.revision > playback_checkpoints.revision
             ",
-            params![
-                record.source_id.as_str(),
-                i64_from_u64(record.revision),
-                record.selected_occurrence_id,
-                i64_from_u64(record.progress_millis),
-                record.repeat_mode,
-                record.shuffle_enabled,
-                record.payload,
-            ],
-        )?;
-        Ok(())
+                params![
+                    record.source_id.as_str(),
+                    i64_from_u64(record.revision),
+                    record.selected_occurrence_id,
+                    i64_from_u64(record.progress_millis),
+                    record.repeat_mode,
+                    record.shuffle_enabled,
+                    record.payload,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn delete_playback_checkpoint(&self, source_id: &SourceId) -> StoreResult<bool> {
-        self.connection
-            .execute(
-                "DELETE FROM playback_checkpoints WHERE source_id = ?1",
-                params![source_id.as_str()],
-            )
-            .map(|deleted| deleted > 0)
-            .map_err(StoreError::from)
+        self.write_batch(|connection| {
+            connection
+                .execute(
+                    "DELETE FROM playback_checkpoints WHERE source_id = ?1",
+                    params![source_id.as_str()],
+                )
+                .map(|deleted| deleted > 0)
+                .map_err(StoreError::from)
+        })
     }
 
     pub fn save_playback_progress(
@@ -89,22 +93,24 @@ impl Store {
         selected_occurrence_id: &str,
         progress_millis: u64,
     ) -> StoreResult<bool> {
-        let updated = self.connection.execute(
-            "
+        self.write_batch(|connection| {
+            let updated = connection.execute(
+                "
             UPDATE playback_checkpoints
             SET progress_millis = ?4, updated_at = CURRENT_TIMESTAMP
             WHERE source_id = ?1
               AND revision = ?2
               AND selected_occurrence_id = ?3
             ",
-            params![
-                source_id.as_str(),
-                i64_from_u64(revision),
-                selected_occurrence_id,
-                i64_from_u64(progress_millis),
-            ],
-        )?;
-        Ok(updated > 0)
+                params![
+                    source_id.as_str(),
+                    i64_from_u64(revision),
+                    selected_occurrence_id,
+                    i64_from_u64(progress_millis),
+                ],
+            )?;
+            Ok(updated > 0)
+        })
     }
 
     pub fn save_playback_state(
@@ -116,8 +122,9 @@ impl Store {
         repeat_mode: &str,
         shuffle_enabled: bool,
     ) -> StoreResult<bool> {
-        let updated = self.connection.execute(
-            "
+        self.write_batch(|connection| {
+            let updated = connection.execute(
+                "
             UPDATE playback_checkpoints
             SET selected_occurrence_id = ?3,
                 progress_millis = ?4,
@@ -126,16 +133,17 @@ impl Store {
                 updated_at = CURRENT_TIMESTAMP
             WHERE source_id = ?1 AND revision = ?2
             ",
-            params![
-                source_id.as_str(),
-                i64_from_u64(revision),
-                selected_occurrence_id,
-                i64_from_u64(progress_millis),
-                repeat_mode,
-                shuffle_enabled,
-            ],
-        )?;
-        Ok(updated > 0)
+                params![
+                    source_id.as_str(),
+                    i64_from_u64(revision),
+                    selected_occurrence_id,
+                    i64_from_u64(progress_millis),
+                    repeat_mode,
+                    shuffle_enabled,
+                ],
+            )?;
+            Ok(updated > 0)
+        })
     }
 }
 

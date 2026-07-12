@@ -32,16 +32,49 @@ struct SmartTrackQuery {
 }
 
 impl Store {
-    pub fn ensure_smart_playlist_defaults_seeded(&self, source_id: &SourceId) -> StoreResult<()> {
-        self.delete_retired_builtin_smart_playlists(source_id)?;
-        let seeded = self.connection.query_row(
+    pub fn prepare_smart_playlist_defaults(&self) -> StoreResult<()> {
+        let mut statement = self.connection.prepare(
             "
-            SELECT EXISTS(
-                SELECT 1
-                FROM smart_playlist_seed_state
-                WHERE source_id = ?1
-            )
+            SELECT source_id
+            FROM sources source
+            WHERE NOT EXISTS(
+                      SELECT 1 FROM smart_playlist_seed_state seed
+                      WHERE seed.source_id = source.source_id
+                  ) OR EXISTS(
+                       SELECT 1 FROM smart_playlists
+                       WHERE source_id = source.source_id
+                         AND builtin_key IN ('favorites', 'highest_rated', 'newest_tracks', 'recently_played')
+                   )
             ",
+        )?;
+        let source_ids = collect_rows(
+            statement.query_map([], |row| row.get::<_, String>(0).map(SourceId::new))?,
+        )?;
+        if source_ids.is_empty() {
+            return Ok(());
+        }
+        self.write_batch(|_| {
+            for source_id in &source_ids {
+                self.seed_smart_playlist_defaults_inside_write(source_id)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn seed_smart_playlist_defaults_inside_write(
+        &self,
+        source_id: &SourceId,
+    ) -> StoreResult<()> {
+        for key in RETIRED_SMART_PLAYLIST_BUILTIN_KEYS {
+            self.connection.execute(
+                "DELETE FROM smart_playlists WHERE source_id = ?1 AND builtin_key = ?2",
+                params![source_id.as_str(), key],
+            )?;
+        }
+        let seeded = self.connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM smart_playlist_seed_state WHERE source_id = ?1
+             )",
             params![source_id.as_str()],
             |row| row.get::<_, bool>(0),
         )?;
@@ -52,40 +85,11 @@ impl Store {
             self.insert_builtin_smart_playlist(source_id, builtin, position as i64)?;
         }
         self.connection.execute(
-            "
-            INSERT INTO smart_playlist_seed_state (source_id)
-            VALUES (?1)
-            ON CONFLICT(source_id) DO NOTHING
-            ",
+            "INSERT INTO smart_playlist_seed_state (source_id)
+             VALUES (?1)
+             ON CONFLICT(source_id) DO NOTHING",
             params![source_id.as_str()],
         )?;
-        Ok(())
-    }
-
-    fn delete_retired_builtin_smart_playlists(&self, source_id: &SourceId) -> StoreResult<()> {
-        for key in RETIRED_SMART_PLAYLIST_BUILTIN_KEYS {
-            let exists = self.connection.query_row(
-                "
-                SELECT EXISTS(
-                    SELECT 1
-                    FROM smart_playlists
-                    WHERE source_id = ?1 AND builtin_key = ?2
-                )
-                ",
-                params![source_id.as_str(), key],
-                |row| row.get::<_, bool>(0),
-            )?;
-            if !exists {
-                continue;
-            }
-            self.connection.execute(
-                "
-                DELETE FROM smart_playlists
-                WHERE source_id = ?1 AND builtin_key = ?2
-                ",
-                params![source_id.as_str(), key],
-            )?;
-        }
         Ok(())
     }
 
@@ -95,7 +99,6 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<SmartPlaylist>> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         self.read_snapshot(|store| store.load_smart_playlists_inner(source_id, offset, limit))
     }
     fn load_smart_playlists_inner(
@@ -134,7 +137,6 @@ impl Store {
         source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<Option<SmartPlaylistDetail>> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         self.read_snapshot(|store| {
             store.load_smart_playlist_detail_inner(source_id, smart_playlist_id)
         })
@@ -169,7 +171,6 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<Option<PagedResponse<Track>>> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         self.read_snapshot(|store| {
             store.load_smart_playlist_tracks_page_inner(source_id, smart_playlist_id, offset, limit)
         })
@@ -197,10 +198,11 @@ impl Store {
         name: &str,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<()> {
-        let position = self.next_smart_playlist_position(source_id)?;
-        let definition_json = serde_json::to_string(definition)?;
-        self.connection.execute(
-            "
+        self.write_batch(|_| {
+            let position = self.next_smart_playlist_position(source_id)?;
+            let definition_json = serde_json::to_string(definition)?;
+            self.connection.execute(
+                "
             INSERT INTO smart_playlists (
                 source_id, smart_playlist_id, name, builtin_key, definition_json, position
             )
@@ -210,15 +212,16 @@ impl Store {
                 definition_json = excluded.definition_json,
                 updated_at = CURRENT_TIMESTAMP
             ",
-            params![
-                source_id.as_str(),
-                smart_playlist_id.as_str(),
-                name.trim(),
-                definition_json,
-                position
-            ],
-        )?;
-        Ok(())
+                params![
+                    source_id.as_str(),
+                    smart_playlist_id.as_str(),
+                    name.trim(),
+                    definition_json,
+                    position
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn delete_smart_playlist(
@@ -226,14 +229,16 @@ impl Store {
         source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            DELETE FROM smart_playlists
-            WHERE source_id = ?1 AND smart_playlist_id = ?2
-            ",
-            params![source_id.as_str(), smart_playlist_id.as_str()],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                DELETE FROM smart_playlists
+                WHERE source_id = ?1 AND smart_playlist_id = ?2
+                ",
+                params![source_id.as_str(), smart_playlist_id.as_str()],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn reorder_smart_playlist(
@@ -243,7 +248,6 @@ impl Store {
         target_id: &SmartPlaylistId,
         after: bool,
     ) -> StoreResult<bool> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT smart_playlist_id
@@ -279,7 +283,6 @@ impl Store {
         &self,
         source_id: &SourceId,
     ) -> StoreResult<Vec<SmartPlaylistBuiltin>> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT builtin_key
@@ -301,9 +304,11 @@ impl Store {
         source_id: &SourceId,
         builtin: SmartPlaylistBuiltin,
     ) -> StoreResult<SmartPlaylistId> {
-        let position = self.next_smart_playlist_position(source_id)?;
-        self.insert_builtin_smart_playlist(source_id, builtin, position)?;
-        Ok(smart_builtin_id(builtin))
+        self.write_batch(|_| {
+            let position = self.next_smart_playlist_position(source_id)?;
+            self.insert_builtin_smart_playlist(source_id, builtin, position)?;
+            Ok(smart_builtin_id(builtin))
+        })
     }
 
     fn load_smart_playlist_row(
@@ -1205,13 +1210,10 @@ mod tests {
     }
 
     #[test]
-    fn smart_retired_sources() {
+    fn startup_prunes_retired_smart_playlist_builtins() {
         let store = Store::open_memory().expect("store");
         let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        store
-            .load_smart_playlists(&saved.source_id, 0, 20)
-            .expect("seed defaults");
         let definition = serde_json::to_string(&smart_policy::builtin_definition(
             SmartPlaylistBuiltin::MostPlayed,
         ))
@@ -1237,6 +1239,9 @@ mod tests {
                 .expect("insert retired default");
         }
 
+        store
+            .prepare_smart_playlist_defaults()
+            .expect("prepare saved sources");
         let page = store
             .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("load after prune");

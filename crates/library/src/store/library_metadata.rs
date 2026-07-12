@@ -83,9 +83,10 @@ impl Store {
         release_types: &[String],
         is_compilation: Option<bool>,
     ) -> StoreResult<()> {
-        let release_types_json = album_release_types_json(release_types)?;
-        let is_compilation = is_compilation.map(|value| if value { 1_i64 } else { 0_i64 });
-        self.connection.execute(
+        self.write_batch(|_| {
+            let release_types_json = album_release_types_json(release_types)?;
+            let is_compilation = is_compilation.map(|value| if value { 1_i64 } else { 0_i64 });
+            self.connection.execute(
             "
             UPDATE albums
             SET release_types_json = ?3,
@@ -99,9 +100,9 @@ impl Store {
                 release_types_json,
                 is_compilation
             ],
-        )?;
-        let identity_key = self.album_resolver_key(source_id, album_id)?;
-        self.connection.execute(
+            )?;
+            let identity_key = self.album_resolver_key(source_id, album_id)?;
+            self.connection.execute(
             "
             INSERT INTO entity_facts (
                 source_id, entity_kind, entity_id, fact_key,
@@ -114,8 +115,8 @@ impl Store {
                 updated_at = excluded.updated_at
             ",
             params![source_id.as_str(), album_id.as_str(), release_types_json],
-        )?;
-        self.connection.execute(
+            )?;
+            self.connection.execute(
             "
             DELETE FROM entity_facts
             WHERE source_id = ?1
@@ -125,10 +126,10 @@ impl Store {
               AND source = 'musicbrainz'
             ",
             params![source_id.as_str(), album_id.as_str()],
-        )?;
-        if let Some(is_compilation) = is_compilation {
-            let value_json = if is_compilation == 1 { "true" } else { "false" };
-            self.connection.execute(
+            )?;
+            if let Some(is_compilation) = is_compilation {
+                let value_json = if is_compilation == 1 { "true" } else { "false" };
+                self.connection.execute(
                 "
                 INSERT INTO entity_facts (
                     source_id, entity_kind, entity_id, fact_key,
@@ -141,9 +142,9 @@ impl Store {
                     updated_at = excluded.updated_at
                 ",
                 params![source_id.as_str(), album_id.as_str(), value_json],
-            )?;
-        }
-        self.connection.execute(
+                )?;
+            }
+            self.connection.execute(
             "
             DELETE FROM entity_resolver_state
             WHERE source_id = ?1
@@ -153,18 +154,19 @@ impl Store {
               AND resolver_value = ?2
             ",
             params![source_id.as_str(), identity_key],
-        )?;
-        if self.table_exists("album_release_type_lookup_misses")? {
-            self.connection.execute(
+            )?;
+            if self.table_exists("album_release_type_lookup_misses")? {
+                self.connection.execute(
                 "
                 DELETE FROM album_release_type_lookup_misses
                 WHERE source_id = ?1
                   AND album_id = ?2
                 ",
                 params![source_id.as_str(), album_id.as_str()],
-            )?;
-        }
-        Ok(())
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub fn save_album_identity_miss(
@@ -174,27 +176,29 @@ impl Store {
         identity_key: &str,
         reason: &str,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO entity_resolver_state (
-                source_id, entity_kind, purpose, resolver_namespace,
-                resolver_value, status, reason, updated_at
-            )
-            VALUES (?1, 'album', 'release_metadata', 'musicbrainz', ?2, 'missing', ?3, CURRENT_TIMESTAMP)
-            ON CONFLICT(
-                source_id, entity_kind, purpose, resolver_namespace, resolver_value
-            ) DO UPDATE SET
-                status = excluded.status,
-                reason = excluded.reason,
-                updated_at = excluded.updated_at
-            ",
-            params![
-                source_id.as_str(),
-                identity_key,
-                reason.chars().take(500).collect::<String>()
-            ],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                INSERT INTO entity_resolver_state (
+                    source_id, entity_kind, purpose, resolver_namespace,
+                    resolver_value, status, reason, updated_at
+                )
+                VALUES (?1, 'album', 'release_metadata', 'musicbrainz', ?2, 'missing', ?3, CURRENT_TIMESTAMP)
+                ON CONFLICT(
+                    source_id, entity_kind, purpose, resolver_namespace, resolver_value
+                ) DO UPDATE SET
+                    status = excluded.status,
+                    reason = excluded.reason,
+                    updated_at = excluded.updated_at
+                ",
+                params![
+                    source_id.as_str(),
+                    identity_key,
+                    reason.chars().take(500).collect::<String>()
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     fn album_resolver_key(&self, source_id: &SourceId, album_id: &AlbumId) -> StoreResult<String> {
@@ -633,10 +637,12 @@ impl Store {
         if tracks.is_empty() {
             return Ok(());
         }
-        let album_ids = tracks
+        let mut album_ids = tracks
             .iter()
             .map(|track| track.album_id.clone())
             .collect::<Vec<_>>();
+        album_ids.sort_unstable();
+        album_ids.dedup();
         let album_artwork = self.load_album_artwork_inner(source_id, &album_ids)?;
         let track_ids = tracks
             .iter()
@@ -644,10 +650,12 @@ impl Store {
             .collect::<Vec<_>>();
         let artist_credits =
             self.load_artist_links(source_id, "track_artist_links", "track_id", &track_ids)?;
-        let album_ids = tracks
+        let mut album_ids = tracks
             .iter()
             .map(|track| track.album_id.as_str().to_string())
             .collect::<Vec<_>>();
+        album_ids.sort_unstable();
+        album_ids.dedup();
         let album_artist_credits =
             self.load_artist_links(source_id, "album_artist_links", "album_id", &album_ids)?;
         for track in tracks {

@@ -4,10 +4,9 @@ use std::sync::{
     Arc, Mutex, Weak,
     mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
 };
-use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use playback::PlaybackView;
+use playback::{PlaybackView, TransportStatus};
 use tracing::debug;
 
 pub use discord::{DEFAULT_CLIENT_ID, DisplayType, LinkType, Settings};
@@ -94,12 +93,16 @@ fn latest_slot<T>() -> (LatestSender<T>, LatestReceiver<T>) {
 pub(crate) struct ArtworkKey {
     artist: String,
     album: String,
+    musicbrainz_album_id: Option<String>,
+    musicbrainz_release_group_id: Option<String>,
     lastfm_api_key: String,
+    allow_musicbrainz: bool,
 }
 
 pub struct ArtworkRequest {
     revision: u64,
     key: ArtworkKey,
+    queued_at: Instant,
     owner: Weak<Inner>,
 }
 
@@ -114,6 +117,22 @@ impl ArtworkRequest {
 
     pub fn lastfm_api_key(&self) -> &str {
         &self.key.lastfm_api_key
+    }
+
+    pub fn musicbrainz_album_id(&self) -> Option<&str> {
+        self.key.musicbrainz_album_id.as_deref()
+    }
+
+    pub fn musicbrainz_release_group_id(&self) -> Option<&str> {
+        self.key.musicbrainz_release_group_id.as_deref()
+    }
+
+    pub const fn allow_musicbrainz(&self) -> bool {
+        self.key.allow_musicbrainz
+    }
+
+    pub fn queued_for(&self) -> Duration {
+        self.queued_at.elapsed()
     }
 
     pub fn complete(self, result: Result<Option<String>, String>) {
@@ -212,6 +231,13 @@ impl Presence {
             self.clear(state);
             return;
         };
+        if state.settings.enabled && view.transport.state == TransportStatus::Resolving {
+            if matches!(state.artwork, ArtworkState::Pending { .. }) {
+                state.artwork = ArtworkState::Empty;
+                self.inner.artwork.clear();
+            }
+            return;
+        }
         let Some(mut activity) = discord::Activity::new(
             &state.settings,
             view,
@@ -224,7 +250,9 @@ impl Presence {
         activity.large_image = self.artwork_image(state, view);
         let activity = Arc::new(activity);
         state.activity = Some(Arc::clone(&activity));
-        state.publish(Some(activity));
+        if !matches!(state.artwork, ArtworkState::Pending { .. }) {
+            state.publish(Some(activity));
+        }
     }
 
     fn clear(&self, state: &mut State) {
@@ -238,7 +266,9 @@ impl Presence {
     }
 
     fn artwork_image(&self, state: &mut State, view: &PlaybackView) -> String {
-        let Some(key) = ArtworkKey::from_view(view, &state.lastfm_api_key) else {
+        let Some(key) =
+            ArtworkKey::from_view(view, &state.lastfm_api_key, state.settings.link_type)
+        else {
             state.artwork = ArtworkState::Empty;
             self.inner.artwork.clear();
             return discord::APP_ICON_URL.to_string();
@@ -268,6 +298,7 @@ impl Presence {
         self.inner.artwork.publish(ArtworkRequest {
             revision,
             key,
+            queued_at: Instant::now(),
             owner: Arc::downgrade(&self.inner),
         });
         discord::APP_ICON_URL.to_string()
@@ -328,34 +359,48 @@ impl State {
         };
         let image = url.unwrap_or_else(|| discord::APP_ICON_URL.to_string());
         let activity = self.activity.as_mut()?;
-        if activity.large_image == image {
-            return None;
-        }
         Arc::make_mut(activity).large_image = image;
         Some(Arc::clone(activity))
     }
 }
 
 impl ArtworkKey {
-    fn from_view(view: &PlaybackView, lastfm_api_key: &str) -> Option<Self> {
-        let (artist, album) = Self::facts(view)?;
+    fn from_view(view: &PlaybackView, lastfm_api_key: &str, link_type: LinkType) -> Option<Self> {
+        if link_type == LinkType::None {
+            return None;
+        }
+        let track = &view.transport.current.as_ref()?.track;
+        let artist = track.artist.trim();
+        let album = track.album.trim();
+        if artist.is_empty() || album.is_empty() {
+            return None;
+        }
+        let musicbrainz_album_id = track
+            .album_artwork
+            .as_ref()
+            .and_then(|album| album.musicbrainz_album_id.clone());
+        let musicbrainz_release_group_id = track
+            .album_artwork
+            .as_ref()
+            .and_then(|album| album.musicbrainz_release_group_id.clone());
+        let lastfm_api_key = if matches!(link_type, LinkType::LastFm | LinkType::MusicBrainzLastFm)
+        {
+            lastfm_api_key
+        } else {
+            ""
+        };
+        let allow_musicbrainz = matches!(
+            link_type,
+            LinkType::MusicBrainz | LinkType::MusicBrainzLastFm
+        );
         Some(Self {
             artist: artist.to_string(),
             album: album.to_string(),
+            musicbrainz_album_id,
+            musicbrainz_release_group_id,
             lastfm_api_key: lastfm_api_key.to_string(),
+            allow_musicbrainz,
         })
-    }
-
-    fn facts(view: &PlaybackView) -> Option<(&str, &str)> {
-        let track = &view.transport.current.as_ref()?.track;
-        let artist = track
-            .album_artist_credits
-            .first()
-            .map(|credit| credit.name.trim())
-            .filter(|artist| !artist.is_empty())
-            .unwrap_or_else(|| track.artist.trim());
-        let album = track.album.trim();
-        (!artist.is_empty() && !album.is_empty()).then_some((artist, album))
     }
 }
 
@@ -386,7 +431,7 @@ fn unix_now_millis() -> u64 {
 mod tests {
     use std::sync::Arc;
 
-    use library::{AlbumId, ArtistCredit, ArtistId, SourceId, Track, TrackId};
+    use library::{AlbumArtwork, AlbumId, ArtistCredit, ArtistId, SourceId, Track, TrackId};
     use playback::{
         ControlsView, OccurrenceId, PlaybackView, Provenance, QueueSummaryView, RepeatMode, RunId,
         SequenceEntry, TransportStatus, TransportView,
@@ -454,7 +499,7 @@ mod tests {
             discord::Activity::new(&settings, &view, 100_000, discord::APP_ICON_URL.to_string())
                 .unwrap_or_else(|| panic!("playing run should publish activity"));
         assert_eq!(activity.started_at_millis, Some(95_000));
-        assert_eq!(activity.ended_at_millis, Some(137_500));
+        assert_eq!(activity.ended_at_millis, Some(137_000));
 
         view.transport.position_millis = 6_000;
         assert!(activity.matches(&view));
@@ -464,7 +509,7 @@ mod tests {
             discord::Activity::new(&settings, &view, 101_000, discord::APP_ICON_URL.to_string())
                 .unwrap_or_else(|| panic!("seek should rebase activity"));
         assert_eq!(seeked.started_at_millis, Some(81_000));
-        assert_eq!(seeked.ended_at_millis, Some(123_500));
+        assert_eq!(seeked.ended_at_millis, Some(123_000));
 
         view.transport.state = TransportStatus::Paused;
         let paused =
@@ -484,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_revision_invalidates_same_run_metadata() {
+    fn only_current_track_changes_invalidate_same_run_metadata() {
         let mut view = test_view(1, "Album", TransportStatus::Playing, 0);
         let activity = discord::Activity::new(
             &enabled_settings(),
@@ -494,6 +539,9 @@ mod tests {
         )
         .unwrap_or_else(|| panic!("playing run should publish activity"));
 
+        view.queue.revision = view.queue.revision.wrapping_add(1);
+        assert!(activity.matches(&view));
+
         Arc::make_mut(
             view.transport
                 .current
@@ -502,7 +550,6 @@ mod tests {
         )
         .track
         .title = "Corrected title".to_string();
-        view.queue.revision = view.queue.revision.wrapping_add(1);
         assert!(!activity.matches(&view));
     }
 
@@ -510,19 +557,215 @@ mod tests {
     fn changed_lastfm_key_requests_artwork_once() {
         let (presence, requests) = Presence::new();
         let view = test_view(1, "Album", TransportStatus::Playing, 0);
-        refresh_presence(&presence, &view, "first-key", 100_000);
+        let mut settings = enabled_settings();
+        settings.link_type = LinkType::LastFm;
+        presence.update(settings.clone(), true, "first-key", Some(&view));
         requests
             .try_recv()
             .unwrap_or_else(|| panic!("first key should request artwork"))
             .complete(Ok(None));
 
-        refresh_presence(&presence, &view, "second-key", 101_000);
+        presence.update(settings, true, "second-key", Some(&view));
         let second = requests
             .try_recv()
             .unwrap_or_else(|| panic!("changed key should request artwork"));
         assert_eq!(second.lastfm_api_key(), "second-key");
         presence.observe(Some(&view), false);
         assert!(requests.try_recv().is_none());
+    }
+
+    #[test]
+    fn artwork_uses_displayed_artist_and_selected_metadata_source() {
+        let (presence, requests) = Presence::new();
+        let mut view = test_view(1, "Album", TransportStatus::Playing, 0);
+        Arc::make_mut(
+            view.transport
+                .current
+                .as_mut()
+                .unwrap_or_else(|| panic!("current entry missing")),
+        )
+        .track
+        .album_artwork = Some(AlbumArtwork {
+            id: AlbumId::fake(1),
+            title: "Album".to_string(),
+            artist: "Album Artist".to_string(),
+            image_ref: None,
+            musicbrainz_album_id: Some("release-id".to_string()),
+            musicbrainz_release_group_id: Some("release-group-id".to_string()),
+        });
+        refresh_presence(&presence, &view, "key", 100_000);
+        let first = requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("album should request artwork"));
+        assert_eq!(first.artist(), "Artist");
+        assert!(first.allow_musicbrainz());
+        assert_eq!(first.lastfm_api_key(), "");
+        assert_eq!(first.musicbrainz_album_id(), Some("release-id"));
+        assert_eq!(
+            first.musicbrainz_release_group_id(),
+            Some("release-group-id")
+        );
+        first.complete(Ok(None));
+
+        let mut settings = enabled_settings();
+        settings.link_type = LinkType::LastFm;
+        presence.update(settings, true, "key", Some(&view));
+        let changed = requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("changed metadata source should request artwork"));
+        assert!(!changed.allow_musicbrainz());
+        assert_eq!(changed.lastfm_api_key(), "key");
+    }
+
+    #[test]
+    fn pending_artwork_delays_the_first_activity_until_completion() {
+        let (presence, requests) = Presence::new();
+        let view = test_view(1, "Album", TransportStatus::Playing, 0);
+        refresh_presence(&presence, &view, "key", 100_000);
+        {
+            let state = presence
+                .inner
+                .state
+                .lock()
+                .expect("presence state lock poisoned");
+            assert!(state.worker.is_none());
+            assert!(matches!(state.artwork, ArtworkState::Pending { .. }));
+        }
+
+        requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("album should request artwork"))
+            .complete(Ok(Some("https://images.example/cover.jpg".to_string())));
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert!(state.worker.is_some());
+        assert_eq!(
+            state
+                .activity
+                .as_ref()
+                .map(|activity| activity.large_image.as_str()),
+            Some("https://images.example/cover.jpg")
+        );
+    }
+
+    #[test]
+    fn resolving_next_track_retains_the_current_activity() {
+        let (presence, requests) = Presence::new();
+        let first = test_view(1, "Album One", TransportStatus::Playing, 0);
+        refresh_presence(&presence, &first, "key", 100_000);
+        requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("first album should request artwork"))
+            .complete(Ok(Some("https://images.example/one.jpg".to_string())));
+
+        let mut second = test_view(2, "Album Two", TransportStatus::Resolving, 0);
+        presence.observe(Some(&second), false);
+        {
+            let state = presence
+                .inner
+                .state
+                .lock()
+                .expect("presence state lock poisoned");
+            assert_eq!(
+                state.activity.as_ref().map(|activity| activity.run),
+                Some(RunId::new(1))
+            );
+        }
+
+        second.transport.state = TransportStatus::Buffering;
+        presence.observe(Some(&second), false);
+        let request = requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("second album should request artwork"));
+        request.complete(Ok(Some("https://images.example/two.jpg".to_string())));
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert_eq!(
+            state.activity.as_ref().map(|activity| activity.run),
+            Some(RunId::new(2))
+        );
+    }
+
+    #[test]
+    fn newer_resolving_track_cancels_a_staged_replacement() {
+        let (presence, requests) = Presence::new();
+        let first = test_view(1, "Album One", TransportStatus::Playing, 0);
+        refresh_presence(&presence, &first, "key", 100_000);
+        requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("first album should request artwork"))
+            .complete(Ok(Some("https://images.example/one.jpg".to_string())));
+
+        let second = test_view(2, "Album Two", TransportStatus::Buffering, 0);
+        presence.observe(Some(&second), false);
+        let second_request = requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("second album should request artwork"));
+
+        let mut third = test_view(3, "Album Three", TransportStatus::Resolving, 0);
+        presence.observe(Some(&third), false);
+        second_request.complete(Ok(Some("https://images.example/two.jpg".to_string())));
+        {
+            let state = presence
+                .inner
+                .state
+                .lock()
+                .expect("presence state lock poisoned");
+            assert!(matches!(state.artwork, ArtworkState::Empty));
+            assert_ne!(
+                state
+                    .activity
+                    .as_ref()
+                    .map(|activity| activity.large_image.as_str()),
+                Some("https://images.example/two.jpg")
+            );
+        }
+
+        third.transport.state = TransportStatus::Buffering;
+        presence.observe(Some(&third), false);
+        requests
+            .try_recv()
+            .unwrap_or_else(|| panic!("third album should request artwork"))
+            .complete(Ok(Some("https://images.example/three.jpg".to_string())));
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert_eq!(
+            state.activity.as_ref().map(|activity| activity.run),
+            Some(RunId::new(3))
+        );
+    }
+
+    #[test]
+    fn disabled_metadata_lookup_publishes_the_app_icon_immediately() {
+        let (presence, requests) = Presence::new();
+        let view = test_view(1, "Album", TransportStatus::Playing, 0);
+        let mut settings = enabled_settings();
+        settings.link_type = LinkType::None;
+        presence.update(settings, true, "key", Some(&view));
+
+        assert!(requests.try_recv().is_none());
+        let state = presence
+            .inner
+            .state
+            .lock()
+            .expect("presence state lock poisoned");
+        assert!(state.worker.is_some());
+        assert_eq!(
+            state
+                .activity
+                .as_ref()
+                .map(|activity| activity.large_image.as_str()),
+            Some(discord::APP_ICON_URL)
+        );
     }
 
     #[test]
@@ -533,17 +776,14 @@ mod tests {
         let request = requests
             .try_recv()
             .unwrap_or_else(|| panic!("album should request artwork"));
-        let mut state = presence
+        let key = request.key.clone();
+        request.complete(Err("offline".to_string()));
+        let state = presence
             .inner
             .state
             .lock()
             .expect("presence state lock poisoned");
-        let key = request.key.clone();
-        assert!(
-            state
-                .complete_artwork(request.revision, &key, Err("offline".to_string()))
-                .is_none()
-        );
+        assert!(state.worker.is_some());
         assert!(matches!(
             &state.artwork,
             ArtworkState::Ready { key: ready, url: None } if ready == &key

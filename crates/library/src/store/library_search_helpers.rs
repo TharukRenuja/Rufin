@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::library_track_sort::*;
 use super::sources::*;
 use super::*;
@@ -628,6 +630,7 @@ impl Store {
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn configure_pragmas(&self, wal: bool) -> StoreResult<()> {
+        self.connection.busy_timeout(Duration::from_secs(30))?;
         self.connection.pragma_update(None, "foreign_keys", "ON")?;
         self.connection.pragma_update(None, "temp_store", "FILE")?;
         if wal {
@@ -642,6 +645,11 @@ impl Store {
         if !self.connection.is_autocommit() {
             return operation(&self.connection);
         }
+        let _write = self
+            .write_gate
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.connection.execute_batch("BEGIN IMMEDIATE")?;
         let result = operation(&self.connection);
         match result {

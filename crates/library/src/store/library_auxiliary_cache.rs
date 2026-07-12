@@ -1013,11 +1013,13 @@ impl Store {
         album_id: &AlbumId,
         favorite: bool,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "UPDATE albums SET favorite = ?3 WHERE source_id = ?1 AND album_id = ?2",
-            params![source_id.as_str(), album_id.as_str(), bool_to_i64(favorite)],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "UPDATE albums SET favorite = ?3 WHERE source_id = ?1 AND album_id = ?2",
+                params![source_id.as_str(), album_id.as_str(), bool_to_i64(favorite)],
+            )?;
+            Ok(())
+        })
     }
     pub fn set_album_favorite_for_owner(
         &self,
@@ -1050,11 +1052,13 @@ impl Store {
         track_id: &TrackId,
         favorite: bool,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "UPDATE tracks SET favorite = ?3 WHERE source_id = ?1 AND track_id = ?2",
-            params![source_id.as_str(), track_id.as_str(), bool_to_i64(favorite)],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "UPDATE tracks SET favorite = ?3 WHERE source_id = ?1 AND track_id = ?2",
+                params![source_id.as_str(), track_id.as_str(), bool_to_i64(favorite)],
+            )?;
+            Ok(())
+        })
     }
     pub fn set_track_favorite_for_owner(
         &self,
@@ -1087,23 +1091,25 @@ impl Store {
         artist_id: &ArtistId,
         favorite: bool,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "UPDATE artists SET favorite = ?3 WHERE source_id = ?1 AND artist_id = ?2",
-            params![
-                source_id.as_str(),
-                artist_id.as_str(),
-                bool_to_i64(favorite)
-            ],
-        )?;
-        self.connection.execute(
-            "UPDATE album_artists SET favorite = ?3 WHERE source_id = ?1 AND artist_id = ?2",
-            params![
-                source_id.as_str(),
-                artist_id.as_str(),
-                bool_to_i64(favorite)
-            ],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "UPDATE artists SET favorite = ?3 WHERE source_id = ?1 AND artist_id = ?2",
+                params![
+                    source_id.as_str(),
+                    artist_id.as_str(),
+                    bool_to_i64(favorite)
+                ],
+            )?;
+            connection.execute(
+                "UPDATE album_artists SET favorite = ?3 WHERE source_id = ?1 AND artist_id = ?2",
+                params![
+                    source_id.as_str(),
+                    artist_id.as_str(),
+                    bool_to_i64(favorite)
+                ],
+            )?;
+            Ok(())
+        })
     }
     pub fn set_artist_favorite_for_owner(
         &self,
@@ -1304,18 +1310,20 @@ impl Store {
         origin: &str,
         payload: &str,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO lyrics_cache (source_id, track_id, source, value, updated_at)
-            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id, track_id) DO UPDATE SET
-                source = excluded.source,
-                value = excluded.value,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str(), track_id.as_str(), origin, payload],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                INSERT INTO lyrics_cache (source_id, track_id, source, value, updated_at)
+                VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                ON CONFLICT(source_id, track_id) DO UPDATE SET
+                    source = excluded.source,
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                ",
+                params![source_id.as_str(), track_id.as_str(), origin, payload],
+            )?;
+            Ok(())
+        })
     }
     pub fn load_lyrics_payload(
         &self,
@@ -1341,14 +1349,16 @@ impl Store {
         track_id: &TrackId,
         origin: &str,
     ) -> StoreResult<bool> {
-        let deleted = self.connection.execute(
-            "
-            DELETE FROM lyrics_cache
-            WHERE source_id = ?1 AND track_id = ?2 AND source = ?3
-            ",
-            params![source_id.as_str(), track_id.as_str(), origin],
-        )?;
-        Ok(deleted > 0)
+        self.write_batch(|connection| {
+            let deleted = connection.execute(
+                "
+                DELETE FROM lyrics_cache
+                WHERE source_id = ?1 AND track_id = ?2 AND source = ?3
+                ",
+                params![source_id.as_str(), track_id.as_str(), origin],
+            )?;
+            Ok(deleted > 0)
+        })
     }
     pub fn search_library(
         &self,

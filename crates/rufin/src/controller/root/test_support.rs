@@ -228,6 +228,7 @@ pub(in crate::controller) fn disk_store_for_test(label: &str) -> (StoreHandle, P
         cache_database_path: root.join(CACHE_DATABASE_FILE_NAME),
         settings_path: root.join("config").join(SETTINGS_FILE_NAME),
         settings: Arc::new(Mutex::new(StoredSettings::default())),
+        write_gate: library::StoreWriteGate::default(),
     };
     store.with_store(|_| Ok(())).expect("open disk store");
     (store, root)

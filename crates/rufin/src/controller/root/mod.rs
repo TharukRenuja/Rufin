@@ -535,6 +535,7 @@ pub(crate) enum StoreHandle {
         cache_database_path: PathBuf,
         settings_path: PathBuf,
         settings: Arc<Mutex<StoredSettings>>,
+        write_gate: library::StoreWriteGate,
     },
     #[cfg(test)]
     Memory {
@@ -554,9 +555,14 @@ impl StoreHandle {
         if let Some(parent) = cache_database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let store = Store::open(&cache_database_path).map_err(|error| error.to_string())?;
+        let write_gate = library::StoreWriteGate::default();
+        let store = Store::open_with_write_gate(&cache_database_path, write_gate.clone())
+            .map_err(|error| error.to_string())?;
         store
             .recover_interrupted_syncs()
+            .map_err(|error| error.to_string())?;
+        store
+            .prepare_smart_playlist_defaults()
             .map_err(|error| error.to_string())?;
 
         let settings_path = app_settings_path();
@@ -569,6 +575,7 @@ impl StoreHandle {
             cache_database_path,
             settings_path,
             settings: Arc::new(Mutex::new(settings)),
+            write_gate,
         };
         Ok(handle)
     }
@@ -633,9 +640,11 @@ impl StoreHandle {
         match self {
             Self::Path {
                 cache_database_path,
+                write_gate,
                 ..
             } => {
-                let store = Store::open(cache_database_path).map_err(store_error)?;
+                let store = Store::open_with_write_gate(cache_database_path, write_gate.clone())
+                    .map_err(store_error)?;
                 operation(&store).map_err(operation_error)
             }
             #[cfg(test)]

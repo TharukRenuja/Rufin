@@ -274,12 +274,29 @@ impl Store {
         source_id: &SourceId,
         album_ids: &[AlbumId],
     ) -> StoreResult<Vec<Album>> {
-        let mut unique_ids = Vec::<AlbumId>::new();
-        for album_id in album_ids {
-            if !unique_ids.iter().any(|existing| existing == album_id) {
-                unique_ids.push(album_id.clone());
-            }
-        }
+        let mut albums =
+            self.load_album_rows_by_ids(source_id, album_ids, &effective_album_favorite_sql("a"))?;
+        self.attach_album_metadata(source_id, &mut albums)?;
+        Ok(albums)
+    }
+    pub(super) fn load_raw_album_rows_by_ids(
+        &self,
+        source_id: &SourceId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<Vec<Album>> {
+        self.load_album_rows_by_ids(source_id, album_ids, "a.favorite")
+    }
+    fn load_album_rows_by_ids(
+        &self,
+        source_id: &SourceId,
+        album_ids: &[AlbumId],
+        favorite: &str,
+    ) -> StoreResult<Vec<Album>> {
+        let mut seen = HashSet::new();
+        let unique_ids = album_ids
+            .iter()
+            .filter(|album_id| seen.insert(album_id.as_str()))
+            .collect::<Vec<_>>();
         if unique_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -298,18 +315,16 @@ impl Store {
                 FROM albums a
                 WHERE a.source_id = ?
                   AND a.album_id IN ({placeholders})
-                ",
-                favorite = effective_album_favorite_sql("a"),
+                "
             );
             let mut values = Vec::with_capacity(chunk.len() + 1);
             values.push(source_id.as_str());
-            values.extend(chunk.iter().map(AlbumId::as_str));
+            values.extend(chunk.iter().map(|album_id| album_id.as_str()));
             let mut statement = self.connection.prepare(&sql)?;
             albums.extend(collect_rows(
                 statement.query_map(rusqlite::params_from_iter(values), album_from_row)?,
             )?);
         }
-        self.attach_album_metadata(source_id, &mut albums)?;
         Ok(albums)
     }
     pub fn load_albums_without_image_ref(
@@ -929,33 +944,58 @@ impl Store {
             return Ok(Vec::new());
         }
         self.read_snapshot(|store| {
-            let requested_json =
-                serde_json::to_string(&track_ids.iter().map(TrackId::as_str).collect::<Vec<_>>())?;
-            let sql = format!(
-                "
-                WITH requested(position, track_id) AS (
-                    SELECT CAST(key AS INTEGER), CAST(value AS TEXT)
-                    FROM json_each(?2)
-                )
-                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
-                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format, t.comment,
-                       t.skip_count
-                FROM requested r
-                JOIN tracks t
-                  ON t.source_id = ?1 AND t.track_id = r.track_id
-                ORDER BY r.position
-                ",
-                favorite = effective_track_favorite_sql("t"),
-            );
-            let mut statement = store.connection.prepare(&sql)?;
-            let mut tracks = collect_rows(
-                statement.query_map(params![source_id.as_str(), requested_json], track_from_row)?,
-            )?;
-            store.attach_track_metadata(source_id, &mut tracks)?;
-            Ok(tracks)
+            store.load_track_rows_by_ids(source_id, track_ids, &effective_track_favorite_sql("t"))
         })
+    }
+    pub(super) fn load_raw_tracks_by_ids(
+        &self,
+        source_id: &SourceId,
+        track_ids: &[TrackId],
+    ) -> StoreResult<Vec<Track>> {
+        self.load_track_rows_by_ids(source_id, track_ids, "t.favorite")
+    }
+    fn load_track_rows_by_ids(
+        &self,
+        source_id: &SourceId,
+        track_ids: &[TrackId],
+        favorite: &str,
+    ) -> StoreResult<Vec<Track>> {
+        let mut seen = HashSet::new();
+        let unique_ids = track_ids
+            .iter()
+            .filter(|track_id| seen.insert(track_id.as_str()))
+            .collect::<Vec<_>>();
+        let mut tracks = Vec::with_capacity(unique_ids.len());
+        for chunk in unique_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                        t.duration_seconds, {favorite} AS favorite, t.disc_number, t.track_number,
+                        t.image_item_id, t.image_tag, t.bpm, t.local_path, t.source_format,
+                        t.comment, t.skip_count
+                 FROM tracks t
+                 WHERE t.source_id = ? AND t.track_id IN ({placeholders})"
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(source_id.as_str());
+            values.extend(chunk.iter().map(|track_id| track_id.as_str()));
+            let mut statement = self.connection.prepare(&sql)?;
+            tracks.extend(collect_rows(
+                statement.query_map(params_from_iter(values), track_from_row)?,
+            )?);
+        }
+        self.attach_track_metadata(source_id, &mut tracks)?;
+        let tracks_by_id = tracks
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect::<HashMap<_, _>>();
+        Ok(track_ids
+            .iter()
+            .filter_map(|track_id| tracks_by_id.get(track_id).cloned())
+            .collect())
     }
     pub fn load_track_ids_with_prefix(
         &self,

@@ -22,35 +22,37 @@ pub struct TrackActivitySummary {
 
 impl Store {
     pub fn record_activity_outcome(&self, outcome: &ActivityOutcome) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO track_activity_period (
-                source_id, period, track_id, qualified_plays, skips,
-                last_played_at, updated_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, datetime(?6, 'unixepoch'), CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id, period, track_id) DO UPDATE SET
-                qualified_plays = qualified_plays + excluded.qualified_plays,
-                skips = skips + excluded.skips,
-                last_played_at = CASE
-                    WHEN excluded.last_played_at IS NULL THEN last_played_at
-                    WHEN last_played_at IS NULL
-                      OR excluded.last_played_at > last_played_at
-                    THEN excluded.last_played_at
-                    ELSE last_played_at
-                END,
-                updated_at = excluded.updated_at
-            ",
-            params![
-                outcome.source_id.as_str(),
-                outcome.period,
-                outcome.track_id.as_str(),
-                i64::from(outcome.qualified_plays),
-                i64::from(outcome.skips),
-                outcome.last_played_at,
-            ],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                INSERT INTO track_activity_period (
+                    source_id, period, track_id, qualified_plays, skips,
+                    last_played_at, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, datetime(?6, 'unixepoch'), CURRENT_TIMESTAMP)
+                ON CONFLICT(source_id, period, track_id) DO UPDATE SET
+                    qualified_plays = qualified_plays + excluded.qualified_plays,
+                    skips = skips + excluded.skips,
+                    last_played_at = CASE
+                        WHEN excluded.last_played_at IS NULL THEN last_played_at
+                        WHEN last_played_at IS NULL
+                          OR excluded.last_played_at > last_played_at
+                        THEN excluded.last_played_at
+                        ELSE last_played_at
+                    END,
+                    updated_at = excluded.updated_at
+                ",
+                params![
+                    outcome.source_id.as_str(),
+                    outcome.period,
+                    outcome.track_id.as_str(),
+                    i64::from(outcome.qualified_plays),
+                    i64::from(outcome.skips),
+                    outcome.last_played_at,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn track_activity_summary(

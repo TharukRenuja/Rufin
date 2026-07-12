@@ -393,13 +393,14 @@ fn job_key(
     external_epoch: u64,
 ) -> JobKey {
     let identity = format!(
-        "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{:x}",
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{:x}",
         source.source_id,
         request.candidates.stable_identity(),
         request.fetch_size,
         request.render_size,
         request.external.allow_cached,
         request.external.allow_network,
+        request.external.allow_musicbrainz,
         source.provider.is_some(),
         source_epoch,
         md5::compute(request.external.lastfm_api_key.as_bytes())
