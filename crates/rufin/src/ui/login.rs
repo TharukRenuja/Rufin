@@ -2,12 +2,12 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ::library::StoredSource;
 use adw::prelude::*;
-use library::SavedSource;
 
 use crate::controller::{AppController, ServerDiscoveryStatus};
 use crate::i18n::{tr, tr_with};
-use crate::sources::{
+use crate::source_setup::{
     CredentialHostInput, CredentialHostPreset, SourceRegistration, default_source_registration,
     resolve_source_registration, source_registrations,
 };
@@ -169,7 +169,7 @@ impl Shell {
     pub(crate) fn reconnect_saved_source(
         &self,
         registration: &'static SourceRegistration,
-    ) -> Option<SavedSource> {
+    ) -> Option<StoredSource> {
         let library = self.state.library.borrow();
         if !library.first_run && !self.state.library_load.borrow().source_setup_active() {
             return None;

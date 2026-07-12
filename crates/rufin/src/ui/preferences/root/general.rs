@@ -12,12 +12,9 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
         .build();
     let app_settings = shell.controller.load_settings_with_scrobbling_secrets();
     *shell.state.settings.borrow_mut() = app_settings.clone();
-    let settings = app_settings.scrobbling.clone();
-    let lastfm_api_key_text = if app_settings.lastfm_api_key.trim().is_empty() {
-        settings.lastfm.api_key.clone()
-    } else {
-        app_settings.lastfm_api_key.clone()
-    };
+    let mut settings = app_settings.scrobbling.clone();
+    settings.lastfm.api_key = app_settings.lastfm_api_key.clone();
+    let lastfm_api_key_text = app_settings.lastfm_api_key.clone();
 
     let lastfm_group = adw::PreferencesGroup::builder()
         .title(tr("Last.fm"))
@@ -60,20 +57,17 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
         let api_key = row.text().trim().to_string();
         if lastfm_api_shell
             .update_app_settings_with_scrobbling_secrets("Last.fm API key setting", |settings| {
-                if settings.lastfm_api_key == api_key
-                    && settings.scrobbling.lastfm.api_key == api_key
-                {
+                if settings.lastfm_api_key == api_key {
                     return false;
                 }
                 settings.lastfm_api_key = api_key.clone();
-                settings.scrobbling.lastfm.api_key = api_key;
                 settings.scrobbling.lastfm.session_key.clear();
                 settings.scrobbling.lastfm.username.clear();
                 true
             })
             .is_some()
         {
-            lastfm_api_shell.retry_external_cover_lookups("Last.fm API key setting");
+            lastfm_api_shell.retry_external_artwork("Last.fm API key setting");
         }
     });
     lastfm_group.add(&lastfm_api_key);
@@ -324,7 +318,7 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
     page
 }
 pub(in crate::ui) fn audioscrobbler_connection_subtitle(
-    settings: &AudioscrobblerScrobbleSettings,
+    settings: &AudioscrobblerSettings,
 ) -> String {
     if settings.session_key.trim().is_empty() {
         tr("Not connected")
@@ -360,11 +354,11 @@ async fn connect_lastfm_session(
     let token_api_key = api_key.clone();
     let token_api_secret = api_secret.clone();
     let token = gtk::gio::spawn_blocking(move || {
-        external_scrobbling::request_lastfm_auth_token(&token_api_key, &token_api_secret)
+        request_lastfm_auth_token(&token_api_key, &token_api_secret)
     })
     .await
     .map_err(|_| "Last.fm authorization task failed.".to_string())??;
-    let url = external_scrobbling::lastfm_auth_url(&api_key, &token);
+    let url = lastfm_auth_url(&api_key, &token);
     let launcher = gtk::UriLauncher::new(&url);
     launcher
         .launch_future(Some(&shell.window))
@@ -377,11 +371,7 @@ async fn connect_lastfm_session(
         let session_api_secret = api_secret.clone();
         let session_token = token.clone();
         let maybe_session = gtk::gio::spawn_blocking(move || {
-            external_scrobbling::request_lastfm_session(
-                &session_api_key,
-                &session_api_secret,
-                &session_token,
-            )
+            request_lastfm_session(&session_api_key, &session_api_secret, &session_token)
         })
         .await
         .map_err(|_| "Last.fm session task failed.".to_string())??;
@@ -390,15 +380,13 @@ async fn connect_lastfm_session(
                 "Last.fm connection setting",
                 |settings| {
                     settings.lastfm_api_key = api_key.clone();
-                    settings.scrobbling.lastfm.api_key = api_key.clone();
                     settings.scrobbling.lastfm.api_secret = api_secret.clone();
                     settings.scrobbling.lastfm.username = session.username.clone();
                     settings.scrobbling.lastfm.session_key = session.session_key.clone();
                     true
                 },
             );
-            shell.retry_external_cover_lookups("Last.fm connection setting");
-            shell.update_discord_presence(&shell.state.player.borrow());
+            shell.retry_external_artwork("Last.fm connection setting");
             return Ok(session);
         }
     }
@@ -406,10 +394,10 @@ async fn connect_lastfm_session(
     Err(tr("Timed out waiting for Last.fm authorization."))
 }
 async fn connect_librefm_session(shell: &Rc<Shell>) -> Result<AudioscrobblerSession, String> {
-    let token = gtk::gio::spawn_blocking(external_scrobbling::request_librefm_auth_token)
+    let token = gtk::gio::spawn_blocking(request_librefm_auth_token)
         .await
         .map_err(|_| "Libre.fm authorization task failed.".to_string())??;
-    let url = external_scrobbling::librefm_auth_url(&token);
+    let url = librefm_auth_url(&token);
     let launcher = gtk::UriLauncher::new(&url);
     launcher
         .launch_future(Some(&shell.window))
@@ -419,16 +407,13 @@ async fn connect_librefm_session(shell: &Rc<Shell>) -> Result<AudioscrobblerSess
     for _ in 0..30 {
         gtk::glib::timeout_future_seconds(2).await;
         let session_token = token.clone();
-        let maybe_session = gtk::gio::spawn_blocking(move || {
-            external_scrobbling::request_librefm_session(&session_token)
-        })
-        .await
-        .map_err(|_| "Libre.fm session task failed.".to_string())??;
+        let maybe_session =
+            gtk::gio::spawn_blocking(move || request_librefm_session(&session_token))
+                .await
+                .map_err(|_| "Libre.fm session task failed.".to_string())??;
         if let Some(session) = maybe_session {
             shell.update_scrobbling_settings("Libre.fm connection setting", |settings| {
                 settings.librefm.username = session.username.clone();
-                settings.librefm.api_key = "rufin".to_string();
-                settings.librefm.api_secret = "rufin".to_string();
                 settings.librefm.session_key = session.session_key.clone();
                 true
             });
@@ -524,18 +509,13 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let refill_shell = Rc::clone(shell);
     refill.connect_value_changed(move |spin| {
         let threshold = spin.value().round() as u8;
-        let changed = refill_shell
-            .update_app_settings("Auto DJ setting", |settings| {
-                if settings.auto_dj_refill_threshold == threshold {
-                    return false;
-                }
-                settings.auto_dj_refill_threshold = threshold;
-                true
-            })
-            .is_some();
-        if changed {
-            refill_shell.controller.refill_auto_dj_queue();
-        }
+        refill_shell.update_app_settings("Auto DJ setting", |settings| {
+            if settings.auto_dj_refill_threshold == threshold {
+                return false;
+            }
+            settings.auto_dj_refill_threshold = threshold;
+            true
+        });
     });
     refill_row.add_suffix(&refill);
     refill_row.set_activatable_widget(Some(&refill));

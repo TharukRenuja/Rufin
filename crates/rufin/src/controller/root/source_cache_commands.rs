@@ -16,20 +16,20 @@ impl AppController {
                 ));
                 return;
             };
-            controller.forget_source_sync(&saved.source.id);
+            controller.forget_source_sync(&saved.source_id);
             let result = store.with_store(|store| {
-                store.clear_library_cache(&saved.source.id)?;
+                store.clear_library_cache(&saved.source_id)?;
                 Ok(())
             });
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                warn!(%error, source_id = %saved.source.id, "failed to clear source cover cache");
+            if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+                warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
-            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source.id) {
-                warn!(%error, source_id = %saved.source.id, "failed to clear source waveform cache");
+            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
+                warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
             let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::CacheCleared));
             match load_snapshot(&store) {
@@ -52,7 +52,7 @@ impl AppController {
                 Ok(store
                     .list_sources()?
                     .into_iter()
-                    .find(|saved| saved.source.id == source_id))
+                    .find(|saved| saved.source_id == source_id))
             }) {
                 Ok(Some(saved)) => saved,
                 Ok(None) => {
@@ -66,24 +66,24 @@ impl AppController {
                     return;
                 }
             };
-            controller.forget_source_sync(&saved.source.id);
+            controller.forget_source_sync(&saved.source_id);
             let result = store.with_store(|store| {
-                store.clear_library_cache(&saved.source.id)?;
+                store.clear_library_cache(&saved.source_id)?;
                 Ok(())
             });
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.source.id) {
-                warn!(%error, source_id = %saved.source.id, "failed to clear source cover cache");
+            if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+                warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
-            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source.id) {
-                warn!(%error, source_id = %saved.source.id, "failed to clear source waveform cache");
+            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
+                warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
             let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::CacheCleared));
             emit_snapshot(&store, &events);
-            if sync_target_is_current(&store, &saved.source.id) {
+            if sync_target_is_current(&store, &saved.source_id) {
                 controller.refresh_source_freshness();
             }
         });

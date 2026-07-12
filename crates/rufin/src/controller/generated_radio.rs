@@ -2,21 +2,19 @@ mod local_cache;
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::thread;
 use std::time::Instant;
 
-use domain::{
-    Album, Artist, GeneratedTrackSeed, GeneratedTrackStrategy, GeneratedTracksRequest, Genre,
-    Playlist, SourceId, Track, TrackId,
-};
-use library::SavedSource;
+use library::StoredSource;
+use library::{Album, Artist, Genre, Playlist, SourceId, Track, TrackId};
+use playback::{Placement, Provenance};
+use sources::{GeneratedTrackSeed, GeneratedTrackStrategy, GeneratedTracksRequest};
 use tracing::info;
 
 use super::{
     AppController, ControllerEvent, RandomPlayAction, load_settings_from_store,
-    source_tracks::{prepare_cached_tracks, prepare_source_tracks},
+    source_tracks::hydrate_source_tracks,
 };
-use crate::sources::{
+use crate::source_setup::{
     GeneratedTrackExecutor, GeneratedTracks, current_active_source, selected_active_source,
 };
 
@@ -26,10 +24,9 @@ pub(in crate::controller) use local_cache::spread_radio_tracks;
 const GENERATED_RADIO_ITEM_COUNT: usize = 20;
 
 pub(crate) fn cached_generated_track_executor(source_id: SourceId) -> GeneratedTrackExecutor {
-    Arc::new(move |store, _runtime, saved, settings, seed, limit| {
+    Arc::new(move |store, _runtime, _saved, _settings, seed, limit| {
         let mut tracks = local_generated_tracks_from_cache(store, &source_id, seed, limit)?;
         dedupe_tracks(&mut tracks);
-        prepare_cached_tracks(store, saved, settings, &mut tracks)?;
         Ok(tracks)
     })
 }
@@ -38,7 +35,7 @@ pub(crate) fn native_generated_track_executor(
     executor: GeneratedTracks,
     strategy: GeneratedTrackStrategy,
 ) -> GeneratedTrackExecutor {
-    Arc::new(move |store, runtime, saved, settings, seed, limit| {
+    Arc::new(move |store, runtime, saved, _settings, seed, limit| {
         let mut tracks = runtime
             .block_on(executor.generated_tracks(GeneratedTracksRequest {
                 seed,
@@ -47,7 +44,7 @@ pub(crate) fn native_generated_track_executor(
             }))
             .map_err(|error| error.to_string())?;
         dedupe_tracks(&mut tracks);
-        prepare_source_tracks(store, saved, settings, &mut tracks)?;
+        hydrate_source_tracks(store, &saved.source_id, &mut tracks)?;
         Ok(tracks)
     })
 }
@@ -61,7 +58,7 @@ struct GeneratedRadioRequest {
 }
 
 impl AppController {
-    pub fn manual_radio_supported(&self, kind: domain::GeneratedTrackSeedKind) -> bool {
+    pub fn manual_radio_supported(&self, kind: sources::GeneratedTrackSeedKind) -> bool {
         current_active_source(&self.active_source)
             .is_some_and(|active| active.manual_radio.seed_domain.contains(&kind))
     }
@@ -211,7 +208,18 @@ impl AppController {
     }
 
     fn play_generated_radio(&self, request: GeneratedRadioRequest) {
-        let generation = self.next_play_activation_generation();
+        let placement = match request.action {
+            RandomPlayAction::PlayNow => Placement::Replace { anchor_index: 0 },
+            RandomPlayAction::PlayNext => Placement::AfterCurrent,
+            RandomPlayAction::AddLast => Placement::End,
+        };
+        let reservation = match self.reserve_queue_materialization(placement) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.emit_generated_radio_error(error);
+                return;
+            }
+        };
         let controller = self.clone();
         let seed_kind = generated_seed_kind(&request.seed);
         let started = Instant::now();
@@ -220,44 +228,57 @@ impl AppController {
             limit = request.limit,
             "started generated radio load"
         );
-        thread::spawn(
-            move || match controller.generated_tracks_for_active_source(&request) {
+        let rejected = reservation.clone();
+        if let Err(error) = self.submit_playback_materialization(move || {
+            match controller.generated_tracks_for_source(
+                reservation.source_id(),
+                &request,
+                reservation.current_track_id(),
+            ) {
+                Ok(tracks) if tracks.is_empty() => controller.reject_queue_materialization(
+                    reservation,
+                    "No matching radio tracks were found.",
+                ),
                 Ok(tracks) => {
-                    if controller.play_activation_generation_matches(generation) {
-                        info!(
-                            seed_kind,
-                            tracks = tracks.len(),
-                            elapsed_ms = started.elapsed().as_millis() as u64,
-                            "loaded generated radio tracks"
-                        );
-                        controller.apply_generated_radio(request.action, tracks);
+                    info!(
+                        seed_kind,
+                        tracks = tracks.len(),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "loaded generated radio tracks"
+                    );
+                    if let Err(error) = controller.apply_reserved_tracks(
+                        reservation.clone(),
+                        tracks,
+                        Provenance::Radio,
+                    ) {
+                        controller.reject_queue_materialization(reservation, error);
                     }
                 }
-                Err(error) => {
-                    if controller.play_activation_generation_matches(generation) {
-                        controller.emit_generated_radio_error(error);
-                    }
-                }
-            },
-        );
+                Err(error) => controller.reject_queue_materialization(reservation, error),
+            }
+        }) {
+            self.reject_queue_materialization(rejected, error);
+        }
     }
 
-    fn generated_tracks_for_active_source(
+    fn generated_tracks_for_source(
         &self,
+        source_id: &SourceId,
         request: &GeneratedRadioRequest,
+        current_track_id: Option<&TrackId>,
     ) -> Result<Vec<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_source())? else {
-            return Err("No active music server is saved.".to_string());
-        };
+        let saved = self
+            .store
+            .with_store(|store| store.stored_source(source_id))?
+            .ok_or_else(|| "The reserved music source is no longer saved.".to_string())?;
         let mut tracks =
             self.generated_tracks_for_saved(&saved, request.seed.clone(), request.limit)?;
         if let Some(seed_track) = request.seed_track.as_ref() {
             let seed_id = seed_track.id.clone();
             tracks.retain(|track| track.id != seed_id);
-            if tracks.is_empty() {
-                return Ok(Vec::new());
+            if current_track_id != Some(&seed_id) {
+                tracks.insert(0, seed_track.clone());
             }
-            tracks.insert(0, seed_track.clone());
         }
         dedupe_tracks(&mut tracks);
         Ok(tracks)
@@ -265,62 +286,16 @@ impl AppController {
 
     pub(in crate::controller) fn generated_tracks_for_saved(
         &self,
-        saved: &SavedSource,
+        saved: &StoredSource,
         seed: GeneratedTrackSeed,
         limit: usize,
     ) -> Result<Vec<Track>, String> {
         let settings = load_settings_from_store(&self.store);
-        let active = selected_active_source(&self.active_source, &saved.source.id)?;
+        let active = selected_active_source(&self.active_source, &saved.source_id)?;
         if !active.manual_radio.accepts(&seed) {
             return Err("Radio is not available for this item from the active source.".to_string());
         }
         (active.manual_radio.executor)(&self.store, &self.runtime, saved, &settings, seed, limit)
-    }
-
-    fn apply_generated_radio(&self, action: RandomPlayAction, tracks: Vec<Track>) {
-        if tracks.is_empty() {
-            self.emit_generated_radio_error("No matching radio tracks were found.");
-            return;
-        }
-        match action {
-            RandomPlayAction::PlayNow => self.play_tracks_now(tracks),
-            RandomPlayAction::PlayNext => self.play_generated_radio_next(tracks),
-            RandomPlayAction::AddLast => self.append_generated_radio(tracks),
-        }
-    }
-
-    fn play_generated_radio_next(&self, tracks: Vec<Track>) {
-        let result = self.with_queue_mut(|queue| {
-            if queue.current().is_some() {
-                for track in tracks.iter().rev() {
-                    queue.play_next(track);
-                }
-            } else {
-                for track in &tracks {
-                    queue.append(track);
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            self.emit_generated_radio_error(error);
-            return;
-        }
-        self.persist_and_emit_queue();
-    }
-
-    fn append_generated_radio(&self, tracks: Vec<Track>) {
-        let result = self.with_queue_mut(|queue| {
-            for track in &tracks {
-                queue.append(track);
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            self.emit_generated_radio_error(error);
-            return;
-        }
-        self.persist_and_emit_queue();
     }
 
     fn emit_generated_radio_error(&self, error: impl Into<String>) {
@@ -341,13 +316,4 @@ fn generated_seed_kind(seed: &GeneratedTrackSeed) -> &'static str {
         GeneratedTrackSeed::Genre { .. } => "genre",
         GeneratedTrackSeed::Playlist(_) => "playlist",
     }
-}
-
-pub(in crate::controller) fn saved_server_for_generated_queue(
-    controller: &AppController,
-    source_id: &SourceId,
-) -> Result<Option<SavedSource>, String> {
-    controller
-        .store
-        .with_store(|store| store.saved_source(source_id))
 }

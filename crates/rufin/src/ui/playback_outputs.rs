@@ -1,5 +1,6 @@
 use super::*;
-use playback::{AudioOutput, available_audio_outputs};
+use playback::AudioOutput;
+use playback_gstreamer::available_audio_outputs;
 use std::rc::Rc;
 use std::sync::mpsc::TryRecvError;
 use std::thread;
@@ -192,11 +193,11 @@ fn playback_output_options(discovered: Vec<AudioOutput>) -> AudioOutputOptions {
     outputs
 }
 
-fn audio_output_index(outputs: &[(Option<String>, String)], selected: Option<&str>) -> usize {
-    outputs
-        .iter()
-        .position(|(id, _)| id.as_deref() == selected)
-        .unwrap_or_default()
+fn audio_output_index(
+    outputs: &[(Option<String>, String)],
+    selected: Option<&str>,
+) -> Option<usize> {
+    outputs.iter().position(|(id, _)| id.as_deref() == selected)
 }
 
 fn static_audio_output_title(id: &str) -> Option<String> {
@@ -229,7 +230,7 @@ fn populate_audio_output_rows(
         list.append(&audio_output_row(
             popover,
             shell,
-            index == selected_index,
+            Some(index) == selected_index,
             id,
             title,
             on_selected,
@@ -281,4 +282,17 @@ fn audio_output_row(
         row_popover.popdown();
     });
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_selected_output_does_not_mark_system_default_active() {
+        let outputs = default_audio_output_options();
+
+        assert_eq!(audio_output_index(&outputs, None), Some(0));
+        assert_eq!(audio_output_index(&outputs, Some("gst-device:gone")), None);
+    }
 }

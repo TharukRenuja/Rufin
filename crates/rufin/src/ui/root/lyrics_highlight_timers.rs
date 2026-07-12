@@ -10,7 +10,12 @@ impl Shell {
         }
     }
     pub(in crate::ui) fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
-        let playing = matches!(self.state.player.borrow().state, PlaybackState::Playing);
+        let playing = self
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .is_some_and(|player| matches!(player.transport.state, TransportStatus::Playing));
         if !playing {
             return;
         }

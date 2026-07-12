@@ -4,9 +4,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use domain::{EQUALIZER_BAND_COUNT, EqualizerSettings, QueueEntry};
+use artwork::CandidateSet;
 use gtk::glib;
-use playback::PlaybackState;
+use playback::{
+    EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackView, SequenceEntry, TransportStatus,
+};
 use tracing::debug;
 
 use crate::i18n::tr;
@@ -19,16 +21,12 @@ use crate::ui::{
 };
 
 use super::{
-    ArtworkTile, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, chrome, cover_artwork_id_for_key,
-    cover_request_id_for_key, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
+    ArtworkTile, Shell, chrome, icon_button, layout::MIN_USEFUL_MAIN_WIDTH,
     player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
 };
 
 const FULLSCREEN_PLAYER_OPEN_TRANSITION_MS: u32 = 420;
 const FULLSCREEN_PLAYER_CLOSE_TRANSITION_MS: u32 = 320;
-const FULLSCREEN_PLAYER_POST_OPEN_SETTLE_MS: u64 = 40;
-const FULLSCREEN_PLAYER_DEFERRED_COVER_MS: u64 =
-    FULLSCREEN_PLAYER_OPEN_TRANSITION_MS as u64 + FULLSCREEN_PLAYER_POST_OPEN_SETTLE_MS;
 const FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
@@ -66,7 +64,6 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) hero_handle: gtk::WindowHandle,
     pub(super) hero: gtk::Box,
     pub(super) cover: ArtworkTile,
-    pub(super) cover_key: RefCell<Option<String>>,
     pub(super) title: gtk::Label,
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
@@ -226,7 +223,6 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         hero_handle,
         hero,
         cover,
-        cover_key: RefCell::new(None),
         title,
         artist,
         album,
@@ -1114,22 +1110,25 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
 
 impl Shell {
     pub(super) fn open_fullscreen_player(self: &Rc<Self>) {
-        if self.state.player.borrow().current.is_none() {
+        let Some(player) = self.state.player.borrow().clone() else {
+            return;
+        };
+        if player.transport.current.is_none() {
             return;
         }
         self.state.fullscreen_player_visible.set(true);
         self.animate_fullscreen_player(true);
-        let player = self.state.player.borrow().clone();
         self.update_fullscreen_player_text_fast(&player);
         let text_shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
-            if text_shell.state.fullscreen_player_visible.get() {
-                let player = text_shell.state.player.borrow().clone();
-                text_shell.update_fullscreen_player_text(&player);
+            if text_shell.state.fullscreen_player_visible.get()
+                && let Some(player) = text_shell.state.player.borrow().as_ref()
+            {
+                text_shell.update_fullscreen_player_text(player);
             }
         });
         self.apply_fullscreen_responsive_layout();
-        self.update_fullscreen_player_cover_fast(&player);
+        self.update_fullscreen_player_cover(&player);
         let resize_shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
             if resize_shell.state.fullscreen_player_visible.get() {
@@ -1142,16 +1141,6 @@ impl Shell {
             move || {
                 if resize_shell.state.fullscreen_player_visible.get() {
                     resize_shell.refresh_fullscreen_player_layout();
-                }
-            },
-        );
-        let cover_shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_COVER_MS),
-            move || {
-                if cover_shell.state.fullscreen_player_visible.get() {
-                    let player = cover_shell.state.player.borrow().clone();
-                    cover_shell.update_fullscreen_player_cover(&player);
                 }
             },
         );
@@ -1212,7 +1201,10 @@ impl Shell {
         if !self.state.fullscreen_player_visible.get() {
             return;
         }
-        let player = self.state.player.borrow().clone();
+        let Some(player) = self.state.player.borrow().clone() else {
+            self.close_fullscreen_player();
+            return;
+        };
         self.update_fullscreen_player_text(&player);
         self.apply_fullscreen_responsive_layout();
         self.update_fullscreen_player_cover(&player);
@@ -1417,10 +1409,12 @@ impl Shell {
     pub(in crate::ui) fn sync_fullscreen_visualizer_state(self: &Rc<Self>) {
         let active = self.state.fullscreen_player_visible.get()
             && self.fullscreen_player.stack.visible_child_name().as_deref() == Some("visualizer")
-            && matches!(
-                self.state.player.borrow().state,
-                PlaybackState::Playing | PlaybackState::Buffering
-            );
+            && self.state.player.borrow().as_ref().is_some_and(|player| {
+                matches!(
+                    player.transport.state,
+                    TransportStatus::Playing | TransportStatus::Buffering
+                )
+            });
         let changed = self.fullscreen_player.visualizer_active.replace(active) != active;
         if active {
             self.controller.set_visualizer_enabled(true);
@@ -1510,239 +1504,84 @@ impl Shell {
             .refocus_highlight(lyrics.as_ref(), self.current_position_millis());
     }
 
-    fn update_fullscreen_player_cover(
-        self: &Rc<Self>,
-        player: &crate::controller::PlaybackSnapshot,
-    ) {
+    fn update_fullscreen_player_cover(self: &Rc<Self>, player: &PlaybackView) {
         let cover_size = self.fullscreen_player_cover_size();
         self.fullscreen_player.cover.set_square_size(cover_size);
         let cover_seed = player
+            .transport
             .current
             .as_ref()
-            .map(|entry| entry.duration_seconds)
+            .map(|entry| entry.track.duration_seconds)
             .unwrap_or(42);
         self.fullscreen_player.cover.set_seed(cover_seed);
 
-        if let Some(image_ref) = player
-            .current
-            .as_ref()
-            .and_then(|entry| entry.image_ref.as_ref())
-        {
+        if let Some(entry) = player.transport.current.as_ref() {
             let fetch_size = cover_fetch_size_for_display(cover_size);
-            if let Some(key) = self.current_playback_cover_cache_key(image_ref, fetch_size) {
-                let request_key = cover_request_id_for_key(&key, cover_size);
-                let pixbuf = self
-                    .cloned_decoded_cover(&key, cover_size)
-                    .map(|cover| {
-                        self.touch_visible_decoded_cover(&key);
-                        cover.pixbuf
-                    })
-                    .or_else(|| {
-                        self.fullscreen_cover_preview(image_ref, fetch_size).map(
-                            |(preview_key, pixbuf)| {
-                                self.touch_visible_decoded_cover(&preview_key);
-                                pixbuf
-                            },
-                        )
-                    });
-                let outcome = self.fullscreen_player.cover.bind_selected_cover(
-                    cover_seed,
-                    cover_artwork_id_for_key(&key, image_ref),
-                    request_key.clone(),
-                    pixbuf,
-                );
-                if outcome.request_needed {
-                    self.request_bound_cover_for_tile(
-                        &self.fullscreen_player.cover,
-                        key,
-                        image_ref.clone(),
-                        outcome.generation,
-                        cover_size,
-                        fetch_size,
-                    );
-                }
-                *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
-            } else {
-                self.clear_fullscreen_player_cover();
-            }
+            self.bind_playback_artwork_tile(
+                &self.fullscreen_player.cover,
+                &player.transport.source_id,
+                CandidateSet::track(&entry.track),
+                cover_seed,
+                cover_size,
+                fetch_size,
+            );
         } else {
             self.clear_fullscreen_player_cover();
         }
     }
 
-    fn update_fullscreen_player_cover_fast(
-        self: &Rc<Self>,
-        player: &crate::controller::PlaybackSnapshot,
-    ) {
-        let cover_size = self.fullscreen_player_cover_size();
-        self.fullscreen_player.cover.set_square_size(cover_size);
-        let cover_seed = player
-            .current
-            .as_ref()
-            .map(|entry| entry.duration_seconds)
-            .unwrap_or(42);
-        self.fullscreen_player.cover.set_seed(cover_seed);
-
-        if let Some(image_ref) = player
-            .current
-            .as_ref()
-            .and_then(|entry| entry.image_ref.as_ref())
-        {
-            let fetch_size = cover_fetch_size_for_display(cover_size);
-            if let Some(key) = self.current_playback_cover_cache_key(image_ref, fetch_size) {
-                let request_key = cover_request_id_for_key(&key, cover_size);
-                let pixbuf = self
-                    .cloned_decoded_cover(&key, cover_size)
-                    .map(|cover| cover.pixbuf)
-                    .or_else(|| {
-                        self.fullscreen_cover_preview(image_ref, fetch_size)
-                            .map(|(_, pixbuf)| pixbuf)
-                    });
-                self.fullscreen_player.cover.bind_selected_cover(
-                    cover_seed,
-                    cover_artwork_id_for_key(&key, image_ref),
-                    request_key.clone(),
-                    pixbuf,
-                );
-                *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
-            } else {
-                self.clear_fullscreen_player_cover();
-            }
-        } else {
-            self.clear_fullscreen_player_cover();
-        }
+    fn update_fullscreen_player_text_fast(&self, player: &PlaybackView) {
+        self.update_fullscreen_player_labels(player);
     }
 
-    fn fullscreen_cover_preview(
-        &self,
-        image_ref: &domain::ImageRef,
-        fetch_size: u32,
-    ) -> Option<(String, gdk_pixbuf::Pixbuf)> {
-        for size in fullscreen_cover_preview_sizes(fetch_size) {
-            let Some(key) = self.current_playback_cover_cache_key(image_ref, size) else {
-                continue;
-            };
-            if let Some(cover) = self.cloned_decoded_cover(&key, 1) {
-                return Some((key, cover.pixbuf));
-            }
-        }
-        None
+    fn update_fullscreen_player_text(&self, player: &PlaybackView) {
+        self.update_fullscreen_player_labels(player);
     }
 
-    fn update_fullscreen_player_text_fast(&self, player: &crate::controller::PlaybackSnapshot) {
-        self.update_fullscreen_player_labels(player, false);
-    }
-
-    fn update_fullscreen_player_text(&self, player: &crate::controller::PlaybackSnapshot) {
-        self.update_fullscreen_player_labels(player, true);
-    }
-
-    fn update_fullscreen_player_labels(
-        &self,
-        player: &crate::controller::PlaybackSnapshot,
-        allow_source_lookup: bool,
-    ) {
+    fn update_fullscreen_player_labels(&self, player: &PlaybackView) {
         let title = player
+            .transport
             .current
             .as_ref()
-            .map(|entry| entry.title.as_str())
+            .map(|entry| entry.track.title.as_str())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| tr("Nothing playing"));
         let artist = player
+            .transport
             .current
             .as_ref()
-            .map(|entry| entry.artist.as_str())
+            .map(|entry| entry.track.artist.as_str())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| tr("Queue a track to begin"));
         let album = player
+            .transport
             .current
             .as_ref()
-            .map(|entry| entry.album.as_str())
+            .map(|entry| entry.track.album.as_str())
             .unwrap_or("");
         self.fullscreen_player.title.set_text(&title);
         self.fullscreen_player.artist.set_text(&artist);
         self.fullscreen_player.album.set_text(album);
         self.fullscreen_player
             .title
-            .set_sensitive(player.current.is_some());
+            .set_sensitive(player.transport.current.is_some());
         self.fullscreen_player.artist.set_sensitive(
             player
+                .transport
                 .current
                 .as_ref()
-                .is_some_and(|entry| !entry.artist.is_empty()),
+                .is_some_and(|entry| !entry.track.artist.is_empty()),
         );
         self.fullscreen_player.album.set_sensitive(
             player
+                .transport
                 .current
                 .as_ref()
-                .is_some_and(|entry| !entry.album.is_empty()),
+                .is_some_and(|entry| !entry.track.album.is_empty()),
         );
-        let parts = if allow_source_lookup {
-            self.fullscreen_player_meta_parts(player)
-        } else {
-            fullscreen_player_fast_meta_parts(player.current.as_ref())
-        };
+        let parts = fullscreen_player_fast_meta_parts(player.transport.current.as_deref());
         update_fullscreen_meta_row(&self.fullscreen_player.meta, &parts);
         self.fullscreen_player.meta.set_visible(!parts.is_empty());
-    }
-
-    fn fullscreen_player_meta_parts(
-        &self,
-        player: &crate::controller::PlaybackSnapshot,
-    ) -> Vec<String> {
-        let source_label = player
-            .current
-            .as_ref()
-            .and_then(|entry| self.current_track_source_label(entry));
-        fullscreen_player_entry_meta_parts(player.current.as_ref(), source_label.as_deref())
-    }
-
-    fn current_track_source_label(&self, entry: &QueueEntry) -> Option<String> {
-        if let Some(source) = queue_entry_source_label(entry) {
-            return Some(source);
-        }
-        if let Some(source) = self
-            .controller
-            .cached_track_source_format(&entry.track_id)
-            .as_deref()
-            .and_then(audio_source_label_from_format)
-        {
-            return Some(source);
-        }
-        if let Some(source) = self
-            .controller
-            .cached_track_local_path(&entry.track_id)
-            .as_deref()
-            .and_then(audio_source_label_from_path)
-        {
-            return Some(source);
-        }
-
-        let library = self.state.library.borrow();
-        library
-            .tracks
-            .iter()
-            .chain(library.favorites.iter())
-            .chain(library.search.tracks.iter())
-            .chain(
-                library
-                    .home_sections
-                    .iter()
-                    .flat_map(|section| section.tracks.iter()),
-            )
-            .find(|track| track.id == entry.track_id)
-            .and_then(|track| {
-                track
-                    .source_format
-                    .as_deref()
-                    .and_then(audio_source_label_from_format)
-                    .or_else(|| {
-                        track
-                            .local_path
-                            .as_deref()
-                            .and_then(audio_source_label_from_path)
-                    })
-            })
     }
 
     fn fullscreen_player_cover_size(&self) -> i32 {
@@ -1755,8 +1594,7 @@ impl Shell {
     }
 
     fn clear_fullscreen_player_cover(&self) {
-        self.fullscreen_player.cover.clear_image();
-        *self.fullscreen_player.cover_key.borrow_mut() = None;
+        self.clear_artwork_tile(&self.fullscreen_player.cover);
     }
 
     fn animate_fullscreen_player(self: &Rc<Self>, opening: bool) {
@@ -1881,27 +1719,29 @@ fn update_fullscreen_meta_row(row: &gtk::FlowBox, parts: &[String]) {
 }
 
 fn fullscreen_player_entry_meta_parts(
-    entry: Option<&QueueEntry>,
+    entry: Option<&SequenceEntry>,
     source_label: Option<&str>,
 ) -> Vec<String> {
     let Some(entry) = entry else {
         return Vec::new();
     };
-    fullscreen_player_meta_parts(entry.year, source_label)
+    fullscreen_player_meta_parts(entry.track.year, source_label)
 }
 
-fn fullscreen_player_fast_meta_parts(entry: Option<&QueueEntry>) -> Vec<String> {
+fn fullscreen_player_fast_meta_parts(entry: Option<&SequenceEntry>) -> Vec<String> {
     let source_label = entry.and_then(queue_entry_source_label);
     fullscreen_player_entry_meta_parts(entry, source_label.as_deref())
 }
 
-fn queue_entry_source_label(entry: &QueueEntry) -> Option<String> {
+fn queue_entry_source_label(entry: &SequenceEntry) -> Option<String> {
     entry
+        .track
         .source_format
         .as_deref()
         .and_then(audio_source_label_from_format)
         .or_else(|| {
             entry
+                .track
                 .local_path
                 .as_deref()
                 .and_then(audio_source_label_from_path)
@@ -1945,12 +1785,6 @@ fn audio_source_label_from_format(value: &str) -> Option<String> {
     Some(normalized)
 }
 
-fn fullscreen_cover_preview_sizes(fetch_size: u32) -> Vec<u32> {
-    let mut sizes = vec![GRID_COVER_SIZE, THUMB_COVER_SIZE];
-    sizes.retain(|size| *size < fetch_size);
-    sizes
-}
-
 pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
     let width_limit = (width - FULLSCREEN_PLAYER_HORIZONTAL_RESERVED).max(1);
     let height_limit = (height - FULLSCREEN_PLAYER_VERTICAL_RESERVED).max(1);
@@ -1971,8 +1805,9 @@ fn fullscreen_equalizer_compact_for(width: i32, height: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::super::equalizer::equalizer_presets;
+    use super::super::shell_tests::{test_image_ref, test_sequence_entry};
     use super::fullscreen_artwork_size_for;
-    use domain::{EQUALIZER_BAND_COUNT, QueueEntry, QueueEntryId, TrackId};
+    use playback::{EQUALIZER_BAND_COUNT, SequenceEntry};
 
     #[test]
     fn fullscreen_stay_windows() {
@@ -2015,31 +1850,23 @@ mod tests {
     #[test]
     fn fullscreen_initial_meta_uses_queue_entry_source() {
         let mut entry = queue_entry();
-        entry.source_format = Some("audio/mpeg".to_string());
+        entry.track.source_format = Some("audio/mpeg".to_string());
         assert_eq!(
             super::fullscreen_player_fast_meta_parts(Some(&entry)),
             vec!["MP3".to_string(), "2026".to_string()]
         );
 
-        entry.source_format = None;
-        entry.local_path = Some("/music/album/track.flac?token=redacted".to_string());
+        entry.track.source_format = None;
+        entry.track.local_path = Some("/music/album/track.flac?token=redacted".to_string());
         assert_eq!(
             super::fullscreen_player_fast_meta_parts(Some(&entry)),
             vec!["FLAC".to_string(), "2026".to_string()]
         );
 
-        entry.local_path = None;
+        entry.track.local_path = None;
         assert_eq!(
             super::fullscreen_player_fast_meta_parts(Some(&entry)),
             vec!["2026".to_string()]
-        );
-    }
-
-    #[test]
-    fn fullscreen_open_defers_full_cover_until_after_animation() {
-        assert!(
-            super::FULLSCREEN_PLAYER_DEFERRED_COVER_MS
-                > u64::from(super::FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)
         );
     }
 
@@ -2110,22 +1937,9 @@ mod tests {
         assert_eq!(super::positive_min([900, 420, 760]), 420);
     }
 
-    fn queue_entry() -> QueueEntry {
-        QueueEntry {
-            id: QueueEntryId::new("queue:test"),
-            track_id: TrackId::fake(1),
-            album_id: None,
-            title: "Track".to_string(),
-            artist: "Artist".to_string(),
-            artist_id: None,
-            album: "Album".to_string(),
-            year: 2026,
-            duration_seconds: 180,
-            favorite: false,
-            image_ref: None,
-            local_path: None,
-            source_format: None,
-            origin: None,
-        }
+    fn queue_entry() -> SequenceEntry {
+        let mut entry = test_sequence_entry("Track", test_image_ref("fullscreen"));
+        entry.track.image_ref = None;
+        entry
     }
 }

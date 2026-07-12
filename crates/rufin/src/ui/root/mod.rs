@@ -4,8 +4,6 @@ mod artist;
 mod cards;
 #[path = "../chrome.rs"]
 mod chrome;
-#[path = "../discord.rs"]
-mod discord;
 #[path = "../equalizer.rs"]
 mod equalizer;
 #[path = "../favorites.rs"]
@@ -61,32 +59,32 @@ mod style_contract;
 #[cfg(unix)]
 mod tray;
 
+use crate::StoredSettings;
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibraryCacheState, LibraryCommitUpdate,
-    LibrarySnapshot, LyricsSearchResult, PlaybackSnapshot, SearchRequestKey, ServerDiscoveryStatus,
-    SourceNotice, grouped_cover_refs_for_items, smart_playlist_definition_fingerprint,
-    track_cover_refs_for_items,
+    LibrarySnapshot, SearchRequestKey, ServerDiscoveryStatus, SourceNotice, WaveformProjection,
+    smart_playlist_definition_fingerprint,
 };
-use crate::external_metadata;
 use crate::i18n::{self, tr, trn_with};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
-use crate::sources::resolve_source_registration;
-use ::library::{CachedGenreDetail, CachedMoodDetail, LibraryDelta, image_cache_key};
+use crate::source_setup::resolve_source_registration;
+use ::library::play_context::{ArtistTrackScope, PlayContextDescriptor, PlaylistSort};
+use ::library::{
+    Album, AlbumId, Artist, ArtistId, FavoriteItemId, FolderDetail, Genre, HomeSection,
+    HomeSectionKind, MusicFolderId, Playlist, PlaylistEntry, PlaylistId, SearchResults,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortField, SourceId, Track, TrackId,
+};
+use ::library::{CachedGenreDetail, LibraryDelta};
 use adw::prelude::*;
+use artwork::CandidateSet;
 use chrome::{build_content_chrome, build_main_area, window_drag_handle_with_child};
-use discord::DiscordPresence;
 use domain::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
-    DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
-    HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, LibrarySourceSelection, Mood, MusicFolderId, PlaySourceDescriptor,
-    Playlist, PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode,
-    Route, RouteStack, SearchKind, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
-    SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, SourceId,
-    SourceIdentity, SourcePlaylistOperation, Track, TrackId, TrackSortKey, TrackTableSettings,
-    format_duration, sanitized_window_size,
+    DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, FolderPathItem, LibraryLayout, LibraryListKey,
+    LibraryListSettings, LibrarySourceSelection, RightSidebarMode, Route, RouteStack, SearchKind,
+    TrackSortKey, TrackTableSettings, format_duration, sanitized_window_size,
 };
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, apply_search_favorite_change,
@@ -99,6 +97,7 @@ use fullscreen_player::{
 };
 use gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
 use gtk::gdk::prelude::GdkCairoContextExt;
+use sources::{SourceIdentity, SourcePlaylistOperation};
 
 use gtk::gio;
 use gtk::glib;
@@ -116,16 +115,15 @@ pub(crate) use login::{
     SourceSetupFlow, new_credential_source_setup_flow, new_jellyfin_source_setup_flow,
     new_local_source_setup_flow,
 };
+use metadata::{ExternalLyricsProvider, Lyrics, LyricsSearchResult, LyricsSource};
 #[cfg(unix)]
 use mpris::install_mpris;
-#[cfg(unix)]
-use mpris_server::Player as MprisPlayer;
 use navigation::{
     build_compact_navigation, build_normal_navigation, rebuild_navigation,
     update_navigation_selection,
 };
 use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
-use playback::PlaybackState;
+use playback::{PlaybackView, QueuePage, QueuePageQuery, TransportStatus};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use popup::present_light_dismiss_dialog;
 use preferences::{
@@ -135,10 +133,9 @@ use preferences::{
 use queue::connect_queue_panel_controls;
 use release_kind::album_release_kind_label;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
-use source::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use source_selector::{SourceSelector, build_source_selector};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -260,11 +257,7 @@ mod startup_reveal;
 mod shell_tests;
 
 pub(in crate::ui) use build::*;
-pub(in crate::ui::root) use cover::*;
-pub(in crate::ui) use cover::{
-    CoverBinding, CoverDecodeJob, DecodedCover, DecodedCoverOrderEntry, cover_artwork_id_for_key,
-    cover_request_id_for_key,
-};
+pub(in crate::ui) use cover::CoverBinding;
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use detail_showcase::*;
 pub(in crate::ui) use equalizer::{
@@ -278,7 +271,7 @@ pub(in crate::ui) use home_visible_sections::render_home_section_page_model;
 pub(in crate::ui) use layout_rendering::*;
 pub(in crate::ui) use library::{TrackTableSelection, TrackTableSelectionHandle};
 
-type PendingQueueSelection = Rc<dyn Fn(&QueueSnapshot)>;
+type PendingQueueSelection = Rc<dyn Fn(&QueuePage)>;
 
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
@@ -292,23 +285,10 @@ pub(in crate::ui) const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 pub(in crate::ui) const GRID_COVER_SIZE: u32 = 256;
 pub(in crate::ui) const DETAIL_COVER_SIZE: u32 = 512;
 pub(in crate::ui) const THUMB_COVER_SIZE: u32 = 96;
-pub(in crate::ui) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct PlaybackArtworkPath {
-    key: String,
     path: PathBuf,
 }
-pub(in crate::ui) const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
-pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 256 * 1024 * 1024;
-pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;
-pub(in crate::ui) const COVER_LOOKUP_LIMIT: usize = 12;
-pub(in crate::ui) const COVER_WARM_INTERVAL_MS: u64 = 32;
-pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
-pub(in crate::ui) const COVER_VISIBLE_SCROLL_PAUSE_MS: u64 = 160;
-pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
-pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
-pub(in crate::ui) const COVER_DECODE_LIMIT: usize = 16;
-pub(in crate::ui) const SLOW_COVER_CALLBACK_MS: u64 = 100;
 pub(in crate::ui) const SLOW_ROUTE_PAGE_LOAD_MS: u64 = 100;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
@@ -316,14 +296,6 @@ pub(in crate::ui) const STARTUP_MAIN_LOOP_STALL_MONITOR_INTERVAL_MS: u64 = 100;
 pub(in crate::ui) const STARTUP_MAIN_LOOP_STALL_MONITOR_WINDOW_MS: u64 = 60_000;
 pub(in crate::ui) const STARTUP_MAIN_LOOP_STALL_LOG_MS: u64 = 100;
 pub(in crate::ui) const POST_REVEAL_MAIN_LOOP_STALL_WARN_MS: u64 = 1_000;
-pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
-pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
-pub(in crate::ui) const PRIME_TIMEOUT_MS: u64 = 3_000;
-pub(in crate::ui) const PRIME_POLL_MS: u64 = 33;
-pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;
-pub(in crate::ui) const HOME_COVER_LIMIT: usize = 4;
-pub(in crate::ui) const GRID_COVER_LIMIT: usize = 192;
-pub(in crate::ui) const WARM_SETTLE_MS: u64 = RESPONSIVE_RENDER_DELAY_MS * 5;
 pub(in crate::ui) const FAVORITE_ADD_ICON: &str = "rufin-favorite-add-symbolic";
 pub(in crate::ui) const FAVORITE_REMOVE_ICON: &str = "rufin-favorite-remove-symbolic";
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
@@ -415,23 +387,22 @@ impl LibraryLoad {
 
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
-    settings: RefCell<AppSettings>,
+    settings: RefCell<StoredSettings>,
     resolved_left_sidebar: Cell<ResolvedLeftSidebarMode>,
     resolved_right_sidebar: Cell<RightSidebarMode>,
     resolved_right_sidebar_width: Cell<i32>,
     main_content_width: Cell<i32>,
     library: RefCell<LibrarySnapshot>,
     track_index: RefCell<HashMap<TrackId, usize>>,
-    queue: RefCell<Option<QueueSnapshot>>,
-    now_playing_track_id: RefCell<Option<TrackId>>,
+    queue: RefCell<Option<QueuePage>>,
     current_route_track_selections: RefCell<Vec<TrackTableSelection>>,
     current_route_playlist_entry_selections: RefCell<Vec<PlaylistEntryTableSelection>>,
     pending_playlist_entry_selection: RefCell<Option<PendingQueueSelection>>,
-    player: RefCell<PlaybackSnapshot>,
+    player: RefCell<Option<PlaybackView>>,
+    waveform: RefCell<WaveformProjection>,
     lyrics: RefCell<Option<Lyrics>>,
-    lyrics_track_id: RefCell<Option<domain::TrackId>>,
-    lyrics_loading_track_id: RefCell<Option<domain::TrackId>>,
-    lyrics_auto_search_attempted: RefCell<HashSet<domain::TrackId>>,
+    lyrics_loading_media: RefCell<Option<playback::MediaKey>>,
+    lyrics_auto_search_attempted: RefCell<HashSet<playback::MediaKey>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     type_to_search: RefCell<Option<gtk::SearchEntry>>,
     context_playlist_picker: RefCell<Option<PlaylistPickerHandle>>,
@@ -444,23 +415,21 @@ pub(in crate::ui) struct AppState {
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
-    mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
-    #[cfg(unix)]
-    mpris_metadata_key: RefCell<Option<String>>,
-    #[cfg(unix)]
-    mpris_position_state: RefCell<Option<mpris::MprisPositionState>>,
-    #[cfg(unix)]
-    mpris_update_generation: Rc<Cell<u64>>,
+    mpris: Rc<mpris::MprisAdapter>,
     now_playing_native_notification_id: Cell<u32>,
+    now_playing_notification_run: Cell<Option<playback::RunId>>,
     #[cfg(unix)]
     tray_handle: RefCell<Option<tray::TrayHandle>>,
     #[cfg(unix)]
     tray_command_source: RefCell<Option<glib::SourceId>>,
-    discord_presence: RefCell<DiscordPresence>,
     updating_player_controls: Cell<bool>,
+    volume_persist_source: RefCell<Option<glib::SourceId>>,
     seek_preview_seconds: Cell<Option<u32>>,
     seek_generation: Cell<u64>,
     queue_filter: RefCell<String>,
+    queue_page_request: RefCell<Option<QueuePageQuery>>,
+    queue_search_source: RefCell<Option<glib::SourceId>>,
+    queue_scroll_programmatic: Cell<bool>,
     queue_render_queued: Cell<bool>,
     queue_sidebar_render_state: RefCell<Option<queue::QueuePanelModelState>>,
     queue_fullscreen_render_state: RefCell<Option<queue::QueuePanelModelState>>,
@@ -479,7 +448,6 @@ pub(in crate::ui) struct AppState {
     collection_grid_columns: Cell<usize>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
-    route_track_refs: RefCell<Vec<Option<ImageRef>>>,
     smart_playlists: RefCell<Vec<SmartPlaylist>>,
     smart_playlists_loaded: Cell<bool>,
     home_showcase_seed: Cell<u64>,
@@ -491,34 +459,14 @@ pub(in crate::ui) struct AppState {
     startup_route_content_prepared: Cell<bool>,
     library_load: RefCell<LibraryLoad>,
     startup_cover_prime_generation: Cell<u64>,
-    startup_cover_prime_pending: RefCell<HashSet<String>>,
-    first_run_cover_prime_generation: Cell<u64>,
-    first_run_cover_prime_pending: RefCell<HashSet<String>>,
-    cover_warm_token: Cell<u64>,
-    cover_warm_pending: RefCell<Option<(SourceId, u64)>>,
-    cover_warm_started: RefCell<Option<SourceId>>,
+    startup_cover_prime_pending: RefCell<HashSet<artwork::RequestId>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<ServerDiscoveryStatus>,
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
     add_server_dialog: RefCell<Option<AddServerDialogHandle>>,
     locale_bindings: RefCell<Vec<Box<dyn Fn()>>>,
-    cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
-    cover_unavailable: RefCell<HashSet<String>>,
-    cover_path_cache: RefCell<HashMap<String, PathBuf>>,
-    cover_path_lookups: cover::CoverPathLookups,
-    cover_fetches: RefCell<HashSet<String>>,
-    cover_visible_requests: cover::CoverVisibleRequests,
-    cover_decodes: RefCell<HashMap<String, cover::CoverDecodePriority>>,
-    cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
-    cover_warm_generation: Cell<u64>,
-    cover_warm_paused_until: Cell<Option<Instant>>,
-    cover_visible_paused_until: Cell<Option<Instant>>,
-    cover_decode_resume_queued: Cell<bool>,
-    decoded_covers: RefCell<HashMap<String, DecodedCover>>,
-    decoded_cover_order: RefCell<VecDeque<DecodedCoverOrderEntry>>,
-    decoded_cover_bytes: Cell<usize>,
-    decoded_cover_touch: Cell<u64>,
+    cover_bindings: RefCell<HashMap<artwork::RequestId, Vec<CoverBinding>>>,
     favorite_controls: FavoriteControls,
     pending_favorite_intents: RefCell<HashMap<FavoriteItemId, bool>>,
     folder_request_generation: Cell<u64>,
@@ -529,7 +477,7 @@ pub(in crate::ui) struct AppState {
 #[derive(Clone)]
 pub(in crate::ui) struct LyricsSearchDialog {
     dialog: adw::Dialog,
-    track_id: domain::TrackId,
+    media_key: playback::MediaKey,
     artist_entry: gtk::Entry,
     title_entry: gtk::Entry,
     search_debounce_source: Rc<RefCell<Option<glib::SourceId>>>,
@@ -543,8 +491,9 @@ pub(in crate::ui) struct ArtworkTile {
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     expects_image: Rc<Cell<bool>>,
-    artwork_id: Rc<RefCell<Option<String>>>,
-    request_key: Rc<RefCell<Option<String>>>,
+    artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
+    request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
+    artwork_request_id: Rc<Cell<Option<artwork::RequestId>>>,
     generation: Rc<Cell<u64>>,
 }
 #[derive(Clone)]
@@ -554,21 +503,16 @@ pub(in crate::ui) struct ArtworkTileWeak {
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     expects_image: Rc<Cell<bool>>,
-    artwork_id: Rc<RefCell<Option<String>>>,
-    request_key: Rc<RefCell<Option<String>>>,
+    artwork_id: Rc<RefCell<Option<artwork::ArtworkVisualIdentity>>>,
+    request_key: Rc<RefCell<Option<artwork::ArtworkRequestIdentity>>>,
+    artwork_request_id: Rc<Cell<Option<artwork::RequestId>>>,
     generation: Rc<Cell<u64>>,
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum ArtworkBindAction {
-    Request,
-    Replace,
-    Retain,
-    RetainAndRequest,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct ArtworkBindOutcome {
     pub(in crate::ui) generation: u64,
     pub(in crate::ui) request_needed: bool,
+    pub(in crate::ui) request_changed: bool,
 }
 #[derive(Clone, Copy)]
 pub(in crate::ui) enum HomeSectionContent {
@@ -587,7 +531,7 @@ pub(in crate::ui) struct HomeSectionView {
 }
 #[derive(Clone)]
 pub(in crate::ui) struct PrefetchedHomeSection {
-    source_id: domain::SourceId,
+    source_id: SourceId,
     section: HomeSection,
 }
 #[derive(Clone, Default)]
@@ -608,14 +552,14 @@ pub(in crate::ui) struct SearchRouteState {
 pub(in crate::ui) struct GroupedDetailData {
     kind_row: Option<gtk::Widget>,
     title: String,
-    artwork: crate::cover_art_policy::SelectedArtwork,
+    artwork: Vec<CandidateSet>,
     seed: u32,
     summary_items: Vec<(&'static str, String)>,
     actions: Option<gtk::Widget>,
     selection_handle: Option<TrackTableSelectionHandle>,
     tracks: Vec<Track>,
     table_context: &'static str,
-    source_descriptor: Option<PlaySourceDescriptor>,
+    source_descriptor: Option<PlayContextDescriptor>,
 }
 pub(crate) struct Shell {
     state: AppState,
@@ -665,18 +609,13 @@ pub(in crate::ui) fn track_index_for(tracks: &[Track]) -> HashMap<TrackId, usize
     index
 }
 
-pub(in crate::ui) fn queue_current_entry(queue: &QueueSnapshot) -> Option<&QueueEntry> {
-    queue
-        .current_index
-        .and_then(|index| queue.entries.get(index))
-}
-
 impl Shell {
     pub(in crate::ui) fn register_current_route_track_selection(
         &self,
         selection: TrackTableSelection,
     ) {
-        selection.select_now_playing_track(self.state.now_playing_track_id.borrow().as_ref());
+        let track_id = current_playback_track_id(&self.state.player.borrow());
+        selection.select_now_playing_track(track_id.as_ref());
         self.state
             .current_route_track_selections
             .borrow_mut()
@@ -687,7 +626,8 @@ impl Shell {
         &self,
         selection: PlaylistEntryTableSelection,
     ) {
-        selection.select_now_playing_track(self.state.now_playing_track_id.borrow().as_ref());
+        let track_id = current_playback_track_id(&self.state.player.borrow());
+        selection.select_now_playing_track(track_id.as_ref());
         self.state
             .current_route_playlist_entry_selections
             .borrow_mut()
@@ -695,7 +635,7 @@ impl Shell {
     }
 
     pub(in crate::ui) fn refresh_current_route_now_playing_selections(&self) {
-        let now_playing_track_id = self.state.now_playing_track_id.borrow();
+        let now_playing_track_id = current_playback_track_id(&self.state.player.borrow());
         for selection in self.state.current_route_track_selections.borrow().iter() {
             selection.select_now_playing_track(now_playing_track_id.as_ref());
         }
@@ -709,25 +649,11 @@ impl Shell {
         }
     }
 
-    pub(in crate::ui) fn apply_now_playing_track_id(&self, queue: Option<&QueueSnapshot>) {
-        let track_id = queue
-            .and_then(queue_current_entry)
-            .map(|entry| entry.track_id.clone());
-        if self.state.now_playing_track_id.borrow().as_ref() == track_id.as_ref() {
-            return;
-        }
-        *self.state.now_playing_track_id.borrow_mut() = track_id;
-        self.refresh_current_route_now_playing_selections();
-    }
-
     pub(in crate::ui) fn arm_playlist_entry_selection(&self, select: PendingQueueSelection) {
         *self.state.pending_playlist_entry_selection.borrow_mut() = Some(select);
     }
 
-    pub(in crate::ui) fn apply_pending_playlist_entry_selection(
-        &self,
-        queue: Option<&QueueSnapshot>,
-    ) {
+    pub(in crate::ui) fn apply_pending_playlist_entry_selection(&self, queue: Option<&QueuePage>) {
         let Some(select) = self
             .state
             .pending_playlist_entry_selection
@@ -771,6 +697,7 @@ impl Shell {
         *self.state.track_index.borrow_mut() = track_index;
         self.state.smart_playlists.borrow_mut().clear();
         self.state.smart_playlists_loaded.set(false);
+        self.sync_bottom_player_favorite();
     }
 
     pub(in crate::ui) fn rebuild_track_index(&self) {
@@ -796,7 +723,7 @@ pub fn build(app: &adw::Application) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
-    let (controller, events, library, queue, player) = match AppController::bootstrap() {
+    let (controller, events, library, playback) = match AppController::bootstrap() {
         Ok(bootstrapped) => bootstrapped,
         Err(error) => {
             error!(%error, "failed to start Rufin");
@@ -829,11 +756,9 @@ pub fn build(app: &adw::Application) {
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
     let track_index = track_index_for(&library.tracks);
 
-    let now_playing_track_id = queue
-        .as_ref()
-        .and_then(queue_current_entry)
-        .map(|entry| entry.track_id.clone());
-
+    let (player, queue) = playback
+        .map(|projection| (Some(projection.view), projection.queue_page))
+        .unwrap_or((None, None));
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         settings: RefCell::new(settings.clone()),
@@ -844,14 +769,13 @@ pub fn build(app: &adw::Application) {
         library: RefCell::new(library),
         track_index: RefCell::new(track_index),
         queue: RefCell::new(queue),
-        now_playing_track_id: RefCell::new(now_playing_track_id),
         current_route_track_selections: RefCell::new(Vec::new()),
         current_route_playlist_entry_selections: RefCell::new(Vec::new()),
         pending_playlist_entry_selection: RefCell::new(None),
         player: RefCell::new(player),
+        waveform: RefCell::new(WaveformProjection::default()),
         lyrics: RefCell::new(None),
-        lyrics_track_id: RefCell::new(None),
-        lyrics_loading_track_id: RefCell::new(None),
+        lyrics_loading_media: RefCell::new(None),
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
         type_to_search: RefCell::new(None),
@@ -865,23 +789,21 @@ pub fn build(app: &adw::Application) {
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]
-        mpris_player: RefCell::new(None),
-        #[cfg(unix)]
-        mpris_metadata_key: RefCell::new(None),
-        #[cfg(unix)]
-        mpris_position_state: RefCell::new(None),
-        #[cfg(unix)]
-        mpris_update_generation: Rc::new(Cell::new(0)),
+        mpris: Rc::new(mpris::MprisAdapter::new()),
         now_playing_native_notification_id: Cell::new(0),
+        now_playing_notification_run: Cell::new(None),
         #[cfg(unix)]
         tray_handle: RefCell::new(None),
         #[cfg(unix)]
         tray_command_source: RefCell::new(None),
-        discord_presence: RefCell::new(DiscordPresence::new()),
         updating_player_controls: Cell::new(false),
+        volume_persist_source: RefCell::new(None),
         seek_preview_seconds: Cell::new(None),
         seek_generation: Cell::new(0),
         queue_filter: RefCell::new(String::new()),
+        queue_page_request: RefCell::new(None),
+        queue_search_source: RefCell::new(None),
+        queue_scroll_programmatic: Cell::new(false),
         queue_render_queued: Cell::new(false),
         queue_sidebar_render_state: RefCell::new(None),
         queue_fullscreen_render_state: RefCell::new(None),
@@ -900,7 +822,6 @@ pub fn build(app: &adw::Application) {
         collection_grid_columns: Cell::new(0),
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
-        route_track_refs: RefCell::new(Vec::new()),
         smart_playlists: RefCell::new(Vec::new()),
         smart_playlists_loaded: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
@@ -913,11 +834,6 @@ pub fn build(app: &adw::Application) {
         library_load: RefCell::new(initial_load),
         startup_cover_prime_generation: Cell::new(0),
         startup_cover_prime_pending: RefCell::new(HashSet::new()),
-        first_run_cover_prime_generation: Cell::new(0),
-        first_run_cover_prime_pending: RefCell::new(HashSet::new()),
-        cover_warm_token: Cell::new(0),
-        cover_warm_pending: RefCell::new(None),
-        cover_warm_started: RefCell::new(None),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new(ServerDiscoveryStatus::Idle),
         server_discovery_running: Cell::new(false),
@@ -925,21 +841,6 @@ pub fn build(app: &adw::Application) {
         add_server_dialog: RefCell::new(None),
         locale_bindings: RefCell::new(Vec::new()),
         cover_bindings: RefCell::new(HashMap::new()),
-        cover_unavailable: RefCell::new(HashSet::new()),
-        cover_path_cache: RefCell::new(HashMap::new()),
-        cover_path_lookups: cover::CoverPathLookups::new(),
-        cover_fetches: RefCell::new(HashSet::new()),
-        cover_visible_requests: cover::CoverVisibleRequests::new(),
-        cover_decodes: RefCell::new(HashMap::new()),
-        cover_decode_queue: RefCell::new(VecDeque::new()),
-        cover_warm_generation: Cell::new(0),
-        cover_warm_paused_until: Cell::new(None),
-        cover_visible_paused_until: Cell::new(None),
-        cover_decode_resume_queued: Cell::new(false),
-        decoded_covers: RefCell::new(HashMap::new()),
-        decoded_cover_order: RefCell::new(VecDeque::new()),
-        decoded_cover_bytes: Cell::new(0),
-        decoded_cover_touch: Cell::new(0),
         favorite_controls: FavoriteControls::default(),
         pending_favorite_intents: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
@@ -1181,9 +1082,9 @@ pub fn build(app: &adw::Application) {
     }
     shell.render_queue_panel();
     shell.render_lyrics_panel();
+    shell.sync_bottom_player_favorite();
     shell.update_bottom_player();
     shell.update_fullscreen_player();
-    shell.update_discord_presence(&shell.state.player.borrow());
     shell.update_right_panel_button();
     shell.update_lyrics_panel_button();
     if !shell.state.lyrics_panel_visible.get() {

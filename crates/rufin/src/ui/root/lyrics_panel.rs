@@ -12,8 +12,8 @@ impl Shell {
     }
     pub(in crate::ui) fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.state.settings.borrow();
-        let current_track_id = current_playback_track_id(&self.state.player.borrow());
-        let has_current_track = current_track_id.is_some();
+        let current_media = current_playback_media_key(&self.state.player.borrow());
+        let has_current_track = current_media.is_some();
         let (search_label, search_enabled) = if settings.private_mode {
             (tr("Private mode is on"), false)
         } else if has_current_track {
@@ -23,12 +23,17 @@ impl Shell {
         };
         let lyrics = self.state.lyrics.borrow();
         let loading = lyrics_loading_matches_current(
-            current_track_id.as_ref(),
-            self.state.lyrics_loading_track_id.borrow().as_ref(),
+            current_media.as_ref(),
+            self.state.lyrics_loading_media.borrow().as_ref(),
             lyrics.as_ref(),
         );
-        let clear_auto_search_enabled =
-            auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref(), lyrics.as_ref());
+        let clear_auto_search_enabled = current_media.as_ref().is_some_and(|key| {
+            settings.metadata.can_suppress_auto_lyrics(
+                settings.private_mode,
+                &key.track_id,
+                lyrics.as_ref(),
+            )
+        });
         drop(settings);
         pane.set_search_action(&search_label, search_enabled);
         pane.set_clear_auto_search_action(
@@ -50,7 +55,16 @@ impl Shell {
             return;
         }
 
-        let Some(current) = self.state.player.borrow().current.clone() else {
+        let Some(current) = self
+            .state
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.transport.current.clone())
+        else {
+            return;
+        };
+        let Some(media_key) = current_playback_media_key(&self.state.player.borrow()) else {
             return;
         };
         if self.state.settings.borrow().private_mode {
@@ -86,13 +100,13 @@ impl Shell {
 
         let artist_entry = gtk::Entry::new();
         artist_entry.set_placeholder_text(Some(&tr("Artist")));
-        artist_entry.set_text(&current.artist);
+        artist_entry.set_text(&current.track.artist);
         artist_entry.set_hexpand(true);
         content.append(&artist_entry);
 
         let title_entry = gtk::Entry::new();
         title_entry.set_placeholder_text(Some(&tr("Song")));
-        title_entry.set_text(&current.title);
+        title_entry.set_text(&current.track.title);
         title_entry.set_hexpand(true);
         content.append(&title_entry);
 
@@ -118,7 +132,7 @@ impl Shell {
             .build();
         let search_dialog = LyricsSearchDialog {
             dialog: dialog.clone(),
-            track_id: current.track_id,
+            media_key,
             artist_entry: artist_entry.clone(),
             title_entry: title_entry.clone(),
             search_debounce_source: Rc::new(RefCell::new(None)),
@@ -157,7 +171,7 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_lyrics_search_results(
         self: &Rc<Self>,
-        track_id: domain::TrackId,
+        media_key: playback::MediaKey,
         artist_name: String,
         track_name: String,
         results: Vec<LyricsSearchResult>,
@@ -165,10 +179,10 @@ impl Shell {
         let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
             return;
         };
-        if dialog.track_id != track_id {
+        if dialog.media_key != media_key {
             debug!(
-                dialog_track_id = %dialog.track_id,
-                response_track_id = %track_id,
+                dialog_track_id = %dialog.media_key.track_id,
+                response_track_id = %media_key.track_id,
                 "ignored lyric search response for another track"
             );
             return;
@@ -204,12 +218,12 @@ impl Shell {
         dialog
             .status
             .set_text(&result_count_text(results.len() as u64));
-        self.render_lyrics_search_result_rows(&dialog, &track_id, &results);
+        self.render_lyrics_search_result_rows(&dialog, &media_key, &results);
     }
     fn render_lyrics_search_result_rows(
         self: &Rc<Self>,
         dialog: &LyricsSearchDialog,
-        track_id: &domain::TrackId,
+        media_key: &playback::MediaKey,
         results: &[LyricsSearchResult],
     ) {
         let mut current_provider = None;
@@ -239,11 +253,11 @@ impl Shell {
 
             if has_content {
                 let preview_shell = Rc::clone(self);
-                let preview_track_id = track_id.clone();
+                let preview_media = media_key.clone();
                 let preview_result = result.clone();
                 row.connect_activated(move |_| {
                     preview_shell.controller.preview_lyrics_search_result(
-                        preview_track_id.clone(),
+                        preview_media.clone(),
                         preview_result.clone(),
                     );
                     if let Some(dialog) = preview_shell.state.lyrics_search_dialog.borrow().as_ref()
@@ -253,11 +267,11 @@ impl Shell {
                 });
             }
             let save_shell = Rc::clone(self);
-            let save_track_id = track_id.clone();
+            let save_media = media_key.clone();
             let save_result = result.clone();
             button.connect_clicked(move |_| {
                 let shell = Rc::clone(&save_shell);
-                let track_id = save_track_id.clone();
+                let media_key = save_media.clone();
                 let result = save_result.clone();
                 gtk::glib::spawn_future_local(async move {
                     let dialog = gtk::FileDialog::builder()
@@ -275,7 +289,7 @@ impl Shell {
                     }
                     shell
                         .controller
-                        .save_lyrics_search_result(track_id, result, path);
+                        .save_lyrics_search_result(media_key, result, path);
                 });
             });
             dialog.list.append(&row);
@@ -283,7 +297,7 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_lyrics_search_failed(
         self: &Rc<Self>,
-        track_id: domain::TrackId,
+        media_key: playback::MediaKey,
         artist_name: String,
         track_name: String,
         error: String,
@@ -291,10 +305,10 @@ impl Shell {
         let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
             return;
         };
-        if dialog.track_id != track_id {
+        if dialog.media_key != media_key {
             debug!(
-                dialog_track_id = %dialog.track_id,
-                response_track_id = %track_id,
+                dialog_track_id = %dialog.media_key.track_id,
+                response_track_id = %media_key.track_id,
                 "ignored lyric search failure for another track"
             );
             return;
@@ -355,11 +369,15 @@ impl Shell {
         clear_list_box(&dialog.list);
         dialog.status.set_text(&tr("Ready"));
     }
-    pub(in crate::ui) fn apply_lyrics_saved(self: &Rc<Self>, path: PathBuf, lyrics: Lyrics) {
-        let track_id = lyrics.track_id.clone();
-        self.apply_loaded_lyrics(Some(lyrics));
+    pub(in crate::ui) fn apply_lyrics_saved(
+        self: &Rc<Self>,
+        media_key: playback::MediaKey,
+        path: PathBuf,
+        lyrics: Lyrics,
+    ) {
+        self.apply_loaded_lyrics_for_media(media_key.clone(), Some(lyrics));
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref()
-            && dialog.track_id == track_id
+            && dialog.media_key == media_key
         {
             dialog
                 .status

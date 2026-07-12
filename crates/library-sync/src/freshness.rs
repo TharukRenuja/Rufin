@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use source::{
+use sources::{
     LibraryChange, LibraryChangeFeed, LibraryFreshnessProbe, LibraryProbeResult, SourceError,
 };
 
@@ -91,7 +91,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use source::{SourceObjectChanges, SourceResult};
+    use sources::{SourceObjectChanges, SourceResult};
 
     use super::*;
 

@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr, clippy::print_stdout, clippy::string_slice)]
+
 use std::env;
 use std::error::Error;
 

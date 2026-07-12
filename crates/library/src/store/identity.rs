@@ -168,9 +168,8 @@ fn delete_track_entity_rows_with_source(
     Ok(())
 }
 
-fn track_entity_tables() -> [(&'static str, &'static str); 6] {
+fn track_entity_tables() -> [(&'static str, &'static str); 5] {
     [
-        ("entity_content_refs", "entity_id"),
         ("entity_facts", "entity_id"),
         ("entity_grouping_keys", "entity_id"),
         ("entity_identity_keys", "entity_id"),
@@ -282,17 +281,6 @@ pub(super) fn upsert_album_entity_data_on_connection(
             album.id.as_str(),
             "is_compilation",
             if is_compilation { "true" } else { "false" },
-            "source",
-        )?;
-    }
-    if let Some(content_key) = image_ref_content_key(album.image_ref.as_ref()) {
-        upsert_content_ref_on_connection(
-            connection,
-            source_id,
-            "album",
-            album.id.as_str(),
-            "cover",
-            &content_key,
             "source",
         )?;
     }
@@ -486,17 +474,6 @@ pub(super) fn upsert_track_entity_data_on_connection(
             "musicbrainz:release_track",
             track_id,
             track.id.as_str(),
-            source,
-        )?;
-    }
-    if let Some(content_key) = image_ref_content_key(track.image_ref.as_ref()) {
-        upsert_content_ref_on_connection(
-            connection,
-            source_id,
-            "track",
-            track.id.as_str(),
-            "cover",
-            &content_key,
             source,
         )?;
     }
@@ -714,47 +691,6 @@ fn upsert_fact_on_connection(
         ],
     )?;
     Ok(())
-}
-
-fn upsert_content_ref_on_connection(
-    connection: &rusqlite::Connection,
-    source_id: &SourceId,
-    entity_kind: &str,
-    entity_id: &str,
-    content_kind: &str,
-    content_key: &str,
-    source: &str,
-) -> StoreResult<()> {
-    let Some(content_key) = clean_identity_value(Some(content_key)) else {
-        return Ok(());
-    };
-    connection.execute(
-        "
-        INSERT INTO entity_content_refs (
-            source_id, entity_kind, entity_id, content_kind, content_key, source, updated_at
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
-        ON CONFLICT(source_id, entity_kind, entity_id, content_kind, source) DO UPDATE SET
-            content_key = excluded.content_key,
-            updated_at = excluded.updated_at
-        ",
-        params![
-            source_id.as_str(),
-            entity_kind,
-            entity_id,
-            content_kind,
-            content_key,
-            source,
-        ],
-    )?;
-    Ok(())
-}
-
-fn image_ref_content_key(image_ref: Option<&ImageRef>) -> Option<String> {
-    let image_ref = image_ref?;
-    let item_id = clean_identity_value(Some(image_ref.item_id.as_str()))?;
-    let tag = image_ref.tag.as_deref().unwrap_or("");
-    Some(format!("{item_id}\u{1f}{tag}"))
 }
 
 fn clean_identity_value(value: Option<&str>) -> Option<&str> {

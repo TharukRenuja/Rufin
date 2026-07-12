@@ -5,9 +5,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use domain::SourceId;
-
-use library::LibraryDelta;
+use library::{LibraryDelta, SourceId};
 
 use crate::{Progress, ReconcileScope};
 
@@ -384,7 +382,7 @@ mod tests {
     }
 
     fn objects(ids: &[&str]) -> ReconcileScope {
-        ReconcileScope::objects(source::SourceObjectChanges::new(
+        ReconcileScope::objects(sources::SourceObjectChanges::new(
             ids.iter().map(|id| (*id).to_string()),
         ))
     }

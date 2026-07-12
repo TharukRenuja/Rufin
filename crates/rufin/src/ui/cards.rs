@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
+use ::library::{Album, FavoriteItemId};
 use adw::prelude::*;
-use domain::{Album, LibraryLayout, LibraryListKey, LibraryListSettings, Route};
-use source::FavoriteItemId;
+use artwork::CandidateSet;
+use domain::{LibraryLayout, LibraryListKey, LibraryListSettings, Route};
 
 use super::favorites::album_favorite_key;
 use super::layout::{
@@ -60,8 +61,8 @@ pub(super) fn album_cover_overlay(
     album_button.add_css_class("flat");
     constrain_cover_widget(&album_button, size);
     clip_cover(&album_button);
-    album_button.set_child(Some(&shell.cover_tile_for(
-        album.image_ref.as_ref(),
+    album_button.set_child(Some(&shell.cover_tile_for_candidates(
+        CandidateSet::album(album),
         album.color_seed,
         size,
         GRID_COVER_SIZE,

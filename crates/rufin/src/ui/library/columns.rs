@@ -48,13 +48,14 @@ pub(in crate::ui) fn playlist_column(
     shell: &Rc<Shell>,
     field: LibraryField,
 ) -> gtk::ColumnViewColumn {
+    let prefer_server_cover = shell.state.settings.borrow().prefer_server_playlist_covers;
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<Playlist, _, _>(
+        LibraryField::Image => artwork_column::<Playlist, _, _>(
             shell,
             "Image",
             column_width(LibraryField::Image),
-            |playlist| playlist.image_ref.clone(),
+            move |playlist| CandidateSet::playlist(playlist, prefer_server_cover),
             |playlist| stable_seed(playlist.id.as_str()),
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
@@ -71,11 +72,11 @@ pub(in crate::ui) fn smart_playlist_column(
 ) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<SmartPlaylist, _, _>(
+        LibraryField::Image => artwork_column::<SmartPlaylist, _, _>(
             shell,
             "Image",
             column_width(LibraryField::Image),
-            |playlist| playlist.image_ref.clone(),
+            CandidateSet::smart_playlist,
             |playlist| stable_seed(playlist.id.as_str()),
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
@@ -106,7 +107,6 @@ pub(in crate::ui) fn track_column_for_key(
             TrackMergedColumnValues {
                 title: |track: &Track| track.title.clone(),
                 subtitle: |track: &Track| track.artist.clone(),
-                image_ref: |track: &Track| track.image_ref.clone(),
                 seed: |track: &Track| stable_seed(track.id.as_str()),
             },
         ),
@@ -175,7 +175,10 @@ pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField
         LibraryField::PlayCount => play_count_column_width(),
         LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 82,
         LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 108,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 62,
+        LibraryField::Year
+        | LibraryField::DiscNumber
+        | LibraryField::TrackNumber
+        | LibraryField::Bpm => 62,
         LibraryField::Duration => 70,
         LibraryField::Image => column_width(LibraryField::Image),
         LibraryField::Favorite => 48,
@@ -200,7 +203,10 @@ fn track_list_column_width(field: LibraryField) -> i32 {
         LibraryField::Title | LibraryField::TitleMerged => 320,
         LibraryField::Album => 260,
         LibraryField::Artist | LibraryField::AlbumArtist | LibraryField::Genre => 220,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 70,
+        LibraryField::Year
+        | LibraryField::DiscNumber
+        | LibraryField::TrackNumber
+        | LibraryField::Bpm => 70,
         LibraryField::Duration => 90,
         LibraryField::Favorite => 76,
         _ => column_width(field),
@@ -389,9 +395,9 @@ pub(in crate::ui) fn album_image_column(
         let Some(cell) = album_image_cell(item) else {
             return;
         };
-        shell.bind_cover_tile_for(
+        shell.bind_artwork_tile(
             &cell.cover,
-            album.image_ref.as_ref(),
+            CandidateSet::album(&album),
             album.color_seed,
             48,
             THUMB_COVER_SIZE,
@@ -580,9 +586,9 @@ pub(in crate::ui) fn album_merged_column(
         let Some(cell) = album_merged_cell(item) else {
             return;
         };
-        shell.bind_cover_tile_for(
+        shell.bind_artwork_tile(
             &cell.cover,
-            album.image_ref.as_ref(),
+            CandidateSet::album(&album),
             album.color_seed,
             48,
             THUMB_COVER_SIZE,
@@ -624,21 +630,21 @@ pub(in crate::ui) fn album_merged_column(
     column
 }
 
-pub(in crate::ui) fn image_column<T, F, S>(
+pub(in crate::ui) fn artwork_column<T, F, S>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
-    image_ref: F,
+    candidates: F,
     seed: S,
 ) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
-    F: Fn(&T) -> Option<domain::ImageRef> + 'static,
+    F: Fn(&T) -> CandidateSet + 'static,
     S: Fn(&T) -> u32 + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
-    let image_ref = Rc::new(image_ref);
+    let candidates = Rc::new(candidates);
     let seed = Rc::new(seed);
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -651,8 +657,8 @@ where
             return;
         };
         let data = boxed.borrow::<T>();
-        item.set_child(Some(&shell.cover_tile_for(
-            image_ref(&data).as_ref(),
+        item.set_child(Some(&shell.cover_tile_for_candidates(
+            candidates(&data),
             seed(&data),
             48,
             THUMB_COVER_SIZE,
@@ -673,9 +679,8 @@ pub(in crate::ui) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewCo
         let Some(artist) = item_at_from_item::<Artist>(item) else {
             return;
         };
-        let image_ref = artist_cover_image_ref(&shell, &artist);
-        let cover = shell.cover_tile_for(
-            image_ref.as_ref(),
+        let cover = shell.cover_tile_for_candidates(
+            CandidateSet::artist(&artist),
             stable_seed(artist.id.as_str()),
             48,
             THUMB_COVER_SIZE,
@@ -869,9 +874,9 @@ pub(in crate::ui) fn track_image_column(
         let Some(cell) = track_image_cell(item) else {
             return;
         };
-        shell.bind_cover_tile_for(
+        shell.bind_artwork_tile(
             &cell.cover,
-            track.image_ref.as_ref(),
+            CandidateSet::track(&track),
             stable_seed(track.id.as_str()),
             48,
             THUMB_COVER_SIZE,
@@ -998,24 +1003,22 @@ where
     column
 }
 
-pub(in crate::ui) struct TrackMergedColumnValues<Title, Subtitle, Image, Seed> {
+pub(in crate::ui) struct TrackMergedColumnValues<Title, Subtitle, Seed> {
     pub(in crate::ui) title: Title,
     pub(in crate::ui) subtitle: Subtitle,
-    pub(in crate::ui) image_ref: Image,
     pub(in crate::ui) seed: Seed,
 }
 
-pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
+pub(in crate::ui) fn track_merged_column<Title, Subtitle, Seed>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
     selection: Option<TrackTableSelection>,
-    values: TrackMergedColumnValues<Title, Subtitle, Image, Seed>,
+    values: TrackMergedColumnValues<Title, Subtitle, Seed>,
 ) -> gtk::ColumnViewColumn
 where
     Title: Fn(&Track) -> String + 'static,
     Subtitle: Fn(&Track) -> String + 'static,
-    Image: Fn(&Track) -> Option<domain::ImageRef> + 'static,
     Seed: Fn(&Track) -> u32 + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
@@ -1023,12 +1026,10 @@ where
     let TrackMergedColumnValues {
         title: title_value,
         subtitle: subtitle_value,
-        image_ref,
         seed,
     } = values;
     let title_value = Rc::new(title_value);
     let subtitle_value = Rc::new(subtitle_value);
-    let image_ref = Rc::new(image_ref);
     let seed = Rc::new(seed);
 
     let setup_shell = Rc::clone(&shell);
@@ -1114,9 +1115,9 @@ where
         let Some(cell) = track_merged_cell(item) else {
             return;
         };
-        shell.bind_cover_tile_for(
+        shell.bind_artwork_tile(
             &cell.cover,
-            image_ref(&track).as_ref(),
+            CandidateSet::track(&track),
             seed(&track),
             48,
             THUMB_COVER_SIZE,
@@ -1187,7 +1188,7 @@ pub(in crate::ui) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         button.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Album(album.id.clone()),
+                library::FavoriteItemId::Album(album.id.clone()),
                 favorite,
                 Some(button),
             );
@@ -1217,7 +1218,7 @@ pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnVie
         button.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Artist(artist.id.clone()),
+                library::FavoriteItemId::Artist(artist.id.clone()),
                 favorite,
                 Some(button),
             );
@@ -1269,7 +1270,7 @@ pub(in crate::ui) fn track_favorite_column(
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Track(track.id),
+                library::FavoriteItemId::Track(track.id),
                 favorite,
                 Some(button),
             );

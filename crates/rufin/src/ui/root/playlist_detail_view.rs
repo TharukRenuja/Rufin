@@ -47,7 +47,7 @@ fn playlist_detail_from_loaded_tracks(
     cached_track_count: usize,
     tracks_by_id: &HashMap<TrackId, usize>,
     entry_keys: Vec<(String, TrackId)>,
-) -> Option<source::PlaylistDetail> {
+) -> Option<::library::PlaylistDetail> {
     if cached_track_count > tracks.len() {
         return None;
     }
@@ -62,7 +62,7 @@ fn playlist_detail_from_loaded_tracks(
         detail_tracks.push(track.clone());
         entries.push(PlaylistEntry { entry_id, track });
     }
-    Some(source::PlaylistDetail {
+    Some(::library::PlaylistDetail {
         playlist,
         tracks: detail_tracks,
         entries,
@@ -90,7 +90,7 @@ impl Shell {
         row.append(&kind);
         if let Some(playlist) = radio_playlist.filter(|_| {
             self.controller
-                .manual_radio_supported(domain::GeneratedTrackSeedKind::Playlist)
+                .manual_radio_supported(sources::GeneratedTrackSeedKind::Playlist)
         }) {
             let radio = detail_radio_button();
             let controller = self.controller.clone();
@@ -115,7 +115,7 @@ impl Shell {
         row
     }
 
-    fn playlist_detail_genre_id(&self, name: &str) -> Option<domain::GenreId> {
+    fn playlist_detail_genre_id(&self, name: &str) -> Option<::library::GenreId> {
         let library = self.state.library.borrow();
         if let Some(genre) = library
             .genres
@@ -151,14 +151,8 @@ impl Shell {
             );
         };
         let seed = stable_seed(detail.smart_playlist.id.as_str());
-        let cover_refs = if detail.smart_playlist.image_refs.is_empty() {
-            track_cover_refs_for_items(&detail.tracks)
-        } else {
-            detail.smart_playlist.image_refs.clone()
-        };
-        let mut smart_playlist = detail.smart_playlist.clone();
-        smart_playlist.image_refs = cover_refs;
-        let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
+        let smart_playlist = detail.smart_playlist.clone();
+        let artwork = CandidateSet::smart_playlist_slots(&smart_playlist);
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let compact = playlist_detail_compact_for_width(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -188,9 +182,15 @@ impl Shell {
         actions.set_halign(gtk::Align::Start);
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.controller.clone();
-        let detail_for_play = detail.clone();
+        let playlist_for_play = detail.smart_playlist.clone();
+        let first_track_for_play = detail.tracks.first().map(|track| track.id.clone());
+        let play_music_folder_id = selected_music_folder_id(self);
         play.connect_clicked(move |_| {
-            controller.play_smart_playlist_detail(detail_for_play.clone());
+            controller.play_smart_playlist(
+                playlist_for_play.clone(),
+                first_track_for_play.clone(),
+                play_music_folder_id.clone(),
+            );
         });
         actions.append(&play);
         let edit = detail_action_button(EDIT_ICON, "Edit");
@@ -226,12 +226,12 @@ impl Shell {
                 detail.tracks,
                 LibraryListKey::SmartPlaylistTracks,
                 "smart-playlist-detail",
-                Some(PlaySourceDescriptor::SmartPlaylist {
+                Some(PlayContextDescriptor::SmartPlaylist {
                     smart_playlist_id: detail.smart_playlist.id.clone(),
                     definition_fingerprint: smart_playlist_definition_fingerprint(
                         &detail.smart_playlist.definition,
                     ),
-                    selected_music_folder_id: selected_music_folder_id(self),
+                    music_folder_id: selected_music_folder_id(self),
                 }),
                 Some(track_selection),
             ));
@@ -273,7 +273,7 @@ impl Shell {
                     .iter()
                     .find(|playlist| playlist.id.as_str() == playlist_id.as_str())
                     .cloned()?;
-                Some(source::PlaylistDetail {
+                Some(::library::PlaylistDetail {
                     playlist,
                     tracks: Vec::new(),
                     entries: Vec::new(),
@@ -284,14 +284,9 @@ impl Shell {
                 .placeholder_view("Playlist", "The selected cached playlist was not found.");
         };
         let seed = stable_seed(detail.playlist.id.as_str());
-        let cover_refs = if detail.playlist.image_refs.is_empty() {
-            track_cover_refs_for_items(&detail.tracks)
-        } else {
-            detail.playlist.image_refs.clone()
-        };
-        let mut playlist = detail.playlist.clone();
-        playlist.image_refs = cover_refs;
-        let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
+        let playlist = detail.playlist.clone();
+        let artwork =
+            CandidateSet::playlist_slots(&playlist, settings.prefer_server_playlist_covers);
         let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let compact = playlist_detail_compact_for_width(content_width);
         let cover_size = playlist_cover_size(content_width);
@@ -344,16 +339,20 @@ impl Shell {
                 let entries_for_selection = Rc::clone(&entries_for_selection);
                 let play_selection = Rc::clone(&play_selection);
                 shell.arm_playlist_entry_selection(Rc::new(move |queue| {
-                    let Some(current_index) = queue.current_index else {
+                    let Some(current_index) = queue.current_absolute_index else {
                         return;
                     };
-                    let Some(queue_entry) = queue.entries.get(current_index) else {
+                    let Some(queue_entry) = queue
+                        .rows
+                        .iter()
+                        .find(|row| row.absolute_index == current_index)
+                    else {
                         return;
                     };
                     let Some(entry) = entries_for_selection.get(current_index) else {
                         return;
                     };
-                    if entry.track.id != queue_entry.track_id {
+                    if entry.track.id != queue_entry.entry.track.id {
                         return;
                     }
                     if let Some(select_entry) = play_selection.borrow().as_ref() {
@@ -365,7 +364,7 @@ impl Shell {
                     entry,
                     0,
                     None,
-                    (PlaylistEntrySortDescriptor::Position, false),
+                    (PlaylistSort::Position, false),
                     true,
                 );
             }
@@ -387,15 +386,9 @@ impl Shell {
                 .state
                 .player
                 .borrow()
-                .current
                 .as_ref()
-                .and_then(|entry| {
-                    let track_id = entry.track_id.clone();
-                    let index = self.state.track_index.borrow().get(&track_id).copied()?;
-                    let library = self.state.library.borrow();
-                    let track = library.tracks.get(index)?;
-                    (track.id == track_id).then(|| track.clone())
-                });
+                .and_then(|player| player.transport.current.as_ref())
+                .map(|entry| entry.track.clone());
             add_current.set_sensitive(current_track.is_some());
             let controller = self.controller.clone();
             let playlist_id_for_add = detail.playlist.id.clone();
@@ -465,7 +458,7 @@ impl Shell {
     fn playlist_detail_from_loaded_tracks(
         self: &Rc<Self>,
         playlist_id: &PlaylistId,
-    ) -> Option<source::PlaylistDetail> {
+    ) -> Option<::library::PlaylistDetail> {
         let library = self.state.library.borrow();
         let playlist = library
             .playlists
@@ -485,7 +478,7 @@ impl Shell {
 
     pub(in crate::ui) fn playlist_entries_view(
         self: &Rc<Self>,
-        detail: &source::PlaylistDetail,
+        detail: &::library::PlaylistDetail,
         selection_handle: Option<PlaylistEntrySelectionHandle>,
         can_remove_entries: bool,
         can_reorder_entries: bool,
@@ -708,6 +701,7 @@ mod tests {
             disc_number: 1,
             track_number: index as u16,
             image_ref: None,
+            album_artwork: None,
             genres: genres.iter().map(|genre| genre.to_string()).collect(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,
@@ -728,8 +722,8 @@ mod tests {
             track_count: 0,
             duration_seconds: 0,
             top_genres: Vec::new(),
-            image_refs: Vec::new(),
             image_ref: None,
+            representative_albums: Vec::new(),
         }
     }
 }

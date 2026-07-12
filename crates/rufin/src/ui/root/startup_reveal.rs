@@ -21,23 +21,6 @@ pub(in crate::ui) fn startup_route_reveal_action(
     StartupRevealAction::Wait
 }
 
-pub(in crate::ui) fn startup_prime_action(
-    pending_covers: usize,
-    elapsed: Duration,
-) -> StartupRevealAction {
-    if pending_covers == 0 {
-        StartupRevealAction::RevealReady
-    } else if elapsed >= Duration::from_millis(PRIME_TIMEOUT_MS) {
-        StartupRevealAction::RevealExpired
-    } else {
-        StartupRevealAction::Wait
-    }
-}
-
-pub(in crate::ui) fn cover_warm_delay() -> u64 {
-    WARM_SETTLE_MS
-}
-
 pub(in crate::ui) fn main_loop_stall_delay_ms(expected: Duration, observed: Duration) -> u64 {
     observed.saturating_sub(expected).as_millis() as u64
 }
@@ -75,15 +58,8 @@ pub(in crate::ui) fn install_startup_main_loop_stall_monitor(shell: &Rc<Shell>) 
                         startup_render_pending = shell.state.startup_route_render_pending.get(),
                         startup_content_prepared = shell.state.startup_route_content_prepared.get(),
                         cover_prime_pending = cover.prime_pending,
-                        cover_path_lookups = cover.path_lookups,
-                        cover_fetches = cover.fetches,
-                        cover_visible_requests = cover.visible_requests,
+                        cover_requests = cover.requests,
                         cover_bindings = cover.bindings,
-                        cover_decode_queue = cover.decode_queue,
-                        cover_decodes = cover.decodes,
-                        decoded_covers = cover.decoded,
-                        cover_warm_pending = cover.warm_pending,
-                        cover_warm_started = cover.warm_started,
                         "main loop stalled after startup route reveal"
                     );
                 } else {
@@ -98,15 +74,8 @@ pub(in crate::ui) fn install_startup_main_loop_stall_monitor(shell: &Rc<Shell>) 
                         startup_render_pending = shell.state.startup_route_render_pending.get(),
                         startup_content_prepared = shell.state.startup_route_content_prepared.get(),
                         cover_prime_pending = cover.prime_pending,
-                        cover_path_lookups = cover.path_lookups,
-                        cover_fetches = cover.fetches,
-                        cover_visible_requests = cover.visible_requests,
+                        cover_requests = cover.requests,
                         cover_bindings = cover.bindings,
-                        cover_decode_queue = cover.decode_queue,
-                        cover_decodes = cover.decodes,
-                        decoded_covers = cover.decoded,
-                        cover_warm_pending = cover.warm_pending,
-                        cover_warm_started = cover.warm_started,
                         "main loop stalled during startup monitor window"
                     );
                 }
@@ -118,24 +87,6 @@ pub(in crate::ui) fn install_startup_main_loop_stall_monitor(shell: &Rc<Shell>) 
             }
         },
     );
-}
-
-pub(in crate::ui) fn take_pending_warm(
-    pending: &mut Option<(SourceId, u64)>,
-    source_id: &SourceId,
-    token: u64,
-) -> bool {
-    if pending
-        .as_ref()
-        .is_some_and(|(pending_source_id, pending_token)| {
-            pending_source_id == source_id && *pending_token == token
-        })
-    {
-        pending.take();
-        true
-    } else {
-        false
-    }
 }
 
 impl Shell {
@@ -293,191 +244,10 @@ impl Shell {
                 move || shell.log_layout_snapshot("startup_reveal_after_allocation_tick"),
             );
         }
-        self.queue_settled_warm();
     }
     pub(in crate::ui) fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
-        if let Some(generation) = self.begin_first_run_cover_prime() {
-            let started_at = Instant::now();
-            let timeout_logged = Rc::new(Cell::new(false));
-            let shell = Rc::clone(self);
-            glib::timeout_add_local(Duration::from_millis(PRIME_POLL_MS), move || {
-                if !shell.first_run_cover_prime_current(generation) {
-                    return glib::ControlFlow::Break;
-                }
-                shell.reconcile_prime_pending();
-                let pending_covers = shell.first_run_cover_prime_pending_count();
-                match startup_prime_action(pending_covers, started_at.elapsed()) {
-                    StartupRevealAction::RevealReady => {
-                        shell.finish_first_run_app_reveal();
-                        glib::ControlFlow::Break
-                    }
-                    StartupRevealAction::RevealExpired => {
-                        if pending_covers > 0 && !timeout_logged.replace(true) {
-                            debug!(pending = pending_covers, "first-run cover prime expired");
-                        }
-                        shell.finish_first_run_app_reveal();
-                        glib::ControlFlow::Break
-                    }
-                    StartupRevealAction::Wait => glib::ControlFlow::Continue,
-                }
-            });
-            return;
-        }
-
-        self.finish_first_run_app_reveal();
-    }
-    pub(in crate::ui) fn finish_first_run_app_reveal(self: &Rc<Self>) {
-        self.finish_first_run_cover_prime_gate();
-
-        let shell = Rc::clone(self);
-        glib::idle_add_local_once(move || {
-            *shell.state.library_load.borrow_mut() = LibraryLoad::Ready;
-            shell.log_layout_snapshot("first_run_reveal_before_stack_switch");
-            shell.update_layout();
-            shell.window.queue_resize();
-            shell.app_root.queue_resize();
-            shell.route_host.queue_resize();
-            shell.right_panel_slot.queue_resize();
-            shell.log_layout_snapshot("first_run_reveal_after_stack_switch");
-
-            let shell = Rc::clone(&shell);
-            glib::timeout_add_local_once(
-                Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
-                move || {
-                    shell.log_layout_snapshot("first_run_reveal_before_render");
-                    shell.state.startup_route_render_pending.set(false);
-                    shell.state.startup_route_revealed.set(true);
-                    shell.update_layout();
-                    shell.render_current_route();
-                    shell.state.startup_route_content_prepared.set(true);
-                    shell.render_queue_panel();
-                    shell.render_lyrics_panel();
-                    shell.update_bottom_player();
-                    shell.log_layout_snapshot("first_run_reveal_after_render");
-                    shell.queue_post_layout_route_render();
-                    shell.queue_settled_warm();
-                },
-            );
-        });
-    }
-    pub(in crate::ui) fn queue_settled_warm(self: &Rc<Self>) {
-        let Some(source_id) = self
-            .state
-            .library
-            .borrow()
-            .source
-            .as_ref()
-            .map(|server| server.id.clone())
-        else {
-            return;
-        };
-        if self
-            .state
-            .cover_warm_pending
-            .borrow()
-            .as_ref()
-            .is_some_and(|(pending_source_id, _)| pending_source_id == &source_id)
-        {
-            return;
-        }
-        if self
-            .state
-            .cover_warm_started
-            .borrow()
-            .as_ref()
-            .is_some_and(|started_source_id| started_source_id == &source_id)
-        {
-            return;
-        }
-
-        let token = self.state.cover_warm_token.get().saturating_add(1);
-        self.state.cover_warm_token.set(token);
-        *self.state.cover_warm_pending.borrow_mut() = Some((source_id.clone(), token));
-
-        let shell = Rc::clone(self);
-        glib::timeout_add_local_once(Duration::from_millis(cover_warm_delay()), move || {
-            if !take_pending_warm(
-                &mut shell.state.cover_warm_pending.borrow_mut(),
-                &source_id,
-                token,
-            ) {
-                return;
-            }
-            let active_source_id = shell
-                .state
-                .library
-                .borrow()
-                .source
-                .as_ref()
-                .map(|server| server.id.clone());
-            if active_source_id.as_ref() != Some(&source_id)
-                || !shell.state.startup_route_revealed.get()
-                || shell.state.startup_route_render_pending.get()
-            {
-                return;
-            }
-
-            let smart_playlists = if sidebar_route_visible(
-                &shell.state.settings.borrow(),
-                SidebarRouteItem::SmartPlaylists,
-            ) {
-                Some(
-                        shell
-                            .controller
-                            .cached_smart_playlists_page(0, 1_000)
-                            .map(|page| page.items)
-                            .unwrap_or_else(|error| {
-                                warn!(%error, "failed to load cached smart playlists for source cover warm");
-                                Vec::new()
-                            }),
-                    )
-            } else {
-                None
-            };
-            let active_source_id = shell
-                .state
-                .library
-                .borrow()
-                .source
-                .as_ref()
-                .map(|server| server.id.clone());
-            if active_source_id.as_ref() != Some(&source_id) {
-                return;
-            }
-            if let Some(smart_playlists) = smart_playlists.as_ref() {
-                *shell.state.smart_playlists.borrow_mut() = smart_playlists.clone();
-                shell.state.smart_playlists_loaded.set(true);
-            }
-
-            let (target_count, queued) = shell.schedule_source_route_cover_warm(
-                &shell.state.library.borrow(),
-                smart_playlists.as_deref().unwrap_or_default(),
-                &shell.state.settings.borrow(),
-                shell.source_route_initial_cover_metrics(),
-            );
-            *shell.state.cover_warm_started.borrow_mut() = Some(source_id.clone());
-            if target_count > 0 {
-                debug!(
-                    targets = target_count,
-                    queued, "started source route cover warm"
-                );
-            }
-        });
-    }
-    pub(in crate::ui) fn source_route_initial_cover_metrics(&self) -> InitialRouteCoverMetrics {
-        let (grid_columns, grid_card_size) = self.collection_card_grid_metrics();
-        let album_settings = self.library_settings(LibraryListKey::Albums);
-        let (album_grid_columns, album_grid_card_size) =
-            self.collection_card_grid_metrics_for(LibraryListKey::Albums, &album_settings);
-        InitialRouteCoverMetrics {
-            route_height: self.route_host.height(),
-            app_height: self.app_root.height(),
-            grid_columns,
-            grid_card_size,
-            album_grid_columns,
-            album_grid_card_size,
-            home_showcase_seed: self.state.home_showcase_seed.get(),
-        }
+        *self.state.library_load.borrow_mut() = LibraryLoad::Ready;
+        self.schedule_startup_route_reveal();
     }
 }

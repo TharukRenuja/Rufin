@@ -1,9 +1,7 @@
-use super::sources::{
-    COLLECTION_COVER_SMART_PLAYLIST, bool_to_i64, collect_rows, replace_collection_refs,
-    track_from_row, u32_from_i64,
-};
+use super::activity::lifetime_activity_join_sql;
+use super::sources::{bool_to_i64, collect_rows, track_from_row, u32_from_i64};
 use super::*;
-use domain::smart_playlists as smart_policy;
+use crate::smart_playlists as smart_policy;
 
 const SMART_TRACK_DEFAULT_LIMIT: usize = 25_000;
 const RETIRED_SMART_PLAYLIST_BUILTIN_KEYS: &[&str] = &[
@@ -228,29 +226,13 @@ impl Store {
         source_id: &SourceId,
         smart_playlist_id: &SmartPlaylistId,
     ) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            connection.execute(
-                "
-                DELETE FROM smart_playlists
-                WHERE source_id = ?1 AND smart_playlist_id = ?2
-                ",
-                params![source_id.as_str(), smart_playlist_id.as_str()],
-            )?;
-            connection.execute(
-                "
-                DELETE FROM collection_cover_refs
-                WHERE source_id = ?1
-                  AND collection_type = ?2
-                  AND collection_id = ?3
-                ",
-                params![
-                    source_id.as_str(),
-                    COLLECTION_COVER_SMART_PLAYLIST,
-                    smart_playlist_id.as_str(),
-                ],
-            )?;
-            Ok(())
-        })?;
+        self.connection.execute(
+            "
+            DELETE FROM smart_playlists
+            WHERE source_id = ?1 AND smart_playlist_id = ?2
+            ",
+            params![source_id.as_str(), smart_playlist_id.as_str()],
+        )?;
         Ok(())
     }
 
@@ -324,60 +306,6 @@ impl Store {
         Ok(smart_builtin_id(builtin))
     }
 
-    pub fn record_local_track_played(
-        &self,
-        source_id: &SourceId,
-        track_id: &TrackId,
-        session_key: &str,
-    ) -> StoreResult<bool> {
-        let changed = self.connection.execute(
-            "
-            INSERT INTO track_activity (
-                source_id, track_id, play_count, last_played, skip_count,
-                play_recorded_session, updated_at
-            )
-            VALUES (?1, ?2, 1, CURRENT_TIMESTAMP, 0, ?3, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id, track_id) DO UPDATE SET
-                play_count = CASE
-                    WHEN play_recorded_session = excluded.play_recorded_session
-                    THEN play_count
-                    ELSE play_count + 1
-                END,
-                last_played = CASE
-                    WHEN play_recorded_session = excluded.play_recorded_session
-                    THEN last_played
-                    ELSE CURRENT_TIMESTAMP
-                END,
-                play_recorded_session = excluded.play_recorded_session,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE play_recorded_session IS NULL
-               OR play_recorded_session != excluded.play_recorded_session
-            ",
-            params![source_id.as_str(), track_id.as_str(), session_key],
-        )?;
-        Ok(changed > 0)
-    }
-
-    pub fn increment_track_skip_count(
-        &self,
-        source_id: &SourceId,
-        track_id: &TrackId,
-    ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO track_activity (
-                source_id, track_id, play_count, last_played, skip_count, updated_at
-            )
-            VALUES (?1, ?2, 0, NULL, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id, track_id) DO UPDATE SET
-                skip_count = skip_count + 1,
-                updated_at = CURRENT_TIMESTAMP
-            ",
-            params![source_id.as_str(), track_id.as_str()],
-        )?;
-        Ok(())
-    }
-
     fn load_smart_playlist_row(
         &self,
         source_id: &SourceId,
@@ -404,14 +332,8 @@ impl Store {
     ) -> StoreResult<SmartPlaylist> {
         let (track_count, duration_seconds) =
             self.smart_playlist_stats(source_id, &row.definition)?;
-        let mut image_refs = self.load_collection_cover_refs(
-            source_id,
-            COLLECTION_COVER_SMART_PLAYLIST,
-            row.id.as_str(),
-        )?;
-        if image_refs.is_empty() {
-            image_refs = self.smart_playlist_cover_image_refs(source_id, &row.definition)?;
-        }
+        let representative_albums =
+            self.smart_playlist_representative_albums(source_id, &row.definition)?;
         Ok(SmartPlaylist {
             id: row.id,
             name: row.name,
@@ -420,8 +342,7 @@ impl Store {
             definition: row.definition,
             track_count,
             duration_seconds,
-            image_ref: image_refs.first().cloned(),
-            image_refs,
+            representative_albums,
         })
     }
 
@@ -443,12 +364,12 @@ impl Store {
         Ok((total.min(u32::MAX as usize) as u32, duration_seconds))
     }
 
-    fn smart_playlist_cover_image_refs(
+    fn smart_playlist_representative_albums(
         &self,
         source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
-    ) -> StoreResult<Vec<ImageRef>> {
-        Ok(first_track_image_refs(
+    ) -> StoreResult<Vec<AlbumArtwork>> {
+        Ok(first_track_albums(
             self.query_smart_playlist_tracks(
                 source_id,
                 definition,
@@ -459,58 +380,6 @@ impl Store {
         ))
     }
 
-    pub(super) fn refresh_smart_playlist_cover_refs(
-        &self,
-        source_id: &SourceId,
-    ) -> StoreResult<()> {
-        self.ensure_smart_playlist_defaults_seeded(source_id)?;
-        let rows = {
-            let mut statement = self.connection.prepare(
-                "
-                SELECT smart_playlist_id, name, builtin_key, definition_json, position
-                FROM smart_playlists
-                WHERE source_id = ?1
-                ORDER BY position, name COLLATE NOCASE, smart_playlist_id
-                ",
-            )?;
-            collect_rows(
-                statement.query_map(params![source_id.as_str()], smart_playlist_row_from_row)?,
-            )?
-        };
-        let mut cover_refs = Vec::with_capacity(rows.len());
-        for row in rows {
-            cover_refs.push((
-                row.id,
-                self.smart_playlist_cover_image_refs(source_id, &row.definition)?,
-            ));
-        }
-        self.write_batch(|connection| {
-            for (smart_playlist_id, image_refs) in cover_refs {
-                replace_collection_refs(
-                    connection,
-                    source_id,
-                    COLLECTION_COVER_SMART_PLAYLIST,
-                    smart_playlist_id.as_str(),
-                    &image_refs,
-                )?;
-            }
-            connection.execute(
-                "
-                DELETE FROM collection_cover_refs
-                WHERE source_id = ?1
-                  AND collection_type = ?2
-                  AND NOT EXISTS (
-                      SELECT 1 FROM smart_playlists
-                      WHERE smart_playlists.source_id = collection_cover_refs.source_id
-                        AND smart_playlists.smart_playlist_id = collection_cover_refs.collection_id
-                  )
-                ",
-                params![source_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
-            )?;
-            Ok(())
-        })
-    }
-
     fn query_smart_playlist_tracks(
         &self,
         source_id: &SourceId,
@@ -518,18 +387,55 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let total = self.count_smart_playlist_tracks(source_id, definition)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
+        self.query_smart_playlist_tracks_in_folder(
+            source_id,
+            definition,
+            selected_folder.as_ref(),
+            offset,
+            limit,
+        )
+    }
+
+    pub(super) fn query_smart_playlist_tracks_in_folder(
+        &self,
+        source_id: &SourceId,
+        definition: &SmartPlaylistDefinition,
+        music_folder_id: Option<&MusicFolderId>,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
+        let total =
+            self.count_smart_playlist_tracks_in_folder(source_id, definition, music_folder_id)?;
+        let tracks = self.smart_playlist_track_rows_in_folder(
+            source_id,
+            definition,
+            music_folder_id,
+            offset,
+            limit,
+        )?;
+        Ok(PagedResponse::new(tracks, total))
+    }
+
+    pub(super) fn smart_playlist_track_rows_in_folder(
+        &self,
+        source_id: &SourceId,
+        definition: &SmartPlaylistDefinition,
+        music_folder_id: Option<&MusicFolderId>,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Vec<Track>> {
         if definition
             .limit
             .is_some_and(|definition_limit| offset >= definition_limit)
         {
-            return Ok(PagedResponse::new(Vec::new(), total));
+            return Ok(Vec::new());
         }
         let limit = definition
             .limit
             .map(|definition_limit| limit.min(definition_limit.saturating_sub(offset)))
             .unwrap_or(limit);
-        let query = self.smart_track_query(source_id, definition)?;
+        let query = self.smart_track_query_in_folder(source_id, definition, music_folder_id);
         let mut values = query.where_params;
         values.push(Value::from(limit as i64));
         values.push(Value::from(offset as i64));
@@ -539,8 +445,8 @@ impl Store {
                    t.release_date, t.date_added, {last_played} AS last_played,
                    {play_count} AS play_count, t.user_rating, t.duration_seconds,
                    {favorite} AS favorite,
-                   t.disc_number, t.track_number, t.image_item_id, t.image_tag,
-                   t.local_path, t.source_format, t.comment, {skip_count} AS skip_count, t.bpm
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag, t.bpm,
+                   t.local_path, t.source_format, t.comment, {skip_count} AS skip_count
             {from}
             WHERE {where_clause}
             ORDER BY {order_by}
@@ -558,7 +464,7 @@ impl Store {
         let mut tracks =
             collect_rows(statement.query_map(params_from_iter(values), track_from_row)?)?;
         self.attach_track_metadata(source_id, &mut tracks)?;
-        Ok(PagedResponse::new(tracks, total))
+        Ok(tracks)
     }
 
     fn count_smart_playlist_tracks(
@@ -566,7 +472,17 @@ impl Store {
         source_id: &SourceId,
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<usize> {
-        let query = self.smart_track_query(source_id, definition)?;
+        let selected_folder = self.selected_music_folder_id(source_id)?;
+        self.count_smart_playlist_tracks_in_folder(source_id, definition, selected_folder.as_ref())
+    }
+
+    fn count_smart_playlist_tracks_in_folder(
+        &self,
+        source_id: &SourceId,
+        definition: &SmartPlaylistDefinition,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> StoreResult<usize> {
+        let query = self.smart_track_query_in_folder(source_id, definition, music_folder_id);
         let sql = format!(
             "
             SELECT COUNT(*)
@@ -617,12 +533,21 @@ impl Store {
         definition: &SmartPlaylistDefinition,
     ) -> StoreResult<SmartTrackQuery> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
+        Ok(self.smart_track_query_in_folder(source_id, definition, selected_folder.as_ref()))
+    }
+
+    fn smart_track_query_in_folder(
+        &self,
+        source_id: &SourceId,
+        definition: &SmartPlaylistDefinition,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> SmartTrackQuery {
         let compiled = compile_group(&definition.root);
         let mut params = Vec::with_capacity(compiled.params.len() + 2);
         params.push(Value::from(source_id.as_str().to_string()));
         params.extend(compiled.params);
         let mut where_clause = format!("t.source_id = ? AND ({})", compiled.clause);
-        if let Some(folder_id) = selected_folder {
+        if let Some(folder_id) = music_folder_id {
             where_clause.push_str(
                 "
                 AND EXISTS (
@@ -636,18 +561,18 @@ impl Store {
             );
             params.push(Value::from(folder_id.as_str().to_string()));
         }
-        Ok(SmartTrackQuery {
-            from: "
+        SmartTrackQuery {
+            from: format!(
+                "
                 FROM tracks t
                 JOIN sources s ON s.source_id = t.source_id
-                LEFT JOIN track_activity ta
-                  ON ta.source_id = t.source_id AND ta.track_id = t.track_id
-            "
-            .to_string(),
+                {}",
+                lifetime_activity_join_sql()
+            ),
             where_clause,
             where_params: params,
             order_by: smart_order_by(definition.sort_field, definition.descending),
-        })
+        }
     }
 
     fn next_smart_playlist_position(&self, source_id: &SourceId) -> StoreResult<i64> {
@@ -699,18 +624,32 @@ impl Store {
     }
 }
 
-fn first_track_image_refs(tracks: Vec<Track>) -> Vec<ImageRef> {
-    let mut image_refs = Vec::new();
+fn first_track_albums(tracks: Vec<Track>) -> Vec<AlbumArtwork> {
+    let mut albums = Vec::new();
     for track in tracks {
-        let Some(image_ref) = track.image_ref else {
+        if albums
+            .iter()
+            .any(|album: &AlbumArtwork| album.id == track.album_id)
+        {
             continue;
-        };
-        image_refs.push(image_ref);
-        if image_refs.len() >= 4 {
+        }
+        let mut artwork = track.album_artwork.unwrap_or_else(|| AlbumArtwork {
+            id: track.album_id,
+            title: track.album,
+            artist: track.artist,
+            image_ref: None,
+            musicbrainz_album_id: None,
+            musicbrainz_release_group_id: None,
+        });
+        if track.image_ref.is_some() {
+            artwork.image_ref = track.image_ref;
+        }
+        albums.push(artwork);
+        if albums.len() >= 4 {
             break;
         }
     }
-    image_refs
+    albums
 }
 
 fn smart_playlist_row_from_row(row: &Row<'_>) -> rusqlite::Result<SmartPlaylistRow> {
@@ -1090,16 +1029,16 @@ fn escape_like(value: &str) -> String {
 }
 
 fn smart_play_count_expr() -> String {
-    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.play_count, t.play_count, 0) ELSE COALESCE(t.play_count, 0) END".to_string()
+    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.qualified_plays, t.play_count, 0) ELSE COALESCE(t.play_count, 0) END".to_string()
 }
 
 fn smart_last_played_expr() -> String {
-    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.last_played, t.last_played) ELSE t.last_played END"
+    "CASE WHEN s.kind = 'local' THEN COALESCE(ta.last_played_at, t.last_played) ELSE t.last_played END"
         .to_string()
 }
 
 fn smart_skip_count_expr() -> String {
-    "COALESCE(ta.skip_count, t.skip_count, 0)".to_string()
+    "COALESCE(ta.skips, t.skip_count, 0)".to_string()
 }
 
 fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
@@ -1138,41 +1077,41 @@ fn smart_order_by(field: SmartPlaylistSortField, descending: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SmartPlaylistRuleValue;
     use crate::store::test_support::{
-        LibraryObservation, album, album_with_image, saved_source, track,
+        LibraryObservation, album, album_with_image, image_ref, stored_source, track,
     };
-    use domain::SmartPlaylistRuleValue;
 
     #[test]
     fn smart_playlist_restored() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("defaults");
         assert_eq!(page.total, 3);
 
         let most_played = smart_builtin_id(SmartPlaylistBuiltin::MostPlayed);
         store
-            .delete_smart_playlist(&saved.source.id, &most_played)
+            .delete_smart_playlist(&saved.source_id, &most_played)
             .expect("delete");
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("after delete");
         assert_eq!(page.total, 2);
         assert_eq!(
             store
-                .missing_builtin_smart_playlists(&saved.source.id)
+                .missing_builtin_smart_playlists(&saved.source_id)
                 .expect("missing"),
             vec![SmartPlaylistBuiltin::MostPlayed]
         );
 
         store
-            .restore_builtin_smart_playlist(&saved.source.id, SmartPlaylistBuiltin::MostPlayed)
+            .restore_builtin_smart_playlist(&saved.source_id, SmartPlaylistBuiltin::MostPlayed)
             .expect("restore");
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("after restore");
         assert_eq!(page.total, 3);
     }
@@ -1180,10 +1119,10 @@ mod tests {
     #[test]
     fn smart_persist_position() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("defaults");
         let ids = page
             .items
@@ -1193,11 +1132,11 @@ mod tests {
 
         assert!(
             store
-                .reorder_smart_playlist(&saved.source.id, &ids[2], &ids[0], false)
+                .reorder_smart_playlist(&saved.source_id, &ids[2], &ids[0], false)
                 .expect("move before first")
         );
         let moved = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("after move")
             .items
             .into_iter()
@@ -1210,23 +1149,24 @@ mod tests {
     #[test]
     fn smart_track_image() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album_with_image(1);
-        let album_image = album.image_ref.clone();
         let mut track = track(1, &album);
+        let track_image = image_ref("track-cover", "track-cover-tag");
+        track.image_ref = Some(track_image.clone());
         track.play_count = Some(1);
         LibraryObservation {
             albums: vec![album],
             tracks: vec![track.clone()],
             ..LibraryObservation::default()
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit library");
 
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("smart playlist index");
         let most_played = page
             .items
@@ -1235,14 +1175,17 @@ mod tests {
             .expect("most played");
         assert_eq!(most_played.track_count, 1);
         assert_eq!(most_played.duration_seconds, track.duration_seconds);
-        assert_eq!(most_played.image_ref, album_image);
         assert_eq!(
-            most_played.image_refs,
-            album_image.iter().cloned().collect::<Vec<_>>()
+            most_played
+                .representative_albums
+                .iter()
+                .filter_map(|album| album.image_ref.clone())
+                .collect::<Vec<_>>(),
+            vec![track_image.clone()],
         );
 
         let detail = store
-            .load_smart_playlist_detail(&saved.source.id, &most_played.id)
+            .load_smart_playlist_detail(&saved.source_id, &most_played.id)
             .expect("smart playlist detail")
             .expect("smart playlist detail");
         assert_eq!(detail.smart_playlist.track_count, 1);
@@ -1250,20 +1193,24 @@ mod tests {
             detail.smart_playlist.duration_seconds,
             track.duration_seconds
         );
-        assert_eq!(detail.smart_playlist.image_ref, album_image);
         assert_eq!(
-            detail.smart_playlist.image_refs,
-            album_image.iter().cloned().collect::<Vec<_>>()
+            detail
+                .smart_playlist
+                .representative_albums
+                .iter()
+                .filter_map(|album| album.image_ref.clone())
+                .collect::<Vec<_>>(),
+            vec![track_image]
         );
     }
 
     #[test]
     fn smart_retired_sources() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
         store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("seed defaults");
         let definition = serde_json::to_string(&smart_policy::builtin_definition(
             SmartPlaylistBuiltin::MostPlayed,
@@ -1281,7 +1228,7 @@ mod tests {
                     VALUES (?1, ?2, ?3, ?3, ?4, 100)
                     ",
                     params![
-                        saved.source.id.as_str(),
+                        saved.source_id.as_str(),
                         retired_id,
                         key,
                         definition.as_str()
@@ -1291,7 +1238,7 @@ mod tests {
         }
 
         let page = store
-            .load_smart_playlists(&saved.source.id, 0, 20)
+            .load_smart_playlists(&saved.source_id, 0, 20)
             .expect("load after prune");
 
         assert_eq!(page.total, 3);
@@ -1306,9 +1253,9 @@ mod tests {
     #[test]
     fn smart_filter_activity() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Signal One".to_string();
@@ -1319,13 +1266,20 @@ mod tests {
         second.comment = Some("morning".to_string());
         second.genres = vec!["Noise".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], generation)
+            .upsert_albums(&saved.source_id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second], generation)
+            .upsert_tracks(&saved.source_id, &[first.clone(), second], generation)
             .expect("tracks");
         store
-            .increment_track_skip_count(&saved.source.id, &first.id)
+            .record_activity_outcome(&ActivityOutcome {
+                source_id: saved.source_id.clone(),
+                period: "2026-07".to_string(),
+                track_id: first.id.clone(),
+                qualified_plays: 0,
+                skips: 1,
+                last_played_at: None,
+            })
             .expect("skip");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1364,10 +1318,10 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:night");
         store
-            .save_smart_playlist(&saved.source.id, &smart_id, "Night", &definition)
+            .save_smart_playlist(&saved.source_id, &smart_id, "Night", &definition)
             .expect("save smart");
         let detail = store
-            .load_smart_playlist_detail(&saved.source.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source_id, &smart_id)
             .expect("detail")
             .expect("detail");
         assert_eq!(detail.tracks.len(), 1);
@@ -1378,19 +1332,19 @@ mod tests {
     #[test]
     fn smart_filter_range() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.date_added = Some("2024-02-14".to_string());
         let mut second = track(2, &album);
         second.date_added = Some("2024-05-20".to_string());
         store
-            .upsert_albums(&saved.source.id, &[album], generation)
+            .upsert_albums(&saved.source_id, &[album], generation)
             .expect("album");
         store
-            .upsert_tracks(&saved.source.id, &[first.clone(), second], generation)
+            .upsert_tracks(&saved.source_id, &[first.clone(), second], generation)
             .expect("tracks");
         let definition = SmartPlaylistDefinition {
             root: SmartPlaylistRuleGroup {
@@ -1410,11 +1364,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:date-range");
         store
-            .save_smart_playlist(&saved.source.id, &smart_id, "Date Range", &definition)
+            .save_smart_playlist(&saved.source_id, &smart_id, "Date Range", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.source.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source_id, &smart_id)
             .expect("detail")
             .expect("detail");
 
@@ -1425,9 +1379,9 @@ mod tests {
     #[test]
     fn smart_filter_genre() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Range Match".to_string();
@@ -1442,11 +1396,11 @@ mod tests {
         third.year = 2005;
         third.genres = vec!["Rock".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], generation)
+            .upsert_albums(&saved.source_id, &[album], generation)
             .expect("album");
         store
             .upsert_tracks(
-                &saved.source.id,
+                &saved.source_id,
                 &[first.clone(), second, third],
                 generation,
             )
@@ -1476,11 +1430,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:year-genre");
         store
-            .save_smart_playlist(&saved.source.id, &smart_id, "Year Genre", &definition)
+            .save_smart_playlist(&saved.source_id, &smart_id, "Year Genre", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.source.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source_id, &smart_id)
             .expect("detail")
             .expect("detail");
 
@@ -1491,9 +1445,9 @@ mod tests {
     #[test]
     fn smart_filter_mood_and_bpm() {
         let store = Store::open_memory().expect("store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save server");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album(1);
         let mut first = track(1, &album);
         first.title = "Fast Focus".to_string();
@@ -1508,11 +1462,11 @@ mod tests {
         third.bpm = Some(130);
         third.moods = vec!["Calm".to_string()];
         store
-            .upsert_albums(&saved.source.id, &[album], generation)
+            .upsert_albums(&saved.source_id, &[album], generation)
             .expect("album");
         store
             .upsert_tracks(
-                &saved.source.id,
+                &saved.source_id,
                 &[first.clone(), second, third],
                 generation,
             )
@@ -1539,11 +1493,11 @@ mod tests {
         };
         let smart_id = SmartPlaylistId::new("custom:mood-bpm");
         store
-            .save_smart_playlist(&saved.source.id, &smart_id, "Mood BPM", &definition)
+            .save_smart_playlist(&saved.source_id, &smart_id, "Mood BPM", &definition)
             .expect("save smart");
 
         let detail = store
-            .load_smart_playlist_detail(&saved.source.id, &smart_id)
+            .load_smart_playlist_detail(&saved.source_id, &smart_id)
             .expect("detail")
             .expect("detail");
 

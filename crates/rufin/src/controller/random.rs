@@ -1,13 +1,10 @@
-use std::thread;
+use library::{GenreId, Track};
+use playback::{Placement, Provenance};
+use sources::{PlayedFilter, RandomTrackRequest};
 
-use domain::{GenreId, Track};
-use source::{PlayedFilter, RandomTrackRequest};
+use crate::source_setup::{RandomTrackDomain, current_active_source, selected_active_source};
 
-use crate::sources::{RandomTrackDomain, current_active_source, selected_active_source};
-
-use super::{
-    AppController, ControllerEvent, load_settings_from_store, source_tracks::prepare_source_tracks,
-};
+use super::{AppController, ControllerEvent, source_tracks::hydrate_source_tracks};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RandomPlayAction {
@@ -33,30 +30,52 @@ impl AppController {
     }
 
     pub fn play_random_tracks(&self, request: RandomPlayRequest) {
-        let generation = self.next_play_activation_generation();
+        let placement = match request.action {
+            RandomPlayAction::PlayNow => Placement::Replace { anchor_index: 0 },
+            RandomPlayAction::PlayNext => Placement::AfterCurrent,
+            RandomPlayAction::AddLast => Placement::End,
+        };
+        let reservation = match self.reserve_queue_materialization(placement) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.emit_random_error(error);
+                return;
+            }
+        };
         let controller = self.clone();
-        thread::spawn(
-            move || match controller.random_tracks_for_request(&request) {
+        let rejected = reservation.clone();
+        if let Err(error) = self.submit_playback_materialization(move || {
+            match controller.random_tracks_for_request(reservation.source_id(), &request) {
+                Ok(tracks) if tracks.is_empty() => controller.reject_queue_materialization(
+                    reservation,
+                    "No matching random tracks were found.",
+                ),
                 Ok(tracks) => {
-                    if controller.play_activation_generation_matches(generation) {
-                        controller.apply_random_tracks(request.action, tracks);
+                    if let Err(error) = controller.apply_reserved_tracks(
+                        reservation.clone(),
+                        tracks,
+                        Provenance::Random,
+                    ) {
+                        controller.reject_queue_materialization(reservation, error);
                     }
                 }
-                Err(error) => {
-                    if controller.play_activation_generation_matches(generation) {
-                        controller.emit_random_error(error);
-                    }
-                }
-            },
-        );
+                Err(error) => controller.reject_queue_materialization(reservation, error),
+            }
+        }) {
+            self.reject_queue_materialization(rejected, error);
+        }
     }
 
-    fn random_tracks_for_request(&self, request: &RandomPlayRequest) -> Result<Vec<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_source())? else {
-            return Err("No active music server is saved.".to_string());
-        };
-        let settings = load_settings_from_store(&self.store);
-        let active = selected_active_source(&self.active_source, &saved.source.id)?;
+    fn random_tracks_for_request(
+        &self,
+        source_id: &library::SourceId,
+        request: &RandomPlayRequest,
+    ) -> Result<Vec<Track>, String> {
+        let saved = self
+            .store
+            .with_store(|store| store.stored_source(source_id))?
+            .ok_or_else(|| "The reserved music source is no longer saved.".to_string())?;
+        let active = selected_active_source(&self.active_source, source_id)?;
         let source_request = RandomTrackRequest {
             limit: request.limit,
             min_year: request.min_year,
@@ -65,63 +84,14 @@ impl AppController {
             genre_name: request.genre_name.clone(),
             played_filter: request.played_filter,
         };
-        active
-            .random_tracks
-            .domain
-            .validate(&source_request)
-            .map_err(str::to_string)?;
-        let mut tracks = self
-            .runtime
-            .block_on(active.random_tracks.executor.random_tracks(source_request))
-            .map_err(|error| error.to_string())?;
-        prepare_source_tracks(&self.store, &saved, &settings, &mut tracks)?;
+        let mut tracks = active.random_tracks.random_tracks(
+            &self.store,
+            &self.runtime,
+            source_id,
+            source_request,
+        )?;
+        hydrate_source_tracks(&self.store, &saved.source_id, &mut tracks)?;
         Ok(tracks)
-    }
-
-    fn apply_random_tracks(&self, action: RandomPlayAction, tracks: Vec<Track>) {
-        if tracks.is_empty() {
-            self.emit_random_error("No matching random tracks were found.");
-            return;
-        }
-        match action {
-            RandomPlayAction::PlayNow => self.play_tracks_now(tracks),
-            RandomPlayAction::PlayNext => self.play_random_tracks_next(tracks),
-            RandomPlayAction::AddLast => self.append_random_tracks(tracks),
-        }
-    }
-
-    fn play_random_tracks_next(&self, tracks: Vec<Track>) {
-        let result = self.with_queue_mut(|queue| {
-            if queue.current().is_some() {
-                for track in tracks.iter().rev() {
-                    queue.play_next(track);
-                }
-            } else {
-                for track in &tracks {
-                    queue.append(track);
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            self.emit_random_error(error);
-            return;
-        }
-        self.persist_and_emit_queue();
-    }
-
-    fn append_random_tracks(&self, tracks: Vec<Track>) {
-        let result = self.with_queue_mut(|queue| {
-            for track in &tracks {
-                queue.append(track);
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            self.emit_random_error(error);
-            return;
-        }
-        self.persist_and_emit_queue();
     }
 
     fn emit_random_error(&self, error: impl Into<String>) {

@@ -1,15 +1,22 @@
 use std::rc::Rc;
 
-use crate::i18n::{self, tr};
+use crate::{
+    StoredSettings,
+    i18n::{self, tr},
+};
+use ::library::HomeBlockKind;
 use adw::prelude::*;
 use domain::{
-    AppSettings, DiscordDisplayType, DiscordLinkType, ExternalLyricsProvider, HomeBlockKind,
-    LeftSidebarMode, LibraryListKey, LibraryListSettings, PlaybackSettings, Route,
-    ScrobblingSettings, SecretStorageMode, sanitized_window_size,
+    LeftSidebarMode, LibraryListKey, LibraryListSettings, Route, SecretStorageMode,
+    sanitized_window_size,
 };
+use metadata::ExternalLyricsProvider;
+use playback::PlaybackSettings;
+use rich_presence::{DisplayType, LinkType};
+use scrobbling::Settings;
 use tracing::warn;
 
-use super::{Shell, current_playback_track_id, navigation};
+use super::{Shell, current_playback_media_key, current_playback_track_id, navigation};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AppControllerSettingsMode {
@@ -39,18 +46,11 @@ impl Shell {
         });
     }
 
-    pub(super) fn sync_auto_dj(&self, enabled: bool) {
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.auto_dj_enabled != enabled {
-            settings.auto_dj_enabled = enabled;
-        }
-    }
-
     pub(super) fn update_app_settings(
         &self,
         warning_action: &'static str,
-        update: impl FnOnce(&mut AppSettings) -> bool,
-    ) -> Option<AppSettings> {
+        update: impl FnOnce(&mut StoredSettings) -> bool,
+    ) -> Option<StoredSettings> {
         self.update_app_settings_with_loader(
             warning_action,
             AppControllerSettingsMode::PreserveScrobblingSecrets,
@@ -61,8 +61,8 @@ impl Shell {
     pub(super) fn update_app_settings_with_scrobbling_secrets(
         &self,
         warning_action: &'static str,
-        update: impl FnOnce(&mut AppSettings) -> bool,
-    ) -> Option<AppSettings> {
+        update: impl FnOnce(&mut StoredSettings) -> bool,
+    ) -> Option<StoredSettings> {
         self.update_app_settings_with_loader(
             warning_action,
             AppControllerSettingsMode::DeleteMissingScrobblingSecrets,
@@ -74,8 +74,8 @@ impl Shell {
         &self,
         warning_action: &'static str,
         mode: AppControllerSettingsMode,
-        update: impl FnOnce(&mut AppSettings) -> bool,
-    ) -> Option<AppSettings> {
+        update: impl FnOnce(&mut StoredSettings) -> bool,
+    ) -> Option<StoredSettings> {
         let mut settings = match mode {
             AppControllerSettingsMode::PreserveScrobblingSecrets => self.controller.load_settings(),
             AppControllerSettingsMode::DeleteMissingScrobblingSecrets => {
@@ -86,7 +86,6 @@ impl Shell {
             return None;
         }
         settings.migrate_defaults();
-        *self.state.settings.borrow_mut() = settings.clone();
         let save_result = if mode == AppControllerSettingsMode::DeleteMissingScrobblingSecrets {
             self.controller
                 .save_settings_with_scrobbling_deletes(&settings)
@@ -95,46 +94,67 @@ impl Shell {
         };
         if let Err(error) = save_result {
             warn!(%error, action = warning_action, "failed to save settings");
+            return None;
         }
+        *self.state.settings.borrow_mut() = settings.clone();
         Some(settings)
     }
 
-    pub(super) fn retry_external_cover_lookups(self: &Rc<Self>, warning_action: &'static str) {
-        if let Err(error) = self.controller.retry_external_cover_lookups() {
-            warn!(%error, action = warning_action, "failed to retry external cover lookups");
+    pub(super) fn retry_external_artwork(self: &Rc<Self>, warning_action: &'static str) {
+        if let Err(error) = self.controller.retry_external_artwork() {
+            warn!(%error, action = warning_action, "failed to retry external artwork");
             return;
         }
         self.refresh_cover_surfaces();
     }
 
+    fn refresh_lyrics_for_changed_settings(self: &Rc<Self>) {
+        let search_dialog = self
+            .state
+            .lyrics_search_dialog
+            .borrow()
+            .as_ref()
+            .map(|dialog| dialog.dialog.clone());
+        if let Some(dialog) = search_dialog {
+            dialog.close();
+        }
+        let media_key = current_playback_media_key(&self.state.player.borrow());
+        *self.state.lyrics.borrow_mut() = None;
+        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
+        *self.state.lyrics_loading_media.borrow_mut() = media_key.clone();
+        if let Some(media_key) = media_key {
+            self.state
+                .lyrics_auto_search_attempted
+                .borrow_mut()
+                .insert(media_key);
+            self.controller.refresh_lyrics_for_current();
+        }
+        self.render_lyrics_panel();
+    }
+
     pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("lyrics setting", |settings| {
-                if settings.external_lyrics_enabled == enabled {
+                if settings.metadata.external_lyrics_enabled == enabled {
                     return false;
                 }
-                settings.external_lyrics_enabled = enabled;
+                settings.metadata.external_lyrics_enabled = enabled;
                 true
             })
             .is_none()
         {
             return;
         }
-        *self.state.lyrics.borrow_mut() = None;
-        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-        self.render_lyrics_panel();
-        if current_playback_track_id(&self.state.player.borrow()).is_some() {
-            self.controller.refresh_lyrics_for_current();
-        }
+        self.refresh_lyrics_for_changed_settings();
     }
 
     pub(super) fn set_external_metadata_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("metadata setting", |settings| {
-                if settings.external_metadata_enabled == enabled {
+                if settings.metadata.external_metadata_enabled == enabled {
                     return false;
                 }
-                settings.external_metadata_enabled = enabled;
+                settings.metadata.external_metadata_enabled = enabled;
                 true
             })
             .is_none()
@@ -142,7 +162,7 @@ impl Shell {
             return;
         }
         if enabled {
-            self.retry_external_cover_lookups("metadata setting");
+            self.retry_external_artwork("metadata setting");
         } else {
             self.refresh_cover_surfaces();
         }
@@ -211,21 +231,18 @@ impl Shell {
 
     pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
         let Some(settings) = self.update_app_settings("lyrics search setting", |settings| {
-            if settings.prefer_server_lyrics == enabled {
+            if settings.metadata.prefer_server_lyrics == enabled {
                 return false;
             }
-            settings.prefer_server_lyrics = enabled;
+            settings.metadata.prefer_server_lyrics = enabled;
             true
         }) else {
             return;
         };
-        if settings.external_lyrics_enabled
+        if settings.metadata.external_lyrics_enabled
             && current_playback_track_id(&self.state.player.borrow()).is_some()
         {
-            *self.state.lyrics.borrow_mut() = None;
-            self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-            self.render_lyrics_panel();
-            self.controller.refresh_lyrics_for_current();
+            self.refresh_lyrics_for_changed_settings();
         }
     }
 
@@ -252,14 +269,18 @@ impl Shell {
         enabled: bool,
     ) {
         let Some(settings) = self.update_app_settings("lyrics provider setting", |settings| {
-            let has_provider = settings.external_lyrics_providers.contains(&provider);
+            let has_provider = settings
+                .metadata
+                .external_lyrics_providers
+                .contains(&provider);
             if has_provider == enabled {
                 return false;
             }
             if enabled {
-                settings.external_lyrics_providers.push(provider);
+                settings.metadata.external_lyrics_providers.push(provider);
             } else {
                 settings
+                    .metadata
                     .external_lyrics_providers
                     .retain(|candidate| *candidate != provider);
             }
@@ -267,13 +288,10 @@ impl Shell {
         }) else {
             return;
         };
-        if settings.external_lyrics_enabled
+        if settings.metadata.external_lyrics_enabled
             && current_playback_track_id(&self.state.player.borrow()).is_some()
         {
-            *self.state.lyrics.borrow_mut() = None;
-            self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-            self.render_lyrics_panel();
-            self.controller.refresh_lyrics_for_current();
+            self.refresh_lyrics_for_changed_settings();
         }
     }
 
@@ -292,11 +310,7 @@ impl Shell {
         }
         #[cfg(unix)]
         self.refresh_tray_private_mode();
-        if enabled {
-            self.withdraw_now_playing_notification();
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-        self.render_lyrics_panel();
+        self.refresh_lyrics_for_changed_settings();
     }
 
     pub(super) fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {
@@ -615,119 +629,69 @@ impl Shell {
     }
 
     pub(super) fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("Discord presence setting", |settings| {
-                if settings.discord_presence_enabled == enabled {
-                    return false;
-                }
-                settings.discord_presence_enabled = enabled;
-                true
-            })
-            .is_some()
-        {
-            self.retry_external_cover_lookups("Last.fm API key setting");
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+        self.update_app_settings("Discord presence setting", |settings| {
+            if settings.rich_presence.enabled == enabled {
+                return false;
+            }
+            settings.rich_presence.enabled = enabled;
+            true
+        });
     }
 
-    pub(super) fn set_discord_display_type(self: &Rc<Self>, display_type: DiscordDisplayType) {
-        if self
-            .update_app_settings("Discord display setting", |settings| {
-                if settings.discord_display_type == display_type {
-                    return false;
-                }
-                settings.discord_display_type = display_type;
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+    pub(super) fn set_discord_display_type(self: &Rc<Self>, display_type: DisplayType) {
+        self.update_app_settings("Discord display setting", |settings| {
+            if settings.rich_presence.display_type == display_type {
+                return false;
+            }
+            settings.rich_presence.display_type = display_type;
+            true
+        });
     }
 
-    pub(super) fn set_discord_link_type(self: &Rc<Self>, link_type: DiscordLinkType) {
-        if self
-            .update_app_settings("Discord link setting", |settings| {
-                if settings.discord_link_type == link_type {
-                    return false;
-                }
-                settings.discord_link_type = link_type;
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+    pub(super) fn set_discord_link_type(self: &Rc<Self>, link_type: LinkType) {
+        self.update_app_settings("Discord link setting", |settings| {
+            if settings.rich_presence.link_type == link_type {
+                return false;
+            }
+            settings.rich_presence.link_type = link_type;
+            true
+        });
     }
 
     pub(super) fn set_discord_show_paused(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("Discord paused setting", |settings| {
-                if settings.discord_show_paused == enabled {
-                    return false;
-                }
-                settings.discord_show_paused = enabled;
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+        self.update_app_settings("Discord paused setting", |settings| {
+            if settings.rich_presence.show_paused == enabled {
+                return false;
+            }
+            settings.rich_presence.show_paused = enabled;
+            true
+        });
     }
 
     pub(super) fn set_discord_show_as_listening(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("Discord activity type setting", |settings| {
-                if settings.discord_show_as_listening == enabled {
-                    return false;
-                }
-                settings.discord_show_as_listening = enabled;
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+        self.update_app_settings("Discord activity type setting", |settings| {
+            if settings.rich_presence.show_as_listening == enabled {
+                return false;
+            }
+            settings.rich_presence.show_as_listening = enabled;
+            true
+        });
     }
 
     pub(super) fn set_discord_show_state_icon(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("Discord state icon setting", |settings| {
-                if settings.discord_show_state_icon == enabled {
-                    return false;
-                }
-                settings.discord_show_state_icon = enabled;
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
-    }
-
-    pub(super) fn set_lastfm_api_key(self: &Rc<Self>, api_key: String) {
-        let api_key = api_key.trim().to_string();
-        if self
-            .update_app_settings("Last.fm API key setting", |settings| {
-                if settings.lastfm_api_key == api_key
-                    && settings.scrobbling.lastfm.api_key == api_key
-                {
-                    return false;
-                }
-                settings.lastfm_api_key = api_key;
-                settings.scrobbling.lastfm.api_key = settings.lastfm_api_key.clone();
-                true
-            })
-            .is_some()
-        {
-            self.update_discord_presence(&self.state.player.borrow());
-        }
+        self.update_app_settings("Discord state icon setting", |settings| {
+            if settings.rich_presence.show_state_icon == enabled {
+                return false;
+            }
+            settings.rich_presence.show_state_icon = enabled;
+            true
+        });
     }
 
     pub(super) fn update_scrobbling_settings(
         self: &Rc<Self>,
         warning_action: &'static str,
-        update: impl FnOnce(&mut ScrobblingSettings) -> bool,
+        update: impl FnOnce(&mut Settings) -> bool,
     ) {
         self.update_app_settings_with_scrobbling_secrets(warning_action, |settings| {
             let changed = update(&mut settings.scrobbling);
@@ -774,8 +738,6 @@ impl Shell {
             settings.playback.sanitize();
             settings.playback != previous
         }) {
-            self.controller
-                .update_playback_settings(settings.playback.clone());
             self.sync_fullscreen_equalizer_controls(&settings.playback.equalizer);
             self.update_bottom_player();
         }

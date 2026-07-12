@@ -2,7 +2,7 @@ use super::identity::{
     delete_local_track_entity_rows, delete_source_track_entity_rows, local_file_source_object_id,
     source_object_from_row, upsert_source_object_on_connection,
 };
-use super::sources::{COLLECTION_COVER_GENRE, collect_rows, image_ref_from_row, u32_from_i64};
+use super::sources::{collect_rows, image_ref_from_row, u32_from_i64};
 use super::*;
 
 #[derive(Clone, Debug, Default)]
@@ -47,9 +47,7 @@ impl Store {
     ) -> StoreResult<HashMap<TrackId, Option<ImageRef>>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT track_id,
-                   CASE WHEN image_origin = 'source' THEN image_item_id END,
-                   CASE WHEN image_origin = 'source' THEN image_tag END
+            SELECT track_id, image_item_id, image_tag
             FROM tracks
             WHERE source_id = ?1
             ",
@@ -72,9 +70,7 @@ impl Store {
     ) -> StoreResult<HashMap<AlbumId, Option<ImageRef>>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT album_id,
-                   CASE WHEN image_origin = 'source' THEN image_item_id END,
-                   CASE WHEN image_origin = 'source' THEN image_tag END
+            SELECT album_id, image_item_id, image_tag
             FROM albums
             WHERE source_id = ?1
             ",
@@ -103,9 +99,7 @@ impl Store {
         };
         let mut statement = self.connection.prepare(&format!(
             "
-            SELECT artist_id,
-                   CASE WHEN image_origin = 'source' THEN image_item_id END,
-                   CASE WHEN image_origin = 'source' THEN image_tag END
+            SELECT artist_id, image_item_id, image_tag
             FROM {table}
             WHERE source_id = ?1
             "
@@ -338,11 +332,6 @@ impl Store {
             delete_track_fts_rows(connection, source_id, track_ids)?;
             for playlist_id in &affected_playlist_ids {
                 super::library_auxiliary_cache::refresh_playlist_stats(
-                    connection,
-                    source_id,
-                    playlist_id,
-                )?;
-                super::library_auxiliary_cache::refresh_playlist_refs(
                     connection,
                     source_id,
                     playlist_id,
@@ -1151,12 +1140,6 @@ fn prune_stale_local_aggregate_rows(
         source_id,
         "local_current_genre_ids",
     )?;
-    delete_stale_refs(
-        connection,
-        source_id,
-        COLLECTION_COVER_GENRE,
-        "local_current_genre_ids",
-    )?;
     Ok(pruned)
 }
 
@@ -1231,24 +1214,6 @@ fn delete_fts_not_in_temp(
         "
     );
     connection.execute(&sql, params![source_id.as_str(), item_type])?;
-    Ok(())
-}
-
-fn delete_stale_refs(
-    connection: &Connection,
-    source_id: &SourceId,
-    collection_type: &str,
-    temp_table: &str,
-) -> StoreResult<()> {
-    let sql = format!(
-        "
-        DELETE FROM collection_cover_refs
-        WHERE source_id = ?1
-          AND collection_type = ?2
-          AND collection_id NOT IN (SELECT id FROM {temp_table})
-        "
-    );
-    connection.execute(&sql, params![source_id.as_str(), collection_type])?;
     Ok(())
 }
 

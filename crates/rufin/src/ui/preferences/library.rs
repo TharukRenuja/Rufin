@@ -2,8 +2,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{LibrarySourceSelection, SourceIdentity};
+use domain::LibrarySourceSelection;
 use gtk::gio;
+use sources::SourceIdentity;
 
 use crate::controller::SourceLocalAccessSnapshot;
 use crate::i18n::tr;
@@ -78,7 +79,7 @@ fn library_sources_page(
             let account = shell
                 .controller
                 .configured_source(&server.id)
-                .map(|saved| saved.username);
+                .and_then(|saved| crate::source_setup::configured_source_username(&saved));
             let row = adw::ActionRow::builder()
                 .title(configured_source_display_name(server))
                 .subtitle(source_summary_subtitle(server, summary, account.as_deref()))

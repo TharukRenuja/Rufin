@@ -1,12 +1,14 @@
 [workspace]
 members = [
+    "crates/artwork",
     "crates/rufin",
     "crates/domain",
     "crates/playback",
-    "crates/source",
-    "crates/source-jellyfin",
-    "crates/source-local",
-    "crates/source-subsonic",
+    "crates/playback-gstreamer",
+    "crates/rich-presence",
+    "crates/scrobbling",
+    "crates/metadata",
+    "crates/sources",
     "crates/secrets",
     "crates/library",
     "crates/library-sync",
@@ -28,6 +30,7 @@ publish = false
 [workspace.dependencies]
 adw = { package = "libadwaita", version = "0.9.1" }
 async-trait = "0.1.89"
+artwork = { path = "crates/artwork" }
 base64 = "0.22.1"
 clap = "4.6.1"
 directories = "6.0.0"
@@ -38,11 +41,11 @@ gdk-pixbuf = "0.22.0"
 getrandom = "0.4.0"
 gstreamer = "0.25.2"
 gstreamer-audio = "0.25.2"
-gstreamer-play = "0.25.0"
 gtk = { package = "gtk4", version = "0.11.3" }
 ksni = "0.3.4"
 library = { path = "crates/library" }
 library-sync = { path = "crates/library-sync" }
+metadata = { path = "crates/metadata" }
 lofty = "0.24.0"
 md5 = "0.8.0"
 mpris-server = "0.10.0"
@@ -50,16 +53,16 @@ notify = "8.2.0"
 oo7 = "0.6.0"
 percent-encoding = "2.3.2"
 playback = { path = "crates/playback" }
+playback-gstreamer = { path = "crates/playback-gstreamer" }
+rich-presence = { path = "crates/rich-presence" }
+scrobbling = { path = "crates/scrobbling" }
 reqwest = "0.13.3"
 rusqlite = "0.40.1"
 rustfft = "6.2.0"
 secrets = { path = "crates/secrets" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-source = { path = "crates/source" }
-source-jellyfin = { path = "crates/source-jellyfin" }
-source-local = { path = "crates/source-local" }
-source-subsonic = { path = "crates/source-subsonic" }
+sources = { path = "crates/sources" }
 tempfile = "3.23.0"
 thiserror = "2.0.18"
 tokio = "1.52.3"
@@ -76,6 +79,9 @@ dead_code = "deny"
 warnings = "deny"
 
 [workspace.lints.clippy]
+all = { level = "allow", priority = -2 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
@@ -87,10 +93,31 @@ large_include_file = "deny"
 exit = "deny"
 fallible_impl_from = "deny"
 panic_in_result_fn = "deny"
-unreachable = "deny"
-assertions_on_result_states = "deny"
 string_slice = "deny"
-match_wildcard_for_single_variants = "deny"
+map_entry = "deny"
+format_in_format_args = "deny"
+to_string_in_format_args = "deny"
+manual_memcpy = "deny"
+manual_ignore_case_cmp = "deny"
+manual_retain = "deny"
+collapsible_str_replace = "deny"
+double_ended_iterator_last = "deny"
+drain_collect = "deny"
+extend_with_drain = "deny"
+iter_overeager_cloned = "deny"
+manual_contains = "deny"
+manual_str_repeat = "deny"
+readonly_write_lock = "deny"
+redundant_iter_cloned = "deny"
+sliced_string_as_bytes = "deny"
+unbuffered_bytes = "deny"
+unnecessary_to_owned = "deny"
+waker_clone_wake = "deny"
+cmp_owned = "deny"
+regex_creation_in_loops = "deny"
+slow_vector_initialization = "deny"
+useless_vec = "deny"
+vec_init_then_push = "deny"
 
 [profile.dev]
 debug = "line-tables-only"

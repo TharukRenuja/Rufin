@@ -99,7 +99,7 @@ impl NamedCollectionKind {
                                 .take(GRID_ROUTE_PAGE_SIZE)
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            NamedPage::from_genres(source::PagedResponse::new(
+                            NamedPage::from_genres(library::PagedResponse::new(
                                 genres,
                                 library.genres.len(),
                             ))
@@ -137,10 +137,10 @@ impl NamedCollectionItem {
         }
     }
 
-    fn artwork(&self) -> crate::cover_art_policy::SelectedArtwork {
+    fn artwork(&self) -> Vec<CandidateSet> {
         match self {
-            Self::Genre(genre) => crate::cover_art_policy::selected_genre_artwork(genre),
-            Self::Mood(mood) => crate::cover_art_policy::selected_mood_artwork(mood),
+            Self::Genre(genre) => CandidateSet::genre_slots(genre),
+            Self::Mood(mood) => CandidateSet::mood_slots(mood),
         }
     }
 
@@ -260,15 +260,15 @@ impl NamedCollectionItem {
     }
 }
 
-struct NamedPage(source::PagedResponse<NamedCollectionItem>);
+struct NamedPage(library::PagedResponse<NamedCollectionItem>);
 
 impl NamedPage {
     fn empty() -> Self {
-        Self(source::PagedResponse::new(Vec::new(), 0))
+        Self(library::PagedResponse::new(Vec::new(), 0))
     }
 
-    fn from_genres(page: source::PagedResponse<Genre>) -> Self {
-        Self(source::PagedResponse::new(
+    fn from_genres(page: library::PagedResponse<Genre>) -> Self {
+        Self(library::PagedResponse::new(
             page.items
                 .into_iter()
                 .map(NamedCollectionItem::Genre)
@@ -277,8 +277,8 @@ impl NamedPage {
         ))
     }
 
-    fn from_moods(page: source::PagedResponse<Mood>) -> Self {
-        Self(source::PagedResponse::new(
+    fn from_moods(page: library::PagedResponse<Mood>) -> Self {
+        Self(library::PagedResponse::new(
             page.items
                 .into_iter()
                 .map(NamedCollectionItem::Mood)
@@ -287,7 +287,7 @@ impl NamedPage {
         ))
     }
 
-    fn into_inner(self) -> source::PagedResponse<NamedCollectionItem> {
+    fn into_inner(self) -> library::PagedResponse<NamedCollectionItem> {
         self.0
     }
 }
@@ -327,58 +327,6 @@ fn populate_named_collection_model(
     let mut values = items.to_vec();
     sort_named_collection_items(&mut values, settings);
     replace_named_collection_items(model, values);
-}
-
-fn named_collection_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<ImageRef> {
-    let mut refs = Vec::new();
-    for index in start..end.min(model.n_items() as usize) {
-        let Some(item) = item_at::<NamedCollectionItem>(model, index as u32) else {
-            continue;
-        };
-        push_selected_cover_refs(&mut refs, item.artwork().image_refs);
-    }
-    refs
-}
-
-fn warm_named_collection_covers(
-    shell: &Rc<Shell>,
-    items: &[NamedCollectionItem],
-    settings: &LibraryListSettings,
-) {
-    let Some((fetch_size, size)) = collection_cover_warm_sizes(settings) else {
-        return;
-    };
-    let mut values = items.to_vec();
-    sort_named_collection_items(&mut values, settings);
-    let image_refs = values
-        .iter()
-        .take(INITIAL_ROUTE_COVER_WARM_ITEMS)
-        .flat_map(|item| item.artwork().image_refs)
-        .collect::<Vec<ImageRef>>();
-    shell.prime_cover_refs_now(image_refs, fetch_size, size);
-}
-
-fn connect_named_collection_viewport_cover_warm(
-    shell: &Rc<Shell>,
-    scroller: &gtk::ScrolledWindow,
-    model: &gio::ListStore,
-    settings: &LibraryListSettings,
-    key: LibraryListKey,
-) {
-    connect_cover_viewport_warm(
-        shell,
-        scroller,
-        model,
-        settings,
-        CoverViewportSpec {
-            key,
-            cover_sizes: grid_row_sizes,
-            refs_for_range: named_collection_cover_refs,
-            row_interaction_behind: ALBUM_INTERACTION_BEHIND,
-            row_interaction_ahead: ALBUM_INTERACTION_AHEAD,
-            row_warm_delay: GRID_WARM_DELAY,
-        },
-    );
 }
 
 pub(in crate::ui) fn named_collection_widget(
@@ -612,17 +560,7 @@ fn named_collection_route_spec(
         sort_items: Rc::new(sort_named_collection_items),
         populate_model: Rc::new(populate_named_collection_model),
         append_model: Rc::new(append_named_collection_items),
-        warm_items: Rc::new(warm_named_collection_covers),
         build_content: Rc::new(move |shell, model| named_collection_widget(shell, model, kind)),
-        configure_scroller: Rc::new(move |shell, scroller, model, settings| {
-            connect_named_collection_viewport_cover_warm(
-                shell,
-                scroller,
-                model,
-                settings,
-                kind.key(),
-            );
-        }),
         after_replace: None,
     }
 }

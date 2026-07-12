@@ -1,40 +1,70 @@
 use super::*;
-use domain::{LocalCueTrackSource, LocalFileFacts, LocalManifestEntry};
-use source::MusicSource;
+use metadata::ExternalLyricsProvider;
+use sources::MusicSource;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
 fn active_source_for_test(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    saved: &SavedSource,
+    saved: &StoredSource,
 ) -> ActiveSourceSlot {
-    let active = crate::sources::activate_configured_source(store, secrets, saved)
+    let active = crate::source_setup::activate_configured_source(store, secrets, saved)
         .expect("activate saved source");
     Arc::new(std::sync::RwLock::new(Some(active)))
 }
 
-fn active_value_for_test(store: &StoreHandle, saved: &SavedSource) -> Arc<ActiveSource> {
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    secrets
-        .save_token(&saved.source.id, "test-token")
-        .expect("save credential");
-    crate::sources::activate_configured_source(store, &secrets, saved)
-        .expect("activate saved source")
-}
-
 fn controller_with_current_track(
-    saved: &SavedSource,
+    saved: &StoredSource,
     track: &Track,
 ) -> (AppController, Receiver<ControllerEvent>) {
     let store = StoreHandle::open_memory().expect("memory store");
     seed_cached_library(&store, saved, &[], std::slice::from_ref(track), &[]);
-    let mut queue = QueueEngine::new(saved.source.id.clone());
-    queue.play_now(track);
-    store
-        .with_store(|store| store.save_queue_snapshot(&queue.snapshot()))
-        .expect("seed current track");
+    seed_playback_checkpoint(&store, &saved.source_id, track, 0);
     controller_from_store_for_test(store)
+}
+
+fn media_key(source_id: &SourceId, track_id: &TrackId) -> playback::MediaKey {
+    playback::MediaKey {
+        source_id: source_id.clone(),
+        track_id: track_id.clone(),
+    }
+}
+
+fn seed_playback_checkpoint(
+    store: &StoreHandle,
+    source_id: &SourceId,
+    track: &Track,
+    progress_millis: u64,
+) {
+    let mut sequence = playback::Sequence::new(source_id.clone());
+    sequence
+        .apply_batch(
+            playback::Batch::new(vec![playback::BatchItem::new(
+                track.clone(),
+                playback::Provenance::Manual,
+            )]),
+            playback::Placement::Replace { anchor_index: 0 },
+        )
+        .expect("seed playback sequence");
+    sequence.set_progress_millis(progress_millis);
+    let checkpoint = playback::encode_checkpoint(&sequence).expect("encode playback checkpoint");
+    store
+        .with_store(|store| {
+            store.save_playback_checkpoint(&library::PlaybackCheckpointRecord {
+                source_id: checkpoint.header.source_id,
+                revision: checkpoint.header.revision,
+                selected_occurrence_id: checkpoint
+                    .header
+                    .selected_occurrence
+                    .map(|occurrence| occurrence.to_string()),
+                progress_millis: checkpoint.header.progress_millis,
+                repeat_mode: "Off".to_string(),
+                shuffle_enabled: checkpoint.header.shuffle_enabled,
+                payload: checkpoint.payload,
+            })
+        })
+        .expect("seed playback checkpoint");
 }
 
 #[test]
@@ -138,7 +168,7 @@ pub(in crate::controller) fn store_playlist_commands_preserve_exact_order() {
         .clone();
     assert_eq!(
         store
-            .with_store(|store| store.playlist_owner(&saved.source.id, &playlist.id))
+            .with_store(|store| store.playlist_owner(&saved.source_id, &playlist.id))
             .expect("playlist owner"),
         Some(SourceFeatureOwner::Store)
     );
@@ -197,37 +227,14 @@ pub(in crate::controller) fn lyrics_emit_event() {
     track.local_path = Some(media_path.to_string_lossy().into_owned());
     let (controller, events) = controller_with_current_track(&saved, &track);
 
-    controller.request_track_server_lyrics(track.id);
+    controller.request_lyrics_for_media(
+        media_key(&saved.source_id, &track.id),
+        metadata::LyricsRequestKind::ServerOnly,
+    );
 
     assert!(wait_for_lyrics(&events).is_none());
     let _cleanup = fs::remove_dir_all(root);
 }
-#[test]
-pub(in crate::controller) fn lyrics_local_lookup() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = local_source_saved();
-    let mut track = restored_track();
-    track.id = TrackId::new("local:track:lyrics");
-    track.local_path = None;
-    let mut queue = QueueEngine::new(saved.source.id.clone());
-    queue.play_now(&track);
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.save_queue_snapshot(&queue.snapshot())?;
-            Ok(())
-        })
-        .expect("seed local queue");
-    let (controller, events) = controller_from_store_for_test(store);
-
-    controller.request_track_lyrics(track.id);
-
-    let _error = events
-        .recv_timeout(std::time::Duration::from_millis(100))
-        .expect_err("lyrics event should not be emitted");
-}
-
 #[test]
 pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind lyrics server");
@@ -244,10 +251,12 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
             .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .expect("write lyrics response");
     });
-    let mut saved = saved_source();
-    saved.source.base_url = format!("http://{address}");
+    let mut config = sources::jellyfin::JellyfinSourceConfig::from_stored(&saved_source())
+        .expect("Jellyfin source config");
+    config.credentials.source.base_url = format!("http://{address}");
+    let saved = config.into_stored();
     let track = restored_track();
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -258,16 +267,16 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
             start_millis: None,
         }],
     };
-    controller
-        .store
-        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
-        .expect("save remote lyrics");
+    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
     controller
         .secrets
-        .save_token(&source_id, "lyrics-token")
+        .save_token(source_id.as_str(), "lyrics-token")
         .expect("save lyrics token");
 
-    controller.request_track_server_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&source_id, &track.id),
+        metadata::LyricsRequestKind::ServerOnly,
+    );
 
     assert!(wait_for_lyrics(&events).is_none());
     let request = request_receiver
@@ -275,10 +284,7 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
         .expect("native lyrics request");
     assert!(request.starts_with("GET /Audio/lyrics/Lyrics HTTP/1.1"));
     assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.load_lyrics(&source_id, &track.id))
-            .expect("load ignored cache"),
+        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load ignored cache"),
         Some(remote_lyrics)
     );
     server.join().expect("lyrics server");
@@ -287,7 +293,7 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
 pub(in crate::controller) fn lyrics_remove_cache() {
     let saved = saved_source();
     let track = restored_track();
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -298,21 +304,18 @@ pub(in crate::controller) fn lyrics_remove_cache() {
             start_millis: None,
         }],
     };
-    controller
-        .store
-        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
-        .expect("save remote lyrics");
+    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
 
-    controller.request_track_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
+    );
     assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
     controller.clear_remote_lyrics_for_current();
 
     assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.load_lyrics(&source_id, &track.id))
-            .expect("load lyrics"),
+        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load lyrics"),
         None
     );
 }
@@ -320,7 +323,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
 pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
     let saved = saved_source();
     let track = restored_track();
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -331,12 +334,12 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
             start_millis: None,
         }],
     };
-    controller
-        .store
-        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
-        .expect("save remote lyrics");
+    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
 
-    controller.request_track_auto_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
+    );
 
     assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
 }
@@ -349,11 +352,11 @@ pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
     track.title.clear();
     track.artist.clear();
     track.artist_id = None;
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
     let mut settings = controller.store.load_settings();
-    settings.external_lyrics_enabled = true;
-    settings.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
+    settings.metadata.external_lyrics_enabled = true;
+    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
     controller
         .store
         .save_settings(&settings)
@@ -373,27 +376,25 @@ pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
             },
         ],
     };
-    controller
-        .store
-        .with_store(|store| store.save_lyrics(&source_id, &remote_lyrics))
+    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics)
         .expect("seed invalid cached lyrics");
 
-    controller.request_track_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
+    );
 
+    assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
-        controller
-            .store
-            .with_store(|store| store.load_lyrics(&source_id, &track.id))
-            .expect("load lyrics"),
+        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load lyrics"),
         None
     );
-    assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
 pub(in crate::controller) fn lyrics_preserve_cache() {
     let saved = saved_source();
     let track = restored_track();
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let (controller, events) = controller_with_current_track(&saved, &track);
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
@@ -404,35 +405,23 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
             start_millis: None,
         }],
     };
-    controller
-        .store
-        .with_store(|store| store.save_lyrics(&source_id, &server_lyrics))
-        .expect("save server lyrics");
+    save_cached_lyrics(&controller.store, &source_id, &server_lyrics).expect("save server lyrics");
 
     controller.clear_remote_lyrics_for_current();
-    controller.request_track_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
+    );
 
     assert_eq!(wait_for_lyrics(&events), Some(server_lyrics));
 }
 #[test]
 pub(in crate::controller) fn lyrics_emit_current() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new("jellyfin:server:lyrics"),
-            kind: "jellyfin".to_string(),
-            name: "Lyrics Server".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let mut saved = saved_source();
+    saved.source_id = SourceId::new("jellyfin:server:lyrics");
+    saved.name = "Lyrics Server".to_string();
     let track = restored_track();
-    let mut queue = QueueEngine::new(saved.source.id.clone());
-    queue.play_now(&track);
-    queue.set_progress_seconds(12);
     let lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
@@ -445,454 +434,127 @@ pub(in crate::controller) fn lyrics_emit_current() {
     store
         .with_store(|store| {
             store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.save_queue_snapshot(&queue.snapshot())?;
-            store.save_lyrics(&saved.source.id, &lyrics)?;
+            store.set_active_source(&saved.source_id)?;
             Ok(())
         })
         .expect("seed restored state");
+    save_cached_lyrics(&store, &saved.source_id, &lyrics).expect("seed restored lyrics");
+    seed_playback_checkpoint(&store, &saved.source_id, &track, 12_000);
     let (controller, events) = controller_from_store_for_test(store);
-    controller.request_track_lyrics(track.id.clone());
+    controller.request_lyrics_for_media(
+        media_key(&saved.source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
+    );
     assert_eq!(wait_for_lyrics(&events), Some(lyrics));
 }
 #[test]
 pub(in crate::controller) fn lyrics_skip_stale_track_request() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let saved = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new("jellyfin:server:lyrics"),
-            kind: "jellyfin".to_string(),
-            name: "Lyrics Server".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
-    };
+    let mut saved = saved_source();
+    saved.source_id = SourceId::new("jellyfin:server:lyrics");
+    saved.name = "Lyrics Server".to_string();
     let track = restored_track();
-    let mut queue = QueueEngine::new(saved.source.id.clone());
-    queue.play_now(&track);
     store
         .with_store(|store| {
             store.save_source(&saved)?;
-            store.set_active_source(&saved.source.id)?;
-            store.save_queue_snapshot(&queue.snapshot())?;
+            store.set_active_source(&saved.source_id)?;
             Ok(())
         })
         .expect("seed restored state");
+    seed_playback_checkpoint(&store, &saved.source_id, &track, 0);
     let (controller, events) = controller_from_store_for_test(store);
 
-    controller.request_track_lyrics(TrackId::new("jellyfin:track:stale-lyrics"));
+    controller.request_lyrics_for_media(
+        media_key(
+            &saved.source_id,
+            &TrackId::new("jellyfin:track:stale-lyrics"),
+        ),
+        metadata::LyricsRequestKind::Configured,
+    );
 
     let _error = events
         .recv_timeout(std::time::Duration::from_millis(100))
         .expect_err("lyrics event should not be emitted");
 }
-#[test]
-pub(in crate::controller) fn lyrics_search_preference() {
-    let mut settings = AppSettings {
-        external_lyrics_enabled: true,
-        ..AppSettings::default()
-    };
-    assert_eq!(
-        super::lyrics_search_for_settings(&settings),
-        LyricsSearch::ServerThenRemote
-    );
-    settings.prefer_server_lyrics = false;
-    assert_eq!(
-        super::lyrics_search_for_settings(&settings),
-        LyricsSearch::RemoteThenServer
-    );
-    settings.private_mode = true;
-    assert_eq!(
-        super::lyrics_search_for_settings(&settings),
-        LyricsSearch::ServerOnly
-    );
-    settings.private_mode = false;
-    settings.external_lyrics_enabled = false;
-    assert_eq!(
-        super::lyrics_search_for_settings(&settings),
-        LyricsSearch::ServerOnly
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_use_path() {
-    let dir = self::unique_test_dir("lyrics-portal-save");
-    fs::create_dir_all(&dir).expect("create dir");
-    let sidecar = dir.join("Track.lrc");
-    let output = dir.join("Chosen Lyrics.lrc");
-    let entry = lyrics_save_entry("jellyfin:track:lyrics-save", &dir);
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Lrclib,
-        id: "1".to_string(),
-        track_name: "Track".to_string(),
-        artist_name: "Artist".to_string(),
-        album_name: "Album".to_string(),
-        duration_seconds: 180,
-        synced_lyrics: Some("[00:01.00]line one".to_string()),
-        plain_lyrics: None,
-    };
-    let (saved_path, lyrics) = super::save_lrclib_result(
-        &SourceId::new("jellyfin:server:lyrics"),
-        &entry,
-        &result,
-        output.clone(),
-    )
-    .expect("save lyrics")
-    .expect("lyrics");
-    assert_eq!(saved_path, output);
-    assert_eq!(
-        fs::read_to_string(&saved_path).expect("saved lyrics"),
-        "[00:01.00]line one"
-    );
-    assert!(!sidecar.exists());
-    assert!(!dir.join("Chosen Lyrics.lrc.tmp").exists());
-    assert_eq!(lyrics.track_id, entry.track_id);
-    let _cleanup = fs::remove_dir_all(dir);
-}
-#[test]
-pub(in crate::controller) fn lyrics_save_rejects_netease_placeholder() {
-    let dir = self::unique_test_dir("lyrics-placeholder-save");
-    fs::create_dir_all(&dir).expect("create dir");
-    let output = dir.join("Chosen Lyrics.lrc");
-    let entry = lyrics_save_entry("jellyfin:track:lyrics-placeholder", &dir);
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Netease,
-        id: "remote-placeholder-save".to_string(),
-        track_name: "Track".to_string(),
-        artist_name: "Artist".to_string(),
-        album_name: "Album".to_string(),
-        duration_seconds: 180,
-        synced_lyrics: Some("[00:05.00]Sorry，此歌曲暂无文本歌词。\n".to_string()),
-        plain_lyrics: None,
-    };
 
-    let saved = super::save_lrclib_result(
-        &SourceId::new("jellyfin:server:lyrics"),
-        &entry,
-        &result,
-        output.clone(),
-    )
-    .expect("save result");
-
-    assert!(saved.is_none());
-    assert!(!output.exists());
-    let _cleanup = fs::remove_dir_all(dir);
-}
-fn lyrics_save_entry(track_id: &str, dir: &std::path::Path) -> domain::QueueEntry {
-    domain::QueueEntry {
-        id: domain::QueueEntryId::new(format!("queue-entry:{track_id}")),
-        track_id: TrackId::new(track_id),
-        album_id: None,
-        title: "Track".to_string(),
-        artist: "Artist".to_string(),
-        artist_id: None,
-        album: "Album".to_string(),
-        year: 0,
-        duration_seconds: 180,
-        favorite: false,
-        image_ref: None,
-        local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
-        source_format: None,
-        origin: None,
-    }
-}
 #[test]
-pub(in crate::controller) fn lyrics_use_file() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let dir = self::unique_test_dir("local-sidecar");
-    fs::create_dir_all(&dir).expect("create dir");
-    let generation = begin_sync_with_access(
-        &store,
-        &saved,
-        &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
-            root_path: dir.to_string_lossy().into_owned(),
-            path_replace_from: None,
-            path_replace_to: Some(dir.to_string_lossy().into_owned()),
+pub(in crate::controller) fn lyrics_preview_rejects_a_disabled_provider() {
+    let saved = saved_source();
+    let track = restored_track();
+    let (controller, events) = controller_with_current_track(&saved, &track);
+    let mut settings = controller.load_settings();
+    settings.metadata.external_lyrics_enabled = true;
+    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
+    controller
+        .store
+        .save_settings(&settings)
+        .expect("save lyrics settings");
+
+    controller.preview_lyrics_search_result(
+        media_key(&saved.source_id, &track.id),
+        LyricsSearchResult {
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "disabled-result".to_string(),
+            track_name: track.title.clone(),
+            artist_name: track.artist.clone(),
+            album_name: String::new(),
+            duration_seconds: 0,
+            synced_lyrics: None,
+            plain_lyrics: Some("should not load".to_string()),
         },
     );
-    let audio = dir.join("07 I'm feeling lucky.flac");
-    let lrc = dir.join("07 I'm feeling lucky.lrc");
-    fs::write(&audio, []).expect("audio");
-    fs::write(&lrc, "[00:01.00]line one").expect("lrc");
-    let mut track = restored_track();
-    track.local_path = Some(audio.to_string_lossy().into_owned());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
-    let active = active_value_for_test(&store, &saved);
-    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id).expect("sidecar lyrics");
-    assert_eq!(lyrics.source, LyricsSource::Local);
-    assert_eq!(lyrics.lines[0].text, "line one");
-    assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
-    let _cleanup = fs::remove_dir_all(dir);
-}
 
-#[test]
-pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let dir = self::unique_test_dir("title-sidecar");
-    fs::create_dir_all(&dir).expect("create dir");
-    let generation = begin_sync_with_access(
-        &store,
-        &saved,
-        &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
-            root_path: dir.to_string_lossy().into_owned(),
-            path_replace_from: None,
-            path_replace_to: Some(dir.to_string_lossy().into_owned()),
-        },
+    events
+        .recv_timeout(Duration::from_millis(100))
+        .expect_err("disabled provider result should not be applied");
+    assert_eq!(
+        load_cached_lyrics(&controller.store, &saved.source_id, &track.id)
+            .expect("load lyrics cache"),
+        None
     );
-    let audio = dir.join("01 Apple.flac");
-    let lrc = dir.join("Apple.lrc");
-    fs::write(&audio, []).expect("audio");
-    fs::write(&lrc, "[00:01.00]apple line").expect("lrc");
-    let mut track = restored_track();
-    track.title = "Apple".to_string();
-    track.local_path = Some(audio.to_string_lossy().into_owned());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
-
-    let active = active_value_for_test(&store, &saved);
-    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id).expect("sidecar lyrics");
-
-    assert_eq!(lyrics.source, LyricsSource::Local);
-    assert_eq!(lyrics.lines[0].text, "apple line");
-    let _cleanup = fs::remove_dir_all(dir);
 }
 
 #[test]
-pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let mut saved = self::saved_source();
-    saved.source.id = SourceId::new("local:server:library");
-    saved.source.kind = LOCAL_SOURCE_ID.to_string();
-    let dir = self::unique_test_dir("cue-sidecar");
-    fs::create_dir_all(&dir).expect("create dir");
-    let audio = dir.join("fruits.flac");
-    let same_stem_lrc = dir.join("fruits.lrc");
-    let title_lrc = dir.join("Apple.lrc");
-    fs::write(&audio, []).expect("audio");
-    fs::write(&same_stem_lrc, "[00:01.00]wrong line").expect("same stem lrc");
-    fs::write(&title_lrc, "[00:01.00]apple line").expect("title lrc");
-    let track_id = TrackId::new("local:track:cue-one");
-    let mut track = restored_track();
-    track.id = track_id.clone();
-    track.title = "Apple".to_string();
-    track.local_path = Some(audio.to_string_lossy().into_owned());
-    store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            let generation = store.begin_sync(&saved.source.id)?;
-            let manifest_path = dir.join("album.cue#track=01");
-            let manifest = LocalManifestEntry {
-                facts: LocalFileFacts {
-                    path: manifest_path,
-                    root_path: dir.clone(),
-                    relative_path: "album.cue#track=01".to_string(),
-                    file_size: 0,
-                    mtime_seconds: 0,
-                    mtime_nanos: 0,
-                    inode: None,
-                    device: None,
-                },
-                track: track.clone(),
-                album_artist: track.artist.clone(),
-                musicbrainz_album_id: None,
-                musicbrainz_release_group_id: None,
-                cover: None,
-                metadata_hash: "metadata".to_string(),
-                search_hash: "search".to_string(),
-            };
-            let base_cache_revision = store.source_cache_revision(&saved.source.id)?;
-            store.commit_local_library_delta(
-                &saved.source.id,
-                generation,
-                base_cache_revision,
-                true,
-                library::LocalLibraryDelta {
-                    tracks: vec![track.clone()],
-                    manifest: library::LocalManifestDelta {
-                        upserted_entries: vec![manifest],
-                        ..library::LocalManifestDelta::default()
-                    },
-                    cue_track_sources: vec![LocalCueTrackSource {
-                        source_object_id: "local:cue:track:one".to_string(),
-                        track_id: track_id.clone(),
-                        source_path: audio.to_string_lossy().into_owned(),
-                        root_path: dir.to_string_lossy().into_owned(),
-                        relative_path: "album.flac".to_string(),
-                        cue_path: dir.join("album.cue").to_string_lossy().into_owned(),
-                        cue_revision: "cue-revision-one".to_string(),
-                        cue_track_index: 1,
-                        segment_start_ms: 0,
-                        segment_end_ms: 30_000,
-                        sync_generation: generation,
-                    }],
-                    ..library::LocalLibraryDelta::default()
-                },
-            )?;
-            Ok(())
-        })
-        .expect("cue source");
-
-    let active = active_value_for_test(&store, &saved);
-    let lyrics = super::local_sidecar_lyrics(&store, &active, &track_id).expect("sidecar lyrics");
-
-    assert_eq!(lyrics.source, LyricsSource::Local);
-    assert_eq!(lyrics.lines[0].text, "apple line");
-    let _cleanup = fs::remove_dir_all(dir);
-}
-
-#[test]
-pub(in crate::controller) fn lyrics_ignore_cached_local_for_cue_tracks() {
+pub(in crate::controller) fn lyrics_settings_invalidate_a_queued_result() {
+    let saved = saved_source();
+    let track = restored_track();
+    let (controller, events) = controller_with_current_track(&saved, &track);
     let lyrics = Lyrics {
-        track_id: TrackId::new("local:track:cue-one"),
-        source: LyricsSource::Local,
-        external_provider: None,
-        lines: vec![LyricLine {
-            text: "line one".to_string(),
-            start_millis: Some(1_000),
-        }],
-    };
-
-    assert!(!super::cached_lyrics_allowed_for_track(
-        &lyrics,
-        LyricsSearch::RemoteThenServer,
-        &domain::default_external_lyrics_providers(),
-        true,
-    ));
-    assert!(super::cached_lyrics_allowed_for_track(
-        &lyrics,
-        LyricsSearch::RemoteThenServer,
-        &domain::default_external_lyrics_providers(),
-        false,
-    ));
-}
-#[test]
-pub(in crate::controller) fn lyrics_cache_respects_external_provider_selection() {
-    let lyrics = Lyrics {
-        track_id: TrackId::new("track-one"),
+        track_id: track.id.clone(),
         source: LyricsSource::Remote,
-        external_provider: Some(ExternalLyricsProvider::Genius),
+        external_provider: Some(ExternalLyricsProvider::Lrclib),
         lines: vec![LyricLine {
-            text: "line one".to_string(),
+            text: "queued line".to_string(),
             start_millis: None,
         }],
     };
+    save_cached_lyrics(&controller.store, &saved.source_id, &lyrics).expect("save cached lyrics");
 
-    assert!(super::cached_lyrics_allowed_for_track(
-        &lyrics,
-        LyricsSearch::RemoteThenServer,
-        &[ExternalLyricsProvider::Genius],
-        false,
-    ));
-    assert!(!super::cached_lyrics_allowed_for_track(
-        &lyrics,
-        LyricsSearch::RemoteThenServer,
-        &[ExternalLyricsProvider::Lrclib],
-        false,
-    ));
-}
-#[test]
-pub(in crate::controller) fn lyrics_ignore_files() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let dir = self::unique_test_dir("local-sidecar-large");
-    fs::create_dir_all(&dir).expect("create dir");
-    let generation = begin_sync_with_access(
-        &store,
-        &saved,
-        &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
-            root_path: dir.to_string_lossy().into_owned(),
-            path_replace_from: None,
-            path_replace_to: Some(dir.to_string_lossy().into_owned()),
-        },
+    controller.request_lyrics_for_media(
+        media_key(&saved.source_id, &track.id),
+        metadata::LyricsRequestKind::Configured,
     );
-    let audio = dir.join("Track.flac");
-    let lrc = dir.join("Track.lrc");
-    fs::write(&audio, []).expect("audio");
-    let file = fs::File::create(&lrc).expect("lrc");
-    file.set_len((LOCAL_LYRICS_MAX_BYTES + 1) as u64)
-        .expect("lrc length");
-    let mut track = restored_track();
-    track.local_path = Some(audio.to_string_lossy().into_owned());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
+    let generation = loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("lyrics event")
+        {
+            ControllerEvent::Lyrics { generation, .. } => break generation,
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
+        }
+    };
+    assert!(controller.lyrics_result_is_current(generation));
 
-    let active = active_value_for_test(&store, &saved);
-    let lyrics = super::local_sidecar_lyrics(&store, &active, &track.id);
+    let mut settings = controller.load_settings();
+    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
+    controller
+        .save_settings(&settings)
+        .expect("disable lyrics provider");
 
-    assert_eq!(lyrics, None);
-    let _cleanup = fs::remove_dir_all(dir);
+    assert!(!controller.lyrics_result_is_current(generation));
 }
-#[test]
-pub(in crate::controller) fn lyrics_use_replacement() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let generation = store
-        .with_store(|store| {
-            store.save_source(&saved)?;
-            store.save_source_local_access(&SourceLocalAccess {
-                source_id: saved.source.id.clone(),
-                root_path: "/unused".to_string(),
-                path_replace_from: Some("/server/music".to_string()),
-                path_replace_to: Some(
-                    self::unique_test_dir("mapped-audio")
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-            })?;
-            store.begin_sync(&saved.source.id)
-        })
-        .expect("begin sync");
-    let root = store
-        .with_store(|store| store.source_local_access(&saved.source.id))
-        .expect("access")
-        .expect("access")
-        .path_replace_to
-        .expect("replace to");
-    let root = PathBuf::from(root);
-    let audio = root.join("Album/Track.flac");
-    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
-    fs::write(&audio, []).expect("audio");
-    let mut track = restored_track();
-    track.local_path = Some("/server/music/Album/Track.flac".to_string());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
-    let active = active_value_for_test(&store, &saved);
-    let mapped =
-        super::local_audio_path_for_track(&store, &active, &track.id).expect("mapped path");
-    assert_eq!(mapped, audio);
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn lyrics_require_access() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let generation = begin_active_sync(&store, &saved);
-    let dir = self::unique_test_dir("remote-no-local-access");
-    fs::create_dir_all(&dir).expect("create dir");
-    let audio = dir.join("Track.flac");
-    fs::write(&audio, []).expect("audio");
-    let mut track = restored_track();
-    track.local_path = Some(audio.to_string_lossy().into_owned());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
-    let active = active_value_for_test(&store, &saved);
-    let mapped = super::local_audio_path_for_track(&store, &active, &track.id);
-    assert_eq!(mapped, None);
-    let _cleanup = fs::remove_dir_all(dir);
-}
+
 #[test]
 pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let store = StoreHandle::open_memory().expect("memory store");
@@ -905,7 +567,7 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
         &store,
         &saved,
         &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: Some("/server/music".to_string()),
             path_replace_to: Some(root.to_string_lossy().into_owned()),
@@ -914,22 +576,21 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
     let mut track = restored_track();
     track.local_path = Some("/server/music/Album/Track.flac".to_string());
     store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source_id, &[track.clone()], generation))
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets = Arc::new(MemorySecretStore::new());
     secrets
-        .save_token(&saved.source.id, "test-token")
+        .save_token(saved.source_id.as_str(), "test-token")
         .expect("save token");
     let secrets: Arc<dyn SecretStore> = secrets;
     let active_source = active_source_for_test(&store, &secrets, &saved);
-    let stream = super::resolve_stream(
+    let stream = super::resolve_stream_request(
         &store,
         &runtime,
         &active_source,
-        &saved.source.id,
-        &track.id,
-        &PlaybackSettings::default(),
+        &saved.source_id,
+        &StreamRequest::original(track.id.clone()),
     )
     .expect("stream");
     assert!(stream.uri().starts_with("https://music.example/Audio/"));
@@ -940,40 +601,7 @@ pub(in crate::controller) fn playback_skips_uncached_prefix_access() {
 }
 
 #[test]
-pub(in crate::controller) fn lyrics_change_source() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let playback_server = saved_source();
-    let local = local_source_saved();
-    store
-        .with_store(|store| {
-            store.save_source(&playback_server)?;
-            store.save_source(&local)?;
-            store.set_active_source(&local.source.id)
-        })
-        .expect("seed servers");
-    let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let secrets = Arc::new(MemorySecretStore::new());
-    secrets
-        .save_token(&playback_server.source.id, "playback-token")
-        .expect("save playback token");
-    let secrets: Arc<dyn SecretStore> = secrets;
-    let active_source = active_source_for_test(&store, &secrets, &local);
-    let track_id = restored_track().id;
-
-    let error = super::resolve_stream(
-        &store,
-        &runtime,
-        &active_source,
-        &playback_server.source.id,
-        &track_id,
-        &PlaybackSettings::default(),
-    )
-    .expect_err("non-selected source");
-
-    assert!(error.contains("selected source is not active"));
-}
-#[test]
-pub(in crate::controller) fn lyrics_use_source() {
+pub(in crate::controller) fn local_playback_uses_cached_file() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
     let root = self::unique_test_dir("local-source-stream");
@@ -985,19 +613,18 @@ pub(in crate::controller) fn lyrics_use_source() {
     track.id = TrackId::new("local:track:stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source_id, &[track.clone()], generation))
         .expect("upsert track");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let active_source = active_source_for_test(&store, &secrets, &saved);
 
-    let stream = super::resolve_stream(
+    let stream = super::resolve_stream_request(
         &store,
         &runtime,
         &active_source,
-        &saved.source.id,
-        &track.id,
-        &PlaybackSettings::default(),
+        &saved.source_id,
+        &StreamRequest::original(track.id.clone()),
     )
     .expect("stream");
 
@@ -1019,20 +646,19 @@ pub(in crate::controller) fn local_stream_resolution_rejects_stale_cached_path()
     track.id = TrackId::new("local:track:stale-stream");
     track.local_path = Some(audio.to_string_lossy().into_owned());
     store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source_id, &[track.clone()], generation))
         .expect("upsert track");
     fs::remove_file(&audio).expect("remove audio");
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let active_source = active_source_for_test(&store, &secrets, &saved);
 
-    let error = super::resolve_stream(
+    let error = super::resolve_stream_request(
         &store,
         &runtime,
         &active_source,
-        &saved.source.id,
-        &track.id,
-        &PlaybackSettings::default(),
+        &saved.source_id,
+        &StreamRequest::original(track.id.clone()),
     )
     .expect_err("stale cached path");
 
@@ -1047,23 +673,21 @@ pub(in crate::controller) fn local_stream_resolution_does_not_scan_on_cache_miss
     let audio = root.join("Album/Track.flac");
     fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
     fs::write(&audio, []).expect("audio");
-    let saved = SavedSource {
-        source: SourceIdentity {
-            id: SourceId::new("local:server:no-rescan"),
-            kind: LOCAL_SOURCE_ID.to_string(),
-            name: "Local".to_string(),
-            base_url: root.to_string_lossy().into_owned(),
-        },
-        user_id: "local".to_string(),
-        username: "Local".to_string(),
-        trust_invalid_cert: false,
-        use_jellyfin_instant_mix: false,
+    let identity = SourceIdentity {
+        id: SourceId::new("local:server:no-rescan"),
+        kind: LOCAL_SOURCE_ID.to_string(),
+        name: "Local".to_string(),
+        base_url: root.to_string_lossy().into_owned(),
     };
+    let saved = sources::local::LocalSourceConfig {
+        source: identity.clone(),
+    }
+    .into_stored();
     let runtime = Arc::new(Runtime::new().expect("runtime"));
-    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], saved.source.clone())
+    let provider = LocalSource::from_roots_with_identity(vec![root.clone()], identity)
         .expect("local provider");
     let mut track = runtime
-        .block_on(provider.tracks(source::PagedRequest::new(0, 1)))
+        .block_on(provider.tracks(sources::PagedRequest::new(0, 1)))
         .expect("tracks")
         .items
         .into_iter()
@@ -1072,18 +696,17 @@ pub(in crate::controller) fn local_stream_resolution_does_not_scan_on_cache_miss
     track.local_path = None;
     let generation = begin_active_sync(&store, &saved);
     store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
+        .with_store(|store| store.upsert_tracks(&saved.source_id, &[track.clone()], generation))
         .expect("upsert track");
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let active_source = active_source_for_test(&store, &secrets, &saved);
 
-    let error = super::resolve_stream(
+    let error = super::resolve_stream_request(
         &store,
         &runtime,
         &active_source,
-        &saved.source.id,
-        &track.id,
-        &PlaybackSettings::default(),
+        &saved.source_id,
+        &StreamRequest::original(track.id.clone()),
     )
     .expect_err("missing cached path");
 
@@ -1092,7 +715,7 @@ pub(in crate::controller) fn local_stream_resolution_does_not_scan_on_cache_miss
 }
 
 #[test]
-pub(in crate::controller) fn lyrics_match_path() {
+pub(in crate::controller) fn remote_playback_uses_cached_local_match() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_source();
     let root = self::unique_test_dir("cached-local-match-stream");
@@ -1103,7 +726,7 @@ pub(in crate::controller) fn lyrics_match_path() {
         &store,
         &saved,
         &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: None,
             path_replace_to: Some(root.to_string_lossy().into_owned()),
@@ -1114,7 +737,7 @@ pub(in crate::controller) fn lyrics_match_path() {
         .with_store(|store| {
             commit_cached_library(
                 store,
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 CachedLibraryObservation {
                     tracks: vec![track.clone()],
@@ -1132,53 +755,21 @@ pub(in crate::controller) fn lyrics_match_path() {
     let runtime = Arc::new(Runtime::new().expect("runtime"));
     let secrets = Arc::new(MemorySecretStore::new());
     secrets
-        .save_token(&saved.source.id, "test-token")
+        .save_token(saved.source_id.as_str(), "test-token")
         .expect("save token");
     let secrets: Arc<dyn SecretStore> = secrets;
     let active_source = active_source_for_test(&store, &secrets, &saved);
-    let stream = super::resolve_stream(
+    let stream = super::resolve_stream_request(
         &store,
         &runtime,
         &active_source,
-        &saved.source.id,
-        &track.id,
-        &PlaybackSettings::default(),
+        &saved.source_id,
+        &StreamRequest::original(track.id.clone()),
     )
     .expect("stream");
     assert!(stream.uri().starts_with("file://"));
     assert!(stream.uri().contains("Track.flac"));
     let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn lyrics_use_prefix() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let saved = self::saved_source();
-    let scan_root = self::unique_test_dir("relative-scan-root");
-    let local_root = self::unique_test_dir("relative-local-prefix");
-    let audio = local_root.join("Album/Track.flac");
-    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
-    fs::write(&audio, []).expect("audio");
-    let generation = begin_sync_with_access(
-        &store,
-        &saved,
-        &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
-            root_path: scan_root.to_string_lossy().into_owned(),
-            path_replace_from: None,
-            path_replace_to: Some(local_root.to_string_lossy().into_owned()),
-        },
-    );
-    let mut track = restored_track();
-    track.local_path = Some("Album/Track.flac".to_string());
-    store
-        .with_store(|store| store.upsert_tracks(&saved.source.id, &[track.clone()], generation))
-        .expect("upsert track");
-    let active = active_value_for_test(&store, &saved);
-    let mapped =
-        super::local_audio_path_for_track(&store, &active, &track.id).expect("mapped path");
-    assert_eq!(mapped, audio);
-    let _cleanup = fs::remove_dir_all(scan_root);
-    let _cleanup = fs::remove_dir_all(local_root);
 }
 #[test]
 pub(in crate::controller) fn lyrics_local_access_status() {
@@ -1197,7 +788,7 @@ pub(in crate::controller) fn lyrics_local_access_status() {
         &store,
         &saved,
         &SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: root.to_string_lossy().into_owned(),
             path_replace_from: Some("/server/music".to_string()),
             path_replace_to: Some(local_prefix.to_string_lossy().into_owned()),
@@ -1222,7 +813,7 @@ pub(in crate::controller) fn lyrics_local_access_status() {
         .with_store(|store| {
             commit_cached_library(
                 store,
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 CachedLibraryObservation {
                     tracks: vec![direct, prefix, metadata.clone(), unmatched],
@@ -1251,7 +842,7 @@ pub(in crate::controller) fn lyrics_include_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_source();
     let access = SourceLocalAccess {
-        source_id: saved.source.id.clone(),
+        source_id: saved.source_id.clone(),
         root_path: "/home/demo/Music".to_string(),
         path_replace_from: Some("/server/music".to_string()),
         path_replace_to: Some("/home/demo/Music".to_string()),
@@ -1260,650 +851,14 @@ pub(in crate::controller) fn lyrics_include_access() {
         .with_store(|store| {
             store.save_source(&saved)?;
             store.save_source_local_access(&access)?;
-            store.set_active_source(&saved.source.id)
+            store.set_active_source(&saved.source_id)
         })
         .expect("save server");
     let snapshot = super::load_snapshot(&store).expect("load snapshot");
     assert_eq!(snapshot.local_access, Some(access));
 }
 #[test]
-pub(in crate::controller) fn lyrics_lrclib_timed() {
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Lrclib,
-        id: "7".to_string(),
-        track_name: "Song".to_string(),
-        artist_name: "Artist".to_string(),
-        album_name: "Album".to_string(),
-        duration_seconds: 180,
-        synced_lyrics: Some(
-            "[00:12.34]first line\n[ar:Artist]\n[00:13.005]second line".to_string(),
-        ),
-        plain_lyrics: None,
-    };
-    let lyrics = super::lyrics_from_text(TrackId::new("track-one"), &result);
-    assert_eq!(lyrics.lines.len(), 2);
-    assert_eq!(lyrics.lines[0].text, "first line");
-    assert_eq!(lyrics.lines[0].start_millis, Some(12_340));
-    assert_eq!(lyrics.lines[1].text, "second line");
-    assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
-}
-#[test]
-pub(in crate::controller) fn lyrics_track_current() {
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Lrclib,
-        id: "12".to_string(),
-        track_name: "Example Track".to_string(),
-        artist_name: "Example Artist".to_string(),
-        album_name: "Example Album".to_string(),
-        duration_seconds: 95,
-        synced_lyrics: Some("[00:01.00]line one".to_string()),
-        plain_lyrics: Some("line one".to_string()),
-    };
-
-    let lyrics = super::lyrics_from_lrclib_search_result(TrackId::new("track-preview"), &result)
-        .expect("lyrics");
-
-    assert_eq!(lyrics.track_id, TrackId::new("track-preview"));
-    assert_eq!(lyrics.source, LyricsSource::Remote);
-    assert_eq!(lyrics.lines[0].text, "line one");
-    assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
-}
-#[test]
-pub(in crate::controller) fn lyrics_reject_netease_instrumental_placeholder() {
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Netease,
-        id: "remote-placeholder".to_string(),
-        track_name: "Instrumental Track".to_string(),
-        artist_name: "Example Artist".to_string(),
-        album_name: "Example Album".to_string(),
-        duration_seconds: 120,
-        synced_lyrics: Some(
-            "[00:00.00] 作曲 : Example Composer\n[00:05.00]纯音乐，请欣赏\n".to_string(),
-        ),
-        plain_lyrics: None,
-    };
-
-    let lyrics = super::lyrics_from_search_result(TrackId::new("track-placeholder"), &result)
-        .expect("lyrics result");
-
-    assert!(lyrics.is_none());
-}
-#[test]
-pub(in crate::controller) fn lyrics_reject_netease_no_text_placeholder() {
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Netease,
-        id: "remote-no-text".to_string(),
-        track_name: "Example Track".to_string(),
-        artist_name: "Example Artist".to_string(),
-        album_name: "Example Album".to_string(),
-        duration_seconds: 120,
-        synced_lyrics: Some("[00:00.00]Sorry，此歌曲暂无文本歌词。\n".to_string()),
-        plain_lyrics: None,
-    };
-
-    let lyrics = super::lyrics_from_search_result(TrackId::new("track-no-text"), &result)
-        .expect("lyrics result");
-
-    assert!(lyrics.is_none());
-}
-#[test]
-pub(in crate::controller) fn lyrics_keep_netease_content_after_credit() {
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Netease,
-        id: "remote-content".to_string(),
-        track_name: "Example Track".to_string(),
-        artist_name: "Example Artist".to_string(),
-        album_name: "Example Album".to_string(),
-        duration_seconds: 120,
-        synced_lyrics: Some(
-            "[00:00.00] 作曲 : Example Composer\n[00:10.00]actual lyric line\n".to_string(),
-        ),
-        plain_lyrics: None,
-    };
-
-    let lyrics = super::lyrics_from_search_result(TrackId::new("track-content"), &result)
-        .expect("lyrics result")
-        .expect("lyrics");
-
-    assert_eq!(lyrics.lines.len(), 1);
-    assert_eq!(lyrics.lines[0].text, "actual lyric line");
-    assert_eq!(lyrics.lines[0].start_millis, Some(10_000));
-}
-#[test]
-pub(in crate::controller) fn preview_lrclib_result() {
-    let saved = saved_source();
-    let source_id = saved.source.id.clone();
-    let track = restored_track();
-    let (controller, events) = controller_with_current_track(&saved, &track);
-    let result = super::LyricsSearchResult {
-        provider: ExternalLyricsProvider::Lrclib,
-        id: "21".to_string(),
-        track_name: "Example Track".to_string(),
-        artist_name: "Example Artist".to_string(),
-        album_name: "Example Album".to_string(),
-        duration_seconds: 95,
-        synced_lyrics: Some("[00:30.00]line at thirty seconds".to_string()),
-        plain_lyrics: None,
-    };
-
-    controller.preview_lyrics_search_result(track.id.clone(), result);
-
-    let lyrics = wait_for_lyrics(&events).expect("lyrics");
-    let cached = controller
-        .store
-        .with_store(|store| store.load_lyrics(&source_id, &track.id))
-        .expect("load cached lyrics")
-        .expect("cached lyrics");
-    assert_eq!(cached, lyrics);
-    assert_eq!(cached.lines[0].text, "line at thirty seconds");
-    assert_eq!(cached.lines[0].start_millis, Some(30_000));
-}
-#[test]
-pub(in crate::controller) fn lyrics_accept_seconds() {
-    let json = r#"{
-            "id": 7,
-            "trackName": "Imagine",
-            "artistName": "John Lennon",
-            "albumName": "Imagine",
-            "duration": 185.0,
-            "plainLyrics": "line",
-            "syncedLyrics": null
-        }"#;
-    let dto = serde_json::from_str::<super::LrcLibLyricsDto>(json).expect("deserialize lrclib dto");
-    let result = super::LyricsSearchResult::from(dto);
-    assert_eq!(result.duration_seconds, 185);
-    assert_eq!(result.track_name, "Imagine");
-    assert_eq!(result.artist_name, "John Lennon");
-}
-#[test]
-pub(in crate::controller) fn lyrics_use_queries() {
-    let urls =
-        super::lrclib_search_urls("EXAMPLE ARTIST!", "Opening Theme").expect("lrclib search urls");
-    let query_sets = urls
-        .iter()
-        .map(|url| {
-            url.query_pairs()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        query_sets,
-        vec![
-            vec![
-                ("track_name".to_string(), "Opening Theme".to_string()),
-                ("artist_name".to_string(), "EXAMPLE ARTIST!".to_string()),
-            ],
-            vec![("q".to_string(), "opening theme example artist".to_string())],
-            vec![("q".to_string(), "opening theme example".to_string())],
-        ]
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_accept_query() {
-    let urls = super::lrclib_search_urls("", "Opening Theme").expect("lrclib search urls");
-    let query_sets = urls
-        .iter()
-        .map(|url| {
-            url.query_pairs()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        query_sets,
-        vec![vec![("q".to_string(), "opening theme".to_string())]]
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_track_duration() {
-    let url = super::lrclib_get_url("The Cure", "Lovesong", 210)
-        .expect("lrclib get url")
-        .expect("url");
-
-    assert_eq!(
-        url.as_str(),
-        "https://lrclib.net/api/get?track_name=Lovesong&artist_name=The+Cure&duration=210"
-    );
-    let url = super::lrclib_get_url("The Cure", "Lovesong", 0)
-        .expect("lrclib get url")
-        .expect("url");
-    assert_eq!(
-        url.as_str(),
-        "https://lrclib.net/api/get?track_name=Lovesong&artist_name=The+Cure"
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_automatic_hits() {
-    let entry = QueueEntry {
-        id: QueueEntryId::new("queue-entry:lyrics-fallback"),
-        track_id: TrackId::new("jellyfin:track:lovesong"),
-        album_id: Some(AlbumId::fake(1)),
-        title: "Lovesong".to_string(),
-        artist: "The Cure".to_string(),
-        artist_id: Some(ArtistId::fake(1)),
-        album: "Disintegration".to_string(),
-        year: 1989,
-        duration_seconds: 210,
-        favorite: false,
-        image_ref: None,
-        local_path: None,
-        source_format: None,
-        origin: None,
-    };
-    let results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "1".to_string(),
-            track_name: "Lovesong".to_string(),
-            artist_name: "The Cure".to_string(),
-            album_name: "Disintegration".to_string(),
-            duration_seconds: 210,
-            synced_lyrics: None,
-            plain_lyrics: None,
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "2".to_string(),
-            track_name: "Lovesong".to_string(),
-            artist_name: "The Cure".to_string(),
-            album_name: "Disintegration".to_string(),
-            duration_seconds: 210,
-            synced_lyrics: Some("[00:01.00]first line".to_string()),
-            plain_lyrics: Some("first line".to_string()),
-        },
-    ];
-
-    let lyrics = super::lyrics_from_lrclib_results(&entry, results).expect("lyrics");
-
-    assert_eq!(lyrics.track_id, entry.track_id);
-    assert_eq!(lyrics.source, LyricsSource::Remote);
-    assert_eq!(lyrics.lines[0].text, "first line");
-    assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
-}
-#[test]
-pub(in crate::controller) fn lyrics_decode_result() {
-    let json = r#"[{
-            "id": 9386114,
-            "name": "feel my soul",
-            "artistName": "joy",
-            "albumName": "feel my soul",
-            "duration": 223.0,
-            "plainLyrics": "plain line",
-            "syncedLyrics": "[00:01.00]synced line",
-            "lyricsfile": null
-        }]"#;
-    let results = super::parse_lrclib_search_body(json).expect("parse lrclib response");
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].provider, ExternalLyricsProvider::Lrclib);
-    assert_eq!(results[0].id, "9386114");
-    assert_eq!(results[0].track_name, "feel my soul");
-    assert_eq!(results[0].artist_name, "joy");
-    assert_eq!(results[0].duration_seconds, 223);
-    assert!(results[0].synced_lyrics.is_some());
-    assert!(results[0].plain_lyrics.is_some());
-}
-#[test]
-pub(in crate::controller) fn lyrics_decode_netease_result() {
-    let json = r#"{
-        "result": {
-            "songs": [{
-                "id": 42,
-                "name": "Example Song",
-                "artists": [{"name": "Example Artist"}],
-                "album": {"name": "Example Album"},
-                "duration": 95000
-            }]
-        }
-    }"#;
-
-    let results = super::parse_netease_search_body(json).expect("parse netease response");
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].provider, ExternalLyricsProvider::Netease);
-    assert_eq!(results[0].id, "42");
-    assert_eq!(results[0].track_name, "Example Song");
-    assert_eq!(results[0].artist_name, "Example Artist");
-    assert_eq!(results[0].album_name, "Example Album");
-}
-#[test]
-pub(in crate::controller) fn lyrics_decode_simpmusic_result() {
-    let json = r#"{
-        "success": true,
-        "data": [{
-            "videoId": "video-one",
-            "songTitle": "Example Song",
-            "artistName": "Example Artist",
-            "albumName": "Example Album",
-            "durationSeconds": 95,
-            "syncedLyrics": "[00:01.00]line"
-        }]
-    }"#;
-
-    let results = super::parse_simpmusic_search_body(json).expect("parse simpmusic response");
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].provider, ExternalLyricsProvider::SimpMusic);
-    assert_eq!(results[0].id, "video-one");
-    assert!(results[0].synced_lyrics.is_some());
-}
-#[test]
-pub(in crate::controller) fn lyrics_decode_genius_result() {
-    let json = r#"{
-        "response": {
-            "sections": [{
-                "hits": [{
-                    "result": {
-                        "artist_names": "Example Artist",
-                        "full_title": "Example Song by Example Artist",
-                        "title": "Example Song",
-                        "url": "https://genius.com/Example-artist-example-song-lyrics"
-                    }
-                }]
-            }]
-        }
-    }"#;
-
-    let results = super::parse_genius_search_body(json).expect("parse genius response");
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].provider, ExternalLyricsProvider::Genius);
-    assert_eq!(
-        results[0].id,
-        "https://genius.com/Example-artist-example-song-lyrics"
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_reject_untrusted_genius_result_url() {
-    let json = r#"{
-        "response": {
-            "sections": [{
-                "hits": [
-                    {
-                        "result": {
-                            "artist_names": "Example Artist",
-                            "full_title": "Example Song by Example Artist",
-                            "title": "Example Song",
-                            "url": "https://example.test/song"
-                        }
-                    },
-                    {
-                        "result": {
-                            "artist_names": "Example Artist",
-                            "full_title": "Example Song by Example Artist",
-                            "title": "Example Song",
-                            "url": "http://genius.com/Example-artist-example-song-lyrics"
-                        }
-                    },
-                    {
-                        "result": {
-                            "artist_names": "Example Artist",
-                            "full_title": "Example Song by Example Artist",
-                            "title": "Example Song",
-                            "url": "https://genius.com:8443/Example-artist-example-song-lyrics"
-                        }
-                    }
-                ]
-            }]
-        }
-    }"#;
-
-    let results = super::parse_genius_search_body(json).expect("parse genius response");
-
-    assert!(results.is_empty());
-}
-#[test]
-pub(in crate::controller) fn lyrics_skip_untrusted_genius_fetch_url() {
-    assert_eq!(
-        super::lyrics_from_search_result(
-            TrackId::new("track-one"),
-            &super::LyricsSearchResult {
-                provider: ExternalLyricsProvider::Genius,
-                id: "https://example.test/song".to_string(),
-                track_name: "Example Song".to_string(),
-                artist_name: "Example Artist".to_string(),
-                album_name: String::new(),
-                duration_seconds: 0,
-                synced_lyrics: None,
-                plain_lyrics: None,
-            },
-        )
-        .expect("untrusted genius url"),
-        None
-    );
-}
-#[test]
-pub(in crate::controller) fn lyrics_extract_genius_html() {
-    let html = r#"
-        <div data-lyrics-container="true">First &amp; line<br/>Second line</div>
-        <div data-lyrics-container="true"><span>Third line</span></div>
-    "#;
-
-    let lyrics = super::extract_genius_lyrics(html).expect("lyrics");
-
-    assert_eq!(lyrics, "First & line\nSecond line\nThird line");
-}
-#[test]
-pub(in crate::controller) fn lyrics_track_field() {
-    let json = r#"[{
-            "id": 12,
-            "name": "Legacy Name",
-            "trackName": "Current Name",
-            "artistName": "Example Artist",
-            "albumName": "Example Album",
-            "duration": 95.0,
-            "plainLyrics": "line",
-            "syncedLyrics": null
-        }]"#;
-
-    let results = super::parse_lrclib_search_body(json).expect("parse lrclib response");
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].track_name, "Current Name");
-    assert_eq!(results[0].artist_name, "Example Artist");
-}
-#[test]
-pub(in crate::controller) fn lyrics_match_hit() {
-    let mut results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "1".to_string(),
-            track_name: "Crippled Inside".to_string(),
-            artist_name: "John Lennon".to_string(),
-            album_name: "Imagine".to_string(),
-            duration_seconds: 233,
-            synced_lyrics: Some("[00:01.00]line".to_string()),
-            plain_lyrics: Some("line".to_string()),
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "2".to_string(),
-            track_name: "Imagine".to_string(),
-            artist_name: "John Lennon".to_string(),
-            album_name: "Lennon".to_string(),
-            duration_seconds: 185,
-            synced_lyrics: None,
-            plain_lyrics: Some("line".to_string()),
-        },
-    ];
-    super::order_lrclib_results(&mut results, "John Lennon", "Imagine");
-    assert_eq!(results[0].track_name, "Imagine");
-}
-#[test]
-pub(in crate::controller) fn lyrics_filter_manual_query_results() {
-    let results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Netease,
-            id: "match".to_string(),
-            track_name: "MeeM".to_string(),
-            artist_name: "Daoko".to_string(),
-            album_name: String::new(),
-            duration_seconds: 0,
-            synced_lyrics: None,
-            plain_lyrics: None,
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Netease,
-            id: "same-artist".to_string(),
-            track_name: "Allure of the Dark".to_string(),
-            artist_name: "Daoko".to_string(),
-            album_name: String::new(),
-            duration_seconds: 0,
-            synced_lyrics: None,
-            plain_lyrics: None,
-        },
-    ];
-    let mut exact_results = results.clone();
-
-    super::filter_external_results_for_query(&mut exact_results, "Daoko", "MeeM");
-
-    assert_eq!(exact_results.len(), 1);
-    assert_eq!(exact_results[0].id, "match");
-
-    let mut artist_results = results;
-    super::filter_external_results_for_query(&mut artist_results, "Daoko", "");
-    assert_eq!(artist_results.len(), 2);
-}
-#[test]
-pub(in crate::controller) fn lyrics_accept_primary_artist_result_for_credited_display_artist() {
-    let mut results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "primary-artist".to_string(),
-            track_name: "Everybody Wants to Rule the World".to_string(),
-            artist_name: "Tears for Fears".to_string(),
-            album_name: String::new(),
-            duration_seconds: 251,
-            synced_lyrics: None,
-            plain_lyrics: None,
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "wrong-title".to_string(),
-            track_name: "Shout".to_string(),
-            artist_name: "Tears for Fears".to_string(),
-            album_name: String::new(),
-            duration_seconds: 0,
-            synced_lyrics: None,
-            plain_lyrics: None,
-        },
-    ];
-
-    super::filter_external_results_for_query(
-        &mut results,
-        "Tears for Fears • Roland Orzabal • Ian Stanley • Christopher Merrick Hughes",
-        "Everybody Wants to Rule the World",
-    );
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, "primary-artist");
-}
-#[test]
-pub(in crate::controller) fn lyrics_rank_matching_duration_before_wrong_duration() {
-    let lookup = super::LyricsLookup::from_search("The Cure", "Lovesong", 210);
-    let mut results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "wrong-duration".to_string(),
-            track_name: "Lovesong".to_string(),
-            artist_name: "The Cure".to_string(),
-            album_name: "Disintegration".to_string(),
-            duration_seconds: 310,
-            synced_lyrics: Some("[00:01.00]line".to_string()),
-            plain_lyrics: Some("line".to_string()),
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "right-duration".to_string(),
-            track_name: "Lovesong".to_string(),
-            artist_name: "The Cure".to_string(),
-            album_name: "Disintegration".to_string(),
-            duration_seconds: 211,
-            synced_lyrics: None,
-            plain_lyrics: Some("line".to_string()),
-        },
-    ];
-
-    super::order_external_provider_results(&mut results, &lookup);
-
-    assert_eq!(results[0].id, "right-duration");
-}
-#[test]
-pub(in crate::controller) fn lyrics_match_token() {
-    let mut results = vec![
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "1".to_string(),
-            track_name: "Long Title With Part Token".to_string(),
-            artist_name: "Example Artist".to_string(),
-            album_name: "Example Album".to_string(),
-            duration_seconds: 240,
-            synced_lyrics: Some("[00:01.00]line".to_string()),
-            plain_lyrics: Some("line".to_string()),
-        },
-        super::LyricsSearchResult {
-            provider: ExternalLyricsProvider::Lrclib,
-            id: "2".to_string(),
-            track_name: "Part Two".to_string(),
-            artist_name: "Example Artist".to_string(),
-            album_name: "Example Album".to_string(),
-            duration_seconds: 120,
-            synced_lyrics: Some("[00:01.00]line".to_string()),
-            plain_lyrics: Some("line".to_string()),
-        },
-    ];
-
-    super::order_lrclib_results(&mut results, "", "part");
-
-    assert_eq!(results[0].track_name, "Part Two");
-}
-#[test]
 pub(in crate::controller) fn controller_events_are_sendable() {
     pub(in crate::controller) fn assert_send<T: Send>() {}
     assert_send::<ControllerEvent>();
-}
-#[test]
-pub(in crate::controller) fn lyrics_found_classified() {
-    assert!(super::covers::is_source_not_found_error(
-        "source item was not found"
-    ));
-    assert!(!super::covers::is_source_not_found_error(
-        "source network failed: offline"
-    ));
-}
-#[test]
-pub(in crate::controller) fn lyrics_keep_size() {
-    let cover = test_image_ref(1);
-    let albums = vec![library_album(
-        1,
-        "Example Artist",
-        "Example Album",
-        Some(cover.clone()),
-    )];
-    let refs = super::grouped_cover_refs_for_items(&albums, &[]);
-    assert_eq!(refs, vec![cover]);
-}
-#[test]
-pub(in crate::controller) fn lyrics_cover_four() {
-    let first = test_image_ref(1);
-    let second = test_image_ref(2);
-    let third = test_image_ref(3);
-    let fourth = test_image_ref(4);
-    let fifth = test_image_ref(5);
-    let albums = vec![
-        library_album(1, "Example Artist", "First", Some(first.clone())),
-        library_album(2, "Example Artist", "Duplicate", Some(first.clone())),
-        library_album(3, "Example Artist", "Second", Some(second.clone())),
-    ];
-    let mut tracks = vec![
-        library_track(1, None, AlbumId::fake(1), "Example Artist", &[]),
-        library_track(2, None, AlbumId::fake(2), "Example Artist", &[]),
-        library_track(3, None, AlbumId::fake(3), "Example Artist", &[]),
-    ];
-    tracks[0].image_ref = Some(third.clone());
-    tracks[1].image_ref = Some(fourth.clone());
-    tracks[2].image_ref = Some(fifth);
-    let refs = super::grouped_cover_refs_for_items(&albums, &tracks);
-    assert_eq!(refs, vec![first, second, third, fourth]);
 }

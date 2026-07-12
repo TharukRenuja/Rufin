@@ -65,7 +65,6 @@ impl Shell {
         let source_albums = Rc::new(albums.to_vec());
         let settings = self.library_settings(key);
         let album_tracks = self.album_tracks_for_layout(&source_albums, &settings);
-        warm_album_covers_for_settings(self, &source_albums, key, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         populate_album_collection_model(&model, &source_albums, &settings, &album_tracks);
 
@@ -85,7 +84,6 @@ impl Shell {
                     .collect::<Vec<_>>();
                 let settings = shell.library_settings(key);
                 let album_tracks = shell.album_tracks_for_layout(&albums, &settings);
-                warm_album_covers_for_settings(&shell, &albums, key, &settings);
                 populate_album_collection_model(&model, &albums, &settings, &album_tracks);
             });
         }
@@ -112,9 +110,6 @@ impl Shell {
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let visible_tracks = tracks_for_settings(&tracks.borrow(), &settings, "", false);
-        self.state
-            .route_track_refs
-            .replace(track_image_refs(&visible_tracks));
         replace_tracks_in_model(&model, visible_tracks);
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -153,7 +148,6 @@ impl Shell {
                         let mut items = page.items;
                         let settings = shell.library_settings(LibraryListKey::Tracks);
                         sort_tracks(&mut items, &settings, false);
-                        warm_track_covers_for_settings(&shell, &items, &settings);
                         tracks.borrow_mut().extend(items.iter().cloned());
                         append_tracks_to_model(&model, items);
                         shell.refresh_current_route_now_playing_selections();
@@ -190,13 +184,8 @@ impl Shell {
                     let visible_tracks =
                         tracks_for_settings(&tracks.borrow(), &settings, &text, false);
                     let visible_count = visible_tracks.len();
-                    shell
-                        .state
-                        .route_track_refs
-                        .replace(track_image_refs(&visible_tracks));
                     replace_tracks_in_model(&model, visible_tracks);
                     shell.refresh_current_route_now_playing_selections();
-                    warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                     cursor.offset.set(visible_count);
                     cursor.total.set(visible_count);
                     cursor.loading.set(false);
@@ -221,13 +210,8 @@ impl Shell {
                         *tracks.borrow_mut() = page.items;
                         let visible_tracks =
                             tracks_for_settings(&tracks.borrow(), &settings, "", false);
-                        shell
-                            .state
-                            .route_track_refs
-                            .replace(track_image_refs(&visible_tracks));
                         replace_tracks_in_model(&model, visible_tracks);
                         shell.refresh_current_route_now_playing_selections();
-                        warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
                         log_route_page_timing(RoutePageTiming {
                             route: &Route::Tracks,
@@ -247,21 +231,14 @@ impl Shell {
                 }
             });
         }
-        let track_viewport_warm = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let settings = settings.clone();
-            Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_track_viewport_cover_warm(&shell, scroller, &model, &settings);
-            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
-        };
         let play_context = track_collection_play_context(
             self,
-            PlaySourceDescriptor::GlobalTracks {
-                selected_music_folder_id: selected_music_folder_id(self),
+            PlayContextDescriptor::Global {
+                music_folder_id: selected_music_folder_id(self),
             },
             LibraryListKey::Tracks,
             play_query,
+            false,
             false,
         );
         self.library_page_shell(LibraryPageShellOptions {
@@ -279,7 +256,7 @@ impl Shell {
                 None,
             ),
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(track_viewport_warm),
+            configure_scroller: None,
         })
     }
     pub(in crate::ui) fn library_page_shell(
@@ -657,24 +634,24 @@ impl Shell {
     }
     pub(in crate::ui) fn complete_track_snapshot_page(
         &self,
-    ) -> Option<source::PagedResponse<Track>> {
+    ) -> Option<library::PagedResponse<Track>> {
         let library = self.state.library.borrow();
         if library.cached_track_count > library.tracks.len() {
             return None;
         }
-        Some(source::PagedResponse::new(
+        Some(library::PagedResponse::new(
             library.tracks.clone(),
             library.cached_track_count,
         ))
     }
     pub(in crate::ui) fn complete_album_snapshot_page(
         &self,
-    ) -> Option<source::PagedResponse<Album>> {
+    ) -> Option<library::PagedResponse<Album>> {
         let library = self.state.library.borrow();
         if library.cached_album_count > library.albums.len() {
             return None;
         }
-        Some(source::PagedResponse::new(
+        Some(library::PagedResponse::new(
             library.albums.clone(),
             library.cached_album_count,
         ))
@@ -682,7 +659,7 @@ impl Shell {
     pub(in crate::ui) fn complete_artist_snapshot_page(
         &self,
         album_artist: bool,
-    ) -> Option<source::PagedResponse<Artist>> {
+    ) -> Option<library::PagedResponse<Artist>> {
         let library = self.state.library.borrow();
         let (items, total) = if album_artist {
             (&library.album_artists, library.cached_album_artist_count)
@@ -692,28 +669,28 @@ impl Shell {
         if total > items.len() {
             return None;
         }
-        Some(source::PagedResponse::new(items.clone(), total))
+        Some(library::PagedResponse::new(items.clone(), total))
     }
     pub(in crate::ui) fn complete_genre_snapshot_page(
         &self,
-    ) -> Option<source::PagedResponse<Genre>> {
+    ) -> Option<library::PagedResponse<Genre>> {
         let library = self.state.library.borrow();
         if library.cached_genre_count > library.genres.len() {
             return None;
         }
-        Some(source::PagedResponse::new(
+        Some(library::PagedResponse::new(
             library.genres.clone(),
             library.cached_genre_count,
         ))
     }
     pub(in crate::ui) fn complete_playlist_snapshot_page(
         &self,
-    ) -> Option<source::PagedResponse<Playlist>> {
+    ) -> Option<library::PagedResponse<Playlist>> {
         let library = self.state.library.borrow();
         if library.cached_playlist_count > library.playlists.len() {
             return None;
         }
-        Some(source::PagedResponse::new(
+        Some(library::PagedResponse::new(
             library.playlists.clone(),
             library.cached_playlist_count,
         ))

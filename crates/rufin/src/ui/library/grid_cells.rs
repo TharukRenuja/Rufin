@@ -1,5 +1,6 @@
 use super::*;
 use crate::i18n::msgid;
+use ::library::play_context::ArtistTrackScope;
 use gtk::{gio, glib};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -185,7 +186,7 @@ impl TrackGridCell {
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Track(track.id),
+                library::FavoriteItemId::Track(track.id),
                 favorite,
                 Some(button),
             );
@@ -221,13 +222,13 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
                 &self.shell,
                 &self.model,
                 context.clone(),
-                Some(position),
+                position,
                 track.clone(),
             )
         });
-        self.shell.bind_cover_tile_for(
+        self.shell.bind_artwork_tile(
             &self.cover_tile,
-            track.image_ref.as_ref(),
+            CandidateSet::track(&track),
             stable_seed(track.id.as_str()),
             self.size,
             GRID_COVER_SIZE,
@@ -244,7 +245,7 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
     }
 
     fn clear(&self) {
-        self.cover_tile.clear_image();
+        self.shell.clear_artwork_tile(&self.cover_tile);
         self.body.clear();
         *self.current_track.borrow_mut() = None;
         *self.current_play_action.borrow_mut() = None;
@@ -344,7 +345,7 @@ impl AlbumGridCell {
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Album(album.id),
+                library::FavoriteItemId::Album(album.id),
                 favorite,
                 Some(button),
             );
@@ -372,9 +373,9 @@ impl ReusableCollectionGridCell<Album> for AlbumGridCell {
     }
 
     fn bind(&self, _: u32, album: Album) {
-        self.shell.bind_cover_tile_for(
+        self.shell.bind_artwork_tile(
             &self.cover_tile,
-            album.image_ref.as_ref(),
+            CandidateSet::album(&album),
             album.color_seed,
             self.size,
             GRID_COVER_SIZE,
@@ -395,7 +396,7 @@ impl ReusableCollectionGridCell<Album> for AlbumGridCell {
     }
 
     fn clear(&self) {
-        self.cover_tile.clear_image();
+        self.shell.clear_artwork_tile(&self.cover_tile);
         self.body.clear();
         *self.current_album.borrow_mut() = None;
     }
@@ -457,7 +458,7 @@ impl ArtistGridCell {
             if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
                 controller.play_artist_tracks_window(
                     artist_id,
-                    domain::ArtistTrackScope::AllCredits,
+                    ArtistTrackScope::AllCredits,
                     detail.tracks.len(),
                     0,
                     |index| detail.tracks.get(index).cloned(),
@@ -515,7 +516,7 @@ impl ArtistGridCell {
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Artist(artist.id),
+                library::FavoriteItemId::Artist(artist.id),
                 favorite,
                 Some(button),
             );
@@ -543,10 +544,9 @@ impl ReusableCollectionGridCell<Artist> for ArtistGridCell {
     }
 
     fn bind(&self, _: u32, artist: Artist) {
-        let image_ref = artist_cover_image_ref(&self.shell, &artist);
-        self.shell.bind_cover_tile_for(
+        self.shell.bind_artwork_tile(
             &self.cover_tile,
-            image_ref.as_ref(),
+            CandidateSet::artist(&artist),
             stable_seed(artist.id.as_str()),
             self.size,
             GRID_COVER_SIZE,
@@ -558,7 +558,7 @@ impl ReusableCollectionGridCell<Artist> for ArtistGridCell {
     }
 
     fn clear(&self) {
-        self.cover_tile.clear_image();
+        self.shell.clear_artwork_tile(&self.cover_tile);
         self.body.clear();
         *self.current_artist.borrow_mut() = None;
     }
@@ -665,9 +665,13 @@ impl ReusableCollectionGridCell<Playlist> for PlaylistGridCell {
     }
 
     fn bind(&self, _: u32, playlist: Playlist) {
-        let artwork = crate::cover_art_policy::selected_playlist_artwork(
+        let artwork = CandidateSet::playlist_slots(
             &playlist,
-            &self.shell.state.settings.borrow(),
+            self.shell
+                .state
+                .settings
+                .borrow()
+                .prefer_server_playlist_covers,
         );
         self.cover_button
             .set_child(Some(&self.shell.cover_group_tile_for_artwork(
@@ -732,6 +736,7 @@ impl SmartPlaylistGridCell {
         });
 
         let controller = shell.controller.clone();
+        let play_shell = Rc::clone(&shell);
         let play_playlist = Rc::clone(&current_playlist);
         controls.play.connect_clicked(move |_| {
             let Some(playlist_id) = play_playlist
@@ -742,7 +747,12 @@ impl SmartPlaylistGridCell {
                 return;
             };
             if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-                controller.play_smart_playlist_detail(detail);
+                let first_track_id = detail.tracks.first().map(|track| track.id.clone());
+                controller.play_smart_playlist(
+                    detail.smart_playlist,
+                    first_track_id,
+                    selected_music_folder_id(&play_shell),
+                );
             }
         });
 
@@ -807,7 +817,7 @@ impl ReusableCollectionGridCell<SmartPlaylist> for SmartPlaylistGridCell {
     }
 
     fn bind(&self, _: u32, playlist: SmartPlaylist) {
-        let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&playlist);
+        let artwork = CandidateSet::smart_playlist_slots(&playlist);
         self.cover_button
             .set_child(Some(&self.shell.cover_group_tile_for_artwork(
                 &artwork,

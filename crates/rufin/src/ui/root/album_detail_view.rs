@@ -33,22 +33,15 @@ impl Shell {
                 .source
                 .as_ref()
                 .map(|server| server.id.to_string());
-            let queue_source_id = self
-                .state
-                .queue
-                .borrow()
-                .as_ref()
-                .map(|queue| queue.source_id.to_string());
             let player_source_id = self
                 .state
                 .player
                 .borrow()
-                .current_source_id
                 .as_ref()
-                .map(ToString::to_string);
+                .map(|player| player.transport.source_id.to_string());
             warn!(
                 album_id = album_id.as_str(),
-                active_source_id, queue_source_id, player_source_id, "cached album route missing"
+                active_source_id, player_source_id, "cached album route missing"
             );
             return self.placeholder_view("Album", "The selected cached album was not found.");
         };
@@ -67,7 +60,7 @@ impl Shell {
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
         let cover = detail_cover_button(
             self,
-            album.image_ref.as_ref(),
+            CandidateSet::album(&album),
             album.color_seed,
             cover_size,
             cover_fetch_size,
@@ -195,9 +188,9 @@ impl Shell {
             tracks,
             LibraryListKey::AlbumDetailTracks,
             "album-detail",
-            Some(PlaySourceDescriptor::Album {
+            Some(PlayContextDescriptor::Album {
                 album_id: album.id.clone(),
-                selected_music_folder_id: selected_music_folder_id(self),
+                music_folder_id: selected_music_folder_id(self),
             }),
             ALBUM_DETAIL_ROUTE_INSET,
             track_selection,
@@ -211,7 +204,7 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn album_genre_id(&self, name: &str) -> Option<domain::GenreId> {
+    fn album_genre_id(&self, name: &str) -> Option<::library::GenreId> {
         let library = self.state.library.borrow();
         if let Some(genre) = library
             .genres

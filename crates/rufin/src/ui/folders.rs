@@ -1,8 +1,9 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
+use ::library::{Folder, FolderDetail, Track};
 use adw::prelude::*;
-use domain::{Folder, FolderPathItem, Route, Track, TrackTableSettings, format_duration};
-use source::FolderDetail;
+use artwork::CandidateSet;
+use domain::{FolderPathItem, Route, TrackTableSettings, format_duration};
 
 use super::library::library_route_inset;
 use super::{
@@ -315,13 +316,13 @@ fn populate_folder_table(
         ));
     }
 
-    let visible_tracks = Rc::new(tracks);
+    let visible_tracks = Arc::new(tracks);
     let source = Rc::new((path.to_vec(), query.clone(), settings.clone()));
     for (position, track) in visible_tracks.iter().enumerate() {
         table.append(&folder_table_track_row(
             shell,
             table,
-            Rc::clone(&visible_tracks),
+            Arc::clone(&visible_tracks),
             Rc::clone(&source),
             position,
             track,
@@ -421,7 +422,7 @@ fn folder_table_folder_row(
 fn folder_table_track_row(
     shell: &Rc<Shell>,
     table: &gtk::ListBox,
-    visible_tracks: Rc<Vec<Track>>,
+    visible_tracks: Arc<Vec<Track>>,
     source: Rc<(Vec<FolderPathItem>, String, TrackTableSettings)>,
     position: usize,
     track: &Track,
@@ -441,7 +442,7 @@ fn folder_table_track_row(
     let row_for_click = row.clone();
     let table_for_click = table.clone();
     let controller = shell.controller.clone();
-    let tracks_for_click = Rc::clone(&visible_tracks);
+    let tracks_for_click = Arc::clone(&visible_tracks);
     let gesture = gtk::GestureClick::new();
     gesture.connect_released(move |_, n_press, _, _| {
         table_for_click.select_row(Some(&row_for_click));
@@ -452,9 +453,8 @@ fn folder_table_track_row(
                 path.clone(),
                 query.clone(),
                 settings.clone(),
-                tracks_for_click.len(),
+                Arc::clone(&tracks_for_click),
                 position,
-                |index| tracks_for_click.get(index).cloned(),
             );
         }
     });
@@ -483,8 +483,8 @@ fn track_name_cell(shell: &Rc<Shell>, track: &Track, width: i32) -> gtk::Widget 
     let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     cell.set_hexpand(true);
     cell.set_halign(gtk::Align::Fill);
-    cell.append(&shell.cover_tile_for(
-        track.image_ref.as_ref(),
+    cell.append(&shell.cover_tile_for_candidates(
+        CandidateSet::track(track),
         stable_seed(track.id.as_str()),
         FOLDER_ROW_ARTWORK_SIZE,
         THUMB_COVER_SIZE,
@@ -626,9 +626,9 @@ mod tests {
     fn folders_use_growth() {
         let folders = Vec::new();
         let tracks = vec![
-            domain::Track {
-                id: domain::TrackId::new("track-short"),
-                album_id: domain::AlbumId::new("album-one"),
+            library::Track {
+                id: library::TrackId::new("track-short"),
+                album_id: library::AlbumId::new("album-one"),
                 title: "Short".to_string(),
                 artist: String::new(),
                 artist_id: None,
@@ -646,6 +646,7 @@ mod tests {
                 disc_number: 1,
                 track_number: 1,
                 image_ref: None,
+                album_artwork: None,
                 genres: Vec::new(),
                 musicbrainz_recording_id: None,
                 musicbrainz_release_track_id: None,
@@ -656,9 +657,9 @@ mod tests {
                 bpm: None,
                 moods: Vec::new(),
             },
-            domain::Track {
-                id: domain::TrackId::new("track-long"),
-                album_id: domain::AlbumId::new("album-one"),
+            library::Track {
+                id: library::TrackId::new("track-long"),
+                album_id: library::AlbumId::new("album-one"),
                 title: "A Very Long Track Title That Still Should Not Own The Whole Row"
                     .to_string(),
                 artist: String::new(),
@@ -677,6 +678,7 @@ mod tests {
                 disc_number: 1,
                 track_number: 2,
                 image_ref: None,
+                album_artwork: None,
                 genres: Vec::new(),
                 musicbrainz_recording_id: None,
                 musicbrainz_release_track_id: None,
@@ -698,9 +700,9 @@ mod tests {
     #[test]
     fn folders_fit_narrow_route() {
         let folders = Vec::new();
-        let tracks = vec![domain::Track {
-            id: domain::TrackId::new("track-long"),
-            album_id: domain::AlbumId::new("album-one"),
+        let tracks = vec![library::Track {
+            id: library::TrackId::new("track-long"),
+            album_id: library::AlbumId::new("album-one"),
             title: "A Very Long Track Title That Still Should Not Own The Whole Row".to_string(),
             artist: String::new(),
             artist_id: None,
@@ -718,6 +720,7 @@ mod tests {
             disc_number: 1,
             track_number: 1,
             image_ref: None,
+            album_artwork: None,
             genres: Vec::new(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,

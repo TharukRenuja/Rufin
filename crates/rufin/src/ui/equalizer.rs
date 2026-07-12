@@ -2,9 +2,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use domain::{EQUALIZER_BAND_COUNT, EqualizerSettings};
 use gtk::glib;
 use gtk::prelude::*;
+use playback::{EQUALIZER_BAND_COUNT, EqualizerSettings};
 
 use crate::i18n::tr;
 

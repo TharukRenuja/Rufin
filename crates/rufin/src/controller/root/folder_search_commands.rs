@@ -50,14 +50,13 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
-            let settings = load_settings_from_store(&store);
             let query = expected.query.clone();
             let kind = expected.kind.clone();
-            let (key, mut results) = match store.with_store(|store| {
+            let (key, results) = match store.with_store(|store| {
                 let Some(saved) = store.active_source()? else {
                     return Ok((expected.clone(), SearchResults::default()));
                 };
-                let source_id = saved.source.id.clone();
+                let source_id = saved.source_id.clone();
                 let selected_music_folder_id = store.selected_music_folder_id(&source_id)?;
                 let key = SearchRequestKey {
                     request_id: expected.request_id,
@@ -78,7 +77,6 @@ impl AppController {
                     return;
                 }
             };
-            cover_art_policy::bind_search_results(&mut results, &settings);
             let _sent = events.send(ControllerEvent::SearchLoaded { key, results });
         });
     }

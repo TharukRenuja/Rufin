@@ -1,234 +1,128 @@
 use super::*;
-use library::AlbumIdentityCandidate;
 #[cfg(test)]
 use library::SyncCommit;
 use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
-const RELEASE_TYPE_LOOKUP_LIMIT: usize = 500;
 #[cfg(test)]
 pub(in crate::controller) const SYNC_CANCELLED_ERROR: &str = "Sync cancelled.";
-static RELEASE_TYPE_LOOKUPS_IN_FLIGHT: OnceLock<Mutex<HashSet<SourceId>>> = OnceLock::new();
 
 pub(in crate::controller) fn start_album_identity_lookup(
     controller: &AppController,
-    saved: &SavedSource,
+    saved: &StoredSource,
+    cache_revision: i64,
 ) {
     let settings = load_settings_from_store(&controller.store);
-    if !external_metadata::enabled(&settings) {
+    if !settings.metadata.external_metadata_enabled || settings.private_mode {
         return;
     }
-    let source_id = saved.source.id.clone();
-    if !mark_release_type_lookup_in_flight(&source_id) {
-        return;
-    }
-
+    let source_id = saved.source_id.clone();
     let store = controller.store.clone();
     let events = controller.events.clone();
-    thread::spawn(move || {
-        let result = run_album_identity_lookup(&store, &events, &source_id);
-        clear_release_type_lookup_in_flight(&source_id);
-        if let Err(error) = result {
-            warn!(%error, source_id = %source_id.as_str(), "failed to enrich album identity");
-        }
-    });
-}
-
-fn mark_release_type_lookup_in_flight(source_id: &SourceId) -> bool {
-    RELEASE_TYPE_LOOKUPS_IN_FLIGHT
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .map(|mut running| running.insert(source_id.clone()))
-        .unwrap_or(false)
-}
-
-fn clear_release_type_lookup_in_flight(source_id: &SourceId) {
-    if let Ok(mut running) = RELEASE_TYPE_LOOKUPS_IN_FLIGHT
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-    {
-        running.remove(source_id);
-    }
-}
-
-fn run_album_identity_lookup(
-    store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
-    source_id: &SourceId,
-) -> Result<(), String> {
-    let candidates = store.with_store(|store| {
-        store.load_album_identity_candidates(source_id, RELEASE_TYPE_LOOKUP_LIMIT)
-    })?;
-    if candidates.is_empty() {
-        return Ok(());
-    }
-
-    info!(
-        source_id = %source_id.as_str(),
-        candidate_count = candidates.len(),
-        "started album identity enrichment"
-    );
-    let mut updated = Vec::new();
-    let mut misses = 0_usize;
-    let mut errors = 0_usize;
-    for candidate in &candidates {
-        if !sync_target_is_current(store, source_id) {
-            break;
-        }
-        match lookup_album_identity(candidate) {
-            Ok(metadata) => {
-                store.with_store(|store| {
-                    store.update_album_identity_metadata(
-                        source_id,
-                        &candidate.album_id,
-                        &metadata.release_types,
-                        metadata.is_compilation,
+    let submit = metadata_runner().and_then(|runner| {
+        runner.submit(move || {
+            let result = (|| {
+                let candidates = store.with_store(|store| {
+                    store.load_album_identity_candidates(
+                        &source_id,
+                        metadata::ALBUM_IDENTITY_LOOKUP_LIMIT,
                     )
                 })?;
-                updated.push(candidate.album_id.clone());
-            }
-            Err(error) if external_metadata::is_expected_release_type_lookup_miss(&error) => {
-                misses += 1;
-                store.with_store(|store| {
-                    store.save_album_identity_miss(
-                        source_id,
-                        &candidate.album_id,
-                        &candidate.identity_key,
-                        &error,
-                    )
-                })?;
-            }
-            Err(error) => {
-                errors += 1;
-                warn!(
-                    %error,
-                    album_id = %candidate.album_id.as_str(),
-                    "failed to look up album identity"
+                if candidates.is_empty() {
+                    return Ok(());
+                }
+                let summary = metadata::enrich_album_identities(
+                    &candidates,
+                    || {
+                        if !sync_target_is_current(&store, &source_id)
+                            || store.with_store(|store| store.source_cache_revision(&source_id))
+                                != Ok(cache_revision)
+                        {
+                            return false;
+                        }
+                        let settings = load_settings_from_store(&store);
+                        settings.metadata.external_metadata_enabled && !settings.private_mode
+                    },
+                    |candidate, change| {
+                        store.with_store(|store| match change {
+                            metadata::AlbumIdentityChange::Updated(metadata) => store
+                                .update_album_identity_metadata(
+                                    &source_id,
+                                    &candidate.album_id,
+                                    &metadata.release_types,
+                                    metadata.is_compilation,
+                                ),
+                            metadata::AlbumIdentityChange::Missing(error) => store
+                                .save_album_identity_miss(
+                                    &source_id,
+                                    &candidate.album_id,
+                                    &candidate.identity_key,
+                                    &error,
+                                ),
+                        })
+                    },
+                )?;
+                if !summary.updated.is_empty() {
+                    let _sent =
+                        events.send(ControllerEvent::LibraryDelta(Box::new(LibraryDelta {
+                            albums: EntityDelta {
+                                fields: summary.updated.clone(),
+                                ..EntityDelta::default()
+                            },
+                            ..LibraryDelta::default()
+                        })));
+                }
+                info!(
+                    source_id = %source_id,
+                    updated = summary.updated.len(),
+                    misses = summary.misses,
+                    errors = summary.errors,
+                    "completed album identity enrichment"
                 );
+                Ok::<(), String>(())
+            })();
+            if let Err(error) = result {
+                warn!(%error, source_id = %source_id, "failed to enrich album identity");
             }
-        }
+        })
+    });
+    if let Err(error) = submit {
+        warn!(%error, source_id = %saved.source_id, "could not schedule album identity enrichment");
     }
-    if !updated.is_empty() {
-        let _sent = events.send(ControllerEvent::LibraryDelta(Box::new(LibraryDelta {
-            albums: EntityDelta {
-                fields: updated.clone(),
-                ..EntityDelta::default()
-            },
-            ..LibraryDelta::default()
-        })));
-    }
-    info!(
-        source_id = %source_id.as_str(),
-        updated = updated.len(),
-        misses,
-        errors,
-        "completed album identity enrichment"
-    );
-    Ok(())
 }
 
-fn lookup_album_identity(
-    candidate: &AlbumIdentityCandidate,
-) -> Result<external_metadata::AlbumReleaseMetadata, String> {
-    external_metadata::fetch_album_release_metadata(
-        candidate.musicbrainz_release_group_id.as_deref(),
-        candidate.musicbrainz_album_id.as_deref(),
-    )
-}
-
-pub(in crate::controller) fn refresh_queue_refs(controller: &AppController, saved: &SavedSource) {
-    let Some(original_snapshot) = controller
-        .queue
-        .lock()
-        .ok()
-        .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot))
-    else {
+pub(in crate::controller) fn refresh_queue_refs(controller: &AppController, saved: &StoredSource) {
+    let Some(product) = controller.playback_product_if_present() else {
         return;
     };
-    snapshot_queue_refs(controller, saved, original_snapshot);
-}
-
-pub(in crate::controller) fn snapshot_queue_refs(
-    controller: &AppController,
-    saved: &SavedSource,
-    original_snapshot: QueueSnapshot,
-) {
-    if original_snapshot.source_id != saved.source.id {
-        return;
-    }
-    let mut normalized_entries = original_snapshot.entries.clone();
-    let settings = load_settings_from_store(&controller.store);
-    match queue_track_refs(&controller.store, saved, &settings, &mut normalized_entries) {
-        Ok(true) => {}
-        Ok(false) => return,
-        Err(error) => {
-            warn!(%error, "failed to refresh queue image refs after sync");
-            return;
-        }
-    }
-    let mut queue = match controller.queue.lock() {
-        Ok(queue) => queue,
-        Err(error) => {
-            warn!(%error, "failed to lock queue after local sync");
-            return;
-        }
-    };
-    let Some(current_snapshot) = queue.as_ref().map(QueueEngine::snapshot) else {
+    let Some(queued_track_ids) = product.queued_track_ids(&saved.source_id) else {
         return;
     };
-    if !queue_snapshot_entries_match(&original_snapshot, &current_snapshot) {
+    let mut seen = HashSet::new();
+    let track_ids = queued_track_ids
+        .into_iter()
+        .filter(|track_id| seen.insert(track_id.clone()))
+        .collect::<Vec<_>>();
+    let Ok(tracks) = load_queued_track_facts(&controller.store, saved, &track_ids) else {
+        warn!(source_id = %saved.source_id, "failed to refresh queued library facts after sync");
+        return;
+    };
+    if tracks.is_empty() {
         return;
     }
-    let mut refreshed_snapshot = current_snapshot.clone();
-    for (entry, normalized_entry) in refreshed_snapshot
-        .entries
-        .iter_mut()
-        .zip(normalized_entries)
-    {
-        entry.image_ref = normalized_entry.image_ref;
+    if let Err(error) = product.command(playback::SessionCommand::RefreshTracks {
+        source_id: saved.source_id.clone(),
+        tracks,
+    }) {
+        warn!(%error, "failed to refresh queued library facts after sync");
     }
-    if refreshed_snapshot.entries == current_snapshot.entries {
-        return;
-    }
-    *queue = Some(QueueEngine::restore(refreshed_snapshot.clone()));
-    drop(queue);
-
-    defer_queue_snapshot(
-        controller.store.clone(),
-        controller.events.clone(),
-        Arc::clone(&controller.queue_persist_generation),
-        refreshed_snapshot.clone(),
-    );
-    sync_queue_snapshot(
-        &controller.queue,
-        &controller.playback_snapshot,
-        &controller.auto_dj_enabled,
-    );
-    let _sent = controller
-        .events
-        .send(ControllerEvent::Queue(Box::new(Some(refreshed_snapshot))));
-    let playback = controller
-        .playback_snapshot
-        .lock()
-        .map(|snapshot| snapshot.clone())
-        .unwrap_or_default();
-    let _sent = controller
-        .events
-        .send(ControllerEvent::Playback(Box::new(playback)));
 }
 
-fn queue_snapshot_entries_match(left: &QueueSnapshot, right: &QueueSnapshot) -> bool {
-    left.source_id == right.source_id
-        && left.entries.len() == right.entries.len()
-        && left
-            .entries
-            .iter()
-            .zip(&right.entries)
-            .all(|(left, right)| {
-                left.id == right.id
-                    && left.track_id == right.track_id
-                    && left.album_id == right.album_id
-            })
+pub(in crate::controller) fn load_queued_track_facts(
+    store: &StoreHandle,
+    saved: &StoredSource,
+    track_ids: &[TrackId],
+) -> Result<Vec<Track>, String> {
+    store.with_store(|store| store.load_tracks_by_ids(&saved.source_id, track_ids))
 }
 
 pub(in crate::controller) fn sync_target_is_current(
@@ -239,17 +133,17 @@ pub(in crate::controller) fn sync_target_is_current(
         .with_store(|store| {
             Ok(store
                 .active_source()?
-                .is_some_and(|saved| saved.source.id == *source_id))
+                .is_some_and(|saved| saved.source_id == *source_id))
         })
         .unwrap_or(false)
 }
 
 pub(in crate::controller) fn start_home_refresh_thread(
     context: HomeRefreshContext,
-    saved: SavedSource,
+    saved: StoredSource,
     target: HomeRefreshTarget,
 ) {
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
         return;
     };
@@ -297,9 +191,9 @@ pub(in crate::controller) fn home_refresh_completed_event(
 }
 pub(in crate::controller) fn start_explore_prefetch_thread(
     context: ExplorePrefetchContext,
-    saved: SavedSource,
+    saved: StoredSource,
 ) {
-    let source_id = saved.source.id.clone();
+    let source_id = saved.source_id.clone();
     let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
         return;
     };
@@ -321,7 +215,6 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
             &context.runtime,
             &context.active_source,
             &active,
-            &saved,
             HomeSectionKind::Explore,
         );
         drop(permit);
@@ -363,9 +256,9 @@ pub(in crate::controller) fn start_home_promotion(
 pub(crate) fn local_sync_operation(
     source_id: SourceId,
     identity: SourceIdentity,
-    load: crate::sources::LocalLoader,
-    roots: crate::sources::LocalRootsLoader,
-) -> crate::sources::LibrarySyncOperation {
+    load: crate::source_setup::LocalLoader,
+    roots: crate::source_setup::LocalRootsLoader,
+) -> crate::source_setup::LibrarySyncOperation {
     Arc::new(
         move |store, runtime, scope, generation, progress, cancellation| {
             if cancellation.is_cancelled() {
@@ -450,18 +343,18 @@ pub(crate) fn local_sync_operation(
 
 pub(crate) fn remote_sync_operation<T>(
     source: Arc<T>,
-    changes: Option<crate::sources::LibraryChangeResolverHandle>,
-) -> crate::sources::LibrarySyncOperation
+    changes: Option<crate::source_setup::LibraryChangeResolverHandle>,
+) -> crate::source_setup::LibrarySyncOperation
 where
-    T: source::MusicSource
-        + source::MusicFolderProvider
-        + source::PlaylistReader
-        + source::SourceObjectKeyProvider
+    T: sources::MusicSource
+        + sources::MusicFolderProvider
+        + sources::PlaylistReader
+        + sources::SourceObjectKeyProvider
         + Send
         + Sync
         + 'static,
 {
-    let source_id = source::MusicSource::identity(source.as_ref()).id.clone();
+    let source_id = sources::MusicSource::identity(source.as_ref()).id.clone();
     Arc::new(
         move |store, runtime, scope, generation, progress, cancellation| {
             info!(generation, "started source cache sync");
@@ -569,12 +462,12 @@ fn remote_local_access_observation(
 }
 
 fn local_scan_progress(
-    progress: source_local::LocalScanProgress,
+    progress: sources::local::LocalScanProgress,
 ) -> library_sync::LocalScanProgress {
     let stage = match progress.stage {
-        source_local::LocalScanStage::Walking => library_sync::LocalScanStage::Walking,
-        source_local::LocalScanStage::ReadingTags => library_sync::LocalScanStage::ReadingTags,
-        source_local::LocalScanStage::BuildingLibrary => {
+        sources::local::LocalScanStage::Walking => library_sync::LocalScanStage::Walking,
+        sources::local::LocalScanStage::ReadingTags => library_sync::LocalScanStage::ReadingTags,
+        sources::local::LocalScanStage::BuildingLibrary => {
             library_sync::LocalScanStage::BuildingLibrary
         }
     };
@@ -608,11 +501,8 @@ pub(in crate::controller) fn refresh_home_section_for_active(
         Ok((state.generation, state.cache_revision))
     })?;
     let section = (active.home_section)(store, runtime, kind)?;
-    crate::sources::with_active_source_instance(active_source, active, || {
-        let commit =
-            cache_home_section(store, source_id, &section, generation, base_cache_revision)?;
-        prune_successful_sync_image_cache(store, source_id, commit.pruned_cover_entries);
-        Ok(())
+    crate::source_setup::with_active_source_instance(active_source, active, || {
+        cache_home_section(store, source_id, &section, generation, base_cache_revision).map(|_| ())
     })
 }
 pub(in crate::controller) fn prefetch_home_section_for_active(
@@ -620,7 +510,6 @@ pub(in crate::controller) fn prefetch_home_section_for_active(
     runtime: &Runtime,
     active_source: &ActiveSourceSlot,
     active: &Arc<ActiveSource>,
-    saved: &SavedSource,
     kind: HomeSectionKind,
 ) -> Result<HomeSection, String> {
     let source_id = &active.identity.id;
@@ -628,15 +517,20 @@ pub(in crate::controller) fn prefetch_home_section_for_active(
         let state = store.sync_state(source_id)?;
         Ok((state.generation, state.cache_revision))
     })?;
-    let mut section = (active.home_section)(store, runtime, kind)?;
-    let commit = crate::sources::with_active_source_instance(active_source, active, || {
-        store.with_store(|store| {
-            store.save_home_section_prefetch(source_id, generation, base_cache_revision, &section)
-        })
-    })?;
-    prune_successful_sync_image_cache(store, source_id, commit.pruned_cover_entries);
-    home_image_refs(store, saved, &mut section)?;
-    Ok(section)
+    let section = (active.home_section)(store, runtime, kind)?;
+    let projected =
+        crate::source_setup::with_active_source_instance(active_source, active, || {
+            store.with_store(|store| {
+                store.save_home_section_prefetch(
+                    source_id,
+                    generation,
+                    base_cache_revision,
+                    &section,
+                )?;
+                store.load_home_section_prefetch(source_id, kind)
+            })
+        })?;
+    projected.ok_or_else(|| "The prefetched Home section was not retained.".to_string())
 }
 #[cfg(test)]
 pub(in crate::controller) async fn sync_local_source_with_events(

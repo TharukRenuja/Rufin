@@ -2,14 +2,18 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ::library::SourceId;
+use ::library::SourceLocalAccess;
 use adw::prelude::*;
-use domain::{LibrarySourceSelection, SourceId, SourceIdentity};
+use domain::LibrarySourceSelection;
 use gtk::gio;
-use library::SourceLocalAccess;
+use sources::SourceIdentity;
 
 use crate::controller::{AppController, LocalAccessStatus};
 use crate::i18n::{tr, trn_with};
-use crate::sources::{CredentialHostPreset, CredentialSettingsInput, resolve_source_registration};
+use crate::source_setup::{
+    CredentialHostPreset, CredentialSettingsInput, resolve_source_registration,
+};
 
 use super::{
     Shell,
@@ -108,10 +112,17 @@ fn manage_server_content(
     content.set_hexpand(true);
     clamp.set_child(Some(&content));
     if let Some(saved) = shell.controller.configured_source(&server.id)
-        && let Some(registration) = resolve_source_registration(&saved.source.kind)
+        && let Some(registration) = resolve_source_registration(&saved.kind)
         && let Some(settings_group) = registration.settings_group
     {
-        let settings = settings_group(shell, &saved);
+        let settings = match settings_group(shell, &saved) {
+            Ok(settings) => settings,
+            Err(error) => {
+                let label = gtk::Label::new(Some(&error));
+                label.set_wrap(true);
+                label.upcast()
+            }
+        };
         content.append(&settings);
     }
 

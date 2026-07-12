@@ -7,10 +7,6 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_loaded_lyrics(self: &Rc<Self>, lyrics: Option<Lyrics>) {
         self.restart_lyrics_follow_tracking();
-        allow_loaded_lyrics_cache_revisit(
-            &mut self.state.lyrics_auto_search_attempted.borrow_mut(),
-            lyrics.as_ref(),
-        );
         *self.state.lyrics.borrow_mut() = lyrics;
         self.render_lyrics_panel();
         let shell = Rc::clone(self);
@@ -19,26 +15,31 @@ impl Shell {
             shell.update_lyrics_highlight();
         });
     }
-    pub(in crate::ui) fn apply_loaded_lyrics_for_track(
+    pub(in crate::ui) fn apply_loaded_lyrics_for_media(
         self: &Rc<Self>,
-        track_id: TrackId,
+        media_key: playback::MediaKey,
         lyrics: Option<Lyrics>,
     ) {
         clear_matching_lyrics_loading(
-            &mut self.state.lyrics_loading_track_id.borrow_mut(),
-            &track_id,
+            &mut self.state.lyrics_loading_media.borrow_mut(),
+            &media_key,
         );
         if !loaded_lyrics_matches_current(
-            current_playback_track_id(&self.state.player.borrow()).as_ref(),
-            &track_id,
+            current_playback_media_key(&self.state.player.borrow()).as_ref(),
+            &media_key,
             lyrics.as_ref(),
         ) {
             return;
         }
+        allow_loaded_lyrics_cache_revisit(
+            &mut self.state.lyrics_auto_search_attempted.borrow_mut(),
+            &media_key,
+            lyrics.as_ref(),
+        );
         let has_lyrics = lyrics.is_some();
         self.apply_loaded_lyrics(lyrics);
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref()
-            && dialog.track_id == track_id
+            && dialog.media_key == media_key
             && dialog.status.text().as_str() == tr("Searching...")
         {
             let status = if has_lyrics {
@@ -54,65 +55,59 @@ impl Shell {
         self.fullscreen_player.lyrics_pane.restart_follow_tracking();
     }
     pub(in crate::ui) fn request_initial_lyrics_if_needed(&self) {
-        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+        if current_playback_media_key(&self.state.player.borrow()).is_none() {
             return;
-        };
-        *self.state.lyrics_track_id.borrow_mut() = Some(track_id);
+        }
         self.request_auto_lyrics_if_needed();
     }
     pub(in crate::ui) fn request_auto_lyrics_if_needed(&self) {
-        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+        let Some(media_key) = current_playback_media_key(&self.state.player.borrow()) else {
             return;
         };
         if self.state.lyrics.borrow().is_some() {
             return;
         }
-        let settings = self.state.settings.borrow();
         let lyrics_surface_visible = self.lyrics_surface_visible();
-        let request =
-            auto_lyrics_request_for_settings(&settings, &track_id, lyrics_surface_visible);
-        drop(settings);
-        let Some(request) = request else {
+        if !lyrics_surface_visible {
             return;
-        };
-        let request_track_id = track_id.clone();
+        }
+        let settings = self.state.settings.borrow();
+        let request = settings
+            .metadata
+            .automatic_lyrics_request(settings.private_mode, &media_key.track_id);
+        drop(settings);
+        let requested_media = media_key.clone();
         if !self
             .state
             .lyrics_auto_search_attempted
             .borrow_mut()
-            .insert(track_id)
+            .insert(media_key)
         {
             return;
         }
-        *self.state.lyrics_loading_track_id.borrow_mut() = Some(request_track_id.clone());
-        let controller = self.controller.clone();
-        std::thread::spawn(move || match request {
-            AutoLyricsRequest::Default => controller.request_track_auto_lyrics(request_track_id),
-            AutoLyricsRequest::ServerOnly => {
-                controller.request_track_server_lyrics(request_track_id);
-            }
-        });
+        *self.state.lyrics_loading_media.borrow_mut() = Some(requested_media.clone());
+        self.controller
+            .request_lyrics_for_media(requested_media, request);
     }
     pub(in crate::ui) fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
-        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+        let Some(media_key) = current_playback_media_key(&self.state.player.borrow()) else {
             return;
         };
+        let track_id = &media_key.track_id;
         {
             let mut attempted = self.state.lyrics_auto_search_attempted.borrow_mut();
-            attempted.remove(&track_id);
+            attempted.remove(&media_key);
         }
         {
             let mut settings = self.state.settings.borrow_mut();
-            let id = track_id.as_str().to_string();
-            if !settings.suppressed_auto_lyrics_track_ids.contains(&id) {
-                settings.suppressed_auto_lyrics_track_ids.push(id);
+            if settings.metadata.suppress_auto_lyrics(track_id) {
                 if let Err(error) = self.controller.save_settings(&settings) {
                     warn!(%error, "failed to save lyrics auto-search setting");
                 }
             }
         }
         if self.state.lyrics.borrow().as_ref().is_some_and(|lyrics| {
-            lyrics.track_id == track_id && lyrics.source == LyricsSource::Remote
+            &lyrics.track_id == track_id && lyrics.source == LyricsSource::Remote
         }) {
             *self.state.lyrics.borrow_mut() = None;
             self.controller.clear_remote_lyrics_for_current();
@@ -123,7 +118,7 @@ impl Shell {
         let settings = self.state.settings.borrow();
         if settings.private_mode {
             tr("No server lyrics for the current track. Private mode is on.")
-        } else if !settings.external_lyrics_enabled {
+        } else if !settings.metadata.external_lyrics_enabled {
             tr("No server lyrics for the current track. External lyric lookup is off.")
         } else {
             tr("No lyrics for the current track.")
@@ -142,7 +137,11 @@ impl Shell {
         self.state.lyrics_panel_visible.get() || self.state.fullscreen_player_visible.get()
     }
     pub(in crate::ui) fn current_position_millis(&self) -> u64 {
-        self.state.player.borrow().position_millis
+        self.state
+            .player
+            .borrow()
+            .as_ref()
+            .map_or(0, |player| player.transport.position_millis)
     }
     pub(in crate::ui) fn seek_to_lyrics_position(self: &Rc<Self>, position_millis: u64) {
         self.lyrics_pane.clear_follow_scroll_pause();
@@ -155,36 +154,34 @@ impl Shell {
 }
 
 pub(in crate::ui) fn allow_loaded_lyrics_cache_revisit(
-    attempted: &mut HashSet<TrackId>,
+    attempted: &mut HashSet<playback::MediaKey>,
+    media_key: &playback::MediaKey,
     lyrics: Option<&Lyrics>,
 ) {
-    if let Some(lyrics) = lyrics {
-        attempted.remove(&lyrics.track_id);
+    if lyrics.is_some_and(|lyrics| lyrics.track_id == media_key.track_id) {
+        attempted.remove(media_key);
     }
 }
 pub(in crate::ui) fn loaded_lyrics_matches_current(
-    current_track: Option<&TrackId>,
-    track_id: &TrackId,
+    current_media: Option<&playback::MediaKey>,
+    media_key: &playback::MediaKey,
     lyrics: Option<&Lyrics>,
 ) -> bool {
-    current_track.is_some_and(|current| current == track_id)
-        && lyrics.is_none_or(|lyrics| &lyrics.track_id == track_id)
+    current_media == Some(media_key)
+        && lyrics.is_none_or(|lyrics| lyrics.track_id == media_key.track_id)
 }
 pub(in crate::ui) fn lyrics_loading_matches_current(
-    current_track: Option<&TrackId>,
-    loading_track: Option<&TrackId>,
+    current_media: Option<&playback::MediaKey>,
+    loading_media: Option<&playback::MediaKey>,
     lyrics: Option<&Lyrics>,
 ) -> bool {
-    lyrics.is_none()
-        && current_track
-            .zip(loading_track)
-            .is_some_and(|(current, loading)| current == loading)
+    lyrics.is_none() && current_media.is_some() && current_media == loading_media
 }
 pub(in crate::ui) fn clear_matching_lyrics_loading(
-    loading_track: &mut Option<TrackId>,
-    track_id: &TrackId,
+    loading_media: &mut Option<playback::MediaKey>,
+    media_key: &playback::MediaKey,
 ) {
-    if loading_track.as_ref() == Some(track_id) {
-        *loading_track = None;
+    if loading_media.as_ref() == Some(media_key) {
+        *loading_media = None;
     }
 }

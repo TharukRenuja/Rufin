@@ -1,13 +1,11 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn mood_detail_view(self: &Rc<Self>, mood_id: domain::MoodId) -> gtk::Widget {
-        let detail = self
-            .controller
-            .cached_mood_detail(&mood_id)
-            .ok()
-            .flatten()
-            .or_else(|| self.mood_detail_from_memory(&mood_id));
+    pub(in crate::ui) fn mood_detail_view(
+        self: &Rc<Self>,
+        mood_id: ::library::MoodId,
+    ) -> gtk::Widget {
+        let detail = self.controller.cached_mood_detail(&mood_id).ok().flatten();
         let Some(detail) = detail else {
             return self.placeholder_view(
                 "Mood",
@@ -25,14 +23,8 @@ impl Shell {
                 format_duration_units(detail.mood.duration_seconds),
             ));
         }
-        let cover_refs = if detail.mood.image_refs.is_empty() {
-            grouped_cover_refs_for_items(&detail.albums, &detail.tracks)
-        } else {
-            detail.mood.image_refs.clone()
-        };
-        let mut mood = detail.mood;
-        mood.image_refs = cover_refs;
-        let artwork = crate::cover_art_policy::selected_mood_artwork(&mood);
+        let mood = detail.mood;
+        let artwork = CandidateSet::mood_slots(&mood);
         let kind_row = self.mood_detail_kind_row();
         let action_tracks = Rc::new(detail.tracks.clone());
         let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
@@ -47,9 +39,9 @@ impl Shell {
             selection_handle: Some(track_selection),
             tracks: detail.tracks,
             table_context: "mood-detail",
-            source_descriptor: Some(PlaySourceDescriptor::MoodTracks {
+            source_descriptor: Some(PlayContextDescriptor::Mood {
                 mood_id,
-                selected_music_folder_id: selected_music_folder_id(self),
+                music_folder_id: selected_music_folder_id(self),
             }),
         })
     }
@@ -72,7 +64,7 @@ impl Shell {
 
     fn mood_detail_actions(
         self: &Rc<Self>,
-        mood_id: domain::MoodId,
+        mood_id: ::library::MoodId,
         tracks: Rc<Vec<Track>>,
     ) -> gtk::Box {
         let actions = detail_action_row();
@@ -91,40 +83,5 @@ impl Shell {
         append_track_batch_queue_actions(&actions, &self.controller, tracks);
 
         actions
-    }
-
-    fn mood_detail_from_memory(
-        self: &Rc<Self>,
-        mood_id: &domain::MoodId,
-    ) -> Option<CachedMoodDetail> {
-        let library = self.state.library.borrow();
-        if library.cached_track_count > library.tracks.len() {
-            return None;
-        }
-        let tracks = library
-            .tracks
-            .iter()
-            .filter(|track| track.moods.iter().any(|name| name == mood_id.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        if tracks.is_empty() {
-            return None;
-        }
-        let duration_seconds = tracks
-            .iter()
-            .map(|track| track.duration_seconds)
-            .sum::<u32>();
-        Some(CachedMoodDetail {
-            mood: Mood {
-                id: mood_id.clone(),
-                name: mood_id.as_str().to_string(),
-                track_count: tracks.len().min(u32::MAX as usize) as u32,
-                duration_seconds,
-                image_refs: grouped_cover_refs_for_items(&[], &tracks),
-                image_ref: None,
-            },
-            albums: Vec::new(),
-            tracks,
-        })
     }
 }

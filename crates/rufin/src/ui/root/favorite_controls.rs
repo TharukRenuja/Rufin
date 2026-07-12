@@ -1,6 +1,27 @@
 use super::*;
 
 impl Shell {
+    pub(in crate::ui) fn projected_track_favorite(
+        &self,
+        track_id: &TrackId,
+        playback_fallback: bool,
+    ) -> bool {
+        if let Some(pending) = self
+            .state
+            .pending_favorite_intents
+            .borrow()
+            .get(&FavoriteItemId::Track(track_id.clone()))
+            .copied()
+        {
+            return pending;
+        }
+        let library = self.state.library.borrow();
+        if library.source.is_none() {
+            return playback_fallback;
+        }
+        library.favorites.iter().any(|track| track.id == *track_id)
+    }
+
     pub(in crate::ui) fn register_favorite_button(
         &self,
         key: FavoriteControlKey,
@@ -24,7 +45,7 @@ impl Shell {
         update_favorite_controls(&self.state.favorite_controls, &key, favorite);
     }
     pub(in crate::ui) fn restore_failed_favorite_change(
-        &self,
+        self: &Rc<Self>,
         item_id: &FavoriteItemId,
         favorite: bool,
     ) {
@@ -32,12 +53,9 @@ impl Shell {
             return;
         }
         self.update_visible_favorite_buttons(item_id, favorite);
-        if let FavoriteItemId::Track(track_id) = item_id
-            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
-            && current.track_id == *track_id
-        {
-            current.favorite = favorite;
-            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
+        if matches!(item_id, FavoriteItemId::Track(_)) {
+            self.sync_bottom_player_favorite();
+            self.schedule_queue_panel_render();
         }
     }
     pub(in crate::ui) fn set_favorite_with_feedback(
@@ -46,19 +64,13 @@ impl Shell {
         favorite: bool,
         button: Option<&gtk::Button>,
     ) {
+        let track_favorite_changed = matches!(item_id, FavoriteItemId::Track(_));
         self.state
             .pending_favorite_intents
             .borrow_mut()
             .insert(item_id.clone(), favorite);
         if let Some(button) = button {
             set_favorite_button_active(button, favorite);
-        }
-        if let FavoriteItemId::Track(track_id) = &item_id
-            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
-            && current.track_id == *track_id
-        {
-            current.favorite = favorite;
-            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
         }
         self.update_visible_favorite_buttons(&item_id, favorite);
         match item_id {
@@ -71,6 +83,10 @@ impl Shell {
             FavoriteItemId::Artist(artist_id) => {
                 self.controller.set_artist_favorite(artist_id, favorite)
             }
+        }
+        if track_favorite_changed {
+            self.sync_bottom_player_favorite();
+            self.schedule_queue_panel_render();
         }
         let title = if favorite {
             tr("Added to favorites")
@@ -101,14 +117,11 @@ impl Shell {
         }
 
         self.update_search_favorite(&item_id, favorite);
-        if let FavoriteItemId::Track(track_id) = &item_id
-            && let Some(current) = self.state.player.borrow_mut().current.as_mut()
-            && current.track_id == *track_id
-        {
-            current.favorite = favorite;
-            set_favorite_button_active(&self.player_controls.favorite_button, favorite);
-        }
         self.update_visible_favorite_buttons(&item_id, favorite);
+        if matches!(item_id, FavoriteItemId::Track(_)) {
+            self.sync_bottom_player_favorite();
+            self.schedule_queue_panel_render();
+        }
         let track_sort_key = self.state.settings.borrow().track_table.sort_key;
         if favorite_change_needs_route_render(&route, &item_id, track_sort_key) {
             self.render_current_route_preserving_scroll();

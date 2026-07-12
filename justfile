@@ -47,15 +47,14 @@ test *args:
     fi
 
 _check:
-    cargo clippy -p rufin --bin rufin --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity -D clippy::expect_used -D clippy::panic
+    cargo clippy -p rufin --bin rufin --locked -- -D warnings
 
 _fmt-check:
     cargo fmt --all -- --check
 
 _lint:
-    cargo clippy --workspace --lib --bins --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity -D clippy::expect_used -D clippy::panic
-    cargo clippy --workspace --tests --benches --examples --locked -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity
-    cargo clippy -p domain --lib --all-features --locked -- -D clippy::indexing_slicing
+    cargo clippy --workspace --lib --bins --locked -- -D warnings
+    cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
 
 _deps:
     cargo deny --locked check -D unmatched-skip

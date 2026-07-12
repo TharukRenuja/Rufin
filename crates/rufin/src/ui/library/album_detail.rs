@@ -612,8 +612,8 @@ pub(in crate::ui) fn album_detail_cover_tile(
     cover_button.add_css_class("album-cover-button");
     cards::constrain_cover_widget(&cover_button, cover_size);
     cards::clip_cover(&cover_button);
-    cover_button.set_child(Some(&shell.cover_tile_for(
-        album.image_ref.as_ref(),
+    cover_button.set_child(Some(&shell.cover_tile_for_candidates(
+        CandidateSet::album(album),
         album.color_seed,
         cover_size,
         GRID_COVER_SIZE,
@@ -657,7 +657,7 @@ pub(in crate::ui) fn album_detail_cover_tile(
         favorite.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                source::FavoriteItemId::Album(album_id.clone()),
+                library::FavoriteItemId::Album(album_id.clone()),
                 favorite,
                 Some(button),
             );
@@ -791,7 +791,7 @@ pub(in crate::ui) fn album_detail_track_cell(
             button.connect_clicked(move |button| {
                 let favorite = !favorite_button_is_active(button);
                 favorite_shell.set_favorite_with_feedback(
-                    source::FavoriteItemId::Track(track_id.clone()),
+                    library::FavoriteItemId::Track(track_id.clone()),
                     favorite,
                     Some(button),
                 );
@@ -800,8 +800,8 @@ pub(in crate::ui) fn album_detail_track_cell(
             album_detail_fixed_cell(width, button.upcast())
         }
         LibraryField::Image => {
-            let cover = shell.cover_tile_for(
-                track.image_ref.as_ref(),
+            let cover = shell.cover_tile_for_candidates(
+                CandidateSet::track(track),
                 stable_seed(track.id.as_str()),
                 48,
                 THUMB_COVER_SIZE,
@@ -979,7 +979,7 @@ pub(in crate::ui) fn album_detail_track_column_width(
         LibraryField::TrackNumber => 52,
         LibraryField::DiscNumber => 44,
         LibraryField::Duration => 48,
-        LibraryField::Year => 52,
+        LibraryField::Year | LibraryField::Bpm => 52,
         LibraryField::PlayCount => play_count_column_width().min(56),
         LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 64,
         LibraryField::Favorite => 40,

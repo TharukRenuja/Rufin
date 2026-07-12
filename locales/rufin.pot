@@ -16,36 +16,6 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-msgid "Most Played"
-msgstr ""
-
-msgid "Never Played"
-msgstr ""
-
-msgid "Most Skipped"
-msgstr ""
-
-msgid "Explore"
-msgstr ""
-
-msgid "Most played"
-msgstr ""
-
-msgid "Newly added"
-msgstr ""
-
-msgid "Recently played"
-msgstr ""
-
-msgid "Recently released"
-msgstr ""
-
-msgid "Showcase"
-msgstr ""
-
-msgid "Featured genres"
-msgstr ""
-
 msgid "Home"
 msgstr ""
 
@@ -160,6 +130,9 @@ msgstr ""
 msgid "Rating"
 msgstr ""
 
+msgid "BPM"
+msgstr ""
+
 msgid "Track"
 msgstr ""
 
@@ -173,6 +146,36 @@ msgid "Duration"
 msgstr ""
 
 msgid "Favorite"
+msgstr ""
+
+msgid "Explore"
+msgstr ""
+
+msgid "Most played"
+msgstr ""
+
+msgid "Newly added"
+msgstr ""
+
+msgid "Recently played"
+msgstr ""
+
+msgid "Recently released"
+msgstr ""
+
+msgid "Showcase"
+msgstr ""
+
+msgid "Featured genres"
+msgstr ""
+
+msgid "Most Played"
+msgstr ""
+
+msgid "Never Played"
+msgstr ""
+
+msgid "Most Skipped"
 msgstr ""
 
 msgid "LRCLIB"
@@ -1061,10 +1064,10 @@ msgstr ""
 msgid "MusicBrainz + Last.fm"
 msgstr ""
 
-msgid "Metadata source"
+msgid "Link source"
 msgstr ""
 
-msgid "Source to use for cover images and song/artist links"
+msgid "Service to use for song and artist links"
 msgstr ""
 
 msgid "Show paused status"
@@ -1077,9 +1080,6 @@ msgid "Set the Discord activity type to Listening"
 msgstr ""
 
 msgid "Show playback icon"
-msgstr ""
-
-msgid "Last.fm API key"
 msgstr ""
 
 msgid "Legacy"
@@ -1163,9 +1163,6 @@ msgid "Maximum year"
 msgstr ""
 
 msgid "Play filter"
-msgstr ""
-
-msgid "Add Last"
 msgstr ""
 
 msgid "Any genre"
@@ -1525,9 +1522,6 @@ msgid "Any"
 msgstr ""
 
 msgid "Comment"
-msgstr ""
-
-msgid "BPM"
 msgstr ""
 
 msgid "Played"

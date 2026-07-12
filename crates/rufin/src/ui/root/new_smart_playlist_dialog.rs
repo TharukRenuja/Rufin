@@ -1,7 +1,7 @@
 use super::layout::large_popup_content_width;
 use super::*;
 use crate::i18n::msgid;
-use domain::smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind};
+use ::library::smart_playlists::{self as smart_policy, SmartPlaylistRuleValueKind};
 use std::cell::Cell;
 
 const SMART_PLAYLIST_DIALOG_WIDTH: i32 = 700;

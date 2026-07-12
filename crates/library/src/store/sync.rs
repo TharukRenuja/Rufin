@@ -1,13 +1,9 @@
-use super::sources::{
-    COLLECTION_COVER_GENRE, COLLECTION_COVER_PLAYLIST, canonical_album_artists_for_write,
-    collect_rows, home_membership,
-};
+use super::sources::{canonical_album_artists_for_write, collect_rows, home_membership};
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SyncCommit {
     pub delta: LibraryDelta,
-    pub pruned_cover_entries: Vec<CoverCacheEntry>,
     pub cache_revision: i64,
 }
 
@@ -69,18 +65,6 @@ pub(super) struct AggregateStats {
     album_artists: HashMap<String, (i64, i64)>,
     genres: HashMap<String, (i64, i64, i64)>,
 }
-
-#[derive(Default)]
-pub(super) struct CoverSnapshot {
-    albums: CoverSignatures,
-    tracks: CoverSignatures,
-    artists: CoverSignatures,
-    album_artists: CoverSignatures,
-    genres: CoverSignatures,
-    playlists: CoverSignatures,
-}
-
-type CoverSignatures = HashMap<String, Vec<(String, Option<String>)>>;
 
 enum HomeWrite {
     Visible,
@@ -181,137 +165,6 @@ pub(super) fn merge_aggregate_stats(
         }
     }
     Ok(())
-}
-
-pub(super) fn load_cover_snapshot(
-    store: &Store,
-    source_id: &SourceId,
-) -> StoreResult<CoverSnapshot> {
-    Ok(CoverSnapshot {
-        albums: cover_signatures(store, source_id, "albums", "album_id", None)?,
-        tracks: cover_signatures(store, source_id, "tracks", "track_id", None)?,
-        artists: cover_signatures(store, source_id, "artists", "artist_id", None)?,
-        album_artists: cover_signatures(store, source_id, "album_artists", "artist_id", None)?,
-        genres: cover_signatures(
-            store,
-            source_id,
-            "genres",
-            "genre_id",
-            Some(COLLECTION_COVER_GENRE),
-        )?,
-        playlists: cover_signatures(
-            store,
-            source_id,
-            "playlists",
-            "playlist_id",
-            Some(COLLECTION_COVER_PLAYLIST),
-        )?,
-    })
-}
-
-pub(super) fn merge_cover_changes(
-    store: &Store,
-    source_id: &SourceId,
-    before: &CoverSnapshot,
-    delta: &mut LibraryDelta,
-) -> StoreResult<()> {
-    let after = load_cover_snapshot(store, source_id)?;
-    merge_changed_cover_ids(
-        &before.albums,
-        &after.albums,
-        &mut delta.albums.cover_refs,
-        AlbumId::new,
-    );
-    merge_changed_cover_ids(
-        &before.tracks,
-        &after.tracks,
-        &mut delta.tracks.cover_refs,
-        TrackId::new,
-    );
-    merge_changed_cover_ids(
-        &before.artists,
-        &after.artists,
-        &mut delta.artists.cover_refs,
-        ArtistId::new,
-    );
-    merge_changed_cover_ids(
-        &before.album_artists,
-        &after.album_artists,
-        &mut delta.album_artists.cover_refs,
-        ArtistId::new,
-    );
-    merge_changed_cover_ids(
-        &before.genres,
-        &after.genres,
-        &mut delta.genres.cover_refs,
-        GenreId::new,
-    );
-    merge_changed_cover_ids(
-        &before.playlists,
-        &after.playlists,
-        &mut delta.playlists.cover_refs,
-        PlaylistId::new,
-    );
-    Ok(())
-}
-
-fn merge_changed_cover_ids<Id: Eq>(
-    before: &HashMap<String, Vec<(String, Option<String>)>>,
-    after: &HashMap<String, Vec<(String, Option<String>)>>,
-    changed: &mut Vec<Id>,
-    id: impl Fn(String) -> Id,
-) {
-    for (key, signature) in after {
-        let id = id(key.clone());
-        if before.get(key).is_some_and(|before| before != signature) && !changed.contains(&id) {
-            changed.push(id);
-        }
-    }
-}
-
-fn cover_signatures(
-    store: &Store,
-    source_id: &SourceId,
-    table: &str,
-    id_column: &str,
-    collection_type: Option<&str>,
-) -> StoreResult<CoverSignatures> {
-    let sql =
-        format!("SELECT {id_column}, image_item_id, image_tag FROM {table} WHERE source_id = ?1");
-    let mut statement = store.connection.prepare(&sql)?;
-    let rows = collect_rows(statement.query_map(params![source_id.as_str()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
-    })?)?;
-    let mut signatures = rows
-        .into_iter()
-        .map(|(id, item, tag)| {
-            let signature = item.map(|item| vec![(item, tag)]).unwrap_or_default();
-            (id, signature)
-        })
-        .collect::<HashMap<_, _>>();
-    if let Some(collection_type) = collection_type {
-        let mut statement = store.connection.prepare(
-            "SELECT collection_id, image_item_id, image_tag
-             FROM collection_cover_refs
-             WHERE source_id = ?1 AND collection_type = ?2
-             ORDER BY collection_id, position",
-        )?;
-        for row in statement.query_map(params![source_id.as_str(), collection_type], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        })? {
-            let (id, item, tag) = row?;
-            signatures.entry(id).or_default().push((item, tag));
-        }
-    }
-    Ok(signatures)
 }
 
 fn two_column_stats(
@@ -468,7 +321,6 @@ impl Store {
             )?;
             Ok(SyncCommit {
                 delta,
-                pruned_cover_entries: Vec::new(),
                 cache_revision,
             })
         })
@@ -524,33 +376,22 @@ impl Store {
         complete_coverage: bool,
         apply: impl FnOnce() -> StoreResult<LibraryDelta>,
     ) -> StoreResult<SyncCommit> {
-        // Save library rows, refresh counts and cover links, and advance the cache
-        // revision all at once
+        // Save library rows, refresh aggregate facts, and advance the cache revision all at once.
         self.write_batch(|_| {
             self.require_current_sync_generation(source_id, generation)?;
             self.require_source_cache_revision(source_id, base_cache_revision)?;
-            let derived_before = complete_coverage
-                .then(|| {
-                    Ok::<_, StoreError>((
-                        load_aggregate_stats(self, source_id)?,
-                        load_cover_snapshot(self, source_id)?,
-                    ))
-                })
+            let aggregate_stats_before = complete_coverage
+                .then(|| load_aggregate_stats(self, source_id))
                 .transpose()?;
             let mut delta = apply()?;
-            let pruned_cover_entries = if delta.is_empty() {
-                Vec::new()
-            } else if let Some((aggregate_stats_before, covers_before)) = derived_before.as_ref() {
+            if !delta.is_empty()
+                && let Some(aggregate_stats_before) = aggregate_stats_before.as_ref()
+            {
                 self.refresh_library_counts(source_id)?;
                 merge_aggregate_stats(self, source_id, aggregate_stats_before, &mut delta)?;
-                self.refresh_collection_cover_refs(source_id)?;
-                self.refresh_smart_playlist_cover_refs(source_id)?;
-                merge_cover_changes(self, source_id, covers_before, &mut delta)?;
-                self.prune_stale_image_cache_entries(source_id)?
-            } else {
+            } else if !delta.is_empty() {
                 self.refresh_finite_stats(source_id, &mut delta)?;
-                Vec::new()
-            };
+            }
             let cache_revision =
                 self.advance_source_cache_revision(source_id, base_cache_revision)?;
             self.connection.execute(
@@ -570,7 +411,6 @@ impl Store {
             )?;
             Ok(SyncCommit {
                 delta,
-                pruned_cover_entries,
                 cache_revision,
             })
         })
@@ -880,6 +720,7 @@ impl Store {
             self.apply_local_access_update(source_id, generation, sync.local_access)?;
         let mut delta = collector.finish();
         delta.local_matches_changed = local_matches_changed;
+        self.expand_artwork_projection_delta(source_id, &mut delta)?;
         Ok(delta)
     }
 
@@ -1151,7 +992,7 @@ impl Store {
             delta
                 .genres
                 .links
-                .extend(track.genres.into_iter().map(GenreId::new));
+                .extend(self.genre_ids_for_names(source_id, &track.genres)?);
         }
         let deletion = self.delete_track_rows(
             source_id,
@@ -1449,6 +1290,7 @@ impl Store {
             .into_iter()
             .map(PlaylistId::new)
             .collect();
+        self.expand_artwork_projection_delta(source_id, &mut delta)?;
         Ok(delta)
     }
 
@@ -1574,7 +1416,6 @@ impl Store {
             ("album_artist", "album_artists", "artist_id"),
         ] {
             for entity_table in [
-                "entity_content_refs",
                 "entity_facts",
                 "entity_grouping_keys",
                 "entity_identity_keys",
@@ -1657,8 +1498,8 @@ impl Store {
 mod tests {
     use super::*;
     use crate::store::test_support::{
-        LibraryObservation, album, artist, credit, genre, image_ref, playlist, saved_source,
-        seed_cached_library, sqlite_sidecar_path, track,
+        LibraryObservation, album, artist, credit, genre, image_ref, playlist, seed_cached_library,
+        sqlite_sidecar_path, stored_source, track,
     };
 
     struct FiniteFixture {
@@ -1799,9 +1640,9 @@ mod tests {
     #[test]
     fn remote_commit_publishes_local_access_in_the_same_revision() {
         let store = Store::open_memory().expect("open Store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let album = album(1);
         let track = track(1, &album);
         let manifest = local_manifest_entry(10, "/music/local.flac");
@@ -1820,20 +1661,20 @@ mod tests {
         });
 
         let commit = store
-            .commit_library_sync(&saved.source.id, generation, 0, sync)
+            .commit_library_sync(&saved.source_id, generation, 0, sync)
             .expect("commit sync");
 
         assert_eq!(commit.cache_revision, 1);
         assert!(commit.delta.local_matches_changed);
         assert_eq!(
             store
-                .track_local_match_path(&saved.source.id, &track.id)
+                .track_local_match_path(&saved.source_id, &track.id)
                 .expect("load match"),
             Some(local_match.1)
         );
         assert_eq!(
             store
-                .load_local_manifest(&saved.source.id)
+                .load_local_manifest(&saved.source_id)
                 .expect("load manifest"),
             vec![manifest]
         );
@@ -1841,7 +1682,7 @@ mod tests {
 
     fn seed_local_access_projection(
         store: &Store,
-        saved: &SavedSource,
+        saved: &StoredSource,
         access: &SourceLocalAccess,
     ) -> (Track, LocalManifestEntry) {
         assert!(
@@ -1852,7 +1693,7 @@ mod tests {
         let album = album(1);
         let track = track(1, &album);
         let manifest = local_manifest_entry(1, "/music/old.flac");
-        let generation = store.begin_sync(&saved.source.id).expect("begin seed sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin seed sync");
         let mut sync = small_library_sync(&album, &track);
         sync.local_access = Some(LocalAccessUpdate {
             manifest: LocalManifestDelta {
@@ -1866,22 +1707,22 @@ mod tests {
             )],
         });
         store
-            .commit_library_sync(&saved.source.id, generation, 1, sync)
+            .commit_library_sync(&saved.source_id, generation, 1, sync)
             .expect("commit seed sync");
         (track, manifest)
     }
 
     fn replacement_sync(
         store: &Store,
-        saved: &SavedSource,
+        saved: &StoredSource,
     ) -> (i64, i64, LibrarySync, PagedResponse<Track>) {
         let committed = store
-            .load_tracks(&saved.source.id, 0, 10)
+            .load_tracks(&saved.source_id, 0, 10)
             .expect("load committed tracks");
         let base_cache_revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("load base revision");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let replacement_album = album(2);
         let replacement_track = track(2, &replacement_album);
         let mut sync = small_library_sync(&replacement_album, &replacement_track);
@@ -1902,10 +1743,10 @@ mod tests {
     #[test]
     fn saving_local_access_rejects_an_older_sync() {
         let store = Store::open_memory().expect("open Store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let first = SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: "/music/old".to_string(),
             path_replace_from: Some("/server/old".to_string()),
             path_replace_to: Some("/music/old".to_string()),
@@ -1913,10 +1754,10 @@ mod tests {
         let (old_track, _old_manifest) = seed_local_access_projection(&store, &saved, &first);
         let (generation, base_revision, sync, committed_tracks) = replacement_sync(&store, &saved);
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("load revision");
         let replacement = SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: "/music/new".to_string(),
             path_replace_from: Some("/server/new".to_string()),
             path_replace_to: Some("/music/new".to_string()),
@@ -1929,25 +1770,25 @@ mod tests {
         );
         assert_eq!(
             store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("load changed revision"),
             revision + 1
         );
         assert_eq!(
             store
-                .source_local_access(&saved.source.id)
+                .source_local_access(&saved.source_id)
                 .expect("load local access"),
             Some(replacement.clone())
         );
         assert_eq!(
             store
-                .track_local_match_path(&saved.source.id, &old_track.id)
+                .track_local_match_path(&saved.source_id, &old_track.id)
                 .expect("load cleared match"),
             None
         );
         assert!(
             store
-                .load_local_manifest(&saved.source.id)
+                .load_local_manifest(&saved.source_id)
                 .expect("load cleared manifest")
                 .is_empty()
         );
@@ -1958,17 +1799,17 @@ mod tests {
         );
         assert_eq!(
             store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("load unchanged revision"),
             revision + 1
         );
         assert!(matches!(
-            store.commit_library_sync(&saved.source.id, generation, base_revision, sync),
+            store.commit_library_sync(&saved.source_id, generation, base_revision, sync),
             Err(StoreError::StaleCacheRevision { .. })
         ));
         assert_eq!(
             store
-                .load_tracks(&saved.source.id, 0, 10)
+                .load_tracks(&saved.source_id, 0, 10)
                 .expect("reload tracks"),
             committed_tracks
         );
@@ -1977,10 +1818,10 @@ mod tests {
     #[test]
     fn clearing_local_access_rejects_an_older_sync() {
         let store = Store::open_memory().expect("open Store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let access = SourceLocalAccess {
-            source_id: saved.source.id.clone(),
+            source_id: saved.source_id.clone(),
             root_path: "/music/old".to_string(),
             path_replace_from: None,
             path_replace_to: Some("/music/old".to_string()),
@@ -1988,56 +1829,56 @@ mod tests {
         let (old_track, _old_manifest) = seed_local_access_projection(&store, &saved, &access);
         let (generation, base_revision, sync, committed_tracks) = replacement_sync(&store, &saved);
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("load revision");
 
         assert!(
             store
-                .clear_source_local_access(&saved.source.id)
+                .clear_source_local_access(&saved.source_id)
                 .expect("clear local access")
         );
         assert_eq!(
             store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("load changed revision"),
             revision + 1
         );
         assert_eq!(
             store
-                .source_local_access(&saved.source.id)
+                .source_local_access(&saved.source_id)
                 .expect("load local access"),
             None
         );
         assert_eq!(
             store
-                .track_local_match_path(&saved.source.id, &old_track.id)
+                .track_local_match_path(&saved.source_id, &old_track.id)
                 .expect("load cleared match"),
             None
         );
         assert!(
             store
-                .load_local_manifest(&saved.source.id)
+                .load_local_manifest(&saved.source_id)
                 .expect("load cleared manifest")
                 .is_empty()
         );
         assert!(
             !store
-                .clear_source_local_access(&saved.source.id)
+                .clear_source_local_access(&saved.source_id)
                 .expect("clear unchanged local access")
         );
         assert_eq!(
             store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("load unchanged revision"),
             revision + 1
         );
         assert!(matches!(
-            store.commit_library_sync(&saved.source.id, generation, base_revision, sync),
+            store.commit_library_sync(&saved.source_id, generation, base_revision, sync),
             Err(StoreError::StaleCacheRevision { .. })
         ));
         assert_eq!(
             store
-                .load_tracks(&saved.source.id, 0, 10)
+                .load_tracks(&saved.source_id, 0, 10)
                 .expect("reload tracks"),
             committed_tracks
         );
@@ -2051,11 +1892,11 @@ mod tests {
         ));
         let _cleanup = std::fs::remove_file(&path);
         let writer = Store::open(&path).expect("open writer");
-        let saved = saved_source();
+        let saved = stored_source();
         writer.save_source(&saved).expect("save source");
-        seed_cached_library(&writer, &saved.source.id);
+        seed_cached_library(&writer, &saved.source_id);
 
-        let generation = writer.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = writer.begin_sync(&saved.source_id).expect("begin sync");
         let replacement_album = album(2);
         let replacement_track = track(2, &replacement_album);
         let sync = small_library_sync(&replacement_album, &replacement_track);
@@ -2063,9 +1904,9 @@ mod tests {
         let reader = Store::open(&path).expect("open reader");
         let (albums, tracks) = reader
             .read_snapshot(|reader| {
-                let albums = reader.load_albums(&saved.source.id, 0, 10)?.items;
-                writer.commit_library_sync(&saved.source.id, generation, 1, sync)?;
-                let tracks = reader.load_tracks(&saved.source.id, 0, 10)?.items;
+                let albums = reader.load_albums(&saved.source_id, 0, 10)?.items;
+                writer.commit_library_sync(&saved.source_id, generation, 1, sync)?;
+                let tracks = reader.load_tracks(&saved.source_id, 0, 10)?.items;
                 Ok((albums, tracks))
             })
             .expect("read one cache revision");
@@ -2073,11 +1914,11 @@ mod tests {
         assert_eq!(tracks[0].id, TrackId::fake(1));
 
         let albums = reader
-            .load_albums(&saved.source.id, 0, 10)
+            .load_albums(&saved.source_id, 0, 10)
             .expect("read new albums")
             .items;
         let tracks = reader
-            .load_tracks(&saved.source.id, 0, 10)
+            .load_tracks(&saved.source_id, 0, 10)
             .expect("read new tracks")
             .items;
         assert_eq!(albums[0].id, replacement_album.id);
@@ -2093,23 +1934,23 @@ mod tests {
     #[test]
     fn successful_commit_replaces_cross_collection_cache_and_reports_delta() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let initial_album = album(1);
         let initial_track = track(1, &initial_album);
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin initial sync");
         store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 0,
                 small_library_sync(&initial_album, &initial_track),
             )
             .expect("commit initial sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("initial revision");
 
         let replacement_artist = artist(2, None);
@@ -2141,7 +1982,7 @@ mod tests {
             albums: vec![replacement_album.clone()],
             tracks: vec![replacement_track.clone()],
         };
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let committed = LibraryObservation {
             albums: vec![replacement_album.clone()],
             tracks: vec![replacement_track.clone()],
@@ -2152,7 +1993,7 @@ mod tests {
             playlists: vec![playlist_detail],
             home_sections: vec![home],
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit sync");
         assert_eq!(
             committed.delta.tracks.added,
@@ -2188,14 +2029,14 @@ mod tests {
         assert!(committed.delta.home_changed);
         assert!(committed.delta.folders_changed);
         let tracks = store
-            .load_tracks(&saved.source.id, 0, 10)
+            .load_tracks(&saved.source_id, 0, 10)
             .expect("load committed tracks")
             .items;
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].id, replacement_track.id);
         assert_eq!(tracks[0].album_id, replacement_track.album_id);
         let playlist = store
-            .load_playlist_detail(&saved.source.id, &replacement_playlist.id)
+            .load_playlist_detail(&saved.source_id, &replacement_playlist.id)
             .expect("load playlist")
             .expect("playlist detail");
         assert_eq!(playlist.entries.len(), 1);
@@ -2203,11 +2044,11 @@ mod tests {
         assert_eq!(playlist.entries[0].track.id, replacement_track.id);
         assert_eq!(
             store
-                .list_music_folders(&saved.source.id)
+                .list_music_folders(&saved.source_id)
                 .expect("load folders"),
             vec![folder]
         );
-        let state = store.sync_state(&saved.source.id).expect("sync state");
+        let state = store.sync_state(&saved.source_id).expect("sync state");
         assert_eq!(state.cache_revision, revision + 1);
         assert!(state.last_completed_at.is_some());
         assert_eq!(state.last_all_completed_at, state.last_completed_at);
@@ -2216,20 +2057,20 @@ mod tests {
     #[test]
     fn identical_full_sync_has_empty_delta() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let mut cached_album = album(1);
         cached_album.artist_credits = vec![credit(ArtistId::fake(9), "Guest Artist")];
         let cached_track = track(1, &cached_album);
 
         for expected_empty in [false, true] {
-            let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+            let generation = store.begin_sync(&saved.source_id).expect("begin sync");
             let revision = store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("cache revision");
             let committed = store
                 .commit_library_sync(
-                    &saved.source.id,
+                    &saved.source_id,
                     generation,
                     revision,
                     small_library_sync(&cached_album, &cached_track),
@@ -2242,14 +2083,14 @@ mod tests {
     #[test]
     fn selected_folder_filter_does_not_make_identical_home_look_changed() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let album = album(1);
         let track = track(1, &album);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 0,
                 small_library_sync(&album, &track),
@@ -2261,94 +2102,152 @@ mod tests {
             tracks: vec![track],
         };
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         store
-            .replace_home_section(&saved.source.id, generation, revision, &section)
+            .replace_home_section(&saved.source_id, generation, revision, &section)
             .expect("save Home");
         let folder = MusicFolder {
             id: MusicFolderId::new("other-folder"),
             name: "Other folder".to_string(),
         };
         store
-            .upsert_music_folders(&saved.source.id, std::slice::from_ref(&folder), generation)
+            .upsert_music_folders(&saved.source_id, std::slice::from_ref(&folder), generation)
             .expect("save folder");
         store
-            .set_selected_music_folder_id(&saved.source.id, Some(&folder.id))
+            .set_selected_music_folder_id(&saved.source_id, Some(&folder.id))
             .expect("select folder");
         assert!(
             store
-                .load_home_sections(&saved.source.id)
+                .load_home_sections(&saved.source_id)
                 .expect("filtered Home")
                 .is_empty()
         );
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
 
         let commit = store
-            .replace_home_section(&saved.source.id, generation, revision, &section)
+            .replace_home_section(&saved.source_id, generation, revision, &section)
             .expect("save identical Home");
 
         assert!(commit.delta.is_empty());
     }
 
     #[test]
-    fn changed_track_cover_updates_album_fallback_and_delta() {
+    fn changed_track_cover_updates_relation_query_and_track_delta() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let album = album(1);
+        let mut album = album(1);
+        let genre = genre(7, None);
+        album.genres = vec![genre.name.clone()];
         let mut track = track(1, &album);
         track.image_ref = Some(image_ref("track-cover-one", "one"));
 
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin first sync");
+        let mut first_sync = small_library_sync(&album, &track);
+        first_sync.genres = vec![genre.clone()];
         store
-            .commit_library_sync(
-                &saved.source.id,
-                generation,
-                0,
-                small_library_sync(&album, &track),
-            )
+            .commit_library_sync(&saved.source_id, generation, 0, first_sync)
             .expect("commit first sync");
 
         track.image_ref = Some(image_ref("track-cover-two", "two"));
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin second sync");
+        let mut second_sync = small_library_sync(&album, &track);
+        second_sync.genres = vec![genre.clone()];
         let commit = store
-            .commit_library_sync(
-                &saved.source.id,
-                generation,
-                1,
-                small_library_sync(&album, &track),
-            )
+            .commit_library_sync(&saved.source_id, generation, 1, second_sync)
             .expect("commit second sync");
         let cached_album = store
-            .load_albums(&saved.source.id, 0, 10)
+            .load_albums(&saved.source_id, 0, 10)
             .expect("load albums")
             .items
             .into_iter()
             .find(|cached| cached.id == album.id)
             .expect("cached album");
 
-        assert_eq!(cached_album.image_ref, track.image_ref);
+        assert_eq!(cached_album.image_ref.as_ref(), track.image_ref.as_ref());
+        let cached_track = store
+            .load_track(&saved.source_id, &track.id)
+            .expect("load track")
+            .expect("cached track");
+        assert_eq!(
+            cached_track
+                .album_artwork
+                .as_ref()
+                .and_then(|artwork| artwork.image_ref.as_ref()),
+            track.image_ref.as_ref()
+        );
         assert_eq!(commit.delta.tracks.cover_refs, vec![track.id.clone()]);
         assert_eq!(commit.delta.albums.cover_refs, vec![album.id.clone()]);
+        assert_eq!(commit.delta.genres.cover_refs, vec![genre.id]);
+    }
+
+    #[test]
+    fn changed_album_cover_invalidates_hydrated_track_artwork() {
+        let store = Store::open_memory().expect("open store");
+        let saved = stored_source();
+        store.save_source(&saved).expect("save source");
+        let mut album = album(1);
+        album.image_ref = Some(image_ref("album-cover-one", "one"));
+        let mut track = track(1, &album);
+        track.image_ref = None;
+
+        let generation = store
+            .begin_sync(&saved.source_id)
+            .expect("begin first sync");
+        store
+            .commit_library_sync(
+                &saved.source_id,
+                generation,
+                0,
+                small_library_sync(&album, &track),
+            )
+            .expect("commit first sync");
+
+        album.image_ref = Some(image_ref("album-cover-two", "two"));
+        let generation = store
+            .begin_sync(&saved.source_id)
+            .expect("begin second sync");
+        let commit = store
+            .commit_library_sync(
+                &saved.source_id,
+                generation,
+                1,
+                small_library_sync(&album, &track),
+            )
+            .expect("commit second sync");
+        let cached_track = store
+            .load_track(&saved.source_id, &track.id)
+            .expect("load track")
+            .expect("cached track");
+
+        assert_eq!(commit.delta.albums.cover_refs, vec![album.id.clone()]);
+        assert_eq!(commit.delta.tracks.cover_refs, vec![track.id.clone()]);
+        assert_eq!(
+            cached_track
+                .album_artwork
+                .as_ref()
+                .and_then(|artwork| artwork.image_ref.as_ref()),
+            album.image_ref.as_ref()
+        );
     }
 
     #[test]
     fn album_artist_aliases_across_pages_keep_both_source_keys() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let mut first_artist = artist(1, None);
         first_artist.musicbrainz_artist_id = Some("shared-mbid".to_string());
         let mut second_artist = artist(2, None);
         second_artist.musicbrainz_artist_id = Some("shared-mbid".to_string());
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let sync = LibrarySync {
             albums: Vec::new(),
             tracks: Vec::new(),
@@ -2375,18 +2274,18 @@ mod tests {
             local_access: None,
         };
         store
-            .commit_library_sync(&saved.source.id, generation, 0, sync)
+            .commit_library_sync(&saved.source_id, generation, 0, sync)
             .expect("commit sync");
 
         let artists = store
-            .load_artists(&saved.source.id, true, 0, 10)
+            .load_artists(&saved.source_id, true, 0, 10)
             .expect("load album artists")
             .items;
         assert_eq!(artists.len(), 1);
         for key in ["native-one", "native-two"] {
             assert_eq!(
                 store
-                    .source_object_mappings(&saved.source.id, key)
+                    .source_object_mappings(&saved.source_id, key)
                     .expect("load source mapping")[0]
                     .entity_id,
                 artists[0].id.as_str()
@@ -2397,7 +2296,7 @@ mod tests {
     #[test]
     fn folder_membership_change_is_part_of_the_commit_delta() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let cached_album = album(1);
         let cached_track = track(1, &cached_album);
@@ -2411,7 +2310,7 @@ mod tests {
         };
 
         for (folder, expect_empty) in [(&first_folder, false), (&second_folder, false)] {
-            let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+            let generation = store.begin_sync(&saved.source_id).expect("begin sync");
             let mut sync = small_library_sync(&cached_album, &cached_track);
             sync.mappings.extend([
                 mapping(SourceEntityKind::MusicFolder, first_folder.id.as_str()),
@@ -2430,10 +2329,10 @@ mod tests {
                     .collect(),
             };
             let revision = store
-                .source_cache_revision(&saved.source.id)
+                .source_cache_revision(&saved.source_id)
                 .expect("cache revision");
             let committed = store
-                .commit_library_sync(&saved.source.id, generation, revision, sync)
+                .commit_library_sync(&saved.source_id, generation, revision, sync)
                 .expect("commit sync");
             assert_eq!(committed.delta.is_empty(), expect_empty);
             assert!(committed.delta.folders_changed);
@@ -2443,14 +2342,14 @@ mod tests {
     #[test]
     fn deleted_track_reports_store_playlist_repair() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let cached_album = album(1);
         let cached_track = track(1, &cached_album);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 0,
                 small_library_sync(&cached_album, &cached_track),
@@ -2460,14 +2359,14 @@ mod tests {
         let stored_playlist = playlist(9, None);
         store
             .upsert_playlists_with_mode(
-                &saved.source.id,
+                &saved.source_id,
                 std::slice::from_ref(&stored_playlist),
                 PlaylistWriteMode::StoreOwned,
             )
             .expect("save Store playlist");
         store
             .upsert_playlist_entries_with_mode(
-                &saved.source.id,
+                &saved.source_id,
                 &stored_playlist.id,
                 &[PlaylistEntry {
                     entry_id: "stored-entry".to_string(),
@@ -2477,13 +2376,13 @@ mod tests {
             )
             .expect("save Store playlist entry");
 
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let mut sync = small_library_sync(&cached_album, &cached_track);
         sync.tracks.clear();
         sync.mappings
             .retain(|mapping| mapping.entity_kind != SourceEntityKind::Track);
         let committed = store
-            .commit_library_sync(&saved.source.id, generation, 1, sync)
+            .commit_library_sync(&saved.source_id, generation, 1, sync)
             .expect("commit sync");
 
         assert_eq!(
@@ -2495,7 +2394,7 @@ mod tests {
             vec![stored_playlist.id.clone()]
         );
         let stored_playlist = store
-            .load_playlists(&saved.source.id, 0, 10)
+            .load_playlists(&saved.source_id, 0, 10)
             .expect("load playlists")
             .items
             .into_iter()
@@ -2507,35 +2406,35 @@ mod tests {
     #[test]
     fn changed_cache_revision_rejects_an_older_commit() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        seed_cached_library(&store, &saved.source.id);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        seed_cached_library(&store, &saved.source_id);
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let staged_album = album(2);
         let staged_track = track(2, &staged_album);
         let sync = small_library_sync(&staged_album, &staged_track);
 
         store
             .write_batch(|_| {
-                let revision = store.source_cache_revision(&saved.source.id)?;
+                let revision = store.source_cache_revision(&saved.source_id)?;
                 let mut live_track = track(1, &album(1));
                 live_track.title = "Live mutation".to_string();
                 store.upsert_tracks(
-                    &saved.source.id,
+                    &saved.source_id,
                     std::slice::from_ref(&live_track),
                     generation,
                 )?;
-                store.advance_source_cache_revision(&saved.source.id, revision)?;
+                store.advance_source_cache_revision(&saved.source_id, revision)?;
                 Ok(())
             })
             .expect("commit live mutation");
 
         let error = store
-            .commit_library_sync(&saved.source.id, generation, 1, sync)
+            .commit_library_sync(&saved.source_id, generation, 1, sync)
             .expect_err("reject stale stage");
         assert!(matches!(error, StoreError::StaleCacheRevision { .. }));
         let tracks = store
-            .load_tracks(&saved.source.id, 0, 10)
+            .load_tracks(&saved.source_id, 0, 10)
             .expect("load live tracks")
             .items;
         assert_eq!(tracks.len(), 1);
@@ -2545,18 +2444,18 @@ mod tests {
     #[test]
     fn local_commit_returns_the_common_sync_result() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let cached_album = album(1);
         let cached_track = track(1, &cached_album);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let base_cache_revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
 
         let committed = store
             .commit_local_library_delta(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 base_cache_revision,
                 true,
@@ -2577,9 +2476,9 @@ mod tests {
     #[test]
     fn finite_track_update_preserves_siblings_and_complete_sync_time() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let fixture = seed_finite_fixture(&store, &saved.source.id);
+        let fixture = seed_finite_fixture(&store, &saved.source_id);
         store
             .connection
             .execute(
@@ -2587,19 +2486,19 @@ mod tests {
                  SET last_completed_at = '2000-01-01 00:00:00',
                      last_all_completed_at = '2000-01-01 00:00:00'
                  WHERE source_id = ?1",
-                params![saved.source.id.as_str()],
+                params![saved.source_id.as_str()],
             )
             .expect("set old completion time");
         let mut changed = fixture.first_track.clone();
         changed.title = "Changed title".to_string();
         changed.duration_seconds += 30;
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let committed = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2618,27 +2517,27 @@ mod tests {
         assert!(committed.delta.tracks.fields.contains(&changed.id));
         assert_eq!(
             store
-                .load_track(&saved.source.id, &changed.id)
+                .load_track(&saved.source_id, &changed.id)
                 .expect("load changed track")
                 .expect("changed track exists")
                 .title,
             "Changed title"
         );
-        assert_eq!(
-            store
-                .load_track(&saved.source.id, &fixture.second_track.id)
-                .expect("load sibling"),
-            Some(fixture.second_track)
-        );
+        let mut sibling = store
+            .load_track(&saved.source_id, &fixture.second_track.id)
+            .expect("load sibling")
+            .expect("sibling exists");
+        sibling.album_artwork = None;
+        assert_eq!(sibling, fixture.second_track);
         let album = store
-            .load_albums(&saved.source.id, 0, 10)
+            .load_albums(&saved.source_id, 0, 10)
             .expect("load albums")
             .items
             .into_iter()
             .find(|album| album.id == fixture.first_album.id)
             .expect("updated album");
         assert_eq!(album.duration_seconds, changed.duration_seconds);
-        let state = store.sync_state(&saved.source.id).expect("sync state");
+        let state = store.sync_state(&saved.source_id).expect("sync state");
         assert_ne!(
             state.last_completed_at.as_deref(),
             Some("2000-01-01 00:00:00")
@@ -2652,13 +2551,13 @@ mod tests {
     #[test]
     fn finite_track_tombstone_repairs_references_without_deleting_siblings() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let fixture = seed_finite_fixture(&store, &saved.source.id);
+        let fixture = seed_finite_fixture(&store, &saved.source_id);
         let stored_playlist = playlist(9, None);
         store
             .replace_playlist_snapshot(
-                &saved.source.id,
+                &saved.source_id,
                 &stored_playlist,
                 &[PlaylistEntry {
                     entry_id: "stored-entry".to_string(),
@@ -2667,13 +2566,13 @@ mod tests {
                 PlaylistWriteMode::StoreOwned,
             )
             .expect("save Store playlist");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let committed = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2710,30 +2609,30 @@ mod tests {
         );
         assert_eq!(
             store
-                .load_track(&saved.source.id, &fixture.first_track.id)
+                .load_track(&saved.source_id, &fixture.first_track.id)
                 .expect("load removed track"),
             None
         );
-        assert_eq!(
-            store
-                .load_track(&saved.source.id, &fixture.second_track.id)
-                .expect("load sibling"),
-            Some(fixture.second_track.clone())
-        );
+        let mut sibling = store
+            .load_track(&saved.source_id, &fixture.second_track.id)
+            .expect("load sibling")
+            .expect("sibling exists");
+        sibling.album_artwork = None;
+        assert_eq!(sibling, fixture.second_track);
         assert!(
             store
-                .playlist_entry_keys(&saved.source.id, &fixture.playlist.id)
+                .playlist_entry_keys(&saved.source_id, &fixture.playlist.id)
                 .expect("native entries")
                 .is_empty()
         );
         assert_eq!(
             store
-                .playlist_entry_keys(&saved.source.id, &stored_playlist.id)
+                .playlist_entry_keys(&saved.source_id, &stored_playlist.id)
                 .expect("Store entries"),
             vec![("stored-entry".to_string(), fixture.first_track.id.clone())]
         );
         let home = store
-            .load_home_sections(&saved.source.id)
+            .load_home_sections(&saved.source_id)
             .expect("load Home");
         assert!(home.iter().all(|section| {
             section
@@ -2746,25 +2645,25 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*) FROM track_music_folders
                  WHERE source_id = ?1 AND track_id = ?2",
-                params![saved.source.id.as_str(), fixture.first_track.id.as_str()],
+                params![saved.source_id.as_str(), fixture.first_track.id.as_str()],
                 |row| row.get::<_, i64>(0),
             )
             .expect("folder rows");
         assert_eq!(folder_rows, 0);
         assert!(
             store
-                .source_object_mappings(&saved.source.id, fixture.first_track.id.as_str(),)
+                .source_object_mappings(&saved.source_id, fixture.first_track.id.as_str(),)
                 .expect("source mappings")
                 .is_empty()
         );
 
-        let generation = store.begin_sync(&saved.source.id).expect("repeat sync");
+        let generation = store.begin_sync(&saved.source_id).expect("repeat sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let repeated = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2784,13 +2683,13 @@ mod tests {
     #[test]
     fn finite_native_playlist_tombstone_preserves_store_playlists() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let fixture = seed_finite_fixture(&store, &saved.source.id);
+        let fixture = seed_finite_fixture(&store, &saved.source_id);
         let stored_playlist = playlist(9, None);
         store
             .replace_playlist_snapshot(
-                &saved.source.id,
+                &saved.source_id,
                 &stored_playlist,
                 &[PlaylistEntry {
                     entry_id: "stored-entry".to_string(),
@@ -2799,13 +2698,13 @@ mod tests {
                 PlaylistWriteMode::StoreOwned,
             )
             .expect("save Store playlist");
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let committed = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2825,7 +2724,7 @@ mod tests {
             vec![fixture.playlist.id.clone()]
         );
         let playlists = store
-            .load_playlists(&saved.source.id, 0, 10)
+            .load_playlists(&saved.source_id, 0, 10)
             .expect("load playlists")
             .items;
         assert!(
@@ -2843,9 +2742,9 @@ mod tests {
     #[test]
     fn finite_tombstone_preserves_an_alias_and_rejects_remapping_it() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let fixture = seed_finite_fixture(&store, &saved.source.id);
+        let fixture = seed_finite_fixture(&store, &saved.source_id);
         store
             .connection
             .execute(
@@ -2853,17 +2752,17 @@ mod tests {
                      source_id, source_object_id, entity_kind, entity_id,
                      source_object_kind, sync_generation
                  ) VALUES (?1, 'track-alias', 'track', ?2, 'source', 1)",
-                params![saved.source.id.as_str(), fixture.first_track.id.as_str()],
+                params![saved.source_id.as_str(), fixture.first_track.id.as_str()],
             )
             .expect("seed alias");
 
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let committed = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2879,26 +2778,26 @@ mod tests {
             .expect("commit tombstone");
 
         assert!(committed.delta.tracks.deleted.is_empty());
-        assert_eq!(
-            store
-                .load_track(&saved.source.id, &fixture.first_track.id)
-                .expect("load aliased track"),
-            Some(fixture.first_track.clone())
-        );
+        let mut aliased = store
+            .load_track(&saved.source_id, &fixture.first_track.id)
+            .expect("load aliased track")
+            .expect("aliased track exists");
+        aliased.album_artwork = None;
+        assert_eq!(aliased, fixture.first_track);
         assert!(
             store
-                .source_object_mappings(&saved.source.id, fixture.first_track.id.as_str())
+                .source_object_mappings(&saved.source_id, fixture.first_track.id.as_str())
                 .expect("load removed mapping")
                 .is_empty()
         );
 
-        let generation = store.begin_sync(&saved.source.id).expect("begin remap");
+        let generation = store.begin_sync(&saved.source_id).expect("begin remap");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         let error = store
             .commit_library_sync(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 finite_sync(
@@ -2919,7 +2818,7 @@ mod tests {
         assert!(matches!(error, StoreError::NeedsFullSync));
         assert_eq!(
             store
-                .source_object_mappings(&saved.source.id, "track-alias")
+                .source_object_mappings(&saved.source_id, "track-alias")
                 .expect("load alias")[0]
                 .entity_id,
             fixture.first_track.id.as_str()
@@ -2929,27 +2828,32 @@ mod tests {
     #[test]
     fn full_commit_prunes_stale_native_source_mappings() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
-        let fixture = seed_finite_fixture(&store, &saved.source.id);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
-        LibraryObservation {
+        let fixture = seed_finite_fixture(&store, &saved.source_id);
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+        let removed_album_id = fixture.first_album.id.clone();
+        let removed_track_id = fixture.first_track.id.clone();
+        let commit = LibraryObservation {
             albums: vec![fixture.second_album],
             tracks: vec![fixture.second_track],
             ..LibraryObservation::default()
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit complete sync");
+
+        assert!(commit.delta.albums.cover_refs.contains(&removed_album_id));
+        assert!(commit.delta.tracks.cover_refs.contains(&removed_track_id));
 
         assert!(
             store
-                .source_object_mappings(&saved.source.id, fixture.first_track.id.as_str(),)
+                .source_object_mappings(&saved.source_id, fixture.first_track.id.as_str(),)
                 .expect("load removed mapping")
                 .is_empty()
         );
         assert_eq!(
             store
-                .load_track(&saved.source.id, &fixture.first_track.id)
+                .load_track(&saved.source_id, &fixture.first_track.id)
                 .expect("load removed track"),
             None
         );
@@ -2958,21 +2862,21 @@ mod tests {
     #[test]
     fn full_commit_keeps_a_track_without_an_enumerated_album() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let album = album(1);
         let track = track(1, &album);
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
 
         LibraryObservation {
             tracks: vec![track.clone()],
             ..LibraryObservation::default()
         }
-        .commit(&store, &saved.source.id, generation)
+        .commit(&store, &saved.source_id, generation)
         .expect("commit track-only library");
 
         let (loaded_album, loaded_tracks) = store
-            .load_album_detail(&saved.source.id, &track.album_id)
+            .load_album_detail(&saved.source_id, &track.album_id)
             .expect("load synthetic album")
             .expect("synthetic album exists");
         assert_eq!(loaded_album.id, track.album_id);
@@ -2983,7 +2887,7 @@ mod tests {
     #[test]
     fn local_coverage_owns_verification_time_and_cue_dependencies() {
         let store = Store::open_memory().expect("open store");
-        let saved = saved_source();
+        let saved = stored_source();
         store.save_source(&saved).expect("save source");
         let first = LocalCueDependency {
             cue_path: PathBuf::from("/music/album.cue"),
@@ -2993,13 +2897,13 @@ mod tests {
             cue_path: PathBuf::from("/music/other.cue"),
             source_path: PathBuf::from("/music/other.flac"),
         };
-        let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         store
             .commit_local_library_delta(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 true,
@@ -3011,7 +2915,7 @@ mod tests {
             .expect("commit complete Local scan");
         assert_eq!(
             store
-                .load_local_cue_dependencies(&saved.source.id)
+                .load_local_cue_dependencies(&saved.source_id)
                 .expect("load dependencies"),
             vec![first.clone()]
         );
@@ -3022,18 +2926,18 @@ mod tests {
                  SET last_completed_at = '2000-01-01 00:00:00',
                      last_all_completed_at = '2000-01-01 00:00:00'
                  WHERE source_id = ?1",
-                params![saved.source.id.as_str()],
+                params![saved.source_id.as_str()],
             )
             .expect("set old completion time");
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin bounded sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         store
             .commit_local_library_delta(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 false,
@@ -3045,27 +2949,27 @@ mod tests {
             .expect("commit bounded Local scan");
         assert_eq!(
             store
-                .load_local_cue_dependencies(&saved.source.id)
+                .load_local_cue_dependencies(&saved.source_id)
                 .expect("load retained dependencies"),
             vec![first]
         );
         assert_eq!(
             store
-                .sync_state(&saved.source.id)
+                .sync_state(&saved.source_id)
                 .expect("sync state")
                 .last_all_completed_at
                 .as_deref(),
             Some("2000-01-01 00:00:00")
         );
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin complete sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         store
             .commit_local_library_delta(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 true,
@@ -3077,19 +2981,19 @@ mod tests {
             .expect("replace dependencies");
         assert_eq!(
             store
-                .load_local_cue_dependencies(&saved.source.id)
+                .load_local_cue_dependencies(&saved.source_id)
                 .expect("load replaced dependencies"),
             vec![second]
         );
         let generation = store
-            .begin_sync(&saved.source.id)
+            .begin_sync(&saved.source_id)
             .expect("begin clearing sync");
         let revision = store
-            .source_cache_revision(&saved.source.id)
+            .source_cache_revision(&saved.source_id)
             .expect("cache revision");
         store
             .commit_local_library_delta(
-                &saved.source.id,
+                &saved.source_id,
                 generation,
                 revision,
                 true,
@@ -3098,7 +3002,7 @@ mod tests {
             .expect("clear dependencies");
         assert!(
             store
-                .load_local_cue_dependencies(&saved.source.id)
+                .load_local_cue_dependencies(&saved.source_id)
                 .expect("load cleared dependencies")
                 .is_empty()
         );

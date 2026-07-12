@@ -26,6 +26,24 @@ impl Store {
                     }
                     if album_links_changed(&existing, &delta_album) {
                         delta.albums.links.push(album.id.clone());
+                        delta.artists.links.extend(
+                            existing
+                                .artist_id
+                                .iter()
+                                .chain(delta_album.artist_id.iter())
+                                .cloned(),
+                        );
+                        delta.album_artists.links.extend(
+                            existing
+                                .album_artist_credits
+                                .iter()
+                                .chain(delta_album.album_artist_credits.iter())
+                                .map(|credit| credit.id.clone()),
+                        );
+                        delta.genres.links.extend(self.genre_ids_for_names(
+                            source_id,
+                            existing.genres.iter().chain(delta_album.genres.iter()),
+                        )?);
                     }
                     if existing.image_ref != delta_album.image_ref {
                         delta.albums.cover_refs.push(album.id.clone());
@@ -96,12 +114,20 @@ impl Store {
                         delta.albums.links.push(track.album_id.clone());
                     }
                     if track_artist_links_changed(&existing, track) {
-                        if let Some(artist_id) = existing.artist_id.clone() {
-                            delta.artists.links.push(artist_id);
-                        }
-                        if let Some(artist_id) = track.artist_id.clone() {
-                            delta.artists.links.push(artist_id);
-                        }
+                        delta.artists.links.extend(
+                            existing
+                                .artist_credits
+                                .iter()
+                                .chain(track.artist_credits.iter())
+                                .map(|credit| credit.id.clone()),
+                        );
+                        delta.artists.links.extend(
+                            existing
+                                .artist_id
+                                .iter()
+                                .chain(track.artist_id.iter())
+                                .cloned(),
+                        );
                     }
                     if artist_credits_changed(
                         &existing.album_artist_credits,
@@ -116,13 +142,10 @@ impl Store {
                         );
                     }
                     if existing.genres != track.genres || duration_changed {
-                        delta.genres.links.extend(
-                            existing
-                                .genres
-                                .iter()
-                                .chain(track.genres.iter())
-                                .map(|name| GenreId::new(name.clone())),
-                        );
+                        delta.genres.links.extend(self.genre_ids_for_names(
+                            source_id,
+                            existing.genres.iter().chain(track.genres.iter()),
+                        )?);
                     }
                 }
                 None => {
@@ -141,7 +164,7 @@ impl Store {
                     delta
                         .genres
                         .links
-                        .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
+                        .extend(self.genre_ids_for_names(source_id, &track.genres)?);
                     if track.bpm.is_some() || !track.moods.is_empty() {
                         delta.tracks.metadata.push(track.id.clone());
                     }
@@ -453,10 +476,6 @@ impl Store {
         self.write_batch(|connection| {
             clear_library_cache_on_connection(connection, source_id)?;
             connection.execute(
-                "DELETE FROM queue_snapshots WHERE source_id = ?1",
-                params![source_id.as_str()],
-            )?;
-            connection.execute(
                 "DELETE FROM active_source WHERE source_id = ?1",
                 params![source_id.as_str()],
             )?;
@@ -489,10 +508,10 @@ impl Store {
                     source_id, album_id, title, artist, artist_id, year, release_date,
                     date_added, last_played, play_count, user_rating, track_count,
                     duration_seconds, favorite, color_seed, image_item_id, image_tag,
-                    image_origin, release_types_json, is_compilation, musicbrainz_album_id,
+                    release_types_json, is_compilation, musicbrainz_album_id,
                     musicbrainz_release_group_id, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
                 ON CONFLICT(source_id, album_id) DO UPDATE SET
                     title = excluded.title,
                     artist = excluded.artist,
@@ -509,7 +528,6 @@ impl Store {
                     color_seed = excluded.color_seed,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
-                    image_origin = excluded.image_origin,
                     release_types_json = CASE
                         WHEN excluded.release_types_json <> '[]' THEN excluded.release_types_json
                         WHEN COALESCE(NULLIF(excluded.musicbrainz_album_id, ''), '') =
@@ -595,7 +613,6 @@ impl Store {
 
             for album in &albums {
                 let (image_item_id, image_tag) = image_ref_parts(album.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(album.image_ref.as_ref());
                 let release_types_json = album_release_types_json(&album.release_types)?;
                 statement.execute(params![
                     source_id.as_str(),
@@ -615,7 +632,6 @@ impl Store {
                     i64::from(album.color_seed),
                     image_item_id,
                     image_tag,
-                    image_origin,
                     release_types_json,
                     album.is_compilation.map(bool_to_i64),
                     album.musicbrainz_album_id.as_deref(),
@@ -676,11 +692,11 @@ impl Store {
                     source_id, track_id, album_id, title, artist, artist_id, album,
                     year, release_date, date_added, last_played, play_count, user_rating,
                     duration_seconds, favorite, disc_number, track_number,
-                    image_item_id, image_tag, image_origin, local_path, source_format, comment, skip_count,
+                    image_item_id, image_tag, local_path, source_format, comment, skip_count,
                     bpm,
                     sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
                 ON CONFLICT(source_id, track_id) DO UPDATE SET
                     album_id = excluded.album_id,
                     title = excluded.title,
@@ -699,7 +715,6 @@ impl Store {
                     track_number = excluded.track_number,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
-                    image_origin = excluded.image_origin,
                     local_path = excluded.local_path,
                     source_format = excluded.source_format,
                     comment = excluded.comment,
@@ -770,7 +785,6 @@ impl Store {
 
             for track in tracks {
                 let (image_item_id, image_tag) = image_ref_parts(track.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(track.image_ref.as_ref());
                 statement.execute(params![
                     source_id.as_str(),
                     track.id.as_str(),
@@ -791,7 +805,6 @@ impl Store {
                     i64::from(track.track_number),
                     image_item_id,
                     image_tag,
-                    image_origin,
                     track.local_path.as_deref(),
                     track.source_format.as_deref(),
                     track.comment.as_deref(),
@@ -875,13 +888,6 @@ impl Store {
 
     pub fn refresh_library_counts(&self, source_id: &SourceId) -> StoreResult<()> {
         self.write_batch(|connection| {
-            self.bind_album_fallback_image_refs(source_id)?;
-            self.bind_album_artist_fallback_image_refs(source_id)?;
-            self.bind_album_external_identity_image_refs(source_id)?;
-            self.bind_track_album_fallback_image_refs(source_id)?;
-            self.bind_artist_fallback_image_refs(source_id, false)?;
-            self.bind_artist_fallback_image_refs(source_id, true)?;
-            self.refresh_selected_cover_content_refs(source_id)?;
             refresh_genre_counts_on_connection(connection, source_id)?;
             connection.execute(
                 "
@@ -1061,9 +1067,9 @@ impl Store {
                 INSERT INTO {table} (
                     source_id, artist_id, name, album_count, track_count, favorite,
                     last_played, play_count, user_rating, image_item_id, image_tag,
-                    image_origin, sync_generation
+                    sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ON CONFLICT(source_id, artist_id) DO UPDATE SET
                     name = excluded.name,
                     album_count = excluded.album_count,
@@ -1074,7 +1080,6 @@ impl Store {
                     user_rating = excluded.user_rating,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
-                    image_origin = excluded.image_origin,
                     sync_generation = excluded.sync_generation
                 "
             );
@@ -1096,7 +1101,6 @@ impl Store {
 
             for (artist, alias_ids) in artists {
                 let (image_item_id, image_tag) = image_ref_parts(artist.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(artist.image_ref.as_ref());
                 statement.execute(params![
                     source_id.as_str(),
                     artist.id.as_str(),
@@ -1109,7 +1113,6 @@ impl Store {
                     artist.user_rating.map(i64::from),
                     image_item_id,
                     image_tag,
-                    image_origin,
                     generation,
                 ])?;
                 upsert_artist_entity_data_on_connection(
@@ -1167,9 +1170,9 @@ impl Store {
                 "
                 INSERT INTO genres (
                     source_id, genre_id, name, album_count, track_count, duration_seconds,
-                    image_item_id, image_tag, image_origin, sync_generation
+                    image_item_id, image_tag, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ON CONFLICT(source_id, genre_id) DO UPDATE SET
                     name = excluded.name,
                     album_count = excluded.album_count,
@@ -1180,13 +1183,11 @@ impl Store {
                     END,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
-                    image_origin = excluded.image_origin,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
             for genre in genres {
                 let (image_item_id, image_tag) = image_ref_parts(genre.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(genre.image_ref.as_ref());
                 statement.execute(params![
                     source_id.as_str(),
                     genre.id.as_str(),
@@ -1196,7 +1197,6 @@ impl Store {
                     i64::from(genre.duration_seconds),
                     image_item_id,
                     image_tag,
-                    image_origin,
                     generation,
                 ])?;
                 connection.execute(
@@ -1208,18 +1208,6 @@ impl Store {
                       AND name = ?3
                     ",
                     params![source_id.as_str(), genre.id.as_str(), genre.name],
-                )?;
-                let cover_refs = if genre.image_refs.is_empty() {
-                    genre.image_ref.iter().cloned().collect::<Vec<_>>()
-                } else {
-                    genre.image_refs.clone()
-                };
-                replace_collection_refs(
-                    connection,
-                    source_id,
-                    COLLECTION_COVER_GENRE,
-                    genre.id.as_str(),
-                    &cover_refs,
                 )?;
             }
             if refresh_counts {
@@ -1257,9 +1245,9 @@ impl Store {
                 "
                 INSERT INTO playlists (
                     source_id, playlist_id, name, track_count, duration_seconds,
-                    top_genres_json, image_item_id, image_tag, image_origin, owner, sync_generation
+                    top_genres_json, image_item_id, image_tag, owner, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 ON CONFLICT(source_id, playlist_id) DO UPDATE SET
                     name = excluded.name,
                     track_count = CASE
@@ -1291,7 +1279,6 @@ impl Store {
                     END,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
-                    image_origin = excluded.image_origin,
                     sync_generation = excluded.sync_generation
                 WHERE playlists.owner = excluded.owner
                 ",
@@ -1308,7 +1295,6 @@ impl Store {
 
             for playlist in playlists {
                 let (image_item_id, image_tag) = image_ref_parts(playlist.image_ref.as_ref());
-                let image_origin = image_origin_for_source_ref(playlist.image_ref.as_ref());
                 let changed = statement.execute(params![
                     source_id.as_str(),
                     playlist.id.as_str(),
@@ -1318,7 +1304,6 @@ impl Store {
                     string_vec_json(&playlist.top_genres)?,
                     image_item_id,
                     image_tag,
-                    image_origin,
                     playlist_owner_to_str(owner),
                     generation,
                 ])?;
@@ -1329,18 +1314,6 @@ impl Store {
                         playlist_owner_to_str(owner)
                     )));
                 }
-                let cover_refs = if playlist.image_refs.is_empty() {
-                    playlist.image_ref.iter().cloned().collect::<Vec<_>>()
-                } else {
-                    playlist.image_refs.clone()
-                };
-                replace_collection_refs(
-                    connection,
-                    source_id,
-                    COLLECTION_COVER_PLAYLIST,
-                    playlist.id.as_str(),
-                    &cover_refs,
-                )?;
                 delete_fts.execute(params![source_id.as_str(), playlist.id.as_str()])?;
                 insert_fts.execute(params![
                     source_id.as_str(),
@@ -1500,9 +1473,7 @@ impl Store {
                 "
                 SELECT album_id, title, artist, artist_id, year, release_date, date_added,
                        last_played, play_count, user_rating, track_count, duration_seconds,
-                       favorite, color_seed,
-                       CASE WHEN image_origin = 'source' THEN image_item_id END,
-                       CASE WHEN image_origin = 'source' THEN image_tag END,
+                       favorite, color_seed, image_item_id, image_tag,
                        release_types_json, is_compilation, musicbrainz_album_id,
                        musicbrainz_release_group_id
                 FROM albums
@@ -1541,9 +1512,7 @@ impl Store {
         let sql = format!(
             "
             SELECT artist_id, name, album_count, track_count, favorite,
-                   last_played, play_count, user_rating,
-                   CASE WHEN image_origin = 'source' THEN image_item_id END,
-                   CASE WHEN image_origin = 'source' THEN image_tag END
+                   last_played, play_count, user_rating, image_item_id, image_tag
             FROM {table}
             WHERE source_id = ?1 AND artist_id = ?2
             "
@@ -1570,10 +1539,8 @@ impl Store {
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
                        duration_seconds, favorite, disc_number, track_number,
-                       CASE WHEN image_origin = 'source' THEN image_item_id END,
-                       CASE WHEN image_origin = 'source' THEN image_tag END,
-                       local_path, source_format, comment, skip_count,
-                       bpm
+                       image_item_id, image_tag, bpm,
+                       local_path, source_format, comment, skip_count
                 FROM tracks
                 WHERE source_id = ?1 AND track_id = ?2
                 ",
@@ -1597,8 +1564,7 @@ impl Store {
             .query_row(
                 "
                 SELECT genre_id, name, album_count, track_count, duration_seconds,
-                       CASE WHEN image_origin = 'source' THEN image_item_id END,
-                       CASE WHEN image_origin = 'source' THEN image_tag END
+                       image_item_id, image_tag
                 FROM genres
                 WHERE source_id = ?1 AND genre_id = ?2
                 ",
@@ -1619,9 +1585,7 @@ impl Store {
             .query_row(
                 "
                 SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
-                       owner,
-                       CASE WHEN image_origin = 'source' THEN image_item_id END,
-                       CASE WHEN image_origin = 'source' THEN image_tag END
+                       owner, image_item_id, image_tag
                 FROM playlists
                 WHERE source_id = ?1 AND playlist_id = ?2
                 ",
@@ -1693,7 +1657,6 @@ fn refresh_playlists_for_track_ids_on_connection(
             source_id,
             &playlist_id,
         )?;
-        super::library_auxiliary_cache::refresh_playlist_refs(connection, source_id, &playlist_id)?;
     }
     Ok(())
 }

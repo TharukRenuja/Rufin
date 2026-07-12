@@ -33,7 +33,7 @@ impl AppController {
                 .iter()
                 .map(|track| track.id.clone())
                 .collect::<Vec<_>>();
-            let active = match selected_active_source(&active_source, &saved.source.id) {
+            let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -64,14 +64,14 @@ impl AppController {
                 track_count: tracks.len() as u32,
                 duration_seconds: tracks.iter().map(|track| track.duration_seconds).sum(),
                 top_genres: Vec::new(),
-                image_refs: track_cover_refs_for_items(&tracks),
-                image_ref: tracks.iter().find_map(|track| track.image_ref.clone()),
+                image_ref: None,
+                representative_albums: Vec::new(),
             };
             let entries = playlist_entries_for_tracks(&playlist_id, &tracks);
             let result = store.with_store(|store| {
                 write_playlist_snapshot_for_owner(
                     store,
-                    &saved.source.id,
+                    &saved.source_id,
                     &playlist,
                     &entries,
                     create_owner,
@@ -98,7 +98,7 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let active = match selected_active_source(&active_source, &saved.source.id) {
+            let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -127,7 +127,7 @@ impl AppController {
             }
             let result = store.with_store(|store| {
                 store.rename_playlist_with_owner(
-                    &saved.source.id,
+                    &saved.source_id,
                     &playlist_id,
                     name.trim(),
                     owner,
@@ -155,7 +155,7 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let active = match selected_active_source(&active_source, &saved.source.id) {
+            let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -183,7 +183,7 @@ impl AppController {
                 }
             }
             let result = store.with_store(|store| {
-                store.delete_playlist_with_owner(&saved.source.id, &playlist_id, owner)?;
+                store.delete_playlist_with_owner(&saved.source_id, &playlist_id, owner)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -203,7 +203,7 @@ impl AppController {
                 return;
             };
             let result = store.with_store(|store| {
-                store.delete_smart_playlist(&saved.source.id, &smart_playlist_id)?;
+                store.delete_smart_playlist(&saved.source_id, &smart_playlist_id)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -223,7 +223,7 @@ impl AppController {
                 return;
             };
             let result = store.with_store(|store| {
-                store.restore_builtin_smart_playlist(&saved.source.id, builtin)?;
+                store.restore_builtin_smart_playlist(&saved.source_id, builtin)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -248,7 +248,7 @@ impl AppController {
                 return;
             };
             let result = store.with_store(|store| {
-                store.reorder_smart_playlist(&saved.source.id, &dragged_id, &target_id, after)?;
+                store.reorder_smart_playlist(&saved.source_id, &dragged_id, &target_id, after)?;
                 Ok(())
             });
             emit_snapshot_result(&store, &events, result);
@@ -272,7 +272,7 @@ impl AppController {
                 unique_millis().unwrap_or(name.len() as u128)
             ));
             let result = store.with_store(|store| {
-                store.save_smart_playlist(&saved.source.id, &id, &name, &definition)?;
+                store.save_smart_playlist(&saved.source_id, &id, &name, &definition)?;
                 Ok(())
             });
             emit_smart_playlist_changed_result(&store, &events, id, result);
@@ -298,7 +298,7 @@ impl AppController {
             };
             let result = store.with_store(|store| {
                 store.save_smart_playlist(
-                    &saved.source.id,
+                    &saved.source_id,
                     &smart_playlist_id,
                     &name,
                     &definition,
@@ -364,7 +364,7 @@ impl AppController {
         &self,
         playlist_id: PlaylistId,
         operation: SourcePlaylistOperation,
-        mutate: impl FnOnce(source::PlaylistDetail) -> source::PlaylistDetail + Send + 'static,
+        mutate: impl FnOnce(library::PlaylistDetail) -> library::PlaylistDetail + Send + 'static,
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
@@ -381,7 +381,7 @@ impl AppController {
                 return;
             };
             let before = match store
-                .with_store(|store| store.load_playlist_detail(&saved.source.id, &playlist_id))
+                .with_store(|store| store.load_playlist_detail(&saved.source_id, &playlist_id))
             {
                 Ok(Some(detail)) => detail,
                 Ok(None) => {
@@ -399,7 +399,7 @@ impl AppController {
             let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
                 return;
             };
-            let active = match selected_active_source(&active_source, &saved.source.id) {
+            let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -425,24 +425,14 @@ impl AppController {
                     .iter()
                     .map(|entry| entry.track.duration_seconds)
                     .sum(),
-                image_refs: track_cover_refs_for_items(
-                    &after
-                        .entries
-                        .iter()
-                        .map(|entry| entry.track.clone())
-                        .collect::<Vec<_>>(),
-                ),
-                image_ref: after
-                    .entries
-                    .iter()
-                    .find_map(|entry| entry.track.image_ref.clone())
-                    .or(after.playlist.image_ref.clone()),
+                image_ref: after.playlist.image_ref.clone(),
+                representative_albums: Vec::new(),
                 ..after.playlist.clone()
             };
             let result = store.with_store(|store| {
                 write_playlist_snapshot_for_owner(
                     store,
-                    &saved.source.id,
+                    &saved.source_id,
                     &playlist,
                     &after.entries,
                     owner,
@@ -480,10 +470,10 @@ fn playlist_write_mode_for_owner(
 fn cached_playlist_owner(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
-    saved: &SavedSource,
+    saved: &StoredSource,
     playlist_id: &PlaylistId,
 ) -> Option<SourceFeatureOwner> {
-    match store.with_store(|store| store.playlist_owner(&saved.source.id, playlist_id)) {
+    match store.with_store(|store| store.playlist_owner(&saved.source_id, playlist_id)) {
         Ok(Some(owner)) => Some(owner),
         Ok(None) => {
             let _sent = events.send(ControllerEvent::Error(

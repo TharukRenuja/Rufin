@@ -1,14 +1,15 @@
 use super::test_support::*;
-use domain::{
-    MoodId, PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder,
+use crate::play_context::{
+    PlayContext, PlayContextAnchor, PlayContextDescriptor, PlayContextOrder, PlaylistSort,
 };
+use crate::{MoodId, RandomTrackQuery};
 
 #[test]
 fn relation_keep_id() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let track = track(1, &album);
     let playlist = playlist(1, None);
@@ -23,35 +24,52 @@ fn relation_keep_id() {
         },
     ];
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert tracks");
     store
         .upsert_playlists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&playlist),
             generation,
         )
         .expect("upsert playlist");
     store
-        .upsert_playlist_entries(&saved.source.id, &playlist.id, &entries, generation)
+        .upsert_playlist_entries(&saved.source_id, &playlist.id, &entries, generation)
         .expect("upsert playlist entries");
     let detail = store
-        .load_playlist_detail(&saved.source.id, &playlist.id)
+        .load_playlist_detail(&saved.source_id, &playlist.id)
         .expect("load playlist detail")
         .expect("playlist detail");
-    assert_eq!(detail.entries, entries);
-    assert_eq!(detail.tracks, vec![track.clone(), track]);
+    assert_eq!(
+        detail
+            .entries
+            .iter()
+            .map(|entry| (entry.entry_id.as_str(), entry.track.id.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("entry-one", track.id.clone()),
+            ("entry-two", track.id.clone()),
+        ]
+    );
+    assert_eq!(
+        detail
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![track.id.clone(), track.id]
+    );
 }
 
 #[test]
 fn relation_preserve_order() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let mut repeated_track = track(1, &album);
     repeated_track.title = "Echo".to_string();
@@ -75,79 +93,49 @@ fn relation_preserve_order() {
         },
     ];
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
         .upsert_tracks(
-            &saved.source.id,
+            &saved.source_id,
             &[repeated_track.clone(), other_track.clone()],
             generation,
         )
         .expect("upsert tracks");
     store
         .upsert_playlists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&playlist),
             generation,
         )
         .expect("upsert playlist");
     store
-        .upsert_playlist_entries(&saved.source.id, &playlist.id, &entries, generation)
+        .upsert_playlist_entries(&saved.source_id, &playlist.id, &entries, generation)
         .expect("upsert playlist entries");
 
-    let source = PlaySourceKey {
-        descriptor: PlaySourceDescriptor::Playlist {
+    let context = PlayContext {
+        descriptor: PlayContextDescriptor::Playlist {
             playlist_id: playlist.id.clone(),
         },
-        order: SourceOrder::PlaylistDisplayed {
+        order: PlayContextOrder::Playlist {
             query: Some("echo".to_string()),
-            sort: PlaylistEntrySortDescriptor::Title,
+            sort: PlaylistSort::Title,
             descending: true,
         },
     };
-
+    let materialized = store
+        .materialize_play_context(
+            &saved.source_id,
+            &context,
+            &PlayContextAnchor {
+                track_id: repeated_track.id.clone(),
+                source_rank: 0,
+                source_item_id: Some("entry-two".to_string()),
+            },
+        )
+        .expect("materialize filtered playlist");
     assert_eq!(
-        store
-            .count_tracks_for_source(&saved.source.id, &source)
-            .expect("count source tracks"),
-        2
-    );
-    assert_eq!(
-        store
-            .track_rank_for_source(
-                &saved.source.id,
-                &source,
-                &repeated_track.id,
-                Some("entry-two")
-            )
-            .expect("rank second duplicate"),
-        Some(0)
-    );
-    assert_eq!(
-        store
-            .track_rank_for_source(
-                &saved.source.id,
-                &source,
-                &repeated_track.id,
-                Some("entry-one")
-            )
-            .expect("rank first duplicate"),
-        Some(1)
-    );
-    assert_eq!(
-        store
-            .track_rank_for_source(&saved.source.id, &source, &other_track.id, None)
-            .expect("rank filtered track"),
-        None
-    );
-
-    let window = store
-        .tracks_window_for_source(&saved.source.id, &source, 0, 0, 1)
-        .expect("source window");
-    assert_eq!(window.start_rank, 0);
-    assert_eq!(window.total_source_items, 2);
-    assert_eq!(
-        window
+        materialized
             .items
             .iter()
             .map(|item| item.source_item_id.as_deref())
@@ -155,53 +143,37 @@ fn relation_preserve_order() {
         vec![Some("entry-two"), Some("entry-one")]
     );
     assert_eq!(
-        window
+        materialized
             .items
             .iter()
-            .map(|item| item.source_index)
+            .map(|item| item.source_rank)
             .collect::<Vec<_>>(),
         vec![0, 1]
     );
 
-    let source = PlaySourceKey {
-        descriptor: PlaySourceDescriptor::Playlist {
+    let context = PlayContext {
+        descriptor: PlayContextDescriptor::Playlist {
             playlist_id: playlist.id,
         },
-        order: SourceOrder::PlaylistDisplayed {
+        order: PlayContextOrder::Playlist {
             query: None,
-            sort: PlaylistEntrySortDescriptor::Position,
+            sort: PlaylistSort::Position,
             descending: false,
         },
     };
-    let anchor_rank = store
-        .track_rank_for_source(
-            &saved.source.id,
-            &source,
-            &repeated_track.id,
-            Some("entry-two"),
+    let materialized = store
+        .materialize_play_context(
+            &saved.source_id,
+            &context,
+            &PlayContextAnchor {
+                track_id: repeated_track.id,
+                source_rank: 1,
+                source_item_id: Some("entry-two".to_string()),
+            },
         )
-        .expect("rank source occurrence")
-        .expect("source occurrence rank");
-    let window = store
-        .tracks_window_for_source(&saved.source.id, &source, anchor_rank, 1, 1)
-        .expect("source window");
-    assert_eq!(window.start_rank, 0);
-    assert_eq!(window.total_source_items, 3);
+        .expect("materialize complete playlist");
     assert_eq!(
-        window
-            .items
-            .iter()
-            .map(|item| item.source_item_id.as_deref())
-            .collect::<Vec<_>>(),
-        vec![Some("entry-one"), Some("entry-two"), Some("entry-three")]
-    );
-
-    let window = store
-        .tracks_window_for_source(&saved.source.id, &source, 2, 1, 1)
-        .expect("source window near end");
-    assert_eq!(window.start_rank, 0);
-    assert_eq!(
-        window
+        materialized
             .items
             .iter()
             .map(|item| item.source_item_id.as_deref())
@@ -212,38 +184,30 @@ fn relation_preserve_order() {
 #[test]
 fn relation_track_server() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let track = track(1, &album);
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    let lyrics = Lyrics {
-        track_id: track.id.clone(),
-        source: LyricsSource::Remote,
-        external_provider: None,
-        lines: vec![LyricLine {
-            start_millis: Some(12_000),
-            text: "hello".to_string(),
-        }],
-    };
+    let payload = r#"{"source":"Remote","lines":[{"text":"hello","start_millis":12000}]}"#;
     store
-        .save_lyrics(&saved.source.id, &lyrics)
+        .save_lyrics_payload(&saved.source_id, &track.id, "remote", payload)
         .expect("save lyrics");
     assert_eq!(
         store
-            .load_lyrics(&saved.source.id, &track.id)
+            .load_lyrics_payload(&saved.source_id, &track.id)
             .expect("load lyrics"),
-        Some(lyrics)
+        Some(payload.to_string())
     );
     assert_eq!(
         store
-            .load_lyrics(&SourceId::fake(2), &track.id)
+            .load_lyrics_payload(&SourceId::fake(2), &track.id)
             .expect("load missing lyrics"),
         None
     );
@@ -251,62 +215,46 @@ fn relation_track_server() {
 #[test]
 fn relation_preserve_lyrics() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let track = track(1, &album);
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
-    let server_lyrics = Lyrics {
-        track_id: track.id.clone(),
-        source: LyricsSource::Server,
-        external_provider: None,
-        lines: vec![LyricLine {
-            start_millis: None,
-            text: "server line".to_string(),
-        }],
-    };
+    let server_payload = r#"{"source":"Server","lines":[{"text":"server line"}]}"#;
     store
-        .save_lyrics(&saved.source.id, &server_lyrics)
+        .save_lyrics_payload(&saved.source_id, &track.id, "server", server_payload)
         .expect("save lyrics");
 
     assert!(
         !store
-            .delete_remote_lyrics(&saved.source.id, &track.id)
+            .delete_lyrics_payload(&saved.source_id, &track.id, "remote")
             .expect("delete remote lyrics")
     );
     assert_eq!(
         store
-            .load_lyrics(&saved.source.id, &track.id)
+            .load_lyrics_payload(&saved.source_id, &track.id)
             .expect("load lyrics"),
-        Some(server_lyrics)
+        Some(server_payload.to_string())
     );
 
-    let remote_lyrics = Lyrics {
-        track_id: track.id.clone(),
-        source: LyricsSource::Remote,
-        external_provider: None,
-        lines: vec![LyricLine {
-            start_millis: None,
-            text: "remote line".to_string(),
-        }],
-    };
+    let remote_payload = r#"{"source":"Remote","lines":[{"text":"remote line"}]}"#;
     store
-        .save_lyrics(&saved.source.id, &remote_lyrics)
+        .save_lyrics_payload(&saved.source_id, &track.id, "remote", remote_payload)
         .expect("save remote lyrics");
     assert!(
         store
-            .delete_remote_lyrics(&saved.source.id, &track.id)
+            .delete_lyrics_payload(&saved.source_id, &track.id, "remote")
             .expect("delete remote lyrics")
     );
     assert_eq!(
         store
-            .load_lyrics(&saved.source.id, &track.id)
+            .load_lyrics_payload(&saved.source_id, &track.id)
             .expect("load lyrics"),
         None
     );
@@ -314,61 +262,61 @@ fn relation_preserve_lyrics() {
 #[test]
 fn relation_track_favorite() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let mut album = album(1);
     album.favorite = false;
     let mut track = track(1, &album);
     track.favorite = false;
     let artist = artist(1, None);
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
         .upsert_artists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&artist),
             false,
             generation,
         )
         .expect("upsert artist");
     store
-        .set_album_favorite(&saved.source.id, &album.id, true)
+        .set_album_favorite(&saved.source_id, &album.id, true)
         .expect("favorite album");
     store
-        .set_track_favorite(&saved.source.id, &track.id, true)
+        .set_track_favorite(&saved.source_id, &track.id, true)
         .expect("favorite track");
     store
-        .set_artist_favorite(&saved.source.id, &artist.id, true)
+        .set_artist_favorite(&saved.source_id, &artist.id, true)
         .expect("favorite artist");
     assert!(
         store
-            .load_albums(&saved.source.id, 0, 1)
+            .load_albums(&saved.source_id, 0, 1)
             .expect("load albums")
             .items[0]
             .favorite
     );
     assert!(
         store
-            .load_tracks(&saved.source.id, 0, 1)
+            .load_tracks(&saved.source_id, 0, 1)
             .expect("load tracks")
             .items[0]
             .favorite
     );
     assert!(
         store
-            .load_artists(&saved.source.id, false, 0, 1)
+            .load_artists(&saved.source_id, false, 0, 1)
             .expect("load artists")
             .items[0]
             .favorite
     );
     assert_eq!(
         store
-            .load_favorite_tracks(&saved.source.id)
+            .load_favorite_tracks(&saved.source_id)
             .expect("favorite tracks")
             .len(),
         1
@@ -377,9 +325,9 @@ fn relation_track_favorite() {
 #[test]
 fn genre_detail_tracks() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let mut album = album(1);
     album.genres = vec!["Dream Pop".to_string()];
     let track = track(1, &album);
@@ -389,35 +337,155 @@ fn genre_detail_tracks() {
         album_count: 0,
         track_count: 0,
         duration_seconds: 0,
-        image_refs: Vec::new(),
         image_ref: Some(image_ref("genre-dream-pop", "tag")),
+        representative_albums: Vec::new(),
     };
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
-        .upsert_genres(&saved.source.id, std::slice::from_ref(&genre), generation)
+        .upsert_genres(&saved.source_id, std::slice::from_ref(&genre), generation)
         .expect("upsert genre");
     let detail = store
-        .load_genre_detail(&saved.source.id, &genre.id)
+        .load_genre_detail(&saved.source_id, &genre.id)
         .expect("load genre detail")
         .expect("genre detail");
     assert_eq!(detail.genre.name, genre.name);
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
-    assert_eq!(detail.albums, vec![album]);
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.albums[0].id, album.id);
+    assert_eq!(detail.tracks[0].id, track.id);
+}
+
+#[test]
+fn cached_random_tracks_filter_wrap_and_stay_bounded() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let mut ambient_album = album(1);
+    ambient_album.genres = vec!["Ambient".to_string()];
+    ambient_album.year = 2020;
+    let mut rock_album = album(2);
+    rock_album.genres = vec!["Rock".to_string()];
+    rock_album.year = 2010;
+    let mut ambient_genre = genre(1, None);
+    ambient_genre.id = GenreId::new("local:genre:ambient");
+    ambient_genre.name = "Ambient".to_string();
+    let mut rock_genre = genre(2, None);
+    rock_genre.id = GenreId::new("local:genre:rock");
+    rock_genre.name = "Rock".to_string();
+    let mut tracks = (1..=510)
+        .map(|number| {
+            let mut track = track(number, &ambient_album);
+            track.id = TrackId::new(format!("local:track:{number:016x}"));
+            track
+        })
+        .collect::<Vec<_>>();
+    tracks.extend((511..=520).map(|number| {
+        let mut track = track(number, &rock_album);
+        track.id = TrackId::new(format!("local:track:{number:016x}"));
+        track
+    }));
+    case.upsert_albums(&case.id, &[ambient_album, rock_album], generation)
+        .expect("upsert albums");
+    case.upsert_tracks(&case.id, &tracks, generation)
+        .expect("upsert tracks");
+    case.upsert_genres(
+        &case.id,
+        &[ambient_genre.clone(), rock_genre.clone()],
+        generation,
+    )
+    .expect("upsert genres");
+
+    let mut request = RandomTrackQuery {
+        limit: 999,
+        min_year: Some(2020),
+        max_year: Some(2020),
+        genre_id: Some(ambient_genre.id.clone()),
+        genre_name: Some(ambient_genre.name.clone()),
+    };
+    let selected = case
+        .load_cached_random_tracks(&case.id, "local:track:000000000000012c", &request)
+        .expect("load cached random tracks");
+    assert_eq!(selected.len(), 500);
+    assert_eq!(selected[0].id.as_str(), "local:track:000000000000012c");
+    assert_eq!(selected[499].id.as_str(), "local:track:0000000000000121");
+    assert!(
+        selected
+            .iter()
+            .all(|track| track.year == 2020 && track.genres == ["Ambient"])
+    );
+
+    request.limit = 0;
+    assert_eq!(
+        case.load_cached_random_tracks(&case.id, "local:track:000000000000012c", &request)
+            .expect("clamp minimum")
+            .len(),
+        1
+    );
+    request.genre_id = Some(rock_genre.id);
+    assert!(
+        case.load_cached_random_tracks(&case.id, "local:track:000000000000012c", &request)
+            .expect("apply genre id and name together")
+            .is_empty()
+    );
+}
+
+#[test]
+fn track_id_batch_read_preserves_occurrences_and_durable_cached_facts() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let mut album = album(1);
+    album.genres = vec!["Ambient".to_string()];
+    let mut first = track(1, &album);
+    first.local_path = Some("/music/first.flac".to_string());
+    first.source_format = Some("FLAC".to_string());
+    first.comment = Some("opening".to_string());
+    first.skip_count = Some(2);
+    first.bpm = Some(110);
+    first.moods = vec!["Focused".to_string()];
+    let mut second = track(2, &album);
+    second.local_path = Some("/music/second.flac".to_string());
+    second.source_format = Some("FLAC".to_string());
+    second.comment = Some("closing".to_string());
+    second.skip_count = Some(3);
+    second.bpm = Some(120);
+    second.moods = vec!["Energetic".to_string()];
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, &[first.clone(), second.clone()], generation)
+        .expect("upsert tracks");
+
+    let mut loaded = case
+        .load_tracks_by_ids(
+            &case.id,
+            &[
+                second.id.clone(),
+                TrackId::new("missing"),
+                first.id.clone(),
+                second.id.clone(),
+            ],
+        )
+        .expect("load tracks by ids");
+    for track in &mut loaded {
+        track.album_artwork = None;
+    }
+    assert_eq!(loaded, vec![second.clone(), first, second]);
+    assert!(
+        case.load_tracks_by_ids(&case.id, &[])
+            .expect("empty id batch")
+            .is_empty()
+    );
 }
 
 #[test]
 fn relation_return_genre() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let mut album = album(1);
     album.genres = vec!["Dream Pop".to_string()];
     let mut movie_genre = genre(2, None);
@@ -425,17 +493,17 @@ fn relation_return_genre() {
     let mut music_genre = genre(3, None);
     music_genre.name = "Dream Pop".to_string();
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
         .upsert_genres(
-            &saved.source.id,
+            &saved.source_id,
             &[movie_genre, music_genre.clone()],
             generation,
         )
         .expect("upsert genres");
     let genres = store
-        .load_genres(&saved.source.id, 0, 20)
+        .load_genres(&saved.source_id, 0, 20)
         .expect("load genres");
     assert_eq!(genres.total, 1);
     assert_eq!(genres.items[0].id, music_genre.id);
@@ -446,9 +514,9 @@ fn relation_return_genre() {
 #[test]
 fn relation_use_counts() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let mut album = album(1);
     album.genres = vec!["Anime".to_string()];
     let track = track(1, &album);
@@ -458,27 +526,27 @@ fn relation_use_counts() {
         album_count: 167,
         track_count: 1_561,
         duration_seconds: 0,
-        image_refs: Vec::new(),
         image_ref: None,
+        representative_albums: Vec::new(),
     };
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
         .upsert_genres(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&provider_genre),
             generation,
         )
         .expect("upsert genre");
     let genres = store
-        .load_genres(&saved.source.id, 0, 20)
+        .load_genres(&saved.source_id, 0, 20)
         .expect("load genres");
     let detail = store
-        .load_genre_detail(&saved.source.id, &provider_genre.id)
+        .load_genre_detail(&saved.source_id, &provider_genre.id)
         .expect("load genre detail")
         .expect("genre detail");
     assert_eq!(genres.items[0].album_count, 1);
@@ -492,33 +560,33 @@ fn relation_use_counts() {
 #[test]
 fn mood_projection_uses_track_metadata() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let mut first = track(1, &album);
     first.moods = vec!["Focused".to_string(), "Energetic".to_string()];
     let mut second = track(2, &album);
     second.moods = vec!["Focused".to_string()];
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
         .upsert_tracks(
-            &saved.source.id,
+            &saved.source_id,
             &[first.clone(), second.clone()],
             generation,
         )
         .expect("upsert tracks");
 
     let moods = store
-        .load_moods(&saved.source.id, 0, 20)
+        .load_moods(&saved.source_id, 0, 20)
         .expect("load moods");
     let matching = store
-        .load_moods_matching(&saved.source.id, "focus", 0, 20)
+        .load_moods_matching(&saved.source_id, "focus", 0, 20)
         .expect("search moods");
     let detail = store
-        .load_mood_detail(&saved.source.id, &MoodId::new("Focused"))
+        .load_mood_detail(&saved.source_id, &MoodId::new("Focused"))
         .expect("load mood detail")
         .expect("mood detail");
 
@@ -558,9 +626,9 @@ fn mood_projection_uses_track_metadata() {
 #[test]
 fn track_only_counts() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.genres = vec!["Instrumental".to_string()];
@@ -570,28 +638,28 @@ fn track_only_counts() {
         album_count: 12,
         track_count: 99,
         duration_seconds: 0,
-        image_refs: Vec::new(),
         image_ref: None,
+        representative_albums: Vec::new(),
     };
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
         .upsert_genres(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&provider_genre),
             generation,
         )
         .expect("upsert genre");
 
     let genres = store
-        .load_genres(&saved.source.id, 0, 20)
+        .load_genres(&saved.source_id, 0, 20)
         .expect("load genres");
     let detail = store
-        .load_genre_detail(&saved.source.id, &provider_genre.id)
+        .load_genre_detail(&saved.source_id, &provider_genre.id)
         .expect("load genre detail")
         .expect("genre detail");
 
@@ -599,16 +667,16 @@ fn track_only_counts() {
     assert_eq!(genres.items[0].track_count, 1);
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
-    assert_eq!(detail.albums, vec![album]);
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.albums[0].id, album.id);
+    assert_eq!(detail.tracks[0].id, track.id);
 }
 
 #[test]
 fn missing_album_counts() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let mut track = track(1, &album);
     track.genres = vec!["Instrumental".to_string()];
@@ -618,25 +686,25 @@ fn missing_album_counts() {
         album_count: 12,
         track_count: 99,
         duration_seconds: 0,
-        image_refs: Vec::new(),
         image_ref: None,
+        representative_albums: Vec::new(),
     };
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
         .upsert_genres(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&provider_genre),
             generation,
         )
         .expect("upsert genre");
 
     let genres = store
-        .load_genres(&saved.source.id, 0, 20)
+        .load_genres(&saved.source_id, 0, 20)
         .expect("load genres");
     let detail = store
-        .load_genre_detail(&saved.source.id, &provider_genre.id)
+        .load_genre_detail(&saved.source_id, &provider_genre.id)
         .expect("load genre detail")
         .expect("genre detail");
 
@@ -651,16 +719,16 @@ fn missing_album_counts() {
 #[test]
 fn relation_track_missing() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(9);
     let tracks = vec![track(1, &album), track(2, &album)];
     store
-        .upsert_tracks(&saved.source.id, &tracks, generation)
+        .upsert_tracks(&saved.source_id, &tracks, generation)
         .expect("upsert tracks");
     let detail = store
-        .load_album_detail(&saved.source.id, &album.id)
+        .load_album_detail(&saved.source_id, &album.id)
         .expect("load album detail")
         .expect("album detail");
     assert_eq!(detail.0.id, album.id);
@@ -672,9 +740,9 @@ fn relation_track_missing() {
 #[test]
 fn relation_track_cache() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let mut album = album(1);
     album.track_count = 0;
     album.duration_seconds = 0;
@@ -690,16 +758,17 @@ fn relation_track_cache() {
         user_rating: None,
         musicbrainz_artist_id: None,
         image_ref: None,
+        representative_albums: Vec::new(),
     };
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, &tracks, generation)
+        .upsert_tracks(&saved.source_id, &tracks, generation)
         .expect("upsert tracks");
     store
         .upsert_artists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&artist),
             false,
             generation,
@@ -707,17 +776,17 @@ fn relation_track_cache() {
         .expect("upsert artist");
     store
         .upsert_artists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&artist),
             true,
             generation,
         )
         .expect("upsert album artist");
     store
-        .refresh_library_counts(&saved.source.id)
+        .refresh_library_counts(&saved.source_id)
         .expect("refresh counts");
     let album = store
-        .load_albums(&saved.source.id, 0, 1)
+        .load_albums(&saved.source_id, 0, 1)
         .expect("load albums")
         .items
         .remove(0);
@@ -730,12 +799,12 @@ fn relation_track_cache() {
             .sum::<u32>()
     );
     let artist = store
-        .load_artists(&saved.source.id, false, 0, 1)
+        .load_artists(&saved.source_id, false, 0, 1)
         .expect("load artists")
         .items
         .remove(0);
     let album_artist = store
-        .load_artists(&saved.source.id, true, 0, 1)
+        .load_artists(&saved.source_id, true, 0, 1)
         .expect("load album artists")
         .items
         .remove(0);
@@ -747,9 +816,9 @@ fn relation_track_cache() {
 #[test]
 fn artist_detail_primary() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let artist = Artist {
         id: album.artist_id.clone().expect("album artist id"),
@@ -762,46 +831,65 @@ fn artist_detail_primary() {
         user_rating: None,
         musicbrainz_artist_id: None,
         image_ref: None,
+        representative_albums: Vec::new(),
     };
     let mut track = track(1, &album);
     track.artist_id = None;
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     store
         .upsert_artists(
-            &saved.source.id,
+            &saved.source_id,
             std::slice::from_ref(&artist),
             true,
             generation,
         )
         .expect("upsert album artist");
     let detail = store
-        .load_artist_detail(&saved.source.id, &artist.id)
+        .load_artist_detail(&saved.source_id, &artist.id)
         .expect("load artist detail")
         .expect("artist detail");
-    assert_eq!(detail.artist, artist);
+    assert_eq!(detail.artist.id, artist.id);
+    assert_eq!(detail.artist.name, artist.name);
+    assert_eq!(detail.artist.image_ref, artist.image_ref);
+    assert_eq!(
+        detail
+            .artist
+            .representative_albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>(),
+        vec![album.id.clone()]
+    );
     assert_eq!(detail.albums, vec![album]);
     assert!(detail.appears_on.is_empty());
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(
+        detail
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![track.id]
+    );
 }
 #[test]
 fn artist_track_fallback() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let tracks = vec![track(1, &album), track(2, &album)];
     let artist_id = album.artist_id.clone().expect("artist id");
     store
-        .upsert_tracks(&saved.source.id, &tracks, generation)
+        .upsert_tracks(&saved.source_id, &tracks, generation)
         .expect("upsert tracks");
     let detail = store
-        .load_artist_detail(&saved.source.id, &artist_id)
+        .load_artist_detail(&saved.source_id, &artist_id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(detail.artist.id, artist_id);
@@ -818,28 +906,28 @@ fn artist_track_fallback() {
 #[test]
 fn relation_fall_missing() {
     let store = Store::open_memory().expect("open store");
-    let saved = saved_source();
+    let saved = stored_source();
     store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source.id).expect("begin sync");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
     let album = album(1);
     let artist_id = album.artist_id.clone().expect("artist id");
     let mut track = track(1, &album);
     track.artist_id = None;
     store
-        .upsert_albums(&saved.source.id, std::slice::from_ref(&album), generation)
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
     store
-        .upsert_tracks(&saved.source.id, std::slice::from_ref(&track), generation)
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
         .expect("upsert track");
     let detail = store
-        .load_artist_detail(&saved.source.id, &artist_id)
+        .load_artist_detail(&saved.source_id, &artist_id)
         .expect("load artist detail")
         .expect("artist detail");
     assert_eq!(detail.artist.id, artist_id);
     assert_eq!(detail.artist.name, album.artist);
     assert_eq!(detail.artist.album_count, 1);
     assert_eq!(detail.artist.track_count, 1);
-    assert_eq!(detail.albums, vec![album]);
+    assert_eq!(detail.albums[0].id, album.id);
     assert!(detail.appears_on.is_empty());
-    assert_eq!(detail.tracks, vec![track]);
+    assert_eq!(detail.tracks[0].id, track.id);
 }

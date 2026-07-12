@@ -1,111 +1,194 @@
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
-use domain::{QueueEntry, RepeatMode, TrackId};
 use gtk::glib;
+use library::SourceId;
 use mpris_server::{
     LoopStatus, Metadata, PlaybackStatus, Player as MprisPlayer, Time, TrackId as MprisTrackId,
 };
-use playback::PlaybackState;
+use playback::{
+    PlaybackView, PositionDiscontinuity, RepeatMode, RunId, SequenceEntry, TransportStatus,
+};
 use tracing::warn;
-
-use crate::controller::PlaybackSnapshot;
 
 use super::{Shell, THUMB_COVER_SIZE};
 
-const MPRIS_POSITION_REGRESSION_TOLERANCE_MS: u64 = 1_500;
+#[derive(Clone, Debug, PartialEq)]
+struct MprisDesiredState {
+    run: Option<RunId>,
+    playback_status: PlaybackStatus,
+    loop_status: LoopStatus,
+    shuffle: bool,
+    metadata: Metadata,
+    volume: f64,
+    can_play: bool,
+    can_pause: bool,
+    can_seek: bool,
+    can_go_next: bool,
+    can_go_previous: bool,
+    position: Option<Time>,
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::ui) struct MprisPositionState {
-    track_id: Option<TrackId>,
-    position_millis: u64,
+pub(super) struct MprisAdapter {
+    player: RefCell<Option<Rc<MprisPlayer>>>,
+    desired: RefCell<Option<MprisDesiredState>>,
+    applied: RefCell<Option<MprisDesiredState>>,
+    pending_seeked: Cell<Option<PositionDiscontinuity>>,
+    generation: Cell<u64>,
+    running: Cell<bool>,
+}
+
+impl MprisAdapter {
+    pub(super) fn new() -> Self {
+        Self {
+            player: RefCell::new(None),
+            desired: RefCell::new(None),
+            applied: RefCell::new(None),
+            pending_seeked: Cell::new(None),
+            generation: Cell::new(0),
+            running: Cell::new(false),
+        }
+    }
+
+    fn install_player(self: &Rc<Self>, player: Rc<MprisPlayer>) {
+        *self.player.borrow_mut() = Some(player);
+        self.applied.borrow_mut().take();
+        self.pending_seeked.set(None);
+        self.start();
+    }
+
+    fn queue(
+        self: &Rc<Self>,
+        desired: MprisDesiredState,
+        discontinuity: Option<PositionDiscontinuity>,
+    ) {
+        if self
+            .pending_seeked
+            .get()
+            .is_some_and(|pending| Some(pending.run) != desired.run)
+        {
+            self.pending_seeked.set(None);
+        }
+        if let Some(discontinuity) = discontinuity
+            && desired.run == Some(discontinuity.run)
+        {
+            self.pending_seeked.set(Some(discontinuity));
+        }
+        *self.desired.borrow_mut() = Some(desired);
+        self.generation.set(self.generation.get().saturating_add(1));
+        self.start();
+    }
+
+    fn start(self: &Rc<Self>) {
+        if self.player.borrow().is_none() || self.running.replace(true) {
+            return;
+        }
+        let adapter = Rc::clone(self);
+        glib::spawn_future_local(async move {
+            adapter.drain().await;
+            adapter.running.set(false);
+        });
+    }
+
+    async fn drain(&self) {
+        loop {
+            let Some(player) = self.player.borrow().as_ref().cloned() else {
+                return;
+            };
+            let Some(desired) = self.desired.borrow().clone() else {
+                return;
+            };
+            let applied = self.applied.borrow().clone();
+            let generation = self.generation.get();
+            let discontinuity = self.pending_seeked.take();
+
+            apply_mpris_desired(&player, applied.as_ref(), &desired).await;
+            let mut applied = desired.clone();
+            if let Some(discontinuity) = discontinuity
+                && self
+                    .desired
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|current| current.run == Some(discontinuity.run))
+            {
+                let position = mpris_time(discontinuity.position_millis);
+                player.set_position(position);
+                let _sent = player.seeked(position).await;
+                applied.position = Some(position);
+            }
+            *self.applied.borrow_mut() = Some(applied);
+
+            if self.generation.get() == generation && self.pending_seeked.get().is_none() {
+                return;
+            }
+        }
+    }
+}
+
+async fn apply_mpris_desired(
+    player: &MprisPlayer,
+    applied: Option<&MprisDesiredState>,
+    desired: &MprisDesiredState,
+) {
+    if applied.is_none_or(|applied| applied.playback_status != desired.playback_status) {
+        let _updated = player.set_playback_status(desired.playback_status).await;
+    }
+    if applied.is_none_or(|applied| applied.loop_status != desired.loop_status) {
+        let _updated = player.set_loop_status(desired.loop_status).await;
+    }
+    if applied.is_none_or(|applied| applied.shuffle != desired.shuffle) {
+        let _updated = player.set_shuffle(desired.shuffle).await;
+    }
+    if applied.is_none_or(|applied| applied.metadata != desired.metadata) {
+        let _updated = player.set_metadata(desired.metadata.clone()).await;
+    }
+    if applied.is_none_or(|applied| applied.volume != desired.volume) {
+        let _updated = player.set_volume(desired.volume).await;
+    }
+    if applied.is_none_or(|applied| applied.can_play != desired.can_play) {
+        let _updated = player.set_can_play(desired.can_play).await;
+    }
+    if applied.is_none_or(|applied| applied.can_pause != desired.can_pause) {
+        let _updated = player.set_can_pause(desired.can_pause).await;
+    }
+    if applied.is_none_or(|applied| applied.can_seek != desired.can_seek) {
+        let _updated = player.set_can_seek(desired.can_seek).await;
+    }
+    if applied.is_none_or(|applied| applied.can_go_next != desired.can_go_next) {
+        let _updated = player.set_can_go_next(desired.can_go_next).await;
+    }
+    if applied.is_none_or(|applied| applied.can_go_previous != desired.can_go_previous) {
+        let _updated = player.set_can_go_previous(desired.can_go_previous).await;
+    }
+    if applied.is_none_or(|applied| applied.position != desired.position)
+        && let Some(position) = desired.position
+    {
+        player.set_position(position);
+    }
 }
 
 impl Shell {
     pub(super) fn update_mpris_player(&self) {
-        let Some(player) = self.state.mpris_player.borrow().as_ref().cloned() else {
-            return;
-        };
-        let generation = self.state.mpris_update_generation.get().saturating_add(1);
-        self.state.mpris_update_generation.set(generation);
-        let update_generation = Rc::clone(&self.state.mpris_update_generation);
-        let snapshot = self.state.player.borrow().clone();
-        let metadata = self.mpris_metadata_update(&snapshot);
-        let playback_status = mpris_playback_status(snapshot.state);
-        let loop_status = match snapshot.repeat_mode {
-            RepeatMode::Off => LoopStatus::None,
-            RepeatMode::One => LoopStatus::Track,
-            RepeatMode::All => LoopStatus::Playlist,
-        };
-        let has_current = snapshot.current.is_some();
-        let position = mpris_position_update(&snapshot);
-        let emit_seeked = if position.is_some() {
-            let previous = self.state.mpris_position_state.borrow().clone();
-            let next = mpris_position_state(&snapshot);
-            let emit_seeked = mpris_seeked_required(previous.as_ref(), &next);
-            *self.state.mpris_position_state.borrow_mut() = Some(next);
-            emit_seeked
-        } else {
-            false
-        };
-        let volume = snapshot.volume.clamp(0.0, 1.0);
+        self.update_mpris_player_after(None);
+    }
 
-        glib::spawn_future_local(async move {
-            let _updated = player.set_playback_status(playback_status).await;
-            let _updated = player.set_loop_status(loop_status).await;
-            let _updated = player.set_shuffle(snapshot.shuffle_enabled).await;
-            if let Some(metadata) = metadata {
-                let _updated = player.set_metadata(metadata).await;
-            }
-            let _updated = player.set_volume(volume).await;
-            let _updated = player.set_can_play(has_current).await;
-            let _updated = player.set_can_pause(has_current).await;
-            let _updated = player.set_can_seek(has_current).await;
-            let _updated = player.set_can_go_next(has_current).await;
-            let _updated = player.set_can_go_previous(has_current).await;
-            if update_generation.get() != generation {
-                return;
-            }
-            if let Some(position) = position {
-                player.set_position(position);
-                if emit_seeked {
-                    let _updated = player.seeked(position).await;
-                }
-            }
+    pub(super) fn update_mpris_player_after(&self, discontinuity: Option<PositionDiscontinuity>) {
+        let playback = self.state.player.borrow();
+        let art_url = playback.as_ref().and_then(|playback| {
+            playback
+                .transport
+                .current
+                .as_deref()
+                .and_then(|entry| self.current_art_url(&playback.transport.source_id, entry))
         });
+        let desired = mpris_desired_state(playback.as_ref(), art_url);
+        self.state.mpris.queue(desired, discontinuity);
     }
 
-    fn mpris_metadata_update(&self, snapshot: &PlaybackSnapshot) -> Option<Metadata> {
-        let art_url = snapshot
-            .current
-            .as_ref()
-            .and_then(|entry| self.current_art_url(entry));
-        let key = mpris_metadata_key(snapshot, art_url.as_deref());
-        if self.state.mpris_metadata_key.borrow().as_deref() == Some(key.as_str()) {
-            return None;
-        }
-        *self.state.mpris_metadata_key.borrow_mut() = Some(key);
-        Some(self.mpris_metadata(snapshot, art_url))
-    }
-
-    fn mpris_metadata(&self, snapshot: &PlaybackSnapshot, art_url: Option<String>) -> Metadata {
-        let Some(entry) = snapshot.current.as_ref() else {
-            return Metadata::builder().trackid(MprisTrackId::NO_TRACK).build();
-        };
-        let mut builder = Metadata::builder()
-            .trackid(mpris_track_id(entry.track_id.as_str()))
-            .title(entry.title.clone())
-            .artist([entry.artist.clone()])
-            .album(entry.album.clone())
-            .length(Time::from_secs(i64::from(entry.duration_seconds)));
-        if let Some(art_url) = art_url {
-            builder = builder.art_url(art_url);
-        }
-        builder.build()
-    }
-
-    fn current_art_url(&self, entry: &QueueEntry) -> Option<String> {
-        let artwork = self.current_playback_cached_artwork_path(entry, THUMB_COVER_SIZE)?;
+    fn current_art_url(&self, source_id: &SourceId, entry: &SequenceEntry) -> Option<String> {
+        let artwork =
+            self.current_playback_cached_artwork_path(source_id, entry, THUMB_COVER_SIZE)?;
         glib::filename_to_uri(artwork.path, None)
             .ok()
             .map(|uri| uri.to_string())
@@ -138,20 +221,10 @@ pub(super) fn install_mpris(shell: &Rc<Shell>) {
 
         let controller = shell.controller.clone();
         player.connect_play_pause(move |_| controller.play_pause());
-        let play_shell = Rc::clone(&shell);
-        player.connect_play(move |_| {
-            let state = play_shell.state.player.borrow().state;
-            if !matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
-                play_shell.controller.play_pause();
-            }
-        });
-        let pause_shell = Rc::clone(&shell);
-        player.connect_pause(move |_| {
-            let state = pause_shell.state.player.borrow().state;
-            if matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
-                pause_shell.controller.play_pause();
-            }
-        });
+        let controller = shell.controller.clone();
+        player.connect_play(move |_| controller.play());
+        let controller = shell.controller.clone();
+        player.connect_pause(move |_| controller.pause());
         let controller = shell.controller.clone();
         player.connect_stop(move |_| controller.stop());
         let controller = shell.controller.clone();
@@ -161,7 +234,12 @@ pub(super) fn install_mpris(shell: &Rc<Shell>) {
         let controller = shell.controller.clone();
         let seek_shell = Rc::clone(&shell);
         player.connect_seek(move |_, offset| {
-            let current = seek_shell.state.player.borrow().position_millis;
+            let current = seek_shell
+                .state
+                .player
+                .borrow()
+                .as_ref()
+                .map_or(0, |playback| playback.transport.position_millis);
             let offset_millis = offset.as_micros() / 1_000;
             let target = if offset_millis.is_negative() {
                 current.saturating_sub(offset_millis.unsigned_abs())
@@ -170,187 +248,201 @@ pub(super) fn install_mpris(shell: &Rc<Shell>) {
             };
             controller.seek_millis(target);
         });
+        let position_shell = Rc::clone(&shell);
+        player.connect_set_position(move |_, track_id, position| {
+            let current_matches =
+                mpris_set_position_matches(position_shell.state.player.borrow().as_ref(), track_id);
+            if current_matches {
+                position_shell
+                    .controller
+                    .seek_millis((position.as_micros() / 1_000).max(0) as u64);
+            }
+        });
+        let volume_shell = Rc::clone(&shell);
+        player.connect_set_volume(move |_, volume| volume_shell.apply_user_volume(volume));
         let controller = shell.controller.clone();
-        player.connect_set_position(move |_, _, position| {
-            controller.seek_millis((position.as_micros() / 1_000).max(0) as u64);
+        player.connect_set_shuffle(move |_, enabled| controller.set_shuffle(enabled));
+        let controller = shell.controller.clone();
+        player.connect_set_loop_status(move |_, status| {
+            controller.set_repeat(repeat_mode_from_mpris(status));
         });
 
-        let run_player = Rc::clone(&player);
-        glib::spawn_future_local(async move {
-            run_player.run().await;
-        });
-        *shell.state.mpris_player.borrow_mut() = Some(player);
+        shell.state.mpris.install_player(Rc::clone(&player));
         shell.update_mpris_player();
+        glib::spawn_future_local(async move {
+            player.run().await;
+        });
     });
 }
 
-fn mpris_track_id(track_id: &str) -> MprisTrackId {
-    let mut encoded = String::with_capacity(track_id.len() * 2);
-    for byte in track_id.as_bytes() {
+fn mpris_desired_state(
+    playback: Option<&PlaybackView>,
+    art_url: Option<String>,
+) -> MprisDesiredState {
+    let has_current = playback.is_some_and(|playback| playback.transport.current.is_some());
+    let has_active_run = playback.is_some_and(|playback| {
+        playback.transport.run.is_some()
+            && !matches!(
+                playback.transport.state,
+                TransportStatus::Stopped | TransportStatus::Failed
+            )
+    });
+    let can_go_next = playback.is_some_and(|playback| {
+        has_current
+            && (playback.queue.next_occurrence.is_some() || playback.controls.auto_dj_enabled)
+    });
+    MprisDesiredState {
+        run: playback.and_then(|playback| playback.transport.run),
+        playback_status: playback.map_or(PlaybackStatus::Stopped, |playback| {
+            mpris_playback_status(playback.transport.state)
+        }),
+        loop_status: mpris_loop_status(
+            playback.map_or(RepeatMode::Off, |playback| playback.controls.repeat_mode),
+        ),
+        shuffle: playback.is_some_and(|playback| playback.controls.shuffle_enabled),
+        metadata: mpris_metadata(playback, art_url),
+        volume: playback.map_or(1.0, |playback| playback.controls.volume.clamp(0.0, 1.0)),
+        can_play: has_current,
+        can_pause: has_active_run,
+        can_seek: has_current,
+        can_go_next,
+        can_go_previous: has_current,
+        position: playback
+            .filter(|playback| playback.transport.current.is_some())
+            .map(|playback| mpris_time(playback.transport.position_millis)),
+    }
+}
+
+fn mpris_metadata(playback: Option<&PlaybackView>, art_url: Option<String>) -> Metadata {
+    let Some(entry) = playback.and_then(|playback| playback.transport.current.as_ref()) else {
+        return Metadata::builder().trackid(MprisTrackId::NO_TRACK).build();
+    };
+    let mut builder = Metadata::builder()
+        .trackid(mpris_track_id(entry.occurrence.as_str()))
+        .title(entry.track.title.clone())
+        .artist([entry.track.artist.clone()])
+        .album(entry.track.album.clone())
+        .length(Time::from_secs(i64::from(entry.track.duration_seconds)));
+    if let Some(art_url) = art_url {
+        builder = builder.art_url(art_url);
+    }
+    builder.build()
+}
+
+fn mpris_track_id(occurrence: &str) -> MprisTrackId {
+    let mut encoded = String::with_capacity(occurrence.len() * 2);
+    for byte in occurrence.as_bytes() {
         let _written = write!(&mut encoded, "{byte:02x}");
     }
     MprisTrackId::try_from(format!("/io/github/screwys/Rufin/track/{encoded}"))
         .unwrap_or(MprisTrackId::NO_TRACK)
 }
 
-fn mpris_metadata_key(snapshot: &PlaybackSnapshot, art_url: Option<&str>) -> String {
-    let Some(entry) = snapshot.current.as_ref() else {
-        return "none".to_string();
-    };
-    let image = entry
-        .image_ref
-        .as_ref()
-        .map(|image| format!("{}:{}", image.item_id, image.tag.as_deref().unwrap_or("")))
-        .unwrap_or_default();
-    format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
-        entry.track_id.as_str(),
-        entry.title,
-        entry.artist,
-        entry.album,
-        entry.duration_seconds,
-        image,
-        art_url.unwrap_or_default(),
-    )
+fn mpris_set_position_matches(playback: Option<&PlaybackView>, track_id: &MprisTrackId) -> bool {
+    playback
+        .and_then(|playback| playback.transport.current.as_ref())
+        .is_some_and(|entry| &mpris_track_id(entry.occurrence.as_str()) == track_id)
 }
 
-fn mpris_position_state(snapshot: &PlaybackSnapshot) -> MprisPositionState {
-    MprisPositionState {
-        track_id: snapshot
-            .current
-            .as_ref()
-            .map(|entry| entry.track_id.clone()),
-        position_millis: snapshot.position_millis,
+fn mpris_time(position_millis: u64) -> Time {
+    Time::from_millis(position_millis.min(i64::MAX as u64) as i64)
+}
+
+fn mpris_loop_status(repeat_mode: RepeatMode) -> LoopStatus {
+    match repeat_mode {
+        RepeatMode::Off => LoopStatus::None,
+        RepeatMode::One => LoopStatus::Track,
+        RepeatMode::All => LoopStatus::Playlist,
     }
 }
 
-fn mpris_position_update(snapshot: &PlaybackSnapshot) -> Option<Time> {
-    if snapshot.state == PlaybackState::Buffering
-        || (snapshot.state == PlaybackState::Playing && snapshot.position_millis == 0)
-    {
-        return None;
+fn repeat_mode_from_mpris(status: LoopStatus) -> RepeatMode {
+    match status {
+        LoopStatus::None => RepeatMode::Off,
+        LoopStatus::Track => RepeatMode::One,
+        LoopStatus::Playlist => RepeatMode::All,
     }
-    Some(Time::from_millis(
-        snapshot.position_millis.min(i64::MAX as u64) as i64,
-    ))
 }
 
-fn mpris_playback_status(state: PlaybackState) -> PlaybackStatus {
+fn mpris_playback_status(state: TransportStatus) -> PlaybackStatus {
     match state {
-        PlaybackState::Playing => PlaybackStatus::Playing,
-        PlaybackState::Buffering | PlaybackState::Paused => PlaybackStatus::Paused,
-        PlaybackState::Stopped => PlaybackStatus::Stopped,
+        TransportStatus::Playing => PlaybackStatus::Playing,
+        TransportStatus::Resolving | TransportStatus::Buffering | TransportStatus::Paused => {
+            PlaybackStatus::Paused
+        }
+        TransportStatus::Stopped | TransportStatus::Failed => PlaybackStatus::Stopped,
     }
-}
-
-fn mpris_seeked_required(
-    previous: Option<&MprisPositionState>,
-    current: &MprisPositionState,
-) -> bool {
-    let Some(previous) = previous else {
-        return false;
-    };
-    if current.track_id.is_none() {
-        return false;
-    }
-    if previous.track_id != current.track_id {
-        return true;
-    }
-    previous.position_millis
-        > current
-            .position_millis
-            .saturating_add(MPRIS_POSITION_REGRESSION_TOLERANCE_MS)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::shell_tests::{test_image_ref, test_playback_view, test_sequence_entry};
     use super::*;
-    use domain::{ImageRef, QueueEntryId, TrackId};
+    use library::{SourceId, TrackId};
+    use playback::OccurrenceId;
 
     #[test]
-    fn mpris_key_changes_when_art_url_arrives() {
-        let snapshot = PlaybackSnapshot {
-            current: Some(QueueEntry {
-                id: QueueEntryId::new("queue-entry"),
-                track_id: TrackId::new("track-one"),
-                album_id: None,
-                title: "Track".to_string(),
-                artist: "Artist".to_string(),
-                artist_id: None,
-                album: "Album".to_string(),
-                year: 0,
-                duration_seconds: 180,
-                favorite: false,
-                image_ref: Some(ImageRef::new("image-one", Some("tag-one".to_string()))),
-                local_path: None,
-                source_format: None,
-                origin: None,
-            }),
-            ..PlaybackSnapshot::default()
-        };
+    fn mpris_occurrence_paths_distinguish_duplicate_tracks_and_guard_set_position() {
+        let mut first = sequence_entry();
+        let mut second = first.clone();
+        first.occurrence = OccurrenceId::new("occurrence:first");
+        second.occurrence = OccurrenceId::new("occurrence:second");
+        let first_id = mpris_track_id(first.occurrence.as_str());
+        let second_id = mpris_track_id(second.occurrence.as_str());
+        assert_ne!(first_id, second_id);
 
+        let playback = test_playback_view(
+            Some(first),
+            SourceId::fake(1),
+            TransportStatus::Playing,
+            1_000,
+        );
+        assert!(mpris_set_position_matches(Some(&playback), &first_id));
+        assert!(!mpris_set_position_matches(Some(&playback), &second_id));
+    }
+
+    #[test]
+    fn mpris_exact_repeat_mapping_round_trips() {
+        for repeat in [RepeatMode::Off, RepeatMode::One, RepeatMode::All] {
+            assert_eq!(repeat_mode_from_mpris(mpris_loop_status(repeat)), repeat);
+        }
+    }
+
+    #[test]
+    fn mpris_capabilities_follow_queue_summary() {
+        let mut playback = test_playback_view(
+            Some(sequence_entry()),
+            SourceId::fake(1),
+            TransportStatus::Playing,
+            0,
+        );
+        let exhausted = mpris_desired_state(Some(&playback), None);
+        assert!(!exhausted.can_go_next);
+        assert!(exhausted.can_go_previous);
+
+        playback.queue.next_occurrence = Some(OccurrenceId::new("occurrence:next"));
+        let with_next = mpris_desired_state(Some(&playback), None);
+        assert!(with_next.can_go_next);
+    }
+
+    #[test]
+    fn mpris_metadata_updates_when_cached_art_arrives() {
+        let playback = test_playback_view(
+            Some(sequence_entry()),
+            SourceId::fake(1),
+            TransportStatus::Paused,
+            0,
+        );
         assert_ne!(
-            mpris_metadata_key(&snapshot, None),
-            mpris_metadata_key(&snapshot, Some("file:///tmp/cover.png"))
+            mpris_metadata(Some(&playback), None),
+            mpris_metadata(Some(&playback), Some("file:///tmp/cover.png".to_string()))
         );
     }
 
-    #[test]
-    fn mpris_seeked_on_track_or_position_reset() {
-        let first = MprisPositionState {
-            track_id: Some(TrackId::new("track-one")),
-            position_millis: 180_000,
-        };
-        let next_track = MprisPositionState {
-            track_id: Some(TrackId::new("track-two")),
-            position_millis: 0,
-        };
-        let same_track_reset = MprisPositionState {
-            track_id: Some(TrackId::new("track-one")),
-            position_millis: 0,
-        };
-        let normal_tick = MprisPositionState {
-            track_id: Some(TrackId::new("track-one")),
-            position_millis: 181_000,
-        };
-
-        assert!(mpris_seeked_required(Some(&first), &next_track));
-        assert!(mpris_seeked_required(Some(&first), &same_track_reset));
-        assert!(!mpris_seeked_required(Some(&first), &normal_tick));
-        assert!(!mpris_seeked_required(None, &next_track));
-    }
-
-    #[test]
-    fn mpris_buffering_does_not_publish_position_reset() {
-        let buffering = PlaybackSnapshot {
-            state: PlaybackState::Buffering,
-            position_millis: 0,
-            ..PlaybackSnapshot::default()
-        };
-        let playing_before_tick = PlaybackSnapshot {
-            state: PlaybackState::Playing,
-            position_millis: 0,
-            ..PlaybackSnapshot::default()
-        };
-        let playing = PlaybackSnapshot {
-            state: PlaybackState::Playing,
-            position_millis: 1_000,
-            ..PlaybackSnapshot::default()
-        };
-
-        assert_eq!(
-            mpris_playback_status(PlaybackState::Buffering),
-            PlaybackStatus::Paused
-        );
-        assert_eq!(
-            mpris_playback_status(PlaybackState::Playing),
-            PlaybackStatus::Playing
-        );
-        assert_eq!(mpris_position_update(&buffering), None);
-        assert_eq!(mpris_position_update(&playing_before_tick), None);
-        assert_eq!(
-            mpris_position_update(&playing),
-            Some(Time::from_millis(1_000))
-        );
+    fn sequence_entry() -> SequenceEntry {
+        let mut entry = test_sequence_entry("Track", test_image_ref("mpris"));
+        entry.track.id = TrackId::new("track-one");
+        entry.track.image_ref = None;
+        entry
     }
 }

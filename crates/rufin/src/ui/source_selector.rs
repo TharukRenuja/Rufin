@@ -4,11 +4,11 @@ use std::{
     time::Duration,
 };
 
+use ::library::{MusicFolder, MusicFolderId};
 use adw::prelude::*;
-use domain::{
-    LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId, SourceIdentity,
-};
+use domain::{LibrarySourceSelection, LocalLibraryFolder};
 use gtk::glib;
+use sources::SourceIdentity;
 
 use super::{
     Shell, configured_source_display_name, configured_source_icon_name,
@@ -251,9 +251,14 @@ fn selected_source_server(
 }
 
 fn local_source_identity() -> SourceIdentity {
-    let mut source = crate::sources::local_configured_source().source;
-    source.name = configured_source_kind_display_name(&source.kind);
-    source
+    let saved = crate::source_setup::local_configured_source();
+    let name = configured_source_kind_display_name(&saved.kind);
+    SourceIdentity {
+        id: saved.source_id,
+        kind: saved.kind,
+        name,
+        base_url: String::new(),
+    }
 }
 
 fn update_selector_popover(

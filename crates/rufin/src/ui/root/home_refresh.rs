@@ -725,7 +725,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
     ));
     let radio_supported = shell
         .controller
-        .manual_radio_supported(domain::GeneratedTrackSeedKind::Playlist);
+        .manual_radio_supported(sources::GeneratedTrackSeedKind::Playlist);
     if radio_supported {
         menu.append(&context_menu_submenu_action(
             msgid("Playlist radio"),
@@ -852,10 +852,16 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
 
     surface.add_action("play", {
         let controller = shell.controller.clone();
+        let shell = Rc::clone(shell);
         let playlist_id = playlist.id.clone();
         move || {
             if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-                controller.play_smart_playlist_detail(detail);
+                let first_track_id = detail.tracks.first().map(|track| track.id.clone());
+                controller.play_smart_playlist(
+                    detail.smart_playlist,
+                    first_track_id,
+                    selected_music_folder_id(&shell),
+                );
             }
         }
     });
@@ -1195,13 +1201,8 @@ fn playlist_genre_pill(name: &str) -> gtk::Label {
 }
 fn playlist_picker_cover(shell: &Rc<Shell>, playlist: &Playlist) -> gtk::Widget {
     let settings = shell.state.settings.borrow();
-    let image_refs = crate::cover_art_policy::selected_collection_refs(
-        &playlist.image_refs,
-        playlist.image_ref.as_ref(),
-        settings.prefer_server_playlist_covers,
-    );
-    let cover = shell.cover_collection_tile_for(
-        image_refs.first(),
+    let cover = shell.cover_tile_for_candidates(
+        CandidateSet::playlist(playlist, settings.prefer_server_playlist_covers),
         stable_seed(playlist.id.as_str()),
         CONTEXT_PLAYLIST_ROW_COVER_SIZE,
         THUMB_COVER_SIZE,
@@ -1268,7 +1269,7 @@ fn playlist_tracks_to_add(
         filter_duplicate_tracks(tracks, &detail.entries)
     }
 }
-fn filter_duplicate_tracks(tracks: &[Track], entries: &[source::PlaylistEntry]) -> Vec<Track> {
+fn filter_duplicate_tracks(tracks: &[Track], entries: &[::library::PlaylistEntry]) -> Vec<Track> {
     filter_existing_tracks(
         tracks,
         &entries
@@ -1642,41 +1643,15 @@ pub(in crate::ui) fn library_artist(
         .cloned()
 }
 pub(in crate::ui) fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
-    let entry = shell.state.player.borrow().current.clone()?;
-    let library = shell.state.library.borrow();
-    library_track(&library, &entry.track_id).or_else(|| track_from_queue_entry(&entry))
-}
-pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
-    Some(Track {
-        id: entry.track_id.clone(),
-        album_id: entry.album_id.clone()?,
-        title: entry.title.clone(),
-        artist: entry.artist.clone(),
-        artist_id: entry.artist_id.clone(),
-        artist_credits: Vec::new(),
-        album_artist_credits: Vec::new(),
-        album: entry.album.clone(),
-        year: entry.year,
-        release_date: None,
-        date_added: None,
-        last_played: None,
-        play_count: None,
-        user_rating: None,
-        duration_seconds: entry.duration_seconds,
-        favorite: entry.favorite,
-        disc_number: 0,
-        track_number: 0,
-        image_ref: entry.image_ref.clone(),
-        genres: Vec::new(),
-        musicbrainz_recording_id: None,
-        musicbrainz_release_track_id: None,
-        local_path: entry.local_path.clone(),
-        source_format: entry.source_format.clone(),
-        comment: None,
-        skip_count: None,
-        bpm: None,
-        moods: Vec::new(),
-    })
+    shell
+        .state
+        .player
+        .borrow()
+        .as_ref()?
+        .transport
+        .current
+        .as_ref()
+        .map(|entry| entry.track.clone())
 }
 pub(in crate::ui) fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     let escaped_text = glib::markup_escape_text(text);
@@ -1756,16 +1731,18 @@ impl ArtworkTile {
         let size = Rc::new(Cell::new(width.max(height)));
         let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
         let expects_image = Rc::new(Cell::new(false));
-        let artwork_id = Rc::new(RefCell::new(None::<String>));
-        let request_key = Rc::new(RefCell::new(None::<String>));
+        let artwork_id = Rc::new(RefCell::new(None::<artwork::ArtworkVisualIdentity>));
+        let request_key = Rc::new(RefCell::new(None::<artwork::ArtworkRequestIdentity>));
+        let artwork_request_id = Rc::new(Cell::new(None));
         let generation = Rc::new(Cell::new(0));
         let draw_seed = Rc::clone(&seed);
         let draw_pixbuf = Rc::clone(&pixbuf);
+        let draw_expects_image = Rc::clone(&expects_image);
         area.set_draw_func(move |_, context, width, height| {
             clip_rounded_rect(context, width, height, 12.0);
             if let Some(pixbuf) = draw_pixbuf.borrow().as_ref() {
                 draw_pixbuf_cover(context, pixbuf, width, height);
-            } else {
+            } else if !draw_expects_image.get() {
                 draw_fallback_cover(context, draw_seed.get(), width, height);
             }
         });
@@ -1778,6 +1755,7 @@ impl ArtworkTile {
             expects_image,
             artwork_id,
             request_key,
+            artwork_request_id,
             generation,
         }
     }
@@ -1795,16 +1773,9 @@ impl ArtworkTile {
             expects_image: Rc::clone(&self.expects_image),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
+            artwork_request_id: Rc::clone(&self.artwork_request_id),
             generation: Rc::clone(&self.generation),
         }
-    }
-
-    pub(in crate::ui) fn generation(&self) -> u64 {
-        self.generation.get()
-    }
-
-    pub(in crate::ui) fn is_live_generation(&self, generation: u64) -> bool {
-        self.generation.get() == generation && self.area.root().is_some()
     }
 
     pub(in crate::ui) fn is_current_generation(&self, generation: u64) -> bool {
@@ -1818,14 +1789,14 @@ impl ArtworkTile {
     pub(in crate::ui) fn bind_selected_cover(
         &self,
         seed: u32,
-        artwork_id: String,
-        request_key: String,
-        pixbuf: Option<Pixbuf>,
+        artwork_id: artwork::ArtworkVisualIdentity,
+        request_key: artwork::ArtworkRequestIdentity,
     ) -> ArtworkBindOutcome {
-        let same_artwork = self.artwork_id.borrow().as_deref() == Some(artwork_id.as_str());
-        let same_request = self.request_key.borrow().as_deref() == Some(request_key.as_str());
+        let same_artwork = self.artwork_id.borrow().as_ref() == Some(&artwork_id);
+        let same_request = self.request_key.borrow().as_ref() == Some(&request_key);
         let has_pixbuf = self.pixbuf.borrow().is_some();
-        let action = artwork_bind_action(same_artwork, same_request, has_pixbuf, pixbuf.is_some());
+        let terminal_missing =
+            same_artwork && same_request && !has_pixbuf && !self.expects_image.get();
 
         let request_changed = !same_artwork || !same_request;
         if request_changed {
@@ -1835,23 +1806,41 @@ impl ArtworkTile {
         }
 
         self.seed.set(seed);
-        if let Some(pixbuf) = pixbuf {
-            *self.pixbuf.borrow_mut() = Some(pixbuf);
-        } else if !same_artwork {
+        if !same_artwork {
             *self.pixbuf.borrow_mut() = None;
         }
-        self.expects_image.set(true);
+        self.expects_image.set(!terminal_missing);
 
         let has_pixbuf = self.pixbuf.borrow().is_some();
-        self.sync_cover_state_classes(true, has_pixbuf);
+        self.area.set_opacity(if has_pixbuf || terminal_missing {
+            1.0
+        } else {
+            0.0
+        });
+        self.sync_cover_state_classes(!terminal_missing, has_pixbuf);
         self.area.queue_draw();
 
         ArtworkBindOutcome {
             generation: self.generation.get(),
-            request_needed: matches!(
-                action,
-                ArtworkBindAction::Request | ArtworkBindAction::RetainAndRequest
-            ),
+            request_needed: request_changed || (!has_pixbuf && !terminal_missing),
+            request_changed,
+        }
+    }
+
+    pub(in crate::ui) fn artwork_request_id(&self) -> Option<artwork::RequestId> {
+        self.artwork_request_id.get()
+    }
+
+    pub(in crate::ui) fn replace_artwork_request_id(
+        &self,
+        request_id: artwork::RequestId,
+    ) -> Option<artwork::RequestId> {
+        self.artwork_request_id.replace(Some(request_id))
+    }
+
+    pub(in crate::ui) fn clear_artwork_request_id(&self, request_id: artwork::RequestId) {
+        if self.artwork_request_id.get() == Some(request_id) {
+            self.artwork_request_id.set(None);
         }
     }
 
@@ -1887,6 +1876,7 @@ impl ArtworkTile {
         self.expects_image.set(expects_image);
         *self.artwork_id.borrow_mut() = None;
         *self.request_key.borrow_mut() = None;
+        self.area.set_opacity(1.0);
         self.sync_cover_state_classes(expects_image, has_pixbuf);
         self.area.queue_draw();
         generation
@@ -1897,6 +1887,7 @@ impl ArtworkTile {
             return false;
         }
         *self.pixbuf.borrow_mut() = Some(pixbuf);
+        self.area.set_opacity(1.0);
         self.sync_cover_state_classes(self.expects_image.get(), true);
         self.area.queue_draw();
         true
@@ -1908,6 +1899,7 @@ impl ArtworkTile {
         self.expects_image.set(false);
         *self.artwork_id.borrow_mut() = None;
         *self.request_key.borrow_mut() = None;
+        self.area.set_opacity(1.0);
         self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
     }
@@ -1921,6 +1913,20 @@ impl ArtworkTile {
         self.expects_image.set(false);
         *self.artwork_id.borrow_mut() = None;
         *self.request_key.borrow_mut() = None;
+        self.area.set_opacity(1.0);
+        self.sync_cover_state_classes(false, false);
+        self.area.queue_draw();
+        true
+    }
+
+    pub(in crate::ui) fn set_missing_if_current(&self, generation: u64) -> bool {
+        if self.generation.get() != generation {
+            return false;
+        }
+        self.generation.set(self.generation.get().saturating_add(1));
+        *self.pixbuf.borrow_mut() = None;
+        self.expects_image.set(false);
+        self.area.set_opacity(1.0);
         self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
         true
@@ -1959,104 +1965,12 @@ impl ArtworkTileWeak {
             expects_image: Rc::clone(&self.expects_image),
             artwork_id: Rc::clone(&self.artwork_id),
             request_key: Rc::clone(&self.request_key),
+            artwork_request_id: Rc::clone(&self.artwork_request_id),
             generation: Rc::clone(&self.generation),
         })
     }
-
-    pub(in crate::ui) fn size(&self) -> i32 {
-        self.size.get()
-    }
-
-    pub(in crate::ui) fn is_current_generation(&self, generation: u64) -> bool {
-        self.upgrade()
-            .is_some_and(|tile| tile.is_current_generation(generation))
-    }
 }
 
-pub(in crate::ui) fn artwork_bind_action(
-    same_artwork: bool,
-    same_request: bool,
-    has_pixbuf: bool,
-    decoded_ready: bool,
-) -> ArtworkBindAction {
-    if decoded_ready {
-        ArtworkBindAction::Replace
-    } else if !same_artwork || !has_pixbuf {
-        ArtworkBindAction::Request
-    } else if same_request {
-        ArtworkBindAction::Retain
-    } else {
-        ArtworkBindAction::RetainAndRequest
-    }
-}
-pub(in crate::ui) async fn load_cover_pixbuf(
-    path: PathBuf,
-    size: i32,
-    _priority: glib::Priority,
-) -> Result<Pixbuf, glib::Error> {
-    let decode_size = cover_pixbuf_decode_size(size);
-    let pixels = gio::spawn_blocking(move || decode_cover_pixels(path, decode_size))
-        .await
-        .map_err(|_| glib::Error::new(glib::FileError::Failed, "cover decode task failed"))??;
-    let bytes = glib::Bytes::from_owned(pixels.data);
-    Ok(Pixbuf::from_bytes(
-        &bytes,
-        pixels.colorspace,
-        pixels.has_alpha,
-        pixels.bits_per_sample,
-        pixels.width,
-        pixels.height,
-        pixels.rowstride,
-    ))
-}
-struct CoverPixelData {
-    data: Vec<u8>,
-    colorspace: gdk_pixbuf::Colorspace,
-    has_alpha: bool,
-    bits_per_sample: i32,
-    width: i32,
-    height: i32,
-    rowstride: i32,
-}
-fn decode_cover_pixels(path: PathBuf, decode_size: i32) -> Result<CoverPixelData, glib::Error> {
-    let pixbuf = Pixbuf::from_file_at_scale(&path, decode_size, decode_size, true)?;
-    Ok(CoverPixelData {
-        data: pixbuf.read_pixel_bytes().as_ref().to_vec(),
-        colorspace: pixbuf.colorspace(),
-        has_alpha: pixbuf.has_alpha(),
-        bits_per_sample: pixbuf.bits_per_sample(),
-        width: pixbuf.width(),
-        height: pixbuf.height(),
-        rowstride: pixbuf.rowstride(),
-    })
-}
-pub(in crate::ui) fn cover_pixbuf_decode_size(size: i32) -> i32 {
-    let size = size.max(1);
-    if size >= GRID_COVER_SIZE as i32 {
-        size
-    } else {
-        size.saturating_mul(2).min(GRID_COVER_SIZE as i32)
-    }
-}
-pub(in crate::ui) fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
-    let apply_started = Instant::now();
-    let binding_count = bindings.len();
-    let mut applied = 0_usize;
-    for binding in bindings {
-        if let Some(tile) = binding.tile.upgrade()
-            && tile.set_pixbuf_if_current(binding.generation, pixbuf.clone())
-        {
-            applied = applied.saturating_add(1);
-        }
-    }
-    let apply_ms = apply_started.elapsed().as_millis() as u64;
-    if apply_ms >= SLOW_COVER_CALLBACK_MS {
-        warn!(
-            bindings = binding_count,
-            applied, apply_ms, "slow cover pixbuf binding"
-        );
-    }
-}
 pub(in crate::ui) fn draw_fallback_cover(
     context: &gtk::cairo::Context,
     seed: u32,
@@ -2190,12 +2104,20 @@ pub(in crate::ui) fn add_card_label_link(
     add_widget_click(target, move || shell.navigate(route.clone()));
 }
 pub(in crate::ui) fn current_playback_track_id(
-    snapshot: &PlaybackSnapshot,
-) -> Option<domain::TrackId> {
-    snapshot
-        .current
-        .as_ref()
-        .map(|entry| entry.track_id.clone())
+    player: &Option<PlaybackView>,
+) -> Option<::library::TrackId> {
+    current_playback_media_key(player).map(|key| key.track_id)
+}
+
+pub(in crate::ui) fn current_playback_media_key(
+    player: &Option<PlaybackView>,
+) -> Option<playback::MediaKey> {
+    let player = player.as_ref()?;
+    let current = player.transport.current.as_ref()?;
+    Some(playback::MediaKey {
+        source_id: player.transport.source_id.clone(),
+        track_id: current.track.id.clone(),
+    })
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum PlaylistEntrySort {
@@ -2212,7 +2134,7 @@ mod tests {
     #[test]
     fn filter_duplicate_tracks_skips_existing_playlist_entries() {
         let tracks = vec![test_track(1, &[]), test_track(2, &[])];
-        let entries = vec![source::PlaylistEntry {
+        let entries = vec![::library::PlaylistEntry {
             entry_id: "entry-1".to_string(),
             track: test_track(1, &[]),
         }];
@@ -2257,6 +2179,7 @@ mod tests {
             disc_number: 1,
             track_number: index as u16,
             image_ref: None,
+            album_artwork: None,
             genres: genres.iter().map(|genre| genre.to_string()).collect(),
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,

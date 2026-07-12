@@ -11,33 +11,35 @@ impl SettingsController {
         Self { store, secrets }
     }
 
-    pub(in crate::controller) fn load_settings(&self) -> AppSettings {
+    pub(in crate::controller) fn load_settings(&self) -> StoredSettings {
         load_settings_from_store(&self.store)
     }
 
-    pub(in crate::controller) fn load_settings_with_scrobbling_secrets(&self) -> AppSettings {
+    pub(in crate::controller) fn load_settings_with_scrobbling_secrets(&self) -> StoredSettings {
         load_settings_with_secrets(&self.store, &self.secrets)
     }
 
     pub(in crate::controller) fn save_settings(
         &self,
-        settings: &AppSettings,
-    ) -> Result<(), String> {
-        save_settings_preserving_scrobbling_secrets(&self.store, &self.secrets, settings)
+        settings: &StoredSettings,
+    ) -> Result<StoredSettings, String> {
+        save_settings_preserving_scrobbling_secrets(&self.store, &self.secrets, settings)?;
+        Ok(self.load_settings_with_scrobbling_secrets())
     }
 
     pub(in crate::controller) fn save_settings_with_scrobbling_deletes(
         &self,
-        settings: &AppSettings,
-    ) -> Result<(), String> {
-        save_settings_with_scrobbling_deletes(&self.store, &self.secrets, settings)
+        settings: &StoredSettings,
+    ) -> Result<StoredSettings, String> {
+        save_settings_with_scrobbling_deletes(&self.store, &self.secrets, settings)?;
+        Ok(self.load_settings_with_scrobbling_secrets())
     }
 }
 
 pub(in crate::controller) fn load_settings_with_secrets(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-) -> AppSettings {
+) -> StoredSettings {
     let mut settings = load_settings_from_store(store);
     let mut persisted = settings.clone();
     let migrated = persist_scrobbling_secret_values(
@@ -60,7 +62,7 @@ pub(in crate::controller) fn load_settings_with_secrets(
 pub(in crate::controller) fn save_settings_preserving_scrobbling_secrets(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    settings: &AppSettings,
+    settings: &StoredSettings,
 ) -> Result<(), String> {
     save_settings_with_missing_secret_action(store, secrets, settings, MissingSecretAction::Keep)
 }
@@ -68,7 +70,7 @@ pub(in crate::controller) fn save_settings_preserving_scrobbling_secrets(
 pub(in crate::controller) fn save_settings_with_scrobbling_deletes(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    settings: &AppSettings,
+    settings: &StoredSettings,
 ) -> Result<(), String> {
     save_settings_with_missing_secret_action(store, secrets, settings, MissingSecretAction::Delete)
 }
@@ -76,7 +78,7 @@ pub(in crate::controller) fn save_settings_with_scrobbling_deletes(
 fn save_settings_with_missing_secret_action(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    settings: &AppSettings,
+    settings: &StoredSettings,
     missing_action: MissingSecretAction,
 ) -> Result<(), String> {
     let mut persisted = settings.clone();
@@ -85,7 +87,10 @@ fn save_settings_with_missing_secret_action(
     save_non_source_settings(store, persisted)
 }
 
-fn save_non_source_settings(store: &StoreHandle, mut persisted: AppSettings) -> Result<(), String> {
+fn save_non_source_settings(
+    store: &StoreHandle,
+    mut persisted: StoredSettings,
+) -> Result<(), String> {
     store.update_settings(move |current| {
         persisted.sources = current.sources.clone();
         persisted.jellyfin_device_id = current.jellyfin_device_id.clone();
@@ -104,44 +109,30 @@ enum MissingSecretAction {
 
 fn persist_scrobbling_secret_values(
     secrets: &Arc<dyn SecretStore>,
-    settings: &AppSettings,
-    persisted: &mut AppSettings,
+    settings: &StoredSettings,
+    persisted: &mut StoredSettings,
     missing_action: MissingSecretAction,
 ) -> Result<bool, String> {
     let mut migrated = false;
-    persist_secret_value(
-        secrets,
-        &SecretKey::LastFmApiSecret,
-        &settings.scrobbling.lastfm.api_secret,
-        &mut persisted.scrobbling.lastfm.api_secret,
-        missing_action,
-        &mut migrated,
-    )?;
-    persist_secret_value(
-        secrets,
-        &SecretKey::LastFmSession,
-        &settings.scrobbling.lastfm.session_key,
-        &mut persisted.scrobbling.lastfm.session_key,
-        missing_action,
-        &mut migrated,
-    )?;
-    persist_secret_value(
-        secrets,
-        &SecretKey::LibreFmSession,
-        &settings.scrobbling.librefm.session_key,
-        &mut persisted.scrobbling.librefm.session_key,
-        missing_action,
-        &mut migrated,
-    )?;
-    persist_secret_value(
-        secrets,
-        &SecretKey::ListenBrainzToken,
-        &settings.scrobbling.listenbrainz.user_token,
-        &mut persisted.scrobbling.listenbrainz.user_token,
-        missing_action,
-        &mut migrated,
-    )?;
+    for descriptor in scrobbling::secret_descriptors() {
+        persist_secret_value(
+            secrets,
+            &scrobbling_secret_key(*descriptor),
+            descriptor.value(&settings.scrobbling),
+            descriptor.value_mut(&mut persisted.scrobbling),
+            missing_action,
+            &mut migrated,
+        )?;
+    }
     Ok(migrated)
+}
+
+pub(super) fn scrobbling_secret_key(descriptor: scrobbling::SecretDescriptor) -> SecretKey {
+    SecretKey::namespaced(
+        descriptor.namespace(),
+        descriptor.kind(),
+        descriptor.label(),
+    )
 }
 
 fn persist_secret_value(
@@ -179,27 +170,14 @@ fn persist_secret_value(
     }
 }
 
-fn hydrate_scrobbling_secret_values(secrets: &Arc<dyn SecretStore>, settings: &mut AppSettings) {
-    hydrate_secret_value(
-        secrets,
-        &SecretKey::LastFmApiSecret,
-        &mut settings.scrobbling.lastfm.api_secret,
-    );
-    hydrate_secret_value(
-        secrets,
-        &SecretKey::LastFmSession,
-        &mut settings.scrobbling.lastfm.session_key,
-    );
-    hydrate_secret_value(
-        secrets,
-        &SecretKey::LibreFmSession,
-        &mut settings.scrobbling.librefm.session_key,
-    );
-    hydrate_secret_value(
-        secrets,
-        &SecretKey::ListenBrainzToken,
-        &mut settings.scrobbling.listenbrainz.user_token,
-    );
+fn hydrate_scrobbling_secret_values(secrets: &Arc<dyn SecretStore>, settings: &mut StoredSettings) {
+    for descriptor in scrobbling::secret_descriptors() {
+        hydrate_secret_value(
+            secrets,
+            &scrobbling_secret_key(*descriptor),
+            descriptor.value_mut(&mut settings.scrobbling),
+        );
+    }
     settings.migrate_defaults();
 }
 
@@ -217,9 +195,7 @@ fn hydrate_secret_value(secrets: &Arc<dyn SecretStore>, key: &SecretKey, value: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{
-        AudioscrobblerScrobbleSettings, ListenBrainzScrobbleSettings, ScrobblingSettings,
-    };
+    use scrobbling::{AudioscrobblerSettings, LASTFM_SESSION, ListenBrainzSettings, Settings};
     use secrets::{SecretError, SecretResult};
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -269,21 +245,21 @@ mod tests {
         });
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
-        let settings = AppSettings {
-            scrobbling: ScrobblingSettings {
-                lastfm: AudioscrobblerScrobbleSettings {
+        let settings = StoredSettings {
+            scrobbling: Settings {
+                lastfm: AudioscrobblerSettings {
                     api_key: "lastfm-key".to_string(),
                     api_secret: "lastfm-secret".to_string(),
                     session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerScrobbleSettings::default()
+                    ..AudioscrobblerSettings::default()
                 },
-                listenbrainz: ListenBrainzScrobbleSettings {
+                listenbrainz: ListenBrainzSettings {
                     user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzScrobbleSettings::default()
+                    ..ListenBrainzSettings::default()
                 },
-                ..ScrobblingSettings::default()
+                ..Settings::default()
             },
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
         store.save_settings(&settings).expect("save settings");
 
@@ -311,21 +287,21 @@ mod tests {
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
-        let settings = AppSettings {
-            scrobbling: ScrobblingSettings {
-                lastfm: AudioscrobblerScrobbleSettings {
+        let settings = StoredSettings {
+            scrobbling: Settings {
+                lastfm: AudioscrobblerSettings {
                     api_key: "lastfm-key".to_string(),
                     api_secret: "lastfm-secret".to_string(),
                     session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerScrobbleSettings::default()
+                    ..AudioscrobblerSettings::default()
                 },
-                listenbrainz: ListenBrainzScrobbleSettings {
+                listenbrainz: ListenBrainzSettings {
                     user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzScrobbleSettings::default()
+                    ..ListenBrainzSettings::default()
                 },
-                ..ScrobblingSettings::default()
+                ..Settings::default()
             },
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
         store.save_settings(&settings).expect("save settings");
 
@@ -339,7 +315,7 @@ mod tests {
         );
         assert_eq!(
             secrets
-                .load_secret(&SecretKey::LastFmSession)
+                .load_secret(&scrobbling_secret_key(LASTFM_SESSION))
                 .expect("load lastfm session"),
             Some("lastfm-session".to_string())
         );
@@ -350,48 +326,82 @@ mod tests {
     }
 
     #[test]
+    fn config_scrobbling_secret_key_remains_load_compatible() {
+        let path = std::env::temp_dir().join(format!(
+            "rufin-scrobbling-secret-{}-{}.json",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            r#"{
+  "format": "config-base64",
+  "secrets": {
+    "scope:scope-1:scrobbling:lastfm-session": "bGFzdGZtLXNlc3Npb24="
+  }
+}
+"#,
+        )
+        .expect("seed existing config secret file");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let secrets: Arc<dyn SecretStore> =
+            Arc::new(ConfigSecretStore::with_scope(path.clone(), "scope-1"));
+
+        let settings = load_settings_with_secrets(&store, &secrets);
+
+        assert_eq!(settings.scrobbling.lastfm.session_key, "lastfm-session");
+        fs::remove_file(path).expect("remove config secret file");
+    }
+
+    #[test]
     fn settings_persist_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
-        let settings = AppSettings {
+        let settings = StoredSettings {
             lastfm_api_key: "cover-key".to_string(),
-            scrobbling: ScrobblingSettings {
-                lastfm: AudioscrobblerScrobbleSettings {
+            scrobbling: Settings {
+                lastfm: AudioscrobblerSettings {
                     api_key: "scrobble-key".to_string(),
                     api_secret: "lastfm-secret".to_string(),
                     session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerScrobbleSettings::default()
+                    ..AudioscrobblerSettings::default()
                 },
-                librefm: AudioscrobblerScrobbleSettings {
+                librefm: AudioscrobblerSettings {
                     session_key: "librefm-session".to_string(),
-                    ..AudioscrobblerScrobbleSettings::default()
+                    ..AudioscrobblerSettings::default()
                 },
-                listenbrainz: ListenBrainzScrobbleSettings {
+                listenbrainz: ListenBrainzSettings {
                     user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzScrobbleSettings::default()
+                    ..ListenBrainzSettings::default()
                 },
             },
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
 
-        controller.save_settings(&settings).expect("save settings");
+        let committed = controller.save_settings(&settings).expect("save settings");
 
         let persisted = store.load_settings();
         assert_eq!(persisted.lastfm_api_key, "cover-key");
-        assert_eq!(persisted.scrobbling.lastfm.api_key, "cover-key");
+        assert!(persisted.scrobbling.lastfm.api_key.is_empty());
         assert_eq!(persisted.scrobbling.lastfm.api_secret, "");
         assert_eq!(persisted.scrobbling.lastfm.session_key, "");
         assert_eq!(persisted.scrobbling.librefm.session_key, "");
         assert_eq!(persisted.scrobbling.listenbrainz.user_token, "");
 
-        let loaded = controller.load_settings_with_scrobbling_secrets();
-        assert_eq!(loaded.scrobbling.lastfm.api_secret, "lastfm-secret");
-        assert_eq!(loaded.scrobbling.lastfm.session_key, "lastfm-session");
-        assert_eq!(loaded.scrobbling.librefm.session_key, "librefm-session");
+        assert_eq!(committed.scrobbling.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(committed.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
-            loaded.scrobbling.listenbrainz.user_token,
+            committed.scrobbling_runtime_settings().lastfm.api_key,
+            "cover-key"
+        );
+        assert_eq!(committed.scrobbling.librefm.session_key, "librefm-session");
+        assert_eq!(
+            committed.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
     }
@@ -401,15 +411,15 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(FailingSecretStore);
         let controller = SettingsController::new(store.clone(), secrets);
-        let settings = AppSettings {
-            scrobbling: ScrobblingSettings {
-                lastfm: AudioscrobblerScrobbleSettings {
+        let settings = StoredSettings {
+            scrobbling: Settings {
+                lastfm: AudioscrobblerSettings {
                     session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerScrobbleSettings::default()
+                    ..AudioscrobblerSettings::default()
                 },
-                ..ScrobblingSettings::default()
+                ..Settings::default()
             },
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
 
         let error = controller
@@ -428,18 +438,18 @@ mod tests {
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         secrets
-            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
+            .save_secret(&scrobbling_secret_key(LASTFM_SESSION), "lastfm-session")
             .expect("seed secret");
-        let settings = AppSettings {
+        let settings = StoredSettings {
             language: "en".to_string(),
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
 
         controller.save_settings(&settings).expect("save settings");
 
         assert_eq!(
             secrets
-                .load_secret(&SecretKey::LastFmSession)
+                .load_secret(&scrobbling_secret_key(LASTFM_SESSION))
                 .expect("load secret"),
             Some("lastfm-session".to_string())
         );
@@ -450,7 +460,7 @@ mod tests {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let controller = SettingsController::new(store.clone(), secrets);
-        let mut current = AppSettings::default();
+        let mut current = StoredSettings::default();
         current.sources.selected = Some(LibrarySourceSelection::Local);
         current.sources.local_folders = vec![LocalLibraryFolder {
             path: "/music".to_string(),
@@ -460,12 +470,12 @@ mod tests {
         current.secret_scope_id = "current-scope".to_string();
         store.save_settings(&current).expect("seed settings");
 
-        let stale = AppSettings {
+        let stale = StoredSettings {
             language: "tr".to_string(),
             jellyfin_device_id: "rufin-stale".to_string(),
             secret_storage_mode: SecretStorageMode::SystemKeyring,
             secret_scope_id: "stale-scope".to_string(),
-            ..AppSettings::default()
+            ..StoredSettings::default()
         };
         controller.save_settings(&stale).expect("save settings");
 
@@ -484,9 +494,9 @@ mod tests {
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         secrets
-            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
+            .save_secret(&scrobbling_secret_key(LASTFM_SESSION), "lastfm-session")
             .expect("seed secret");
-        let settings = AppSettings::default();
+        let settings = StoredSettings::default();
 
         controller
             .save_settings_with_scrobbling_deletes(&settings)
@@ -494,7 +504,7 @@ mod tests {
 
         assert_eq!(
             secrets
-                .load_secret(&SecretKey::LastFmSession)
+                .load_secret(&scrobbling_secret_key(LASTFM_SESSION))
                 .expect("load secret"),
             None
         );
