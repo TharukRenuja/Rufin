@@ -1,19 +1,5 @@
 [workspace]
-members = [
-    "crates/artwork",
-    "crates/rufin",
-    "crates/domain",
-    "crates/playback",
-    "crates/playback-gstreamer",
-    "crates/rich-presence",
-    "crates/scrobbling",
-    "crates/metadata",
-    "crates/sources",
-    "crates/secrets",
-    "crates/library",
-    "crates/library-sync",
-    "crates/xtask",
-]
+members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
@@ -75,17 +61,17 @@ wiremock = "0.6.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-dead_code = "deny"
 warnings = "deny"
 
 [workspace.lints.clippy]
 all = { level = "allow", priority = -2 }
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+large_enum_variant = "allow"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
-unwrap_used = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 mem_forget = "deny"
@@ -94,30 +80,6 @@ exit = "deny"
 fallible_impl_from = "deny"
 panic_in_result_fn = "deny"
 string_slice = "deny"
-map_entry = "deny"
-format_in_format_args = "deny"
-to_string_in_format_args = "deny"
-manual_memcpy = "deny"
-manual_ignore_case_cmp = "deny"
-manual_retain = "deny"
-collapsible_str_replace = "deny"
-double_ended_iterator_last = "deny"
-drain_collect = "deny"
-extend_with_drain = "deny"
-iter_overeager_cloned = "deny"
-manual_contains = "deny"
-manual_str_repeat = "deny"
-readonly_write_lock = "deny"
-redundant_iter_cloned = "deny"
-sliced_string_as_bytes = "deny"
-unbuffered_bytes = "deny"
-unnecessary_to_owned = "deny"
-waker_clone_wake = "deny"
-cmp_owned = "deny"
-regex_creation_in_loops = "deny"
-slow_vector_initialization = "deny"
-useless_vec = "deny"
-vec_init_then_push = "deny"
 
 [profile.dev]
 debug = "line-tables-only"

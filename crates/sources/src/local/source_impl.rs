@@ -677,7 +677,6 @@ pub(super) fn searchable_matches<'a>(
 ) -> bool {
     values.any(|value| normalize_search(value).contains(query))
 }
-#[allow(dead_code)]
 pub(super) fn decode_cover_id(item_id: &str) -> Option<String> {
     item_id
         .strip_prefix("local:cover:")

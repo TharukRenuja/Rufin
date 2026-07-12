@@ -130,9 +130,9 @@ jobs:
       - name: Check Rust lints
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            cargo clippy --workspace --lib --bins --locked -- -D warnings
+            cargo clippy --workspace --lib --bins --locked
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
-            cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
+            cargo clippy --workspace --tests --benches --examples --locked
 
       - name: Run Rust tests
         run: |

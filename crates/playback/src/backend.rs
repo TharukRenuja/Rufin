@@ -171,7 +171,6 @@ pub enum BackendState {
     Playing,
 }
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum BackendCommand {
     Start {
         run: RunId,
