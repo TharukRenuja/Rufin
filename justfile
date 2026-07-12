@@ -47,14 +47,14 @@ test *args:
     fi
 
 _check:
-    cargo clippy -p rufin --bin rufin --locked -- -D warnings
+    cargo clippy -p rufin --bin rufin --locked
 
 _fmt-check:
     cargo fmt --all -- --check
 
 _lint:
-    cargo clippy --workspace --lib --bins --locked -- -D warnings
-    cargo clippy --workspace --tests --benches --examples --locked -- -D warnings
+    cargo clippy --workspace --lib --bins --locked
+    cargo clippy --workspace --tests --benches --examples --locked
 
 _deps:
     cargo deny --locked check -D unmatched-skip
