@@ -103,8 +103,7 @@ nix run github:screwys/Rufin/vX.Y.Z
 
 ## Building locally
 
-Install the usual desktop app build dependencies. Package names vary by distro,
-but you need:
+Dependencies:
 
 - Rust 1.95 or newer, with Cargo
 - just
@@ -138,11 +137,9 @@ For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
 and `gstreamer1-plugin-libav`.
 
 Distrobox or Toolbx is a good option if you want to keep these packages out of
-your host system (Especially if you are on a Fedora Silverblue image like me). Create a normal development container, install the same
-packages there, and use it for building and testing. Running Rufin from the
-container can work too, but it can be tricky.
+your host system (Especially if you are on a Fedora Silverblue image like me).
 
-If you already use Nix, the dev shell is an easy alternative:
+If you have Nix available, dev shell would be the easiest option:
 
 ```bash
 nix develop
@@ -202,9 +199,7 @@ For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_
 
 ## Not in scope
 
-- **Integration with sources that are hostile to third party clients:** Not in scope due to technical and philosophical reasons. These easily make up the majority of known music apps. Support for these would allow a larger user base, but it would be a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take more than a day to deploy. The other point is, I don't want this app to have anything to do with services that dictate their users what to do with their music.
-
-- **Built-in full metadata editor:** A simple metadata editor is a convenience to have in a music client and some simple editing functionality can be considered, but it will always be inferior to full metadata editors that can support custom user scripts, which just can't be bundled inside the app. An integration like "Open on Picard" could be possible in the future, but it will wait until we have more information on [flatpak-next](https://blog.sebastianwick.net/posts/flatpak-happenings/) to see if it can be done easily. 
+- **Integration with sources that are hostile to third party clients:** Not in scope due to technical and philosophical reasons. These easily make up the majority of known music apps. Support for these would allow a larger user base, but it would be a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take more than a day to deploy. 
 
 - **Changing the operational performance significantly:** Rufin is meant to be a fast and visual client. Visual here refers to overall aesthethic; pages are meant to have covers here and there. The app keeps these covers in memory, up to a limit, to do less work of decoding again. Therefore it takes advantage of memory at all times. So far, it usually remains at 370~ MiB on a library with few thousand tracks, and it should not meaningfully go so much beyond on larger libraries. This is inline with other native clients with similar features, and significantly less than Electron-based clients that can easily use 1-1.5 GB. Therefore it can be `lightweight` in the sense that it tries to offer what these heavier apps do natively, though it is not lightweight like plenty of QT-based clients that can run with <100~ MiB memory usage. 
 
@@ -212,6 +207,10 @@ For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_
 
 - **Almost anything that doesn't collide with 3 points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
 
+- **Integration with other self hosted services**: Rufin aims to be your own client truly. In future, there are plans for integration with other self-hosted scrobbling servers, or other controller servers to sync Rufin between different devices, directly under your own control.
+
+- **More packaging alternatives**: Since this is a native client, we want to offer distribution specific packaging formats. As long as there is an active tester, these can be maintained officially from this repository.
+  
 - **Basic hardening for privacy and security:** See [SECURITY.md](SECURITY.md).
 
 # Contributing
@@ -226,9 +225,11 @@ You can also contribute by translating the app on [Weblate](https://hosted.webla
 
 # Credits
 
-Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/), [gtk-rs](https://gtk-rs.org/), [GStreamer](https://gstreamer.freedesktop.org/)
+Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/), [gtk-rs](https://gtk-rs.org/) and [GStreamer](https://gstreamer.freedesktop.org/)
 
-This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), as in the overall design and in how certain parts should work. It aims to bring a similar experience, altough not as feature-rich, to a native desktop app without a web stack.
+Rufin is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), and a lot of design decisions are directly borrowed; as much we can achieve natively.
+
+Player backend design and Smart Playlists are inspired from [Strawberry](https://github.com/strawberrymusicplayer/strawberry).
 
 ## Translation credits
 
