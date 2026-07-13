@@ -221,6 +221,12 @@ fn binding_identity_separates_visual_changes_from_rerequest_changes() {
     assert_eq!(initial.visual, network_identity.visual);
     assert_ne!(initial.request, network_identity.request);
 
+    let lastfm_only = ArtworkRequest::new(candidates.clone(), 96, 96)
+        .with_external(ExternalPolicy::new(false, true, "key").with_musicbrainz(false));
+    let lastfm_only_identity = artwork.binding_identity(&source, &lastfm_only);
+    assert_eq!(network_identity.visual, lastfm_only_identity.visual);
+    assert_ne!(network_identity.request, lastfm_only_identity.request);
+
     artwork.retry_external().expect("retry external artwork");
     let retried = artwork.binding_identity(&source, &network);
     assert_eq!(network_identity.visual, retried.visual);

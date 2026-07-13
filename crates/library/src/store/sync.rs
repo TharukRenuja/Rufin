@@ -814,6 +814,25 @@ impl Store {
         generation: i64,
         mappings: &[SourceObjectMapping],
     ) -> StoreResult<()> {
+        let mut current_statement = self.connection.prepare(
+            "SELECT source_object_id, entity_kind, entity_id, metadata_json
+             FROM source_objects
+             WHERE source_id = ?1 AND source_object_kind = 'source'",
+        )?;
+        let current = collect_rows(current_statement.query_map(
+            params![source_id.as_str()],
+            |row| {
+                let source_object_id = row.get::<_, String>(0)?;
+                let kind = row.get::<_, String>(1)?;
+                let entity_id = row.get::<_, String>(2)?;
+                let metadata_is_empty = row.get::<_, String>(3)? == "{}";
+                Ok(SourceEntityKind::parse(&kind)
+                    .map(|kind| ((source_object_id, kind), (entity_id, metadata_is_empty))))
+            },
+        )?)?
+        .into_iter()
+        .flatten()
+        .collect::<HashMap<_, _>>();
         let mut statement = self.connection.prepare(
             "INSERT INTO source_objects (
                 source_id, source_object_id, entity_kind, entity_id,
@@ -830,6 +849,18 @@ impl Store {
                 OR source_objects.metadata_json != excluded.metadata_json",
         )?;
         for mapping in mappings {
+            let key = (
+                mapping.source_object_id.as_str().to_string(),
+                mapping.entity_kind,
+            );
+            if current
+                .get(&key)
+                .is_some_and(|(entity_id, metadata_is_empty)| {
+                    entity_id == &mapping.entity_id && *metadata_is_empty
+                })
+            {
+                continue;
+            }
             statement.execute(params![
                 source_id.as_str(),
                 mapping.source_object_id,
@@ -2078,6 +2109,66 @@ mod tests {
                 .expect("commit sync");
             assert_eq!(committed.delta.is_empty(), expected_empty);
         }
+    }
+
+    #[test]
+    fn large_identical_full_sync_stays_bounded() {
+        let store = Store::open_memory().expect("open store");
+        let saved = stored_source();
+        store.save_source(&saved).expect("save source");
+        let album = album(1);
+        let tracks = (1..=2_500)
+            .map(|number| track(number, &album))
+            .collect::<Vec<_>>();
+        let build_sync = || LibrarySync {
+            albums: vec![album.clone()],
+            tracks: tracks.clone(),
+            artists: Vec::new(),
+            album_artists: Vec::new(),
+            genres: Vec::new(),
+            playlists: Vec::new(),
+            home_sections: Vec::new(),
+            mappings: std::iter::once(SourceObjectMapping {
+                source_object_id: album.id.as_str().to_string(),
+                entity_kind: SourceEntityKind::Album,
+                entity_id: album.id.as_str().to_string(),
+            })
+            .chain(tracks.iter().map(|track| SourceObjectMapping {
+                source_object_id: track.id.as_str().to_string(),
+                entity_kind: SourceEntityKind::Track,
+                entity_id: track.id.as_str().to_string(),
+            }))
+            .collect(),
+            coverage: SyncCoverage::All {
+                music_folders: Vec::new(),
+            },
+            local_access: None,
+        };
+
+        let generation = store.begin_sync(&saved.source_id).expect("begin seed sync");
+        let revision = store
+            .source_cache_revision(&saved.source_id)
+            .expect("cache revision");
+        store
+            .commit_library_sync(&saved.source_id, generation, revision, build_sync())
+            .expect("commit seed sync");
+
+        let generation = store
+            .begin_sync(&saved.source_id)
+            .expect("begin measured sync");
+        let revision = store
+            .source_cache_revision(&saved.source_id)
+            .expect("cache revision");
+        let started = std::time::Instant::now();
+        let commit = store
+            .commit_library_sync(&saved.source_id, generation, revision, build_sync())
+            .expect("commit measured sync");
+        assert!(commit.delta.is_empty());
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "a warm 2,500-track no-op sync took {elapsed:?}"
+        );
     }
 
     #[test]

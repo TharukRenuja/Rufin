@@ -92,18 +92,19 @@ fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String>
 }
 
 fn wait_for_musicbrainz_slot() {
-    static LAST_REQUEST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
-    let lock = LAST_REQUEST.get_or_init(|| Mutex::new(None));
-    let Ok(mut last_request) = lock.lock() else {
+    static NEXT_REQUEST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let lock = NEXT_REQUEST.get_or_init(|| Mutex::new(None));
+    let Ok(mut next_request) = lock.lock() else {
         return;
     };
-    if let Some(last_request) = *last_request {
-        let elapsed = last_request.elapsed();
-        if elapsed < MUSICBRAINZ_MIN_INTERVAL {
-            std::thread::sleep(MUSICBRAINZ_MIN_INTERVAL - elapsed);
-        }
+    let now = Instant::now();
+    let slot = next_request.map_or(now, |next| next.max(now));
+    *next_request = Some(slot + MUSICBRAINZ_MIN_INTERVAL);
+    drop(next_request);
+    let delay = slot.saturating_duration_since(now);
+    if !delay.is_zero() {
+        std::thread::sleep(delay);
     }
-    *last_request = Some(Instant::now());
 }
 
 fn read_response_bounded(

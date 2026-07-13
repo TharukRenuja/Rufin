@@ -3,6 +3,7 @@ use std::{
     fs,
     hash::Hash,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use crate::{
@@ -436,8 +437,12 @@ pub struct CachedMoodDetail {
     pub tracks: Vec<Track>,
 }
 
+#[derive(Clone, Default)]
+pub struct StoreWriteGate(Arc<Mutex<()>>);
+
 pub struct Store {
     connection: Connection,
+    write_gate: StoreWriteGate,
 }
 
 mod activity;

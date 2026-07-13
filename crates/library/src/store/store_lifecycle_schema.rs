@@ -819,20 +819,30 @@ fn rename_column_if_exists(store: &Store, table: &str, from: &str, to: &str) -> 
 }
 
 impl Store {
+    #[cfg(test)]
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
+        Self::open_with_write_gate(path, StoreWriteGate::default())
+    }
+    pub fn open_with_write_gate(
+        path: impl AsRef<Path>,
+        write_gate: StoreWriteGate,
+    ) -> StoreResult<Self> {
         let path = path.as_ref();
-        let mut store = Self::open_file(path)?;
+        let mut store = Self::open_file(path, write_gate.clone())?;
         if store.needs_reset()? {
             drop(store);
             reset_database_files(path)?;
-            store = Self::open_file(path)?;
+            store = Self::open_file(path, write_gate)?;
         }
         store.migrate()?;
         Ok(store)
     }
     pub fn open_memory() -> StoreResult<Self> {
         let connection = Connection::open_in_memory()?;
-        let store = Self { connection };
+        let store = Self {
+            connection,
+            write_gate: StoreWriteGate::default(),
+        };
         store.configure_pragmas(true)?;
         store.initialize_schema()?;
         Ok(store)
@@ -842,7 +852,10 @@ impl Store {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         connection.busy_timeout(Duration::ZERO)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            write_gate: StoreWriteGate::default(),
+        })
     }
     pub fn migrate(&self) -> StoreResult<()> {
         if !self.database_has_objects()? {
@@ -861,25 +874,22 @@ impl Store {
         if migrations.is_empty() {
             return Ok(());
         }
-        self.connection.execute_batch("BEGIN IMMEDIATE")?;
-        let migration_result = (|| {
+        self.write_batch(|_| {
             for migration in migrations {
                 (migration.run)(self)?;
                 self.connection
                     .pragma_update(None, "user_version", migration.to_version())?;
             }
+            self.initialize_schema()?;
             Ok(())
-        })();
-        if let Err(error) = migration_result {
-            let _rollback_result = self.connection.execute_batch("ROLLBACK");
-            return Err(error);
-        }
-        self.connection.execute_batch("COMMIT")?;
-        self.initialize_schema()
+        })
     }
-    pub(super) fn open_file(path: &Path) -> StoreResult<Self> {
+    pub(super) fn open_file(path: &Path, write_gate: StoreWriteGate) -> StoreResult<Self> {
         let connection = Connection::open(path)?;
-        let store = Self { connection };
+        let store = Self {
+            connection,
+            write_gate,
+        };
         store.configure_pragmas(true)?;
         Ok(store)
     }
@@ -1071,6 +1081,9 @@ impl Store {
         Ok(())
     }
     pub(super) fn initialize_schema(&self) -> StoreResult<()> {
+        self.write_batch(|_| self.initialize_schema_inside_write())
+    }
+    fn initialize_schema_inside_write(&self) -> StoreResult<()> {
         self.connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS playback_checkpoints (
@@ -1749,7 +1762,10 @@ impl Store {
         Ok(())
     }
     pub fn save_source(&self, source: &StoredSource) -> StoreResult<()> {
-        save_source_on_connection(&self.connection, source)
+        self.write_batch(|connection| {
+            save_source_on_connection(connection, source)?;
+            self.seed_smart_playlist_defaults_inside_write(&source.source_id)
+        })
     }
     pub fn save_source_settings_update(
         &self,
@@ -1779,20 +1795,23 @@ impl Store {
         })
     }
     pub fn set_active_source(&self, source_id: &SourceId) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO active_source (singleton, source_id)
-            VALUES (1, ?1)
-            ON CONFLICT(singleton) DO UPDATE SET source_id = excluded.source_id
-            ",
-            params![source_id.as_str()],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                INSERT INTO active_source (singleton, source_id)
+                VALUES (1, ?1)
+                ON CONFLICT(singleton) DO UPDATE SET source_id = excluded.source_id
+                ",
+                params![source_id.as_str()],
+            )?;
+            Ok(())
+        })
     }
     pub fn clear_active_source(&self) -> StoreResult<()> {
-        self.connection
-            .execute("DELETE FROM active_source WHERE singleton = 1", [])?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute("DELETE FROM active_source WHERE singleton = 1", [])?;
+            Ok(())
+        })
     }
     pub fn active_source(&self) -> StoreResult<Option<StoredSource>> {
         self.connection
@@ -2107,19 +2126,21 @@ impl Store {
         source_id: &SourceId,
         folder_id: Option<&MusicFolderId>,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO source_library_preferences (
-                source_id, selected_music_folder_id, updated_at
-            )
-            VALUES (?1, ?2, CURRENT_TIMESTAMP)
-            ON CONFLICT(source_id) DO UPDATE SET
-                selected_music_folder_id = excluded.selected_music_folder_id,
-                updated_at = excluded.updated_at
-            ",
-            params![source_id.as_str(), folder_id.map(MusicFolderId::as_str)],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                INSERT INTO source_library_preferences (
+                    source_id, selected_music_folder_id, updated_at
+                )
+                VALUES (?1, ?2, CURRENT_TIMESTAMP)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    selected_music_folder_id = excluded.selected_music_folder_id,
+                    updated_at = excluded.updated_at
+                ",
+                params![source_id.as_str(), folder_id.map(MusicFolderId::as_str)],
+            )?;
+            Ok(())
+        })
     }
     pub fn upsert_track_music_folder_memberships(
         &self,
@@ -2311,44 +2332,47 @@ impl Store {
             .map_err(StoreError::from)
     }
     pub fn recover_interrupted_syncs(&self) -> StoreResult<usize> {
-        self.connection
-            .execute(
-                "
+        self.write_batch(|connection| {
+            connection
+                .execute(
+                    "
                 UPDATE sync_state
                 SET status = 'error',
                     last_error = 'Previous sync was interrupted.'
                 WHERE status = 'running'
                 ",
-                [],
-            )
-            .map_err(StoreError::from)
+                    [],
+                )
+                .map_err(StoreError::from)
+        })
     }
     pub fn begin_sync(&self, source_id: &SourceId) -> StoreResult<i64> {
-        let current = self
-            .connection
-            .query_row(
-                "SELECT generation FROM sync_state WHERE source_id = ?1",
-                params![source_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .unwrap_or(0);
-        let generation = current + 1;
-        self.connection.execute(
-            "
-            INSERT INTO sync_state (
-                source_id, generation, status, last_started_at, last_error
-            )
-            VALUES (?1, ?2, 'running', CURRENT_TIMESTAMP, NULL)
-            ON CONFLICT(source_id) DO UPDATE SET
-                generation = excluded.generation,
-                status = excluded.status,
-                last_started_at = excluded.last_started_at,
-                last_error = NULL
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        Ok(generation)
+        self.write_batch(|connection| {
+            let current = connection
+                .query_row(
+                    "SELECT generation FROM sync_state WHERE source_id = ?1",
+                    params![source_id.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            let generation = current + 1;
+            connection.execute(
+                "
+                INSERT INTO sync_state (
+                    source_id, generation, status, last_started_at, last_error
+                )
+                VALUES (?1, ?2, 'running', CURRENT_TIMESTAMP, NULL)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    generation = excluded.generation,
+                    status = excluded.status,
+                    last_started_at = excluded.last_started_at,
+                    last_error = NULL
+                ",
+                params![source_id.as_str(), generation],
+            )?;
+            Ok(generation)
+        })
     }
 
     /// Check that this sync is still current after starting its database write

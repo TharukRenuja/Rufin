@@ -45,6 +45,7 @@ impl SourceImages {
 pub struct ExternalPolicy {
     pub allow_cached: bool,
     pub allow_network: bool,
+    pub allow_musicbrainz: bool,
     pub lastfm_api_key: String,
 }
 
@@ -53,14 +54,21 @@ impl ExternalPolicy {
         Self {
             allow_cached,
             allow_network,
+            allow_musicbrainz: true,
             lastfm_api_key: lastfm_api_key.into(),
         }
+    }
+
+    pub const fn with_musicbrainz(mut self, allow: bool) -> Self {
+        self.allow_musicbrainz = allow;
+        self
     }
 
     pub const fn disabled() -> Self {
         Self {
             allow_cached: false,
             allow_network: false,
+            allow_musicbrainz: false,
             lastfm_api_key: String::new(),
         }
     }

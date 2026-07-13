@@ -14,9 +14,18 @@ impl Store {
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
         let mut changed = Vec::new();
+        let album_ids = albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>();
+        let mut existing = self
+            .load_albums_for_delta(source_id, &album_ids)?
+            .into_iter()
+            .map(|album| (album.id.clone(), album))
+            .collect::<HashMap<_, _>>();
         for album in albums {
             let delta_album = canonical_album_for_write(&self.connection, source_id, album)?;
-            match self.load_album_for_delta(source_id, &album.id)? {
+            match existing.remove(&album.id) {
                 Some(existing) => {
                     if !album_observation_changed(&existing, &delta_album) {
                         continue;
@@ -82,8 +91,17 @@ impl Store {
         let mut delta = LibraryDelta::default();
         let mut playlist_stat_track_ids = Vec::<TrackId>::new();
         let mut changed = Vec::new();
+        let track_ids = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let mut existing = self
+            .load_raw_tracks_by_ids(source_id, &track_ids)?
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect::<HashMap<_, _>>();
         for track in tracks {
-            match self.load_track_for_delta(source_id, &track.id)? {
+            match existing.remove(&track.id) {
                 Some(existing) => {
                     if !track_changed(&existing, track) {
                         continue;
@@ -211,9 +229,18 @@ impl Store {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| artists.iter().collect());
+        let artist_ids = delta_artists
+            .iter()
+            .map(|artist| artist.id.clone())
+            .collect::<Vec<_>>();
+        let mut existing = self
+            .load_artists_for_delta(source_id, &artist_ids, album_artist)?
+            .into_iter()
+            .map(|artist| (artist.id.clone(), artist))
+            .collect::<HashMap<_, _>>();
         let mut changed_input_ids = HashSet::new();
         for artist in delta_artists {
-            match self.load_artist_for_delta(source_id, &artist.id, album_artist)? {
+            match existing.remove(&artist.id) {
                 Some(existing) if !artist_projection_changed(&existing, artist) => continue,
                 Some(existing) => {
                     let entity = if album_artist {
@@ -266,8 +293,17 @@ impl Store {
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
         let mut changed = Vec::new();
+        let genre_ids = genres
+            .iter()
+            .map(|genre| genre.id.clone())
+            .collect::<Vec<_>>();
+        let mut existing = self
+            .load_genres_for_delta(source_id, &genre_ids)?
+            .into_iter()
+            .map(|genre| (genre.id.clone(), genre))
+            .collect::<HashMap<_, _>>();
         for genre in genres {
-            match self.load_genre_for_delta(source_id, &genre.id)? {
+            match existing.remove(&genre.id) {
                 Some(existing) if genre_delta_unchanged(&existing, genre) => continue,
                 Some(existing) => {
                     if existing.image_ref != genre.image_ref {
@@ -293,8 +329,17 @@ impl Store {
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
         let mut changed = Vec::new();
+        let playlist_ids = playlists
+            .iter()
+            .map(|playlist| playlist.id.clone())
+            .collect::<Vec<_>>();
+        let mut existing = self
+            .load_playlists_for_delta(source_id, &playlist_ids)?
+            .into_iter()
+            .map(|playlist| (playlist.id.clone(), playlist))
+            .collect::<HashMap<_, _>>();
         for playlist in playlists {
-            match self.load_playlist_for_delta(source_id, &playlist.id)? {
+            match existing.remove(&playlist.id) {
                 Some(existing) if playlist_summary_matches(&existing, playlist) => continue,
                 Some(existing) => {
                     if existing.image_ref != playlist.image_ref {
@@ -421,36 +466,40 @@ impl Store {
         generation: i64,
         error: &str,
     ) -> StoreResult<bool> {
-        let updated = self.connection.execute(
-            "
-            UPDATE sync_state
-            SET status = 'error',
-                last_error = ?2
-            WHERE source_id = ?1
-              AND generation = ?3
-              AND status = 'running'
-            ",
-            params![source_id.as_str(), error, generation],
-        )?;
-        Ok(updated > 0)
+        self.write_batch(|connection| {
+            let updated = connection.execute(
+                "
+                UPDATE sync_state
+                SET status = 'error',
+                    last_error = ?2
+                WHERE source_id = ?1
+                  AND generation = ?3
+                  AND status = 'running'
+                ",
+                params![source_id.as_str(), error, generation],
+            )?;
+            Ok(updated > 0)
+        })
     }
     pub fn finish_sync_without_commit(
         &self,
         source_id: &SourceId,
         generation: i64,
     ) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            UPDATE sync_state
-            SET status = 'idle',
-                last_error = NULL
-            WHERE source_id = ?1
-              AND generation = ?2
-              AND status = 'running'
-            ",
-            params![source_id.as_str(), generation],
-        )?;
-        Ok(())
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                UPDATE sync_state
+                SET status = 'idle',
+                    last_error = NULL
+                WHERE source_id = ?1
+                  AND generation = ?2
+                  AND status = 'running'
+                ",
+                params![source_id.as_str(), generation],
+            )?;
+            Ok(())
+        })
     }
     pub fn clear_library_cache(&self, source_id: &SourceId) -> StoreResult<()> {
         self.write_batch(|connection| {
@@ -1462,69 +1511,63 @@ impl Store {
 }
 
 impl Store {
-    pub(super) fn load_album_for_delta(
+    fn load_albums_for_delta(
         &self,
         source_id: &SourceId,
-        album_id: &AlbumId,
-    ) -> StoreResult<Option<Album>> {
-        let mut album = self
-            .connection
-            .query_row(
-                "
-                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
-                       last_played, play_count, user_rating, track_count, duration_seconds,
-                       favorite, color_seed, image_item_id, image_tag,
-                       release_types_json, is_compilation, musicbrainz_album_id,
-                       musicbrainz_release_group_id
-                FROM albums
-                WHERE source_id = ?1 AND album_id = ?2
-                ",
-                params![source_id.as_str(), album_id.as_str()],
-                album_from_row,
-            )
-            .optional()?;
-        if let Some(album) = album.as_mut() {
-            self.attach_album_genres(source_id, std::slice::from_mut(album))?;
-            self.attach_album_release_metadata(source_id, std::slice::from_mut(album))?;
-            let credits = self.load_artist_links(
-                source_id,
-                "album_artist_links",
-                "album_id",
-                &[album.id.as_str().to_string()],
-            )?;
+        album_ids: &[AlbumId],
+    ) -> StoreResult<Vec<Album>> {
+        if album_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut albums = self.load_raw_album_rows_by_ids(source_id, album_ids)?;
+        self.attach_album_genres(source_id, &mut albums)?;
+        self.attach_album_release_metadata(source_id, &mut albums)?;
+        let ids = albums
+            .iter()
+            .map(|album| album.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        let credits = self.load_artist_links(source_id, "album_artist_links", "album_id", &ids)?;
+        for album in &mut albums {
             album.album_artist_credits =
                 credits.get(album.id.as_str()).cloned().unwrap_or_default();
         }
-        Ok(album)
+        Ok(albums)
     }
 
-    pub(super) fn load_artist_for_delta(
+    fn load_artists_for_delta(
         &self,
         source_id: &SourceId,
-        artist_id: &ArtistId,
+        artist_ids: &[ArtistId],
         album_artist: bool,
-    ) -> StoreResult<Option<Artist>> {
+    ) -> StoreResult<Vec<Artist>> {
+        if artist_ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let table = if album_artist {
             "album_artists"
         } else {
             "artists"
         };
-        let sql = format!(
-            "
-            SELECT artist_id, name, album_count, track_count, favorite,
-                   last_played, play_count, user_rating, image_item_id, image_tag
-            FROM {table}
-            WHERE source_id = ?1 AND artist_id = ?2
-            "
-        );
-        self.connection
-            .query_row(
-                &sql,
-                params![source_id.as_str(), artist_id.as_str()],
-                artist_from_row,
-            )
-            .optional()
-            .map_err(StoreError::from)
+        let mut artists = Vec::with_capacity(artist_ids.len());
+        for chunk in artist_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT artist_id, name, album_count, track_count, favorite,
+                        last_played, play_count, user_rating, image_item_id, image_tag
+                 FROM {table}
+                 WHERE source_id = ? AND artist_id IN ({placeholders})"
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(source_id.as_str());
+            values.extend(chunk.iter().map(ArtistId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            artists.extend(collect_rows(
+                statement.query_map(params_from_iter(values), artist_from_row)?,
+            )?);
+        }
+        Ok(artists)
     }
 
     pub(super) fn load_track_for_delta(
@@ -1554,25 +1597,64 @@ impl Store {
         Ok(track)
     }
 
-    fn load_genre_for_delta(
+    fn load_genres_for_delta(
         &self,
         source_id: &SourceId,
-        genre_id: &GenreId,
-    ) -> StoreResult<Option<Genre>> {
-        let genre = self
-            .connection
-            .query_row(
-                "
-                SELECT genre_id, name, album_count, track_count, duration_seconds,
-                       image_item_id, image_tag
-                FROM genres
-                WHERE source_id = ?1 AND genre_id = ?2
-                ",
-                params![source_id.as_str(), genre_id.as_str()],
-                genre_from_row,
-            )
-            .optional()?;
-        Ok(genre)
+        genre_ids: &[GenreId],
+    ) -> StoreResult<Vec<Genre>> {
+        if genre_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut genres = Vec::with_capacity(genre_ids.len());
+        for chunk in genre_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT genre_id, name, album_count, track_count, duration_seconds,
+                        image_item_id, image_tag
+                 FROM genres
+                 WHERE source_id = ? AND genre_id IN ({placeholders})"
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(source_id.as_str());
+            values.extend(chunk.iter().map(GenreId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            genres.extend(collect_rows(
+                statement.query_map(params_from_iter(values), genre_from_row)?,
+            )?);
+        }
+        Ok(genres)
+    }
+
+    fn load_playlists_for_delta(
+        &self,
+        source_id: &SourceId,
+        playlist_ids: &[PlaylistId],
+    ) -> StoreResult<Vec<Playlist>> {
+        if playlist_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut playlists = Vec::with_capacity(playlist_ids.len());
+        for chunk in playlist_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
+                        owner, image_item_id, image_tag
+                 FROM playlists
+                 WHERE source_id = ? AND playlist_id IN ({placeholders})"
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(source_id.as_str());
+            values.extend(chunk.iter().map(PlaylistId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            playlists.extend(collect_rows(
+                statement.query_map(params_from_iter(values), playlist_from_row)?,
+            )?);
+        }
+        Ok(playlists)
     }
 
     pub(super) fn load_playlist_for_delta(

@@ -135,6 +135,23 @@ impl CandidateSet {
         candidates
     }
 
+    pub fn album_facts(
+        artist: &str,
+        album: &str,
+        musicbrainz_release_group_id: Option<&str>,
+        musicbrainz_album_id: Option<&str>,
+    ) -> Self {
+        let mut candidates = Self::new();
+        candidates.push_album(
+            None,
+            musicbrainz_release_group_id,
+            musicbrainz_album_id,
+            artist,
+            album,
+        );
+        candidates
+    }
+
     fn collection(
         representative_albums: &[AlbumArtwork],
         direct_ref: Option<&ImageRef>,

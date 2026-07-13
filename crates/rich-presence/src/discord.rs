@@ -2,9 +2,10 @@ use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
+#[cfg(all(unix, not(test)))]
+use std::env;
 #[cfg(unix)]
 use std::{
-    env,
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
@@ -45,7 +46,7 @@ const OP_PONG: u32 = 4;
 pub enum DisplayType {
     #[serde(rename = "artist")]
     Artist,
-    #[serde(rename = "application", alias = "app", alias = "feishin")]
+    #[serde(rename = "application", alias = "app")]
     #[default]
     Application,
     #[serde(rename = "song")]
@@ -135,10 +136,8 @@ impl PlaybackState {
 pub(crate) struct Activity {
     settings: Settings,
     source_id: String,
-    queue_revision: u64,
     pub(crate) run: RunId,
     entry: Arc<SequenceEntry>,
-    duration_millis: u64,
     playback_state: PlaybackState,
     pub(crate) started_at_millis: Option<u64>,
     pub(crate) ended_at_millis: Option<u64>,
@@ -165,10 +164,8 @@ impl Activity {
         Some(Self {
             settings: settings.clone(),
             source_id: view.transport.source_id.as_str().to_string(),
-            queue_revision: view.queue.revision,
             run,
             entry,
-            duration_millis,
             playback_state,
             started_at_millis,
             ended_at_millis: started_at_millis.and_then(|started| {
@@ -180,7 +177,6 @@ impl Activity {
 
     pub(crate) fn matches(&self, view: &PlaybackView) -> bool {
         self.source_id == view.transport.source_id.as_str()
-            && self.queue_revision == view.queue.revision
             && Some(self.run) == view.transport.run
             && Some(self.playback_state)
                 == visible_playback_state(&self.settings, view.transport.state)
@@ -188,16 +184,12 @@ impl Activity {
                 .transport
                 .current
                 .as_ref()
-                .is_some_and(|entry| self.duration_millis == duration_millis(view, entry))
+                .is_some_and(|entry| entry.as_ref() == self.entry.as_ref())
     }
 }
 
-fn duration_millis(view: &PlaybackView, entry: &SequenceEntry) -> u64 {
-    if view.transport.duration_millis > 0 {
-        view.transport.duration_millis
-    } else {
-        u64::from(entry.track.duration_seconds).saturating_mul(1_000)
-    }
+fn duration_millis(_view: &PlaybackView, entry: &SequenceEntry) -> u64 {
+    u64::from(entry.track.duration_seconds).saturating_mul(1_000)
 }
 
 pub(crate) fn visible_playback_state(
@@ -218,20 +210,38 @@ pub(crate) fn visible_playback_state(
 }
 
 pub(crate) struct Worker {
-    mailbox: LatestSender<Option<Arc<Activity>>>,
+    mailbox: Option<LatestSender<Option<Arc<Activity>>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Worker {
     pub(crate) fn new() -> Self {
         let (mailbox, receiver) = latest_slot();
-        std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             run_worker(&receiver, Connection::new(), RECONNECT_DELAY);
         });
-        Self { mailbox }
+        Self {
+            mailbox: Some(mailbox),
+            thread: Some(thread),
+        }
     }
 
     pub(crate) fn publish(&self, activity: Option<Arc<Activity>>) {
-        self.mailbox.publish(activity);
+        if let Some(mailbox) = &self.mailbox {
+            mailbox.publish(activity);
+        }
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        if let Some(mailbox) = self.mailbox.take() {
+            mailbox.publish(None);
+            drop(mailbox);
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -274,7 +284,7 @@ impl Connection {
             #[cfg(unix)]
             client_id: None,
             #[cfg(unix)]
-            paths: discord_ipc_paths(),
+            paths: worker_ipc_paths(),
             #[cfg(unix)]
             nonce: 0,
         }
@@ -376,6 +386,18 @@ impl Connection {
 }
 
 #[cfg(unix)]
+fn worker_ipc_paths() -> Vec<PathBuf> {
+    #[cfg(test)]
+    {
+        Vec::new()
+    }
+    #[cfg(not(test))]
+    {
+        discord_ipc_paths()
+    }
+}
+
+#[cfg(unix)]
 fn activity_json(activity: &Activity) -> Value {
     let track = &activity.entry.track;
     let mut value = json!({
@@ -391,10 +413,10 @@ fn activity_json(activity: &Activity) -> Value {
         "type": if activity.settings.show_as_listening { 2 } else { 0 },
     });
     if let Some(start) = activity.started_at_millis {
-        value["timestamps"]["start"] = json!(start);
+        value["timestamps"]["start"] = json!(start / 1_000);
     }
     if let Some(end) = activity.ended_at_millis {
-        value["timestamps"]["end"] = json!(end);
+        value["timestamps"]["end"] = json!(end / 1_000);
     }
     let (details_url, state_url) = activity_urls(activity);
     if let Some(details_url) = details_url {
@@ -543,7 +565,7 @@ fn connect_paths(paths: &[PathBuf]) -> Result<UnixStream, String> {
     Err("Discord IPC socket was not found".to_string())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(test)))]
 fn discord_ipc_paths() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for key in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
@@ -615,15 +637,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_keep_persisted_defaults_and_legacy_display_value() {
+    fn settings_keep_persisted_defaults_and_display_alias() {
         let settings = serde_json::from_str::<Settings>("{}")
             .unwrap_or_else(|error| panic!("deserialize defaults: {error}"));
         assert_eq!(settings, Settings::default());
         assert_eq!(settings.link_type, LinkType::MusicBrainz);
 
-        let legacy = serde_json::from_str::<DisplayType>("\"feishin\"")
-            .unwrap_or_else(|error| panic!("deserialize legacy display: {error}"));
-        assert_eq!(legacy, DisplayType::Application);
+        let alias = serde_json::from_str::<DisplayType>("\"app\"")
+            .unwrap_or_else(|error| panic!("deserialize display alias: {error}"));
+        assert_eq!(alias, DisplayType::Application);
 
         let mut disabled = Settings {
             enabled: false,
@@ -647,7 +669,7 @@ mod tests {
             "https://musicbrainz.org/track/track-id"
         );
         assert_eq!(payload["state_url"], "https://www.last.fm/music/Artist");
-        assert_eq!(payload["timestamps"]["end"], 52_500);
+        assert_eq!(payload["timestamps"]["end"], 52);
         assert_eq!(payload["assets"]["large_image"], APP_ICON_URL);
 
         activity.settings.link_type = LinkType::MusicBrainz;

@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(object["discord_presence_enabled"], false);
         object.insert(
             "discord_display_type".to_string(),
-            serde_json::Value::String("feishin".to_string()),
+            serde_json::Value::String("app".to_string()),
         );
         object.insert(
             "discord_client_id".to_string(),

@@ -1689,7 +1689,116 @@ fn schema_use_mode() {
 #[test]
 fn store_configures_busy_timeout() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 5_000);
+    assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 30_000);
+}
+#[test]
+fn shared_write_gate_serializes_connections_before_sqlite_busy_handling() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "shared-write-gate"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let gate = crate::StoreWriteGate::default();
+    let holder = Store::open_with_write_gate(&path, gate.clone()).expect("open holder");
+    let contender = Store::open_with_write_gate(&path, gate.clone()).expect("open contender");
+    contender
+        .connection
+        .busy_timeout(std::time::Duration::ZERO)
+        .expect("disable SQLite busy wait");
+    let source = stored_source();
+    let source_id = source.source_id.clone();
+    holder.save_source(&source).expect("save source");
+    holder.set_active_source(&source_id).expect("select source");
+    let album = album(1);
+    let track = track(1, &album);
+    let track_id = track.id.clone();
+    let setup_generation = holder.begin_sync(&source_id).expect("begin setup sync");
+    LibraryObservation {
+        albums: vec![album],
+        tracks: vec![track],
+        ..LibraryObservation::default()
+    }
+    .commit(&holder, &source_id, setup_generation)
+    .expect("seed library");
+    let generation = holder.begin_sync(&source_id).expect("begin held sync");
+    let base_cache_revision = holder
+        .source_cache_revision(&source_id)
+        .expect("read cache revision");
+    let reader = Store::open_fast_read(&path).expect("open concurrent reader");
+
+    let (holder_entered_tx, holder_entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder_source_id = source_id.clone();
+    let holder_thread = std::thread::spawn(move || {
+        holder.finish_library_sync(
+            &holder_source_id,
+            generation,
+            base_cache_revision,
+            true,
+            || {
+                holder_entered_tx.send(()).expect("report holder");
+                release_rx.recv().expect("release holder");
+                Ok(crate::LibraryDelta::default())
+            },
+        )
+    });
+    holder_entered_rx
+        .recv()
+        .expect("holder entered transaction");
+    assert_eq!(
+        reader
+            .active_source()
+            .expect("read while writer is held")
+            .expect("active source")
+            .source_id,
+        source_id,
+        "WAL readers must remain independent from the write gate"
+    );
+
+    let (contender_finished_tx, contender_finished_rx) = std::sync::mpsc::channel();
+    let contender_source_id = source_id.clone();
+    let contender_track_id = track_id.clone();
+    let contender_thread = std::thread::spawn(move || {
+        let result = contender.set_track_favorite_for_owner(
+            &contender_source_id,
+            &contender_track_id,
+            true,
+            SourceFeatureOwner::Native,
+        );
+        contender_finished_tx.send(()).expect("report contender");
+        result
+    });
+    assert!(
+        contender_finished_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err(),
+        "ordinary mutations must wait at the Store gate"
+    );
+    release_tx.send(()).expect("release writer");
+    holder_thread
+        .join()
+        .expect("join holder")
+        .expect("holder commit");
+    contender_thread
+        .join()
+        .expect("join contender")
+        .expect("contender commit without SQLite busy retry");
+    contender_finished_rx
+        .recv()
+        .expect("contender finished after holder");
+    let verifier = Store::open_with_write_gate(&path, gate).expect("open verifier");
+    assert!(
+        verifier
+            .load_tracks(&source_id, 0, 1)
+            .expect("load track")
+            .items[0]
+            .favorite
+    );
+
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
 fn store_recognizes_writer_contention_by_sqlite_code() {
@@ -1757,7 +1866,8 @@ fn current_schema_migrate_is_read_only() {
         assert_eq!(store.schema_version().expect("schema version"), 28);
     }
 
-    let store = Store::open_file(&path).expect("open current store");
+    let store =
+        Store::open_file(&path, crate::StoreWriteGate::default()).expect("open current store");
     store
         .connection
         .pragma_update(None, "query_only", true)

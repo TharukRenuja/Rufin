@@ -73,9 +73,15 @@ impl FetchContext {
                     })
             }
             Candidate::MusicBrainzReleaseGroup(id) => {
+                if !policy.allow_musicbrainz {
+                    return Ok(FetchOutcome::Missing);
+                }
                 self.download(&cover_art_url(RELEASE_GROUP_URL, id, size))
             }
             Candidate::MusicBrainzRelease(id) => {
+                if !policy.allow_musicbrainz {
+                    return Ok(FetchOutcome::Missing);
+                }
                 self.download(&cover_art_url(RELEASE_URL, id, size))
             }
             Candidate::AlbumText { artist, album } => {
@@ -94,22 +100,42 @@ impl FetchContext {
             return Ok(None);
         }
         let mut failures = Vec::new();
-        for candidate in candidates.candidates() {
-            match candidate {
-                Candidate::Native(_) => {}
-                Candidate::MusicBrainzReleaseGroup(id) if valid_mbid(id) => {
-                    return Ok(Some(cover_art_url(RELEASE_GROUP_URL, id, size)));
+        let album_text = candidates.candidates().iter().filter_map(|candidate| {
+            if let Candidate::AlbumText { artist, album } = candidate {
+                Some((artist.as_str(), album.as_str()))
+            } else {
+                None
+            }
+        });
+        if !policy.lastfm_api_key.trim().is_empty() {
+            for (artist, album) in album_text.clone() {
+                match self.lastfm_url(artist, album, &policy.lastfm_api_key) {
+                    Ok(Some(url)) => return Ok(Some(url)),
+                    Ok(None) => {}
+                    Err(error) => failures.push(error),
                 }
-                Candidate::MusicBrainzRelease(id) if valid_mbid(id) => {
+            }
+        }
+        if policy.allow_musicbrainz {
+            for candidate in candidates.candidates() {
+                if let Candidate::MusicBrainzRelease(id) = candidate
+                    && valid_mbid(id)
+                {
                     return Ok(Some(cover_art_url(RELEASE_URL, id, size)));
                 }
-                Candidate::MusicBrainzReleaseGroup(_) | Candidate::MusicBrainzRelease(_) => {}
-                Candidate::AlbumText { artist, album } => {
-                    match self.resolve_album_text_url(artist, album, size, policy) {
-                        Ok(Some(url)) => return Ok(Some(url)),
-                        Ok(None) => {}
-                        Err(error) => failures.push(error),
-                    }
+            }
+            for candidate in candidates.candidates() {
+                if let Candidate::MusicBrainzReleaseGroup(id) = candidate
+                    && valid_mbid(id)
+                {
+                    return Ok(Some(cover_art_url(RELEASE_GROUP_URL, id, size)));
+                }
+            }
+            for (artist, album) in album_text {
+                match self.musicbrainz_album_text_url(artist, album, size) {
+                    Ok(Some(url)) => return Ok(Some(url)),
+                    Ok(None) => {}
+                    Err(error) => failures.push(error),
                 }
             }
         }
@@ -139,6 +165,13 @@ impl FetchContext {
                 Err(error) => failures.push(error),
             }
         }
+        if !policy.allow_musicbrainz {
+            return if failures.is_empty() {
+                Ok(FetchOutcome::Missing)
+            } else {
+                Err(failures.join("; "))
+            };
+        }
         match search_album_release_group_ids(artist, album) {
             Ok(ids) => {
                 if let Some(bytes) =
@@ -165,41 +198,20 @@ impl FetchContext {
         }
     }
 
-    fn resolve_album_text_url(
+    fn musicbrainz_album_text_url(
         &self,
         artist: &str,
         album: &str,
         size: u32,
-        policy: &ExternalPolicy,
     ) -> Result<Option<String>, String> {
-        let mut failures = Vec::new();
-        if !policy.lastfm_api_key.trim().is_empty() {
-            match self.lastfm_url(artist, album, &policy.lastfm_api_key) {
-                Ok(Some(url)) => return Ok(Some(url)),
-                Ok(None) => {}
-                Err(error) => failures.push(error),
-            }
-        }
-        match search_album_release_group_ids(artist, album) {
-            Ok(ids) => {
-                if let Some(id) = ids.into_iter().find(|id| valid_mbid(id)) {
-                    return Ok(Some(cover_art_url(RELEASE_GROUP_URL, &id, size)));
-                }
-            }
-            Err(error) => failures.push(error),
-        }
         match search_album_release_ids(artist, album) {
             Ok(ids) => {
                 if let Some(id) = ids.into_iter().find(|id| valid_mbid(id)) {
                     return Ok(Some(cover_art_url(RELEASE_URL, &id, size)));
                 }
+                Ok(None)
             }
-            Err(error) => failures.push(error),
-        }
-        if !failures.is_empty() {
-            Err(failures.join("; "))
-        } else {
-            Ok(None)
+            Err(error) => Err(error),
         }
     }
 
@@ -379,6 +391,26 @@ mod tests {
                 "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png"
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn public_album_url_uses_the_accepted_release_without_text_lookup() {
+        let candidates = crate::CandidateSet::album_facts(
+            "Artist",
+            "Album",
+            Some("11111111-1111-1111-1111-111111111111"),
+            Some("22222222-2222-2222-2222-222222222222"),
+        );
+        let context = FetchContext::new().unwrap_or_else(|error| panic!("fetch context: {error}"));
+        let url = context
+            .public_url(&candidates, 250, &ExternalPolicy::new(false, true, ""))
+            .unwrap_or_else(|error| panic!("public URL: {error}"));
+        assert_eq!(
+            url.as_deref(),
+            Some(
+                "https://coverartarchive.org/release/22222222-2222-2222-2222-222222222222/front-250"
+            )
         );
     }
 }

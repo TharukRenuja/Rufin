@@ -659,8 +659,8 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
     let link_options = gtk::StringList::new(&link_refs);
     let link_row = adw::ComboRow::builder()
-        .title(tr("Link source"))
-        .subtitle(tr("Service to use for song and artist links"))
+        .title(tr("Metadata source"))
+        .subtitle(tr("Source to use for cover images and song/artist links"))
         .model(&link_options)
         .selected(discord_link_index(settings.rich_presence.link_type))
         .build();
