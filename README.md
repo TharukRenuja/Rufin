@@ -205,7 +205,7 @@ For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_
 
 ## In scope
 
-- **Almost anything that doesn't collide with 3 points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
+- **Almost anything that doesn't collide with points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
 
 - **Integration with other self hosted services**: Rufin aims to be your own client truly. In future, there are plans for integration with other self-hosted scrobbling servers, or other controller servers to sync Rufin between different devices, directly under your own control.
 
