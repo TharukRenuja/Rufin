@@ -1317,15 +1317,17 @@ pub(in crate::controller) fn failed_manual_sync_keeps_the_cache() {
 fn wait_for_library_commit(
     events: &ProductReceivers,
     source_id: &SourceId,
-) -> library_sync::LibraryCommitted {
+) -> (library_sync::LibraryCommitted, bool) {
     loop {
         match wait_for_typed_event(
             &events.library_sync,
             Duration::from_secs(5),
             "controller event",
         ) {
-            library_sync::LibrarySyncEvent::Committed(update) if update.source_id == *source_id => {
-                return update;
+            library_sync::LibrarySyncEvent::Committed { update, manual }
+                if update.source_id == *source_id =>
+            {
+                return (update, manual);
             }
             library_sync::LibrarySyncEvent::SyncChanged(state)
                 if state.source_id == *source_id
@@ -1350,7 +1352,9 @@ fn wait_for_sync_failure(events: &ProductReceivers, source_id: &SourceId) -> Str
             {
                 return state.failure.expect("typed sync failure");
             }
-            library_sync::LibrarySyncEvent::Committed(update) if update.source_id == *source_id => {
+            library_sync::LibrarySyncEvent::Committed { update, .. }
+                if update.source_id == *source_id =>
+            {
                 panic!("source sync unexpectedly committed")
             }
             _ => {}
@@ -1371,7 +1375,9 @@ fn wait_for_source_sync_change(
             library_sync::LibrarySyncEvent::SyncChanged(state) if state.source_id == *source_id => {
                 return state;
             }
-            library_sync::LibrarySyncEvent::Committed(update) if update.source_id == *source_id => {
+            library_sync::LibrarySyncEvent::Committed { update, .. }
+                if update.source_id == *source_id =>
+            {
                 panic!("source sync unexpectedly committed")
             }
             _ => {}
@@ -1438,7 +1444,8 @@ pub(in crate::controller) fn active_local_sync_updates_manifest_delta() {
     owners
         .source
         .request_manual_source_sync(local.source_id.clone());
-    let update = wait_for_library_commit(&events, &local.source_id);
+    let (update, manual) = wait_for_library_commit(&events, &local.source_id);
+    assert!(manual);
     assert!(!update.delta.tracks.added.is_empty());
     let idle = wait_for_source_sync_change(&events, &local.source_id);
     assert_eq!(idle.phase, library_sync::SyncPhase::Idle);

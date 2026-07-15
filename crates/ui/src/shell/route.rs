@@ -23,6 +23,10 @@ use crate::routes::route_layout::{primary_route_scroll_adjustment, route_boundar
 
 const SLOW_ROUTE_RENDER_MS: u64 = 100;
 
+fn commit_refreshes_visible_route(route: &Route, manual: bool) -> bool {
+    manual || !matches!(route, Route::Home)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RouteCurrentTrackContext {
     pub(crate) context_id: String,
@@ -1437,6 +1441,7 @@ impl Shell {
         self: &Rc<Self>,
         revision: i64,
         delta: LibraryDelta,
+        manual: bool,
     ) {
         if let Some(query) = self.library.query.borrow().as_ref() {
             self.advance_prepared_query_reads(query, revision, &delta);
@@ -1445,7 +1450,9 @@ impl Shell {
             return;
         }
         self.invalidate_home_projection_overlay_for(&delta);
-        self.apply_delta_to_mounted_route(&delta);
+        if commit_refreshes_visible_route(self.navigation.routes.borrow().current(), manual) {
+            self.apply_delta_to_mounted_route(&delta);
+        }
     }
 
     fn apply_delta_to_mounted_route(&self, delta: &LibraryDelta) {
@@ -1562,7 +1569,14 @@ mod tests {
 
     use crate::routes::route::{FolderPathItem, Route};
 
-    use super::{RoutePreparationToken, RouteStack};
+    use super::{RoutePreparationToken, RouteStack, commit_refreshes_visible_route};
+
+    #[test]
+    fn automatic_commit_keeps_visible_home_stable() {
+        assert!(!commit_refreshes_visible_route(&Route::Home, false));
+        assert!(commit_refreshes_visible_route(&Route::Home, true));
+        assert!(commit_refreshes_visible_route(&Route::Tracks, false));
+    }
 
     #[test]
     fn route_track_history() {

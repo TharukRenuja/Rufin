@@ -203,8 +203,8 @@ fn apply_source_discovery(shell: &Rc<Shell>, update: sources::ServerDiscoveryUpd
 
 fn apply_library_sync_event(shell: &Rc<Shell>, event: library_sync::LibrarySyncEvent) {
     match event {
-        library_sync::LibrarySyncEvent::Committed(update) => {
-            shell.apply_library_committed(update);
+        library_sync::LibrarySyncEvent::Committed { update, manual } => {
+            shell.apply_library_committed(update, manual);
         }
         library_sync::LibrarySyncEvent::SyncChanged(change) => {
             shell.apply_source_sync_changed(change);
@@ -833,7 +833,11 @@ impl Shell {
         }
     }
 
-    fn apply_library_committed(self: &Rc<Self>, commit: library_sync::LibraryCommitted) {
+    fn apply_library_committed(
+        self: &Rc<Self>,
+        commit: library_sync::LibraryCommitted,
+        manual: bool,
+    ) {
         if !self.commit_matches_selected_source(&commit)
             || !apply_commit_revision(&mut self.source.presentation.borrow_mut(), &commit)
         {
@@ -841,7 +845,7 @@ impl Shell {
         }
         let commit_source_id = commit.source_id.clone();
         update_source_selector(self);
-        self.apply_committed_library_delta(commit.revision, commit.delta);
+        self.apply_committed_library_delta(commit.revision, commit.delta, manual);
         self.schedule_prepared_library_warm();
         let load = self.source.load.borrow().clone();
         match load {
