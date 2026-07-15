@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+state_dir="${repo_root}/.local/container"
+enabled_file="${state_dir}/enabled"
+image_file="${state_dir}/image"
+runtime_file="${state_dir}/runtime"
+default_image="ghcr.io/screwys/rufin-dev:latest"
+
+selected_image() {
+    if [[ -n "${RUFIN_CONTAINER_IMAGE:-}" ]]; then
+        printf '%s\n' "${RUFIN_CONTAINER_IMAGE}"
+    elif [[ -f "${image_file}" ]]; then
+        cat "${image_file}"
+    else
+        printf '%s\n' "${default_image}"
+    fi
+}
+
+selected_runtime() {
+    if [[ -n "${RUFIN_CONTAINER_RUNTIME:-}" ]]; then
+        printf '%s\n' "${RUFIN_CONTAINER_RUNTIME}"
+    elif [[ -f "${runtime_file}" ]]; then
+        cat "${runtime_file}"
+    elif command -v podman >/dev/null 2>&1; then
+        printf '%s\n' podman
+    else
+        printf '%s\n' docker
+    fi
+}
+
+runtime_is_podman() {
+    local runtime="$1"
+
+    [[ "$(basename "${runtime}")" == "podman" ]] \
+        || "${runtime}" --version 2>/dev/null | grep -qi podman
+}
+
+prepare_directories() {
+    mkdir -p \
+        "${state_dir}/home" \
+        "${state_dir}/nix" \
+        "${state_dir}/target"
+}
+
+prepare_docker_identity() {
+    local image="$1" runtime="$2"
+    local gid uid group_tmp passwd_tmp
+
+    gid="$(id -g)"
+    uid="$(id -u)"
+    group_tmp="$(mktemp "${state_dir}/group.XXXXXX")"
+    passwd_tmp="$(mktemp "${state_dir}/passwd.XXXXXX")"
+
+    "${runtime}" run --rm --entrypoint cat "${image}" /etc/group > "${group_tmp}"
+    "${runtime}" run --rm --entrypoint cat "${image}" /etc/passwd > "${passwd_tmp}"
+
+    if ! awk -F: -v gid="${gid}" '$3 == gid { found = 1 } END { exit !found }' "${group_tmp}"; then
+        printf 'rufin-host:x:%s:\n' "${gid}" >> "${group_tmp}"
+    fi
+    if ! awk -F: -v uid="${uid}" '$3 == uid { found = 1 } END { exit !found }' "${passwd_tmp}"; then
+        printf 'rufin-host:x:%s:%s:Rufin host user:/home/rufin:/bin/bash\n' \
+            "${uid}" "${gid}" >> "${passwd_tmp}"
+    fi
+
+    mv "${group_tmp}" "${state_dir}/group"
+    mv "${passwd_tmp}" "${state_dir}/passwd"
+    chmod 0644 "${state_dir}/group" "${state_dir}/passwd"
+}
+
+require_host() {
+    if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then
+        echo "Run 'just container $1' on the host." >&2
+        exit 1
+    fi
+}
+
+container_run() {
+    local git_common_dir git_dir image interactive=false runtime
+    local -a container_command
+    local -a git_mounts=()
+    local -a runtime_args=(run --rm)
+
+    if [[ "${1:-}" == "--interactive" ]]; then
+        interactive=true
+        shift
+    fi
+
+    image="$(selected_image)"
+    runtime="$(selected_runtime)"
+    prepare_directories
+
+    if [[ "${interactive}" == "true" ]]; then
+        runtime_args+=(--interactive)
+        if [[ -t 0 && -t 1 ]]; then
+            runtime_args+=(--tty)
+        fi
+    fi
+
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        runtime_args+=(--security-opt label=disable)
+    fi
+
+    if runtime_is_podman "${runtime}"; then
+        runtime_args+=(
+            "--userns=keep-id:uid=1000,gid=1000"
+            --user 1000:1000
+        )
+    else
+        prepare_docker_identity "${image}" "${runtime}"
+        runtime_args+=(
+            --user "$(id -u):$(id -g)"
+            --volume "${state_dir}/group:/etc/group:ro"
+            --volume "${state_dir}/passwd:/etc/passwd:ro"
+        )
+    fi
+
+    git_dir="$(git rev-parse --path-format=absolute --git-dir)"
+    git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+    if [[ "${git_common_dir}" != "${repo_root}"/* ]]; then
+        git_mounts+=(--volume "${git_common_dir}:${git_common_dir}:ro")
+    fi
+    if [[ "${git_dir}" != "${repo_root}"/* && "${git_dir}" != "${git_common_dir}"/* ]]; then
+        git_mounts+=(--volume "${git_dir}:${git_dir}:ro")
+    fi
+
+    container_command=(
+        nix --accept-flake-config develop "git+file://${repo_root}" --command "$@"
+    )
+    if [[ "${RUFIN_CONTAINER_HEADLESS:-0}" == "1" ]]; then
+        container_command=(
+            xvfb-run -a dbus-run-session -- "${container_command[@]}"
+        )
+    fi
+
+    exec "${runtime}" "${runtime_args[@]}" \
+        --workdir "${repo_root}" \
+        --env "CARGO_TARGET_DIR=${repo_root}/target" \
+        --env HOME=/home/rufin \
+        --env NIX_REMOTE=local \
+        --env RUFIN_CONTAINER=1 \
+        --env USER=rufin \
+        --volume "${repo_root}:${repo_root}:rw" \
+        --volume "${state_dir}/home:/home/rufin:rw" \
+        --volume "${state_dir}/nix:/nix:rw" \
+        --volume "${state_dir}/target:${repo_root}/target:rw" \
+        "${git_mounts[@]}" \
+        "${image}" \
+        "${container_command[@]}"
+}
+
+action="${1:-status}"
+if [[ $# -gt 0 ]]; then
+    shift
+fi
+
+case "${action}" in
+    setup)
+        require_host setup
+        prepare_directories
+        image="$(selected_image)"
+        runtime="$(selected_runtime)"
+        if [[ "${image}" != localhost/* ]] || ! "${runtime}" image inspect "${image}" >/dev/null 2>&1; then
+            "${runtime}" pull "${image}"
+        fi
+        printf '%s\n' "${image}" > "${image_file}"
+        printf '%s\n' "${runtime}" > "${runtime_file}"
+        touch "${enabled_file}"
+        echo "Container enabled: ${runtime}"
+        ;;
+    status)
+        if [[ -f "${enabled_file}" ]]; then
+            echo "enabled: $(selected_runtime) ($(selected_image))"
+        else
+            echo "disabled"
+        fi
+        ;;
+    shell)
+        require_host shell
+        if [[ ! -f "${enabled_file}" ]]; then
+            echo "Run 'just container setup' first." >&2
+            exit 1
+        fi
+        container_run --interactive bash
+        ;;
+    disable)
+        require_host disable
+        rm -f "${enabled_file}"
+        echo "Container disabled."
+        ;;
+    reset)
+        require_host reset
+        rm -rf "${state_dir}"
+        echo "Container cache removed."
+        ;;
+    run)
+        if [[ $# -eq 0 ]]; then
+            echo "usage: scripts/container run COMMAND [ARG...]" >&2
+            exit 2
+        fi
+        if [[ "${RUFIN_CONTAINER:-0}" == "1" || ! -f "${enabled_file}" ]]; then
+            if [[ "${RUFIN_CONTAINER:-0}" == "1" && "${RUFIN_CONTAINER_HEADLESS:-0}" == "1" ]]; then
+                exec xvfb-run -a dbus-run-session -- "$@"
+            fi
+            exec "$@"
+        fi
+        container_run "$@"
+        ;;
+    *)
+        echo "usage: scripts/container setup|status|shell|disable|reset|run" >&2
+        exit 2
+        ;;
+esac

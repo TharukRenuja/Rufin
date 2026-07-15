@@ -1,3 +1,7 @@
+//! Commands, updates, and startup data exchanged between the UI and Rufin.
+//!
+//! `rufin` constructs these handles; the crates behind them implement the behavior.
+
 pub mod artwork;
 mod events;
 mod inputs;

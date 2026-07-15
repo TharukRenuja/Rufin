@@ -6,7 +6,7 @@
   <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
   <a href="https://flathub.org/apps/io.github.screwys.Rufin"><img alt="Flathub installs" src="https://img.shields.io/flathub/downloads/io.github.screwys.Rufin?logo=flathub&amp;label=flathub&amp;color=4A86CF"></a>
     <a href="https://aur.archlinux.org/packages/rufin"><img alt="AUR version" src="https://img.shields.io/aur/version/rufin?logo=archlinux&amp;label=AUR&amp;color=1793D1"></a>
-    <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs package" src="https://img.shields.io/badge/Nixpkgs-rufin-5277C3?logo=nixos"></a>
+    <a href="https://search.nixos.org/packages?channel=unstable&query=rufin"><img alt="Nixpkgs version" src="https://repology.org/badge/version-for-repo/nix_unstable/rufin.svg?header=Nixpkgs"></a>
 </p>
 
 <img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="72"> Rufin is a native, fast and easy to use GTK4/libadwaita music client written in Rust. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike.
@@ -94,7 +94,7 @@ To add it to your profile:
 nix profile install nixpkgs#rufin
 ```
 
-We also publish release tag and `main` to Cachix. You can run `main` or an older release with:
+You can also run `main` or an older release directly:
 
 ```bash
 nix run github:screwys/Rufin/main
@@ -103,22 +103,32 @@ nix run github:screwys/Rufin/vX.Y.Z
 
 ## Building locally
 
-Dependencies:
+Start by cloning the repository. You can build Rufin natively or use our development container to produce a binary if you want to keep dependencies outside of your system and have Docker or Podman available.
 
-- Rust 1.95 or newer, with Cargo
-- just
-- pkg-config or pkgconf
-- gettext
-- GTK 4.20 or newer
-- libadwaita 1.8 or newer
-- gdk-pixbuf
-- GStreamer with the base, good, bad, ugly, and libav plugin sets
+```bash
+git clone https://github.com/screwys/Rufin.git
+cd Rufin
+```
+
+### Development container
+
+```bash
+just container setup
+just build
+```
+
+This makes just commands go through the container development. If you want to build natively instead after running this one, use `just container disable`.
+
+### Native build
+
+Rufin requires Rust 1.95 or newer, GTK 4.20 or newer, libadwaita 1.8 or
+newer, and GStreamer 1.26 or newer.
 
 Arch Linux:
 
 ```bash
 sudo pacman -S --needed \
-  rust cargo just pkgconf gettext gtk4 libadwaita gdk-pixbuf2 \
+  base-devel rust cargo just pkgconf gettext gtk4 libadwaita \
   gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
   gst-plugins-ugly gst-libav
 ```
@@ -127,49 +137,24 @@ Fedora:
 
 ```bash
 sudo dnf install \
-  rust cargo just pkgconf-pkg-config gettext gtk4-devel libadwaita-devel \
-  gdk-pixbuf2-devel gstreamer1-devel gstreamer1-plugins-base-devel \
-  gstreamer1-plugins-bad-free-devel gstreamer1-plugins-base \
-  gstreamer1-plugins-good gstreamer1-plugins-bad-free
+  gcc rust cargo just pkgconf-pkg-config gettext gtk4-devel \
+  libadwaita-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+  gstreamer1-plugins-base gstreamer1-plugins-good \
+  gstreamer1-plugins-bad-free
 ```
 
 For full codec coverage, enable RPM Fusion and install `gstreamer1-plugins-ugly`
 and `gstreamer1-plugin-libav`.
 
-Distrobox or Toolbx is a good option if you want to keep these packages out of
-your host system (Especially if you are on a Fedora Silverblue image like me).
-
-If you have Nix available, dev shell would be the easiest option:
+Then you can build and run:
 
 ```bash
-nix develop
-```
-
-For a debug run:
-
-```bash
-nix develop --command just debug
-```
-
-Since each `main` push builds cache, you can also set the shell to use it:
-
-```bash
-nix-shell -p cachix --run "cachix use rufin"
-```
-
-To build Rufin from source:
-
-```bash
-git clone https://github.com/screwys/Rufin.git
-cd Rufin
 just build
+just run
 ```
 
-To run the source build:
-
-```bash
-just debug
-```
+Testing, Nix, and container controls are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
 
 # Troubleshooting
 

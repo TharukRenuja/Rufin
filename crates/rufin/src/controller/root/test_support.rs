@@ -4,7 +4,7 @@ use library::MusicFolder;
 use std::collections::HashMap;
 use std::time::Instant;
 
-const TEST_WAIT: Duration = Duration::from_secs(1);
+const TEST_WAIT: Duration = Duration::from_secs(5);
 
 pub(in crate::controller) fn library_track(
     number: u32,

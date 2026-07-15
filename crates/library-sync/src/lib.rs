@@ -1,3 +1,7 @@
+//! Compares one music source with Rufin's stored library and applies its changes.
+//!
+//! `sources` fetches provider data; `library` owns the stored items and queries.
+
 use std::collections::HashSet;
 use std::future::Future;
 use std::time::Duration;

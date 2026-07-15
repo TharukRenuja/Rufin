@@ -1,3 +1,8 @@
+//! Defines Rufin's library items and stores them for each music source.
+//!
+//! Source clients provide data, `library-sync` applies changes, and the UI
+//! decides how the items are displayed.
+
 macro_rules! opaque_id {
     ($name:ident, $prefix:literal) => {
         #[derive(

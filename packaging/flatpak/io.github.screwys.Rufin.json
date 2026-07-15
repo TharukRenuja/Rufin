@@ -96,7 +96,12 @@
       "sources": [
         {
           "type": "dir",
-          "path": "../.."
+          "path": "../..",
+          "skip": [
+            ".git",
+            ".local",
+            "target"
+          ]
         },
         "cargo-sources.json"
       ]

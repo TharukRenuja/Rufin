@@ -1,3 +1,8 @@
+//! Loads artwork and keeps decoded images in a shared cache.
+//!
+//! The UI decides what it needs now; this crate chooses the image source, avoids
+//! duplicate work, prioritizes requests, and removes older cached images.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

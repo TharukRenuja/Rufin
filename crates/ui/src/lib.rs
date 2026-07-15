@@ -1,3 +1,8 @@
+//! Rufin's GTK interface.
+//!
+//! `shell` owns the window, navigation, and layout; `routes` owns individual
+//! pages. Library, playback, and source behavior stays in their own crates.
+
 mod application;
 mod favorites;
 mod interactions;
