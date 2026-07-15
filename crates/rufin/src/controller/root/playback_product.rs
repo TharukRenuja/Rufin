@@ -1409,7 +1409,6 @@ pub(in crate::controller) fn send_session_command_to_slot(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::controller) fn activate_playback_product(
     store: &StoreHandle,
     runtime: &Arc<Runtime>,
@@ -1475,7 +1474,6 @@ pub(in crate::controller) fn activate_playback_product(
     switched_projection.map_or_else(|| product.initial_projection(), Ok)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::controller) fn activate_playback_source(
     store: &StoreHandle,
     runtime: &Arc<Runtime>,

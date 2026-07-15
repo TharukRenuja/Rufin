@@ -503,7 +503,6 @@ pub(crate) fn playlist_entries_collection_projection(
     (collection, model)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn playlist_entry_table_projection(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -605,7 +604,6 @@ fn playlist_entry_grid_projection(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn playlist_entry_column_for_field(
     shell: &Rc<Shell>,
     field: LibraryField,
