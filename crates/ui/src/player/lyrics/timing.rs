@@ -25,16 +25,21 @@ impl Shell {
             return;
         }
 
-        let Some(next_position_millis) = self
-            .lyrics
-            .current
-            .borrow()
-            .as_ref()
-            .and_then(|lyrics| next_lyrics_line_start_after(&lyrics.lines, position_millis))
+        let Some(next_position_millis) = self.lyrics.current.borrow().as_ref().and_then(|lyrics| {
+            next_lyrics_line_start_after(
+                &lyrics.lines,
+                self.lyrics_position_millis(position_millis),
+            )
+        }) else {
+            return;
+        };
+        let lyrics_position_millis = self.lyrics_position_millis(position_millis);
+        let Ok(delay_millis) =
+            u64::try_from(i128::from(next_position_millis) - lyrics_position_millis)
         else {
             return;
         };
-        let delay_millis = next_position_millis.saturating_sub(position_millis);
+        let next_playback_position_millis = position_millis.saturating_add(delay_millis);
         let generation = self.lyrics.timing_generation.get().saturating_add(1);
         self.lyrics.timing_generation.set(generation);
 
@@ -44,7 +49,7 @@ impl Shell {
                 return;
             }
             let _source = shell.lyrics.timing_source.borrow_mut().take();
-            shell.update_lyrics_highlight_at(next_position_millis);
+            shell.update_lyrics_highlight_at(next_playback_position_millis);
         });
         if let Some(previous_source) = self.lyrics.timing_source.borrow_mut().replace(source) {
             previous_source.remove();

@@ -44,7 +44,7 @@ crates.
 | `library` | library items are defined and stored here |
 | `library-sync` | changes from sources are gathered and applied to the library |
 | `localization` | translation tooling and locales |
-| `metadata` | external metadata fetching |
+| `metadata` | lyrics handling and metadata enrichment |
 | `playback` | playback behavior and the queue |
 | `playback-gstreamer` | the GStreamer playback backend |
 | `rich-presence` | RPC backend |

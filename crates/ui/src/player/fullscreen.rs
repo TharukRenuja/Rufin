@@ -201,8 +201,7 @@ pub(crate) fn build_fullscreen_player() -> FullscreenPlayerParts {
     queue_panel.set_vexpand(true);
     stack.add_titled(&queue_panel, Some("queue"), &tr("Queue"));
 
-    let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
-    lyrics_pane.set_title("");
+    let lyrics_pane = LyricsPane::new();
     lyrics_pane.widget().add_css_class("fullscreen-player-pane");
     stack.add_titled(lyrics_pane.widget(), Some("lyrics"), &tr("Lyrics"));
 
@@ -1523,7 +1522,10 @@ impl Shell {
         self.player_view
             .fullscreen_player
             .lyrics_pane
-            .refocus_highlight(lyrics.as_ref(), self.current_position_millis());
+            .refocus_highlight(
+                lyrics.as_ref(),
+                self.lyrics_position_millis(self.current_position_millis()),
+            );
     }
 
     fn update_fullscreen_player_cover(self: &Rc<Self>, player: &PlaybackView) {

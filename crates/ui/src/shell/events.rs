@@ -410,6 +410,7 @@ fn apply_playback_projection(shell: &Rc<Shell>, projection: playback::PlaybackPr
         if lyrics_media_changed {
             *shell.lyrics.current.borrow_mut() = None;
             *shell.lyrics.loading_media.borrow_mut() = None;
+            shell.lyrics.offset_millis.set(0);
             shell.right_panel.lyrics_pane.clear_follow_scroll_pause();
             shell
                 .player_view
@@ -423,6 +424,7 @@ fn apply_playback_projection(shell: &Rc<Shell>, projection: playback::PlaybackPr
     if lyrics_media_changed {
         *shell.lyrics.current.borrow_mut() = None;
         *shell.lyrics.loading_media.borrow_mut() = None;
+        shell.lyrics.offset_millis.set(0);
         shell.right_panel.lyrics_pane.clear_follow_scroll_pause();
         shell
             .player_view
@@ -496,6 +498,15 @@ fn apply_metadata_event(shell: &Rc<Shell>, event: metadata::LyricsEvent) {
         } => {
             if shell.products.lyrics.accepts_generation(generation) {
                 shell.apply_lyrics_saved(media_key, path, lyrics);
+            }
+        }
+        metadata::LyricsEvent::FileSaved {
+            media_key,
+            generation,
+            path,
+        } => {
+            if shell.products.lyrics.accepts_generation(generation) {
+                shell.apply_lyrics_file_saved(media_key, path);
             }
         }
     }

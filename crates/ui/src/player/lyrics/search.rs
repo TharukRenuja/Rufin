@@ -11,6 +11,8 @@ use crate::player::state::{current_playback_media_key, current_playback_track_id
 use crate::shell::Shell;
 use localization::tr;
 
+use super::view::install_offset_focus_dismissal;
+
 #[derive(Clone)]
 pub(crate) struct LyricsSearchDialog {
     pub(crate) dialog: adw::Dialog,
@@ -23,6 +25,19 @@ pub(crate) struct LyricsSearchDialog {
 }
 
 pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
+    install_offset_focus_dismissal(
+        &shell.chrome.window,
+        &[
+            &shell.right_panel.lyrics_pane,
+            &shell.player_view.fullscreen_player.lyrics_pane,
+        ],
+    );
+
+    let save_shell = Rc::clone(shell);
+    shell
+        .right_panel
+        .lyrics_pane
+        .connect_save_clicked(move || save_shell.present_current_lyrics_save_dialog());
     let lyrics_shell = Rc::clone(shell);
     shell
         .right_panel
@@ -38,7 +53,28 @@ pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
         .right_panel
         .lyrics_pane
         .connect_clear_auto_search_clicked(move || lyrics_shell.suppress_auto_lyrics_for_current());
+    let offset_shell = Rc::clone(shell);
+    shell
+        .right_panel
+        .lyrics_pane
+        .connect_offset_decrease_clicked(move || offset_shell.adjust_lyrics_offset(-50));
+    let offset_shell = Rc::clone(shell);
+    shell
+        .right_panel
+        .lyrics_pane
+        .connect_offset_increase_clicked(move || offset_shell.adjust_lyrics_offset(50));
+    let offset_shell = Rc::clone(shell);
+    shell
+        .right_panel
+        .lyrics_pane
+        .connect_offset_committed(move |value| offset_shell.set_lyrics_offset_from_text(&value));
 
+    let fullscreen_save_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .fullscreen_player
+        .lyrics_pane
+        .connect_save_clicked(move || fullscreen_save_shell.present_current_lyrics_save_dialog());
     let fullscreen_lyrics_shell = Rc::clone(shell);
     shell
         .player_view
@@ -60,6 +96,24 @@ pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
         .connect_clear_auto_search_clicked(move || {
             fullscreen_lyrics_shell.suppress_auto_lyrics_for_current()
         });
+    let offset_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .fullscreen_player
+        .lyrics_pane
+        .connect_offset_decrease_clicked(move || offset_shell.adjust_lyrics_offset(-50));
+    let offset_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .fullscreen_player
+        .lyrics_pane
+        .connect_offset_increase_clicked(move || offset_shell.adjust_lyrics_offset(50));
+    let offset_shell = Rc::clone(shell);
+    shell
+        .player_view
+        .fullscreen_player
+        .lyrics_pane
+        .connect_offset_committed(move |value| offset_shell.set_lyrics_offset_from_text(&value));
 }
 
 pub(crate) fn submit_lyrics_search(shell: &Rc<Shell>) {

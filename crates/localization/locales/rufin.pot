@@ -229,7 +229,19 @@ msgstr ""
 msgid "No track playing"
 msgstr ""
 
+msgid "Save Lyrics"
+msgstr ""
+
 msgid "Clear fetched lyrics for this track"
+msgstr ""
+
+msgid "Lyrics offset (ms)"
+msgstr ""
+
+msgid "Decrease"
+msgstr ""
+
+msgid "Increase"
 msgstr ""
 
 msgid "Search Lyrics"
@@ -259,9 +271,6 @@ msgid "Save"
 msgstr ""
 
 msgid "Searching..."
-msgstr ""
-
-msgid "Save Lyrics"
 msgstr ""
 
 msgid "Search failed."
@@ -397,6 +406,9 @@ msgid "Search queue"
 msgstr ""
 
 msgid "Clear queue"
+msgstr ""
+
+msgid "Hold and drag to resize"
 msgstr ""
 
 msgid "Hide sidebar"
@@ -1629,9 +1641,6 @@ msgstr ""
 msgid ""
 "Thank you for trying out Rufin! If you have problems or suggestions, please "
 "open an issue in Github."
-msgstr ""
-
-msgid "Hold and drag to resize"
 msgstr ""
 
 #, rust-format

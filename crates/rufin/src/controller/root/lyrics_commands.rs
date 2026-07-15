@@ -453,6 +453,56 @@ impl LyricsCommands {
         }
     }
 
+    pub fn save_current_lyrics(
+        &self,
+        media_key: playback::MediaKey,
+        lyrics: Lyrics,
+        offset_millis: i64,
+        output_path: PathBuf,
+    ) {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
+            debug!("lyrics save skipped because no track is playing");
+            return;
+        };
+        if source_id != media_key.source_id
+            || entry.track.id != media_key.track_id
+            || lyrics.track_id != media_key.track_id
+        {
+            debug!("lyrics save skipped because the playing track changed");
+            return;
+        }
+        let metadata_events = self.lyrics_events.clone();
+        let generation = self.lyrics_request_generation.load(Ordering::Acquire);
+        let current_generation = Arc::clone(&self.lyrics_request_generation);
+        let result_media_key = media_key.clone();
+        let submit = metadata_runner().and_then(|runner| {
+            runner.submit(move || {
+                if current_generation.load(Ordering::Acquire) != generation {
+                    debug!("discarded stale lyrics save request");
+                    return;
+                }
+                match metadata::save_current_lyrics(&lyrics, offset_millis, output_path) {
+                    Ok(path) => {
+                        if current_generation.load(Ordering::Acquire) == generation {
+                            let _sent =
+                                metadata_events.try_send(metadata::LyricsEvent::FileSaved {
+                                    media_key: result_media_key,
+                                    generation,
+                                    path,
+                                });
+                        }
+                    }
+                    Err(error) => warn!(%error, "failed to save lyrics file"),
+                }
+            })
+        });
+        if let Err(error) = submit {
+            warn!(%error, "could not schedule lyrics save");
+        }
+    }
+
     pub fn preview_lyrics_search_result(
         &self,
         media_key: playback::MediaKey,

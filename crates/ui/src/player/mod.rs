@@ -31,7 +31,7 @@ pub(crate) use outputs::{
 };
 pub(crate) use queue::connect_queue_panel_controls;
 pub(crate) use right_panel::{
-    apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split,
+    apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_overlay,
 };
 
 pub(crate) struct PlayerDesktopWidgets {
