@@ -19,7 +19,8 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      container_required: ${{ steps.classify.outputs.container_required }}
+      container_mode: ${{ steps.classify.outputs.container_mode }}
+      current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
 
     steps:
@@ -40,8 +41,11 @@ jobs:
           set -euo pipefail
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "container_required=true" >> "$GITHUB_OUTPUT"
-            echo "rust_required=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "container_mode=full"
+              echo "current_nix_required=true"
+              echo "rust_required=true"
+            } >> "$GITHUB_OUTPUT"
             echo "Manual runs execute the container and full Rust checks."
             exit 0
           fi
@@ -60,16 +64,29 @@ jobs:
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
 
           rust_required=false
-          container_required=false
+          container_mode=none
+          current_nix_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             rust_required=true
-            container_required=true
+            container_mode=full
+            current_nix_required=true
           fi
 
           for path in "${changed_paths[@]}"; do
             case "$path" in
-              .github/workflows/checks.yml|.github/workflows/container-image.yml|Cargo.lock|Cargo.toml|flake.lock|flake.nix|justfile|scripts/container|packaging/container/*|packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|crates/*/Cargo.toml|crates/*/build.rs)
-                container_required=true
+              .github/workflows/checks.yml|.github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
+                container_mode=full
+                ;;
+              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO)
+                if [[ "$container_mode" != "full" ]]; then
+                  container_mode=aur
+                fi
+                ;;
+            esac
+
+            case "$path" in
+              flake.lock|flake.nix)
+                current_nix_required=true
                 ;;
             esac
 
@@ -86,13 +103,16 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
-          echo "container_required=$container_required" >> "$GITHUB_OUTPUT"
-          echo "rust_required=$rust_required" >> "$GITHUB_OUTPUT"
+          {
+            echo "container_mode=$container_mode"
+            echo "current_nix_required=$current_nix_required"
+            echo "rust_required=$rust_required"
+          } >> "$GITHUB_OUTPUT"
 
   container:
     name: Container
     needs: changes
-    if: needs.changes.outputs.container_required == 'true' && github.event_name != 'push'
+    if: needs.changes.outputs.container_mode != 'none' && github.event_name != 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -108,14 +128,21 @@ jobs:
             --tag localhost/rufin-dev:ci \
             packaging/container
 
-      - name: Check Rufin through container
+      - name: Check AUR metadata through container
         env:
           RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
           RUFIN_CONTAINER_RUNTIME: docker
         run: |
           scripts/container setup
           scripts/container run bash -lc \
-            'set -euo pipefail; (cd packaging/aur/rufin && diff -u .SRCINFO <(makepkg --printsrcinfo)); just check'
+            'set -euo pipefail; cd packaging/aur/rufin; diff -u .SRCINFO <(makepkg --printsrcinfo)'
+
+      - name: Check Rufin through container
+        if: needs.changes.outputs.container_mode == 'full'
+        env:
+          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
+          RUFIN_CONTAINER_RUNTIME: docker
+        run: scripts/container run just check
 
   workspace:
     name: Workspace
@@ -133,9 +160,10 @@ jobs:
         id: nix-environment
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CURRENT_NIX_REQUIRED: ${{ needs.changes.outputs.current_nix_required }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$CURRENT_NIX_REQUIRED" != "true" ]]; then
             echo "target=github:screwys/Rufin/$BASE_SHA" >> "$GITHUB_OUTPUT"
           else
             echo "target=." >> "$GITHUB_OUTPUT"
@@ -219,7 +247,7 @@ jobs:
         env:
           CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          CONTAINER_REQUIRED: ${{ needs.changes.outputs.container_required }}
+          CONTAINER_MODE: ${{ needs.changes.outputs.container_mode }}
           CONTAINER_RESULT: ${{ needs.container.result }}
           EVENT_NAME: ${{ github.event_name }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
@@ -232,7 +260,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$EVENT_NAME" != "push" && "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
+          if [[ "$EVENT_NAME" != "push" && "$CONTAINER_MODE" != "none" && "$CONTAINER_RESULT" != "success" ]]; then
             echo "Container build did not pass: $CONTAINER_RESULT" >&2
             exit 1
           fi
