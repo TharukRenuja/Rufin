@@ -4,25 +4,14 @@ Thank you for your interest in contributing to Rufin! This document has some sim
 
 ## Development environment
 
-Native dependencies and build setup are in
+For development using host packages, please see
 [README.md#building-locally](README.md#building-locally).
 
-For a reproducible Docker or Podman environment:
+If you have nix available, it is easier to:
 
 ```bash
-just container setup
-```
-
-`just build`, `just fmt`, `just test`, `just check`, and `just release-check`
-will then use the container. Its state is kept under `.local/container`. Use
-`just container shell` for an interactive shell, `just container disable` to
-return those commands to the host, or `just container reset` to clear the
-container state. `just debug` always runs on the host and is unavailable inside
-the container shell.
-
-If you have Nix available, it is easier to enter the development shell:
-
-```bash
+git clone https://github.com/screwys/Rufin.git
+cd Rufin
 nix develop
 ```
 
@@ -30,6 +19,12 @@ The cache for `main` and release tags is available through Cachix:
 
 ```bash
 nix-shell -p cachix --run "cachix use rufin"
+```
+
+Even if you don't want to install dependencies on your host, and don't have nix available it is still possible to develop Rufin. We release a minimal Fedora container with nix available. This is quite convenient since you can keep these dependencies out of your system; yet develop and test Rufin easily. Since this is a container, you can't start Rufin from inside but you can use it to build a binary for your system.
+
+```bash
+just container setup
 ```
 
 ## Project structure
@@ -76,8 +71,6 @@ This adds a new source without building new library, syncing, playback, secrets,
 
 ## Development commands
 
-To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
-
 ```bash
 just build # builds the app
 just debug # runs the development app on the host
@@ -91,6 +84,8 @@ To run the broader testing suite:
 just check
 ```
 
+To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
+
 On a native host, this also needs rustfmt, clippy, cargo-deny, and gettext.
 cargo-nextest is used when available.
 
@@ -99,6 +94,12 @@ For release or package metadata changes:
 ```bash
 just release-check
 ```
+These commands work the same for local and contrainer development. If container is set up; `just build`, `just fmt`, `just test`, `just check`, and `just release-check`
+uses the container environment. Its state is kept under `.local/container`. Use
+`just container shell` for an interactive shell, `just container disable` to
+return those commands to the host, or `just container reset` to clear the
+container state. `just debug` always runs on the host and is unavailable inside
+the container shell.
 
 ## Simple guidelines
 
