@@ -384,7 +384,7 @@ fn release_note_row(window: &adw::ApplicationWindow, note: &ReleaseNote) -> gtk:
     version.set_tooltip_text(Some(&tr("Open release notes")));
     let version_content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     let version_text = gtk::Label::new(Some(&version_label));
-    let version_icon = gtk::Image::from_icon_name("external-link-symbolic");
+    let version_icon = gtk::Image::from_icon_name("adw-external-link-symbolic");
     version_icon.set_pixel_size(12);
     version_content.append(&version_text);
     version_content.append(&version_icon);
