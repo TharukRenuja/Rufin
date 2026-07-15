@@ -25,7 +25,7 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 | `secrets` | storage for credentials and service keys |
 | `sources` | source clients and their specific configurations live here |
 | `ui` | GTK bindings, navigation, and desktop integrations |
-| `xtask` | release tooling; binary packages do not use this crate |
+| `xtask` | development tooling that we use through just commands; binary packages do not use this crate |
 
 For example, even a large expansion such as adding a new source roughly can be added like this:
 
