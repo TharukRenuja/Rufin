@@ -126,6 +126,7 @@ pub struct RandomPlayRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[expect(clippy::large_enum_variant)]
 pub enum RadioSeed {
     Track(Track),
     Album(Album),

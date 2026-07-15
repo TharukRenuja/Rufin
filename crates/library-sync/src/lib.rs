@@ -32,6 +32,7 @@ pub use local::{LocalObservation, acquire_local, commit_local};
 pub use local_access::LocalAccessObservation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[expect(clippy::large_enum_variant)]
 pub enum LibrarySyncEvent {
     Committed(LibraryCommitted),
     SyncChanged(SourceSyncChanged),

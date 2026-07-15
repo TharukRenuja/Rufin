@@ -38,6 +38,7 @@ const FOLDER_TREE_HIDE_WIDTH: i32 = 550;
 const FOLDER_ROW_ARTWORK_SIZE: i32 = 28;
 
 #[derive(Clone)]
+#[expect(clippy::large_enum_variant)]
 enum FolderTableRow {
     Folder {
         name: String,

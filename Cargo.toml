@@ -67,11 +67,8 @@ unsafe_code = "forbid"
 warnings = "deny"
 
 [workspace.lints.clippy]
-all = { level = "allow", priority = -2 }
-correctness = { level = "deny", priority = -1 }
-suspicious = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
-large_enum_variant = "allow"
+style = { level = "allow", priority = -1 }
+complexity = { level = "allow", priority = -1 }
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"

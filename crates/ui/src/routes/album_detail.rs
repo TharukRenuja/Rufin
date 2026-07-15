@@ -517,6 +517,7 @@ impl AlbumDetailTrackSelection {
     }
 }
 #[derive(Clone, Debug, PartialEq)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum AlbumDetailItem {
     Lead {
         album: Album,
