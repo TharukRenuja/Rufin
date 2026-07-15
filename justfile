@@ -4,17 +4,27 @@ default:
     @just --list
 
 build:
+    scripts/container run just _build
+
+_build:
     cargo build --locked
 
 check:
+    RUFIN_CONTAINER_HEADLESS=1 scripts/container run just _check-all
+
+_check-all:
     just _flatpak-sources-check
     just _fmt-check
     just _lint
-    just test
+    just _test
     just _deps
 
 debug *args:
-    set -- {{args}}; \
+    if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
+        echo "Run 'just debug' on the host." >&2; \
+        exit 1; \
+    fi
+    set -- {{ args }}; \
     if [[ "${1:-}" == "flatpak" ]]; then \
         shift; \
         flatpak run --env=RUST_LOG="${RUST_LOG:-rufin=debug,warn}" io.github.screwys.Rufin "$@" 2>&1; \
@@ -23,12 +33,21 @@ debug *args:
     fi
 
 fmt:
+    scripts/container run just _fmt
+
+_fmt:
     cargo fmt --all
 
 release-check *args:
-    cargo run --locked -p xtask -- verify local {{args}}
+    scripts/container run just _release-check {{ args }}
+
+_release-check *args:
+    cargo run --locked -p xtask -- verify local {{ args }}
 
 test *args:
+    RUFIN_CONTAINER_HEADLESS=1 scripts/container run just _test {{ args }}
+
+_test *args:
     just _icon-check
     if command -v cargo-nextest >/dev/null 2>&1; then \
         nextest_jobs="${NEXTEST_JOBS:-4}"; \
@@ -36,15 +55,18 @@ test *args:
             echo "NEXTEST_JOBS must be a positive integer." >&2; \
             exit 1; \
         fi; \
-        cargo nextest run --workspace --locked --test-threads "$nextest_jobs" {{args}}; \
+        cargo nextest run --workspace --locked --test-threads "$nextest_jobs" {{ args }}; \
     else \
         cargo_args=(--workspace --locked); \
-        if [[ -z "{{args}}" ]]; then \
+        if [[ -z "{{ args }}" ]]; then \
             cargo_args+=(--lib --bins --tests --benches --examples); \
         fi; \
         echo "cargo-nextest is unavailable; falling back to cargo test." >&2; \
-        cargo test "${cargo_args[@]}" {{args}}; \
+        cargo test "${cargo_args[@]}" {{ args }}; \
     fi
+
+container action="status":
+    scripts/container {{ action }}
 
 _check:
     cargo clippy -p rufin --bin rufin --locked

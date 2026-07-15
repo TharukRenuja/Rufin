@@ -19,6 +19,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
+      container_required: ${{ steps.classify.outputs.container_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
 
     steps:
@@ -39,8 +40,9 @@ jobs:
           set -euo pipefail
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "container_required=true" >> "$GITHUB_OUTPUT"
             echo "rust_required=true" >> "$GITHUB_OUTPUT"
-            echo "Manual runs execute the full Rust checks."
+            echo "Manual runs execute the container and full Rust checks."
             exit 0
           fi
 
@@ -58,11 +60,19 @@ jobs:
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
 
           rust_required=false
+          container_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             rust_required=true
+            container_required=true
           fi
 
           for path in "${changed_paths[@]}"; do
+            case "$path" in
+              .github/workflows/checks.yml|.github/workflows/container-image.yml|Cargo.lock|Cargo.toml|flake.lock|flake.nix|justfile|scripts/container|packaging/container/*|packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|crates/*/Cargo.toml|crates/*/build.rs)
+                container_required=true
+                ;;
+            esac
+
             case "$path" in
               packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO)
                 ;;
@@ -76,7 +86,36 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
+          echo "container_required=$container_required" >> "$GITHUB_OUTPUT"
           echo "rust_required=$rust_required" >> "$GITHUB_OUTPUT"
+
+  container:
+    name: Container
+    needs: changes
+    if: needs.changes.outputs.container_required == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build container image
+        run: |
+          docker build \
+            --file packaging/container/Containerfile \
+            --tag localhost/rufin-dev:ci \
+            packaging/container
+
+      - name: Check Rufin through container
+        env:
+          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
+          RUFIN_CONTAINER_RUNTIME: docker
+        run: |
+          scripts/container setup
+          scripts/container run bash -lc \
+            'set -euo pipefail; (cd packaging/aur/rufin && diff -u .SRCINFO <(makepkg --printsrcinfo)); just check'
 
   workspace:
     name: Workspace
@@ -121,7 +160,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
+          cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command env RUSTUP_HOME=/tmp/rufin-empty-rustup {0}
 
       - name: Check Flatpak cargo sources
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
@@ -169,6 +208,7 @@ jobs:
     name: Required
     needs:
       - changes
+      - container
       - workspace
       - cargo-deny
     if: always()
@@ -179,6 +219,8 @@ jobs:
         env:
           CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
+          CONTAINER_REQUIRED: ${{ needs.changes.outputs.container_required }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
         run: |
@@ -189,8 +231,13 @@ jobs:
             exit 1
           fi
 
+          if [[ "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
+            echo "Container build did not pass: $CONTAINER_RESULT" >&2
+            exit 1
+          fi
+
           if [[ "$RUST_REQUIRED" != "true" ]]; then
-            echo "Docs or stable AUR metadata only; Rust checks are not required."
+            echo "Full Rust checks are not required."
             exit 0
           fi
 

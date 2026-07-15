@@ -234,7 +234,7 @@ scrolledwindow.route-scroll-owner scrollbar.vertical > range > trough > slider {
   min-height: 42px;
   margin: 0 1px;
   border: none;
-  outline: none;
+  outline: none; /* The inherited outline creates an invalid rectangle that Pixman rejects. */
   border-radius: 999px;
   background: color-mix(in srgb, var(--window-fg-color) 38%, transparent);
   box-shadow: none;
