@@ -235,16 +235,15 @@ impl MusicSource for SubsonicSource {
         ))
     }
 
-    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
+    async fn artist_collections(&self) -> SourceResult<ArtistCollections> {
         let artists = self.get_all_artists().await?;
-        Ok(page(artists, request))
+        Ok(ArtistCollections {
+            album_artists: artists.clone(),
+            artists,
+        })
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
-        self.artists(request).await
-    }
-
-    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
+    async fn genres(&self) -> SourceResult<Vec<Genre>> {
         let body: GenresBody = self.get_json("getGenres", &[]).await?;
         let mut genres = body
             .genres
@@ -253,7 +252,7 @@ impl MusicSource for SubsonicSource {
             .map(|genre| genre_from_dto(self, genre))
             .collect::<Vec<_>>();
         genres.sort_by_key(|genre| genre.name.to_lowercase());
-        Ok(page(genres, request))
+        Ok(genres)
     }
 
     async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
@@ -371,11 +370,11 @@ impl MusicFolderProvider for SubsonicSource {
             .collect())
     }
 
-    async fn tracks_in_music_folder(
+    async fn track_ids_in_music_folder(
         &self,
         folder_id: &MusicFolderId,
         request: PagedRequest,
-    ) -> SourceResult<PagedResponse<Track>> {
+    ) -> SourceResult<PagedResponse<TrackId>> {
         let body: SearchBody = self
             .get_json(
                 "search3",
@@ -396,7 +395,7 @@ impl MusicFolderProvider for SubsonicSource {
                 .and_then(|result| result.song)
                 .unwrap_or_default()
                 .into_iter()
-                .map(|song| track_from_dto(self, song))
+                .map(|song| TrackId::new(self.id("track", &raw_id_string(&song.id))))
                 .collect(),
             0,
         ))
@@ -544,7 +543,7 @@ impl GeneratedTrackProvider for SubsonicSource {
 
 #[async_trait(?Send)]
 impl PlaylistReader for SubsonicSource {
-    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>> {
+    async fn playlists(&self) -> SourceResult<Vec<Playlist>> {
         let body: PlaylistsBody = self.get_json("getPlaylists", &[]).await?;
         let mut playlists = body
             .playlists
@@ -554,7 +553,34 @@ impl PlaylistReader for SubsonicSource {
             .map(|playlist| playlist_from_dto(self, playlist))
             .collect::<Vec<_>>();
         playlists.sort_by_key(|playlist| playlist.name.to_lowercase());
-        Ok(page(playlists, request))
+        Ok(playlists)
+    }
+
+    async fn playlist_snapshot(&self, playlist: &Playlist) -> SourceResult<PlaylistSnapshot> {
+        let body: PlaylistBody = self
+            .get_json(
+                "getPlaylist",
+                &[("id", raw_item_id(playlist.id.as_str()).to_string())],
+            )
+            .await?;
+        let entries = body
+            .playlist
+            .entry
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(index, song)| {
+                let raw_track_id = raw_id_string(&song.id);
+                PlaylistEntryKey {
+                    entry_id: playlist_entry_id(&playlist.id, index, &raw_track_id),
+                    track_id: TrackId::new(self.id("track", &raw_track_id)),
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(PlaylistSnapshot {
+            playlist: playlist.clone(),
+            entries,
+        })
     }
 
     async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {

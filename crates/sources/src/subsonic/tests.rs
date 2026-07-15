@@ -619,6 +619,47 @@ async fn music_load_folders() {
     assert_eq!(folders[0].id.as_str(), "subsonic:music-folder:1");
     assert_eq!(folders[0].name, "Music");
 }
+
+#[tokio::test]
+async fn artist_collections_share_one_complete_response() {
+    let server = MockServer::start().await;
+    let artists = (0..501)
+        .map(|index| {
+            serde_json::json!({
+                "id": format!("artist-{index}"),
+                "name": format!("Artist {index}")
+            })
+        })
+        .collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/rest/getArtists.view"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "artists": {
+                    "index": [{
+                        "name": "A",
+                        "artist": artists
+                    }]
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let collections = provider
+        .artist_collections()
+        .await
+        .expect("artist collections");
+
+    assert_eq!(collections.artists.len(), 501);
+    assert_eq!(collections.album_artists.len(), 501);
+    assert_eq!(collections.artists, collections.album_artists);
+}
+
 #[tokio::test]
 async fn in_track_id() {
     let server = MockServer::start().await;
@@ -647,14 +688,14 @@ async fn in_track_id() {
     let provider = provider(&server);
 
     let page = provider
-        .tracks_in_music_folder(
+        .track_ids_in_music_folder(
             &MusicFolderId::new("subsonic:music-folder:1"),
             PagedRequest::new(0, 50),
         )
         .await
         .expect("tracks");
 
-    assert_eq!(page.items[0].id.as_str(), "subsonic:track:track-one");
+    assert_eq!(page.items[0].as_str(), "subsonic:track:track-one");
 }
 #[tokio::test]
 async fn root_use_folder() {

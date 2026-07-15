@@ -562,7 +562,7 @@ async fn library_scope_id() {
     let provider = provider(&server, "token-one");
 
     let page = provider
-        .tracks_in_music_folder(
+        .track_ids_in_music_folder(
             &MusicFolderId::new("jellyfin:music-folder:music-one"),
             PagedRequest::new(0, 50),
         )
@@ -570,7 +570,7 @@ async fn library_scope_id() {
         .expect("tracks");
 
     assert_eq!(page.total, 1);
-    assert_eq!(page.items[0].id.as_str(), "jellyfin:track:track-one");
+    assert_eq!(page.items[0].as_str(), "jellyfin:track:track-one");
 }
 #[tokio::test]
 async fn library_folder_views() {
@@ -730,36 +730,90 @@ async fn library_map_counts() {
         })))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/Artists/AlbumArtists"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 0,
+            "Items": []
+        })))
+        .mount(&server)
+        .await;
     let provider = provider(&server, "token-one");
 
     let artists = provider
-        .artists(PagedRequest::new(0, 50))
+        .artist_collections()
         .await
-        .expect("artists");
+        .expect("artists")
+        .artists;
 
-    assert_eq!(artists.items[0].id.as_str(), "jellyfin:artist:artist-one");
-    assert_eq!(artists.items[0].album_count, 4);
-    assert_eq!(artists.items[0].track_count, 30);
+    assert_eq!(artists[0].id.as_str(), "jellyfin:artist:artist-one");
+    assert_eq!(artists[0].album_count, 4);
+    assert_eq!(artists[0].track_count, 30);
     assert_eq!(
-        artists.items[0].last_played.as_deref(),
+        artists[0].last_played.as_deref(),
         Some("2024-05-03T09:10:11.0000000Z")
     );
-    assert_eq!(artists.items[0].play_count, Some(22));
-    assert_eq!(artists.items[0].user_rating, Some(3));
+    assert_eq!(artists[0].play_count, Some(22));
+    assert_eq!(artists[0].user_rating, Some(3));
     assert_eq!(
-        artists.items[0].musicbrainz_artist_id.as_deref(),
+        artists[0].musicbrainz_artist_id.as_deref(),
         Some("mb-artist-one")
     );
-    assert!(artists.items[0].favorite);
+    assert!(artists[0].favorite);
 }
+
+#[tokio::test]
+async fn artist_collections_read_every_capped_jellyfin_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Artists"))
+        .and(query_param("StartIndex", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 2,
+            "Items": [{ "Id": "artist-one", "Name": "First Artist" }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Artists"))
+        .and(query_param("StartIndex", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 2,
+            "Items": [{ "Id": "artist-two", "Name": "Second Artist" }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Artists/AlbumArtists"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 0,
+            "Items": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let collections = provider
+        .artist_collections()
+        .await
+        .expect("artist collections");
+
+    assert_eq!(collections.artists.len(), 2);
+    assert_eq!(collections.artists[0].name, "First Artist");
+    assert_eq!(collections.artists[1].name, "Second Artist");
+}
+
 #[tokio::test]
 async fn library_scope_music() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/MusicGenres"))
         .and(query_param("IncludeItemTypes", "Audio,MusicAlbum"))
-        .and(query_param("StartIndex", "3"))
-        .and(query_param("Limit", "7"))
+        .and(query_param("StartIndex", "0"))
+        .and(query_param("Limit", "500"))
         .and(header_regex("authorization", "Token=\"token-one\""))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "TotalRecordCount": 1,
@@ -778,18 +832,14 @@ async fn library_scope_music() {
         .await;
     let provider = provider(&server, "token-one");
 
-    let genres = provider
-        .genres(PagedRequest::new(3, 7))
-        .await
-        .expect("genres");
+    let genres = provider.genres().await.expect("genres");
 
-    assert_eq!(genres.total, 1);
-    assert_eq!(genres.items[0].id.as_str(), "jellyfin:genre:genre-one");
-    assert_eq!(genres.items[0].name, "Dream Pop");
-    assert_eq!(genres.items[0].album_count, 4);
-    assert_eq!(genres.items[0].track_count, 31);
+    assert_eq!(genres[0].id.as_str(), "jellyfin:genre:genre-one");
+    assert_eq!(genres[0].name, "Dream Pop");
+    assert_eq!(genres[0].album_count, 4);
+    assert_eq!(genres[0].track_count, 31);
     assert_eq!(
-        genres.items[0].image_ref,
+        genres[0].image_ref,
         Some(ImageRef {
             item_id: "jellyfin:genre:genre-one".to_string(),
             tag: Some("genre-tag".to_string()),
@@ -1023,6 +1073,109 @@ async fn library_track_ordered() {
         })
     );
     assert_eq!(detail.tracks[1].title, "Second Motion");
+}
+
+#[tokio::test]
+async fn playlist_snapshot_reuses_summary_and_reads_only_entry_keys() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "Playlist"))
+        .and(query_param("Fields", PLAYLIST_FIELDS))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{
+                "Id": "playlist-one",
+                "Name": "Late Set",
+                "Type": "Playlist",
+                "ChildCount": 2
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 2,
+            "Items": [
+                {
+                    "Id": "track-one",
+                    "PlaylistItemId": "entry-one"
+                },
+                {
+                    "Id": "track-one",
+                    "PlaylistItemId": "entry-two"
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let playlist = provider
+        .playlists()
+        .await
+        .expect("playlists")
+        .into_iter()
+        .next()
+        .expect("playlist");
+    let snapshot = provider
+        .playlist_snapshot(&playlist)
+        .await
+        .expect("playlist snapshot");
+
+    assert_eq!(snapshot.playlist.name, "Late Set");
+    assert_eq!(snapshot.entries.len(), 2);
+    assert_eq!(snapshot.entries[0].entry_id, "entry-one");
+    assert_eq!(snapshot.entries[1].entry_id, "entry-two");
+    assert_eq!(snapshot.entries[0].track_id, snapshot.entries[1].track_id);
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.url.path() != "/Items/playlist-one")
+    );
+    let entry_request = requests
+        .iter()
+        .find(|request| request.url.path() == "/Playlists/playlist-one/Items")
+        .expect("entry request");
+    assert!(
+        entry_request
+            .url
+            .query_pairs()
+            .all(|(name, _)| name != "Fields")
+    );
+}
+
+#[tokio::test]
+async fn playlist_snapshot_requires_server_entry_ids() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Playlists/playlist-one/Items"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "TotalRecordCount": 1,
+            "Items": [{ "Id": "track-one" }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+    let playlist = Playlist {
+        id: PlaylistId::new("jellyfin:playlist:playlist-one"),
+        name: "Late Set".to_string(),
+        owner: None,
+        track_count: 1,
+        duration_seconds: 0,
+        top_genres: Vec::new(),
+        image_ref: None,
+        representative_albums: Vec::new(),
+    };
+
+    let result = provider.playlist_snapshot(&playlist).await;
+
+    assert!(matches!(result, Err(SourceError::Other(_))));
 }
 
 #[tokio::test]

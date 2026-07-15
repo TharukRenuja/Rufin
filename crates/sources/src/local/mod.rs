@@ -1,5 +1,6 @@
 use crate::{
-    FolderBrowser, ImageBytes, MusicSource, PagedRequest, SourceError, SourceIdentity, SourceResult,
+    ArtistCollections, FolderBrowser, ImageBytes, MusicSource, PagedRequest, SourceError,
+    SourceIdentity, SourceResult,
 };
 use async_trait::async_trait;
 use library::{
@@ -423,16 +424,15 @@ impl MusicSource for LocalSource {
         Ok(page(&self.library.tracks, request))
     }
 
-    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
-        Ok(page(&self.library.artists, request))
+    async fn artist_collections(&self) -> SourceResult<ArtistCollections> {
+        Ok(ArtistCollections {
+            artists: self.library.artists.clone(),
+            album_artists: self.library.album_artists.clone(),
+        })
     }
 
-    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>> {
-        Ok(page(&self.library.album_artists, request))
-    }
-
-    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>> {
-        Ok(page(&self.library.genres, request))
+    async fn genres(&self) -> SourceResult<Vec<Genre>> {
+        Ok(self.library.genres.clone())
     }
 
     async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {

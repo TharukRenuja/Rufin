@@ -14,7 +14,7 @@ pub struct LibrarySync {
     pub artists: Vec<Artist>,
     pub album_artists: Vec<Artist>,
     pub genres: Vec<Genre>,
-    pub playlists: Vec<PlaylistDetail>,
+    pub playlists: Vec<PlaylistSnapshot>,
     pub home_sections: Vec<HomeSection>,
     pub mappings: Vec<SourceObjectMapping>,
     pub coverage: SyncCoverage,

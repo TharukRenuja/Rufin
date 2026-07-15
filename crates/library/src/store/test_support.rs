@@ -1,7 +1,8 @@
 pub(super) use crate::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    SourceEntityKind, SourceFeatureOwner, SourceId, Track, TrackId, TrackSort,
+    ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistEntry,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SourceEntityKind, SourceFeatureOwner, SourceId,
+    Track, TrackId, TrackSort,
 };
 
 pub(super) use super::{
@@ -100,6 +101,21 @@ impl LibraryObservation {
             .map(|detail| detail.playlist.clone())
             .collect::<Vec<_>>();
         let mappings = self.source_object_mappings(&folders, &playlists);
+        let playlist_snapshots = self
+            .playlists
+            .into_iter()
+            .map(|detail| PlaylistSnapshot {
+                playlist: detail.playlist,
+                entries: detail
+                    .entries
+                    .into_iter()
+                    .map(|entry| PlaylistEntryKey {
+                        entry_id: entry.entry_id,
+                        track_id: entry.track.id,
+                    })
+                    .collect(),
+            })
+            .collect();
         let base_cache_revision = store.source_cache_revision(source_id)?;
         store.commit_library_sync(
             source_id,
@@ -111,7 +127,7 @@ impl LibraryObservation {
                 artists: self.artists,
                 album_artists: self.album_artists,
                 genres: self.genres,
-                playlists: self.playlists,
+                playlists: playlist_snapshots,
                 home_sections: self.home_sections,
                 mappings,
                 coverage: SyncCoverage::All {
