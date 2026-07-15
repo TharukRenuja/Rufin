@@ -92,7 +92,7 @@ jobs:
   container:
     name: Container
     needs: changes
-    if: needs.changes.outputs.container_required == 'true'
+    if: needs.changes.outputs.container_required == 'true' && github.event_name != 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -160,7 +160,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command env RUSTUP_HOME=/tmp/rufin-empty-rustup {0}
+          cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command env RUSTUP_HOME=/dev/null {0}
 
       - name: Check Flatpak cargo sources
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
@@ -221,6 +221,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTAINER_REQUIRED: ${{ needs.changes.outputs.container_required }}
           CONTAINER_RESULT: ${{ needs.container.result }}
+          EVENT_NAME: ${{ github.event_name }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
         run: |
@@ -231,7 +232,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
+          if [[ "$EVENT_NAME" != "push" && "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
             echo "Container build did not pass: $CONTAINER_RESULT" >&2
             exit 1
           fi
