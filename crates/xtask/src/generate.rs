@@ -248,7 +248,6 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
             "--language=Rust",
             "--escape",
             "--no-location",
-            "--sort-by-file",
             "--package-name=Rufin",
             "--msgid-bugs-address=https://github.com/screwys/Rufin/issues",
             "--keyword=tr:1",
@@ -296,7 +295,9 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
     );
     if entries.metadata()?.len() > 0 {
         template.push('\n');
-        template.push_str(strip_xgettext_header(&read_to_string(entries)?));
+        template.push_str(&canonical_gettext_entries(strip_xgettext_header(
+            &read_to_string(entries)?,
+        )));
     }
     write_string(output, &template)
 }
@@ -305,6 +306,52 @@ fn strip_xgettext_header(input: &str) -> &str {
     input
         .split_once("\n\n")
         .map_or(input, |(_, entries)| entries)
+}
+
+fn canonical_gettext_entries(input: &str) -> String {
+    let mut entries = input
+        .trim()
+        .split("\n\n")
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| (gettext_entry_sort_key(entry), entry))
+        .collect::<Vec<_>>();
+    entries.sort_by(|(left_key, left), (right_key, right)| {
+        left_key.cmp(right_key).then_with(|| left.cmp(right))
+    });
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut output = entries
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    output.push('\n');
+    output
+}
+
+fn gettext_entry_sort_key(entry: &str) -> (String, String) {
+    (
+        gettext_field_key(entry, "msgctxt"),
+        gettext_field_key(entry, "msgid"),
+    )
+}
+
+fn gettext_field_key(entry: &str, field: &str) -> String {
+    let prefix = format!("{field} ");
+    let mut key = String::new();
+    let mut collecting = false;
+    for line in entry.lines() {
+        if let Some(value) = line.strip_prefix(&prefix) {
+            collecting = true;
+            key.push_str(value);
+        } else if collecting && line.starts_with('"') {
+            key.push_str(line);
+        } else if collecting {
+            break;
+        }
+    }
+    key
 }
 
 fn nix_cargo_hash_command(args: Vec<String>) -> Result<()> {
@@ -854,7 +901,26 @@ fn print_diff(current_label: &str, current: &str, expected_label: &str, expected
 
 #[cfg(test)]
 mod tests {
-    use super::extract_srcinfo_output;
+    use super::{canonical_gettext_entries, extract_srcinfo_output};
+
+    #[test]
+    fn gettext_entry_order_does_not_change_template() {
+        let plural = "#, rust-format\n\
+                      msgid \"{count} album\"\n\
+                      msgid_plural \"{count} albums\"\n\
+                      msgstr[0] \"\"\n\
+                      msgstr[1] \"\"";
+        let contextual = "msgctxt \"button\"\n\
+                          msgid \"Play\"\n\
+                          msgstr \"\"";
+        let first = format!("{plural}\n\n{contextual}\n");
+        let second = format!("{contextual}\n\n{plural}\n");
+
+        assert_eq!(
+            canonical_gettext_entries(&first),
+            canonical_gettext_entries(&second)
+        );
+    }
 
     #[test]
     fn srcinfo_output_ignores_leading_nix_noise() {
