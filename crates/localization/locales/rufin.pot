@@ -16,13 +16,1090 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
+msgid ""
+"Changing secret backend removes legacy config secrets and signs you out "
+"everywhere, including API secrets. App cache is not affected."
+msgstr ""
+
+#, rust-format
+msgid ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
+
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+
+msgid ""
+"Thank you for trying out Rufin! If you have problems or suggestions, please "
+"open an issue in Github."
+msgstr ""
+
+msgid ""
+"These folders are combined into the Local source and shown through folder "
+"browsing."
+msgstr ""
+
+msgid ""
+"This playlist uses nested rule groups. Rule editing is unavailable in this "
+"editor."
+msgstr ""
+
+msgid ""
+"This removes the server, cached library metadata, queue snapshot, and saved "
+"token for"
+msgstr ""
+
+msgid ""
+"This uses Jellyfin API for play radio, necessary if you want recommendation "
+"plugins to work."
+msgstr ""
+
+#, rust-format
+msgid ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} track."
+msgid_plural ""
+"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
+"{unmatched} unmatched of {total} tracks."
+msgstr[0] ""
+msgstr[1] ""
+
+msgid ". You only need to fill email and an application name parts"
+msgstr ""
+
+msgid "128 kbps"
+msgstr ""
+
+msgid "192 kbps"
+msgstr ""
+
+msgid "256 kbps"
+msgstr ""
+
+msgid "320 kbps"
+msgstr ""
+
+msgid "ALSA"
+msgstr ""
+
+msgid "API key"
+msgstr ""
+
+msgid "API keys"
+msgstr ""
+
+msgid "About Rufin"
+msgstr ""
+
+msgid "Add Rule"
+msgstr ""
+
+msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
+msgstr ""
+
+msgid "Add current"
+msgstr ""
+
+msgid "Add folder"
+msgstr ""
+
+msgid "Add folders to use the Local source."
+msgstr ""
+
+msgid "Add music library"
+msgstr ""
+
+msgid "Add music to start a queue."
+msgstr ""
+
+msgid "Add server"
+msgstr ""
+
+msgid "Add to Favorites"
+msgstr ""
+
+msgid "Add to Playlist"
+msgstr ""
+
+msgid "Add tracks when fewer than this many remain"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Added to favorites"
+msgstr ""
+
+msgid "Album Artists"
+msgstr ""
+
+msgid "Album artist"
+msgstr ""
+
+msgid "Album artists"
+msgstr ""
+
+msgid "Album radio"
+msgstr ""
+
+msgid "Album title"
+msgstr ""
+
+msgid "Album tracks"
+msgstr ""
+
+msgid "Album"
+msgstr ""
+
+msgid "Albums"
+msgstr ""
+
+msgid "All Music"
+msgstr ""
+
+msgid "All tracks"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "Any genre"
+msgstr ""
+
+msgid "Any"
+msgstr ""
+
+msgid "App window"
+msgstr ""
+
+msgid "Appears On"
+msgstr ""
+
+msgid "Application name"
+msgstr ""
+
+msgid "Artist / Album"
+msgstr ""
+
+msgid "Artist albums"
+msgstr ""
+
+msgid "Artist name"
+msgstr ""
+
+msgid "Artist radio"
+msgstr ""
+
+msgid "Artist tracks"
+msgstr ""
+
+msgid "Artist"
+msgstr ""
+
+msgid "Artists"
+msgstr ""
+
+msgid "Audio fade on play/pause"
+msgstr ""
+
+msgid "Audio output"
+msgstr ""
+
+msgid "Audio"
+msgstr ""
+
+msgid "Auto DJ off"
+msgstr ""
+
+msgid "Auto DJ on"
+msgstr ""
+
+msgid "Auto DJ refill threshold"
+msgstr ""
+
+msgid "Auto DJ"
+msgstr ""
+
+msgid "BPM"
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Cached entries will appear here after sync finishes"
+msgstr ""
+
+msgid "Cached library cleared."
+msgstr ""
+
+msgid "Cached library ready"
+msgstr ""
+
+msgid "Cached"
+msgstr ""
+
+msgid "Caching Library"
+msgstr ""
+
+msgid "Caching local library..."
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Change Secret Storage"
+msgstr ""
+
+msgid "Change"
+msgstr ""
+
+#, rust-format
+msgid "Checking {provider} server..."
+msgstr ""
+
+msgid "Choose a configured source or add another."
+msgstr ""
+
+msgid "Choose a local music folder"
+msgstr ""
+
+msgid "Choose a local prefix."
+msgstr ""
+
+msgid "Choose an existing local prefix."
+msgstr ""
+
+msgid "Choose at least one local music folder"
+msgstr ""
+
+msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+
+msgid "Choose the current page layout."
+msgstr ""
+
+msgid "Choose"
+msgstr ""
+
+msgid "Classical"
+msgstr ""
+
+msgid "Clear Cache"
+msgstr ""
+
+msgid "Clear Cached Library"
+msgstr ""
+
+msgid "Clear Mapping"
+msgstr ""
+
+msgid "Clear fetched lyrics for this track"
+msgstr ""
+
+msgid "Clear queue"
+msgstr ""
+
+msgid "Close fullscreen player"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Club"
+msgstr ""
+
+msgid "Collapse sidebar"
+msgstr ""
+
+msgid "Collection"
+msgstr ""
+
+msgid "Collections"
+msgstr ""
+
+msgid "Columns"
+msgstr ""
+
+msgid "Comment text"
+msgstr ""
+
+msgid "Comment"
+msgstr ""
+
+msgid "Compact"
+msgstr ""
+
+msgid "Configure saved music sources and local playback mappings."
+msgstr ""
+
+msgid "Connect"
+msgstr ""
+
+#, rust-format
+msgid "Connected as {username}"
+msgstr ""
+
+msgid "Connected"
+msgstr ""
+
+msgid "Connected. Loading cached library..."
+msgstr ""
+
+msgid "Connecting to music server..."
+msgstr ""
+
+msgid "Connection"
+msgstr ""
+
+msgid "Control notifications"
+msgstr ""
+
+msgid "Create"
+msgstr ""
+
+msgid "Crossfade duration"
+msgstr ""
+
+msgid "Crossfade"
+msgstr ""
+
+msgid "Custom"
+msgstr ""
+
+msgid "Customize display"
+msgstr ""
+
+msgid "Dance"
+msgstr ""
+
+msgid "Date added"
+msgstr ""
+
+msgid "Decrease"
+msgstr ""
+
+msgid "Default left sidebar"
+msgstr ""
+
+msgid "Default right sidebar"
+msgstr ""
+
+msgid "Default"
+msgstr ""
+
+msgid "Delete Playlist"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Descending"
+msgstr ""
+
+msgid "Detail track columns"
+msgstr ""
+
+msgid "Detail"
+msgstr ""
+
+msgid "DirectSound"
+msgstr ""
+
+msgid "Disable private mode"
+msgstr ""
+
+msgid "Disc"
+msgstr ""
+
+msgid "Discography"
+msgstr ""
+
+msgid "Discord"
+msgstr ""
+
+msgid "Don't duplicate"
+msgstr ""
+
+msgid "Drag to reorder"
+msgstr ""
+
+msgid "Duration"
+msgstr ""
+
+msgid "EP"
+msgstr ""
+
+msgid "EPs"
+msgstr ""
+
+msgid "Edit Smart Playlist"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Enable equalizer"
+msgstr ""
+
+msgid "Enable private mode"
+msgstr ""
+
+msgid "Enter API credentials first"
+msgstr ""
+
+msgid "Enter a local prefix."
+msgstr ""
+
+msgid "Enter a matching server prefix to map this path."
+msgstr ""
+
+msgid "Enter a new playlist name."
+msgstr ""
+
+msgid "Enter a server address, username, and password"
+msgstr ""
+
+msgid "Enter an artist or song."
+msgstr ""
+
+msgid "Equalizer"
+msgstr ""
+
+msgid "Exit to tray"
+msgstr ""
+
+msgid "Expand sidebar"
+msgstr ""
+
 msgid "Explore"
+msgstr ""
+
+msgid "External lyric lookup"
+msgstr ""
+
+msgid "External metadata lookup"
+msgstr ""
+
+msgid "External site links"
+msgstr ""
+
+msgid "Fade audio when playback is paused or resumed"
+msgstr ""
+
+msgid "Favorite tracks"
+msgstr ""
+
+msgid "Favorite"
+msgstr ""
+
+msgid "Favorites"
+msgstr ""
+
+msgid "Featured genres"
+msgstr ""
+
+msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
+msgstr ""
+
+msgid "Find your ListenBrainz user token"
+msgstr ""
+
+msgid "Flat"
+msgstr ""
+
+msgid "Folder"
+msgstr ""
+
+msgid "Folders"
+msgstr ""
+
+msgid "Forget Server"
+msgstr ""
+
+msgid "Forward"
+msgstr ""
+
+msgid "Found Servers"
+msgstr ""
+
+msgid "Full Bass"
+msgstr ""
+
+msgid "Full Treble"
+msgstr ""
+
+msgid "Full"
+msgstr ""
+
+msgid "Gapless"
+msgstr ""
+
+msgid "General"
+msgstr ""
+
+msgid "Generate and cache waveforms for the current track"
+msgstr ""
+
+msgid "Genius"
+msgstr ""
+
+msgid "Genre radio"
+msgstr ""
+
+msgid "Genre tracks"
+msgstr ""
+
+msgid "Genre"
+msgstr ""
+
+msgid "Genres"
+msgstr ""
+
+msgid "Get token"
+msgstr ""
+
+msgid "Go to Album"
+msgstr ""
+
+msgid "Go to Artist"
+msgstr ""
+
+msgid "Grid labels"
+msgstr ""
+
+msgid "Grid"
+msgstr ""
+
+msgid "Hidden server section"
+msgstr ""
+
+msgid "Hidden"
+msgstr ""
+
+msgid "Hide lyrics"
+msgstr ""
+
+msgid "Hide sidebar"
+msgstr ""
+
+msgid "Hold and drag to resize"
+msgstr ""
+
+msgid "Home Blocks"
+msgstr ""
+
+msgid "Home"
+msgstr ""
+
+msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
+msgstr ""
+
+msgid "If you do not have API keys, create them"
+msgstr ""
+
+msgid "Image"
+msgstr ""
+
+msgid "Increase"
+msgstr ""
+
+msgid "Installed"
+msgstr ""
+
+msgid "Interface"
+msgstr ""
+
+msgid "JACK"
+msgstr ""
+
+msgid "Jellyfin"
+msgstr ""
+
+msgid "Keep album transitions gapless when possible"
+msgstr ""
+
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+msgid "LRCLIB"
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "Laptop/Headphones"
+msgstr ""
+
+msgid "Last played"
+msgstr ""
+
+msgid "Last.fm scrobbling"
+msgstr ""
+
+msgid "Last.fm"
+msgstr ""
+
+msgid "Layout"
+msgstr ""
+
+msgid "Legacy"
+msgstr ""
+
+msgid "Library"
+msgstr ""
+
+msgid "Libre.fm scrobbling"
+msgstr ""
+
+msgid "Libre.fm"
+msgstr ""
+
+msgid "Limit"
+msgstr ""
+
+msgid "ListenBrainz scrobbling"
+msgstr ""
+
+msgid "ListenBrainz"
+msgstr ""
+
+msgid "Loaded in lyrics panel."
+msgstr ""
+
+msgid "Loading folders..."
+msgstr ""
+
+msgid "Local Folder"
+msgstr ""
+
+msgid "Local Folders"
+msgstr ""
+
+msgid "Local Playback Access"
+msgstr ""
+
+msgid "Local Playback Mapping"
+msgstr ""
+
+msgid "Local Prefix"
+msgstr ""
+
+msgid "Local library folder is saved."
+msgstr ""
+
+msgid "Local library"
+msgstr ""
+
+msgid "Local mapping saved. Sync to preview matches."
+msgstr ""
+
+msgid "Local mapping"
+msgstr ""
+
+msgid "Local playback mapping configured"
+msgstr ""
+
+msgid "Local"
+msgstr ""
+
+msgid "Lyrics offset (ms)"
+msgstr ""
+
+msgid "Lyrics"
+msgstr ""
+
+msgid "Manage"
+msgstr ""
+
+msgid "Map server tracks to local files"
+msgstr ""
+
+msgid "Mapped Local Path"
+msgstr ""
+
+msgid "Match"
+msgstr ""
+
+msgid "Maximum year"
+msgstr ""
+
+msgid "Menu"
+msgstr ""
+
+msgid "Metadata source"
+msgstr ""
+
+msgid "Metadata"
+msgstr ""
+
+msgid "Minimum year"
+msgstr ""
+
+msgid "Mood tracks"
+msgstr ""
+
+msgid "Mood"
+msgstr ""
+
+msgid "Moods"
+msgstr ""
+
+msgid "More actions"
+msgstr ""
+
+msgid "Most Played"
+msgstr ""
+
+msgid "Most Skipped"
 msgstr ""
 
 msgid "Most played"
 msgstr ""
 
+msgid "Move down"
+msgstr ""
+
+msgid "Move up"
+msgstr ""
+
+msgid "Music Folder"
+msgstr ""
+
+msgid "MusicBrainz + Last.fm"
+msgstr ""
+
+msgid "MusicBrainz"
+msgstr ""
+
+msgid "Mute"
+msgstr ""
+
+msgid "Muted"
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Narrow layout threshold"
+msgstr ""
+
+msgid "Narrow left sidebar"
+msgstr ""
+
+msgid "Narrow right sidebar"
+msgstr ""
+
+msgid "Navidrome"
+msgstr ""
+
+msgid "NetEase"
+msgstr ""
+
+msgid "Never Played"
+msgstr ""
+
+msgid "New Playlist"
+msgstr ""
+
+msgid "New Smart Playlist"
+msgstr ""
+
 msgid "Newly added"
+msgstr ""
+
+msgid "Next Track"
+msgstr ""
+
+msgid "Next page"
+msgstr ""
+
+msgid "Next"
+msgstr ""
+
+msgid "No Jellyfin servers found. Enter the address manually or search again"
+msgstr ""
+
+msgid "No Servers Found"
+msgstr ""
+
+msgid "No cached results found."
+msgstr ""
+
+msgid "No cached server path yet"
+msgstr ""
+
+msgid "No cached tracks yet. Sync the server to preview matches."
+msgstr ""
+
+msgid "No changes to save."
+msgstr ""
+
+msgid "No folder contents found."
+msgstr ""
+
+msgid "No folder selected"
+msgstr ""
+
+msgid "No folders selected"
+msgstr ""
+
+msgid "No limit"
+msgstr ""
+
+msgid "No local folders configured"
+msgstr ""
+
+msgid "No local playback mapping"
+msgstr ""
+
+msgid "No lyrics for the current track."
+msgstr ""
+
+msgid "No lyrics found."
+msgstr ""
+
+msgid "No lyrics"
+msgstr ""
+
+msgid "No queue items match the search."
+msgstr ""
+
+msgid "No remote sources configured"
+msgstr ""
+
+msgid "No server lyrics for the current track. External lyric lookup is off."
+msgstr ""
+
+msgid "No server lyrics for the current track. Private mode is on."
+msgstr ""
+
+msgid "No songs added"
+msgstr ""
+
+msgid "No source"
+msgstr ""
+
+msgid "No sources configured"
+msgstr ""
+
+msgid "No track playing"
+msgstr ""
+
+msgid "No"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "Not connected"
+msgstr ""
+
+msgid "Nothing playing"
+msgstr ""
+
+msgid "Notifications"
+msgstr ""
+
+msgid "Now playing notifications"
+msgstr ""
+
+msgid "Now playing updates"
+msgstr ""
+
+msgid "Number of songs"
+msgstr ""
+
+msgid "Off only for a server you control"
+msgstr ""
+
+msgid "Off"
+msgstr ""
+
+msgid "Only played tracks"
+msgstr ""
+
+msgid "Only unplayed tracks"
+msgstr ""
+
+msgid "Open fullscreen player"
+msgstr ""
+
+msgid "Open on Jellyfin"
+msgstr ""
+
+msgid "Open on Last.fm"
+msgstr ""
+
+msgid "Open on MusicBrainz"
+msgstr ""
+
+msgid "Open on Navidrome"
+msgstr ""
+
+msgid "Open release notes"
+msgstr ""
+
+msgid "OpenSubsonic"
+msgstr ""
+
+msgid "Opening Last.fm authorization..."
+msgstr ""
+
+msgid "Opening Libre.fm authorization..."
+msgstr ""
+
+msgid "Original"
+msgstr ""
+
+msgid "Other"
+msgstr ""
+
+msgid "Password"
+msgstr ""
+
+msgid "Pause"
+msgstr ""
+
+msgid "PipeWire"
+msgstr ""
+
+msgid "Plain lyrics"
+msgstr ""
+
+msgid "Play Later"
+msgstr ""
+
+msgid "Play Next"
+msgstr ""
+
+msgid "Play album"
+msgstr ""
+
+msgid "Play artist"
+msgstr ""
+
+msgid "Play count"
+msgstr ""
+
+msgid "Play filter"
+msgstr ""
+
+msgid "Play genre"
+msgstr ""
+
+msgid "Play mood"
+msgstr ""
+
+msgid "Play playlist"
+msgstr ""
+
+msgid "Play radio"
+msgstr ""
+
+msgid "Play random"
+msgstr ""
+
+msgid "Play smart playlist"
+msgstr ""
+
+msgid "Play track"
+msgstr ""
+
+msgid "Play"
+msgstr ""
+
+msgid "Play/Pause"
+msgstr ""
+
+msgid "Playback"
+msgstr ""
+
+msgid "Played"
+msgstr ""
+
+msgid "Playlist name"
+msgstr ""
+
+msgid "Playlist order"
+msgstr ""
+
+msgid "Playlist radio"
+msgstr ""
+
+msgid "Playlist tracks"
+msgstr ""
+
+msgid "Playlists"
+msgstr ""
+
+msgid "Plays"
+msgstr ""
+
+msgid "Pop"
+msgstr ""
+
+msgid "Position"
+msgstr ""
+
+msgid "Prefer server lyrics"
+msgstr ""
+
+msgid "Prefer server playlist covers"
+msgstr ""
+
+msgid "Preferences"
+msgstr ""
+
+msgid "Preparing library..."
+msgstr ""
+
+msgid "Preset"
+msgstr ""
+
+msgid "Previous Track"
+msgstr ""
+
+msgid "Previous page"
+msgstr ""
+
+msgid "Previous"
+msgstr ""
+
+msgid "Privacy and Security"
+msgstr ""
+
+msgid "Private mode is on"
+msgstr ""
+
+msgid "Private mode"
+msgstr ""
+
+msgid "PulseAudio"
+msgstr ""
+
+msgid "Queue a track to begin"
+msgstr ""
+
+msgid "Queue and transitions"
+msgstr ""
+
+msgid "Queue"
+msgstr ""
+
+msgid "Quit"
+msgstr ""
+
+msgid "Rating"
+msgstr ""
+
+msgid "Ready"
 msgstr ""
 
 msgid "Recently played"
@@ -31,27 +1108,532 @@ msgstr ""
 msgid "Recently released"
 msgstr ""
 
+msgid "Reconnect"
+msgstr ""
+
+msgid "Refresh section"
+msgstr ""
+
+msgid "Release date"
+msgstr ""
+
+msgid "Release notifications"
+msgstr ""
+
+msgid "Release"
+msgstr ""
+
+msgid "Remote lyrics"
+msgstr ""
+
+msgid "Remove Local Folder"
+msgstr ""
+
+msgid "Remove folder"
+msgstr ""
+
+msgid "Remove from Favorites"
+msgstr ""
+
+msgid "Remove from Playlist"
+msgstr ""
+
+msgid "Remove from Queue"
+msgstr ""
+
+msgid "Remove from playlist"
+msgstr ""
+
+msgid "Remove rule"
+msgstr ""
+
+msgid "Remove"
+msgstr ""
+
+msgid "Removed from favorites"
+msgstr ""
+
+msgid "Rename Playlist"
+msgstr ""
+
+msgid "Rename"
+msgstr ""
+
+msgid "Repeat all"
+msgstr ""
+
+msgid "Repeat off"
+msgstr ""
+
+msgid "Repeat one"
+msgstr ""
+
+msgid "Repeat"
+msgstr ""
+
+msgid "ReplayGain"
+msgstr ""
+
+msgid "Reset display"
+msgstr ""
+
+msgid "Reset equalizer"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "Restore Default"
+msgstr ""
+
+msgid "Restore selected preset to default bands."
+msgstr ""
+
+msgid "Restore"
+msgstr ""
+
+msgid "Resume"
+msgstr ""
+
+msgid "Rich presence"
+msgstr ""
+
+msgid "Rock"
+msgstr ""
+
+msgid "Rows"
+msgstr ""
+
+msgid "Rufin is running in the tray"
+msgstr ""
+
+msgid "Save Lyrics"
+msgstr ""
+
+msgid "Save Mapping"
+msgstr ""
+
+msgid "Save Server Settings"
+msgstr ""
+
+msgid "Save to apply this mapping after the next sync."
+msgstr ""
+
+msgid "Save to rescan this local library."
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Saved Sources"
+msgstr ""
+
+msgid "Saved to"
+msgstr ""
+
+msgid "Scrobbling"
+msgstr ""
+
+msgid "Search Again"
+msgstr ""
+
+msgid "Search Lyrics"
+msgstr ""
+
+msgid "Search failed."
+msgstr ""
+
+msgid "Search lyrics"
+msgstr ""
+
+msgid "Search queue"
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "Searching Local Network"
+msgstr ""
+
+msgid "Searching for Jellyfin servers on the local network..."
+msgstr ""
+
+msgid "Searching will start automatically"
+msgstr ""
+
+msgid "Searching..."
+msgstr ""
+
+msgid "Seconds"
+msgstr ""
+
+msgid "Secret storage"
+msgstr ""
+
+msgid "Secure storage"
+msgstr ""
+
+msgid "Seek Backward"
+msgstr ""
+
+msgid "Seek Forward"
+msgstr ""
+
+msgid "Seek playback"
+msgstr ""
+
+msgid "Select Music Folder"
+msgstr ""
+
+msgid "Select Source"
+msgstr ""
+
+msgid "Selected device"
+msgstr ""
+
+msgid "Server Actions"
+msgstr ""
+
+msgid "Server Address"
+msgstr ""
+
+msgid "Server Library"
+msgstr ""
+
+msgid "Server Prefix"
+msgstr ""
+
+msgid "Server Sample"
+msgstr ""
+
+msgid "Server Settings"
+msgstr ""
+
+#, rust-format
+msgid "Server discovery failed: {error}"
+msgstr ""
+
+msgid "Server sample does not match the server prefix."
+msgstr ""
+
+msgid "Server"
+msgstr ""
+
+msgid "Servers"
+msgstr ""
+
+msgid "Set the Discord activity type to Listening"
+msgstr ""
+
+msgid "Shared secret"
+msgstr ""
+
+msgid "Show Lyrics Panel"
+msgstr ""
+
+msgid "Show Rufin"
+msgstr ""
+
+msgid "Show external service icons on album and artist pages"
+msgstr ""
+
+msgid "Show external site links"
+msgstr ""
+
+msgid "Show lyrics"
+msgstr ""
+
+msgid "Show paused status"
+msgstr ""
+
+msgid "Show playback icon"
+msgstr ""
+
+msgid "Show sidebar"
+msgstr ""
+
+msgid "Show tray icon"
+msgstr ""
+
+msgid "Show/hide lyrics"
+msgstr ""
+
+msgid "Show/hide right sidebar"
+msgstr ""
+
 msgid "Showcase"
 msgstr ""
 
-msgid "Featured genres"
+msgid "Shuffle off"
 msgstr ""
 
-msgid "Most Played"
+msgid "Shuffle on"
 msgstr ""
 
-msgid "Never Played"
+msgid "Shuffle"
 msgstr ""
 
-msgid "Most Skipped"
+msgid "Sidebar Items"
+msgstr ""
+
+msgid "SimpMusic"
+msgstr ""
+
+msgid "Single"
+msgstr ""
+
+msgid "Singles"
+msgstr ""
+
+msgid "Skip count"
+msgstr ""
+
+msgid "Skip same-album crossfade"
+msgstr ""
+
+msgid "Smart Playlist"
+msgstr ""
+
+msgid "Smart Playlists"
+msgstr ""
+
+msgid "Smart playlist tracks"
+msgstr ""
+
+msgid "Smart playlists will appear here after the default set is seeded."
+msgstr ""
+
+msgid "Smart playlists"
+msgstr ""
+
+msgid "Song title"
+msgstr ""
+
+msgid "Song"
+msgstr ""
+
+msgid "Sort"
+msgstr ""
+
+msgid "Source settings saved."
+msgstr ""
+
+msgid "Source to use for cover images and song/artist links"
+msgstr ""
+
+msgid "Source"
+msgstr ""
+
+msgid "Start minimized"
+msgstr ""
+
+msgid "Status display"
+msgstr ""
+
+msgid "Stream quality"
+msgstr ""
+
+msgid "Switching library..."
+msgstr ""
+
+msgid "Synced lyrics"
 msgstr ""
 
 msgid "System default"
 msgstr ""
 
+msgid "Techno"
+msgstr ""
+
+msgid "Text"
+msgstr ""
+
+msgid "This removes cached library metadata for"
+msgstr ""
+
+msgid "This removes the folder from the Local source."
+msgstr ""
+
+msgid "Timed out waiting for Last.fm authorization."
+msgstr ""
+
+msgid "Timed out waiting for Libre.fm authorization"
+msgstr ""
+
+msgid "Title (merged)"
+msgstr ""
+
+msgid "Title"
+msgstr ""
+
+msgid "Toggle Fullscreen"
+msgstr ""
+
+msgid "Track radio"
+msgstr ""
+
+msgid "Track"
+msgstr ""
+
+msgid "Tracks"
+msgstr ""
+
+msgid "Transition mode"
+msgstr ""
+
+msgid "Turn off only for a server you control"
+msgstr ""
+
+msgid "Turn off private mode"
+msgstr ""
+
+msgid "Turn on private mode"
+msgstr ""
+
+msgid "Type to search or create a new playlist"
+msgstr ""
+
+msgid "Type to search"
+msgstr ""
+
+msgid "Unmuted"
+msgstr ""
+
+msgid "Use Jellyfin Instant Mix for recommendations"
+msgstr ""
+
+msgid "Use different layout below a threshold width"
+msgstr ""
+
+msgid "Use listening activity"
+msgstr ""
+
+msgid "User token"
+msgstr ""
+
+msgid "User"
+msgstr ""
+
+msgid "Username"
+msgstr ""
+
+msgid "Verify server certificate"
+msgstr ""
+
+msgid "Version History"
+msgstr ""
+
+msgid "View"
+msgstr ""
+
+msgid "Visible"
+msgstr ""
+
+msgid "Visualizer"
+msgstr ""
+
+msgid "Volume Down"
+msgstr ""
+
+msgid "Volume Up"
+msgstr ""
+
+msgid "WASAPI"
+msgstr ""
+
+msgid "Waveform seekbar"
+msgstr ""
+
+msgid "Year"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "above"
+msgstr ""
+
+msgid "after"
+msgstr ""
+
+msgid "before"
+msgstr ""
+
+msgid "below"
+msgstr ""
+
+msgid "contains"
+msgstr ""
+
+msgid "does not contain"
+msgstr ""
+
+msgid "does not equal"
+msgstr ""
+
+msgid "equals"
+msgstr ""
+
+msgid "excludes"
+msgstr ""
+
+msgid "here"
+msgstr ""
+
+msgid "is empty"
+msgstr ""
+
+msgid "is not empty"
+msgstr ""
+
+msgid "is not"
+msgstr ""
+
+msgid "is"
+msgstr ""
+
+msgid "macOS"
+msgstr ""
+
+msgid "range"
+msgstr ""
+
+msgid "to"
+msgstr ""
+
+msgid "today"
+msgstr ""
+
+msgid "yesterday"
+msgstr ""
+
 #, rust-format
 msgid "{count} album"
 msgid_plural "{count} albums"
+msgstr[0] ""
+msgstr[1] ""
+
+#, rust-format
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
+msgstr[0] ""
+msgstr[1] ""
+
+#, rust-format
+msgid "{count} folder selected"
+msgid_plural "{count} folders selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#, rust-format
+msgid "{count} folder"
+msgid_plural "{count} folders"
+msgstr[0] ""
+msgstr[1] ""
+
+#, rust-format
+msgid "{count} month ago"
+msgid_plural "{count} months ago"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -67,395 +1649,9 @@ msgid_plural "{count} tracks"
 msgstr[0] ""
 msgstr[1] ""
 
-msgid "LRCLIB"
-msgstr ""
-
-msgid "NetEase"
-msgstr ""
-
-msgid "Genius"
-msgstr ""
-
-msgid "SimpMusic"
-msgstr ""
-
-msgid "Added to favorites"
-msgstr ""
-
-msgid "Removed from favorites"
-msgstr ""
-
-msgid "Play"
-msgstr ""
-
-msgid "Play Next"
-msgstr ""
-
-msgid "Play Later"
-msgstr ""
-
-msgid "Seek playback"
-msgstr ""
-
-msgid "Nothing playing"
-msgstr ""
-
-msgid "Queue a track to begin"
-msgstr ""
-
-msgid "Auto DJ on"
-msgstr ""
-
-msgid "Auto DJ"
-msgstr ""
-
-msgid "Open fullscreen player"
-msgstr ""
-
-msgid "More actions"
-msgstr ""
-
-msgid "Resume"
-msgstr ""
-
-msgid "Pause"
-msgstr ""
-
-msgid "Repeat off"
-msgstr ""
-
-msgid "Repeat one"
-msgstr ""
-
-msgid "Repeat all"
-msgstr ""
-
-msgid "Shuffle on"
-msgstr ""
-
-msgid "Shuffle off"
-msgstr ""
-
-msgid "Auto DJ off"
-msgstr ""
-
-msgid "Show Rufin"
-msgstr ""
-
-msgid "Play/Pause"
-msgstr ""
-
-msgid "Previous Track"
-msgstr ""
-
-msgid "Next Track"
-msgstr ""
-
-msgid "Enable private mode"
-msgstr ""
-
-msgid "Disable private mode"
-msgstr ""
-
-msgid "Quit"
-msgstr ""
-
-msgid "Rufin is running in the tray"
-msgstr ""
-
-msgid "Custom"
-msgstr ""
-
-msgid "Flat"
-msgstr ""
-
-msgid "Classical"
-msgstr ""
-
-msgid "Club"
-msgstr ""
-
-msgid "Dance"
-msgstr ""
-
-msgid "Full Bass"
-msgstr ""
-
-msgid "Full Treble"
-msgstr ""
-
-msgid "Laptop/Headphones"
-msgstr ""
-
-msgid "Rock"
-msgstr ""
-
-msgid "Pop"
-msgstr ""
-
-msgid "Techno"
-msgstr ""
-
-msgid "Close fullscreen player"
-msgstr ""
-
-msgid "Queue"
-msgstr ""
-
-msgid "Lyrics"
-msgstr ""
-
-msgid "Visualizer"
-msgstr ""
-
-msgid "Equalizer"
-msgstr ""
-
-msgid "Enable equalizer"
-msgstr ""
-
-msgid "Preset"
-msgstr ""
-
-msgid "Reset"
-msgstr ""
-
-msgid "Private mode is on"
-msgstr ""
-
-msgid "Search lyrics"
-msgstr ""
-
-msgid "No track playing"
-msgstr ""
-
-msgid "Save Lyrics"
-msgstr ""
-
-msgid "Clear fetched lyrics for this track"
-msgstr ""
-
-msgid "Lyrics offset (ms)"
-msgstr ""
-
-msgid "Decrease"
-msgstr ""
-
-msgid "Increase"
-msgstr ""
-
-msgid "Search Lyrics"
-msgstr ""
-
-msgid "Close"
-msgstr ""
-
-msgid ""
-"Tap to the entry to load the lyrics and save in the app cache, click save "
-"only if you also want to save it in your music folder"
-msgstr ""
-
-msgid "Artist"
-msgstr ""
-
-msgid "Song"
-msgstr ""
-
-msgid "Ready"
-msgstr ""
-
-msgid "No lyrics found."
-msgstr ""
-
-msgid "Save"
-msgstr ""
-
-msgid "Searching..."
-msgstr ""
-
-msgid "Search failed."
-msgstr ""
-
-msgid "Saved to"
-msgstr ""
-
-msgid "Enter an artist or song."
-msgstr ""
-
-msgid "Synced lyrics"
-msgstr ""
-
-msgid "Plain lyrics"
-msgstr ""
-
-msgid "Remote lyrics"
-msgstr ""
-
-msgid "No lyrics"
-msgstr ""
-
-msgid "Loaded in lyrics panel."
-msgstr ""
-
-msgid "No server lyrics for the current track. Private mode is on."
-msgstr ""
-
-msgid "No server lyrics for the current track. External lyric lookup is off."
-msgstr ""
-
-msgid "No lyrics for the current track."
-msgstr ""
-
-msgid "Selected device"
-msgstr ""
-
-msgid "PipeWire"
-msgstr ""
-
-msgid "PulseAudio"
-msgstr ""
-
-msgid "ALSA"
-msgstr ""
-
-msgid "JACK"
-msgstr ""
-
-msgid "macOS"
-msgstr ""
-
-msgid "WASAPI"
-msgstr ""
-
-msgid "DirectSound"
-msgstr ""
-
-msgid "No queue items match the search."
-msgstr ""
-
-msgid "Add music to start a queue."
-msgstr ""
-
-msgid "Title"
-msgstr ""
-
-msgid "Year"
-msgstr ""
-
-msgid "Album"
-msgstr ""
-
-msgid "Duration"
-msgstr ""
-
-msgid "Drag to reorder"
-msgstr ""
-
-msgid "Remove from Queue"
-msgstr ""
-
-msgid "Track radio"
-msgstr ""
-
-msgid "Add to Playlist"
-msgstr ""
-
-msgid "Remove from Favorites"
-msgstr ""
-
-msgid "Add to Favorites"
-msgstr ""
-
-msgid "Go to Artist"
-msgstr ""
-
-msgid "Go to Album"
-msgstr ""
-
-msgid "Play random"
-msgstr ""
-
-msgid "Number of songs"
-msgstr ""
-
-msgid "Minimum year"
-msgstr ""
-
-msgid "Maximum year"
-msgstr ""
-
-msgid "Genre"
-msgstr ""
-
-msgid "Play filter"
-msgstr ""
-
-msgid "Any genre"
-msgstr ""
-
-msgid "All tracks"
-msgstr ""
-
-msgid "Only unplayed tracks"
-msgstr ""
-
-msgid "Only played tracks"
-msgstr ""
-
-msgid "Search queue"
-msgstr ""
-
-msgid "Clear queue"
-msgstr ""
-
-msgid "Hold and drag to resize"
-msgstr ""
-
-msgid "Hide sidebar"
-msgstr ""
-
-msgid "Show sidebar"
-msgstr ""
-
-msgid "Hide lyrics"
-msgstr ""
-
-msgid "Show lyrics"
-msgstr ""
-
-msgid "New Playlist"
-msgstr ""
-
-msgid "Cancel"
-msgstr ""
-
-msgid "Create"
-msgstr ""
-
-msgid "Playlist name"
-msgstr ""
-
-msgid "today"
-msgstr ""
-
-msgid "yesterday"
-msgstr ""
-
-#, rust-format
-msgid "{count} day ago"
-msgid_plural "{count} days ago"
-msgstr[0] ""
-msgstr[1] ""
-
 #, rust-format
 msgid "{count} week ago"
 msgid_plural "{count} weeks ago"
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
-msgid "{count} month ago"
-msgid_plural "{count} months ago"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -464,1028 +1660,6 @@ msgid "{count} year ago"
 msgid_plural "{count} years ago"
 msgstr[0] ""
 msgstr[1] ""
-
-msgid "Open release notes"
-msgstr ""
-
-msgid "Installed"
-msgstr ""
-
-msgid "Version History"
-msgstr ""
-
-msgid "View"
-msgstr ""
-
-msgid "Rename Playlist"
-msgstr ""
-
-msgid "Enter a new playlist name."
-msgstr ""
-
-msgid "Rename"
-msgstr ""
-
-msgid "Restore Default"
-msgstr ""
-
-msgid "New Smart Playlist"
-msgstr ""
-
-msgid "Edit Smart Playlist"
-msgstr ""
-
-msgid "Descending"
-msgstr ""
-
-msgid "No limit"
-msgstr ""
-
-msgid "Restore"
-msgstr ""
-
-msgid "Match"
-msgstr ""
-
-msgid "Sort"
-msgstr ""
-
-msgid "Limit"
-msgstr ""
-
-msgid "Add Rule"
-msgstr ""
-
-msgid ""
-"This playlist uses nested rule groups. Rule editing is unavailable in this "
-"editor."
-msgstr ""
-
-msgid "Remove rule"
-msgstr ""
-
-msgid "to"
-msgstr ""
-
-msgid "No"
-msgstr ""
-
-msgid "Yes"
-msgstr ""
-
-msgid "All"
-msgstr ""
-
-msgid "Any"
-msgstr ""
-
-msgid "Comment"
-msgstr ""
-
-msgid "Mood"
-msgstr ""
-
-msgid "BPM"
-msgstr ""
-
-msgid "Rating"
-msgstr ""
-
-msgid "Favorite"
-msgstr ""
-
-msgid "Played"
-msgstr ""
-
-msgid "Play count"
-msgstr ""
-
-msgid "Skip count"
-msgstr ""
-
-msgid "Last played"
-msgstr ""
-
-msgid "Date added"
-msgstr ""
-
-msgid "excludes"
-msgstr ""
-
-msgid "is not"
-msgstr ""
-
-msgid "contains"
-msgstr ""
-
-msgid "does not contain"
-msgstr ""
-
-msgid "equals"
-msgstr ""
-
-msgid "does not equal"
-msgstr ""
-
-msgid "above"
-msgstr ""
-
-msgid "below"
-msgstr ""
-
-msgid "range"
-msgstr ""
-
-msgid "is"
-msgstr ""
-
-msgid "before"
-msgstr ""
-
-msgid "after"
-msgstr ""
-
-msgid "is empty"
-msgstr ""
-
-msgid "is not empty"
-msgstr ""
-
-msgid "Comment text"
-msgstr ""
-
-msgid "Artist name"
-msgstr ""
-
-msgid "Album title"
-msgstr ""
-
-msgid "Text"
-msgstr ""
-
-msgid "Scrobbling"
-msgstr ""
-
-msgid "Last.fm"
-msgstr ""
-
-msgid "Last.fm scrobbling"
-msgstr ""
-
-msgid "API keys"
-msgstr ""
-
-msgid "If you do not have API keys, create them"
-msgstr ""
-
-msgid "here"
-msgstr ""
-
-msgid ". You only need to fill email and an application name parts"
-msgstr ""
-
-msgid "API key"
-msgstr ""
-
-msgid "Shared secret"
-msgstr ""
-
-msgid "Connection"
-msgstr ""
-
-msgid "Connect"
-msgstr ""
-
-msgid "Reconnect"
-msgstr ""
-
-msgid "Enter API credentials first"
-msgstr ""
-
-msgid "Opening Last.fm authorization..."
-msgstr ""
-
-msgid "Now playing updates"
-msgstr ""
-
-msgid "Libre.fm"
-msgstr ""
-
-msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
-msgstr ""
-
-msgid "Libre.fm scrobbling"
-msgstr ""
-
-msgid "Opening Libre.fm authorization..."
-msgstr ""
-
-msgid "ListenBrainz"
-msgstr ""
-
-msgid "ListenBrainz scrobbling"
-msgstr ""
-
-msgid "Get token"
-msgstr ""
-
-msgid "Find your ListenBrainz user token"
-msgstr ""
-
-msgid "User token"
-msgstr ""
-
-msgid "Not connected"
-msgstr ""
-
-msgid "Connected"
-msgstr ""
-
-#, rust-format
-msgid "Connected as {username}"
-msgstr ""
-
-msgid "Timed out waiting for Last.fm authorization."
-msgstr ""
-
-msgid "Timed out waiting for Libre.fm authorization"
-msgstr ""
-
-msgid "Playback"
-msgstr ""
-
-msgid "Queue and transitions"
-msgstr ""
-
-msgid "Transition mode"
-msgstr ""
-
-msgid "Crossfade"
-msgstr ""
-
-msgid "Default"
-msgstr ""
-
-msgid "Gapless"
-msgstr ""
-
-msgid "Crossfade duration"
-msgstr ""
-
-msgid "Seconds"
-msgstr ""
-
-msgid "Skip same-album crossfade"
-msgstr ""
-
-msgid "Keep album transitions gapless when possible"
-msgstr ""
-
-msgid "Audio fade on play/pause"
-msgstr ""
-
-msgid "Fade audio when playback is paused or resumed"
-msgstr ""
-
-msgid "Auto DJ refill threshold"
-msgstr ""
-
-msgid "Add tracks when fewer than this many remain"
-msgstr ""
-
-msgid "Audio"
-msgstr ""
-
-msgid "ReplayGain"
-msgstr ""
-
-msgid "Off"
-msgstr ""
-
-msgid "Track"
-msgstr ""
-
-msgid "Stream quality"
-msgstr ""
-
-msgid "Original"
-msgstr ""
-
-msgid "320 kbps"
-msgstr ""
-
-msgid "256 kbps"
-msgstr ""
-
-msgid "192 kbps"
-msgstr ""
-
-msgid "128 kbps"
-msgstr ""
-
-msgid "Waveform seekbar"
-msgstr ""
-
-msgid "Generate and cache waveforms for the current track"
-msgstr ""
-
-msgid "Audio output"
-msgstr ""
-
-msgid "Change"
-msgstr ""
-
-msgid "Reset equalizer"
-msgstr ""
-
-msgid "Restore selected preset to default bands."
-msgstr ""
-
-msgid "Layout"
-msgstr ""
-
-msgid "Home Blocks"
-msgstr ""
-
-msgid "Move up"
-msgstr ""
-
-msgid "Move down"
-msgstr ""
-
-msgid "Position"
-msgstr ""
-
-msgid "Hidden server section"
-msgstr ""
-
-msgid "Visible"
-msgstr ""
-
-msgid "Hidden"
-msgstr ""
-
-msgid "Compact"
-msgstr ""
-
-msgid "Full"
-msgstr ""
-
-msgid "Library"
-msgstr ""
-
-msgid "Servers"
-msgstr ""
-
-msgid "Configure saved music sources and local playback mappings."
-msgstr ""
-
-msgid "No remote sources configured"
-msgstr ""
-
-msgid "Add a server to use Jellyfin, Navidrome, or OpenSubsonic."
-msgstr ""
-
-msgid "Add server"
-msgstr ""
-
-msgid "Local Folders"
-msgstr ""
-
-msgid ""
-"These folders are combined into the Local source and shown through folder "
-"browsing."
-msgstr ""
-
-msgid "No local folders configured"
-msgstr ""
-
-msgid "Add folders to use the Local source."
-msgstr ""
-
-msgid "Remove"
-msgstr ""
-
-msgid "Select Music Folder"
-msgstr ""
-
-msgid "Remove Local Folder"
-msgstr ""
-
-msgid "This removes the folder from the Local source."
-msgstr ""
-
-msgid "All Music"
-msgstr ""
-
-msgid "User"
-msgstr ""
-
-msgid "Music Folder"
-msgstr ""
-
-msgid "Cached"
-msgstr ""
-
-msgid "No local playback mapping"
-msgstr ""
-
-msgid "Local mapping saved. Sync to preview matches."
-msgstr ""
-
-msgid "Local mapping"
-msgstr ""
-
-msgid "General"
-msgstr ""
-
-msgid "Back"
-msgstr ""
-
-msgid "Preferences"
-msgstr ""
-
-msgid "Language"
-msgstr ""
-
-msgid "App window"
-msgstr ""
-
-msgid "Show tray icon"
-msgstr ""
-
-msgid "Exit to tray"
-msgstr ""
-
-msgid "Start minimized"
-msgstr ""
-
-msgid "Type to search"
-msgstr ""
-
-msgid "Notifications"
-msgstr ""
-
-msgid "Control notifications"
-msgstr ""
-
-msgid "Now playing notifications"
-msgstr ""
-
-msgid "Release notifications"
-msgstr ""
-
-msgid "Metadata"
-msgstr ""
-
-msgid "Prefer server playlist covers"
-msgstr ""
-
-msgid "Prefer server lyrics"
-msgstr ""
-
-msgid "External metadata lookup"
-msgstr ""
-
-msgid "External lyric lookup"
-msgstr ""
-
-msgid "External site links"
-msgstr ""
-
-msgid "Show external site links"
-msgstr ""
-
-msgid "Show external service icons on album and artist pages"
-msgstr ""
-
-msgid "MusicBrainz"
-msgstr ""
-
-msgid "Server"
-msgstr ""
-
-msgid "Discord"
-msgstr ""
-
-msgid "Rich presence"
-msgstr ""
-
-msgid "Application name"
-msgstr ""
-
-msgid "Song title"
-msgstr ""
-
-msgid "Status display"
-msgstr ""
-
-msgid "None"
-msgstr ""
-
-msgid "MusicBrainz + Last.fm"
-msgstr ""
-
-msgid "Metadata source"
-msgstr ""
-
-msgid "Source to use for cover images and song/artist links"
-msgstr ""
-
-msgid "Show paused status"
-msgstr ""
-
-msgid "Use listening activity"
-msgstr ""
-
-msgid "Set the Discord activity type to Listening"
-msgstr ""
-
-msgid "Show playback icon"
-msgstr ""
-
-msgid "Privacy and Security"
-msgstr ""
-
-msgid "Private mode"
-msgstr ""
-
-msgid "Legacy"
-msgstr ""
-
-msgid "Secure storage"
-msgstr ""
-
-msgid "Secret storage"
-msgstr ""
-
-msgid "Change Secret Storage"
-msgstr ""
-
-msgid ""
-"Changing secret backend removes legacy config secrets and signs you out "
-"everywhere, including API secrets. App cache is not affected."
-msgstr ""
-
-msgid "Interface"
-msgstr ""
-
-msgid "Default left sidebar"
-msgstr ""
-
-msgid "Default right sidebar"
-msgstr ""
-
-msgid "Show Lyrics Panel"
-msgstr ""
-
-msgid "Use different layout below a threshold width"
-msgstr ""
-
-msgid "Narrow layout threshold"
-msgstr ""
-
-msgid "Narrow left sidebar"
-msgstr ""
-
-msgid "Narrow right sidebar"
-msgstr ""
-
-msgid "Sidebar Items"
-msgstr ""
-
-msgid "Home"
-msgstr ""
-
-msgid "Favorites"
-msgstr ""
-
-msgid "Albums"
-msgstr ""
-
-msgid "Tracks"
-msgstr ""
-
-msgid "Artists"
-msgstr ""
-
-msgid "Album Artists"
-msgstr ""
-
-msgid "Genres"
-msgstr ""
-
-msgid "Moods"
-msgstr ""
-
-msgid "Folders"
-msgstr ""
-
-msgid "Playlists"
-msgstr ""
-
-msgid "Smart Playlists"
-msgstr ""
-
-msgid "Files need Mood/BPM tags written on them. Not supported for Jellyfin"
-msgstr ""
-
-msgid "Local Folder"
-msgstr ""
-
-msgid "No folder selected"
-msgstr ""
-
-msgid "Choose"
-msgstr ""
-
-msgid "Server Prefix"
-msgstr ""
-
-msgid "Local Prefix"
-msgstr ""
-
-msgid "No cached server path yet"
-msgstr ""
-
-msgid "Server Sample"
-msgstr ""
-
-msgid "Mapped Local Path"
-msgstr ""
-
-msgid "Local Playback Access"
-msgstr ""
-
-msgid "Local playback mapping configured"
-msgstr ""
-
-msgid "Map server tracks to local files"
-msgstr ""
-
-msgid "Local Playback Mapping"
-msgstr ""
-
-msgid "Clear Mapping"
-msgstr ""
-
-msgid "Save Mapping"
-msgstr ""
-
-msgid "Choose a local music folder"
-msgstr ""
-
-msgid "Enter a local prefix."
-msgstr ""
-
-msgid "Server Settings"
-msgstr ""
-
-msgid "Username"
-msgstr ""
-
-msgid "Password"
-msgstr ""
-
-msgid "Verify server certificate"
-msgstr ""
-
-msgid "Off only for a server you control"
-msgstr ""
-
-msgid "Save Server Settings"
-msgstr ""
-
-msgid "Name"
-msgstr ""
-
-msgid "Server Address"
-msgstr ""
-
-msgid "Server Actions"
-msgstr ""
-
-msgid "Clear Cached Library"
-msgstr ""
-
-msgid "This removes cached library metadata for"
-msgstr ""
-
-msgid "Clear Cache"
-msgstr ""
-
-msgid "Forget Server"
-msgstr ""
-
-msgid ""
-"This removes the server, cached library metadata, queue snapshot, and saved "
-"token for"
-msgstr ""
-
-msgid "Choose a local prefix."
-msgstr ""
-
-msgid "Server sample does not match the server prefix."
-msgstr ""
-
-msgid "Enter a matching server prefix to map this path."
-msgstr ""
-
-msgid "Save to rescan this local library."
-msgstr ""
-
-msgid "Local library folder is saved."
-msgstr ""
-
-msgid "Choose an existing local prefix."
-msgstr ""
-
-msgid "Save to apply this mapping after the next sync."
-msgstr ""
-
-msgid "No cached tracks yet. Sync the server to preview matches."
-msgstr ""
-
-#, rust-format
-msgid ""
-"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track."
-msgid_plural ""
-"Unsaved changes. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks."
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
-msgid ""
-"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} track."
-msgid_plural ""
-"Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
-"{unmatched} unmatched of {total} tracks."
-msgstr[0] ""
-msgstr[1] ""
-
-msgid "Jellyfin"
-msgstr ""
-
-msgid "Navidrome"
-msgstr ""
-
-msgid "OpenSubsonic"
-msgstr ""
-
-msgid "Local"
-msgstr ""
-
-msgid "Caching Library"
-msgstr ""
-
-msgid "Preparing library..."
-msgstr ""
-
-msgid "Use Jellyfin Instant Mix for recommendations"
-msgstr ""
-
-msgid ""
-"This uses Jellyfin API for play radio, necessary if you want recommendation "
-"plugins to work."
-msgstr ""
-
-msgid "Local library"
-msgstr ""
-
-msgid "Choose one or more folders to scan and play directly from this computer"
-msgstr ""
-
-msgid "Add folder"
-msgstr ""
-
-msgid "Choose at least one local music folder"
-msgstr ""
-
-msgid "Caching local library..."
-msgstr ""
-
-msgid "Saved Sources"
-msgstr ""
-
-msgid "Choose a configured source or add another."
-msgstr ""
-
-msgid "Turn off only for a server you control"
-msgstr ""
-
-msgid "Enter a server address, username, and password"
-msgstr ""
-
-msgid "Connecting to music server..."
-msgstr ""
-
-msgid "Found Servers"
-msgstr ""
-
-msgid "Searching Local Network"
-msgstr ""
-
-msgid "No Servers Found"
-msgstr ""
-
-msgid "Search Again"
-msgstr ""
-
-msgid "Searching will start automatically"
-msgstr ""
-
-msgid "Searching for Jellyfin servers on the local network..."
-msgstr ""
-
-msgid "No Jellyfin servers found. Enter the address manually or search again"
-msgstr ""
-
-#, rust-format
-msgid "Server discovery failed: {error}"
-msgstr ""
-
-msgid "Remove folder"
-msgstr ""
-
-msgid "No folders selected"
-msgstr ""
-
-#, rust-format
-msgid "{count} folder"
-msgid_plural "{count} folders"
-msgstr[0] ""
-msgstr[1] ""
-
-#, rust-format
-msgid "{count} folder selected"
-msgid_plural "{count} folders selected"
-msgstr[0] ""
-msgstr[1] ""
-
-msgid "Cached library ready"
-msgstr ""
-
-msgid "Source"
-msgstr ""
-
-msgid "No source"
-msgstr ""
-
-msgid "Select Source"
-msgstr ""
-
-msgid "No sources configured"
-msgstr ""
-
-msgid "Manage"
-msgstr ""
-
-msgid "Add music library"
-msgstr ""
-
-msgid "Server Library"
-msgstr ""
-
-msgid "Play album"
-msgstr ""
-
-msgid "Favorite tracks"
-msgstr ""
-
-msgid "Discography"
-msgstr ""
-
-msgid "Appears On"
-msgstr ""
-
-msgid "Remove from playlist"
-msgstr ""
-
-msgid "Album radio"
-msgstr ""
-
-msgid "Artist radio"
-msgstr ""
-
-msgid "Genre radio"
-msgstr ""
-
-msgid "Playlist radio"
-msgstr ""
-
-msgid "Delete"
-msgstr ""
-
-msgid "Delete Playlist"
-msgstr ""
-
-msgid "Open on Jellyfin"
-msgstr ""
-
-msgid "Open on Navidrome"
-msgstr ""
-
-msgid "Play radio"
-msgstr ""
-
-msgid "Next"
-msgstr ""
-
-msgid "Open on Last.fm"
-msgstr ""
-
-msgid "Open on MusicBrainz"
-msgstr ""
-
-msgid "Loading folders..."
-msgstr ""
-
-msgid "No folder contents found."
-msgstr ""
-
-msgid "Artist / Album"
-msgstr ""
-
-msgid "Folder"
-msgstr ""
-
-msgid "Play track"
-msgstr ""
-
-msgid "Play artist"
-msgstr ""
-
-msgid "Play playlist"
-msgstr ""
-
-msgid "Play smart playlist"
-msgstr ""
-
-msgid "Cached entries will appear here after sync finishes"
-msgstr ""
-
-msgid "Previous page"
-msgstr ""
-
-msgid "Next page"
-msgstr ""
-
-msgid "Refresh section"
-msgstr ""
-
-msgid "Columns"
-msgstr ""
-
-msgid "Grid labels"
-msgstr ""
-
-msgid "Detail track columns"
-msgstr ""
-
-msgid "Grid"
-msgstr ""
-
-msgid "Rows"
-msgstr ""
-
-msgid "Detail"
-msgstr ""
-
-msgid "Plays"
-msgstr ""
-
-msgid "Play genre"
-msgstr ""
-
-msgid "Play mood"
-msgstr ""
-
-msgid "Smart Playlist"
-msgstr ""
-
-msgid "Edit"
-msgstr ""
-
-msgid "Add current"
-msgstr ""
-
-msgid "Remove from Playlist"
-msgstr ""
-
-msgid "Type to search or create a new playlist"
-msgstr ""
-
-msgid "Add"
-msgstr ""
-
-msgid "Don't duplicate"
-msgstr ""
-
-msgid "No songs added"
-msgstr ""
 
 #, rust-format
 msgid "{track_count} song added to {playlist_count} playlist"
@@ -1501,178 +1675,4 @@ msgstr ""
 
 #, rust-format
 msgid "{track_count} songs added to {playlist_count} playlists"
-msgstr ""
-
-msgid "EPs"
-msgstr ""
-
-msgid "Singles"
-msgstr ""
-
-msgid "Collections"
-msgstr ""
-
-msgid "Other"
-msgstr ""
-
-msgid "EP"
-msgstr ""
-
-msgid "Single"
-msgstr ""
-
-msgid "Collection"
-msgstr ""
-
-msgid "Release"
-msgstr ""
-
-msgid "Customize display"
-msgstr ""
-
-msgid "Reset display"
-msgstr ""
-
-msgid "Choose the current page layout."
-msgstr ""
-
-msgid "Playlist order"
-msgstr ""
-
-msgid "Smart playlists will appear here after the default set is seeded."
-msgstr ""
-
-msgid "No cached results found."
-msgstr ""
-
-msgid "Album artists"
-msgstr ""
-
-msgid "Smart playlists"
-msgstr ""
-
-msgid "Album tracks"
-msgstr ""
-
-msgid "Artist albums"
-msgstr ""
-
-msgid "Artist tracks"
-msgstr ""
-
-msgid "Genre tracks"
-msgstr ""
-
-msgid "Mood tracks"
-msgstr ""
-
-msgid "Playlist tracks"
-msgstr ""
-
-msgid "Smart playlist tracks"
-msgstr ""
-
-msgid "Image"
-msgstr ""
-
-msgid "Title (merged)"
-msgstr ""
-
-msgid "Album artist"
-msgstr ""
-
-msgid "Release date"
-msgstr ""
-
-msgid "Disc"
-msgstr ""
-
-msgid "Muted"
-msgstr ""
-
-msgid "Unmuted"
-msgstr ""
-
-msgid "Keyboard Shortcuts"
-msgstr ""
-
-msgid "Forward"
-msgstr ""
-
-msgid "Menu"
-msgstr ""
-
-msgid "Search"
-msgstr ""
-
-msgid "Toggle Fullscreen"
-msgstr ""
-
-msgid "Show/hide right sidebar"
-msgstr ""
-
-msgid "Show/hide lyrics"
-msgstr ""
-
-msgid "Previous"
-msgstr ""
-
-msgid "Seek Backward"
-msgstr ""
-
-msgid "Seek Forward"
-msgstr ""
-
-msgid "Shuffle"
-msgstr ""
-
-msgid "Repeat"
-msgstr ""
-
-msgid "Mute"
-msgstr ""
-
-msgid "Volume Up"
-msgstr ""
-
-msgid "Volume Down"
-msgstr ""
-
-msgid ""
-"Thank you for trying out Rufin! If you have problems or suggestions, please "
-"open an issue in Github."
-msgstr ""
-
-#, rust-format
-msgid "Checking {provider} server..."
-msgstr ""
-
-msgid "Connected. Loading cached library..."
-msgstr ""
-
-msgid "Source settings saved."
-msgstr ""
-
-msgid "No changes to save."
-msgstr ""
-
-msgid "Cached library cleared."
-msgstr ""
-
-msgid "About Rufin"
-msgstr ""
-
-msgid "Collapse sidebar"
-msgstr ""
-
-msgid "Expand sidebar"
-msgstr ""
-
-msgid "Turn off private mode"
-msgstr ""
-
-msgid "Turn on private mode"
-msgstr ""
-
-msgid "Switching library..."
 msgstr ""
