@@ -1,3 +1,8 @@
+//! Music source clients, their configuration, and their supported operations.
+//!
+//! `rufin::source_setup` connects clients to the app; `ui` owns their settings
+//! screens.
+
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;

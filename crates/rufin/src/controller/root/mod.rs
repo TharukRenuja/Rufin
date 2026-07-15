@@ -1,3 +1,8 @@
+//! Connects Rufin's crates to the commands exposed through `ui::runtime`.
+//!
+//! It coordinates operations that need more than one crate. GTK state stays in
+//! `ui`, and music source setup stays in `source_setup`.
+
 use crate::StoredSettings;
 #[cfg(test)]
 pub(in crate::controller) use crate::source_setup::local_configured_source as local_source_saved;

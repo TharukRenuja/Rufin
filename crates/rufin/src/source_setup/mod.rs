@@ -1,3 +1,8 @@
+//! Registers supported music sources and turns saved or login configuration
+//! into an active source.
+//!
+//! Protocol clients live in `sources`; settings screens live in `ui`.
+
 mod active;
 pub(crate) use active::*;
 
