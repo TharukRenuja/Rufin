@@ -1,20 +1,25 @@
 use super::*;
 use crate::source_setup::{AuthenticatedSource, source_identity_changed};
 
-impl AppController {
+impl SourceCommands {
     pub fn forget_source(&self, source_id: SourceId) {
         let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
         let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent =
+                        source_transition_failure.try_send(sources::SourceTransitionFailed {
+                            source_id: Some(source_id.clone()),
+                            error,
+                        });
                 }
             };
             let transition_commit = match source_transitions.commit(transition_generation) {
@@ -26,7 +31,10 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
+                    source_id: Some(source_id.clone()),
+                    error,
+                });
             };
             let saved = match store.with_store(|store| {
                 let active_id = store.active_source()?.map(|saved| saved.source_id);
@@ -79,15 +87,17 @@ impl AppController {
             if let Some(mut active) = active_guard.take() {
                 *active = None;
                 drop(active);
-                controller.clear_playback_product();
+                clear_playback_product_slot(&controller.playback_product);
             }
             if let Err(error) = secrets.delete_token(saved.source_id.as_str()) {
                 warn!(%error, source_id = %saved.source_id, "failed to delete forgotten server token");
             }
-            if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+            if let Err(error) =
+                crate::controller::artwork::invalidate_source(&controller.artwork, &saved.source_id)
+            {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate forgotten source artwork");
             }
-            emit_runtime_snapshot(&store, &secrets, &events);
+            emit_runtime_source_presentation(&store, &secrets, &source_presentation);
             controller.refresh_source_freshness();
             drop(transition_commit);
         });
@@ -107,21 +117,25 @@ impl AppController {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_notice = self.source_events.notice.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
+        let playback_projection = self.playback_projection.clone();
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
-                        source_id: None,
-                        error,
-                    });
+                    let _sent =
+                        source_transition_failure.try_send(sources::SourceTransitionFailed {
+                            source_id: None,
+                            error,
+                        });
                 }
             };
-            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Checking {
+            let _sent = source_notice.try_send(SourceNotice::Checking {
                 source_name: source_name.to_string(),
-            }));
+            });
             let authenticated = match authenticate(&runtime, &store) {
                 Ok(authenticated) => authenticated,
                 Err(error) => {
@@ -144,7 +158,7 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
                     source_id: Some(saved.source_id.clone()),
                     error,
                 });
@@ -185,7 +199,17 @@ impl AppController {
             };
             *active_guard = Some(active);
             drop(active_guard);
-            let projection = match controller.activate_playback_source(&saved.source_id) {
+            let projection = match activate_playback_source(
+                &controller.store,
+                &controller.runtime,
+                &controller.active_source,
+                &controller.secrets,
+                &controller.artwork,
+                &controller.library_events,
+                &controller.playback_projection,
+                &controller.playback_product,
+                &saved.source_id,
+            ) {
                 Ok(projection) => projection,
                 Err(error) => {
                     if let Ok(mut active) = active_source.write() {
@@ -196,14 +220,17 @@ impl AppController {
                     return;
                 }
             };
-            let _sent = events.send(ControllerEvent::PlaybackProduct(Box::new(projection)));
+            let _sent = playback_projection.try_send(projection);
             if identity_changed
-                && let Err(error) = controller.invalidate_artwork_source(&saved.source_id)
+                && let Err(error) = crate::controller::artwork::invalidate_source(
+                    &controller.artwork,
+                    &saved.source_id,
+                )
             {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate replaced source artwork");
             }
-            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Connected));
-            emit_runtime_snapshot(&store, &secrets, &events);
+            let _sent = source_notice.try_send(SourceNotice::Connected);
+            emit_runtime_source_presentation(&store, &secrets, &source_presentation);
             controller.refresh_source_freshness();
             drop(transition_commit);
         });
@@ -215,7 +242,7 @@ pub(in crate::controller) struct SourcePersistenceSnapshot {
     source_id: SourceId,
     previous_saved: Option<StoredSource>,
     pub(in crate::controller) previous_active_id: Option<SourceId>,
-    pub(in crate::controller) previous_sources: domain::LibrarySourceSettings,
+    pub(in crate::controller) previous_sources: LibrarySourceSettings,
 }
 
 impl SourcePersistenceSnapshot {
@@ -259,7 +286,7 @@ impl SourcePersistenceSnapshot {
 
 pub(in crate::controller) fn save_source_settings(
     store: &StoreHandle,
-    sources: &domain::LibrarySourceSettings,
+    sources: &LibrarySourceSettings,
 ) -> Result<(), String> {
     store.update_settings(|settings| {
         settings.sources = sources.clone();

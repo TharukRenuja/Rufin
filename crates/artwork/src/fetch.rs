@@ -92,7 +92,7 @@ impl FetchContext {
 
     pub(crate) fn public_url(
         &self,
-        candidates: &crate::CandidateSet,
+        candidates: &crate::ArtworkBinding,
         size: u32,
         policy: &ExternalPolicy,
     ) -> Result<Option<String>, String> {
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn public_album_url_uses_the_accepted_release_without_text_lookup() {
-        let candidates = crate::CandidateSet::album_facts(
+        let candidates = crate::ArtworkBinding::album_facts(
             "Artist",
             "Album",
             Some("11111111-1111-1111-1111-111111111111"),

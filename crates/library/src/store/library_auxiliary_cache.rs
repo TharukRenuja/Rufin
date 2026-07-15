@@ -4,6 +4,56 @@ use super::*;
 const REPRESENTATIVE_RELATION_WINDOW: usize = 16;
 
 impl Store {
+    pub fn load_genre_ids_by_name(
+        &self,
+        source_id: &SourceId,
+        names: &[String],
+    ) -> StoreResult<HashMap<String, GenreId>> {
+        let mut wanted = Vec::new();
+        let mut seen = HashSet::new();
+        for name in names {
+            let key = name.to_lowercase();
+            if !name.is_empty() && seen.insert(key) {
+                wanted.push(name.clone());
+            }
+        }
+        if wanted.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        self.read_snapshot(|store| {
+            let wanted = serde_json::to_string(&wanted)?;
+            let mut statement = store.connection.prepare(
+                "WITH wanted(name) AS (
+                     SELECT CAST(value AS TEXT) FROM json_each(?2)
+                 )
+                 SELECT w.name, g.genre_id
+                 FROM wanted w
+                 JOIN genres g ON g.source_id = ?1 AND g.name = w.name COLLATE NOCASE
+                 WHERE EXISTS (
+                     SELECT 1 FROM album_genres ag
+                     WHERE ag.source_id = g.source_id AND ag.genre_name = g.name
+                 ) OR EXISTS (
+                     SELECT 1 FROM track_genres tg
+                     WHERE tg.source_id = g.source_id AND tg.genre_name = g.name
+                 )",
+            )?;
+            let pairs = collect_rows(statement.query_map(
+                params![source_id.as_str(), wanted],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        GenreId::new(row.get::<_, String>(1)?),
+                    ))
+                },
+            )?)?;
+            Ok(pairs
+                .into_iter()
+                .map(|(name, genre_id)| (name.to_lowercase(), genre_id))
+                .collect())
+        })
+    }
+
     pub fn load_track_genre_names(&self, source_id: &SourceId) -> StoreResult<Vec<String>> {
         let mut statement = self.connection.prepare(
             "

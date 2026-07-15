@@ -143,7 +143,7 @@ impl FilesystemCache {
         ArtworkKey::new(format!(
             "{}\0{}\0{}\0{}\0{}",
             source_id,
-            request.candidates.stable_identity(),
+            request.binding.stable_identity(),
             request.fetch_size,
             request.render_size,
             request.external.allow_cached

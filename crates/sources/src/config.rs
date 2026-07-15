@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use library::{SourceId, StoredSource};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::{SourceError, SourceResult};
+use crate::{SourceError, SourceResult, subsonic::SubsonicFlavor};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceIdentity {
@@ -18,6 +20,119 @@ pub struct CredentialSourceConfig {
     pub user_id: String,
     pub username: String,
     pub trust_invalid_cert: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum LibrarySourceSelection {
+    Local,
+    #[serde(alias = "Server")]
+    Source(SourceId),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalLibraryFolder {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibrarySourceSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<LibrarySourceSelection>,
+    #[serde(default)]
+    pub local_folders: Vec<LocalLibraryFolder>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialHostInput {
+    pub server_name: Option<String>,
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+    pub trust_invalid_cert: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialHostPreset {
+    pub server_name: String,
+    pub server_url: String,
+    pub username: String,
+    pub trust_invalid_cert: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JellyfinSetupInput {
+    pub credentials: CredentialHostInput,
+    pub use_instant_mix: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalFolderHostInput {
+    pub roots: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialSettingsInput {
+    pub source_id: SourceId,
+    pub name: String,
+    pub base_url: String,
+    pub username: String,
+    pub password: String,
+    pub trust_invalid_cert: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JellyfinSettingsInput {
+    pub credentials: CredentialSettingsInput,
+    pub use_instant_mix: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceSetupInput {
+    Jellyfin(JellyfinSetupInput),
+    Subsonic {
+        flavor: SubsonicFlavor,
+        credentials: CredentialHostInput,
+    },
+    Local(LocalFolderHostInput),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceSettingsInput {
+    Jellyfin(JellyfinSettingsInput),
+    Subsonic {
+        flavor: SubsonicFlavor,
+        credentials: CredentialSettingsInput,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditableSource {
+    pub source_id: SourceId,
+    pub kind: String,
+    pub credentials: CredentialHostPreset,
+    pub jellyfin_use_instant_mix: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceLocalAccessInput {
+    pub source_id: SourceId,
+    pub root_path: PathBuf,
+    pub server_prefix: Option<String>,
+    pub local_prefix: Option<String>,
+}
+
+impl LibrarySourceSettings {
+    pub fn sanitize(&mut self) {
+        let mut seen = Vec::<String>::new();
+        self.local_folders.retain_mut(|folder| {
+            folder.path = folder.path.trim().to_string();
+            if folder.path.is_empty() || seen.iter().any(|path| path == &folder.path) {
+                return false;
+            }
+            seen.push(folder.path.clone());
+            true
+        });
+    }
 }
 
 impl CredentialSourceConfig {
@@ -153,5 +268,67 @@ mod tests {
         let error =
             JellyfinSourceConfig::from_stored(&stored).expect_err("unsupported payload version");
         assert!(matches!(error, SourceError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn library_source_settings_sanitize_folders() {
+        let mut settings = LibrarySourceSettings {
+            selected: None,
+            local_folders: vec![
+                LocalLibraryFolder {
+                    path: " /music ".to_string(),
+                },
+                LocalLibraryFolder {
+                    path: "/music".to_string(),
+                },
+                LocalLibraryFolder {
+                    path: " ".to_string(),
+                },
+                LocalLibraryFolder {
+                    path: "/archive".to_string(),
+                },
+            ],
+        };
+
+        settings.sanitize();
+
+        assert_eq!(
+            settings.local_folders,
+            vec![
+                LocalLibraryFolder {
+                    path: "/music".to_string()
+                },
+                LocalLibraryFolder {
+                    path: "/archive".to_string()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn library_source_settings_preserve_stored_shape_and_server_alias() {
+        let settings = serde_json::from_value::<LibrarySourceSettings>(serde_json::json!({
+            "selected": { "Server": "remote-source" },
+            "local_folders": [{ "path": "/music" }]
+        }))
+        .expect("deserialize legacy source selection");
+        assert_eq!(
+            settings.selected,
+            Some(LibrarySourceSelection::Source(SourceId::new(
+                "remote-source"
+            )))
+        );
+        assert_eq!(
+            serde_json::to_value(settings).expect("serialize source settings"),
+            serde_json::json!({
+                "selected": { "Source": "remote-source" },
+                "local_folders": [{ "path": "/music" }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(LibrarySourceSettings::default())
+                .expect("serialize default source settings"),
+            serde_json::json!({ "local_folders": [] })
+        );
     }
 }

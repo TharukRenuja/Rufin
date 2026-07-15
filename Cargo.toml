@@ -15,22 +15,24 @@ publish = false
 
 [workspace.dependencies]
 adw = { package = "libadwaita", version = "0.9.1" }
+async-channel = "2.5.0"
 async-trait = "0.1.89"
 artwork = { path = "crates/artwork" }
 base64 = "0.22.1"
 clap = "4.6.1"
 directories = "6.0.0"
-domain = { path = "crates/domain" }
 futures-executor = "0.3.32"
 futures-util = "0.3.32"
-gdk-pixbuf = "0.22.0"
 getrandom = "0.4.0"
 gstreamer = "0.25.2"
 gstreamer-audio = "0.25.2"
 gtk = { package = "gtk4", version = "0.11.3" }
+glib = "0.22.7"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 ksni = "0.3.4"
 library = { path = "crates/library" }
 library-sync = { path = "crates/library-sync" }
+localization = { path = "crates/localization" }
 metadata = { path = "crates/metadata" }
 lofty = "0.24.0"
 md5 = "0.8.0"
@@ -55,6 +57,7 @@ tokio = "1.52.3"
 tokio-tungstenite = { version = "0.29.0", default-features = false }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.23"
+ui = { path = "crates/ui" }
 url = "2.5.7"
 walkdir = "2.5.0"
 wiremock = "0.6.5"

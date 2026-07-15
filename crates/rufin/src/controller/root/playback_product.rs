@@ -10,9 +10,9 @@ use playback::BackendCommand;
 use playback::{
     BackendEvent, Batch, CheckpointError, CheckpointHeader, ClockSample, ListeningFact,
     MaterializationId, MaterializationReservation, OccurrenceId, Placement, PlaybackBackend,
-    PlaybackSession, PlaybackView, QueuePage, QueuePageQuery, RepeatMode, SessionCommand,
-    SessionEffect, SessionUpdate, SourceReportFact, SourceReportPhase, decode_checkpoint,
-    decode_legacy_queue_snapshot_with_tracks, encode_checkpoint,
+    PlaybackNotice, PlaybackProjection, PlaybackSession, QueuePage, QueuePageQuery, RepeatMode,
+    SessionCommand, SessionEffect, SessionUpdate, SourceReportFact, SourceReportPhase,
+    decode_checkpoint, decode_legacy_queue_snapshot_with_tracks, encode_checkpoint,
 };
 #[cfg(not(test))]
 use playback_gstreamer::GStreamerPlaybackBackend;
@@ -21,24 +21,6 @@ use scrobbling::Scrobbler;
 const STORE_ACTIVITY_CAPACITY: usize = 64;
 #[cfg(not(test))]
 const SLOW_RICH_PRESENCE_ARTWORK_MS: u128 = 5_000;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum PlaybackNotice {
-    RunStarted(playback::RunId),
-    MediaChanged(playback::MediaChanged),
-    PositionDiscontinuity(playback::PositionDiscontinuity),
-    Visualizer {
-        run: playback::RunId,
-        levels: Vec<f64>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlaybackProjection {
-    pub view: PlaybackView,
-    pub queue_page: Option<QueuePage>,
-    pub notices: Vec<PlaybackNotice>,
-}
 
 enum PlaybackWrite {
     Checkpoint(PlaybackCheckpointRecord),
@@ -248,7 +230,10 @@ impl PlaybackStoreMailbox {
 }
 
 impl PlaybackStoreWriter {
-    fn new(store: &StoreHandle, events: Sender<ControllerEvent>) -> Result<Self, String> {
+    fn new(
+        store: &StoreHandle,
+        library_events: Sender<library::LibraryEvent>,
+    ) -> Result<Self, String> {
         let target = match store {
             StoreHandle::Path {
                 cache_database_path,
@@ -267,7 +252,14 @@ impl PlaybackStoreWriter {
             .name("rufin-playback-store".to_string())
             .spawn({
                 let settings_store = store.clone();
-                move || run_playback_store_writer(target, settings_store, worker_mailbox, events)
+                move || {
+                    run_playback_store_writer(
+                        target,
+                        settings_store,
+                        worker_mailbox,
+                        library_events,
+                    )
+                }
             })
             .map_err(|error| error.to_string())?;
         Ok(Self { mailbox })
@@ -296,7 +288,7 @@ fn run_playback_store_writer(
     target: PlaybackWriterStore,
     settings_store: StoreHandle,
     mailbox: Arc<PlaybackStoreMailbox>,
-    events: Sender<ControllerEvent>,
+    library_events: Sender<library::LibraryEvent>,
 ) {
     let mut failed = HashMap::new();
     let mut deferred_activities = Vec::new();
@@ -332,7 +324,7 @@ fn run_playback_store_writer(
             &target,
             batch.activities,
             &mut deferred_activities,
-            &events,
+            &library_events,
             store_busy,
         );
         mailbox.complete(batch.generation, store_busy);
@@ -397,7 +389,7 @@ fn apply_activity_store_writes(
     target: &PlaybackWriterStore,
     activities: Vec<ActivityOutcome>,
     deferred: &mut Vec<ActivityOutcome>,
-    events: &Sender<ControllerEvent>,
+    library_events: &Sender<library::LibraryEvent>,
     store_busy: bool,
 ) -> bool {
     for outcome in activities {
@@ -417,7 +409,7 @@ fn apply_activity_store_writes(
             continue;
         }
         match target.apply(&PlaybackWrite::Activity(outcome.clone())) {
-            Ok(()) => emit_activity_delta(events, &outcome),
+            Ok(()) => emit_activity_delta(library_events, &outcome),
             Err(error) if error.contention => {
                 store_busy = true;
                 let _retained = enqueue_activity(deferred, outcome);
@@ -528,7 +520,7 @@ fn report_store_error(error: String, contention: bool, error_reported: &mut bool
     }
 }
 
-fn emit_activity_delta(events: &Sender<ControllerEvent>, outcome: &ActivityOutcome) {
+fn emit_activity_delta(library_events: &Sender<library::LibraryEvent>, outcome: &ActivityOutcome) {
     let mut delta = LibraryDelta::default();
     if outcome.qualified_plays != 0 {
         delta.tracks.stats.push(outcome.track_id.clone());
@@ -537,7 +529,7 @@ fn emit_activity_delta(events: &Sender<ControllerEvent>, outcome: &ActivityOutco
         delta.tracks.skip_stats.push(outcome.track_id.clone());
     }
     if !delta.is_empty() {
-        let _ = events.send(ControllerEvent::LibraryDelta(Box::new(delta)));
+        let _ = library_events.try_send(library::LibraryEvent::Delta(Box::new(delta)));
     }
 }
 
@@ -548,8 +540,8 @@ fn apply_output_state(store: &StoreHandle, write: &PlaybackWrite) -> Result<(), 
     let volume = *volume;
     let muted = *muted;
     store.update_settings(move |settings| {
-        settings.playback.volume = volume;
-        settings.playback.muted = muted;
+        settings.ui.playback.volume = volume;
+        settings.ui.playback.muted = muted;
         Ok(())
     })
 }
@@ -604,7 +596,7 @@ fn composed_rich_presence(artwork: ::artwork::Artwork) -> rich_presence::Presenc
             while let Some(request) = requests.recv() {
                 let queued_ms = request.queued_for().as_millis();
                 let lookup_started = Instant::now();
-                let candidates = ::artwork::CandidateSet::album_facts(
+                let candidates = ::artwork::ArtworkBinding::album_facts(
                     request.artist(),
                     request.album(),
                     request.musicbrainz_release_group_id(),
@@ -640,6 +632,12 @@ fn composed_rich_presence() -> rich_presence::Presence {
     presence
 }
 
+#[derive(Clone)]
+struct PlaybackProductOutputs {
+    library: LibraryEventSender,
+    projection: Sender<PlaybackProjection>,
+}
+
 pub(in crate::controller) struct PlaybackProduct {
     session: Mutex<PlaybackSession>,
     backend: Mutex<Box<dyn PlaybackBackend>>,
@@ -654,18 +652,18 @@ pub(in crate::controller) struct PlaybackProduct {
     scrobbler: Mutex<Scrobbler>,
     rich_presence: rich_presence::Presence,
     private_mode: Mutex<bool>,
-    events: Sender<ControllerEvent>,
+    outputs: PlaybackProductOutputs,
     monotonic_origin: Instant,
 }
 
 impl PlaybackProduct {
     #[cfg(not(test))]
-    pub(in crate::controller) fn production(
+    fn production(
         store: StoreHandle,
         runtime: Arc<Runtime>,
         active_source: ActiveSourceSlot,
         artwork: ::artwork::Artwork,
-        events: Sender<ControllerEvent>,
+        outputs: PlaybackProductOutputs,
         sequence: playback::Sequence,
         settings: &StoredSettings,
     ) -> Result<Arc<Self>, String> {
@@ -675,7 +673,7 @@ impl PlaybackProduct {
             store,
             runtime,
             active_source,
-            events,
+            outputs,
             sequence,
             settings,
             Box::new(backend),
@@ -687,13 +685,13 @@ impl PlaybackProduct {
         store: StoreHandle,
         runtime: Arc<Runtime>,
         active_source: ActiveSourceSlot,
-        events: Sender<ControllerEvent>,
+        outputs: PlaybackProductOutputs,
         sequence: playback::Sequence,
         settings: &StoredSettings,
         backend: Box<dyn PlaybackBackend>,
         rich_presence: rich_presence::Presence,
     ) -> Result<Arc<Self>, String> {
-        let store_writer = PlaybackStoreWriter::new(&store, events.clone())?;
+        let store_writer = PlaybackStoreWriter::new(&store, outputs.library.clone())?;
         let materializer =
             BoundedRunner::new("Playback materialization", "rufin-playback-materialize", 4)?;
         let stream_resolver =
@@ -702,14 +700,14 @@ impl PlaybackProduct {
         let scrobbler = Scrobbler::new(settings.scrobbling_runtime_settings())?;
         let session = PlaybackSession::new(
             sequence,
-            settings.playback.clone(),
-            settings.auto_dj_enabled,
-            usize::from(settings.auto_dj_refill_threshold),
+            settings.ui.playback.clone(),
+            settings.ui.auto_dj_enabled,
+            usize::from(settings.ui.auto_dj_refill_threshold),
         );
         rich_presence.update(
-            settings.rich_presence.clone(),
-            !settings.private_mode,
-            &settings.lastfm_api_key,
+            settings.ui.rich_presence.clone(),
+            !settings.ui.private_mode,
+            &settings.ui.lastfm_api_key,
             Some(&session.view()),
         );
         Ok(Arc::new(Self {
@@ -725,18 +723,18 @@ impl PlaybackProduct {
             source_reports,
             scrobbler: Mutex::new(scrobbler),
             rich_presence,
-            private_mode: Mutex::new(settings.private_mode),
-            events,
+            private_mode: Mutex::new(settings.ui.private_mode),
+            outputs,
             monotonic_origin: Instant::now(),
         }))
     }
 
     #[cfg(test)]
-    pub(in crate::controller) fn memory(
+    fn memory(
         store: StoreHandle,
         runtime: Arc<Runtime>,
         active_source: ActiveSourceSlot,
-        events: Sender<ControllerEvent>,
+        outputs: PlaybackProductOutputs,
         sequence: playback::Sequence,
         settings: &StoredSettings,
         backend: Box<dyn PlaybackBackend>,
@@ -746,7 +744,7 @@ impl PlaybackProduct {
             store,
             runtime,
             active_source,
-            events,
+            outputs,
             sequence,
             settings,
             backend,
@@ -863,12 +861,11 @@ impl PlaybackProduct {
         }
     }
 
-    pub(in crate::controller) fn request_page(&self, query: QueuePageQuery) {
-        if let Ok(session) = self.session.lock() {
-            let _ = self
-                .events
-                .send(ControllerEvent::QueuePage(session.sequence().page(query)));
-        }
+    pub(in crate::controller) fn request_page(&self, query: QueuePageQuery) -> Option<QueuePage> {
+        self.session
+            .lock()
+            .ok()
+            .map(|session| session.sequence().page(query))
     }
 
     pub(in crate::controller) fn update_runtime_settings(
@@ -876,7 +873,7 @@ impl PlaybackProduct {
         settings: &StoredSettings,
     ) -> Result<(), String> {
         if let Ok(mut private_mode) = self.private_mode.lock() {
-            *private_mode = settings.private_mode;
+            *private_mode = settings.ui.private_mode;
         }
         self.scrobbler
             .lock()
@@ -888,16 +885,16 @@ impl PlaybackProduct {
             .map_err(|_| "playback session lock was poisoned".to_string())?
             .view();
         self.rich_presence.update(
-            settings.rich_presence.clone(),
-            !settings.private_mode,
-            &settings.lastfm_api_key,
+            settings.ui.rich_presence.clone(),
+            !settings.ui.private_mode,
+            &settings.ui.lastfm_api_key,
             Some(&view),
         );
         self.command(SessionCommand::SetAutoDj {
-            enabled: settings.auto_dj_enabled,
-            refill_threshold: usize::from(settings.auto_dj_refill_threshold),
+            enabled: settings.ui.auto_dj_enabled,
+            refill_threshold: usize::from(settings.ui.auto_dj_refill_threshold),
         })?;
-        self.command(SessionCommand::UpdateSettings(settings.playback.clone()))
+        self.command(SessionCommand::UpdateSettings(settings.ui.playback.clone()))
     }
 
     pub(in crate::controller) fn submit_materialization(
@@ -1147,7 +1144,7 @@ impl PlaybackProduct {
                 }
                 SessionEffect::NonfatalError(error) => debug!(%error, "playback nonfatal effect"),
                 SessionEffect::FatalError(error) => {
-                    let _ = self.events.send(ControllerEvent::Error(error));
+                    warn!(%error, "playback session failed");
                 }
             }
         }
@@ -1162,9 +1159,7 @@ impl PlaybackProduct {
             });
             self.rich_presence
                 .observe(Some(&projection.view), position_discontinuity);
-            let _ = self
-                .events
-                .send(ControllerEvent::PlaybackProduct(Box::new(projection)));
+            let _ = self.outputs.projection.try_send(projection);
         } else if !notices.is_empty()
             && let Ok(session) = self.session.lock()
         {
@@ -1178,13 +1173,11 @@ impl PlaybackProduct {
             });
             self.rich_presence
                 .observe(Some(&view), position_discontinuity);
-            let _ = self.events.send(ControllerEvent::PlaybackProduct(Box::new(
-                PlaybackProjection {
-                    view,
-                    queue_page: None,
-                    notices,
-                },
-            )));
+            let _ = self.outputs.projection.try_send(PlaybackProjection {
+                view,
+                queue_page: None,
+                notices,
+            });
         }
         for (run, error) in backend_failures {
             if let Some(run) = run {
@@ -1193,7 +1186,7 @@ impl PlaybackProduct {
                     error: playback::BackendFailure::new(error),
                 });
             } else {
-                let _ = self.events.send(ControllerEvent::Error(error));
+                warn!(%error, "playback backend command failed without an active run");
             }
         }
     }
@@ -1376,22 +1369,147 @@ fn shuffle_tracks(tracks: &mut [Track], mut state: u64) {
     }
 }
 
-impl AppController {
+pub(in crate::controller) fn playback_product_from_slot(
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+) -> Result<Arc<PlaybackProduct>, String> {
+    slot.read()
+        .map_err(|_| "playback product lock was poisoned".to_string())?
+        .clone()
+        .ok_or_else(|| "No playback source is active.".to_string())
+}
+
+pub(in crate::controller) fn playback_product_if_present_from_slot(
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+) -> Option<Arc<PlaybackProduct>> {
+    slot.read().ok().and_then(|product| product.clone())
+}
+
+pub(in crate::controller) fn clear_playback_product_slot(
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+) {
+    let product = slot.write().ok().and_then(|mut product| product.take());
+    if let Some(product) = product {
+        product.shutdown_and_drain();
+    }
+}
+
+pub(in crate::controller) fn current_playback_entry_from_slot(
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+) -> Option<(SourceId, playback::SequenceEntry, u64)> {
+    playback_product_if_present_from_slot(slot).and_then(|product| product.current_entry())
+}
+
+pub(in crate::controller) fn send_session_command_to_slot(
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+    command: SessionCommand,
+) {
+    let result = playback_product_from_slot(slot).and_then(|product| product.command(command));
+    if let Err(error) = result {
+        warn!(%error, "playback command failed");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::controller) fn activate_playback_product(
+    store: &StoreHandle,
+    runtime: &Arc<Runtime>,
+    active_source: &ActiveSourceSlot,
+    _artwork: &::artwork::Artwork,
+    library_events: &LibraryEventSender,
+    playback_projection: &Sender<PlaybackProjection>,
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+    source_id: &SourceId,
+    settings: &StoredSettings,
+) -> Result<PlaybackProjection, String> {
+    let sequence = match restore_playback_sequence(store, source_id) {
+        Ok(sequence) => sequence,
+        Err(PlaybackRestoreError::Corrupt(error)) => {
+            warn!(%error, %source_id, "discarding corrupt saved playback");
+            playback::Sequence::new(source_id.clone())
+        }
+        Err(PlaybackRestoreError::Unavailable(error)) => {
+            return Err(format!("Saved playback could not be restored: {error}"));
+        }
+    };
+    store
+        .with_store(|store| store.stored_source(source_id))?
+        .ok_or_else(|| format!("Saved source {} was not found.", source_id.as_str()))?;
+    let existing = playback_product_if_present_from_slot(slot);
+    let (product, switched_projection) = if let Some(product) = existing {
+        let projection = product.switch_source(sequence)?;
+        product.update_runtime_settings(settings)?;
+        (product, Some(projection))
+    } else {
+        #[cfg(not(test))]
+        let product = PlaybackProduct::production(
+            store.clone(),
+            Arc::clone(runtime),
+            Arc::clone(active_source),
+            _artwork.clone(),
+            PlaybackProductOutputs {
+                library: library_events.clone(),
+                projection: playback_projection.clone(),
+            },
+            sequence,
+            settings,
+        )?;
+        #[cfg(test)]
+        let product = PlaybackProduct::memory(
+            store.clone(),
+            Arc::clone(runtime),
+            Arc::clone(active_source),
+            PlaybackProductOutputs {
+                library: library_events.clone(),
+                projection: playback_projection.clone(),
+            },
+            sequence,
+            settings,
+            Box::new(RecordingBackend::default()),
+        )?;
+        *slot
+            .write()
+            .map_err(|_| "playback product lock was poisoned".to_string())? =
+            Some(Arc::clone(&product));
+        (product, None)
+    };
+    switched_projection.map_or_else(|| product.initial_projection(), Ok)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::controller) fn activate_playback_source(
+    store: &StoreHandle,
+    runtime: &Arc<Runtime>,
+    active_source: &ActiveSourceSlot,
+    secrets: &Arc<dyn SecretStore>,
+    artwork: &::artwork::Artwork,
+    library_events: &LibraryEventSender,
+    playback_projection: &Sender<PlaybackProjection>,
+    slot: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+    source_id: &SourceId,
+) -> Result<PlaybackProjection, String> {
+    let settings = settings_controller::load_settings_with_secrets(store, secrets);
+    activate_playback_product(
+        store,
+        runtime,
+        active_source,
+        artwork,
+        library_events,
+        playback_projection,
+        slot,
+        source_id,
+        &settings,
+    )
+}
+
+impl PlaybackCommands {
     pub(in crate::controller) fn playback_product(&self) -> Result<Arc<PlaybackProduct>, String> {
-        self.playback_product
-            .read()
-            .map_err(|_| "playback product lock was poisoned".to_string())?
-            .clone()
-            .ok_or_else(|| "No playback source is active.".to_string())
+        playback_product_from_slot(&self.playback_product)
     }
 
     pub(in crate::controller) fn playback_product_if_present(
         &self,
     ) -> Option<Arc<PlaybackProduct>> {
-        self.playback_product
-            .read()
-            .ok()
-            .and_then(|product| product.clone())
+        playback_product_if_present_from_slot(&self.playback_product)
     }
 
     pub(in crate::controller) fn submit_playback_materialization(
@@ -1405,67 +1523,18 @@ impl AppController {
         &self,
         source_id: &SourceId,
     ) -> Result<PlaybackProjection, String> {
-        let sequence = match restore_playback_sequence(&self.store, source_id) {
-            Ok(sequence) => sequence,
-            Err(PlaybackRestoreError::Corrupt(error)) => {
-                let _ = self.events.send(ControllerEvent::Error(format!(
-                    "Saved playback could not be restored: {error}"
-                )));
-                playback::Sequence::new(source_id.clone())
-            }
-            Err(PlaybackRestoreError::Unavailable(error)) => {
-                return Err(format!("Saved playback could not be restored: {error}"));
-            }
-        };
-        let settings = self.load_settings_with_scrobbling_secrets();
-        self.store
-            .with_store(|store| store.stored_source(source_id))?
-            .ok_or_else(|| format!("Saved source {} was not found.", source_id.as_str()))?;
-        let existing = self.playback_product_if_present();
-        let (product, switched_projection) = if let Some(product) = existing {
-            let projection = product.switch_source(sequence)?;
-            product.update_runtime_settings(&settings)?;
-            (product, Some(projection))
-        } else {
-            #[cfg(not(test))]
-            let product = PlaybackProduct::production(
-                self.store.clone(),
-                Arc::clone(&self.runtime),
-                Arc::clone(&self.active_source),
-                self.artwork.clone(),
-                self.events.clone(),
-                sequence,
-                &settings,
-            )?;
-            #[cfg(test)]
-            let product = PlaybackProduct::memory(
-                self.store.clone(),
-                Arc::clone(&self.runtime),
-                Arc::clone(&self.active_source),
-                self.events.clone(),
-                sequence,
-                &settings,
-                Box::new(RecordingBackend::default()),
-            )?;
-            *self
-                .playback_product
-                .write()
-                .map_err(|_| "playback product lock was poisoned".to_string())? =
-                Some(Arc::clone(&product));
-            (product, None)
-        };
-        switched_projection.map_or_else(|| product.initial_projection(), Ok)
-    }
-
-    pub(in crate::controller) fn clear_playback_product(&self) {
-        let product = self
-            .playback_product
-            .write()
-            .ok()
-            .and_then(|mut product| product.take());
-        if let Some(product) = product {
-            product.shutdown_and_drain();
-        }
+        let settings = self.settings.load_settings_with_scrobbling_secrets();
+        activate_playback_product(
+            &self.store,
+            &self.runtime,
+            &self.active_source,
+            &self.artwork,
+            &self.library_events,
+            &self.playback_events.projection,
+            &self.playback_product,
+            source_id,
+            &settings,
+        )
     }
 
     pub fn shutdown_playback(&self) {
@@ -1475,28 +1544,12 @@ impl AppController {
     }
 
     pub(in crate::controller) fn send_session_command(&self, command: SessionCommand) {
-        let result = self
-            .playback_product()
-            .and_then(|product| product.command(command));
-        if let Err(error) = result {
-            let _ = self.events.send(ControllerEvent::Error(error));
-        }
+        send_session_command_to_slot(&self.playback_product, command);
     }
 
-    pub(in crate::controller) fn current_playback_entry(
-        &self,
-    ) -> Option<(SourceId, playback::SequenceEntry, u64)> {
+    pub fn request_queue_page(&self, query: QueuePageQuery) -> Option<QueuePage> {
         self.playback_product_if_present()
-            .and_then(|product| product.current_entry())
-    }
-
-    pub fn request_queue_page(&self, query: QueuePageQuery) -> bool {
-        if let Some(product) = self.playback_product_if_present() {
-            product.request_page(query);
-            true
-        } else {
-            false
-        }
+            .and_then(|product| product.request_page(query))
     }
 }
 
@@ -1670,13 +1723,15 @@ fn repeat_mode_text(value: RepeatMode) -> &'static str {
 }
 
 fn local_calendar_period(now: SystemTime) -> String {
-    let _ = now;
-    gtk::glib::DateTime::now_local()
-        .or_else(|_| gtk::glib::DateTime::now_utc())
-        .ok()
-        .and_then(|date| date.format("%Y-%m").ok())
+    let unix_seconds = now
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default();
+    glib::DateTime::from_unix_local(unix_seconds)
+        .or_else(|_| glib::DateTime::from_unix_utc(unix_seconds))
+        .and_then(|date| date.format("%Y-%m"))
         .map(|period| period.to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 #[cfg(test)]
@@ -1701,7 +1756,8 @@ impl PlaybackBackend for RecordingBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::TryRecvError;
+    use async_channel::{TryRecvError as AsyncTryRecvError, unbounded};
+    use std::sync::mpsc::TryRecvError as StdTryRecvError;
 
     struct StartFailingBackend;
 
@@ -1721,7 +1777,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_start_failure_transitions_the_run_and_emits_one_diagnostic() {
+    fn backend_start_failure_transitions_the_run() {
         let store = StoreHandle::open_memory().expect("open store");
         let mut sequence = playback::Sequence::new(SourceId::new("source:backend-failure"));
         sequence
@@ -1733,12 +1789,17 @@ mod tests {
                 Placement::Replace { anchor_index: 0 },
             )
             .expect("seed sequence");
-        let (events, receiver) = channel();
+        let (_artwork_events, artwork_receiver) = unbounded();
+        let (_source_events, library_events, playback_events, _lyrics_events, _receivers) =
+            product_event_channels(artwork_receiver);
         let product = PlaybackProduct::memory(
             store,
             Arc::new(Runtime::new().expect("runtime")),
             Arc::new(RwLock::new(None)),
-            events,
+            PlaybackProductOutputs {
+                library: library_events,
+                projection: playback_events.projection,
+            },
             sequence,
             &StoredSettings::default(),
             Box::new(StartFailingBackend),
@@ -1761,13 +1822,6 @@ mod tests {
             product.session.lock().expect("session").status(),
             playback::TransportStatus::Failed
         );
-        let mut errors = Vec::new();
-        while let Ok(event) = receiver.try_recv() {
-            if let ControllerEvent::Error(error) = event {
-                errors.push(error);
-            }
-        }
-        assert_eq!(errors, ["playback backend failed: start was rejected"]);
     }
 
     #[test]
@@ -1790,7 +1844,7 @@ mod tests {
 
         let first = mailbox.next_batch().expect("first drain batch");
         mailbox.complete(first.generation, true);
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(StdTryRecvError::Empty)));
 
         let retry = mailbox.next_batch().expect("contention retry batch");
         mailbox.complete(retry.generation, false);
@@ -1820,7 +1874,7 @@ mod tests {
                 })
             })
             .expect("seed checkpoint");
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         let writer = Arc::new(PlaybackStoreWriter::new(&store, events).expect("start writer"));
         let StoreHandle::Memory { store: memory, .. } = &store else {
             return;
@@ -1899,22 +1953,22 @@ mod tests {
         );
         assert_eq!(activity.skips, 0);
         let settings = store.load_settings();
-        assert_eq!(settings.playback.volume, 1.0);
-        assert!(settings.playback.muted);
+        assert_eq!(settings.ui.playback.volume, 1.0);
+        assert!(settings.ui.playback.muted);
         assert!(matches!(
-            receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(ControllerEvent::LibraryDelta(delta))
+            recv_typed_event_timeout(&receiver, Duration::from_secs(1)),
+            Ok(library::LibraryEvent::Delta(delta))
                 if delta.tracks.stats == [track_id]
                     && delta.tracks.skip_stats.is_empty()
         ));
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
     }
 
     #[test]
     fn durable_write_retries_on_a_later_fact_without_emitting_ui_errors() {
         let store = StoreHandle::open_memory().expect("open store");
         let source = saved_source();
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         let writer = PlaybackStoreWriter::new(&store, events).expect("start writer");
         writer.enqueue(PlaybackWrite::Checkpoint(test_checkpoint(
             &source.source_id,
@@ -1922,7 +1976,7 @@ mod tests {
             "first",
         )));
         writer.drain();
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
         store
             .with_store(|store| store.save_source(&source))
             .expect("save source");
@@ -1939,7 +1993,7 @@ mod tests {
             .expect("checkpoint");
         assert_eq!(saved.revision, 2);
         assert_eq!(saved.payload, "second");
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
     }
 
     #[test]
@@ -1949,7 +2003,7 @@ mod tests {
         let mut second = first.clone();
         second.source_id = SourceId::new("jellyfin:server:second");
         second.name = "Second Server".to_string();
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         let writer = PlaybackStoreWriter::new(&store, events).expect("start writer");
 
         writer.enqueue(PlaybackWrite::Checkpoint(test_checkpoint(
@@ -1958,7 +2012,7 @@ mod tests {
             "obsolete",
         )));
         writer.drain();
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
         writer.enqueue(PlaybackWrite::Checkpoint(test_checkpoint(
             &first.source_id,
             2,
@@ -1984,7 +2038,7 @@ mod tests {
             "second",
         )));
         writer.drain();
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
 
         store
             .with_store(|store| {
@@ -2013,7 +2067,7 @@ mod tests {
             .expect("second checkpoint");
         assert_eq!(second_record.revision, 3);
         assert_eq!(second_record.payload, "second");
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
     }
 
     #[test]
@@ -2021,7 +2075,7 @@ mod tests {
         let store = StoreHandle::open_memory().expect("open store");
         let source = saved_source();
         let track_id = TrackId::new("track:activity-failure");
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         let writer = PlaybackStoreWriter::new(&store, events).expect("start writer");
         writer.enqueue(PlaybackWrite::Activity(ActivityOutcome {
             source_id: source.source_id.clone(),
@@ -2032,7 +2086,7 @@ mod tests {
             last_played_at: Some(1_783_850_400),
         }));
         writer.drain();
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(receiver.try_recv(), Err(AsyncTryRecvError::Empty)));
 
         store
             .with_store(|store| store.save_source(&source))
@@ -2054,7 +2108,7 @@ mod tests {
             .with_store(|store| store.save_source(&source))
             .expect("save source");
         let track_id = TrackId::new("track:activity");
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         let writer = PlaybackStoreWriter::new(&store, events).expect("start writer");
 
         writer.enqueue(PlaybackWrite::Activity(ActivityOutcome {
@@ -2067,12 +2121,11 @@ mod tests {
         }));
         writer.drain();
 
-        let delta = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("activity invalidation");
+        let delta =
+            wait_for_typed_event(&receiver, Duration::from_secs(1), "activity invalidation");
         assert!(matches!(
             delta,
-            ControllerEvent::LibraryDelta(delta)
+            library::LibraryEvent::Delta(delta)
                 if delta.tracks.stats == [track_id.clone()]
                     && delta.tracks.skip_stats == [track_id]
         ));
@@ -2101,8 +2154,11 @@ mod tests {
                 store.save_playback_checkpoint(&checkpoint)
             })
             .expect("seed playback");
-        let (controller, _events) = controller_from_store_for_test(store.clone());
-        let product = controller.playback_product().expect("playback product");
+        let (owners, _events) = owners_from_store_for_test(store.clone());
+        let product = owners
+            .playback
+            .playback_product()
+            .expect("playback product");
         let run = {
             let sample = product.clock_sample();
             let mut session = product.session.lock().expect("playback session");
@@ -2116,12 +2172,13 @@ mod tests {
             millis: 37_000,
         });
 
-        controller.shutdown_playback();
+        owners.playback.shutdown_playback();
         drop(product);
-        drop(controller);
+        drop(owners);
 
-        let (reopened, _events) = controller_from_store_for_test(store);
-        let restored = reopened
+        let (reopened_owners, _events) = owners_from_store_for_test(store);
+        let restored = reopened_owners
+            .playback
             .playback_product()
             .expect("reopened playback product")
             .sequence_snapshot()
@@ -2173,8 +2230,11 @@ mod tests {
             .with_store(|store| store.save_playback_checkpoint(&checkpoint))
             .expect("seed playback");
 
-        let (controller, _events) = controller_from_store_for_test(store.clone());
-        let product = controller.playback_product().expect("playback product");
+        let (owners, _events) = owners_from_store_for_test(store.clone());
+        let product = owners
+            .playback
+            .playback_product()
+            .expect("playback product");
         let hydrated = product.sequence_snapshot().expect("hydrated sequence");
         assert_eq!(hydrated.entries()[0].track.title, canonical.title);
         let run = {
@@ -2189,12 +2249,13 @@ mod tests {
             run,
             millis: 37_000,
         });
-        controller.shutdown_playback();
+        owners.playback.shutdown_playback();
         drop(product);
-        drop(controller);
+        drop(owners);
 
-        let (reopened, _events) = controller_from_store_for_test(store);
-        let restored = reopened
+        let (reopened_owners, _events) = owners_from_store_for_test(store);
+        let restored = reopened_owners
+            .playback
             .playback_product()
             .expect("reopened playback product")
             .sequence_snapshot()
@@ -2308,21 +2369,9 @@ mod tests {
             })
             .expect("seed corrupt checkpoint");
 
-        let (controller, events) = controller_from_store_for_test(store.clone());
-
-        let error = events
-            .recv_timeout(Duration::from_secs(1))
-            .expect("restore error");
-        assert!(matches!(
-            error,
-            ControllerEvent::Error(message)
-                if message.starts_with("Saved playback could not be restored:")
-        ));
-        assert!(matches!(
-            events.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-        let sequence = controller
+        let (owners, _events) = owners_from_store_for_test(store.clone());
+        let sequence = owners
+            .playback
             .playback_product()
             .expect("playback product")
             .sequence_snapshot()
@@ -2337,12 +2386,13 @@ mod tests {
         );
 
         let track = restored_track();
-        controller.play_tracks_now(vec![track.clone()]);
-        controller.shutdown_playback();
-        drop(controller);
+        owners.playback.play_tracks_now(vec![track.clone()]);
+        owners.playback.shutdown_playback();
+        drop(owners);
 
-        let (reopened, _events) = controller_from_store_for_test(store);
-        let restored = reopened
+        let (reopened_owners, _events) = owners_from_store_for_test(store);
+        let restored = reopened_owners
+            .playback
             .playback_product()
             .expect("reopened playback product")
             .sequence_snapshot()
@@ -2374,8 +2424,9 @@ mod tests {
                 store.save_playback_checkpoint(&checkpoint)
             })
             .expect("seed playback");
-        let (controller, _events) = controller_from_store_for_test(store.clone());
-        let live = controller
+        let (owners, _events) = owners_from_store_for_test(store.clone());
+        let live = owners
+            .playback
             .playback_product()
             .expect("live playback product");
         let StoreHandle::Memory { store: memory, .. } = &store else {
@@ -2388,10 +2439,14 @@ mod tests {
         })
         .join();
 
-        controller
+        owners
+            .playback
             .activate_playback_source(&source.source_id)
             .expect_err("unavailable restore should fail");
-        let still_live = controller.playback_product().expect("unchanged product");
+        let still_live = owners
+            .playback
+            .playback_product()
+            .expect("unchanged product");
         assert!(Arc::ptr_eq(&live, &still_live));
         assert_eq!(
             still_live

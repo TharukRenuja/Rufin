@@ -10,6 +10,7 @@ use library::{
 use thiserror::Error;
 
 mod config;
+mod events;
 mod operations;
 
 pub mod jellyfin;
@@ -17,7 +18,13 @@ pub mod local;
 pub mod remote_http;
 pub mod subsonic;
 
-pub use config::{CredentialSourceConfig, SourceIdentity};
+pub use config::{
+    CredentialHostInput, CredentialHostPreset, CredentialSettingsInput, CredentialSourceConfig,
+    EditableSource, JellyfinSettingsInput, JellyfinSetupInput, LibrarySourceSelection,
+    LibrarySourceSettings, LocalFolderHostInput, LocalLibraryFolder, SourceIdentity,
+    SourceLocalAccessInput, SourceSettingsInput, SourceSetupInput,
+};
+pub use events::*;
 pub use operations::*;
 
 #[derive(Debug, Error)]

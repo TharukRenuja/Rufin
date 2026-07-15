@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppController {
+impl LibraryCommands {
     pub fn set_album_favorite(&self, album_id: AlbumId, favorite: bool) {
         self.set_favorite(FavoriteItemId::Album(album_id), favorite);
     }
@@ -14,14 +14,14 @@ impl AppController {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
                 emit_favorite_change_failed(
-                    &events,
+                    &library_events,
                     &item_id,
                     !favorite,
                     "No active music source is saved.",
@@ -32,7 +32,7 @@ impl AppController {
             let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
-                    emit_favorite_change_failed(&events, &item_id, !favorite, error);
+                    emit_favorite_change_failed(&library_events, &item_id, !favorite, error);
                     return;
                 }
             };
@@ -43,7 +43,7 @@ impl AppController {
                         .block_on(executor.set_favorite(item_id.clone(), favorite))
                         .map_err(|error| error.to_string());
                     if let Err(error) = result {
-                        emit_favorite_change_failed(&events, &item_id, !favorite, error);
+                        emit_favorite_change_failed(&library_events, &item_id, !favorite, error);
                         return;
                     }
                 }
@@ -80,33 +80,23 @@ impl AppController {
                 Ok(())
             });
             if let Err(error) = result {
-                emit_favorite_change_failed(&events, &item_id, !favorite, error);
+                emit_favorite_change_failed(&library_events, &item_id, !favorite, error);
                 return;
             }
 
-            match load_snapshot(&store) {
-                Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::FavoriteChanged {
-                        item_id,
-                        favorite,
-                        snapshot: Box::new(snapshot),
-                    });
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                }
-            }
+            let _sent = library_events
+                .try_send(library::LibraryEvent::FavoriteChanged { item_id, favorite });
         });
     }
 }
 
 fn emit_favorite_change_failed(
-    events: &Sender<ControllerEvent>,
+    library_events: &Sender<library::LibraryEvent>,
     item_id: &FavoriteItemId,
     previous_favorite: bool,
     error: impl Into<String>,
 ) {
-    let _sent = events.send(ControllerEvent::FavoriteChangeFailed {
+    let _sent = library_events.try_send(library::LibraryEvent::FavoriteChangeFailed {
         item_id: item_id.clone(),
         previous_favorite,
         error: error.into(),

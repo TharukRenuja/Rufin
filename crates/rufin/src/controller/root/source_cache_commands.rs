@@ -1,19 +1,18 @@
 use super::*;
 
-impl AppController {
+impl SourceCommands {
     #[cfg(test)]
     pub fn clear_active_source_cache(&self) {
         let controller = self.clone();
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_notice = self.source_events.notice.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music server is saved.".to_string(),
-                ));
+                warn!("cannot clear active source cache without an active source");
                 return;
             };
             controller.forget_source_sync(&saved.source_id);
@@ -22,22 +21,24 @@ impl AppController {
                 Ok(())
             });
             if let Err(error) = result {
-                let _sent = events.send(ControllerEvent::Error(error));
+                warn!(%error, source_id = %saved.source_id, "failed to clear active source cache");
                 return;
             }
-            if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+            if let Err(error) =
+                crate::controller::artwork::invalidate_source(&controller.artwork, &saved.source_id)
+            {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
             if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
                 warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
-            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::CacheCleared));
-            match load_snapshot(&store) {
-                Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+            let _sent = source_notice.try_send(SourceNotice::CacheCleared);
+            match load_source_presentation(&store) {
+                Ok(presentation) => {
+                    let _sent = source_presentation.try_send(presentation);
                 }
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, "failed to reload source presentation after cache clear");
                 }
             }
             controller.refresh_source_freshness();
@@ -46,7 +47,8 @@ impl AppController {
     pub fn clear_source_cache(&self, source_id: SourceId) {
         let controller = self.clone();
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_notice = self.source_events.notice.clone();
         thread::spawn(move || {
             let saved = match store.with_store(|store| {
                 Ok(store
@@ -56,13 +58,11 @@ impl AppController {
             }) {
                 Ok(Some(saved)) => saved,
                 Ok(None) => {
-                    let _sent = events.send(ControllerEvent::Error(
-                        "The selected server is no longer saved.".to_string(),
-                    ));
+                    warn!(%source_id, "cannot clear cache for an unsaved source");
                     return;
                 }
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %source_id, "failed to load source before clearing cache");
                     return;
                 }
             };
@@ -72,17 +72,19 @@ impl AppController {
                 Ok(())
             });
             if let Err(error) = result {
-                let _sent = events.send(ControllerEvent::Error(error));
+                warn!(%error, source_id = %saved.source_id, "failed to clear source cache");
                 return;
             }
-            if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+            if let Err(error) =
+                crate::controller::artwork::invalidate_source(&controller.artwork, &saved.source_id)
+            {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
             if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
                 warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
-            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::CacheCleared));
-            emit_snapshot(&store, &events);
+            let _sent = source_notice.try_send(SourceNotice::CacheCleared);
+            emit_source_presentation(&store, &source_presentation);
             if sync_target_is_current(&store, &saved.source_id) {
                 controller.refresh_source_freshness();
             }

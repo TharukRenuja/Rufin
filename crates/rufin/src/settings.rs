@@ -1,187 +1,105 @@
-use domain::settings::{DEFAULT_AUTO_DJ_REFILL_THRESHOLD, default_library_list_settings};
-use domain::{
-    ExternalSiteLinkSettings, LayoutSettings, LibraryListKey, LibraryListSettings,
-    LibraryListSettingsEntry, LibrarySourceSettings, MAX_AUTO_DJ_REFILL_THRESHOLD,
-    MIN_AUTO_DJ_REFILL_THRESHOLD, SecretStorageMode, SidebarSettings, ThemePreference,
-    TrackTableSettings, default_language_preference, sanitize_language_preference,
-    sanitized_window_size,
+use ::ui::{
+    LibraryField, LibraryListKey, LibraryListSettings, LibraryListSettingsEntry,
+    Settings as UiSettings,
 };
 use library::{HomeBlockKind, HomeSectionKind};
-use metadata::Settings as MetadataSettings;
-use playback::PlaybackSettings;
-use rich_presence::Settings as RichPresenceSettings;
 use scrobbling::Settings;
 use serde::{Deserialize, Serialize};
+use sources::LibrarySourceSettings;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+pub(crate) enum LegacyTrackSortKey {
+    TrackNumber,
+    #[default]
+    Title,
+    Artist,
+    Album,
+    Year,
+    Duration,
+    Favorite,
+}
+
+impl LegacyTrackSortKey {
+    fn library_field(self) -> LibraryField {
+        match self {
+            Self::TrackNumber => LibraryField::TrackNumber,
+            Self::Title => LibraryField::Title,
+            Self::Artist => LibraryField::Artist,
+            Self::Album => LibraryField::Album,
+            Self::Year => LibraryField::Year,
+            Self::Duration => LibraryField::Duration,
+            Self::Favorite => LibraryField::Favorite,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub(crate) struct LegacyTrackTableSettings {
+    #[serde(default)]
+    sort_key: LegacyTrackSortKey,
+    #[serde(default)]
+    descending: bool,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct StoredSettings {
-    #[serde(default)]
-    pub(crate) layout: LayoutSettings,
-    #[serde(default)]
-    pub(crate) sidebar: SidebarSettings,
+    #[serde(flatten)]
+    pub(crate) ui: UiSettings,
     #[serde(default)]
     pub(crate) sources: LibrarySourceSettings,
-    pub(crate) theme_preference: ThemePreference,
-    #[serde(default = "default_language_preference")]
-    pub(crate) language: String,
-    pub(crate) private_mode: bool,
-    pub(crate) notifications_enabled: bool,
-    #[serde(default = "default_true")]
-    pub(crate) control_notifications_enabled: bool,
-    #[serde(default = "default_true")]
-    pub(crate) release_notifications_enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) release_notification_seen_version: Option<String>,
-    #[serde(default = "legacy_secret_storage_mode")]
-    pub(crate) secret_storage_mode: SecretStorageMode,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) secret_scope_id: String,
-    #[serde(flatten)]
-    pub(crate) metadata: MetadataSettings,
-    #[serde(default)]
-    pub(crate) external_site_links: ExternalSiteLinkSettings,
-    #[serde(default)]
-    pub(crate) prefer_server_playlist_covers: bool,
-    #[serde(default)]
-    pub(crate) seekbar_waveform_enabled: bool,
-    #[serde(default)]
-    pub(crate) tray_enabled: bool,
-    #[serde(default)]
-    pub(crate) exit_to_tray: bool,
-    #[serde(default)]
-    pub(crate) start_minimized: bool,
-    #[serde(default = "default_true")]
-    pub(crate) type_to_search_enabled: bool,
     #[serde(default)]
     pub(crate) jellyfin_device_id: String,
-    #[serde(flatten)]
-    pub(crate) rich_presence: RichPresenceSettings,
-    #[serde(default)]
-    pub(crate) lastfm_api_key: String,
-    #[serde(default)]
-    pub(crate) scrobbling: Settings,
-    #[serde(default)]
-    pub(crate) auto_dj_enabled: bool,
-    #[serde(default = "default_auto_dj_refill_threshold")]
-    pub(crate) auto_dj_refill_threshold: u8,
-    #[serde(default)]
-    pub(crate) playback: PlaybackSettings,
-    #[serde(default = "default_home_sections")]
-    pub(crate) home_sections: Vec<HomeSectionKind>,
-    #[serde(default)]
-    pub(crate) home_blocks: Vec<HomeBlockKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) window_width: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) window_height: Option<i32>,
-    #[serde(default = "default_lyrics_panel_visible")]
-    pub(crate) lyrics_panel_visible: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) queue_lyrics_height: Option<i32>,
-    #[serde(default)]
-    pub(crate) track_table: TrackTableSettings,
-    #[serde(default)]
-    pub(crate) library_lists: Vec<LibraryListSettingsEntry>,
+    #[serde(default, rename = "home_sections", skip_serializing)]
+    pub(crate) legacy_home_sections: Option<Vec<HomeSectionKind>>,
+    #[serde(default, rename = "track_table", skip_serializing)]
+    pub(crate) legacy_track_table: Option<LegacyTrackTableSettings>,
 }
 
 impl Default for StoredSettings {
     fn default() -> Self {
         Self {
-            layout: LayoutSettings::default(),
-            sidebar: SidebarSettings::default(),
+            ui: UiSettings::default(),
             sources: LibrarySourceSettings::default(),
-            theme_preference: ThemePreference::System,
-            language: default_language_preference(),
-            private_mode: false,
-            notifications_enabled: false,
-            control_notifications_enabled: true,
-            release_notifications_enabled: true,
-            release_notification_seen_version: None,
-            secret_storage_mode: SecretStorageMode::default(),
             secret_scope_id: String::new(),
-            metadata: MetadataSettings::default(),
-            external_site_links: ExternalSiteLinkSettings::default(),
-            prefer_server_playlist_covers: false,
-            seekbar_waveform_enabled: true,
-            tray_enabled: false,
-            exit_to_tray: false,
-            start_minimized: false,
-            type_to_search_enabled: true,
             jellyfin_device_id: String::new(),
-            rich_presence: RichPresenceSettings::default(),
-            lastfm_api_key: String::new(),
-            scrobbling: Settings::default(),
-            auto_dj_enabled: false,
-            auto_dj_refill_threshold: DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
-            playback: PlaybackSettings::default(),
-            home_sections: default_home_sections(),
-            home_blocks: default_home_blocks(),
-            window_width: None,
-            window_height: None,
-            lyrics_panel_visible: true,
-            queue_lyrics_height: None,
-            track_table: TrackTableSettings::default(),
-            library_lists: default_library_list_settings(),
+            legacy_home_sections: None,
+            legacy_track_table: None,
         }
     }
 }
 
 impl StoredSettings {
     pub(crate) fn migrate_defaults(&mut self) {
-        self.rich_presence.sanitize();
-        self.track_table.migrate_defaults();
-        self.playback.sanitize();
-        self.metadata.sanitize();
-        self.auto_dj_refill_threshold = self
-            .auto_dj_refill_threshold
-            .clamp(MIN_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD);
-        self.scrobbling.sanitize();
-        self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
-        self.language = sanitize_language_preference(&self.language);
-        self.release_notification_seen_version = self
-            .release_notification_seen_version
-            .as_deref()
-            .map(str::trim)
-            .filter(|version| !version.is_empty())
-            .map(str::to_string);
-        if self.lastfm_api_key.is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
-            self.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
-        }
-        self.scrobbling.lastfm.api_key.clear();
-        self.layout.sanitize();
-        self.sidebar.sanitize();
-        self.sources.sanitize();
-        if !self.tray_enabled {
-            self.exit_to_tray = false;
-            self.start_minimized = false;
-        }
-        if let Some((width, height)) = sanitized_window_size(self.window_width, self.window_height)
+        if self.ui.lastfm_api_key.trim().is_empty() && !self.ui.scrobbling.lastfm.api_key.is_empty()
         {
-            self.window_width = Some(width);
-            self.window_height = Some(height);
-        } else {
-            self.window_width = None;
-            self.window_height = None;
+            self.ui.lastfm_api_key = self.ui.scrobbling.lastfm.api_key.clone();
         }
+        self.ui.scrobbling.lastfm.api_key.clear();
+        self.sources.sanitize();
         self.migrate_home_blocks();
-        self.migrate_library_lists();
+        self.migrate_legacy_track_table();
+        self.ui.sanitize();
     }
 
     pub(crate) fn scrobbling_runtime_settings(&self) -> Settings {
-        let mut settings = self.scrobbling.clone();
-        settings.lastfm.api_key = self.lastfm_api_key.clone();
+        let mut settings = self.ui.scrobbling.clone();
+        settings.lastfm.api_key = self.ui.lastfm_api_key.clone();
         settings
     }
 
     fn migrate_home_blocks(&mut self) {
-        if self.home_sections.is_empty() {
-            self.home_sections = default_home_sections();
-        }
-        if self.home_blocks.is_empty() {
-            self.home_blocks = Vec::with_capacity(self.home_sections.len() + 2);
-            self.home_blocks.push(HomeBlockKind::Showcase);
-            for section in &self.home_sections {
-                self.home_blocks.push(match section {
+        if self.ui.home_blocks.is_empty() {
+            let home_sections = self
+                .legacy_home_sections
+                .take()
+                .filter(|sections| !sections.is_empty())
+                .unwrap_or_else(default_home_sections);
+            self.ui.home_blocks = Vec::with_capacity(home_sections.len() + 2);
+            self.ui.home_blocks.push(HomeBlockKind::Showcase);
+            for section in home_sections {
+                self.ui.home_blocks.push(match section {
                     HomeSectionKind::Explore => HomeBlockKind::Explore,
                     HomeSectionKind::MostPlayed => HomeBlockKind::MostPlayed,
                     HomeSectionKind::NewlyAdded => HomeBlockKind::NewlyAdded,
@@ -189,66 +107,35 @@ impl StoredSettings {
                     HomeSectionKind::RecentlyReleased => HomeBlockKind::RecentlyReleased,
                 });
             }
-            if !self.home_blocks.contains(&HomeBlockKind::Genres) {
-                self.home_blocks.push(HomeBlockKind::Genres);
+            if !self.ui.home_blocks.contains(&HomeBlockKind::Genres) {
+                self.ui.home_blocks.push(HomeBlockKind::Genres);
             }
+        } else {
+            self.legacy_home_sections.take();
         }
-        sanitize_home_blocks(&mut self.home_blocks);
-        self.home_sections = self
-            .home_blocks
-            .iter()
-            .filter_map(|block| block.section_kind())
-            .collect();
     }
 
-    fn migrate_library_lists(&mut self) {
-        if self.library_lists.is_empty() {
-            self.library_lists = default_library_list_settings();
+    fn migrate_legacy_track_table(&mut self) {
+        let Some(legacy) = self.legacy_track_table.take() else {
+            return;
+        };
+        if self
+            .ui
+            .library_lists
+            .iter()
+            .any(|entry| entry.key == LibraryListKey::Tracks)
+        {
+            return;
         }
-        for key in LibraryListKey::all() {
-            if !self.library_lists.iter().any(|entry| entry.key == key) {
-                self.library_lists.push(LibraryListSettingsEntry {
-                    key,
-                    settings: LibraryListSettings::for_key(key),
-                });
-            }
-        }
-        self.library_lists
-            .retain(|entry| LibraryListKey::all().contains(&entry.key));
-        self.library_lists.sort_by_key(|entry| {
-            LibraryListKey::all()
-                .iter()
-                .position(|key| *key == entry.key)
-                .unwrap_or(usize::MAX)
+
+        let mut settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+        settings.sort_key = legacy.sort_key.library_field();
+        settings.descending = legacy.descending;
+        self.ui.library_lists.push(LibraryListSettingsEntry {
+            key: LibraryListKey::Tracks,
+            settings,
         });
-        for entry in &mut self.library_lists {
-            entry.settings.sanitize(entry.key);
-        }
     }
-
-    pub(crate) fn library_list(&self, key: LibraryListKey) -> LibraryListSettings {
-        self.library_lists
-            .iter()
-            .find(|entry| entry.key == key)
-            .map(|entry| entry.settings.clone())
-            .unwrap_or_else(|| LibraryListSettings::for_key(key))
-    }
-}
-
-fn legacy_secret_storage_mode() -> SecretStorageMode {
-    SecretStorageMode::ConfigFile
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_lyrics_panel_visible() -> bool {
-    true
-}
-
-fn default_auto_dj_refill_threshold() -> u8 {
-    DEFAULT_AUTO_DJ_REFILL_THRESHOLD
 }
 
 fn default_home_sections() -> Vec<HomeSectionKind> {
@@ -261,41 +148,19 @@ fn default_home_sections() -> Vec<HomeSectionKind> {
     ]
 }
 
-fn default_home_blocks() -> Vec<HomeBlockKind> {
-    vec![
-        HomeBlockKind::Showcase,
-        HomeBlockKind::Explore,
-        HomeBlockKind::MostPlayed,
-        HomeBlockKind::NewlyAdded,
-        HomeBlockKind::RecentlyPlayed,
-        HomeBlockKind::RecentlyReleased,
-        HomeBlockKind::Genres,
-    ]
-}
-
-fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
-    let mut seen = Vec::new();
-    blocks.retain(|block| {
-        if seen.contains(block) {
-            false
-        } else {
-            seen.push(*block);
-            true
-        }
-    });
-    if blocks.is_empty() {
-        *blocks = default_home_blocks();
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use domain::{
-        LeftSidebarMode, LibraryField, LibraryLayout, LibraryListSettings, RightSidebarMode,
-        SYSTEM_LANGUAGE_PREFERENCE,
+    use ::ui::{
+        LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
+        RightSidebarMode,
     };
-    use metadata::ExternalLyricsProvider;
+    use localization::SYSTEM_LANGUAGE_PREFERENCE;
+    use metadata::{ExternalLyricsProvider, Settings as MetadataSettings};
+    use playback::{DEFAULT_AUTO_DJ_REFILL_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD};
+    use rich_presence::Settings as RichPresenceSettings;
     use scrobbling::AudioscrobblerSettings;
+    use secrets::SecretStorageMode;
+    use sources::{LibrarySourceSelection, LocalLibraryFolder};
 
     use super::*;
 
@@ -313,20 +178,27 @@ mod tests {
         let mut settings =
             serde_json::from_str::<StoredSettings>(json).expect("deserialize legacy settings");
 
-        assert_eq!(settings.secret_storage_mode, SecretStorageMode::ConfigFile);
-        assert!(settings.lyrics_panel_visible);
-        assert!(settings.type_to_search_enabled);
-        assert!(settings.control_notifications_enabled);
-        assert!(settings.release_notifications_enabled);
         assert_eq!(
-            settings.metadata.external_lyrics_providers,
+            settings.ui.secret_storage_mode,
+            SecretStorageMode::ConfigFile
+        );
+        assert_eq!(
+            settings.ui.auto_dj_refill_threshold,
+            DEFAULT_AUTO_DJ_REFILL_THRESHOLD
+        );
+        assert!(settings.ui.lyrics_panel_visible);
+        assert!(settings.ui.type_to_search_enabled);
+        assert!(settings.ui.control_notifications_enabled);
+        assert!(settings.ui.release_notifications_enabled);
+        assert_eq!(
+            settings.ui.metadata.external_lyrics_providers,
             metadata::default_external_lyrics_providers()
         );
 
         settings.migrate_defaults();
 
         assert_eq!(
-            settings.home_blocks,
+            settings.ui.home_blocks,
             vec![
                 HomeBlockKind::Showcase,
                 HomeBlockKind::Explore,
@@ -334,11 +206,50 @@ mod tests {
                 HomeBlockKind::Genres,
             ]
         );
-        assert_eq!(
-            settings.home_sections,
-            vec![HomeSectionKind::Explore, HomeSectionKind::RecentlyPlayed]
+        assert!(settings.legacy_home_sections.is_none());
+        assert!(
+            serde_json::to_value(&settings)
+                .expect("serialize migrated settings")
+                .get("home_sections")
+                .is_none()
         );
-        assert_eq!(settings.library_lists.len(), LibraryListKey::all().len());
+        assert_eq!(settings.ui.library_lists.len(), LibraryListKey::all().len());
+    }
+
+    #[test]
+    fn legacy_track_table_sort_migrates_to_the_tracks_list_owner() {
+        let json = r#"{
+            "theme_preference":"System",
+            "private_mode":false,
+            "notifications_enabled":false,
+            "external_lyrics_enabled":false,
+            "discord_presence_enabled":false,
+            "track_table": {
+                "visible_columns":["Title","Album","Year"],
+                "sort_key":"Artist",
+                "descending":true,
+                "layout_version":4
+            }
+        }"#;
+
+        let mut settings =
+            serde_json::from_str::<StoredSettings>(json).expect("deserialize legacy track table");
+        settings.migrate_defaults();
+
+        let tracks = settings
+            .ui
+            .library_lists
+            .iter()
+            .find(|entry| entry.key == LibraryListKey::Tracks)
+            .expect("Tracks settings should be present");
+        assert_eq!(tracks.settings.sort_key, LibraryField::Artist);
+        assert!(tracks.settings.descending);
+        assert!(
+            serde_json::to_value(settings)
+                .expect("serialize migrated settings")
+                .get("track_table")
+                .is_none()
+        );
     }
 
     #[test]
@@ -364,17 +275,17 @@ mod tests {
             .unwrap_or_else(|error| panic!("restore flat rich-presence settings: {error}"));
         restored.migrate_defaults();
 
-        assert!(!restored.rich_presence.enabled);
+        assert!(!restored.ui.rich_presence.enabled);
         assert_eq!(
-            restored.rich_presence.client_id,
+            restored.ui.rich_presence.client_id,
             rich_presence::DEFAULT_CLIENT_ID
         );
         assert_eq!(
-            restored.rich_presence.display_type,
+            restored.ui.rich_presence.display_type,
             rich_presence::DisplayType::Application
         );
         assert_eq!(
-            restored.rich_presence.link_type,
+            restored.ui.rich_presence.link_type,
             rich_presence::LinkType::MusicBrainz
         );
     }
@@ -406,125 +317,235 @@ mod tests {
             serde_json::from_str::<StoredSettings>(json).expect("deserialize stored settings");
 
         assert_eq!(
-            settings.secret_storage_mode,
+            settings.ui.secret_storage_mode,
             SecretStorageMode::SystemKeyring
         );
         assert_eq!(settings.secret_scope_id, "test-scope");
         assert_eq!(
-            settings.layout.default_profile.left_sidebar,
+            settings.ui.layout.default_profile.left_sidebar,
             LeftSidebarMode::Full
         );
         assert_eq!(
-            settings.layout.default_profile.right_sidebar,
-            RightSidebarMode::Default
+            settings.ui.layout.default_profile.right_sidebar,
+            RightSidebarMode::Visible
         );
         assert_eq!(
-            settings.layout.narrow_profile.left_sidebar,
+            settings.ui.layout.narrow_profile.left_sidebar,
             LeftSidebarMode::Hidden
         );
         assert_eq!(
-            settings.layout.narrow_profile.right_sidebar,
-            RightSidebarMode::Comfortable
+            settings.ui.layout.narrow_profile.right_sidebar,
+            RightSidebarMode::Visible
+        );
+        assert_eq!(settings.ui.layout.preferred_right_sidebar_width, 300);
+    }
+
+    #[test]
+    fn layout_migrates_legacy_right_size_to_one_global_preference() {
+        let mut value = serde_json::to_value(StoredSettings::default())
+            .expect("serialize current settings fixture");
+        value["layout"] = serde_json::json!({
+            "default_profile": {
+                "left_sidebar": "Full",
+                "right_sidebar": "Hidden",
+                "last_visible_right_sidebar": "Comfortable"
+            },
+            "narrow_profile": {
+                "left_sidebar": "Compact",
+                "right_sidebar": "Spacious"
+            }
+        });
+
+        let settings =
+            serde_json::from_value::<StoredSettings>(value).expect("deserialize legacy layout");
+
+        assert_eq!(
+            settings.ui.layout.default_profile.right_sidebar,
+            RightSidebarMode::Hidden
+        );
+        assert_eq!(
+            settings.ui.layout.narrow_profile.right_sidebar,
+            RightSidebarMode::Visible
+        );
+        assert_eq!(settings.ui.layout.preferred_right_sidebar_width, 400);
+        assert_eq!(
+            settings.ui.layout.preferred_left_sidebar_width,
+            ::ui::DEFAULT_LEFT_SIDEBAR_WIDTH
+        );
+
+        let mut value = serde_json::to_value(settings).expect("serialize migrated layout");
+        assert_eq!(
+            value["layout"]["default_profile"]["right_sidebar"],
+            "Hidden"
+        );
+        assert_eq!(
+            value["layout"]["narrow_profile"]["right_sidebar"],
+            "Visible"
+        );
+        assert!(
+            value["layout"]["default_profile"]
+                .get("last_visible_right_sidebar")
+                .is_none()
+        );
+
+        value["layout"]["narrow_profile"]["right_sidebar"] =
+            serde_json::Value::String("Shown".to_string());
+        let previous_name = serde_json::from_value::<StoredSettings>(value)
+            .expect("deserialize previous visible-state name");
+        assert_eq!(
+            previous_name.ui.layout.narrow_profile.right_sidebar,
+            RightSidebarMode::Visible
         );
     }
 
     #[test]
     fn aggregate_migration_preserves_cross_setting_compatibility() {
         let mut settings = StoredSettings {
-            language: "de_DE\0".to_string(),
-            release_notification_seen_version: Some("  ".to_string()),
-            rich_presence: RichPresenceSettings {
-                enabled: false,
-                client_id: String::new(),
-                ..RichPresenceSettings::default()
-            },
-            metadata: MetadataSettings {
-                external_lyrics_providers: vec![
-                    ExternalLyricsProvider::Genius,
-                    ExternalLyricsProvider::Netease,
-                    ExternalLyricsProvider::Genius,
-                ],
-                lyrics_provider_settings_version: 0,
-                suppressed_auto_lyrics_track_ids: vec!["track-one".to_string()],
-                ..MetadataSettings::default()
-            },
-            auto_dj_refill_threshold: 0,
-            tray_enabled: false,
-            exit_to_tray: true,
-            start_minimized: true,
-            lastfm_api_key: String::new(),
-            scrobbling: Settings {
-                lastfm: AudioscrobblerSettings {
-                    api_key: " scrobble-key ".to_string(),
-                    ..AudioscrobblerSettings::default()
+            ui: UiSettings {
+                language: "de_DE\0".to_string(),
+                release_notification_seen_version: Some("  ".to_string()),
+                rich_presence: RichPresenceSettings {
+                    enabled: false,
+                    client_id: String::new(),
+                    ..RichPresenceSettings::default()
                 },
-                ..Settings::default()
-            },
-            library_lists: vec![LibraryListSettingsEntry {
-                key: LibraryListKey::Playlists,
-                settings: LibraryListSettings {
-                    layout: LibraryLayout::Grid,
-                    row_fields: vec![
-                        LibraryField::Image,
-                        LibraryField::Title,
-                        LibraryField::SongCount,
-                        LibraryField::Duration,
+                metadata: MetadataSettings {
+                    external_lyrics_providers: vec![
+                        ExternalLyricsProvider::Genius,
+                        ExternalLyricsProvider::Netease,
+                        ExternalLyricsProvider::Genius,
                     ],
-                    grid_fields: vec![LibraryField::SongCount, LibraryField::Duration],
-                    detail_track_fields: Vec::new(),
-                    sort_key: LibraryField::Title,
-                    descending: false,
-                    layout_version: 2,
+                    lyrics_provider_settings_version: 0,
+                    suppressed_auto_lyrics_track_ids: vec!["track-one".to_string()],
+                    ..MetadataSettings::default()
                 },
-            }],
+                auto_dj_refill_threshold: 0,
+                tray_enabled: false,
+                exit_to_tray: true,
+                start_minimized: true,
+                lastfm_api_key: String::new(),
+                scrobbling: Settings {
+                    lastfm: AudioscrobblerSettings {
+                        api_key: " scrobble-key ".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    ..Settings::default()
+                },
+                library_lists: vec![LibraryListSettingsEntry {
+                    key: LibraryListKey::Playlists,
+                    settings: LibraryListSettings {
+                        layout: LibraryLayout::Grid,
+                        row_fields: vec![
+                            LibraryField::Image,
+                            LibraryField::Title,
+                            LibraryField::SongCount,
+                            LibraryField::Duration,
+                        ],
+                        grid_fields: vec![LibraryField::SongCount, LibraryField::Duration],
+                        detail_track_fields: Vec::new(),
+                        sort_key: LibraryField::Title,
+                        descending: false,
+                        layout_version: 2,
+                    },
+                }],
+                ..UiSettings::default()
+            },
             ..StoredSettings::default()
         };
 
         settings.migrate_defaults();
 
-        assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
-        assert_eq!(settings.release_notification_seen_version, None);
+        assert_eq!(settings.ui.language, SYSTEM_LANGUAGE_PREFERENCE);
+        assert_eq!(settings.ui.release_notification_seen_version, None);
         assert_eq!(
-            settings.rich_presence.client_id,
+            settings.ui.rich_presence.client_id,
             rich_presence::DEFAULT_CLIENT_ID
         );
-        assert!(!settings.rich_presence.enabled);
+        assert!(!settings.ui.rich_presence.enabled);
         assert_eq!(
-            settings.metadata.external_lyrics_providers,
+            settings.ui.metadata.external_lyrics_providers,
             vec![
                 ExternalLyricsProvider::Genius,
                 ExternalLyricsProvider::Netease
             ]
         );
         assert_eq!(
-            settings.metadata.lyrics_provider_settings_version,
+            settings.ui.metadata.lyrics_provider_settings_version,
             metadata::LYRICS_PROVIDER_SETTINGS_VERSION
         );
         assert!(
             settings
+                .ui
                 .metadata
                 .suppressed_auto_lyrics_track_ids
                 .is_empty()
         );
         assert_eq!(
-            settings.auto_dj_refill_threshold,
+            settings.ui.auto_dj_refill_threshold,
             MIN_AUTO_DJ_REFILL_THRESHOLD
         );
-        assert!(!settings.exit_to_tray);
-        assert!(!settings.start_minimized);
-        assert_eq!(settings.lastfm_api_key, "scrobble-key");
-        assert!(settings.scrobbling.lastfm.api_key.is_empty());
+        assert!(!settings.ui.exit_to_tray);
+        assert!(!settings.ui.start_minimized);
+        assert_eq!(settings.ui.lastfm_api_key, "scrobble-key");
+        assert!(settings.ui.scrobbling.lastfm.api_key.is_empty());
         assert_eq!(
             settings.scrobbling_runtime_settings().lastfm.api_key,
             "scrobble-key"
         );
         assert_eq!(
-            settings.library_list(LibraryListKey::Playlists).row_fields,
+            settings
+                .ui
+                .library_list(LibraryListKey::Playlists)
+                .row_fields,
             vec![
                 LibraryField::Image,
                 LibraryField::Title,
                 LibraryField::SongCount
             ]
+        );
+    }
+
+    #[test]
+    fn current_home_blocks_replace_the_read_only_legacy_input() {
+        let sources = LibrarySourceSettings {
+            selected: Some(LibrarySourceSelection::Local),
+            local_folders: vec![LocalLibraryFolder {
+                path: "/music".to_string(),
+            }],
+        };
+        let mut stored = StoredSettings {
+            sources: sources.clone(),
+            jellyfin_device_id: "device-id".to_string(),
+            secret_scope_id: "scope-id".to_string(),
+            legacy_home_sections: Some(vec![HomeSectionKind::MostPlayed]),
+            ..StoredSettings::default()
+        };
+        let mut settings = stored.ui.clone();
+        settings.private_mode = true;
+        settings.home_blocks = vec![HomeBlockKind::Showcase, HomeBlockKind::RecentlyPlayed];
+
+        stored.ui = settings;
+
+        assert_eq!(stored.sources, sources);
+        assert_eq!(stored.jellyfin_device_id, "device-id");
+        assert_eq!(stored.secret_scope_id, "scope-id");
+        assert_eq!(
+            stored.legacy_home_sections,
+            Some(vec![HomeSectionKind::MostPlayed])
+        );
+        assert!(stored.ui.private_mode);
+
+        stored.migrate_defaults();
+
+        assert_eq!(stored.sources, sources);
+        assert_eq!(stored.jellyfin_device_id, "device-id");
+        assert_eq!(stored.secret_scope_id, "scope-id");
+        assert!(stored.legacy_home_sections.is_none());
+        let serialized = serde_json::to_value(&stored).expect("serialize current settings");
+        assert!(serialized.get("home_sections").is_none());
+        assert_eq!(
+            serialized.get("home_blocks"),
+            Some(&serde_json::json!(["Showcase", "RecentlyPlayed"]))
         );
     }
 }

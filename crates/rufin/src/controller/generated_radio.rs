@@ -5,14 +5,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use library::StoredSource;
-use library::{Album, Artist, Genre, Playlist, SourceId, Track, TrackId};
-use playback::{Placement, Provenance};
+use library::{SourceId, Track, TrackId};
+use playback::{Placement, Provenance, RadioPlayRequest, RadioSeed};
 use sources::{GeneratedTrackSeed, GeneratedTrackStrategy, GeneratedTracksRequest};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::{
-    AppController, ControllerEvent, RandomPlayAction, load_settings_from_store,
-    source_tracks::hydrate_source_tracks,
+    load_settings_from_store, root::PlaybackCommands, source_tracks::hydrate_source_tracks,
 };
 use crate::source_setup::{
     GeneratedTrackExecutor, GeneratedTracks, current_active_source, selected_active_source,
@@ -51,168 +50,30 @@ pub(crate) fn native_generated_track_executor(
 
 #[derive(Clone, Debug)]
 struct GeneratedRadioRequest {
-    action: RandomPlayAction,
+    placement: Placement,
     seed: GeneratedTrackSeed,
     seed_track: Option<Track>,
     limit: usize,
 }
 
-impl AppController {
+impl PlaybackCommands {
     pub fn manual_radio_supported(&self, kind: sources::GeneratedTrackSeedKind) -> bool {
         current_active_source(&self.active_source)
             .is_some_and(|active| active.manual_radio.seed_domain.contains(&kind))
     }
 
-    pub fn play_track_radio(&self, track: Track) {
+    pub fn play_radio(&self, request: RadioPlayRequest) {
+        let (seed, seed_track) = generated_radio_seed(request.seed);
         self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNow,
-            seed: GeneratedTrackSeed::Track(track.id.clone()),
-            seed_track: Some(track),
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_track_radio_next(&self, track: Track) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNext,
-            seed: GeneratedTrackSeed::Track(track.id.clone()),
-            seed_track: Some(track),
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_track_radio_last(&self, track: Track) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::AddLast,
-            seed: GeneratedTrackSeed::Track(track.id.clone()),
-            seed_track: Some(track),
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_album_radio(&self, album: Album) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNow,
-            seed: GeneratedTrackSeed::Album(album.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_album_radio_next(&self, album: Album) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNext,
-            seed: GeneratedTrackSeed::Album(album.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_album_radio_last(&self, album: Album) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::AddLast,
-            seed: GeneratedTrackSeed::Album(album.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_artist_radio(&self, artist: Artist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNow,
-            seed: GeneratedTrackSeed::Artist(artist.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_artist_radio_next(&self, artist: Artist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNext,
-            seed: GeneratedTrackSeed::Artist(artist.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_artist_radio_last(&self, artist: Artist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::AddLast,
-            seed: GeneratedTrackSeed::Artist(artist.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_genre_radio(&self, genre: Genre) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNow,
-            seed: GeneratedTrackSeed::Genre {
-                id: Some(genre.id),
-                name: genre.name,
-            },
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_genre_radio_next(&self, genre: Genre) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNext,
-            seed: GeneratedTrackSeed::Genre {
-                id: Some(genre.id),
-                name: genre.name,
-            },
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_genre_radio_last(&self, genre: Genre) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::AddLast,
-            seed: GeneratedTrackSeed::Genre {
-                id: Some(genre.id),
-                name: genre.name,
-            },
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_playlist_radio(&self, playlist: Playlist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNow,
-            seed: GeneratedTrackSeed::Playlist(playlist.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_playlist_radio_next(&self, playlist: Playlist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::PlayNext,
-            seed: GeneratedTrackSeed::Playlist(playlist.id),
-            seed_track: None,
-            limit: GENERATED_RADIO_ITEM_COUNT,
-        });
-    }
-
-    pub fn play_playlist_radio_last(&self, playlist: Playlist) {
-        self.play_generated_radio(GeneratedRadioRequest {
-            action: RandomPlayAction::AddLast,
-            seed: GeneratedTrackSeed::Playlist(playlist.id),
-            seed_track: None,
+            placement: request.placement.into(),
+            seed,
+            seed_track,
             limit: GENERATED_RADIO_ITEM_COUNT,
         });
     }
 
     fn play_generated_radio(&self, request: GeneratedRadioRequest) {
-        let placement = match request.action {
-            RandomPlayAction::PlayNow => Placement::Replace { anchor_index: 0 },
-            RandomPlayAction::PlayNext => Placement::AfterCurrent,
-            RandomPlayAction::AddLast => Placement::End,
-        };
+        let placement = request.placement;
         let reservation = match self.reserve_queue_materialization(placement) {
             Ok(reservation) => reservation,
             Err(error) => {
@@ -299,13 +160,30 @@ impl AppController {
     }
 
     fn emit_generated_radio_error(&self, error: impl Into<String>) {
-        let _sent = self.events.send(ControllerEvent::Error(error.into()));
+        let error = error.into();
+        warn!(%error, "generated radio request failed");
     }
 }
 
 fn dedupe_tracks(tracks: &mut Vec<Track>) {
     let mut seen = HashSet::<TrackId>::new();
     tracks.retain(|track| seen.insert(track.id.clone()));
+}
+
+fn generated_radio_seed(seed: RadioSeed) -> (GeneratedTrackSeed, Option<Track>) {
+    match seed {
+        RadioSeed::Track(track) => (GeneratedTrackSeed::Track(track.id.clone()), Some(track)),
+        RadioSeed::Album(album) => (GeneratedTrackSeed::Album(album.id), None),
+        RadioSeed::Artist(artist) => (GeneratedTrackSeed::Artist(artist.id), None),
+        RadioSeed::Genre(genre) => (
+            GeneratedTrackSeed::Genre {
+                id: Some(genre.id),
+                name: genre.name,
+            },
+            None,
+        ),
+        RadioSeed::Playlist(playlist) => (GeneratedTrackSeed::Playlist(playlist.id), None),
+    }
 }
 
 fn generated_seed_kind(seed: &GeneratedTrackSeed) -> &'static str {

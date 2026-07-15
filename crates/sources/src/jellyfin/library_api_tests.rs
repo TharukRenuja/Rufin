@@ -147,7 +147,10 @@ async fn library_map_page() {
     assert_eq!(page.items[0].genres, vec!["Ambient", "Electronic"]);
     assert_eq!(page.items[0].release_date.as_deref(), Some("2024-03-01"));
     assert_eq!(page.items[0].date_added.as_deref(), Some("2024-03-02"));
-    assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
+    assert_eq!(
+        page.items[0].last_played.as_deref(),
+        Some("2024-04-02T09:10:11.0000000Z")
+    );
     assert_eq!(page.items[0].play_count, Some(12));
     assert_eq!(page.items[0].user_rating, Some(5));
     assert_eq!(
@@ -486,7 +489,10 @@ async fn library_track_album() {
     );
     assert_eq!(detail.tracks[0].release_date.as_deref(), Some("2024-03-01"));
     assert_eq!(detail.tracks[0].date_added.as_deref(), Some("2024-03-03"));
-    assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
+    assert_eq!(
+        detail.tracks[0].last_played.as_deref(),
+        Some("2024-04-03T09:10:11.0000000Z")
+    );
     assert_eq!(detail.tracks[0].play_count, Some(7));
     assert_eq!(detail.tracks[0].user_rating, Some(4));
     assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));
@@ -734,7 +740,10 @@ async fn library_map_counts() {
     assert_eq!(artists.items[0].id.as_str(), "jellyfin:artist:artist-one");
     assert_eq!(artists.items[0].album_count, 4);
     assert_eq!(artists.items[0].track_count, 30);
-    assert_eq!(artists.items[0].last_played.as_deref(), Some("2024-05-03"));
+    assert_eq!(
+        artists.items[0].last_played.as_deref(),
+        Some("2024-05-03T09:10:11.0000000Z")
+    );
     assert_eq!(artists.items[0].play_count, Some(22));
     assert_eq!(artists.items[0].user_rating, Some(3));
     assert_eq!(

@@ -45,7 +45,7 @@
                 ]);
             };
 
-            cargoHash = "sha256-nkoQWKdCKN7bGHMRaY4kC9PRRO9b6y5qaePf7nbKryc=";
+            cargoHash = "sha256-fVaK4umgrvC4lZAxCGCYsHbvgnv6BqfEKvHI/BdDUAs=";
 
             strictDeps = true;
 
@@ -96,7 +96,7 @@
               install -Dm644 -t "$out/share/icons/hicolor/64x64/apps" \
                 data/icons/hicolor/64x64/apps/*.png
 
-              for po_file in locales/*.po; do
+              for po_file in crates/localization/locales/*.po; do
                 if [ -f "$po_file" ]; then
                   lang="$(basename "$po_file" .po)"
                   mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
@@ -174,7 +174,7 @@
                 gst-libav
               ]);
 
-            RUFIN_LOCALEDIR = "locales";
+            RUFIN_LOCALEDIR = "crates/localization/locales";
           };
         }
       );

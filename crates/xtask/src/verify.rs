@@ -131,15 +131,10 @@ fn local(mut args: Vec<String>) -> Result<()> {
 
     ensure_command("cargo")?;
     ensure_command("cargo-deny")?;
-    ensure_command("bash")?;
     ensure_command("just")?;
 
     let root = repo_root()?;
     env::set_current_dir(&root)?;
-    run_command(
-        "bash",
-        ["scripts/check-i18n", "--base-ref", base_ref.as_str()],
-    )?;
     let base_commit = command_stdout("git", ["merge-base", "HEAD", &base_ref])?;
     let changed_paths = changed_paths_since(base_commit.trim())?;
     let needs_nix_hash_check = changed_paths.iter().any(|path| {
@@ -232,7 +227,7 @@ fn package_layout(args: Vec<String>) -> Result<()> {
         ))?;
     }
 
-    for po_file in po_files(&repo.join("locales"))? {
+    for po_file in po_files(&repo.join("crates/localization/locales"))? {
         let lang = po_file
             .file_stem()
             .and_then(|value| value.to_str())

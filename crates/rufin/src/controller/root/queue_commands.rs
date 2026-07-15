@@ -1,23 +1,19 @@
 use std::sync::Arc;
 
-use domain::{FolderPathItem, LibraryField, LibraryListSettings, TrackSortKey, TrackTableSettings};
 use library::play_context::{
-    ArtistTrackScope, PlayContext, PlayContextAnchor, PlayContextDescriptor, PlayContextItem,
-    PlayContextOrder, PlaylistSort, TrackFilter,
+    PlayContext, PlayContextAnchor, PlayContextDescriptor, PlayContextItem, PlayContextOrder,
+    PlaylistSort, TrackFilter, context_id, smart_playlist_definition_fingerprint,
 };
-use library::{
-    AlbumId, ArtistId, GenreId, MoodId, MusicFolderId, PlaylistEntry, PlaylistId, SmartPlaylist,
-    SourceId, Track, TrackId,
-};
+use library::{MusicFolderId, PlaylistId, SourceId, Track, TrackId};
 use playback::{
-    Batch, BatchItem, MaterializationId, OccurrenceId, Placement, Provenance, RepeatMode,
-    SessionCommand,
+    AlbumPlayRequest, ArtistWindowPlayRequest, Batch, BatchItem, CachedPlaylistPlayRequest,
+    FolderWindowPlayRequest, GenreWindowPlayRequest, LibraryWindowPlayRequest, MaterializationId,
+    MoodWindowPlayRequest, OccurrenceId, Placement, PlaylistEntryPlayRequest, Provenance,
+    QueuePlacement, RepeatMode, SessionCommand, SmartPlaylistPlayRequest,
 };
+use tracing::warn;
 
-use super::{
-    AppController, ControllerEvent, PlaybackProduct, StoreHandle, shuffle_seed,
-    smart_playlist_definition_fingerprint,
-};
+use super::{PlaybackCommands, PlaybackProduct, StoreHandle, shuffle_seed};
 
 #[derive(Clone)]
 pub(in crate::controller) struct ReservedQueueMaterialization {
@@ -38,7 +34,7 @@ impl ReservedQueueMaterialization {
     }
 }
 
-impl AppController {
+impl PlaybackCommands {
     pub(in crate::controller) fn reserve_queue_materialization(
         &self,
         placement: Placement,
@@ -93,98 +89,66 @@ impl AppController {
         self.play_tracks_now(vec![track]);
     }
 
-    pub fn play_album_tracks(
-        &self,
-        album_id: AlbumId,
-        tracks: Vec<Track>,
-        anchor_index: usize,
-        shuffled_start: bool,
-    ) {
-        let Some(anchor_track) = tracks.get(anchor_index) else {
+    pub fn play_album(&self, request: AlbumPlayRequest) {
+        let Some(anchor_track) = request.tracks.get(request.anchor_index) else {
             self.queue_error("The selected track is no longer available.");
             return;
         };
         let context = PlayContext {
             descriptor: PlayContextDescriptor::Album {
-                album_id,
+                album_id: request.album_id,
                 music_folder_id: Self::active_music_folder(&self.store),
             },
             order: PlayContextOrder::Canonical,
         };
         let anchor = PlayContextAnchor {
             track_id: anchor_track.id.clone(),
-            source_rank: anchor_index,
+            source_rank: request.anchor_index,
             source_item_id: None,
         };
-        self.play_store_context(context, anchor, shuffled_start);
+        self.play_store_context(context, anchor, request.shuffled_start);
     }
 
-    pub fn play_album_now(&self, album_id: AlbumId) {
-        match self.cached_album_detail(&album_id) {
-            Ok(Some((album, tracks))) if !tracks.is_empty() => {
-                self.play_album_tracks(album.id, tracks, 0, true);
-            }
-            Ok(Some(_)) => self.queue_error("No tracks are available to play."),
-            Ok(None) => self.queue_error("The selected cached album was not found."),
-            Err(error) => self.queue_error(error),
-        }
-    }
-
-    pub fn play_playlist_entry(
-        &self,
-        playlist_id: PlaylistId,
-        entry: PlaylistEntry,
-        source_index: usize,
-        query: Option<String>,
-        sort: (PlaylistSort, bool),
-        shuffled_start: bool,
-    ) {
-        let (sort, descending) = sort;
+    pub fn play_playlist_entry(&self, request: PlaylistEntryPlayRequest) {
         let context = PlayContext {
-            descriptor: PlayContextDescriptor::Playlist { playlist_id },
+            descriptor: PlayContextDescriptor::Playlist {
+                playlist_id: request.playlist_id,
+            },
             order: PlayContextOrder::Playlist {
-                query,
-                sort,
-                descending,
+                query: request.query,
+                sort: request.sort,
+                descending: request.descending,
             },
         };
         let anchor = PlayContextAnchor {
-            track_id: entry.track.id,
-            source_rank: source_index,
-            source_item_id: Some(entry.entry_id),
+            track_id: request.entry.track.id,
+            source_rank: request.source_index,
+            source_item_id: Some(request.entry.entry_id),
         };
-        self.play_store_context(context, anchor, shuffled_start);
+        self.play_store_context(context, anchor, request.shuffled_start);
     }
 
-    pub fn play_cached_playlist(&self, playlist_id: PlaylistId) {
-        self.play_cached_playlist_at(playlist_id, Placement::Replace { anchor_index: 0 }, true);
+    pub fn play_cached_playlist(&self, request: CachedPlaylistPlayRequest) {
+        let shuffled_start = request.placement == QueuePlacement::Now;
+        self.play_cached_playlist_at(
+            request.playlist_id,
+            request.placement.into(),
+            shuffled_start,
+        );
     }
 
-    pub fn play_cached_playlist_next(&self, playlist_id: PlaylistId) {
-        self.play_cached_playlist_at(playlist_id, Placement::AfterCurrent, false);
-    }
-
-    pub fn play_cached_playlist_last(&self, playlist_id: PlaylistId) {
-        self.play_cached_playlist_at(playlist_id, Placement::End, false);
-    }
-
-    pub fn play_smart_playlist(
-        &self,
-        smart_playlist: SmartPlaylist,
-        anchor_track_id: Option<TrackId>,
-        music_folder_id: Option<MusicFolderId>,
-    ) {
+    pub fn play_smart_playlist(&self, request: SmartPlaylistPlayRequest) {
         let context = PlayContext {
             descriptor: PlayContextDescriptor::SmartPlaylist {
-                smart_playlist_id: smart_playlist.id,
+                smart_playlist_id: request.playlist.id,
                 definition_fingerprint: smart_playlist_definition_fingerprint(
-                    &smart_playlist.definition,
+                    &request.playlist.definition,
                 ),
-                music_folder_id,
+                music_folder_id: request.music_folder_id,
             },
             order: PlayContextOrder::SmartPlaylist,
         };
-        let Some(track_id) = anchor_track_id else {
+        let Some(track_id) = request.anchor_track_id else {
             self.queue_error("No tracks are available to play.");
             return;
         };
@@ -196,97 +160,85 @@ impl AppController {
         self.play_store_context(context, anchor, true);
     }
 
-    pub fn play_library_source_window(
-        &self,
-        descriptor: PlayContextDescriptor,
-        source: (LibraryListSettings, String, bool, bool),
-        total_items: usize,
-        anchor_index: usize,
-        mut track_at: impl FnMut(usize) -> Option<Track>,
-    ) -> bool {
-        if total_items == 0 || anchor_index >= total_items {
+    pub fn play_library_window(&self, mut request: LibraryWindowPlayRequest) -> bool {
+        if request.total_items == 0 || request.anchor_index >= request.total_items {
             self.queue_error("The selected track is no longer available.");
             return false;
         }
-        let Some(track) = track_at(anchor_index) else {
+        let Some(track) = (request.track_at)(request.anchor_index) else {
             self.queue_error("The selected track is no longer available.");
             return false;
         };
-        let (settings, query, favorites_only, favorite_first) = source;
-        let order = if matches!(&descriptor, PlayContextDescriptor::SmartPlaylist { .. }) {
+        let order = if matches!(
+            &request.descriptor,
+            PlayContextDescriptor::SmartPlaylist { .. }
+        ) {
             PlayContextOrder::SmartPlaylist
         } else {
             PlayContextOrder::Tracks {
                 filter: TrackFilter {
-                    query: source_query(&query),
-                    favorites_only,
+                    query: source_query(&request.query),
+                    favorites_only: request.favorites_only,
                 },
-                sort: library_track_sort(settings.sort_key),
-                descending: settings.descending,
-                favorite_first,
+                sort: request.sort,
+                descending: request.descending,
+                favorite_first: request.favorite_first,
             }
         };
-        let context = PlayContext { descriptor, order };
+        let context = PlayContext {
+            descriptor: request.descriptor,
+            order,
+        };
         let anchor = PlayContextAnchor {
             track_id: track.id,
-            source_rank: anchor_index,
+            source_rank: request.anchor_index,
             source_item_id: None,
         };
         self.play_store_context(context, anchor, false)
     }
 
-    pub fn play_folder_window(
-        &self,
-        path: Vec<FolderPathItem>,
-        query: String,
-        settings: TrackTableSettings,
-        tracks: Arc<Vec<Track>>,
-        anchor_index: usize,
-    ) -> bool {
-        let Some(anchor_track) = tracks.get(anchor_index) else {
+    pub fn play_folder_window(&self, request: FolderWindowPlayRequest) -> bool {
+        let Some(anchor_track) = request.tracks.get(request.anchor_index) else {
             self.queue_error("The selected track is no longer available.");
             return false;
         };
         let context = PlayContext {
             descriptor: PlayContextDescriptor::Folder {
-                path: path.into_iter().map(|entry| entry.name).collect(),
+                path: request.path,
                 music_folder_id: Self::active_music_folder(&self.store),
             },
             order: PlayContextOrder::Tracks {
                 filter: TrackFilter {
-                    query: source_query(&query),
+                    query: source_query(&request.query),
                     favorites_only: false,
                 },
-                sort: table_track_sort(settings.sort_key),
-                descending: settings.descending,
+                sort: request.sort,
+                descending: request.descending,
                 favorite_first: false,
             },
         };
         let anchor = PlayContextAnchor {
             track_id: anchor_track.id.clone(),
-            source_rank: anchor_index,
+            source_rank: request.anchor_index,
             source_item_id: None,
         };
-        self.play_loaded_context(context, tracks, anchor, false)
+        self.play_loaded_context(context, request.tracks, anchor, false)
     }
 
-    pub fn play_artist_tracks_window(
-        &self,
-        artist_id: ArtistId,
-        scope: ArtistTrackScope,
-        total_items: usize,
-        anchor_index: usize,
-        mut track_at: impl FnMut(usize) -> Option<Track>,
-    ) -> bool {
-        let Some(anchor) = context_anchor(total_items, anchor_index, &mut track_at) else {
+    pub fn play_artist_window(&self, mut request: ArtistWindowPlayRequest) -> bool {
+        let Some(anchor) = context_anchor(
+            request.total_items,
+            request.anchor_index,
+            &mut request.track_at,
+        ) else {
             self.queue_error("The selected track is no longer available.");
             return false;
         };
         self.play_store_context(
             PlayContext {
                 descriptor: PlayContextDescriptor::Artist {
-                    artist_id,
-                    scope,
+                    artist_id: request.artist_id,
+                    scope: request.scope,
                     music_folder_id: Self::active_music_folder(&self.store),
                 },
                 order: PlayContextOrder::Canonical,
@@ -296,20 +248,18 @@ impl AppController {
         )
     }
 
-    pub fn play_genre_tracks_window(
-        &self,
-        genre_id: GenreId,
-        total_items: usize,
-        anchor_index: usize,
-        mut track_at: impl FnMut(usize) -> Option<Track>,
-    ) -> bool {
-        let Some(anchor) = context_anchor(total_items, anchor_index, &mut track_at) else {
+    pub fn play_genre_window(&self, mut request: GenreWindowPlayRequest) -> bool {
+        let Some(anchor) = context_anchor(
+            request.total_items,
+            request.anchor_index,
+            &mut request.track_at,
+        ) else {
             return false;
         };
         self.play_store_context(
             PlayContext {
                 descriptor: PlayContextDescriptor::Genre {
-                    genre_id,
+                    genre_id: request.genre_id,
                     music_folder_id: Self::active_music_folder(&self.store),
                 },
                 order: PlayContextOrder::Canonical,
@@ -319,20 +269,18 @@ impl AppController {
         )
     }
 
-    pub fn play_mood_tracks_window(
-        &self,
-        mood_id: MoodId,
-        total_items: usize,
-        anchor_index: usize,
-        mut track_at: impl FnMut(usize) -> Option<Track>,
-    ) -> bool {
-        let Some(anchor) = context_anchor(total_items, anchor_index, &mut track_at) else {
+    pub fn play_mood_window(&self, mut request: MoodWindowPlayRequest) -> bool {
+        let Some(anchor) = context_anchor(
+            request.total_items,
+            request.anchor_index,
+            &mut request.track_at,
+        ) else {
             return false;
         };
         self.play_store_context(
             PlayContext {
                 descriptor: PlayContextDescriptor::Mood {
-                    mood_id,
+                    mood_id: request.mood_id,
                     music_folder_id: Self::active_music_folder(&self.store),
                 },
                 order: PlayContextOrder::Canonical,
@@ -687,7 +635,8 @@ impl AppController {
     }
 
     fn queue_error(&self, error: impl Into<String>) {
-        let _ = self.events.send(ControllerEvent::Error(error.into()));
+        let error = error.into();
+        warn!(%error, "queue command failed");
     }
 }
 
@@ -721,54 +670,7 @@ fn context_batch_items(items: Vec<PlayContextItem>, context_id: &str) -> Vec<Bat
         .collect()
 }
 
-fn context_id(context: &PlayContext) -> String {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in format!("{context:?}").bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("context:{hash:016x}")
-}
-
 fn source_query(query: &str) -> Option<String> {
     let query = query.trim();
     (!query.is_empty()).then(|| query.to_string())
-}
-
-fn table_track_sort(sort: TrackSortKey) -> library::TrackSort {
-    match sort {
-        TrackSortKey::TrackNumber => library::TrackSort::TrackNumber,
-        TrackSortKey::Title => library::TrackSort::Title,
-        TrackSortKey::Artist => library::TrackSort::Artist,
-        TrackSortKey::Album => library::TrackSort::Album,
-        TrackSortKey::Year => library::TrackSort::Year,
-        TrackSortKey::Duration => library::TrackSort::Duration,
-        TrackSortKey::Favorite => library::TrackSort::Favorite,
-    }
-}
-
-pub(super) fn library_track_sort(sort: LibraryField) -> library::TrackSort {
-    match sort {
-        LibraryField::TrackNumber => library::TrackSort::TrackNumber,
-        LibraryField::Artist => library::TrackSort::Artist,
-        LibraryField::AlbumArtist => library::TrackSort::AlbumArtist,
-        LibraryField::Album => library::TrackSort::Album,
-        LibraryField::Year => library::TrackSort::Year,
-        LibraryField::ReleaseDate => library::TrackSort::ReleaseDate,
-        LibraryField::DateAdded => library::TrackSort::DateAdded,
-        LibraryField::LastPlayed => library::TrackSort::LastPlayed,
-        LibraryField::PlayCount => library::TrackSort::PlayCount,
-        LibraryField::UserRating => library::TrackSort::UserRating,
-        LibraryField::Genre => library::TrackSort::Genre,
-        LibraryField::Bpm => library::TrackSort::Bpm,
-        LibraryField::Duration => library::TrackSort::Duration,
-        LibraryField::Favorite => library::TrackSort::Favorite,
-        LibraryField::RowIndex
-        | LibraryField::Image
-        | LibraryField::Title
-        | LibraryField::TitleMerged
-        | LibraryField::DiscNumber
-        | LibraryField::SongCount
-        | LibraryField::AlbumCount => library::TrackSort::Title,
-    }
 }

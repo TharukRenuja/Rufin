@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 
 use library::{Album, AlbumArtwork, Artist, Genre, ImageRef, Mood, Playlist, SmartPlaylist, Track};
 
@@ -33,19 +34,21 @@ impl Candidate {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CandidateSet {
-    candidates: Vec<Candidate>,
+pub struct ArtworkBinding {
+    candidates: Arc<[Candidate]>,
+    stable_identity: Arc<str>,
 }
 
-impl CandidateSet {
-    pub const fn new() -> Self {
+impl ArtworkBinding {
+    pub fn new() -> Self {
         Self {
-            candidates: Vec::new(),
+            candidates: Arc::new([]),
+            stable_identity: Arc::from(""),
         }
     }
 
     pub fn album(album: &Album) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_album(
             album.image_ref.as_ref(),
             album.musicbrainz_release_group_id.as_deref(),
@@ -53,32 +56,32 @@ impl CandidateSet {
             &album.artist,
             &album.title,
         );
-        candidates
+        candidates.finish()
     }
 
     pub fn album_artwork(album: &AlbumArtwork) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_album_artwork(album);
-        candidates
+        candidates.finish()
     }
 
     pub fn track(track: &Track) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_native(track.image_ref.as_ref());
         if let Some(album) = track.album_artwork.as_ref() {
             candidates.push_album_artwork(album);
         } else {
             candidates.push_album_text(&track.artist, &track.album);
         }
-        candidates
+        candidates.finish()
     }
 
     pub fn artist(artist: &Artist) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_native(artist.image_ref.as_ref());
         candidates.push_representative_native(&artist.representative_albums);
         candidates.push_representative_external(&artist.representative_albums);
-        candidates
+        candidates.finish()
     }
 
     pub fn genre(genre: &Genre) -> Self {
@@ -130,9 +133,9 @@ impl CandidateSet {
     }
 
     pub fn album_text(artist: &str, album: &str) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_album_text(artist, album);
-        candidates
+        candidates.finish()
     }
 
     pub fn album_facts(
@@ -141,7 +144,7 @@ impl CandidateSet {
         musicbrainz_release_group_id: Option<&str>,
         musicbrainz_album_id: Option<&str>,
     ) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_album(
             None,
             musicbrainz_release_group_id,
@@ -149,7 +152,7 @@ impl CandidateSet {
             artist,
             album,
         );
-        candidates
+        candidates.finish()
     }
 
     fn collection(
@@ -160,16 +163,16 @@ impl CandidateSet {
         if prefer_direct && direct_ref.is_some() {
             return Self::from_native(direct_ref);
         }
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         for representative in Self::unique_representatives(representative_albums) {
-            for candidate in representative.candidates {
+            for candidate in representative.candidates.iter().cloned() {
                 candidates.push(candidate);
             }
         }
         if candidates.is_empty() {
             candidates.push_native(direct_ref);
         }
-        candidates
+        candidates.finish()
     }
 
     fn collection_slots(
@@ -208,9 +211,117 @@ impl CandidateSet {
     }
 
     pub(crate) fn from_native(image_ref: Option<&ImageRef>) -> Self {
-        let mut candidates = Self::new();
+        let mut candidates = CandidateBuilder::default();
         candidates.push_native(image_ref);
-        candidates
+        candidates.finish()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+
+    pub(crate) fn has_external(&self) -> bool {
+        self.candidates.iter().any(Candidate::is_external)
+    }
+
+    pub(crate) fn candidates(&self) -> &[Candidate] {
+        &self.candidates
+    }
+
+    pub(crate) fn stable_identity(&self) -> &str {
+        &self.stable_identity
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ArtworkPresentation {
+    primary: ArtworkBinding,
+    slots: Arc<[ArtworkBinding]>,
+}
+
+impl ArtworkPresentation {
+    pub fn track(track: &Track) -> Self {
+        Self::single(ArtworkBinding::track(track))
+    }
+
+    pub fn album(album: &Album) -> Self {
+        Self::single(ArtworkBinding::album(album))
+    }
+
+    pub fn artist(artist: &Artist) -> Self {
+        Self::single(ArtworkBinding::artist(artist))
+    }
+
+    pub fn genre(genre: &Genre) -> Self {
+        Self::collection(
+            ArtworkBinding::genre(genre),
+            ArtworkBinding::genre_slots(genre),
+        )
+    }
+
+    pub fn mood(mood: &Mood) -> Self {
+        Self::collection(ArtworkBinding::mood(mood), ArtworkBinding::mood_slots(mood))
+    }
+
+    pub fn playlist(playlist: &Playlist, prefer_server_cover: bool) -> Self {
+        Self::collection(
+            ArtworkBinding::playlist(playlist, prefer_server_cover),
+            ArtworkBinding::playlist_slots(playlist, prefer_server_cover),
+        )
+    }
+
+    pub fn smart_playlist(playlist: &SmartPlaylist) -> Self {
+        Self::collection(
+            ArtworkBinding::smart_playlist(playlist),
+            ArtworkBinding::smart_playlist_slots(playlist),
+        )
+    }
+
+    pub fn single(primary: ArtworkBinding) -> Self {
+        Self {
+            primary,
+            slots: Arc::new([]),
+        }
+    }
+
+    pub fn collection(primary: ArtworkBinding, slots: Vec<ArtworkBinding>) -> Self {
+        Self {
+            primary,
+            slots: slots.into(),
+        }
+    }
+
+    pub fn primary(&self) -> &ArtworkBinding {
+        &self.primary
+    }
+
+    pub fn slots(&self) -> &[ArtworkBinding] {
+        &self.slots
+    }
+}
+
+#[derive(Default)]
+struct CandidateBuilder {
+    candidates: Vec<Candidate>,
+}
+
+impl CandidateBuilder {
+    fn is_empty(&self) -> bool {
+        self.candidates.is_empty()
+    }
+
+    fn finish(self) -> ArtworkBinding {
+        let mut stable_identity = String::new();
+        for candidate in &self.candidates {
+            if !stable_identity.is_empty() {
+                stable_identity.push('\u{1e}');
+            }
+            stable_identity.push_str(&candidate.stable_identity());
+        }
+        ArtworkBinding {
+            candidates: self.candidates.into(),
+            stable_identity: stable_identity.into(),
+        }
     }
 
     fn push_representative_native(&mut self, albums: &[AlbumArtwork]) {
@@ -283,34 +394,11 @@ impl CandidateSet {
             self.candidates.push(candidate);
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.candidates.is_empty()
-    }
-
-    pub(crate) fn has_external(&self) -> bool {
-        self.candidates.iter().any(Candidate::is_external)
-    }
-
-    pub(crate) fn candidates(&self) -> &[Candidate] {
-        &self.candidates
-    }
-
-    pub(crate) fn stable_identity(&self) -> String {
-        let mut value = String::new();
-        for candidate in &self.candidates {
-            if !value.is_empty() {
-                value.push('\u{1e}');
-            }
-            value.push_str(&candidate.stable_identity());
-        }
-        value
-    }
 }
 
-impl fmt::Display for CandidateSet {
+impl fmt::Display for ArtworkBinding {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.stable_identity())
+        formatter.write_str(self.stable_identity())
     }
 }
 
@@ -403,11 +491,11 @@ mod tests {
 
     #[test]
     fn track_candidates_keep_the_effective_album_order() {
-        let candidates = CandidateSet::track(&track());
+        let candidates = ArtworkBinding::track(&track());
 
         assert_eq!(
-            candidates.candidates,
-            vec![
+            candidates.candidates.as_ref(),
+            &[
                 Candidate::Native(image_ref("track-native")),
                 Candidate::Native(image_ref("album-native")),
                 Candidate::MusicBrainzReleaseGroup("group-one".to_string()),
@@ -439,7 +527,7 @@ mod tests {
             ],
         };
 
-        let candidates = CandidateSet::artist(&artist);
+        let candidates = ArtworkBinding::artist(&artist);
 
         assert_eq!(
             candidates.candidates.first(),
@@ -470,7 +558,7 @@ mod tests {
             ],
         };
 
-        let slots = CandidateSet::genre_slots(&genre);
+        let slots = ArtworkBinding::genre_slots(&genre);
 
         assert_eq!(slots.len(), 4);
         assert_eq!(slots[0], slots[2]);
@@ -495,11 +583,11 @@ mod tests {
             representative_albums: vec![album_artwork("one", None)],
         };
 
-        let slots = CandidateSet::playlist_slots(&playlist, true);
+        let slots = ArtworkBinding::playlist_slots(&playlist, true);
 
         assert_eq!(
             slots,
-            vec![CandidateSet::from_native(Some(&image_ref(
+            vec![ArtworkBinding::from_native(Some(&image_ref(
                 "server-playlist-cover"
             )))]
         );
@@ -521,7 +609,7 @@ mod tests {
             ],
         };
 
-        let candidates = CandidateSet::playlist(&playlist, false);
+        let candidates = ArtworkBinding::playlist(&playlist, false);
 
         assert_eq!(
             &candidates.candidates[..4],
@@ -561,7 +649,7 @@ mod tests {
             ],
         };
 
-        let slots = CandidateSet::genre_slots(&genre);
+        let slots = ArtworkBinding::genre_slots(&genre);
 
         assert_eq!(slots.len(), 4);
         assert_eq!(
@@ -589,6 +677,6 @@ mod tests {
             musicbrainz_release_group_id: Some("/invalid/".to_string()),
         };
 
-        assert!(CandidateSet::album_artwork(&artwork).is_empty());
+        assert!(ArtworkBinding::album_artwork(&artwork).is_empty());
     }
 }

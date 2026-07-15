@@ -126,6 +126,27 @@ pub struct PlaybackView {
     pub controls: ControlsView,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlaybackNotice {
+    RunStarted(RunId),
+    MediaChanged(crate::MediaChanged),
+    PositionDiscontinuity(crate::PositionDiscontinuity),
+    Visualizer { run: RunId, levels: Vec<f64> },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaybackProjection {
+    pub view: PlaybackView,
+    pub queue_page: Option<QueuePage>,
+    pub notices: Vec<PlaybackNotice>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaveformProjection {
+    pub key: Option<String>,
+    pub peaks: Option<Arc<Vec<(f64, f64)>>>,
+}
+
 impl Sequence {
     pub fn summary(&self) -> QueueSummaryView {
         let next_index = self.next_index_eos();

@@ -3,7 +3,7 @@ use crate::source_setup::{
     activate_configured_source, local_configured_source, local_configured_source_for_store,
 };
 
-impl AppController {
+impl SourceCommands {
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
         self.add_library_folders(vec![root_path]);
     }
@@ -12,17 +12,20 @@ impl AppController {
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
+        let playback_projection = self.playback_projection.clone();
         let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
-                        source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
-                        error,
-                    });
+                    let _sent =
+                        source_transition_failure.try_send(sources::SourceTransitionFailed {
+                            source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
+                            error,
+                        });
                 }
             };
             if root_paths.is_empty() {
@@ -60,7 +63,7 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
                     source_id: Some(saved.source_id.clone()),
                     error,
                 });
@@ -106,7 +109,17 @@ impl AppController {
             }
             *active_guard = Some(active);
             drop(active_guard);
-            let projection = match controller.activate_playback_source(&saved.source_id) {
+            let projection = match activate_playback_source(
+                &controller.store,
+                &controller.runtime,
+                &controller.active_source,
+                &controller.secrets,
+                &controller.artwork,
+                &controller.library_events,
+                &controller.playback_projection,
+                &controller.playback_product,
+                &saved.source_id,
+            ) {
                 Ok(projection) => projection,
                 Err(error) => {
                     if let Ok(mut active) = active_source.write() {
@@ -117,8 +130,8 @@ impl AppController {
                     return;
                 }
             };
-            let _sent = events.send(ControllerEvent::PlaybackProduct(Box::new(projection)));
-            emit_snapshot(&store, &events);
+            let _sent = playback_projection.try_send(projection);
+            emit_source_presentation(&store, &source_presentation);
             controller.refresh_source_freshness();
             drop(transition_commit);
         });
@@ -128,17 +141,20 @@ impl AppController {
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
+        let playback_projection = self.playback_projection.clone();
         let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::SourceTransitionFailed {
-                        source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
-                        error,
-                    });
+                    let _sent =
+                        source_transition_failure.try_send(sources::SourceTransitionFailed {
+                            source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
+                            error,
+                        });
                 }
             };
             let transition_commit = match source_transitions.commit(transition_generation) {
@@ -150,7 +166,7 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
                     source_id: Some(SourceId::new(LOCAL_SOURCE_IDENTITY_ID)),
                     error,
                 });
@@ -230,13 +246,23 @@ impl AppController {
                     *active = None;
                     drop(active);
                 }
-                controller.clear_playback_product();
+                clear_playback_product_slot(&controller.playback_product);
             } else if selected_local {
                 if let Some(mut active) = active_guard.take() {
                     *active = next_active;
                     drop(active);
                 }
-                let projection = match controller.activate_playback_source(&saved.source_id) {
+                let projection = match activate_playback_source(
+                    &controller.store,
+                    &controller.runtime,
+                    &controller.active_source,
+                    &controller.secrets,
+                    &controller.artwork,
+                    &controller.library_events,
+                    &controller.playback_projection,
+                    &controller.playback_product,
+                    &saved.source_id,
+                ) {
                     Ok(projection) => projection,
                     Err(error) => {
                         if let (Some(previous_active), Ok(mut active)) =
@@ -249,17 +275,20 @@ impl AppController {
                         return;
                     }
                 };
-                let _sent = events.send(ControllerEvent::PlaybackProduct(Box::new(projection)));
+                let _sent = playback_projection.try_send(projection);
             }
             if no_local_folders {
-                if let Err(error) = controller.invalidate_artwork_source(&saved.source_id) {
+                if let Err(error) = crate::controller::artwork::invalidate_source(
+                    &controller.artwork,
+                    &saved.source_id,
+                ) {
                     warn!(%error, source_id = %saved.source_id, "failed to invalidate Local artwork");
                 }
                 if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
                     warn!(%error, source_id = %saved.source_id, "failed to clear Local waveform cache");
                 }
             }
-            emit_runtime_snapshot(&store, &secrets, &events);
+            emit_runtime_source_presentation(&store, &secrets, &source_presentation);
             if selected_local {
                 controller.refresh_source_freshness();
             } else if !no_local_folders {

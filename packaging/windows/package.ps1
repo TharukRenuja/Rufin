@@ -130,7 +130,7 @@ Copy-DirectoryContents (Join-Path $MsysPrefix "share\icons\hicolor") (Join-Path 
 Copy-DirectoryContents (Join-Path $RepoRoot "data\icons\hicolor") (Join-Path $appShare "icons\hicolor")
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\locale") (Join-Path $appShare "locale")
 $msgfmt = Join-Path $MsysPrefix "bin\msgfmt.exe"
-$poDir = Join-Path $RepoRoot "locales"
+$poDir = Join-Path $RepoRoot "crates\localization\locales"
 if ((Test-Path $msgfmt) -and (Test-Path $poDir)) {
     Get-ChildItem -Path $poDir -Filter "*.po" | ForEach-Object {
         $lang = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)

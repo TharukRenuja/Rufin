@@ -5,7 +5,7 @@ use sources::GeneratedTrackSeed;
 use std::collections::{HashMap, HashSet};
 
 use super::test_support::{
-    controller_from_store_for_test, local_album_with_image_ref, local_track_with_image_ref,
+    local_album_with_image_ref, local_track_with_image_ref, owners_from_store_for_test,
     seed_cached_library,
 };
 
@@ -63,9 +63,10 @@ pub(in crate::controller) fn local_generated_radio_uses_cached_fallback_candidat
         fallback.clone(),
     ];
     seed_cached_library(&store, &local, &albums, &tracks, &[]);
-    let (controller, _events) = controller_from_store_for_test(store);
+    let (owners, _events) = owners_from_store_for_test(store);
 
-    let generated = controller
+    let generated = owners
+        .playback
         .generated_tracks_for_saved(&local, GeneratedTrackSeed::Track(seed.id.clone()), 3)
         .expect("generated local radio");
     let generated_ids = generated
@@ -146,9 +147,10 @@ pub(in crate::controller) fn local_artist_radio_spreads_cached_candidates_across
             }),
     );
     seed_cached_library(&store, &local, &albums, &tracks, &[]);
-    let (controller, _events) = controller_from_store_for_test(store);
+    let (owners, _events) = owners_from_store_for_test(store);
 
-    let generated = controller
+    let generated = owners
+        .playback
         .generated_tracks_for_saved(&local, GeneratedTrackSeed::Artist(artist.clone()), 12)
         .expect("generated local artist radio");
     let mut album_counts = HashMap::<AlbumId, usize>::new();

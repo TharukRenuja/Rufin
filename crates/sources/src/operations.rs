@@ -34,6 +34,59 @@ pub struct RandomTrackRequest {
     pub played_filter: PlayedFilter,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RandomTrackDomain {
+    played_filters: &'static [PlayedFilter],
+    year_range: bool,
+    genre: bool,
+}
+
+impl RandomTrackDomain {
+    pub const fn new(
+        played_filters: &'static [PlayedFilter],
+        year_range: bool,
+        genre: bool,
+    ) -> Self {
+        Self {
+            played_filters,
+            year_range,
+            genre,
+        }
+    }
+
+    pub const fn played_filters(self) -> &'static [PlayedFilter] {
+        self.played_filters
+    }
+
+    pub const fn allows_year_range(self) -> bool {
+        self.year_range
+    }
+
+    pub const fn allows_genre(self) -> bool {
+        self.genre
+    }
+
+    pub fn validate(self, request: &RandomTrackRequest) -> Result<(), &'static str> {
+        if !self.played_filters.contains(&request.played_filter) {
+            return Err("the selected play-history filter is not available for this source");
+        }
+        if !self.year_range && (request.min_year.is_some() || request.max_year.is_some()) {
+            return Err("year filtering is not available for this source");
+        }
+        if !self.genre && (request.genre_id.is_some() || request.genre_name.is_some()) {
+            return Err("genre filtering is not available for this source");
+        }
+        if request
+            .min_year
+            .zip(request.max_year)
+            .is_some_and(|(minimum, maximum)| minimum > maximum)
+        {
+            return Err("minimum year cannot be greater than maximum year");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum GeneratedTrackStrategy {
     #[default]

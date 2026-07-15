@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppController {
+impl UiSettingsStore {
     pub fn load_settings(&self) -> StoredSettings {
         self.settings.load_settings()
     }
@@ -11,7 +11,7 @@ impl AppController {
         let previous = self.settings.load_settings();
         let committed = self.settings.save_settings(settings)?;
         self.invalidate_changed_lyrics_requests(&previous, &committed);
-        if let Some(product) = self.playback_product_if_present() {
+        if let Some(product) = playback_product_if_present_from_slot(&self.playback_product) {
             product.update_runtime_settings(&committed)?;
         }
         Ok(())
@@ -25,7 +25,7 @@ impl AppController {
             .settings
             .save_settings_with_scrobbling_deletes(settings)?;
         self.invalidate_changed_lyrics_requests(&previous, &committed);
-        if let Some(product) = self.playback_product_if_present() {
+        if let Some(product) = playback_product_if_present_from_slot(&self.playback_product) {
             product.update_runtime_settings(&committed)?;
         }
         Ok(())
@@ -36,8 +36,8 @@ impl AppController {
         previous: &StoredSettings,
         current: &StoredSettings,
     ) {
-        let previous_metadata = &previous.metadata;
-        let current_metadata = &current.metadata;
+        let previous_metadata = &previous.ui.metadata;
+        let current_metadata = &current.ui.metadata;
         if previous_metadata.external_lyrics_enabled != current_metadata.external_lyrics_enabled
             || previous_metadata.external_lyrics_providers
                 != current_metadata.external_lyrics_providers
@@ -46,19 +46,12 @@ impl AppController {
                 != current_metadata.lyrics_provider_settings_version
             || previous_metadata.suppressed_auto_lyrics_track_ids
                 != current_metadata.suppressed_auto_lyrics_track_ids
-            || previous.private_mode != current.private_mode
+            || previous.ui.private_mode != current.ui.private_mode
         {
             self.lyrics_request_generation
                 .fetch_add(1, Ordering::AcqRel);
         }
     }
-    pub fn reload_snapshot(&self) {
-        let store = self.store.clone();
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
-        thread::spawn(move || emit_runtime_snapshot(&store, &secrets, &events));
-    }
-
     pub fn set_secret_storage_mode(
         &self,
         mode: SecretStorageMode,
@@ -69,20 +62,24 @@ impl AppController {
             .commit(transition_generation)?
             .ok_or_else(|| "A newer source transition replaced this request.".to_string())?;
         let previous = self.settings.load_settings();
-        if previous.secret_storage_mode == mode {
+        if previous.ui.secret_storage_mode == mode {
             return Ok(previous);
         }
 
         let saved_sources = self.store.with_store(|store| store.list_sources())?;
         for saved in &saved_sources {
-            self.forget_source_sync(&saved.source_id);
+            forget_source_sync_state(
+                &self.sync_coordinator,
+                &self.library_sync_events,
+                &saved.source_id,
+            );
         }
         let mut active = self
             .active_source
             .write()
             .map_err(|_| "active source lock was poisoned".to_string())?;
         let settings = self.store.update_settings(|settings| {
-            settings.secret_storage_mode = mode;
+            settings.ui.secret_storage_mode = mode;
             settings.secret_scope_id = new_secret_scope_id();
             clear_scrobbling_secret_fields(settings);
             settings.migrate_defaults();
@@ -91,10 +88,10 @@ impl AppController {
         let previous_secrets = self.secret_switch.replace(platform_secret_store(&settings));
         *active = None;
         drop(active);
-        self.clear_playback_product();
+        clear_playback_product_slot(&self.playback_product);
         delete_current_secrets(&previous_secrets, &saved_sources);
-        emit_runtime_snapshot(&self.store, &self.secrets, &self.events);
-        self.refresh_source_freshness();
+        emit_runtime_source_presentation(&self.store, &self.secrets, &self.source_presentation);
+        deactivate_source_sync_state(&self.sync_coordinator, &self.library_sync_events);
         drop(transition_commit);
         Ok(settings)
     }
@@ -102,7 +99,7 @@ impl AppController {
 
 fn clear_scrobbling_secret_fields(settings: &mut StoredSettings) {
     for descriptor in scrobbling::secret_descriptors() {
-        descriptor.value_mut(&mut settings.scrobbling).clear();
+        descriptor.value_mut(&mut settings.ui.scrobbling).clear();
     }
 }
 
@@ -143,11 +140,32 @@ fn new_secret_scope_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::root::controller_bootstrap::bootstrap_memory_for_test;
     use scrobbling::{LASTFM_API_SECRET, LASTFM_SESSION, LIBREFM_SESSION, LISTENBRAINZ_TOKEN};
     use secrets::{SecretError, SecretResult};
     use sources::{CredentialSourceConfig, jellyfin::JellyfinSourceConfig};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct DeleteFailingSecretStore;
+
+    struct CountingLoadSecretStore {
+        loads: Arc<AtomicUsize>,
+    }
+
+    impl SecretStore for CountingLoadSecretStore {
+        fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
+            Ok(())
+        }
+
+        fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
+            self.loads.fetch_add(1, Ordering::Relaxed);
+            Ok(Some("hydrated-secret".to_string()))
+        }
+
+        fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
+            Ok(())
+        }
+    }
 
     impl SecretStore for DeleteFailingSecretStore {
         fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
@@ -246,26 +264,46 @@ mod tests {
 
     #[test]
     fn backend_change_completes_when_previous_cleanup_fails() {
-        let (controller, _events, _snapshot, _playback) =
-            AppController::bootstrap_memory_for_test();
-        controller
+        let (owners, _events, _snapshot, _playback) = bootstrap_memory_for_test();
+        owners
+            .settings
             .store
             .update_settings(|settings| {
-                settings.secret_storage_mode = SecretStorageMode::ConfigFile;
+                settings.ui.secret_storage_mode = SecretStorageMode::ConfigFile;
                 Ok(())
             })
             .expect("save legacy settings");
         let failing: Arc<dyn SecretStore> = Arc::new(DeleteFailingSecretStore);
-        let _previous = controller.secret_switch.replace(failing);
+        let _previous = owners.settings.secret_switch.replace(failing);
 
-        controller
+        owners
+            .settings
             .set_secret_storage_mode(SecretStorageMode::SystemKeyring)
             .expect("switch backend");
 
         assert_eq!(
-            controller.load_settings().secret_storage_mode,
+            owners.settings.load_settings().ui.secret_storage_mode,
             SecretStorageMode::SystemKeyring
         );
+    }
+
+    #[test]
+    fn settings_hydrate_secrets_only_for_explicit_edit_load() {
+        let (owners, _events, _snapshot, _playback) = bootstrap_memory_for_test();
+        let loads = Arc::new(AtomicUsize::new(0));
+        let secrets: Arc<dyn SecretStore> = Arc::new(CountingLoadSecretStore {
+            loads: Arc::clone(&loads),
+        });
+        let _previous = owners.settings.secret_switch.replace(secrets);
+        let ordinary = owners.settings.load_settings();
+
+        assert_eq!(loads.load(Ordering::Relaxed), 0);
+        assert!(ordinary.ui.scrobbling.lastfm.session_key.is_empty());
+
+        let hydrated = owners.settings.load_settings_with_scrobbling_secrets();
+
+        assert!(loads.load(Ordering::Relaxed) > 0);
+        assert_eq!(hydrated.ui.scrobbling.lastfm.session_key, "hydrated-secret");
     }
 
     fn saved_source_with_id(id: &str) -> StoredSource {

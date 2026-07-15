@@ -114,7 +114,7 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         year: u16_from_option(item.production_year),
         release_date: normalized_date(item.premiere_date),
         date_added: normalized_date(item.date_created),
-        last_played: normalized_date(
+        last_played: normalized_timestamp(
             item.user_data
                 .as_ref()
                 .and_then(|data| data.last_played_date.clone()),
@@ -191,7 +191,7 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         year: u16_from_option(item.production_year),
         release_date: normalized_date(item.premiere_date),
         date_added: normalized_date(item.date_created),
-        last_played: normalized_date(
+        last_played: normalized_timestamp(
             item.user_data
                 .as_ref()
                 .and_then(|data| data.last_played_date.clone()),
@@ -273,7 +273,7 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
                 .and_then(|counts| counts.song_count)
         })),
         favorite: favorite(&item.user_data),
-        last_played: normalized_date(
+        last_played: normalized_timestamp(
             item.user_data
                 .as_ref()
                 .and_then(|data| data.last_played_date.clone()),
@@ -418,6 +418,12 @@ fn normalized_date(value: Option<String>) -> Option<String> {
         return Some(prefix.to_string());
     }
     Some(value)
+}
+
+fn normalized_timestamp(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn primary_image_ref(

@@ -1,9 +1,11 @@
 use library::TrackId;
 use serde::{Deserialize, Serialize};
 
+mod events;
 mod lyrics;
 mod releases;
 
+pub use events::LyricsEvent;
 pub use lyrics::{
     LocalLyricsInput, LyricsCacheUpdate, LyricsPlan, LyricsRequestKind, LyricsResolution,
     REMOTE_LYRICS_ORIGIN, ResolveLyrics, decode_cached_lyrics, encode_cached_lyrics,

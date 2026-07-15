@@ -52,7 +52,9 @@ macro_rules! opaque_id {
     };
 }
 
+mod active_query;
 pub mod collections;
+mod events;
 pub mod home;
 pub mod items;
 pub mod local_manifest;
@@ -62,7 +64,9 @@ pub mod smart_playlists;
 pub mod source_mapping;
 mod store;
 
+pub use active_query::*;
 pub use collections::*;
+pub use events::*;
 pub use home::*;
 pub use items::*;
 pub use local_manifest::*;

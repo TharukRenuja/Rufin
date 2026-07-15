@@ -1,16 +1,19 @@
 use super::*;
 use crate::source_setup::{
-    activate_configured_source, configured_source_needs_auth, local_configured_source_for_store,
-    resolve_source_registration,
+    activate_configured_source, configured_source_needs_auth, configured_source_ready_for_sync,
+    configured_source_supported, local_configured_source_for_store,
 };
 
-impl AppController {
+impl SourceCommands {
     pub fn select_source(&self, source: LibrarySourceSelection) {
         let controller = self.clone();
         let transition_generation = self.source_transitions.begin();
         let source_transitions = Arc::clone(&self.source_transitions);
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_selection = self.source_events.selection.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
+        let playback_projection = self.playback_projection.clone();
         let secrets = Arc::clone(&self.secrets);
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
@@ -20,7 +23,7 @@ impl AppController {
                 Ok(None) => return,
                 Err(error) => {
                     emit_current_source_selection_error(
-                        &events,
+                        &source_transition_failure,
                         &source_transitions,
                         transition_generation,
                         target_source_id.clone(),
@@ -29,12 +32,12 @@ impl AppController {
                     return;
                 }
             };
-            let _sent = events.send(ControllerEvent::SourceSelectionChanged {
+            let _sent = source_selection.try_send(sources::SourceSelectionChanged {
                 selected_source: source.clone(),
             });
             let emit_error = |error| {
-                emit_runtime_snapshot(&store, &secrets, &events);
-                let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+                emit_runtime_source_presentation(&store, &secrets, &source_presentation);
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
                     source_id: Some(target_source_id.clone()),
                     error,
                 });
@@ -46,10 +49,10 @@ impl AppController {
                     return;
                 }
             };
-            let Some(registration) = resolve_source_registration(&saved.kind) else {
+            if !configured_source_supported(&saved.kind) {
                 emit_error("Saved source type is no longer supported.".to_string());
                 return;
-            };
+            }
             let needs_auth = match configured_source_needs_auth(&secrets, &saved) {
                 Ok(needs_auth) => needs_auth,
                 Err(error) => {
@@ -95,9 +98,19 @@ impl AppController {
             *active_guard = candidate;
             drop(active_guard);
             if needs_auth {
-                controller.clear_playback_product();
+                clear_playback_product_slot(&controller.playback_product);
             } else {
-                let projection = match controller.activate_playback_source(&saved.source_id) {
+                let projection = match activate_playback_source(
+                    &controller.store,
+                    &controller.runtime,
+                    &controller.active_source,
+                    &controller.secrets,
+                    &controller.artwork,
+                    &controller.library_events,
+                    &controller.playback_projection,
+                    &controller.playback_product,
+                    &saved.source_id,
+                ) {
                     Ok(projection) => projection,
                     Err(error) => {
                         if let Ok(mut active) = active_source.write() {
@@ -108,16 +121,16 @@ impl AppController {
                         return;
                     }
                 };
-                let _sent = events.send(ControllerEvent::PlaybackProduct(Box::new(projection)));
+                let _sent = playback_projection.try_send(projection);
             }
             if needs_auth {
-                emit_runtime_snapshot(&store, &secrets, &events);
+                emit_runtime_source_presentation(&store, &secrets, &source_presentation);
                 controller.refresh_source_freshness();
                 drop(transition_commit);
                 return;
             }
-            emit_runtime_snapshot(&store, &secrets, &events);
-            if (registration.configured_for_sync)(&store, &saved) {
+            emit_runtime_source_presentation(&store, &secrets, &source_presentation);
+            if configured_source_ready_for_sync(&store, &saved) {
                 controller.refresh_source_freshness();
             }
             drop(transition_commit);
@@ -141,7 +154,7 @@ fn commit_source_selection(
     store: &StoreHandle,
     saved: &StoredSource,
     selection: &LibrarySourceSelection,
-    previous_sources: &domain::LibrarySourceSettings,
+    previous_sources: &LibrarySourceSettings,
 ) -> Result<(), String> {
     let mut sources = previous_sources.clone();
     sources.selected = Some(selection.clone());
@@ -153,14 +166,14 @@ fn commit_source_selection(
 }
 
 fn emit_current_source_selection_error(
-    events: &Sender<ControllerEvent>,
+    source_transition_failure: &Sender<sources::SourceTransitionFailed>,
     source_transitions: &SourceTransitions,
     transition_generation: u64,
     source_id: SourceId,
     error: String,
 ) {
     if source_transitions.current(transition_generation) {
-        let _sent = events.send(ControllerEvent::SourceTransitionFailed {
+        let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
             source_id: Some(source_id),
             error,
         });
