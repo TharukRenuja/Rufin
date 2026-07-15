@@ -435,11 +435,12 @@ fn publish_source_sync_commit(
     epoch: u64,
     update: library_sync::LibraryCommitted,
 ) -> bool {
-    let _sent = controller
-        .source_events
-        .sync
-        .try_send(library_sync::LibrarySyncEvent::Committed(update));
-    finish_source_sync(controller, source_id, epoch, None)
+    finish_source_sync_with(controller, source_id, epoch, None, move |manual| {
+        let _sent = controller
+            .source_events
+            .sync
+            .try_send(library_sync::LibrarySyncEvent::Committed { update, manual });
+    })
 }
 
 fn finish_source_sync(
@@ -447,6 +448,16 @@ fn finish_source_sync(
     source_id: &SourceId,
     epoch: u64,
     failure: Option<String>,
+) -> bool {
+    finish_source_sync_with(controller, source_id, epoch, failure, |_| {})
+}
+
+fn finish_source_sync_with(
+    controller: &SourceCommands,
+    source_id: &SourceId,
+    epoch: u64,
+    failure: Option<String>,
+    on_finished: impl FnOnce(bool),
 ) -> bool {
     let Ok(mut coordinator) = controller.sync_coordinator.lock() else {
         return false;
@@ -456,6 +467,7 @@ fn finish_source_sync(
         library_sync::Finish::Ignored => return false,
         library_sync::Finish::Finished { manual, follow_up } => (manual, follow_up),
     };
+    on_finished(manual);
     if let Some(failure) = failure {
         let _sent =
             controller
@@ -751,7 +763,7 @@ mod tests {
         assert!(
             emitted
                 .iter()
-                .all(|event| !matches!(event, library_sync::LibrarySyncEvent::Committed(_)))
+                .all(|event| !matches!(event, library_sync::LibrarySyncEvent::Committed { .. }))
         );
         assert!(emitted.iter().any(|event| matches!(
             event,
@@ -759,6 +771,84 @@ mod tests {
                 if change.source_id == saved.source_id
                     && change.phase == library_sync::SyncPhase::Idle
         )));
+    }
+
+    #[test]
+    fn committed_event_uses_finished_manual_interest() {
+        let (owners, events, ..) = bootstrap_memory_for_test();
+        let saved = saved_source();
+        let receive_commit = || loop {
+            if let library_sync::LibrarySyncEvent::Committed { update, manual } =
+                wait_for_typed_event(
+                    &events.library_sync,
+                    Duration::from_secs(1),
+                    "library commit",
+                )
+            {
+                break (update, manual);
+            }
+        };
+
+        let automatic = owners
+            .source
+            .sync_coordinator
+            .lock()
+            .expect("sync coordinator")
+            .request(
+                saved.source_id.clone(),
+                library_sync::RequestKind::Freshness,
+                library_sync::ReconcileScope::All,
+            )
+            .expect("automatic sync");
+        assert!(publish_source_sync_commit(
+            &owners.source,
+            &saved.source_id,
+            automatic.epoch,
+            library_sync::LibraryCommitted {
+                source_id: saved.source_id.clone(),
+                revision: 1,
+                delta: LibraryDelta::default(),
+            },
+        ));
+        let (_, automatic_manual) = receive_commit();
+        assert!(!automatic_manual);
+
+        let joined = {
+            let mut coordinator = owners
+                .source
+                .sync_coordinator
+                .lock()
+                .expect("sync coordinator");
+            let joined = coordinator
+                .request(
+                    saved.source_id.clone(),
+                    library_sync::RequestKind::ActiveVerification,
+                    library_sync::ReconcileScope::All,
+                )
+                .expect("joined sync");
+            assert!(
+                coordinator
+                    .request(
+                        saved.source_id.clone(),
+                        library_sync::RequestKind::Manual,
+                        library_sync::ReconcileScope::All,
+                    )
+                    .is_none()
+            );
+            joined
+        };
+        assert!(publish_source_sync_commit(
+            &owners.source,
+            &saved.source_id,
+            joined.epoch,
+            library_sync::LibraryCommitted {
+                source_id: saved.source_id.clone(),
+                revision: 2,
+                delta: LibraryDelta::default(),
+            },
+        ));
+        let (_, joined_manual) = receive_commit();
+        assert!(joined_manual);
     }
 
     #[test]
