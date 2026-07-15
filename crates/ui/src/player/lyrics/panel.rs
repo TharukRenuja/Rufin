@@ -32,12 +32,12 @@ impl Shell {
         let settings = self.settings.current.borrow();
         let current_media = current_playback_media_key(&self.playback.player.borrow());
         let has_current_track = current_media.is_some();
-        let (search_label, search_enabled, show_search_tooltip) = if settings.private_mode {
-            (tr("Private mode is on"), false, true)
+        let (search_label, search_enabled) = if settings.private_mode {
+            (tr("Private mode is on"), false)
         } else if has_current_track {
-            (tr("Search lyrics"), true, false)
+            (tr("Search lyrics"), true)
         } else {
-            (tr("No track playing"), false, true)
+            (tr("No track playing"), false)
         };
         let lyrics = self.lyrics.current.borrow();
         let loading = lyrics_loading_matches_current(
@@ -52,11 +52,22 @@ impl Shell {
                 lyrics.as_ref(),
             )
         });
+        let offset_enabled = lyrics
+            .as_ref()
+            .is_some_and(|lyrics| lyrics.lines.iter().any(|line| line.start_millis.is_some()));
         drop(settings);
-        pane.set_search_action(&search_label, search_enabled, show_search_tooltip);
+        pane.set_save_action(&tr("Save Lyrics"), lyrics.is_some());
+        pane.set_search_action(&search_label, search_enabled);
         pane.set_clear_auto_search_action(
             &tr("Clear fetched lyrics for this track"),
             clear_auto_search_enabled,
+        );
+        pane.set_offset_action(
+            &tr("Lyrics offset (ms)"),
+            &tr("Decrease"),
+            &tr("Increase"),
+            self.lyrics.offset_millis.get(),
+            offset_enabled,
         );
         let empty_status = self.lyrics_empty_status();
         let seek_shell = Rc::clone(self);
@@ -65,6 +76,42 @@ impl Shell {
         });
         pane.set_content(lyrics.as_ref(), loading, empty_status, seek);
         drop(lyrics);
+    }
+
+    pub(crate) fn present_current_lyrics_save_dialog(self: &Rc<Self>) {
+        let Some(current) = self
+            .playback
+            .player
+            .borrow()
+            .as_ref()
+            .and_then(|player| player.transport.current.clone())
+        else {
+            return;
+        };
+        let Some(media_key) = current_playback_media_key(&self.playback.player.borrow()) else {
+            return;
+        };
+        let Some(lyrics) = self.lyrics.current.borrow().clone() else {
+            return;
+        };
+        let offset_millis = self.lyrics.offset_millis.get();
+        let shell = Rc::clone(self);
+        gtk::glib::spawn_future_local(async move {
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Save Lyrics"))
+                .initial_name(lyrics_save_filename(&current.track.title))
+                .build();
+            let Ok(file) = dialog.save_future(Some(&shell.chrome.window)).await else {
+                return;
+            };
+            let Some(path) = file.path() else {
+                return;
+            };
+            shell
+                .products
+                .lyrics
+                .save_current(media_key, lyrics, offset_millis, path);
+        });
     }
     pub(crate) fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref() {
@@ -400,6 +447,13 @@ impl Shell {
             dialog
                 .status
                 .set_text(&format!("{} {}", tr("Saved to"), path.display()));
+        } else {
+            self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
+        }
+    }
+    pub(crate) fn apply_lyrics_file_saved(&self, media_key: playback::MediaKey, path: PathBuf) {
+        if current_playback_media_key(&self.playback.player.borrow()).as_ref() == Some(&media_key) {
+            self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
         }
     }
 }

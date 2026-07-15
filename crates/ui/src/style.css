@@ -1718,12 +1718,18 @@ popover.audio-output-popover > contents {
   min-height: 80px;
 }
 
-.queue-lyrics-split {
+.queue-lyrics-overlay {
   background: transparent;
 }
-.queue-lyrics-split > separator {
-  min-height: 1px;
-  background: var(--border-color);
+
+.queue-lyrics-surface {
+  background: var(--window-bg-color);
+}
+
+.queue-lyrics-resize-handle {
+  min-height: 10px;
+  background: transparent;
+  box-shadow: inset 0 1px var(--border-color);
 }
 
 .queue-row {
@@ -1778,6 +1784,34 @@ listview.queue-list row {
 
 .lyrics-panel {
   min-height: 120px;
+}
+
+.lyrics-controls {
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+
+.lyrics-panel:hover .lyrics-controls,
+.lyrics-control-bar:focus-within {
+  opacity: 1;
+}
+
+.lyrics-controls .icon-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+entry.lyrics-offset-value.flat,
+entry.lyrics-offset-value.flat:focus-within {
+  min-width: 40px;
+  min-height: 34px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background-color: var(--sidebar-bg-color);
+  background-image: none;
+  border: none;
+  box-shadow: none;
 }
 
 .bottom-player {

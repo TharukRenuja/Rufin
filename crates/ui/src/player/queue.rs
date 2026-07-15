@@ -963,12 +963,12 @@ fn queue_header_row(layout: QueuePanelLayout) -> gtk::Widget {
         return fullscreen_queue_header_row();
     }
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("queue-header");
     header.set_valign(gtk::Align::Center);
 
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_width_request(70);
+    spacer.set_width_request(QUEUE_DRAG_HANDLE_WIDTH);
     header.append(&spacer);
 
     let title = gtk::Label::new(Some(&tr("Title").to_uppercase()));

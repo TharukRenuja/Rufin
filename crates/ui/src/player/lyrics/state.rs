@@ -13,6 +13,7 @@ pub(crate) struct LyricsState {
     pub(crate) current: RefCell<Option<Lyrics>>,
     pub(crate) loading_media: RefCell<Option<MediaKey>>,
     pub(crate) auto_search_attempted: RefCell<HashSet<MediaKey>>,
+    pub(crate) offset_millis: Cell<i64>,
     pub(crate) timing_generation: Cell<u64>,
     pub(crate) timing_source: RefCell<Option<glib::SourceId>>,
     pub(crate) panel_visible: Cell<bool>,
@@ -26,6 +27,7 @@ impl Shell {
     }
     pub(crate) fn apply_loaded_lyrics(self: &Rc<Self>, lyrics: Option<Lyrics>) {
         self.restart_lyrics_follow_tracking();
+        self.lyrics.offset_millis.set(0);
         *self.lyrics.current.borrow_mut() = lyrics;
         self.render_lyrics_panel();
         let shell = Rc::clone(self);
@@ -124,6 +126,7 @@ impl Shell {
             &lyrics.track_id == track_id && lyrics.source == LyricsSource::Remote
         }) {
             *self.lyrics.current.borrow_mut() = None;
+            self.lyrics.offset_millis.set(0);
             self.products.lyrics.clear_remote_current();
         }
         self.render_lyrics_panel();
@@ -140,14 +143,51 @@ impl Shell {
     }
     pub(crate) fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
         let lyrics = self.lyrics.current.borrow();
+        let lyrics_position_millis = self.lyrics_position_millis(position_millis);
         self.right_panel
             .lyrics_pane
-            .update_highlight(lyrics.as_ref(), position_millis);
+            .update_highlight(lyrics.as_ref(), lyrics_position_millis);
         self.player_view
             .fullscreen_player
             .lyrics_pane
-            .update_highlight(lyrics.as_ref(), position_millis);
+            .update_highlight(lyrics.as_ref(), lyrics_position_millis);
         self.schedule_next_lyrics_highlight(position_millis);
+    }
+    pub(crate) fn lyrics_position_millis(&self, position_millis: u64) -> i128 {
+        i128::from(position_millis) + i128::from(self.lyrics.offset_millis.get())
+    }
+    pub(crate) fn adjust_lyrics_offset(self: &Rc<Self>, delta_millis: i64) {
+        self.set_lyrics_offset(self.lyrics.offset_millis.get().saturating_add(delta_millis));
+    }
+    pub(crate) fn set_lyrics_offset_from_text(self: &Rc<Self>, value: &str) {
+        let Some(offset_millis) = parse_lyrics_offset_millis(value) else {
+            self.update_lyrics_offset_controls();
+            return;
+        };
+        self.set_lyrics_offset(offset_millis);
+    }
+    fn set_lyrics_offset(self: &Rc<Self>, offset_millis: i64) {
+        self.lyrics.offset_millis.set(offset_millis);
+        self.update_lyrics_offset_controls();
+        self.update_lyrics_highlight();
+    }
+    fn update_lyrics_offset_controls(&self) {
+        let label = tr("Lyrics offset (ms)");
+        let decrease_label = tr("Decrease");
+        let increase_label = tr("Increase");
+        let offset_millis = self.lyrics.offset_millis.get();
+        for pane in [
+            &self.right_panel.lyrics_pane,
+            &self.player_view.fullscreen_player.lyrics_pane,
+        ] {
+            pane.set_offset_action(
+                &label,
+                &decrease_label,
+                &increase_label,
+                offset_millis,
+                true,
+            );
+        }
     }
     pub(crate) fn current_position_millis(&self) -> u64 {
         self.playback
@@ -168,6 +208,16 @@ impl Shell {
             .seek_millis(position_millis);
         self.update_lyrics_highlight_at(position_millis);
     }
+}
+
+fn parse_lyrics_offset_millis(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let number = ["ms", "MS", "Ms", "mS"]
+        .into_iter()
+        .find_map(|suffix| value.strip_suffix(suffix))
+        .unwrap_or(value)
+        .trim();
+    number.parse().ok()
 }
 
 fn allow_loaded_lyrics_cache_revisit(
@@ -207,7 +257,7 @@ fn clear_matching_lyrics_loading(
 mod tests {
     use super::{
         allow_loaded_lyrics_cache_revisit, clear_matching_lyrics_loading,
-        loaded_lyrics_matches_current, lyrics_loading_matches_current,
+        loaded_lyrics_matches_current, lyrics_loading_matches_current, parse_lyrics_offset_millis,
     };
     use library::{SourceId, TrackId};
     use metadata::{Lyrics, LyricsSource};
@@ -307,5 +357,13 @@ mod tests {
         assert!(attempted.contains(&other_source));
         allow_loaded_lyrics_cache_revisit(&mut attempted, &old, None);
         assert!(attempted.contains(&old));
+    }
+
+    #[test]
+    fn lyrics_offset_input_accepts_milliseconds() {
+        assert_eq!(parse_lyrics_offset_millis("100ms"), Some(100));
+        assert_eq!(parse_lyrics_offset_millis(" -250 ms "), Some(-250));
+        assert_eq!(parse_lyrics_offset_millis("50"), Some(50));
+        assert_eq!(parse_lyrics_offset_millis("later"), None);
     }
 }

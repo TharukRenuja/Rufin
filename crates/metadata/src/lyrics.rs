@@ -1478,6 +1478,34 @@ pub fn save_lyrics_search_result(
     debug!(path = %path.display(), "saved lyric file");
     Ok(Some((path, lyrics)))
 }
+pub fn save_current_lyrics(
+    lyrics: &Lyrics,
+    offset_millis: i64,
+    output_path: PathBuf,
+) -> Result<PathBuf, String> {
+    let content = lyrics
+        .lines
+        .iter()
+        .map(|line| match line.start_millis {
+            Some(start_millis) => {
+                let start_millis = if offset_millis >= 0 {
+                    start_millis.saturating_sub(offset_millis.unsigned_abs())
+                } else {
+                    start_millis.saturating_add(offset_millis.unsigned_abs())
+                };
+                let minutes = start_millis / 60_000;
+                let seconds = start_millis % 60_000 / 1_000;
+                let millis = start_millis % 1_000;
+                format!("[{minutes:02}:{seconds:02}.{millis:03}]{}", line.text)
+            }
+            None => line.text.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&output_path, content).map_err(|error| error.to_string())?;
+    debug!(path = %output_path.display(), "saved current lyric file");
+    Ok(output_path)
+}
 pub(crate) fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
     result
         .synced_lyrics
@@ -1963,6 +1991,35 @@ mod tests {
             )
             .expect("placeholder"),
             None
+        );
+    }
+
+    #[test]
+    fn current_lyrics_save_the_visible_timing() {
+        let directory = tempdir().expect("tempdir");
+        let output = directory.path().join("current.lrc");
+        let lyrics = Lyrics {
+            track_id: track().id,
+            source: LyricsSource::Remote,
+            external_provider: Some(ExternalLyricsProvider::Lrclib),
+            lines: vec![
+                LyricLine {
+                    text: "first".to_string(),
+                    start_millis: Some(1_000),
+                },
+                LyricLine {
+                    text: "note".to_string(),
+                    start_millis: None,
+                },
+            ],
+        };
+
+        let path = save_current_lyrics(&lyrics, 250, output.clone()).expect("save current");
+
+        assert_eq!(path, output);
+        assert_eq!(
+            fs::read_to_string(path).expect("saved current"),
+            "[00:00.750]first\nnote"
         );
     }
 }

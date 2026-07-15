@@ -15,13 +15,15 @@ const LYRICS_SCROLL_READY_RETRIES: u8 = 12;
 
 #[derive(Clone)]
 pub(crate) struct LyricsPane {
-    root: gtk::Box,
-    header: gtk::Box,
+    root: gtk::Overlay,
     scroller: gtk::ScrolledWindow,
     body: gtk::Box,
-    title: gtk::Label,
+    save_button: gtk::Button,
     clear_auto_search_button: gtk::Button,
     search_button: gtk::Button,
+    offset_decrease_button: gtk::Button,
+    offset_entry: gtk::Entry,
+    offset_increase_button: gtk::Button,
     rows: Rc<RefCell<Vec<LyricsRow>>>,
     active_index: Rc<Cell<Option<usize>>>,
     scroll_generation: Rc<Cell<u64>>,
@@ -43,84 +45,94 @@ pub(crate) enum LyricsFollowScrollPause {
 }
 
 impl LyricsPane {
-    pub fn new(title: &str) -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    pub fn new() -> Self {
+        let root = gtk::Overlay::new();
         root.add_css_class("lyrics-panel");
         root.set_vexpand(true);
-        root.set_margin_top(4);
         root.set_margin_start(8);
         root.set_margin_end(8);
         root.set_margin_bottom(8);
-
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        header.set_valign(gtk::Align::Center);
-
-        let title = gtk::Label::new(Some(title));
-        title.add_css_class("panel-title");
-        title.set_xalign(0.0);
-        title.set_hexpand(true);
-        header.append(&title);
 
         let clear_auto_search_button = gtk::Button::from_icon_name("window-close-symbolic");
         clear_auto_search_button.add_css_class("icon-button");
         clear_auto_search_button.add_css_class("flat");
         clear_auto_search_button.add_css_class("circular");
-        clear_auto_search_button.set_visible(false);
-        header.append(&clear_auto_search_button);
 
         let search_button = gtk::Button::from_icon_name("system-search-symbolic");
         search_button.add_css_class("icon-button");
         search_button.add_css_class("flat");
         search_button.add_css_class("circular");
-        header.append(&search_button);
-        root.append(&header);
+        search_button.add_css_class("lyrics-controls");
+        search_button.set_halign(gtk::Align::Start);
+        search_button.set_valign(gtk::Align::Start);
+
+        let offset_decrease_button = lyrics_control_button("value-decrease-symbolic");
+        let offset_entry = gtk::Entry::new();
+        offset_entry.set_text("0 ms");
+        gtk::prelude::EditableExt::set_alignment(&offset_entry, 0.5);
+        offset_entry.set_width_chars(4);
+        offset_entry.set_max_width_chars(8);
+        offset_entry.set_max_length(24);
+        offset_entry.add_css_class("flat");
+        offset_entry.add_css_class("lyrics-offset-value");
+        let offset_increase_button = lyrics_control_button("list-add-symbolic");
+
+        let save_button = lyrics_control_button("document-save-symbolic");
+
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        controls.add_css_class("lyrics-controls");
+        controls.add_css_class("lyrics-control-bar");
+        controls.set_halign(gtk::Align::Center);
+        controls.set_valign(gtk::Align::End);
+        controls.set_margin_bottom(10);
+        controls.append(&save_button);
+        controls.append(&offset_decrease_button);
+        controls.append(&offset_entry);
+        controls.append(&offset_increase_button);
+        controls.append(&clear_auto_search_button);
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_hexpand(true);
         scroller.set_vexpand(true);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         body.set_vexpand(true);
         body.add_css_class("lyrics-lines");
         scroller.set_child(Some(&body));
-        root.append(&scroller);
+        root.set_child(Some(&scroller));
+        root.add_overlay(&search_button);
+        root.add_overlay(&controls);
 
         let pane = Self {
             root,
-            header,
             scroller,
             body,
-            title,
+            save_button,
             clear_auto_search_button,
             search_button,
+            offset_decrease_button,
+            offset_entry,
+            offset_increase_button,
             rows: Rc::new(RefCell::new(Vec::new())),
             active_index: Rc::new(Cell::new(None)),
             scroll_generation: Rc::new(Cell::new(0)),
             follow_pause_until: Rc::new(Cell::new(None)),
         };
-        pane.connect_header_hover(&pane.header);
         pane.connect_user_scroll_pause();
         pane
     }
 
-    pub fn widget(&self) -> &gtk::Box {
+    pub fn widget(&self) -> &gtk::Overlay {
         &self.root
-    }
-
-    pub fn align_header_actions_start(&self) {
-        self.title.set_hexpand(false);
-        self.header
-            .reorder_child_after(&self.search_button, Some(&self.title));
-        self.header
-            .reorder_child_after(&self.clear_auto_search_button, Some(&self.search_button));
-    }
-
-    pub fn set_title(&self, title: &str) {
-        self.title.set_text(title);
     }
 
     pub fn connect_search_clicked(&self, search: impl Fn() + 'static) {
         self.search_button.connect_clicked(move |_| search());
+    }
+
+    pub fn connect_save_clicked(&self, save: impl Fn() + 'static) {
+        self.save_button.connect_clicked(move |_| save());
     }
 
     pub fn connect_clear_auto_search_clicked(&self, clear: impl Fn() + 'static) {
@@ -128,12 +140,29 @@ impl LyricsPane {
             .connect_clicked(move |_| clear());
     }
 
-    pub fn set_search_action(&self, label: &str, enabled: bool, show_tooltip: bool) {
-        self.search_button
-            .set_tooltip_text(show_tooltip.then_some(label));
+    pub fn connect_offset_decrease_clicked(&self, decrease: impl Fn() + 'static) {
+        self.offset_decrease_button
+            .connect_clicked(move |_| decrease());
+    }
+
+    pub fn connect_offset_increase_clicked(&self, increase: impl Fn() + 'static) {
+        self.offset_increase_button
+            .connect_clicked(move |_| increase());
+    }
+
+    pub fn set_search_action(&self, label: &str, enabled: bool) {
+        self.search_button.set_tooltip_text(Some(label));
         self.search_button
             .update_property(&[gtk::accessible::Property::Label(label)]);
         self.search_button.set_sensitive(enabled);
+    }
+
+    pub fn set_save_action(&self, label: &str, enabled: bool) {
+        self.save_button.set_tooltip_text(Some(label));
+        self.save_button
+            .update_property(&[gtk::accessible::Property::Label(label)]);
+        self.save_button.set_visible(enabled);
+        self.save_button.set_sensitive(enabled);
     }
 
     pub fn set_clear_auto_search_action(&self, label: &str, enabled: bool) {
@@ -141,9 +170,42 @@ impl LyricsPane {
         self.clear_auto_search_button
             .update_property(&[gtk::accessible::Property::Label(label)]);
         self.clear_auto_search_button.set_sensitive(enabled);
-        if !enabled {
-            self.clear_auto_search_button.set_visible(false);
+    }
+
+    pub fn connect_offset_committed(&self, commit: impl Fn(String) + 'static) {
+        let commit: Rc<dyn Fn(String)> = Rc::new(commit);
+        let activate_commit = Rc::clone(&commit);
+        self.offset_entry.connect_activate(move |entry| {
+            activate_commit(entry.text().to_string());
+        });
+
+        let entry = self.offset_entry.clone();
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_leave(move |_| commit(entry.text().to_string()));
+        self.offset_entry.add_controller(focus);
+    }
+
+    pub fn set_offset_action(
+        &self,
+        label: &str,
+        decrease_label: &str,
+        increase_label: &str,
+        offset_millis: i64,
+        enabled: bool,
+    ) {
+        self.offset_entry.set_text(&format!("{offset_millis} ms"));
+        self.offset_entry.set_tooltip_text(Some(label));
+        self.offset_entry
+            .update_property(&[gtk::accessible::Property::Label(label)]);
+        for (button, button_label) in [
+            (&self.offset_decrease_button, decrease_label),
+            (&self.offset_increase_button, increase_label),
+        ] {
+            button.set_visible(enabled);
+            button.set_tooltip_text(Some(button_label));
+            button.update_property(&[gtk::accessible::Property::Label(button_label)]);
         }
+        self.offset_entry.set_visible(enabled);
     }
 
     pub fn set_content(
@@ -228,14 +290,14 @@ impl LyricsPane {
         }
     }
 
-    pub fn update_highlight(&self, lyrics: Option<&Lyrics>, position_millis: u64) {
+    pub fn update_highlight(&self, lyrics: Option<&Lyrics>, position_millis: i128) {
         self.update_highlight_with_scroll_duration(lyrics, position_millis, None);
     }
 
     fn update_highlight_with_scroll_duration(
         &self,
         lyrics: Option<&Lyrics>,
-        position_millis: u64,
+        position_millis: i128,
         scroll_duration: Option<u64>,
     ) {
         let active_index = lyrics
@@ -281,7 +343,7 @@ impl LyricsPane {
         }
     }
 
-    pub fn refocus_highlight(&self, lyrics: Option<&Lyrics>, position_millis: u64) {
+    pub fn refocus_highlight(&self, lyrics: Option<&Lyrics>, position_millis: i128) {
         self.active_index.set(None);
         self.follow_pause_until.set(None);
         self.cancel_scroll_animation();
@@ -315,21 +377,6 @@ impl LyricsPane {
         self.scroller.add_controller(controller);
     }
 
-    fn connect_header_hover(&self, header: &gtk::Box) {
-        let button = self.clear_auto_search_button.clone();
-        let motion = gtk::EventControllerMotion::new();
-        motion.connect_enter(move |_, _, _| {
-            if button.is_sensitive() {
-                button.set_visible(true);
-            }
-        });
-        let button = self.clear_auto_search_button.clone();
-        motion.connect_leave(move |_| {
-            button.set_visible(false);
-        });
-        header.add_controller(motion);
-    }
-
     fn follow_scroll_pause(&self) -> LyricsFollowScrollPause {
         let pause = lyrics_follow_scroll_pause_state(self.follow_pause_until.get(), Instant::now());
         if pause == LyricsFollowScrollPause::Expired {
@@ -357,6 +404,41 @@ impl LyricsPane {
             LYRICS_SCROLL_READY_RETRIES,
         );
     }
+}
+
+pub(crate) fn install_offset_focus_dismissal(
+    window: &adw::ApplicationWindow,
+    panes: &[&LyricsPane],
+) {
+    let offset_entries = panes
+        .iter()
+        .map(|pane| pane.offset_entry.clone())
+        .collect::<Vec<_>>();
+    let click_root = window.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(0);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed(move |gesture, _, x, y| {
+        gesture.set_state(gtk::EventSequenceState::Denied);
+        let Some(focus) = gtk::prelude::RootExt::focus(&click_root) else {
+            return;
+        };
+        let Some(entry) = offset_entries
+            .iter()
+            .find(|entry| entry.has_focus() || focus.is_ancestor(*entry))
+        else {
+            return;
+        };
+        if entry.compute_bounds(&click_root).is_none_or(|bounds| {
+            bounds.contains_point(&gtk::graphene::Point::new(x as f32, y as f32))
+        }) {
+            return;
+        }
+        if let Some(root) = entry.root() {
+            root.set_focus(None::<&gtk::Widget>);
+        }
+    });
+    window.add_controller(click);
 }
 
 fn scroll_row_into_view_when_ready(
@@ -424,13 +506,16 @@ fn scroll_row_into_view_when_ready(
     });
 }
 
-pub(crate) fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
+pub(crate) fn active_lyrics_line_index(
+    lines: &[LyricLine],
+    position_millis: i128,
+) -> Option<usize> {
     lines
         .iter()
         .enumerate()
         .filter_map(|(index, line)| {
             let start = line.start_millis?;
-            (start <= position_millis).then_some((
+            (i128::from(start) <= position_millis).then_some((
                 lyric_line_has_text(line).then_some(index),
                 start,
                 index,
@@ -446,12 +531,12 @@ pub(crate) fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
 
 pub(crate) fn next_lyrics_line_start_after(
     lines: &[LyricLine],
-    position_millis: u64,
+    position_millis: i128,
 ) -> Option<u64> {
     lines
         .iter()
         .filter_map(|line| line.start_millis)
-        .filter(|start| *start > position_millis)
+        .filter(|start| i128::from(*start) > position_millis)
         .min()
 }
 
@@ -482,18 +567,18 @@ pub(crate) fn lyrics_follow_scroll_target(
 pub(crate) fn lyrics_scroll_animation_millis(
     lines: &[LyricLine],
     active_index: usize,
-    position_millis: u64,
+    position_millis: i128,
 ) -> u64 {
     let budget = lines
         .iter()
         .skip(active_index + 1)
         .filter(|line| lyric_line_has_text(line))
         .filter_map(|line| line.start_millis)
-        .find(|start| *start > position_millis)
+        .find(|start| i128::from(*start) > position_millis)
         .and_then(|next_start| {
-            next_start
-                .saturating_sub(position_millis)
-                .checked_sub(LYRICS_SCROLL_MS)
+            u64::try_from(i128::from(next_start) - position_millis)
+                .ok()
+                .and_then(|gap| gap.checked_sub(LYRICS_SCROLL_MS))
         });
     budget
         .map(|budget| {
@@ -507,6 +592,14 @@ pub(crate) fn lyrics_scroll_animation_millis(
 
 fn lyric_line_has_text(line: &LyricLine) -> bool {
     !line.text.trim().is_empty()
+}
+
+fn lyrics_control_button(icon_name: &str) -> gtk::Button {
+    let button = gtk::Button::from_icon_name(icon_name);
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button
 }
 
 #[cfg(test)]

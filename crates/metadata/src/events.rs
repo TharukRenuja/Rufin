@@ -31,4 +31,9 @@ pub enum LyricsEvent {
         path: PathBuf,
         lyrics: Lyrics,
     },
+    FileSaved {
+        media_key: MediaKey,
+        generation: u64,
+        path: PathBuf,
+    },
 }

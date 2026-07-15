@@ -147,10 +147,6 @@ impl Shell {
             }
         });
         self.bind_icon_locale(&self.right_panel.queue_clear_button, "Clear queue");
-        self.bind_locale({
-            let pane = self.right_panel.lyrics_pane.clone();
-            move || pane.set_title(&tr("Lyrics"))
-        });
     }
 
     fn bind_locale(&self, update: impl Fn() + 'static) {

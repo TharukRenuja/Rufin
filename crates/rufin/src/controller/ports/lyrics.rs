@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use metadata::{LyricsRequestKind, LyricsSearchResult};
+use metadata::{Lyrics, LyricsRequestKind, LyricsSearchResult};
 use playback::MediaKey;
 use ui::runtime::lyrics::LyricsPort;
 
@@ -25,6 +25,10 @@ impl LyricsPort for LyricsCommands {
 
     fn save_search_result(&self, media_key: MediaKey, result: LyricsSearchResult, path: PathBuf) {
         self.save_lyrics_search_result(media_key, result, path);
+    }
+
+    fn save_current(&self, media_key: MediaKey, lyrics: Lyrics, offset_millis: i64, path: PathBuf) {
+        self.save_current_lyrics(media_key, lyrics, offset_millis, path);
     }
 
     fn preview_search_result(&self, media_key: MediaKey, result: LyricsSearchResult) {

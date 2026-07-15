@@ -9,7 +9,8 @@ pub use events::LyricsEvent;
 pub use lyrics::{
     LocalLyricsInput, LyricsCacheUpdate, LyricsPlan, LyricsRequestKind, LyricsResolution,
     REMOTE_LYRICS_ORIGIN, ResolveLyrics, decode_cached_lyrics, encode_cached_lyrics,
-    lyrics_from_search_result, resolve_lyrics, save_lyrics_search_result, search_lyrics,
+    lyrics_from_search_result, resolve_lyrics, save_current_lyrics, save_lyrics_search_result,
+    search_lyrics,
 };
 pub use releases::{
     ALBUM_IDENTITY_LOOKUP_LIMIT, AlbumIdentityChange, AlbumIdentityEnrichment,

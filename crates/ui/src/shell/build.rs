@@ -20,7 +20,7 @@ use crate::player::{MprisAdapter, install_mpris, install_tray, present_initial_w
 use crate::player::{
     PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
     build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
-    connect_player_controls, connect_queue_lyrics_split, connect_queue_panel_controls,
+    connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
     default_audio_output_options, warm_audio_output_cache,
 };
 use crate::preferences::PreferencesState;
@@ -165,6 +165,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         current: RefCell::new(None),
         loading_media: RefCell::new(None),
         auto_search_attempted: RefCell::new(HashSet::new()),
+        offset_millis: Cell::new(0),
         timing_generation: Cell::new(0),
         timing_source: RefCell::new(None),
         panel_visible: Cell::new(settings.lyrics_panel_visible),
@@ -293,7 +294,9 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let queue_panel = right_panel_parts.queue_panel;
     let queue_search = right_panel_parts.queue_search;
     let queue_clear_button = right_panel_parts.queue_clear_button;
-    let queue_lyrics_split = right_panel_parts.queue_lyrics_split;
+    let queue_lyrics_overlay = right_panel_parts.queue_lyrics_overlay;
+    let lyrics_surface = right_panel_parts.lyrics_surface;
+    let lyrics_resize_handle = right_panel_parts.lyrics_resize_handle;
     let lyrics_pane = right_panel_parts.lyrics_pane;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
@@ -423,7 +426,9 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         queue_panel,
         queue_search,
         queue_clear_button,
-        queue_lyrics_split,
+        queue_lyrics_overlay,
+        lyrics_surface,
+        lyrics_resize_handle,
         lyrics_pane,
     };
     let player_view = PlayerDesktopWidgets {
@@ -480,7 +485,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     #[cfg(unix)]
     install_tray(&shell);
     connect_queue_panel_controls(&shell);
-    connect_queue_lyrics_split(&shell);
+    connect_queue_lyrics_overlay(&shell);
     shell.connect_type_to_search();
     connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
