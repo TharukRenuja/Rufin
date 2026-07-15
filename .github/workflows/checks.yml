@@ -188,7 +188,7 @@ jobs:
         with:
           cache-bin: "false"
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          cmd-format: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command env RUSTUP_HOME=/dev/null {0}
+          cmd-format: bash scripts/rust-cache-command "${{ steps.nix-environment.outputs.target }}" {0}
 
       - name: Check Flatpak cargo sources
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
