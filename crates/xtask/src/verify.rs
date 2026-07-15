@@ -4,7 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::generate;
 use crate::process::{
     collect_files_relative, command_stdout, ensure_command, path_to_slash, read_to_string,
     repo_root, run_command, temp_path,
@@ -105,29 +104,11 @@ fn flatpak_rufin_build_commands(manifest: &Path) -> Result<HashSet<String>> {
         .collect())
 }
 
-fn local(mut args: Vec<String>) -> Result<()> {
-    let mut base_ref =
-        env::var("RUFIN_RELEASE_CHECK_BASE_REF").unwrap_or_else(|_| "origin/main".to_owned());
-    let mut skip_nix_cargo_hash = false;
-
-    while !args.is_empty() {
-        match args.remove(0).as_str() {
-            "--base-ref" => {
-                if args.is_empty() {
-                    return Err("--base-ref requires a ref".into());
-                }
-                base_ref = args.remove(0);
-            }
-            "--skip-nix-cargo-hash" => skip_nix_cargo_hash = true,
-            "-h" | "--help" => {
-                eprintln!(
-                    "Usage: cargo run --locked -p xtask -- verify local [--base-ref REF] [--skip-nix-cargo-hash]"
-                );
-                return Ok(());
-            }
-            arg => return Err(format!("unexpected argument: {arg}").into()),
-        }
+fn local(args: Vec<String>) -> Result<()> {
+    if print_help_if_requested(&args, "Usage: cargo run --locked -p xtask -- verify local")? {
+        return Ok(());
     }
+    ensure_no_args(&args)?;
 
     ensure_command("cargo")?;
     ensure_command("cargo-deny")?;
@@ -135,50 +116,8 @@ fn local(mut args: Vec<String>) -> Result<()> {
 
     let root = repo_root()?;
     env::set_current_dir(&root)?;
-    let base_commit = command_stdout("git", ["merge-base", "HEAD", &base_ref])?;
-    let changed_paths = changed_paths_since(base_commit.trim())?;
-    let needs_nix_hash_check = changed_paths.iter().any(|path| {
-        path == "Cargo.lock"
-            || path == "Cargo.toml"
-            || path.ends_with("/Cargo.toml")
-            || path == "flake.nix"
-            || path.starts_with("crates/xtask/")
-            || path == "scripts/retry-nix"
-    });
-
-    if needs_nix_hash_check && !skip_nix_cargo_hash {
-        generate::nix_cargo_hash(true)?;
-    }
     run_command("just", ["check"])?;
     Ok(())
-}
-
-fn changed_paths_since(base_commit: &str) -> Result<HashSet<String>> {
-    let mut paths = HashSet::new();
-    let head_diff = format!("{base_commit}...HEAD");
-    for args in [
-        vec!["diff".to_owned(), "--name-only".to_owned(), head_diff],
-        vec!["diff".to_owned(), "--name-only".to_owned()],
-        vec![
-            "diff".to_owned(),
-            "--cached".to_owned(),
-            "--name-only".to_owned(),
-        ],
-        vec![
-            "ls-files".to_owned(),
-            "--others".to_owned(),
-            "--exclude-standard".to_owned(),
-        ],
-    ] {
-        let output = command_stdout("git", args)?;
-        paths.extend(
-            output
-                .lines()
-                .filter(|path| !path.is_empty())
-                .map(ToOwned::to_owned),
-        );
-    }
-    Ok(paths)
 }
 
 fn package_layout(args: Vec<String>) -> Result<()> {

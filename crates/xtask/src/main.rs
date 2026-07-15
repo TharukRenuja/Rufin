@@ -41,13 +41,12 @@ fn print_usage() {
         "Usage:
   cargo run --locked -p xtask -- generate flatpak-sources [--check]
   cargo run --locked -p xtask -- generate i18n-template [--check] [--output PATH]
-  cargo run --locked -p xtask -- generate nix-cargo-hash [--check]
   cargo run --locked -p xtask -- generate aur-stable [--check] [--skip-srcinfo] VERSION
   cargo run --locked -p xtask -- release prepare VERSION SUMMARY
   cargo run --locked -p xtask -- release create-tag [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY
   cargo run --locked -p xtask -- release update-flathub-manifest [--manifest PATH] TAG
   cargo run --locked -p xtask -- verify icons
-  cargo run --locked -p xtask -- verify local [--base-ref REF]
+  cargo run --locked -p xtask -- verify local
   cargo run --locked -p xtask -- verify package-layout ROOT [PREFIX]
   cargo run --locked -p xtask -- verify release-tag TAG"
     );

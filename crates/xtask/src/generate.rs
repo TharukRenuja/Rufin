@@ -17,8 +17,6 @@ use crate::release::normalize_plain_version;
 use crate::{Result, parse_check_flag};
 
 const CARGO_REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-const FAKE_NIX_HASH: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
 pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     if args.is_empty() {
         return Err("missing generate command".into());
@@ -27,7 +25,6 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     match args.remove(0).as_str() {
         "flatpak-sources" => flatpak_sources_command(args),
         "i18n-template" => i18n_template_command(args),
-        "nix-cargo-hash" => nix_cargo_hash_command(args),
         "aur-stable" => aur_stable_command(args),
         command => Err(format!("unknown generate command: {command}").into()),
     }
@@ -352,112 +349,6 @@ fn gettext_field_key(entry: &str, field: &str) -> String {
         }
     }
     key
-}
-
-fn nix_cargo_hash_command(args: Vec<String>) -> Result<()> {
-    let Some(check) = parse_check_flag(
-        args,
-        "Usage: cargo run --locked -p xtask -- generate nix-cargo-hash [--check]",
-    )?
-    else {
-        return Ok(());
-    };
-    nix_cargo_hash(check)
-}
-
-pub(crate) fn nix_cargo_hash(check: bool) -> Result<()> {
-    let root = repo_root()?;
-    let flake_file = root.join("flake.nix");
-    let original = read_to_string(&flake_file)?;
-    let current_hash =
-        cargo_hash_from_flake(&original).ok_or("could not find cargoHash in flake.nix")?;
-    let fake_flake = replace_cargo_hash(&original, FAKE_NIX_HASH)?;
-    write_string(&flake_file, &fake_flake)?;
-
-    let output = capture_retry_without_ld_preload([
-        "env",
-        "-u",
-        "LD_PRELOAD",
-        "nix",
-        "--accept-flake-config",
-        "--extra-experimental-features",
-        "nix-command flakes",
-        "build",
-        ".#rufin",
-        "--no-link",
-        "--print-build-logs",
-    ]);
-
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => {
-            write_string(&flake_file, &original)?;
-            return Err(error);
-        }
-    };
-    let combined = format!("{}{}", output.stdout, output.stderr);
-    let new_hash = cargo_hash_from_nix_output(&combined);
-
-    let Some(new_hash) = new_hash else {
-        write_string(&flake_file, &original)?;
-        eprint!("{combined}");
-        return Err("could not determine cargoHash".into());
-    };
-
-    if new_hash == current_hash {
-        write_string(&flake_file, &original)?;
-        println!("cargoHash is already up to date: {new_hash}");
-    } else if check {
-        write_string(&flake_file, &original)?;
-        return Err(format!("cargoHash is stale: {current_hash} -> {new_hash}").into());
-    } else {
-        let updated = replace_cargo_hash(&original, &new_hash)?;
-        write_string(&flake_file, &updated)?;
-        println!("updated cargoHash: {current_hash} -> {new_hash}");
-    }
-
-    Ok(())
-}
-
-fn cargo_hash_from_flake(input: &str) -> Option<String> {
-    input.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("cargoHash = \"")
-            .and_then(|value| value.strip_suffix("\";"))
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn cargo_hash_from_nix_output(input: &str) -> Option<String> {
-    input.lines().rev().find_map(|line| {
-        line.trim()
-            .strip_prefix("got:")
-            .map(str::trim)
-            .filter(|value| value.starts_with("sha256-"))
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn replace_cargo_hash(input: &str, hash: &str) -> Result<String> {
-    let mut output = String::new();
-    let mut replaced = false;
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if !replaced && trimmed.starts_with("cargoHash = \"") && trimmed.ends_with("\";") {
-            let indent_len = line.len() - trimmed.len();
-            output.push_str(&line[..indent_len]);
-            output.push_str(&format!("cargoHash = \"{hash}\";\n"));
-            replaced = true;
-        } else {
-            output.push_str(line);
-            output.push('\n');
-        }
-    }
-    if replaced {
-        Ok(output)
-    } else {
-        Err("could not find cargoHash in flake.nix".into())
-    }
 }
 
 fn aur_stable_command(mut args: Vec<String>) -> Result<()> {

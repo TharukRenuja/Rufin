@@ -39,11 +39,11 @@ fmt:
 _fmt:
     cargo fmt --all
 
-release-check *args:
-    scripts/container run just _release-check {{ args }}
+release-check:
+    scripts/container run just _release-check
 
-_release-check *args:
-    cargo run --locked -p xtask -- verify local {{ args }}
+_release-check:
+    cargo run --locked -p xtask -- verify local
 
 test *args:
     RUFIN_CONTAINER_HEADLESS=1 scripts/container run just _test {{ args }}

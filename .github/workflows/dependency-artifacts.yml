@@ -11,7 +11,6 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**/Cargo.toml
-      - crates/xtask/**
       - flake.nix
       - packaging/flatpak/cargo-sources.json
       - scripts/retry-nix
@@ -25,8 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  nix-cargo-hash:
-    name: Check Nix cargo hash
+  nix-package:
+    name: Check Nix package
     runs-on: ubuntu-latest
 
     steps:
@@ -48,8 +47,8 @@ jobs:
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
-      - name: Check Nix cargo hash
-        run: cargo run --locked -p xtask -- generate nix-cargo-hash --check
+      - name: Check Nix package
+        run: bash scripts/retry-nix nix flake check --no-write-lock-file --print-build-logs
 
   refresh:
     name: Refresh dependency artifacts
@@ -82,30 +81,25 @@ jobs:
       - name: Refresh Flatpak cargo sources
         run: bash scripts/retry-nix nix --accept-flake-config develop . --command cargo run --locked -p xtask -- generate flatpak-sources
 
-      - name: Refresh Nix cargo hash
-        run: cargo run --locked -p xtask -- generate nix-cargo-hash
-
       - name: Detect artifact changes
         id: artifacts
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- packaging/flatpak/cargo-sources.json flake.nix; then
+          if git diff --quiet -- packaging/flatpak/cargo-sources.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          git diff --name-only -- packaging/flatpak/cargo-sources.json flake.nix
+          git diff --name-only -- packaging/flatpak/cargo-sources.json
 
       - name: Upload refreshed artifacts
         if: steps.artifacts.outputs.changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dependency-artifacts
-          path: |
-            packaging/flatpak/cargo-sources.json
-            flake.nix
+          path: packaging/flatpak/cargo-sources.json
           if-no-files-found: error
           retention-days: 1
 
@@ -143,7 +137,7 @@ jobs:
 
           unexpected="$(
             printf '%s\n' "$changed_files" |
-              grep -Ev '^(packaging/flatpak/cargo-sources\.json|flake\.nix)$' || true
+              grep -Ev '^packaging/flatpak/cargo-sources\.json$' || true
           )"
           if [[ -n "$unexpected" ]]; then
             echo "Unexpected refreshed artifact path(s):" >&2
@@ -182,6 +176,6 @@ jobs:
 
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
-          git add packaging/flatpak/cargo-sources.json flake.nix
+          git add packaging/flatpak/cargo-sources.json
           git commit --no-verify -m "chore(deps): refresh generated dependency artifacts"
           git push "https://x-access-token:${TOKEN}@github.com/${REPOSITORY}.git" "HEAD:${HEAD_BRANCH}"
