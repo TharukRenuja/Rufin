@@ -1,9 +1,10 @@
 use super::{
-    ActiveSourceSlot, AppController, BoundedRunner, ControllerEvent, StoreHandle,
-    WaveformProjection, encode_key_part, resolve_stream_request, waveform_cache_path_for_key,
+    ActiveSourceSlot, BoundedRunner, PlaybackCommands, StoreHandle, encode_key_part,
+    resolve_stream_request, waveform_cache_path_for_key,
 };
+use async_channel::Sender;
 use library::{SourceId, TrackId};
-use playback::PreparedStream;
+use playback::{PreparedStream, WaveformProjection};
 use playback_gstreamer::generate_waveform_peaks_cancellable;
 use serde::{Deserialize, Serialize};
 use sources::{StreamQuality, StreamRequest};
@@ -13,7 +14,6 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
-        mpsc::Sender,
     },
     time::Duration,
 };
@@ -93,28 +93,32 @@ struct WaveformWarmWorker {
     generation: Arc<AtomicU64>,
     request_generation: u64,
     requested: Arc<Mutex<Option<WaveformKey>>>,
-    events: Sender<ControllerEvent>,
+    waveform_events: Sender<WaveformProjection>,
 }
 
-impl AppController {
+impl PlaybackCommands {
     pub fn request_waveform_for_current(&self) {
-        let settings = self.load_settings();
-        let request = settings.seekbar_waveform_enabled.then(|| {
+        let settings = self.settings.load_settings();
+        let request = settings.ui.seekbar_waveform_enabled.then(|| {
             self.playback_product_if_present()
                 .and_then(|product| product.current_entry())
                 .map(|(source_id, entry, _position_millis)| {
-                    waveform_request(&source_id, &entry.track, settings.playback.stream_quality)
+                    waveform_request(
+                        &source_id,
+                        &entry.track,
+                        settings.ui.playback.stream_quality,
+                    )
                 })
         });
         let Some(request) = request.flatten() else {
-            clear_requested_waveform(&self.waveform_request_key, &self.events);
+            clear_requested_waveform(&self.waveform_request_key, &self.playback_events.waveform);
             self.cancel_waveform_warm();
             return;
         };
 
         let cached = select_requested_waveform(
             &self.waveform_request_key,
-            &self.events,
+            &self.playback_events.waveform,
             request.key.clone(),
         );
         self.cancel_waveform_warm();
@@ -129,7 +133,7 @@ impl AppController {
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
         let requested = Arc::clone(&self.waveform_request_key);
-        let events = self.events.clone();
+        let waveform_events = self.playback_events.waveform.clone();
         if let Err(error) = waveform_runner().and_then(|runner| {
             runner.submit(move || {
                 let _permit = permit;
@@ -147,7 +151,7 @@ impl AppController {
                 }) {
                     publish_requested_waveform(
                         &requested,
-                        &events,
+                        &waveform_events,
                         &generation.waveform.key,
                         peaks,
                     );
@@ -160,8 +164,8 @@ impl AppController {
 
     pub fn warm_waveforms_for_queue(&self) {
         let generation = self.waveform_warm_generation.fetch_add(1, Ordering::AcqRel) + 1;
-        let settings = self.load_settings();
-        if !settings.seekbar_waveform_enabled {
+        let settings = self.settings.load_settings();
+        if !settings.ui.seekbar_waveform_enabled {
             return;
         }
         let Some((source_id, tracks)) = self
@@ -173,7 +177,7 @@ impl AppController {
         let requests = tracks
             .into_iter()
             .filter(|track| track.duration_seconds > 0)
-            .map(|track| waveform_request(&source_id, &track, settings.playback.stream_quality))
+            .map(|track| waveform_request(&source_id, &track, settings.ui.playback.stream_quality))
             .collect::<Vec<_>>();
         if requests.is_empty() {
             return;
@@ -187,7 +191,7 @@ impl AppController {
                 generation: Arc::clone(&self.waveform_warm_generation),
                 request_generation: generation,
                 requested: Arc::clone(&self.waveform_request_key),
-                events: self.events.clone(),
+                waveform_events: self.playback_events.waveform.clone(),
             },
         );
     }
@@ -286,7 +290,7 @@ fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformRequest) 
     }) {
         publish_requested_waveform(
             &worker.requested,
-            &worker.events,
+            &worker.waveform_events,
             &generation.waveform.key,
             peaks,
         );
@@ -360,7 +364,7 @@ fn generate_and_cache_waveform(
 
 fn select_requested_waveform(
     requested: &Arc<Mutex<Option<WaveformKey>>>,
-    events: &Sender<ControllerEvent>,
+    waveform_events: &Sender<WaveformProjection>,
     key: WaveformKey,
 ) -> bool {
     let Ok(mut current) = requested.lock() else {
@@ -371,13 +375,13 @@ fn select_requested_waveform(
     let cache_key = key.cache_key();
     let peaks = load_cached_waveform(&cache_key, key.duration_seconds);
     let cached = peaks.is_some();
-    publish_requested_projection(requested, events, &key, peaks);
+    publish_requested_projection(requested, waveform_events, &key, peaks);
     cached
 }
 
 fn clear_requested_waveform(
     requested: &Arc<Mutex<Option<WaveformKey>>>,
-    events: &Sender<ControllerEvent>,
+    waveform_events: &Sender<WaveformProjection>,
 ) {
     let Ok(mut current) = requested.lock() else {
         return;
@@ -385,32 +389,32 @@ fn clear_requested_waveform(
     *current = None;
     drop(current);
     if requested.lock().is_ok_and(|current| current.is_none()) {
-        let _sent = events.send(ControllerEvent::Waveform(WaveformProjection::default()));
+        let _sent = waveform_events.try_send(WaveformProjection::default());
     }
 }
 
 fn publish_requested_waveform(
     requested: &Arc<Mutex<Option<WaveformKey>>>,
-    events: &Sender<ControllerEvent>,
+    waveform_events: &Sender<WaveformProjection>,
     key: &WaveformKey,
     peaks: Vec<(f64, f64)>,
 ) {
-    publish_requested_projection(requested, events, key, Some(peaks));
+    publish_requested_projection(requested, waveform_events, key, Some(peaks));
 }
 
 fn publish_requested_projection(
     requested: &Arc<Mutex<Option<WaveformKey>>>,
-    events: &Sender<ControllerEvent>,
+    waveform_events: &Sender<WaveformProjection>,
     key: &WaveformKey,
     peaks: Option<Vec<(f64, f64)>>,
 ) {
     if !requested_waveform_matches(requested, key) {
         return;
     }
-    let _sent = events.send(ControllerEvent::Waveform(WaveformProjection {
+    let _sent = waveform_events.try_send(WaveformProjection {
         key: Some(key.cache_key()),
         peaks: peaks.map(Arc::new),
-    }));
+    });
 }
 
 fn acquire_waveform_generation_permit(key: &WaveformKey) -> Option<WaveformGenerationPermit> {
@@ -519,7 +523,7 @@ fn sanitize_waveform_peaks(peaks: Vec<(f64, f64)>) -> Option<Vec<(f64, f64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::{TryRecvError, channel};
+    use async_channel::{TryRecvError, unbounded};
 
     #[test]
     fn waveform_key_scopes_cache_by_source_track_and_duration() {
@@ -548,15 +552,13 @@ mod tests {
             .expect("request key")
             .clone()
             .expect("wanted key");
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
 
         publish_requested_waveform(&requested, &events, &stale, vec![(0.1, 0.2)]);
         assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
 
         publish_requested_waveform(&requested, &events, &wanted, vec![(0.3, 0.4)]);
-        let ControllerEvent::Waveform(projection) = receiver.recv().expect("waveform event") else {
-            panic!("unexpected controller event");
-        };
+        let projection = receiver.recv_blocking().expect("waveform event");
         assert_eq!(projection.key, Some(wanted.cache_key()));
         assert_eq!(projection.peaks.as_deref(), Some(&vec![(0.3, 0.4)]));
     }
@@ -601,11 +603,9 @@ mod tests {
         ));
         assert!(acquire_waveform_generation_permit(&warm_key).is_none());
 
-        let (events, receiver) = channel();
+        let (events, receiver) = unbounded();
         publish_requested_waveform(&requested, &events, &warm_key, vec![(0.2, 0.8)]);
-        let ControllerEvent::Waveform(projection) = receiver.recv().expect("waveform event") else {
-            panic!("unexpected controller event");
-        };
+        let projection = receiver.recv_blocking().expect("waveform event");
         assert_eq!(projection.key, Some(warm_key.cache_key()));
         assert_eq!(projection.peaks.as_deref(), Some(&vec![(0.2, 0.8)]));
 

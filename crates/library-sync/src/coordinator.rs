@@ -5,7 +5,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use library::{LibraryDelta, SourceId};
+use library::SourceId;
 
 use crate::{Progress, ReconcileScope};
 
@@ -24,13 +24,6 @@ pub struct SourceSyncChanged {
     pub progress: Option<Progress>,
     pub failure: Option<String>,
     pub manual: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LibraryCommitted {
-    pub source_id: SourceId,
-    pub revision: i64,
-    pub delta: LibraryDelta,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

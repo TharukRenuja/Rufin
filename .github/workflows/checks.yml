@@ -56,7 +56,6 @@ jobs:
           fi
 
           mapfile -t changed_paths < <(git diff --name-only "$base" "$HEAD_SHA")
-          bash scripts/check-i18n --base-ref "$base" --head-ref "$HEAD_SHA"
 
           rust_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
@@ -67,7 +66,7 @@ jobs:
             case "$path" in
               packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO)
                 ;;
-              *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp|po/POTFILES.in)
+              *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
               *)
                 rust_required=true
@@ -114,6 +113,9 @@ jobs:
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
+      - name: Install GTK test display
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y dbus-x11 xvfb
+
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -123,6 +125,9 @@ jobs:
 
       - name: Check Flatpak cargo sources
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate flatpak-sources --check
+
+      - name: Check translation template
+        run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo run --locked -p xtask -- generate i18n-template --check
 
       - name: Check Rust formatting
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
@@ -138,7 +143,7 @@ jobs:
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo run --locked -p xtask -- verify icons
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          xvfb-run -a dbus-run-session -- bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
   cargo-deny:

@@ -43,8 +43,8 @@ fn lyrics_event(
     media_key: &playback::MediaKey,
     generation: u64,
     lyrics: Option<Lyrics>,
-) -> ControllerEvent {
-    ControllerEvent::Lyrics {
+) -> metadata::LyricsEvent {
+    metadata::LyricsEvent::Loaded {
         media_key: media_key.clone(),
         generation,
         lyrics: Box::new(lyrics),
@@ -53,9 +53,11 @@ fn lyrics_event(
 
 fn lyrics_search_result_allowed(settings: &StoredSettings, result: &LyricsSearchResult) -> bool {
     settings
+        .ui
         .metadata
-        .external_lyrics_allowed(settings.private_mode)
+        .external_lyrics_allowed(settings.ui.private_mode)
         && settings
+            .ui
             .metadata
             .external_lyrics_providers
             .contains(&result.provider)
@@ -112,13 +114,15 @@ fn apply_cache_update(
     }
 }
 
-impl AppController {
+impl LyricsCommands {
     pub fn request_lyrics_for_media(&self, media_key: playback::MediaKey, kind: LyricsRequestKind) {
         self.request_lyrics(media_key, true, kind);
     }
 
     pub fn refresh_lyrics_for_current(&self) {
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             return;
         };
         self.request_lyrics(
@@ -132,7 +136,9 @@ impl AppController {
     }
 
     pub fn clear_remote_lyrics_for_current(&self) {
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             return;
         };
         let generation = self
@@ -145,7 +151,9 @@ impl AppController {
                     source_id,
                     track_id: entry.track.id,
                 };
-                let _sent = self.events.send(lyrics_event(&media_key, generation, None));
+                let _sent = self
+                    .lyrics_events
+                    .try_send(lyrics_event(&media_key, generation, None));
             }
             Ok(false) => {}
             Err(error) => {
@@ -160,7 +168,9 @@ impl AppController {
         use_cache: bool,
         kind: LyricsRequestKind,
     ) {
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             debug!("lyrics request skipped because the queue has no current track");
             return;
         };
@@ -169,8 +179,11 @@ impl AppController {
             return;
         }
 
-        let settings = self.load_settings();
-        let plan = settings.metadata.lyrics_plan(settings.private_mode, kind);
+        let settings = load_settings_from_store(&self.store);
+        let plan = settings
+            .ui
+            .metadata
+            .lyrics_plan(settings.ui.private_mode, kind);
         let active = selected_active_source(&self.active_source, &source_id).ok();
         let cue_track = cue_track(&self.store, &source_id, &entry.track.id);
         let local = active
@@ -187,7 +200,7 @@ impl AppController {
         let native = active.and_then(|active| active.lyrics.clone());
         let runtime = Arc::clone(&self.runtime);
         let store = self.store.clone();
-        let events = self.events.clone();
+        let metadata_events = self.lyrics_events.clone();
         let generation = self
             .lyrics_request_generation
             .fetch_add(1, Ordering::AcqRel)
@@ -220,13 +233,18 @@ impl AppController {
                     return;
                 }
                 apply_cache_update(&store, &source_id, &track_id, &resolution.cache);
-                let _sent =
-                    events.send(lyrics_event(&job_media_key, generation, resolution.lyrics));
+                let _sent = metadata_events.try_send(lyrics_event(
+                    &job_media_key,
+                    generation,
+                    resolution.lyrics,
+                ));
             })
         });
         if let Err(error) = submit {
             warn!(%error, track_id = %media_key.track_id, "could not schedule metadata lookup");
-            let _sent = self.events.send(lyrics_event(&media_key, generation, None));
+            let _sent = self
+                .lyrics_events
+                .try_send(lyrics_event(&media_key, generation, None));
         }
     }
 
@@ -236,7 +254,9 @@ impl AppController {
         if artist_name.is_empty() && track_name.is_empty() {
             return;
         }
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             debug!("manual lyrics search skipped because no track is playing");
             return;
         };
@@ -245,22 +265,25 @@ impl AppController {
             track_id: entry.track.id,
         };
         let generation = self.lyrics_request_generation.load(Ordering::Acquire);
-        let settings = self.load_settings();
+        let settings = load_settings_from_store(&self.store);
         if !settings
+            .ui
             .metadata
-            .external_lyrics_allowed(settings.private_mode)
+            .external_lyrics_allowed(settings.ui.private_mode)
         {
-            let _sent = self.events.send(ControllerEvent::LyricsSearchResults {
-                media_key,
-                generation,
-                artist_name,
-                track_name,
-                results: Vec::new(),
-            });
+            let _sent = self
+                .lyrics_events
+                .try_send(metadata::LyricsEvent::SearchResults {
+                    media_key,
+                    generation,
+                    artist_name,
+                    track_name,
+                    results: Vec::new(),
+                });
             return;
         }
-        let providers = settings.metadata.external_lyrics_providers;
-        let events = self.events.clone();
+        let providers = settings.ui.metadata.external_lyrics_providers;
+        let metadata_events = self.lyrics_events.clone();
         let settings_store = self.store.clone();
         let result_media_key = media_key.clone();
         let rejected_artist_name = artist_name.clone();
@@ -272,17 +295,19 @@ impl AppController {
                     .into_iter()
                     .filter(|provider| {
                         current
+                            .ui
                             .metadata
                             .external_lyrics_providers
                             .contains(provider)
                     })
                     .collect::<Vec<_>>();
                 if !current
+                    .ui
                     .metadata
-                    .external_lyrics_allowed(current.private_mode)
+                    .external_lyrics_allowed(current.ui.private_mode)
                     || active_providers.is_empty()
                 {
-                    let _sent = events.send(ControllerEvent::LyricsSearchResults {
+                    let _sent = metadata_events.try_send(metadata::LyricsEvent::SearchResults {
                         media_key: result_media_key,
                         generation,
                         artist_name,
@@ -295,11 +320,13 @@ impl AppController {
                     Ok(mut results) => {
                         let current = load_settings_from_store(&settings_store);
                         if current
+                            .ui
                             .metadata
-                            .external_lyrics_allowed(current.private_mode)
+                            .external_lyrics_allowed(current.ui.private_mode)
                         {
                             results.retain(|result| {
                                 current
+                                    .ui
                                     .metadata
                                     .external_lyrics_providers
                                     .contains(&result.provider)
@@ -307,22 +334,24 @@ impl AppController {
                         } else {
                             results.clear();
                         }
-                        let _sent = events.send(ControllerEvent::LyricsSearchResults {
-                            media_key: result_media_key,
-                            generation,
-                            artist_name,
-                            track_name,
-                            results,
-                        });
+                        let _sent =
+                            metadata_events.try_send(metadata::LyricsEvent::SearchResults {
+                                media_key: result_media_key,
+                                generation,
+                                artist_name,
+                                track_name,
+                                results,
+                            });
                     }
                     Err(error) => {
                         debug!(%error, "manual external lyric search failed");
                         let current = load_settings_from_store(&settings_store);
                         let event = if current
+                            .ui
                             .metadata
-                            .external_lyrics_allowed(current.private_mode)
+                            .external_lyrics_allowed(current.ui.private_mode)
                         {
-                            ControllerEvent::LyricsSearchFailed {
+                            metadata::LyricsEvent::SearchFailed {
                                 media_key: result_media_key,
                                 generation,
                                 artist_name,
@@ -330,7 +359,7 @@ impl AppController {
                                 error,
                             }
                         } else {
-                            ControllerEvent::LyricsSearchResults {
+                            metadata::LyricsEvent::SearchResults {
                                 media_key: result_media_key,
                                 generation,
                                 artist_name,
@@ -338,20 +367,22 @@ impl AppController {
                                 results: Vec::new(),
                             }
                         };
-                        let _sent = events.send(event);
+                        let _sent = metadata_events.try_send(event);
                     }
                 }
             })
         });
         if let Err(error) = submit {
             warn!(%error, "could not schedule manual lyrics search");
-            let _sent = self.events.send(ControllerEvent::LyricsSearchFailed {
-                media_key,
-                generation,
-                artist_name: rejected_artist_name,
-                track_name: rejected_track_name,
-                error,
-            });
+            let _sent = self
+                .lyrics_events
+                .try_send(metadata::LyricsEvent::SearchFailed {
+                    media_key,
+                    generation,
+                    artist_name: rejected_artist_name,
+                    track_name: rejected_track_name,
+                    error,
+                });
         }
     }
 
@@ -361,7 +392,9 @@ impl AppController {
         result: LyricsSearchResult,
         output_path: PathBuf,
     ) {
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             debug!("lyrics save skipped because no track is playing");
             return;
         };
@@ -369,12 +402,12 @@ impl AppController {
             debug!("lyrics save skipped because the playing track changed");
             return;
         }
-        if !lyrics_search_result_allowed(&self.load_settings(), &result) {
+        if !lyrics_search_result_allowed(&load_settings_from_store(&self.store), &result) {
             debug!("lyrics save skipped because its provider is no longer enabled");
             return;
         }
         let store = self.store.clone();
-        let events = self.events.clone();
+        let metadata_events = self.lyrics_events.clone();
         let generation = self
             .lyrics_request_generation
             .fetch_add(1, Ordering::AcqRel)
@@ -398,7 +431,7 @@ impl AppController {
                         if let Err(error) = save_cached_lyrics(&store, &source_id, &lyrics) {
                             warn!(%error, "failed to cache saved lyrics");
                         }
-                        let _sent = events.send(ControllerEvent::LyricsSaved {
+                        let _sent = metadata_events.try_send(metadata::LyricsEvent::Saved {
                             media_key: result_media_key,
                             generation,
                             path,
@@ -406,7 +439,8 @@ impl AppController {
                         });
                     }
                     Ok(None) => {
-                        let _sent = events.send(lyrics_event(&media_key, generation, None));
+                        let _sent =
+                            metadata_events.try_send(lyrics_event(&media_key, generation, None));
                     }
                     Err(error) => {
                         warn!(%error, "failed to save lyrics file");
@@ -424,7 +458,9 @@ impl AppController {
         media_key: playback::MediaKey,
         result: LyricsSearchResult,
     ) {
-        let Some((source_id, entry, _position)) = self.current_playback_entry() else {
+        let Some((source_id, entry, _position)) =
+            current_playback_entry_from_slot(&self.playback_product)
+        else {
             debug!("lyrics preview skipped because no track is playing");
             return;
         };
@@ -432,12 +468,12 @@ impl AppController {
             debug!("lyrics preview skipped because the playing track changed");
             return;
         }
-        if !lyrics_search_result_allowed(&self.load_settings(), &result) {
+        if !lyrics_search_result_allowed(&load_settings_from_store(&self.store), &result) {
             debug!("lyrics preview skipped because its provider is no longer enabled");
             return;
         }
         let store = self.store.clone();
-        let events = self.events.clone();
+        let metadata_events = self.lyrics_events.clone();
         let generation = self
             .lyrics_request_generation
             .fetch_add(1, Ordering::AcqRel)
@@ -460,14 +496,20 @@ impl AppController {
                         if let Err(error) = save_cached_lyrics(&store, &source_id, &lyrics) {
                             warn!(%error, "failed to cache previewed lyrics");
                         }
-                        let _sent = events.send(lyrics_event(&media_key, generation, Some(lyrics)));
+                        let _sent = metadata_events.try_send(lyrics_event(
+                            &media_key,
+                            generation,
+                            Some(lyrics),
+                        ));
                     }
                     Ok(None) => {
-                        let _sent = events.send(lyrics_event(&media_key, generation, None));
+                        let _sent =
+                            metadata_events.try_send(lyrics_event(&media_key, generation, None));
                     }
                     Err(error) => {
                         warn!(%error, "failed to preview lyrics");
-                        let _sent = events.send(lyrics_event(&media_key, generation, None));
+                        let _sent =
+                            metadata_events.try_send(lyrics_event(&media_key, generation, None));
                     }
                 }
             })

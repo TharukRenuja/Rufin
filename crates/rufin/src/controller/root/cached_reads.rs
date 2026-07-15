@@ -1,6 +1,6 @@
 use super::*;
 
-pub(in crate::controller) fn promote_prefetched_home_section(
+pub(in crate::controller) fn save_home_section_projection(
     store: &StoreHandle,
     source_id: &SourceId,
     section: &HomeSection,
@@ -26,46 +26,16 @@ pub(in crate::controller) fn cache_home_section(
         store.replace_home_section(source_id, generation, base_cache_revision, section)
     })
 }
-pub(in crate::controller) fn load_library_counts(
+pub(in crate::controller) fn emit_source_presentation(
     store: &StoreHandle,
-    source_id: &SourceId,
-) -> Result<LibraryCounts, String> {
-    store.with_store(|store| {
-        store.read_snapshot(|store| {
-            Ok(LibraryCounts {
-                albums: store.load_albums(source_id, 0, 0)?.total,
-                tracks: store.load_tracks(source_id, 0, 0)?.total,
-                artists: store.load_artists(source_id, false, 0, 0)?.total,
-                album_artists: store.load_artists(source_id, true, 0, 0)?.total,
-                genres: store.load_genres(source_id, 0, 0)?.total,
-                playlists: store.load_playlists(source_id, 0, 0)?.total,
-            })
-        })
-    })
-}
-pub(in crate::controller) fn load_home_update(
-    store: &StoreHandle,
-    saved: &StoredSource,
-) -> Result<LibraryHomeUpdate, String> {
-    store.with_store(|store| {
-        store.read_snapshot(|store| {
-            let sections = store.load_home_sections(&saved.source_id)?;
-            let prefetched_explore =
-                store.load_home_section_prefetch(&saved.source_id, HomeSectionKind::Explore)?;
-            Ok(LibraryHomeUpdate {
-                sections,
-                prefetched_explore,
-            })
-        })
-    })
-}
-pub(in crate::controller) fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
-    match load_snapshot(store) {
-        Ok(snapshot) => {
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+    source_presentation: &Sender<SourcePresentationState>,
+) {
+    match load_source_presentation(store) {
+        Ok(presentation) => {
+            let _sent = source_presentation.try_send(presentation);
         }
         Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
+            warn!(%error, "failed to load source presentation");
         }
     }
 }
@@ -89,7 +59,7 @@ pub(in crate::controller) fn shuffle_seed() -> u64 {
 pub(in crate::controller) fn platform_secret_store(
     settings: &StoredSettings,
 ) -> Arc<dyn SecretStore> {
-    match settings.secret_storage_mode {
+    match settings.ui.secret_storage_mode {
         SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
             ConfigSecretStore::with_scope(config_secrets_path(), settings.secret_scope_id.clone()),
         ))),
@@ -127,17 +97,17 @@ pub(in crate::controller) fn saved_server_needs_auth(
         }
     }
 }
-pub(in crate::controller) fn emit_runtime_snapshot(
+pub(in crate::controller) fn emit_runtime_source_presentation(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
-    events: &Sender<ControllerEvent>,
+    source_presentation: &Sender<SourcePresentationState>,
 ) {
-    match load_runtime_snapshot(store, secrets) {
-        Ok(snapshot) => {
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+    match load_runtime_source_presentation(store, secrets) {
+        Ok(presentation) => {
+            let _sent = source_presentation.try_send(presentation);
         }
         Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
+            warn!(%error, "failed to load runtime source presentation");
         }
     }
 }

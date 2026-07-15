@@ -7,10 +7,10 @@ use std::{
 };
 
 use crate::{
-    Album, AlbumArtwork, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
-    HomeSectionKind, ImageRef, LocalCueDependency, LocalCueTrackSource, LocalFileFacts,
-    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId, MusicFolder,
-    MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
+    Album, AlbumArtwork, AlbumId, Artist, ArtistCredit, ArtistId, FavoriteItemId, Genre, GenreId,
+    HomeSection, HomeSectionKind, ImageRef, LocalCueDependency, LocalCueTrackSource,
+    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId,
+    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
     RandomTrackQuery, SearchResults, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
     SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
@@ -33,6 +33,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("io failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("store lock was poisoned")]
+    Unavailable,
     #[error("unsupported store schema version: {0}")]
     UnsupportedSchemaVersion(i64),
     #[error("incomplete store schema version: {0}")]
@@ -348,6 +350,7 @@ pub struct LibraryDelta {
     pub album_artists: EntityDelta<ArtistId>,
     pub genres: EntityDelta<GenreId>,
     pub playlists: PlaylistDelta,
+    pub smart_playlists: EntityDelta<SmartPlaylistId>,
     pub home_changed: bool,
     pub folders_changed: bool,
     pub local_matches_changed: bool,
@@ -362,6 +365,7 @@ impl LibraryDelta {
             && self.album_artists.is_empty()
             && self.genres.is_empty()
             && self.playlists.is_empty()
+            && self.smart_playlists.is_empty()
             && !self.home_changed
             && !self.folders_changed
             && !self.local_matches_changed
@@ -375,12 +379,47 @@ impl LibraryDelta {
         self.album_artists.merge(other.album_artists);
         self.genres.merge(other.genres);
         self.playlists.merge(other.playlists);
+        self.smart_playlists.merge(other.smart_playlists);
         self.home_changed |= other.home_changed;
         self.folders_changed |= other.folders_changed;
         self.local_matches_changed |= other.local_matches_changed;
         if self.reset.is_none() {
             self.reset = other.reset;
         }
+    }
+
+    pub fn playlist_changed(playlist_id: PlaylistId) -> Self {
+        Self {
+            playlists: PlaylistDelta {
+                fields: vec![playlist_id.clone()],
+                entries: vec![playlist_id],
+                ..PlaylistDelta::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn smart_playlist_changed(smart_playlist_id: SmartPlaylistId) -> Self {
+        Self {
+            smart_playlists: EntityDelta {
+                fields: vec![smart_playlist_id],
+                ..EntityDelta::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn favorite_changed(item_id: &FavoriteItemId) -> Self {
+        let mut delta = Self::default();
+        match item_id {
+            FavoriteItemId::Album(album_id) => delta.albums.fields.push(album_id.clone()),
+            FavoriteItemId::Track(track_id) => delta.tracks.favorite.push(track_id.clone()),
+            FavoriteItemId::Artist(artist_id) => {
+                delta.artists.fields.push(artist_id.clone());
+                delta.album_artists.fields.push(artist_id.clone());
+            }
+        }
+        delta
     }
 }
 
@@ -439,6 +478,78 @@ pub struct CachedMoodDetail {
 
 #[derive(Clone, Default)]
 pub struct StoreWriteGate(Arc<Mutex<()>>);
+
+/// Cloneable access to one library database.
+///
+/// Disk-backed access reopens the SQLite connection for each operation while
+/// sharing the process write gate. Memory-backed access keeps the one in-memory
+/// Store behind a lock so application tests observe the same database.
+#[derive(Clone)]
+pub struct StoreAccess {
+    backend: StoreAccessBackend,
+}
+
+#[derive(Clone)]
+enum StoreAccessBackend {
+    Disk {
+        path: PathBuf,
+        write_gate: StoreWriteGate,
+    },
+    Shared(Arc<Mutex<Store>>),
+}
+
+impl StoreAccess {
+    pub fn from_path(path: impl Into<PathBuf>, write_gate: StoreWriteGate) -> Self {
+        Self {
+            backend: StoreAccessBackend::Disk {
+                path: path.into(),
+                write_gate,
+            },
+        }
+    }
+
+    pub fn from_shared(store: Arc<Mutex<Store>>) -> Self {
+        Self {
+            backend: StoreAccessBackend::Shared(store),
+        }
+    }
+
+    pub fn open_memory() -> StoreResult<Self> {
+        Store::open_memory().map(|store| Self::from_shared(Arc::new(Mutex::new(store))))
+    }
+
+    pub fn with_store<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        match &self.backend {
+            StoreAccessBackend::Disk { path, write_gate } => {
+                let store = Store::open_with_write_gate(path, write_gate.clone())?;
+                operation(&store)
+            }
+            StoreAccessBackend::Shared(store) => {
+                let store = store.lock().map_err(|_| StoreError::Unavailable)?;
+                operation(&store)
+            }
+        }
+    }
+
+    pub fn with_fast_read<T>(
+        &self,
+        operation: impl FnOnce(&Store) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        match &self.backend {
+            StoreAccessBackend::Disk { path, .. } => {
+                let store = Store::open_fast_read(path)?;
+                operation(&store)
+            }
+            StoreAccessBackend::Shared(store) => {
+                let store = store.lock().map_err(|_| StoreError::Unavailable)?;
+                operation(&store)
+            }
+        }
+    }
+}
 
 pub struct Store {
     connection: Connection,

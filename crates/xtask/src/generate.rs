@@ -168,7 +168,7 @@ fn flush_cargo_package(
 
 fn i18n_template_command(mut args: Vec<String>) -> Result<()> {
     let mut check = false;
-    let mut output = PathBuf::from("locales/rufin.pot");
+    let mut output = PathBuf::from("crates/localization/locales/rufin.pot");
 
     while !args.is_empty() {
         match args.remove(0).as_str() {
@@ -201,13 +201,13 @@ pub(crate) fn i18n_template_check() -> Result<()> {
     let output = temp_path("i18n-template.pot");
     i18n_template_to(&output)?;
     let generated = read_to_string(&output)?;
-    let checked_in = read_to_string(&root.join("locales/rufin.pot"))?;
+    let checked_in = read_to_string(&root.join("crates/localization/locales/rufin.pot"))?;
     let _ = fs::remove_file(&output);
     if checked_in == generated {
         Ok(())
     } else {
         Err(
-            "locales/rufin.pot is stale; run cargo run --locked -p xtask -- generate i18n-template"
+            "crates/localization/locales/rufin.pot is stale; run cargo run --locked -p xtask -- generate i18n-template"
                 .into(),
         )
     }
@@ -258,6 +258,7 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
             "--keyword=msgid:1",
             "--keyword=text_button:2",
             "--keyword=icon_button:2",
+            "--keyword=icon_button_without_tooltip:2",
             "--keyword=detail_action_button:2",
             "--keyword=detail_link_button:2",
             "--keyword=toggle_button:2",

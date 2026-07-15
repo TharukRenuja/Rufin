@@ -80,7 +80,7 @@ package() {
     data/icons/hicolor/64x64/apps/*.png
 
   local lang po_file
-  for po_file in locales/*.po; do
+  for po_file in crates/localization/locales/*.po; do
     [[ -f $po_file ]] || continue
     lang=${po_file##*/}
     lang=${lang%.po}

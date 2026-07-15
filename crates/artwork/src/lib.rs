@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+
+use async_channel::Receiver;
 
 use library::SourceId;
 use sources::ImageProvider;
@@ -16,8 +17,8 @@ mod selection;
 #[cfg(test)]
 mod tests;
 
-pub use decode::DecodedImage;
-pub use selection::CandidateSet;
+pub use decode::{DecodedImage, RgbaImage, decode_rgba, square_thumbnail_png};
+pub use selection::{ArtworkBinding, ArtworkPresentation};
 
 #[derive(Clone)]
 pub struct SourceImages {
@@ -76,16 +77,16 @@ impl ExternalPolicy {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtworkRequest {
-    pub candidates: CandidateSet,
+    pub binding: ArtworkBinding,
     pub fetch_size: u32,
     pub render_size: u32,
     pub external: ExternalPolicy,
 }
 
 impl ArtworkRequest {
-    pub fn new(candidates: CandidateSet, fetch_size: u32, render_size: u32) -> Self {
+    pub fn new(binding: ArtworkBinding, fetch_size: u32, render_size: u32) -> Self {
         Self {
-            candidates,
+            binding,
             fetch_size: fetch_size.max(1),
             render_size: render_size.max(1),
             external: ExternalPolicy::disabled(),
@@ -98,7 +99,7 @@ impl ArtworkRequest {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ArtworkKey(String);
 
 impl ArtworkKey {
@@ -114,6 +115,16 @@ impl RequestId {
     pub const fn get(self) -> u64 {
         self.0
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PrefetchOwner(u64);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrefetchPriority {
+    Viewport,
+    Background,
+    Idle,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +163,13 @@ impl ArtworkRequestIdentity {
 pub struct ArtworkBindingIdentity {
     pub visual: ArtworkVisualIdentity,
     pub request: ArtworkRequestIdentity,
+}
+
+pub struct PreparedArtwork {
+    pub identity: ArtworkBindingIdentity,
+    pub ready: Option<Arc<DecodedImage>>,
+    source: SourceImages,
+    request: ArtworkRequest,
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +218,46 @@ impl Artwork {
         self.pipeline.request(source, request)
     }
 
+    pub fn prepare(&self, source: SourceImages, request: ArtworkRequest) -> PreparedArtwork {
+        let (identity, ready) = self.pipeline.binding_identity_and_ready(&source, &request);
+        PreparedArtwork {
+            identity,
+            ready,
+            source,
+            request,
+        }
+    }
+
+    pub fn request_prepared(
+        &self,
+        prepared: PreparedArtwork,
+    ) -> Result<ArtworkProjection, ArtworkError> {
+        self.request(prepared.source, prepared.request)
+    }
+
+    pub fn allocate_prefetch_owner(&self) -> PrefetchOwner {
+        self.pipeline.allocate_prefetch_owner()
+    }
+
+    pub fn replace_prefetch(
+        &self,
+        owner: PrefetchOwner,
+        priority: PrefetchPriority,
+        source: SourceImages,
+        requests: Vec<ArtworkRequest>,
+    ) {
+        self.pipeline
+            .replace_prefetch(owner, priority, source, requests);
+    }
+
+    pub fn clear_prefetch(&self, owner: PrefetchOwner) {
+        self.pipeline.clear_prefetch(owner);
+    }
+
+    pub fn set_prefetch_paused(&self, priority: PrefetchPriority, paused: bool) {
+        self.pipeline.set_prefetch_paused(priority, paused);
+    }
+
     pub fn cancel(&self, request_id: RequestId) {
         self.pipeline.cancel(request_id);
     }
@@ -235,7 +293,7 @@ impl Artwork {
 
     pub fn resolve_public_album_url(
         &self,
-        candidates: &CandidateSet,
+        candidates: &ArtworkBinding,
         size: u32,
         external: &ExternalPolicy,
     ) -> Result<Option<String>, String> {

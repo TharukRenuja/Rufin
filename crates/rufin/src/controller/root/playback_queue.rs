@@ -3,7 +3,7 @@ pub(in crate::controller) fn load_folder_detail(
     store: &StoreHandle,
     runtime: &Runtime,
     active_source: &ActiveSourceSlot,
-    path: &[FolderPathItem],
+    path: &[FolderId],
 ) -> Result<FolderDetail, String> {
     let saved = store
         .with_store(|store| store.active_source())?
@@ -15,7 +15,7 @@ pub(in crate::controller) fn load_folder_detail(
         .folders
         .as_ref()
         .ok_or_else(|| "Folder browsing is not supported by the active source.".to_string())?;
-    let folder_id = path.last().map(|entry| &entry.id);
+    let folder_id = path.last();
     runtime
         .block_on(browser.folder(folder_id, selected_music_folder_id.as_ref()))
         .map_err(|error| error.to_string())
@@ -141,71 +141,6 @@ pub(in crate::controller) fn unique_millis() -> Option<u128> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_millis())
-}
-
-pub(in crate::controller) fn emit_snapshot_result(
-    store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
-    result: Result<(), String>,
-) {
-    if let Err(error) = result {
-        let _sent = events.send(ControllerEvent::Error(error));
-        return;
-    }
-    match load_snapshot(store) {
-        Ok(snapshot) => {
-            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-        }
-        Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
-        }
-    }
-}
-
-pub(in crate::controller) fn emit_playlist_changed_result(
-    store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
-    playlist_id: PlaylistId,
-    result: Result<(), String>,
-) {
-    if let Err(error) = result {
-        let _sent = events.send(ControllerEvent::Error(error));
-        return;
-    }
-    match load_snapshot(store) {
-        Ok(snapshot) => {
-            let _sent = events.send(ControllerEvent::PlaylistChanged {
-                playlist_id,
-                snapshot: Box::new(snapshot),
-            });
-        }
-        Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
-        }
-    }
-}
-
-pub(in crate::controller) fn emit_smart_playlist_changed_result(
-    store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
-    smart_playlist_id: SmartPlaylistId,
-    result: Result<(), String>,
-) {
-    if let Err(error) = result {
-        let _sent = events.send(ControllerEvent::Error(error));
-        return;
-    }
-    match load_snapshot(store) {
-        Ok(snapshot) => {
-            let _sent = events.send(ControllerEvent::SmartPlaylistChanged {
-                smart_playlist_id,
-                snapshot: Box::new(snapshot),
-            });
-        }
-        Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
-        }
-    }
 }
 
 pub(in crate::controller) fn config_dir() -> Option<PathBuf> {

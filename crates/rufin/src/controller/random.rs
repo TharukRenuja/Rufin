@@ -1,40 +1,19 @@
-use library::{GenreId, Track};
-use playback::{Placement, Provenance};
-use sources::{PlayedFilter, RandomTrackRequest};
+use library::Track;
+use playback::{Provenance, RandomPlayRequest};
+use sources::{RandomTrackDomain, RandomTrackRequest};
+use tracing::warn;
 
-use crate::source_setup::{RandomTrackDomain, current_active_source, selected_active_source};
+use crate::source_setup::{current_active_source, selected_active_source};
 
-use super::{AppController, ControllerEvent, source_tracks::hydrate_source_tracks};
+use super::{root::PlaybackCommands, source_tracks::hydrate_source_tracks};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RandomPlayAction {
-    PlayNext,
-    PlayNow,
-    AddLast,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RandomPlayRequest {
-    pub action: RandomPlayAction,
-    pub limit: usize,
-    pub min_year: Option<u16>,
-    pub max_year: Option<u16>,
-    pub genre_id: Option<GenreId>,
-    pub genre_name: Option<String>,
-    pub played_filter: PlayedFilter,
-}
-
-impl AppController {
+impl PlaybackCommands {
     pub(crate) fn random_track_domain(&self) -> Option<RandomTrackDomain> {
         current_active_source(&self.active_source).map(|active| active.random_tracks.domain)
     }
 
-    pub fn play_random_tracks(&self, request: RandomPlayRequest) {
-        let placement = match request.action {
-            RandomPlayAction::PlayNow => Placement::Replace { anchor_index: 0 },
-            RandomPlayAction::PlayNext => Placement::AfterCurrent,
-            RandomPlayAction::AddLast => Placement::End,
-        };
+    pub fn play_random(&self, request: RandomPlayRequest) {
+        let placement = request.placement.into();
         let reservation = match self.reserve_queue_materialization(placement) {
             Ok(reservation) => reservation,
             Err(error) => {
@@ -95,6 +74,7 @@ impl AppController {
     }
 
     fn emit_random_error(&self, error: impl Into<String>) {
-        let _sent = self.events.send(ControllerEvent::Error(error.into()));
+        let error = error.into();
+        warn!(%error, "random play request failed");
     }
 }

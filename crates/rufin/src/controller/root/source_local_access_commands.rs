@@ -1,12 +1,12 @@
 use super::*;
-use crate::source_setup::PreparedSourceSettingsUpdate;
 #[cfg(test)]
-use crate::source_setup::{
-    AuthenticatedSource, CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput,
-};
+use crate::source_setup::AuthenticatedSource;
+use crate::source_setup::PreparedSourceSettingsUpdate;
 use playback::SessionCommand;
+#[cfg(test)]
+use sources::{CredentialHostInput, CredentialSettingsInput, JellyfinSettingsInput};
 
-impl AppController {
+impl SourceCommands {
     pub fn save_source_local_access(
         &self,
         source_id: SourceId,
@@ -16,12 +16,17 @@ impl AppController {
     ) {
         let controller = self.clone();
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_local_access = self.source_events.local_access.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
         thread::spawn(move || {
+            let emit_failure = |error| {
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
+                    source_id: Some(source_id.clone()),
+                    error,
+                });
+            };
             let Some(root_path) = root_path.to_str().map(ToString::to_string) else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "Could not use the selected local folder path.".to_string(),
-                ));
+                emit_failure("Could not use the selected local folder path.".to_string());
                 return;
             };
             let path_replace_to =
@@ -37,15 +42,18 @@ impl AppController {
             }) {
                 Ok(changed) => changed,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    emit_failure(error);
                     return;
                 }
             };
             let current = sync_target_is_current(&store, &matched_source_id);
             if current {
-                controller.send_session_command(SessionCommand::StreamInputsChanged);
+                send_session_command_to_slot(
+                    &controller.playback_product,
+                    SessionCommand::StreamInputsChanged,
+                );
             }
-            emit_snapshot(&store, &events);
+            emit_source_local_access(&store, &source_local_access, &matched_source_id);
             if changed && current {
                 controller.refresh_source_freshness();
             }
@@ -81,21 +89,27 @@ impl AppController {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
+        let source_presentation = self.source_events.presentation.clone();
+        let source_notice = self.source_events.notice.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
+        let playback_projection = self.playback_projection.clone();
         let active_source = Arc::clone(&self.active_source);
         thread::spawn(move || {
             let current = || source_transitions.current(transition_generation);
             let emit_current_error = |error| {
                 if current() {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    let _sent =
+                        source_transition_failure.try_send(sources::SourceTransitionFailed {
+                            source_id: Some(source_id.clone()),
+                            error,
+                        });
                 }
             };
             let saved = match store.with_store(|store| store.stored_source(&source_id)) {
                 Ok(Some(saved)) => saved,
                 Ok(None) => {
                     if current() {
-                        let _sent =
-                            events.send(ControllerEvent::SourceNotice(SourceNotice::NoChanges));
+                        let _sent = source_notice.try_send(SourceNotice::NoChanges);
                     }
                     return;
                 }
@@ -105,9 +119,9 @@ impl AppController {
                 }
             };
             let authentication_started = || {
-                let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::Checking {
+                let _sent = source_notice.try_send(SourceNotice::Checking {
                     source_name: source_name.to_string(),
-                }));
+                });
             };
             let prepared = match prepare(&runtime, &store, &secrets, saved, &authentication_started)
             {
@@ -126,7 +140,7 @@ impl AppController {
             }) = prepared
             else {
                 if current() {
-                    let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::NoChanges));
+                    let _sent = source_notice.try_send(SourceNotice::NoChanges);
                 }
                 return;
             };
@@ -139,7 +153,10 @@ impl AppController {
                 }
             };
             let emit_error = |error| {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
+                    source_id: Some(source_id.clone()),
+                    error,
+                });
             };
             let current_saved = match store.with_store(|store| store.stored_source(&source_id)) {
                 Ok(current) => current,
@@ -184,26 +201,38 @@ impl AppController {
                 drop(current);
             }
             if identity_changed {
-                if let Err(error) = controller.invalidate_artwork_source(&source_id) {
+                if let Err(error) =
+                    crate::controller::artwork::invalidate_source(&controller.artwork, &source_id)
+                {
                     warn!(%error, %source_id, "failed to invalidate replaced source artwork");
                 }
                 if selected {
-                    let projection = match controller.activate_playback_source(&saved.source_id) {
+                    let projection = match activate_playback_source(
+                        &controller.store,
+                        &controller.runtime,
+                        &controller.active_source,
+                        &controller.secrets,
+                        &controller.artwork,
+                        &controller.library_events,
+                        &controller.playback_projection,
+                        &controller.playback_product,
+                        &saved.source_id,
+                    ) {
                         Ok(projection) => projection,
                         Err(error) => {
                             emit_error(error);
                             return;
                         }
                     };
-                    let _sent = events.send(ControllerEvent::PlaybackProduct(Box::new(projection)));
+                    let _sent = playback_projection.try_send(projection);
                 }
             }
             if selected {
                 controller.refresh_source_freshness();
             }
-            let _sent = events.send(ControllerEvent::SourceNotice(SourceNotice::SettingsSaved));
+            let _sent = source_notice.try_send(SourceNotice::SettingsSaved);
             if !selected {
-                emit_snapshot(&store, &events);
+                emit_source_presentation(&store, &source_presentation);
             }
             drop(transition_commit);
         });
@@ -212,19 +241,42 @@ impl AppController {
     pub fn clear_source_local_access(&self, source_id: SourceId) {
         let controller = self.clone();
         let store = self.store.clone();
-        let events = self.events.clone();
+        let source_local_access = self.source_events.local_access.clone();
+        let source_transition_failure = self.source_events.transition_failure.clone();
         thread::spawn(move || {
             if let Err(error) =
                 store.with_store(|store| store.clear_source_local_access(&source_id))
             {
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = source_transition_failure.try_send(sources::SourceTransitionFailed {
+                    source_id: Some(source_id.clone()),
+                    error,
+                });
                 return;
             }
             if sync_target_is_current(&store, &source_id) {
-                controller.send_session_command(SessionCommand::StreamInputsChanged);
+                send_session_command_to_slot(
+                    &controller.playback_product,
+                    SessionCommand::StreamInputsChanged,
+                );
             }
-            emit_snapshot(&store, &events);
+            emit_source_local_access(&store, &source_local_access, &source_id);
         });
+    }
+}
+
+fn emit_source_local_access(
+    store: &StoreHandle,
+    sender: &Sender<SourceLocalAccessPresentation>,
+    source_id: &SourceId,
+) {
+    match load_source_local_access_presentation(store, source_id) {
+        Ok(Some(presentation)) => {
+            let _sent = sender.try_send(presentation);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            warn!(%error, %source_id, "failed to refresh source local-access presentation");
+        }
     }
 }
 

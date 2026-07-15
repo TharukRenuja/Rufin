@@ -1,0 +1,525 @@
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+use adw::prelude::*;
+use playback::WaveformProjection;
+use sources::ServerDiscoveryStatus;
+use tracing::info;
+
+use crate::favorites::FavoriteState;
+use crate::player::desktop::DesktopState;
+use crate::player::desktop::lifecycle::install_playback_shutdown;
+use crate::player::lyrics::search::connect_lyrics_search_controls;
+use crate::player::lyrics::state::LyricsState;
+use crate::player::queue::QueueState;
+use crate::player::right_panel::RightPanelWidgets;
+use crate::player::state::PlaybackState;
+#[cfg(unix)]
+use crate::player::{MprisAdapter, install_mpris, install_tray, present_initial_window};
+use crate::player::{
+    PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
+    build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
+    connect_player_controls, connect_queue_lyrics_split, connect_queue_panel_controls,
+    default_audio_output_options, warm_audio_output_cache,
+};
+use crate::preferences::PreferencesState;
+use crate::preferences::dialogs::release_notes::schedule_release_toast;
+use crate::preferences::persistence::SettingsState;
+use crate::preferences::source::selector::{build_source_selector, update_source_selector};
+use crate::preferences::source::{LibraryLoad, SourceState};
+use crate::routes::LibraryState;
+use crate::routes::playlist_picker::PlaylistPickerState;
+use crate::routes::route::Route;
+use crate::runtime::RuntimeInputs;
+use localization::{effective_language_preference, set_language_preference, tr};
+
+use super::Shell;
+use super::actions::{ControlFeedbackState, connect_shell_actions};
+use super::chrome::{
+    WindowChrome, build_content_chrome, build_main_area, window_drag_handle_with_child,
+};
+use super::cover::{ArtworkState, SourceWarmState, presentation::next_home_showcase_seed};
+use super::events::install_product_event_receivers;
+use super::layout::{
+    COMPACT_RAIL_WIDTH, MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
+    ShellLayoutState,
+};
+use super::localization::LocalizationState;
+use super::navigation::{
+    NavigationState, NavigationWidgets, PrimaryMenuWidgets, build_compact_navigation,
+    build_normal_navigation,
+};
+use super::route::{RouteStack, RouteViewport};
+use super::startup::StartupState;
+use super::window_state::{initial_window_size, install_window_state_persistence};
+
+fn sidebar_scroll_slot(width: i32, child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
+    let slot = gtk::ScrolledWindow::new();
+    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
+    slot.set_width_request(width);
+    slot.set_min_content_width(width);
+    slot.set_max_content_width(width);
+    slot.set_propagate_natural_width(false);
+    slot.set_propagate_natural_height(false);
+    slot.set_hexpand(false);
+    slot.set_vexpand(true);
+    slot.set_child(Some(child));
+    slot
+}
+
+fn sidebar_resize_handle() -> gtk::Box {
+    let handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    handle.add_css_class("sidebar-resize-handle");
+    handle.set_width_request(8);
+    handle.set_halign(gtk::Align::Start);
+    handle.set_valign(gtk::Align::Fill);
+    handle.set_vexpand(true);
+    handle.set_focusable(true);
+    handle.set_cursor_from_name(Some("col-resize"));
+    let label = tr("Hold and drag to resize");
+    handle.update_property(&[gtk::accessible::Property::Label(&label)]);
+    handle
+}
+
+pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
+    crate::application::style::install_css();
+
+    let loaded_at = std::time::Instant::now();
+    let RuntimeInputs {
+        products,
+        settings: settings_handle,
+        receivers,
+        source: library,
+        playback,
+    } = inputs;
+    let settings = settings_handle.load();
+    info!(
+        first_run = library.first_run,
+        elapsed_ms = loaded_at.elapsed().as_millis(),
+        "loaded music source presentation"
+    );
+    let first_run = library.first_run;
+    let defer_initial_route = !first_run;
+    let initial_load = library
+        .source
+        .as_ref()
+        .filter(|_| !library.cache.is_committed() && !first_run)
+        .map(|source| LibraryLoad::WaitingForFirstCommit {
+            source_id: source.id.clone(),
+        })
+        .unwrap_or(LibraryLoad::Ready);
+    let language_preference = effective_language_preference(&settings.language);
+    set_language_preference(&language_preference);
+    let library_query = library
+        .source
+        .as_ref()
+        .map(|source| products.library.query(source.id.clone()));
+    let (player, queue) = playback
+        .map(|projection| (Some(projection.view), projection.queue_page))
+        .unwrap_or((None, None));
+    let settings_state = SettingsState {
+        current: RefCell::new(settings.clone()),
+        persistence: settings_handle,
+    };
+    let navigation = NavigationState {
+        routes: RefCell::new(RouteStack::new(Route::Home)),
+    };
+    let library_state = LibraryState {
+        query: RefCell::new(library_query),
+        home_showcase_seed: Cell::new(next_home_showcase_seed()),
+        next_home_showcase_seed: Cell::new(next_home_showcase_seed()),
+        prepared_home_explore: RefCell::new(None),
+        pending_home_explore: RefCell::new(None),
+    };
+    let source = SourceState {
+        presentation: RefCell::new(library),
+        load: RefCell::new(initial_load),
+        syncs: RefCell::new(HashMap::new()),
+        discovered_servers: RefCell::new(Vec::new()),
+        discovery_status: RefCell::new(ServerDiscoveryStatus::Idle),
+        discovery_running: Cell::new(false),
+        discovery_started: Cell::new(false),
+        add_server: RefCell::new(None),
+        reconnect_toasts_shown: RefCell::new(HashSet::new()),
+        sync_toasts: RefCell::new(HashMap::new()),
+    };
+    let startup = StartupState {
+        route_revealed: Cell::new(!defer_initial_route),
+        reveal_deadline: RefCell::new(None),
+    };
+    let playback_state = PlaybackState {
+        player: RefCell::new(player),
+        waveform: RefCell::new(WaveformProjection::default()),
+        updating_controls: Cell::new(false),
+        volume_persist_source: RefCell::new(None),
+        seek_preview_seconds: Cell::new(None),
+        seek_generation: Cell::new(0),
+        audio_output_options: RefCell::new(default_audio_output_options()),
+        audio_output_refresh_running: Cell::new(false),
+        audio_output_refresh_generation: Cell::new(0),
+        audio_output_refreshed_at: Cell::new(None),
+    };
+    let queue_state = QueueState::new(queue);
+    let lyrics_state = LyricsState {
+        current: RefCell::new(None),
+        loading_media: RefCell::new(None),
+        auto_search_attempted: RefCell::new(HashSet::new()),
+        timing_generation: Cell::new(0),
+        timing_source: RefCell::new(None),
+        panel_visible: Cell::new(settings.lyrics_panel_visible),
+        search_dialog: RefCell::new(None),
+    };
+    let preferences = PreferencesState {
+        dialog: RefCell::new(None),
+        release_notes: RefCell::new(Vec::new()),
+    };
+    let playlist_picker = PlaylistPickerState {
+        active: RefCell::new(None),
+    };
+    let control_feedback = ControlFeedbackState {
+        generation: Rc::new(Cell::new(0)),
+    };
+    let localization = LocalizationState {
+        bindings: RefCell::new(Vec::new()),
+    };
+    let desktop = DesktopState {
+        #[cfg(unix)]
+        mpris: Rc::new(MprisAdapter::new()),
+        notification_id: Cell::new(0),
+        notification_run: Cell::new(None),
+        #[cfg(unix)]
+        tray: RefCell::new(None),
+        #[cfg(unix)]
+        tray_command_source: RefCell::new(None),
+    };
+    let artwork = ArtworkState {
+        startup_prime_pending: RefCell::new(HashSet::new()),
+        bindings: RefCell::new(HashMap::new()),
+        live_bindings: RefCell::new(HashMap::new()),
+        route_interaction: Rc::new(Default::default()),
+        source_warm: Rc::new(SourceWarmState::new(
+            products.artwork.allocate_prefetch_owner(),
+        )),
+    };
+    let favorites = FavoriteState::default();
+
+    let (window_width, window_height) =
+        initial_window_size(settings.window_width, settings.window_height);
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Rufin")
+        .default_width(window_width)
+        .default_height(window_height)
+        .build();
+
+    let root_stack = gtk::Stack::new();
+    root_stack.add_css_class("app-root");
+    root_stack.set_width_request(MIN_APP_WINDOW_WIDTH);
+    root_stack.set_height_request(MIN_APP_WINDOW_HEIGHT);
+    root_stack.set_hhomogeneous(false);
+    root_stack.set_vhomogeneous(false);
+    root_stack.set_interpolate_size(false);
+    root_stack.set_hexpand(true);
+    root_stack.set_vexpand(true);
+
+    let app_root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    app_root.add_css_class("app-root");
+    app_root.set_hexpand(true);
+    app_root.set_vexpand(true);
+
+    let app_content_stack = gtk::Stack::new();
+    app_content_stack.add_css_class("app-content-stack");
+    app_content_stack.set_hhomogeneous(false);
+    app_content_stack.set_vhomogeneous(false);
+    app_content_stack.set_interpolate_size(false);
+    app_content_stack.set_hexpand(true);
+    app_content_stack.set_vexpand(true);
+
+    let app_content_overlay = gtk::Overlay::new();
+    app_content_overlay.set_hexpand(true);
+    app_content_overlay.set_vexpand(true);
+
+    let login_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    login_host.add_css_class("login-root");
+    login_host.set_hexpand(true);
+    login_host.set_vexpand(true);
+
+    let startup_loading_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    startup_loading_host.add_css_class("startup-loading-root");
+    startup_loading_host.set_hexpand(true);
+    startup_loading_host.set_vexpand(true);
+
+    let upper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    upper.set_hexpand(true);
+    upper.set_vexpand(true);
+
+    let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    normal_nav.add_css_class("wide-sidebar");
+    normal_nav.set_hexpand(true);
+    normal_nav.set_vexpand(true);
+    normal_nav.set_width_request(1);
+    let normal_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &normal_nav);
+    normal_nav_handle.set_vexpand(true);
+    normal_nav_handle.set_valign(gtk::Align::Fill);
+    let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav_handle);
+    normal_nav_slot.set_width_request(1);
+    normal_nav_slot.set_min_content_width(1);
+    normal_nav_slot.set_max_content_width(-1);
+    normal_nav_slot.add_css_class("sidebar-pane");
+    normal_nav_slot.add_css_class("wide-sidebar-slot");
+
+    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    compact_nav.add_css_class("compact-rail");
+    compact_nav.set_hexpand(false);
+    compact_nav.set_vexpand(true);
+    compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
+    let compact_nav_handle = window_drag_handle_with_child("sidebar-drag-handle", &compact_nav);
+    compact_nav_handle.set_vexpand(true);
+    compact_nav_handle.set_valign(gtk::Align::Fill);
+    let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav_handle);
+    compact_nav_slot.add_css_class("sidebar-pane");
+    compact_nav_slot.add_css_class("compact-rail-slot");
+    let server_selector = build_source_selector();
+    let normal_main_menu = gtk::Button::new();
+    let compact_main_menu = gtk::Button::new();
+
+    let main_area_parts = build_main_area();
+    let main_area = main_area_parts.root;
+    let route_host = main_area_parts.route_host;
+
+    let right_panel_parts = build_right_panel();
+    let right_panel = right_panel_parts.root;
+    let queue_panel = right_panel_parts.queue_panel;
+    let queue_search = right_panel_parts.queue_search;
+    let queue_clear_button = right_panel_parts.queue_clear_button;
+    let queue_lyrics_split = right_panel_parts.queue_lyrics_split;
+    let lyrics_pane = right_panel_parts.lyrics_pane;
+
+    let content_chrome = build_content_chrome(&main_area, &right_panel);
+    let right_split = content_chrome.right_split;
+    let right_panel_slot = content_chrome.right_panel_slot;
+    let right_resize_handle = content_chrome.right_resize_handle;
+    let tiny_nav_button = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    tiny_nav_button.add_css_class("icon-button");
+    tiny_nav_button.add_css_class("flat");
+    tiny_nav_button.add_css_class("circular");
+    tiny_nav_button.add_css_class("tiny-sidebar-button");
+    tiny_nav_button.set_tooltip_text(Some(&tr("Show sidebar")));
+    tiny_nav_button.update_property(&[gtk::accessible::Property::Label(&tr("Show sidebar"))]);
+    tiny_nav_button.set_halign(gtk::Align::Start);
+    tiny_nav_button.set_valign(gtk::Align::End);
+    tiny_nav_button.set_margin_start(8);
+    tiny_nav_button.set_margin_bottom(8);
+    tiny_nav_button.set_visible(false);
+    content_chrome.root.add_overlay(&tiny_nav_button);
+    content_chrome
+        .root
+        .set_measure_overlay(&tiny_nav_button, false);
+    let fullscreen_player = build_fullscreen_player();
+    let player_controls = build_bottom_player();
+
+    let content_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    content_row.set_hexpand(true);
+    content_row.set_vexpand(true);
+    content_row.append(&compact_nav_slot);
+    content_row.append(&content_chrome.root);
+
+    let split_view = adw::OverlaySplitView::new();
+    split_view.set_hexpand(true);
+    split_view.set_vexpand(true);
+    split_view.set_enable_hide_gesture(false);
+    split_view.set_enable_show_gesture(false);
+    split_view.set_min_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
+    split_view.set_max_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
+    split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
+    split_view.set_sidebar(Some(&normal_nav_slot));
+    split_view.set_content(Some(&content_row));
+
+    let shell_layout = gtk::Overlay::new();
+    shell_layout.set_hexpand(true);
+    shell_layout.set_vexpand(true);
+    shell_layout.set_child(Some(&split_view));
+    let left_resize_handle = sidebar_resize_handle();
+    shell_layout.add_overlay(&left_resize_handle);
+    shell_layout.set_measure_overlay(&left_resize_handle, false);
+    upper.append(&shell_layout);
+
+    app_content_stack.add_named(&upper, Some("main"));
+    app_content_overlay.set_child(Some(&app_content_stack));
+    app_content_overlay.add_overlay(&fullscreen_player.root);
+    app_content_overlay.set_measure_overlay(&fullscreen_player.root, false);
+
+    app_root.append(&app_content_overlay);
+    let bottom_player_handle =
+        window_drag_handle_with_child("bottom-player-drag-handle", &player_controls.root);
+    app_root.append(&bottom_player_handle);
+
+    root_stack.add_named(&login_host, Some("login"));
+    root_stack.add_named(&startup_loading_host, Some("startup-loading"));
+    let app_root_overlay = gtk::Overlay::new();
+    app_root_overlay.set_hexpand(true);
+    app_root_overlay.set_vexpand(true);
+    app_root_overlay.set_child(Some(&app_root));
+    let control_feedback_label = gtk::Label::new(None);
+    control_feedback_label.add_css_class("control-feedback-toast");
+    control_feedback_label.set_halign(gtk::Align::Center);
+    control_feedback_label.set_valign(gtk::Align::End);
+    control_feedback_label.set_visible(false);
+    app_root_overlay.add_overlay(&control_feedback_label);
+    app_root_overlay.set_measure_overlay(&control_feedback_label, false);
+
+    root_stack.add_named(&app_root_overlay, Some("app"));
+    let layout_state = ShellLayoutState::new(&root_stack);
+    let quick_toast_overlay = adw::ToastOverlay::new();
+    quick_toast_overlay.add_css_class("quick-toast-overlay");
+    quick_toast_overlay.set_child(Some(&layout_state.owner));
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.add_css_class("app-toast-overlay");
+    toast_overlay.set_child(Some(&quick_toast_overlay));
+    window.set_content(Some(&toast_overlay));
+
+    let normal_main_menu_connection = normal_main_menu.clone();
+    let compact_main_menu_connection = compact_main_menu.clone();
+    let chrome = WindowChrome {
+        application: app.clone(),
+        window,
+        toast_overlay,
+        quick_toast_overlay,
+        control_feedback_label,
+        root_stack,
+        app_root_overlay,
+        app_root,
+        app_content_stack,
+        login_host,
+        startup_loading_host,
+    };
+    let navigation_view = NavigationWidgets {
+        split_view,
+        left_resize_handle,
+        normal_nav_slot,
+        compact_nav_slot,
+        tiny_nav_button,
+        normal_nav,
+        compact_nav,
+        server_selector,
+        normal_main_menu: PrimaryMenuWidgets {
+            button: normal_main_menu,
+            popover: RefCell::new(None),
+            click_handler: RefCell::new(None),
+        },
+        compact_main_menu: PrimaryMenuWidgets {
+            button: compact_main_menu,
+            popover: RefCell::new(None),
+            click_handler: RefCell::new(None),
+        },
+    };
+    let route_viewport = RouteViewport::new(route_host);
+    let right_panel = RightPanelWidgets {
+        right_split,
+        right_panel_slot,
+        right_resize_handle,
+        root: right_panel,
+        queue_panel,
+        queue_search,
+        queue_clear_button,
+        queue_lyrics_split,
+        lyrics_pane,
+    };
+    let player_view = PlayerDesktopWidgets {
+        fullscreen_player,
+        player_controls,
+    };
+
+    let shell = Rc::new(Shell {
+        settings: settings_state,
+        navigation,
+        library: library_state,
+        source,
+        startup,
+        playback: playback_state,
+        queue: queue_state,
+        lyrics: lyrics_state,
+        preferences,
+        playlist_picker,
+        control_feedback,
+        localization,
+        desktop,
+        artwork,
+        favorites,
+        products,
+        chrome,
+        layout_state,
+        navigation_view,
+        route_viewport,
+        right_panel,
+        player_view,
+    });
+
+    build_normal_navigation(&shell);
+    build_compact_navigation(&shell);
+    shell.install_locale_bindings();
+    update_source_selector(&shell);
+    {
+        let split_view = shell.navigation_view.split_view.clone();
+        shell
+            .navigation_view
+            .tiny_nav_button
+            .connect_clicked(move |_| split_view.set_show_sidebar(true));
+    }
+    connect_shell_actions(
+        &shell,
+        normal_main_menu_connection,
+        compact_main_menu_connection,
+    );
+    install_playback_shutdown(
+        &shell.chrome.application,
+        &shell.products.playback.transport,
+    );
+    install_window_state_persistence(&shell);
+    #[cfg(unix)]
+    install_tray(&shell);
+    connect_queue_panel_controls(&shell);
+    connect_queue_lyrics_split(&shell);
+    shell.connect_type_to_search();
+    connect_lyrics_search_controls(&shell);
+    connect_fullscreen_player_controls(&shell);
+    connect_player_controls(&shell);
+    warm_audio_output_cache(&shell);
+    #[cfg(unix)]
+    install_mpris(&shell);
+    shell.update_layout();
+    if defer_initial_route {
+        shell.render_startup_loading_view();
+    } else {
+        shell.render_current_route();
+    }
+    shell.render_queue_panel();
+    shell.render_lyrics_panel();
+    shell.sync_bottom_player_favorite();
+    shell.update_bottom_player();
+    shell.update_fullscreen_player();
+    shell.update_right_panel_button();
+    shell.update_lyrics_panel_button();
+    if !shell.lyrics.panel_visible.get() {
+        apply_lyrics_panel_visibility(Rc::clone(&shell), false);
+    }
+    shell.request_initial_lyrics_if_needed();
+    install_product_event_receivers(&shell, receivers);
+    if settings.seekbar_waveform_enabled {
+        shell.products.playback.waveform.request_current();
+    }
+
+    shell.products.source.refresh_freshness();
+
+    #[cfg(unix)]
+    present_initial_window(&shell);
+    #[cfg(not(unix))]
+    shell.chrome.window.present();
+    shell.schedule_prepared_library_warm();
+    shell.schedule_source_artwork_warm();
+    schedule_release_toast(&shell);
+    if defer_initial_route && !shell.source.load.borrow().blocks_library() {
+        shell.schedule_startup_route_reveal();
+    }
+}

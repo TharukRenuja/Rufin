@@ -7,17 +7,18 @@ use std::collections::BTreeSet;
 pub(in crate::controller) const SYNC_CANCELLED_ERROR: &str = "Sync cancelled.";
 
 pub(in crate::controller) fn start_album_identity_lookup(
-    controller: &AppController,
+    store: &StoreHandle,
+    library_events: &LibraryEventSender,
     saved: &StoredSource,
     cache_revision: i64,
 ) {
-    let settings = load_settings_from_store(&controller.store);
-    if !settings.metadata.external_metadata_enabled || settings.private_mode {
+    let settings = load_settings_from_store(store);
+    if !settings.ui.metadata.external_metadata_enabled || settings.ui.private_mode {
         return;
     }
     let source_id = saved.source_id.clone();
-    let store = controller.store.clone();
-    let events = controller.events.clone();
+    let store = store.clone();
+    let library_events = library_events.clone();
     let submit = metadata_runner().and_then(|runner| {
         runner.submit(move || {
             let result = (|| {
@@ -40,7 +41,7 @@ pub(in crate::controller) fn start_album_identity_lookup(
                             return false;
                         }
                         let settings = load_settings_from_store(&store);
-                        settings.metadata.external_metadata_enabled && !settings.private_mode
+                        settings.ui.metadata.external_metadata_enabled && !settings.ui.private_mode
                     },
                     |candidate, change| {
                         store.with_store(|store| match change {
@@ -62,14 +63,15 @@ pub(in crate::controller) fn start_album_identity_lookup(
                     },
                 )?;
                 if !summary.updated.is_empty() {
-                    let _sent =
-                        events.send(ControllerEvent::LibraryDelta(Box::new(LibraryDelta {
+                    let _sent = library_events.try_send(library::LibraryEvent::Delta(Box::new(
+                        LibraryDelta {
                             albums: EntityDelta {
                                 fields: summary.updated.clone(),
                                 ..EntityDelta::default()
                             },
                             ..LibraryDelta::default()
-                        })));
+                        },
+                    )));
                 }
                 info!(
                     source_id = %source_id,
@@ -90,8 +92,12 @@ pub(in crate::controller) fn start_album_identity_lookup(
     }
 }
 
-pub(in crate::controller) fn refresh_queue_refs(controller: &AppController, saved: &StoredSource) {
-    let Some(product) = controller.playback_product_if_present() else {
+pub(in crate::controller) fn refresh_queue_refs(
+    store: &StoreHandle,
+    playback_product: &Arc<RwLock<Option<Arc<PlaybackProduct>>>>,
+    saved: &StoredSource,
+) {
+    let Some(product) = playback_product_if_present_from_slot(playback_product) else {
         return;
     };
     let Some(queued_track_ids) = product.queued_track_ids(&saved.source_id) else {
@@ -102,7 +108,7 @@ pub(in crate::controller) fn refresh_queue_refs(controller: &AppController, save
         .into_iter()
         .filter(|track_id| seen.insert(track_id.clone()))
         .collect::<Vec<_>>();
-    let Ok(tracks) = load_queued_track_facts(&controller.store, saved, &track_ids) else {
+    let Ok(tracks) = load_queued_track_facts(store, saved, &track_ids) else {
         warn!(source_id = %saved.source_id, "failed to refresh queued library facts after sync");
         return;
     };
@@ -140,23 +146,37 @@ pub(in crate::controller) fn sync_target_is_current(
 
 pub(in crate::controller) fn start_home_refresh_thread(
     context: HomeRefreshContext,
-    saved: StoredSource,
+    source_id: SourceId,
     target: HomeRefreshTarget,
 ) {
-    let source_id = saved.source_id.clone();
-    let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
-        return;
-    };
-    let permit = match context.home_refresh_in_flight.acquire(source_id) {
+    let permit = match context.home_refresh_in_flight.acquire(source_id.clone()) {
         Ok(Some(permit)) => permit,
         Ok(None) => return,
         Err(error) => {
-            let _sent = context.events.send(ControllerEvent::Error(error));
+            warn!(%error, %source_id, "failed to acquire Home refresh guard");
             return;
         }
     };
 
     thread::spawn(move || {
+        let saved = context
+            .store
+            .with_store(|store| store.active_source())
+            .ok()
+            .flatten()
+            .filter(|saved| saved.source_id == source_id);
+        let Some(saved) = saved else {
+            drop(permit);
+            return;
+        };
+        if saved_server_needs_auth(&context.secrets, &saved) {
+            drop(permit);
+            return;
+        }
+        let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
+            drop(permit);
+            return;
+        };
         let result = match target {
             HomeRefreshTarget::Section(kind) => refresh_home_section_for_active(
                 &context.store,
@@ -165,14 +185,13 @@ pub(in crate::controller) fn start_home_refresh_thread(
                 &active,
                 kind,
             ),
-        }
-        .and_then(|()| load_snapshot(&context.store).map(Box::new));
+        };
         drop(permit);
         match result {
-            Ok(snapshot) => {
+            Ok(()) => {
                 let _sent = context
-                    .events
-                    .send(home_refresh_completed_event(target, snapshot));
+                    .library_events
+                    .try_send(library::LibraryEvent::HomeSectionsChanged { source_id });
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
@@ -180,23 +199,10 @@ pub(in crate::controller) fn start_home_refresh_thread(
         }
     });
 }
-pub(in crate::controller) fn home_refresh_completed_event(
-    target: HomeRefreshTarget,
-    snapshot: Box<LibrarySnapshot>,
-) -> ControllerEvent {
-    ControllerEvent::HomeSectionsUpdated {
-        snapshot,
-        include_explore: matches!(target, HomeRefreshTarget::Section(HomeSectionKind::Explore)),
-    }
-}
 pub(in crate::controller) fn start_explore_prefetch_thread(
     context: ExplorePrefetchContext,
-    saved: StoredSource,
+    source_id: SourceId,
 ) {
-    let source_id = saved.source_id.clone();
-    let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
-        return;
-    };
     let permit = match context
         .explore_prefetch_in_flight
         .acquire(source_id.clone())
@@ -204,12 +210,30 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
         Ok(Some(permit)) => permit,
         Ok(None) => return,
         Err(error) => {
-            let _sent = context.events.send(ControllerEvent::Error(error));
+            warn!(%error, %source_id, "failed to acquire Explore prefetch guard");
             return;
         }
     };
 
     thread::spawn(move || {
+        let saved = context
+            .store
+            .with_store(|store| store.active_source())
+            .ok()
+            .flatten()
+            .filter(|saved| saved.source_id == source_id);
+        let Some(saved) = saved else {
+            drop(permit);
+            return;
+        };
+        if saved_server_needs_auth(&context.secrets, &saved) {
+            drop(permit);
+            return;
+        }
+        let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
+            drop(permit);
+            return;
+        };
         let result = prefetch_home_section_for_active(
             &context.store,
             &context.runtime,
@@ -221,8 +245,8 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
         match result {
             Ok(section) => {
                 let _sent = context
-                    .events
-                    .send(ControllerEvent::HomeSectionPrefetched { source_id, section });
+                    .library_events
+                    .try_send(library::LibraryEvent::HomeSectionPrefetched { source_id, section });
             }
             Err(error) => {
                 warn!(%error, "failed to prefetch Explore section");
@@ -232,24 +256,16 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
 }
 pub(in crate::controller) fn start_home_promotion(
     store: StoreHandle,
-    events: Sender<ControllerEvent>,
+    library_events: Sender<library::LibraryEvent>,
     source_id: SourceId,
     section: HomeSection,
 ) {
     thread::spawn(move || {
-        let result = promote_prefetched_home_section(&store, &source_id, &section)
-            .and_then(|()| load_snapshot(&store).map(Box::new));
-        match result {
-            Ok(snapshot) => {
-                let _sent = events.send(ControllerEvent::HomeSectionsUpdated {
-                    snapshot,
-                    include_explore: false,
-                });
-            }
-            Err(error) => {
-                warn!(%error, "failed to promote prefetched home section");
-            }
+        if let Err(error) = save_home_section_projection(&store, &source_id, &section) {
+            warn!(%error, "failed to promote prefetched home section");
         }
+        let _sent = library_events
+            .try_send(library::LibraryEvent::HomeSectionProjectionFinished { source_id, section });
     });
 }
 
@@ -537,7 +553,7 @@ pub(in crate::controller) async fn sync_local_source_with_events(
     store: &StoreHandle,
     source_id: &SourceId,
     source: &LocalSource,
-    events: Sender<ControllerEvent>,
+    library_sync_events: Sender<library_sync::LibrarySyncEvent>,
 ) -> Result<(), String> {
     let (generation, base_cache_revision) = store.with_store(|store| {
         Ok((
@@ -553,7 +569,7 @@ pub(in crate::controller) async fn sync_local_source_with_events(
         generation,
         base_cache_revision,
         &mut |progress| {
-            let _sent = events.send(ControllerEvent::SourceSyncChanged(
+            let _sent = library_sync_events.try_send(library_sync::LibrarySyncEvent::SyncChanged(
                 library_sync::SourceSyncChanged {
                     source_id: source_id.clone(),
                     epoch: 0,

@@ -140,7 +140,10 @@ async fn albums_map_subsonic_album_list() {
     );
     assert_eq!(page.items[0].release_date.as_deref(), Some("2024-01-01"));
     assert_eq!(page.items[0].date_added.as_deref(), Some("2024-03-02"));
-    assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
+    assert_eq!(
+        page.items[0].last_played.as_deref(),
+        Some("2024-04-02T09:10:11Z")
+    );
     assert_eq!(page.items[0].play_count, Some(12));
     assert_eq!(page.items[0].user_rating, Some(5));
     assert_eq!(page.items[0].release_types, vec!["album", "ep"]);
@@ -201,7 +204,10 @@ async fn album_map_meta() {
     assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-one");
     assert_eq!(detail.tracks[0].release_date.as_deref(), Some("2024-01-01"));
     assert_eq!(detail.tracks[0].date_added.as_deref(), Some("2024-03-03"));
-    assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
+    assert_eq!(
+        detail.tracks[0].last_played.as_deref(),
+        Some("2024-04-03T09:10:11Z")
+    );
     assert_eq!(detail.tracks[0].play_count, Some(7));
     assert_eq!(detail.tracks[0].user_rating, Some(4));
     assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));

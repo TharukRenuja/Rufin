@@ -1,7 +1,11 @@
 use crate::{
-    AlbumId, ArtistId, GenreId, MoodId, MusicFolderId, PlaylistId, SmartPlaylistId, Track, TrackId,
-    TrackSort,
+    AlbumId, ArtistId, GenreId, MoodId, MusicFolderId, PlaylistId, SmartPlaylistDefinition,
+    SmartPlaylistId, Track, TrackId, TrackSort,
 };
+
+pub fn smart_playlist_definition_fingerprint(definition: &SmartPlaylistDefinition) -> String {
+    serde_json::to_string(definition).unwrap_or_else(|_| "unavailable".to_string())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArtistTrackScope {
@@ -96,6 +100,15 @@ pub enum PlayContextOrder {
 pub struct PlayContext {
     pub descriptor: PlayContextDescriptor,
     pub order: PlayContextOrder,
+}
+
+pub fn context_id(context: &PlayContext) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in format!("{context:?}").bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("context:{hash:016x}")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

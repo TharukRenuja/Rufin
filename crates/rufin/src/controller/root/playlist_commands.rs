@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppController {
+impl LibraryCommands {
     pub fn playlist_creation_supported(&self) -> bool {
         current_active_source(&self.active_source).is_some()
     }
@@ -18,15 +18,13 @@ impl AppController {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!("cannot create a playlist without an active source");
                 return;
             };
             let track_ids = tracks
@@ -36,7 +34,7 @@ impl AppController {
             let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, "failed to resolve active source for playlist creation");
                     return;
                 }
             };
@@ -48,7 +46,7 @@ impl AppController {
                 {
                     Ok(playlist_id) => playlist_id,
                     Err(error) => {
-                        let _sent = events.send(ControllerEvent::Error(error));
+                        warn!(%error, "native playlist creation failed");
                         return;
                     }
                 },
@@ -77,40 +75,33 @@ impl AppController {
                     create_owner,
                 )
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_playlist_changed_result(&library_events, playlist.id.clone(), result);
         });
     }
     pub fn rename_playlist(&self, playlist_id: PlaylistId, name: String) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%playlist_id, "cannot rename a playlist without an active source");
                 return;
             };
-            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+            let Some(owner) = cached_playlist_owner(&store, &saved, &playlist_id) else {
                 return;
             };
             let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "failed to resolve active source for playlist rename");
                     return;
                 }
             };
-            if !playlist_operation_supported(
-                owner,
-                SourcePlaylistOperation::Rename,
-                &active,
-                &events,
-            ) {
+            if !playlist_operation_supported(owner, SourcePlaylistOperation::Rename, &active) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
@@ -121,7 +112,7 @@ impl AppController {
                     .block_on(executor.rename_playlist(&playlist_id, &name))
                     .map_err(|error| error.to_string());
                 if let Err(error) = result {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "native playlist rename failed");
                     return;
                 }
             }
@@ -134,40 +125,33 @@ impl AppController {
                 )?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_playlist_changed_result(&library_events, playlist_id, result);
         });
     }
     pub fn delete_playlist(&self, playlist_id: PlaylistId) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%playlist_id, "cannot delete a playlist without an active source");
                 return;
             };
-            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+            let Some(owner) = cached_playlist_owner(&store, &saved, &playlist_id) else {
                 return;
             };
             let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "failed to resolve active source for playlist deletion");
                     return;
                 }
             };
-            if !playlist_operation_supported(
-                owner,
-                SourcePlaylistOperation::Delete,
-                &active,
-                &events,
-            ) {
+            if !playlist_operation_supported(owner, SourcePlaylistOperation::Delete, &active) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
@@ -178,7 +162,7 @@ impl AppController {
                     .block_on(executor.delete_playlist(&playlist_id))
                     .map_err(|error| error.to_string());
                 if let Err(error) = result {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "native playlist deletion failed");
                     return;
                 }
             }
@@ -186,47 +170,51 @@ impl AppController {
                 store.delete_playlist_with_owner(&saved.source_id, &playlist_id, owner)?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_playlist_changed_result(&library_events, playlist_id, result);
         });
     }
     pub fn delete_smart_playlist(&self, smart_playlist_id: SmartPlaylistId) {
         let store = self.store.clone();
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%smart_playlist_id, "cannot delete a smart playlist without an active source");
                 return;
             };
             let result = store.with_store(|store| {
                 store.delete_smart_playlist(&saved.source_id, &smart_playlist_id)?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_smart_playlist_changed_result(&library_events, smart_playlist_id, result);
         });
     }
     pub fn restore_builtin_smart_playlist(&self, builtin: SmartPlaylistBuiltin) {
         let store = self.store.clone();
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(
+                    ?builtin,
+                    "cannot restore a smart playlist without an active source"
+                );
                 return;
             };
-            let result = store.with_store(|store| {
-                store.restore_builtin_smart_playlist(&saved.source_id, builtin)?;
-                Ok(())
-            });
-            emit_snapshot_result(&store, &events, result);
+            match store
+                .with_store(|store| store.restore_builtin_smart_playlist(&saved.source_id, builtin))
+            {
+                Ok(smart_playlist_id) => {
+                    emit_smart_playlist_changed_result(&library_events, smart_playlist_id, Ok(()))
+                }
+                Err(error) => {
+                    warn!(%error, ?builtin, "smart playlist restore failed");
+                }
+            }
         });
     }
     pub fn move_smart_playlist(
@@ -236,35 +224,31 @@ impl AppController {
         after: bool,
     ) {
         let store = self.store.clone();
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%dragged_id, %target_id, "cannot reorder smart playlists without an active source");
                 return;
             };
             let result = store.with_store(|store| {
                 store.reorder_smart_playlist(&saved.source_id, &dragged_id, &target_id, after)?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_smart_playlist_changed_result(&library_events, dragged_id, result);
         });
     }
     pub fn save_smart_playlist(&self, name: String, definition: SmartPlaylistDefinition) {
         let store = self.store.clone();
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!("cannot save a smart playlist without an active source");
                 return;
             };
             let id = SmartPlaylistId::new(format!(
@@ -275,7 +259,7 @@ impl AppController {
                 store.save_smart_playlist(&saved.source_id, &id, &name, &definition)?;
                 Ok(())
             });
-            emit_smart_playlist_changed_result(&store, &events, id, result);
+            emit_smart_playlist_changed_result(&library_events, id, result);
         });
     }
     pub fn update_smart_playlist(
@@ -285,15 +269,13 @@ impl AppController {
         definition: SmartPlaylistDefinition,
     ) {
         let store = self.store.clone();
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%smart_playlist_id, "cannot update a smart playlist without an active source");
                 return;
             };
             let result = store.with_store(|store| {
@@ -305,7 +287,7 @@ impl AppController {
                 )?;
                 Ok(())
             });
-            emit_smart_playlist_changed_result(&store, &events, smart_playlist_id, result);
+            emit_smart_playlist_changed_result(&library_events, smart_playlist_id, result);
         });
     }
     pub fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>) {
@@ -369,15 +351,13 @@ impl AppController {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
-        let events = self.events.clone();
+        let library_events = self.library_events.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_source())
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No active music source is saved.".to_string(),
-                ));
+                warn!(%playlist_id, "cannot mutate playlist entries without an active source");
                 return;
             };
             let before = match store
@@ -385,35 +365,33 @@ impl AppController {
             {
                 Ok(Some(detail)) => detail,
                 Ok(None) => {
-                    let _sent = events.send(ControllerEvent::Error(
-                        "The selected cached playlist was not found.".to_string(),
-                    ));
+                    warn!(%playlist_id, "cannot mutate missing cached playlist");
                     return;
                 }
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "failed to load playlist before mutation");
                     return;
                 }
             };
             let mut after = mutate(before.clone());
-            let Some(owner) = cached_playlist_owner(&store, &events, &saved, &playlist_id) else {
+            let Some(owner) = cached_playlist_owner(&store, &saved, &playlist_id) else {
                 return;
             };
             let active = match selected_active_source(&active_source, &saved.source_id) {
                 Ok(active) => active,
                 Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
+                    warn!(%error, %playlist_id, "failed to resolve active source for playlist mutation");
                     return;
                 }
             };
-            if !playlist_operation_supported(owner, operation, &active, &events) {
+            if !playlist_operation_supported(owner, operation, &active) {
                 return;
             }
             if owner == SourceFeatureOwner::Native {
                 match sync_playlist_mutation(&runtime, &active, operation, &before, &after) {
                     Ok(fresh) => after = fresh,
                     Err(error) => {
-                        let _sent = events.send(ControllerEvent::Error(error));
+                        warn!(%error, %playlist_id, "native playlist entry mutation failed");
                         return;
                     }
                 }
@@ -438,9 +416,37 @@ impl AppController {
                     owner,
                 )
             });
-            emit_playlist_changed_result(&store, &events, after.playlist.id.clone(), result);
+            emit_playlist_changed_result(&library_events, after.playlist.id.clone(), result);
         });
     }
+}
+
+fn emit_playlist_changed_result(
+    library_events: &Sender<library::LibraryEvent>,
+    playlist_id: PlaylistId,
+    result: Result<(), String>,
+) {
+    if let Err(error) = result {
+        warn!(%error, %playlist_id, "playlist mutation failed");
+        return;
+    }
+    let _sent = library_events.try_send(library::LibraryEvent::Delta(Box::new(
+        library::LibraryDelta::playlist_changed(playlist_id),
+    )));
+}
+
+fn emit_smart_playlist_changed_result(
+    library_events: &Sender<library::LibraryEvent>,
+    smart_playlist_id: SmartPlaylistId,
+    result: Result<(), String>,
+) {
+    if let Err(error) = result {
+        warn!(%error, %smart_playlist_id, "smart playlist mutation failed");
+        return;
+    }
+    let _sent = library_events.try_send(library::LibraryEvent::Delta(Box::new(
+        library::LibraryDelta::smart_playlist_changed(smart_playlist_id),
+    )));
 }
 
 fn write_playlist_snapshot_for_owner(
@@ -469,20 +475,17 @@ fn playlist_write_mode_for_owner(
 
 fn cached_playlist_owner(
     store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
     saved: &StoredSource,
     playlist_id: &PlaylistId,
 ) -> Option<SourceFeatureOwner> {
     match store.with_store(|store| store.playlist_owner(&saved.source_id, playlist_id)) {
         Ok(Some(owner)) => Some(owner),
         Ok(None) => {
-            let _sent = events.send(ControllerEvent::Error(
-                "The selected cached playlist was not found.".to_string(),
-            ));
+            warn!(%playlist_id, source_id = %saved.source_id, "cached playlist owner was not found");
             None
         }
         Err(error) => {
-            let _sent = events.send(ControllerEvent::Error(error));
+            warn!(%error, %playlist_id, source_id = %saved.source_id, "failed to load cached playlist owner");
             None
         }
     }
@@ -492,7 +495,6 @@ fn playlist_operation_supported(
     owner: SourceFeatureOwner,
     operation: SourcePlaylistOperation,
     active: &ActiveSource,
-    events: &Sender<ControllerEvent>,
 ) -> bool {
     if !active.supports_playlist_operation(operation, owner) {
         let message = format!(
@@ -500,7 +502,7 @@ fn playlist_operation_supported(
             playlist_operation_label(operation),
             playlist_owner_label(owner)
         );
-        let _sent = events.send(ControllerEvent::Error(message.to_string()));
+        warn!(%message, "unsupported playlist operation");
         false
     } else {
         true

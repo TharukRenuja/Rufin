@@ -222,7 +222,7 @@ pub(super) fn album_from_dto(source: &SubsonicSource, album: SubsonicAlbum) -> A
             .year
             .map(|year| format!("{}-01-01", year.clamp(0, i32::from(u16::MAX)))),
         date_added: normalized_date(album.created),
-        last_played: normalized_date(album.played),
+        last_played: normalized_timestamp(album.played),
         play_count: album
             .play_count
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
@@ -270,7 +270,7 @@ pub(super) fn track_from_dto(source: &SubsonicSource, song: SubsonicSong) -> Tra
             .year
             .map(|year| format!("{}-01-01", year.clamp(0, i32::from(u16::MAX)))),
         date_added: normalized_date(song.created),
-        last_played: normalized_date(song.played),
+        last_played: normalized_timestamp(song.played),
         play_count: song
             .play_count
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
@@ -330,7 +330,7 @@ pub(super) fn artist_from_dto(source: &SubsonicSource, artist: SubsonicArtist) -
         album_count: artist.album_count.unwrap_or_default(),
         track_count: artist.song_count.unwrap_or_default(),
         favorite: favorite(&artist.starred),
-        last_played: normalized_date(artist.played),
+        last_played: normalized_timestamp(artist.played),
         play_count: artist
             .play_count
             .map(|value| value.min(u64::from(u32::MAX)) as u32),
@@ -366,6 +366,13 @@ pub(super) fn normalized_date(value: Option<String>) -> Option<String> {
     }
     Some(value)
 }
+
+fn normalized_timestamp(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub(super) fn playlist_from_dto(source: &SubsonicSource, playlist: SubsonicPlaylist) -> Playlist {
     let raw_id = raw_id_string(&playlist.id);
     Playlist {

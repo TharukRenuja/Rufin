@@ -11,9 +11,13 @@ mod source_tracks;
 
 mod random;
 
+mod ports;
+pub(crate) use ports::runtime_inputs;
+
 mod root;
 
-pub use root::*;
-pub(crate) use root::{StoreHandle, load_settings_from_store};
-pub(crate) use root::{cached_auto_dj_operation, native_auto_dj_operation};
-pub(crate) use root::{local_sync_operation, remote_sync_operation};
+pub(crate) use root::{
+    LOCAL_SOURCE_IDENTITY_ID, SourceCommands, StoreHandle, cached_auto_dj_operation,
+    load_settings_from_store, local_sync_operation, native_auto_dj_operation,
+    remote_sync_operation,
+};

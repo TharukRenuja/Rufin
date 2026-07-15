@@ -2,12 +2,10 @@ mod active;
 pub(crate) use active::*;
 
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use domain::LibrarySourceSelection;
 use library::StoredSource;
 use library::{FolderDetail, FolderId, ImageRef, MusicFolderId, SourceId};
 use secrets::SecretStore;
@@ -23,87 +21,19 @@ use sources::subsonic::{
     SubsonicSource, SubsonicSourceConfig,
 };
 use sources::{
-    GeneratedTrackSeedKind, GeneratedTrackStrategy, ImageBytes, PlayedFilter, SourceIdentity,
-    StreamDescriptor, StreamRequest,
+    CredentialHostInput, CredentialHostPreset, CredentialSettingsInput, EditableSource,
+    JellyfinSettingsInput, JellyfinSetupInput, LocalFolderHostInput, SourceSettingsInput,
+    SourceSetupInput,
+};
+use sources::{
+    GeneratedTrackSeedKind, GeneratedTrackStrategy, ImageBytes, LibrarySourceSelection,
+    PlayedFilter, RandomTrackDomain, SourceIdentity, StreamDescriptor, StreamRequest,
 };
 use tokio::runtime::Runtime;
 
-use crate::controller::{AppController, StoreHandle};
-use crate::i18n::{msgid, tr};
-use crate::ui::{Shell, SourceSetupFlow};
+use crate::controller::{SourceCommands, StoreHandle};
 
 use sources::{CredentialSourceConfig, FolderBrowser, ImageProvider, MusicSource, StreamResolver};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SourcePickerPresentation {
-    pub(crate) title: &'static str,
-    pub(crate) icon_name: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SourceEntityKind {
-    Album,
-    Artist,
-}
-
-impl SourceEntityKind {
-    fn id_prefix(self) -> &'static str {
-        match self {
-            Self::Album => "album",
-            Self::Artist => "artist",
-        }
-    }
-}
-
-pub(crate) struct SourceEntityLink {
-    pub(crate) label: &'static str,
-    pub(crate) icon_name: &'static str,
-    pub(crate) url: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CredentialHostInput {
-    pub(crate) server_name: Option<String>,
-    pub(crate) server_url: String,
-    pub(crate) username: String,
-    pub(crate) password: String,
-    pub(crate) trust_invalid_cert: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CredentialHostPreset {
-    pub(crate) server_name: String,
-    pub(crate) server_url: String,
-    pub(crate) username: String,
-    pub(crate) trust_invalid_cert: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct JellyfinSetupInput {
-    pub(crate) credentials: CredentialHostInput,
-    pub(crate) use_instant_mix: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct LocalFolderHostInput {
-    pub(crate) roots: Vec<PathBuf>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CredentialSettingsInput {
-    pub(crate) source_id: SourceId,
-    pub(crate) name: String,
-    pub(crate) base_url: String,
-    pub(crate) username: String,
-    pub(crate) password: String,
-    pub(crate) trust_invalid_cert: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct JellyfinSettingsInput {
-    pub(crate) credentials: CredentialSettingsInput,
-    pub(crate) use_instant_mix: bool,
-}
 
 pub(crate) type LocalLoader = Arc<
     dyn Fn(
@@ -166,14 +96,11 @@ struct CredentialSettingsPreparation {
     common_changed: bool,
 }
 
-type SetupFlowFactory = fn(&Rc<Shell>) -> Rc<dyn SourceSetupFlow>;
-type SettingsGroupFactory = fn(&Rc<Shell>, &StoredSource) -> Result<gtk::Widget, String>;
 type ActivateConfigured =
     fn(&StoreHandle, &Arc<dyn SecretStore>, &StoredSource) -> Result<Arc<ActiveSource>, String>;
 type NeedsAuth = fn(&Arc<dyn SecretStore>, &StoredSource) -> Result<bool, String>;
 type ConfiguredForSync = fn(&StoreHandle, &StoredSource) -> bool;
 type SourceSelection = fn(&StoredSource) -> LibrarySourceSelection;
-type EntityLink = fn(&SourceIdentity, SourceEntityKind, &str) -> Option<SourceEntityLink>;
 type DecodeIdentity = fn(&StoredSource) -> Result<SourceIdentity, String>;
 type DecodeCredentials = fn(&StoredSource) -> Result<CredentialSourceConfig, String>;
 type EncodeCredentials = fn(&StoredSource, CredentialSourceConfig) -> Result<StoredSource, String>;
@@ -184,88 +111,56 @@ struct CredentialConfigCodec {
     encode: EncodeCredentials,
 }
 
-/// Everything needed to add, reconnect, load and show one saved source type
-pub(crate) struct SourceRegistration {
-    pub(crate) canonical_kind: &'static str,
-    pub(crate) picker: SourcePickerPresentation,
-    pub(crate) new_setup_flow: SetupFlowFactory,
-    pub(crate) settings_group: Option<SettingsGroupFactory>,
-    pub(crate) activate: ActivateConfigured,
-    pub(crate) needs_auth: NeedsAuth,
-    pub(crate) configured_for_sync: ConfiguredForSync,
-    pub(crate) selection: SourceSelection,
-    pub(crate) entity_link: Option<EntityLink>,
+/// Saved-configuration and executable-operation laws for one source type.
+struct SourceOperations {
+    canonical_kind: &'static str,
+    activate: ActivateConfigured,
+    needs_auth: NeedsAuth,
+    configured_for_sync: ConfiguredForSync,
+    selection: SourceSelection,
     identity: DecodeIdentity,
     credentials: Option<CredentialConfigCodec>,
 }
 
-static LOCAL: SourceRegistration = SourceRegistration {
+static LOCAL: SourceOperations = SourceOperations {
     canonical_kind: LOCAL_SOURCE_ID,
-    picker: SourcePickerPresentation {
-        title: msgid("Local"),
-        icon_name: "rufin-route-folders-symbolic",
-    },
-    new_setup_flow: local_setup_flow,
-    settings_group: None,
     activate: activate_local_registration,
     needs_auth: local_needs_auth,
     configured_for_sync: local_configured_for_sync,
     selection: local_selection,
-    entity_link: None,
     identity: decode_local_identity,
     credentials: None,
 };
-static JELLYFIN: SourceRegistration = SourceRegistration {
+static JELLYFIN: SourceOperations = SourceOperations {
     canonical_kind: JELLYFIN_SOURCE_ID,
-    picker: SourcePickerPresentation {
-        title: msgid("Jellyfin"),
-        icon_name: "io.github.screwys.Rufin.source.jellyfin",
-    },
-    new_setup_flow: jellyfin_setup_flow,
-    settings_group: Some(jellyfin_settings_group),
     activate: activate_jellyfin_registration,
     needs_auth: credential_needs_auth,
     configured_for_sync: always_configured_for_sync,
     selection: source_selection,
-    entity_link: Some(jellyfin_entity_link),
     identity: decode_jellyfin_identity,
     credentials: Some(CredentialConfigCodec {
         decode: decode_jellyfin_credentials,
         encode: encode_jellyfin_credentials,
     }),
 };
-static NAVIDROME: SourceRegistration = SourceRegistration {
+static NAVIDROME: SourceOperations = SourceOperations {
     canonical_kind: "navidrome",
-    picker: SourcePickerPresentation {
-        title: msgid("Navidrome"),
-        icon_name: "io.github.screwys.Rufin.source.navidrome",
-    },
-    new_setup_flow: navidrome_setup_flow,
-    settings_group: Some(navidrome_settings_group),
     activate: activate_subsonic_registration,
     needs_auth: credential_needs_auth,
     configured_for_sync: always_configured_for_sync,
     selection: source_selection,
-    entity_link: Some(navidrome_entity_link),
     identity: decode_subsonic_identity,
     credentials: Some(CredentialConfigCodec {
         decode: decode_subsonic_credentials,
         encode: encode_subsonic_credentials,
     }),
 };
-static SUBSONIC: SourceRegistration = SourceRegistration {
+static SUBSONIC: SourceOperations = SourceOperations {
     canonical_kind: "subsonic",
-    picker: SourcePickerPresentation {
-        title: msgid("OpenSubsonic"),
-        icon_name: "io.github.screwys.Rufin.source.opensubsonic",
-    },
-    new_setup_flow: subsonic_setup_flow,
-    settings_group: Some(subsonic_settings_group),
     activate: activate_subsonic_registration,
     needs_auth: credential_needs_auth,
     configured_for_sync: always_configured_for_sync,
     selection: source_selection,
-    entity_link: None,
     identity: decode_subsonic_identity,
     credentials: Some(CredentialConfigCodec {
         decode: decode_subsonic_credentials,
@@ -273,21 +168,22 @@ static SUBSONIC: SourceRegistration = SourceRegistration {
     }),
 };
 
-static REGISTRATIONS: [&SourceRegistration; 4] = [&JELLYFIN, &NAVIDROME, &SUBSONIC, &LOCAL];
+static SOURCE_OPERATIONS: [&SourceOperations; 4] = [&JELLYFIN, &NAVIDROME, &SUBSONIC, &LOCAL];
 
-pub(crate) fn source_registrations() -> &'static [&'static SourceRegistration] {
-    &REGISTRATIONS
-}
-
-pub(crate) fn default_source_registration() -> &'static SourceRegistration {
-    &JELLYFIN
-}
-
-pub(crate) fn resolve_source_registration(kind: &str) -> Option<&'static SourceRegistration> {
-    source_registrations()
+fn source_operations(kind: &str) -> Option<&'static SourceOperations> {
+    SOURCE_OPERATIONS
         .iter()
         .copied()
-        .find(|registration| registration.canonical_kind == kind)
+        .find(|operations| operations.canonical_kind == kind)
+}
+
+pub(crate) fn configured_source_supported(kind: &str) -> bool {
+    source_operations(kind).is_some()
+}
+
+pub(crate) fn configured_source_ready_for_sync(store: &StoreHandle, saved: &StoredSource) -> bool {
+    source_operations(&saved.kind)
+        .is_some_and(|operations| (operations.configured_for_sync)(store, saved))
 }
 
 fn decode_jellyfin_credentials(saved: &StoredSource) -> Result<CredentialSourceConfig, String> {
@@ -333,52 +229,69 @@ fn encode_subsonic_credentials(
 }
 
 fn credential_config(saved: &StoredSource) -> Result<CredentialSourceConfig, String> {
-    let registration = resolve_source_registration(&saved.kind)
+    let operations = source_operations(&saved.kind)
         .ok_or_else(|| "Saved source type is no longer supported.".to_string())?;
-    let codec = registration
+    let codec = operations
         .credentials
         .ok_or_else(|| "Saved source does not use credential settings.".to_string())?;
     (codec.decode)(saved)
 }
 
 fn replace_credential_config(
-    registration: &SourceRegistration,
+    operations: &SourceOperations,
     saved: &StoredSource,
     credentials: CredentialSourceConfig,
 ) -> Result<StoredSource, String> {
-    let codec = registration
+    let codec = operations
         .credentials
         .ok_or_else(|| "Saved source does not use credential settings.".to_string())?;
     (codec.encode)(saved, credentials)
 }
 
 fn source_account_id(saved: &StoredSource) -> Option<String> {
-    resolve_source_registration(&saved.kind)
-        .and_then(|registration| registration.credentials)
+    source_operations(&saved.kind)
+        .and_then(|operations| operations.credentials)
         .and_then(|codec| (codec.decode)(saved).ok())
         .map(|config| config.user_id)
 }
 
-pub(crate) fn configured_source_username(saved: &StoredSource) -> Option<String> {
-    credential_config(saved).ok().map(|config| config.username)
+pub(crate) fn editable_configured_source(saved: &StoredSource) -> Result<EditableSource, String> {
+    Ok(EditableSource {
+        source_id: saved.source_id.clone(),
+        kind: saved.kind.clone(),
+        credentials: credential_host_preset(saved)?,
+        jellyfin_use_instant_mix: if saved.kind == JELLYFIN_SOURCE_ID {
+            Some(
+                JellyfinSourceConfig::from_stored(saved)
+                    .map_err(|error| error.to_string())?
+                    .use_instant_mix,
+            )
+        } else {
+            None
+        },
+    })
 }
 
 pub(crate) fn configured_source_identity(saved: &StoredSource) -> Result<SourceIdentity, String> {
-    let registration = resolve_source_registration(&saved.kind)
+    let operations = source_operations(&saved.kind)
         .ok_or_else(|| "Saved source type is no longer supported.".to_string())?;
-    (registration.identity)(saved)
+    (operations.identity)(saved)
 }
 
 pub(crate) fn local_configured_source() -> StoredSource {
     LocalSourceConfig {
-        source: SourceIdentity {
-            id: SourceId::new(crate::controller::LOCAL_SOURCE_IDENTITY_ID),
-            kind: LOCAL_SOURCE_ID.to_string(),
-            name: "Local".to_string(),
-            base_url: String::new(),
-        },
+        source: local_source_identity(),
     }
     .into_stored()
+}
+
+pub(crate) fn local_source_identity() -> SourceIdentity {
+    SourceIdentity {
+        id: SourceId::new(crate::controller::LOCAL_SOURCE_IDENTITY_ID),
+        kind: LOCAL_SOURCE_ID.to_string(),
+        name: "Local".to_string(),
+        base_url: String::new(),
+    }
 }
 
 pub(crate) fn ensure_local_configured_source(store: &StoreHandle) -> Result<StoredSource, String> {
@@ -418,34 +331,53 @@ pub(crate) fn activate_configured_source(
     secrets: &Arc<dyn SecretStore>,
     saved: &StoredSource,
 ) -> Result<Arc<ActiveSource>, String> {
-    let registration = resolve_source_registration(&saved.kind)
+    let operations = source_operations(&saved.kind)
         .ok_or_else(|| "Saved source type is no longer supported.".to_string())?;
-    (registration.activate)(store, secrets, saved)
+    (operations.activate)(store, secrets, saved)
 }
 pub(crate) fn configured_source_needs_auth(
     secrets: &Arc<dyn SecretStore>,
     saved: &StoredSource,
 ) -> Result<bool, String> {
-    let registration = resolve_source_registration(&saved.kind)
+    let operations = source_operations(&saved.kind)
         .ok_or_else(|| "Saved source type is no longer supported.".to_string())?;
-    (registration.needs_auth)(secrets, saved)
+    (operations.needs_auth)(secrets, saved)
 }
 
 pub(crate) fn configured_source_selection(saved: &StoredSource) -> LibrarySourceSelection {
-    resolve_source_registration(&saved.kind).map_or_else(
+    source_operations(&saved.kind).map_or_else(
         || LibrarySourceSelection::Source(saved.source_id.clone()),
-        |registration| (registration.selection)(saved),
+        |operations| (operations.selection)(saved),
     )
 }
 
-fn configure_local(controller: &AppController, input: LocalFolderHostInput) {
-    controller.add_library_folders(input.roots);
+pub(crate) fn configure_source(controller: &SourceCommands, input: SourceSetupInput) {
+    match input {
+        SourceSetupInput::Jellyfin(input) => {
+            configure_jellyfin_source(controller, "Jellyfin", input);
+        }
+        SourceSetupInput::Subsonic {
+            flavor,
+            credentials,
+        } => configure_subsonic_source(flavor, controller, flavor.display_name(), credentials),
+        SourceSetupInput::Local(input) => configure_local_source(controller, input),
+    }
 }
 
-fn local_setup_flow(shell: &Rc<Shell>) -> Rc<dyn SourceSetupFlow> {
-    crate::ui::new_local_source_setup_flow(shell, &LOCAL, move |controller, roots| {
-        configure_local(controller, LocalFolderHostInput { roots });
-    })
+pub(crate) fn update_source(controller: &SourceCommands, input: SourceSettingsInput) {
+    match input {
+        SourceSettingsInput::Jellyfin(input) => {
+            update_jellyfin_settings(controller, "Jellyfin", input);
+        }
+        SourceSettingsInput::Subsonic {
+            flavor,
+            credentials,
+        } => update_subsonic_settings(flavor, controller, flavor.display_name(), credentials),
+    }
+}
+
+fn configure_local_source(controller: &SourceCommands, input: LocalFolderHostInput) {
+    controller.add_library_folders(input.roots);
 }
 
 fn activate_local_registration(
@@ -474,8 +406,12 @@ fn local_configured_for_sync(store: &StoreHandle, _saved: &StoredSource) -> bool
         .is_empty()
 }
 
-fn configure_jellyfin(controller: &AppController, input: JellyfinSetupInput) {
-    controller.configure_authenticated_source(JELLYFIN.picker.title, move |runtime, store| {
+fn configure_jellyfin_source(
+    controller: &SourceCommands,
+    source_name: &'static str,
+    input: JellyfinSetupInput,
+) {
+    controller.configure_authenticated_source(source_name, move |runtime, store| {
         authenticate_jellyfin(runtime, store, input)
     });
 }
@@ -514,11 +450,15 @@ fn authenticate_jellyfin(
     )
 }
 
-fn update_jellyfin_settings_input(controller: &AppController, input: JellyfinSettingsInput) {
+fn update_jellyfin_settings(
+    controller: &SourceCommands,
+    source_name: &'static str,
+    input: JellyfinSettingsInput,
+) {
     let source_id = input.credentials.source_id.clone();
     controller.update_source_settings(
         source_id,
-        JELLYFIN.picker.title,
+        source_name,
         move |runtime, store, secrets, saved, authentication_started| {
             prepare_jellyfin_settings_update(
                 runtime,
@@ -603,70 +543,6 @@ fn reauthenticate_jellyfin(
     )
 }
 
-fn jellyfin_entity_link(
-    source: &SourceIdentity,
-    kind: SourceEntityKind,
-    entity_id: &str,
-) -> Option<SourceEntityLink> {
-    let base_url = clean_source_base_url(&source.base_url)?;
-    let item_id = raw_source_entity_id(entity_id, JELLYFIN.canonical_kind, kind)?;
-    Some(SourceEntityLink {
-        label: msgid("Open on Jellyfin"),
-        icon_name: JELLYFIN.picker.icon_name,
-        url: format!("{base_url}/web/index.html#!/details?id={item_id}"),
-    })
-}
-
-fn jellyfin_setup_flow(shell: &Rc<Shell>) -> Rc<dyn SourceSetupFlow> {
-    let saved = shell.reconnect_saved_source(&JELLYFIN);
-    crate::ui::new_jellyfin_source_setup_flow(
-        shell,
-        &JELLYFIN,
-        saved
-            .as_ref()
-            .and_then(|saved| credential_host_preset(saved).ok()),
-        saved
-            .as_ref()
-            .and_then(|saved| JellyfinSourceConfig::from_stored(saved).ok())
-            .is_some_and(|config| config.use_instant_mix),
-        move |controller, credentials, use_instant_mix| {
-            configure_jellyfin(
-                controller,
-                JellyfinSetupInput {
-                    credentials,
-                    use_instant_mix,
-                },
-            );
-        },
-    )
-}
-
-fn jellyfin_settings_group(shell: &Rc<Shell>, saved: &StoredSource) -> Result<gtk::Widget, String> {
-    let config = JellyfinSourceConfig::from_stored(saved).map_err(|error| error.to_string())?;
-    let instant_mix = adw::SwitchRow::builder()
-        .title(tr("Use Jellyfin Instant Mix for recommendations"))
-        .subtitle(tr("This uses Jellyfin API for play radio, necessary if you want recommendation plugins to work."))
-        .active(config.use_instant_mix)
-        .build();
-    let instant_mix_for_submit = instant_mix.clone();
-    Ok(crate::ui::credential_source_settings_group(
-        shell,
-        saved.source_id.clone(),
-        credential_host_preset(saved)?,
-        JELLYFIN.picker.title,
-        Some(instant_mix),
-        move |controller, credentials| {
-            update_jellyfin_settings_input(
-                controller,
-                JellyfinSettingsInput {
-                    credentials,
-                    use_instant_mix: instant_mix_for_submit.is_active(),
-                },
-            );
-        },
-    ))
-}
-
 fn activate_jellyfin_registration(
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
@@ -675,35 +551,37 @@ fn activate_jellyfin_registration(
     activate_jellyfin_configured(store, saved, saved_credential(secrets, &saved.source_id)?)
 }
 
-fn configure_subsonic(
-    registration: &'static SourceRegistration,
+fn configure_subsonic_source(
     flavor: SubsonicFlavor,
-    controller: &AppController,
+    controller: &SourceCommands,
+    source_name: &'static str,
     input: CredentialHostInput,
 ) {
-    controller.configure_authenticated_source(registration.picker.title, move |runtime, _store| {
+    controller.configure_authenticated_source(source_name, move |runtime, _store| {
         authenticate_new_subsonic(runtime, input, flavor)
     });
 }
 
 fn update_subsonic_settings(
-    registration: &'static SourceRegistration,
     flavor: SubsonicFlavor,
-    controller: &AppController,
+    controller: &SourceCommands,
+    source_name: &'static str,
     input: CredentialSettingsInput,
 ) {
+    let operations = source_operations(flavor.source_id())
+        .expect("configured Subsonic flavor must have source operations");
     let source_id = input.source_id.clone();
     controller.update_source_settings(
         source_id,
-        registration.picker.title,
+        source_name,
         move |runtime, store, secrets, saved, authentication_started| {
-            if registration.canonical_kind != saved.kind {
+            if operations.canonical_kind != saved.kind {
                 return Err("Saved server source is no longer supported.".to_string());
             }
-            let prepared = prepare_credential_settings(registration, saved, input)?;
+            let prepared = prepare_credential_settings(operations, saved, input)?;
             let changed = prepared.common_changed;
             finish_settings_update(
-                registration,
+                operations,
                 store,
                 secrets,
                 prepared,
@@ -713,57 +591,6 @@ fn update_subsonic_settings(
             )
         },
     );
-}
-
-fn subsonic_setup_flow_for(
-    shell: &Rc<Shell>,
-    registration: &'static SourceRegistration,
-    flavor: SubsonicFlavor,
-) -> Rc<dyn SourceSetupFlow> {
-    crate::ui::new_credential_source_setup_flow(
-        shell,
-        registration,
-        shell
-            .reconnect_saved_source(registration)
-            .as_ref()
-            .and_then(|saved| credential_host_preset(saved).ok()),
-        move |controller, input| configure_subsonic(registration, flavor, controller, input),
-    )
-}
-
-fn navidrome_setup_flow(shell: &Rc<Shell>) -> Rc<dyn SourceSetupFlow> {
-    subsonic_setup_flow_for(shell, &NAVIDROME, SubsonicFlavor::Navidrome)
-}
-
-fn subsonic_setup_flow(shell: &Rc<Shell>) -> Rc<dyn SourceSetupFlow> {
-    subsonic_setup_flow_for(shell, &SUBSONIC, SubsonicFlavor::Subsonic)
-}
-
-fn subsonic_settings_group_for(
-    shell: &Rc<Shell>,
-    saved: &StoredSource,
-    registration: &'static SourceRegistration,
-    flavor: SubsonicFlavor,
-) -> Result<gtk::Widget, String> {
-    Ok(crate::ui::credential_source_settings_group(
-        shell,
-        saved.source_id.clone(),
-        credential_host_preset(saved)?,
-        registration.picker.title,
-        None,
-        move |controller, input| update_subsonic_settings(registration, flavor, controller, input),
-    ))
-}
-
-fn navidrome_settings_group(
-    shell: &Rc<Shell>,
-    saved: &StoredSource,
-) -> Result<gtk::Widget, String> {
-    subsonic_settings_group_for(shell, saved, &NAVIDROME, SubsonicFlavor::Navidrome)
-}
-
-fn subsonic_settings_group(shell: &Rc<Shell>, saved: &StoredSource) -> Result<gtk::Widget, String> {
-    subsonic_settings_group_for(shell, saved, &SUBSONIC, SubsonicFlavor::Subsonic)
 }
 
 fn activate_subsonic_registration(
@@ -789,7 +616,7 @@ fn source_selection(saved: &StoredSource) -> LibrarySourceSelection {
     LibrarySourceSelection::Source(saved.source_id.clone())
 }
 
-fn credential_host_preset(saved: &StoredSource) -> Result<CredentialHostPreset, String> {
+pub(crate) fn credential_host_preset(saved: &StoredSource) -> Result<CredentialHostPreset, String> {
     let config = credential_config(saved)?;
     Ok(CredentialHostPreset {
         server_name: saved.name.clone(),
@@ -800,7 +627,7 @@ fn credential_host_preset(saved: &StoredSource) -> Result<CredentialHostPreset, 
 }
 
 fn prepare_credential_settings(
-    registration: &SourceRegistration,
+    operations: &SourceOperations,
     saved: StoredSource,
     input: CredentialSettingsInput,
 ) -> Result<CredentialSettingsPreparation, String> {
@@ -839,7 +666,7 @@ fn prepare_credential_settings(
     config.source.base_url = next_base_url;
     config.username = next_username;
     config.trust_invalid_cert = input.trust_invalid_cert;
-    let next = replace_credential_config(registration, &previous, config)?;
+    let next = replace_credential_config(operations, &previous, config)?;
     Ok(CredentialSettingsPreparation {
         previous,
         next,
@@ -849,7 +676,7 @@ fn prepare_credential_settings(
 }
 
 fn finish_settings_update(
-    registration: &SourceRegistration,
+    operations: &SourceOperations,
     store: &StoreHandle,
     secrets: &Arc<dyn SecretStore>,
     prepared: CredentialSettingsPreparation,
@@ -867,7 +694,7 @@ fn finish_settings_update(
         common_changed: _,
     } = prepared;
     let Some(request) = reauth else {
-        let active = (registration.activate)(store, secrets, &next)?;
+        let active = (operations.activate)(store, secrets, &next)?;
         return Ok(Some(PreparedSourceSettingsUpdate {
             previous,
             saved: next,
@@ -878,7 +705,7 @@ fn finish_settings_update(
     };
     authentication_started();
     let authenticated = login(next, request)?;
-    if registration.canonical_kind != authenticated.saved.kind {
+    if operations.canonical_kind != authenticated.saved.kind {
         return Err("Authenticated source did not match the saved server.".to_string());
     }
     let identity_changed = source_identity_changed(
@@ -1327,55 +1154,6 @@ fn saved_credential_missing(
         .map_err(|error| error.to_string())
 }
 
-fn navidrome_entity_link(
-    source: &SourceIdentity,
-    kind: SourceEntityKind,
-    entity_id: &str,
-) -> Option<SourceEntityLink> {
-    let base_url = clean_source_base_url(&source.base_url)?;
-    let item_id = raw_source_entity_id(entity_id, "navidrome", kind)?;
-    Some(SourceEntityLink {
-        label: msgid("Open on Navidrome"),
-        icon_name: NAVIDROME.picker.icon_name,
-        url: format!(
-            "{base_url}/app/#/{}/{}/show",
-            kind.id_prefix(),
-            percent_encode_path_segment(item_id)
-        ),
-    })
-}
-
-fn raw_source_entity_id<'a>(
-    entity_id: &'a str,
-    source_kind: &str,
-    kind: SourceEntityKind,
-) -> Option<&'a str> {
-    let raw_id = entity_id.strip_prefix(&format!("{source_kind}:{}:", kind.id_prefix()))?;
-    let raw_id = raw_id.trim();
-    (!raw_id.is_empty()).then_some(raw_id)
-}
-
-fn clean_source_base_url(base_url: &str) -> Option<&str> {
-    let base_url = base_url.trim().trim_end_matches('/');
-    (!base_url.is_empty()).then_some(base_url)
-}
-
-fn percent_encode_path_segment(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(*byte as char);
-            }
-            _ => {
-                encoded.push('%');
-                encoded.push_str(&format!("{byte:02X}"));
-            }
-        }
-    }
-    encoded
-}
-
 pub(crate) fn ensure_jellyfin_device_id(store: &StoreHandle) -> Result<String, String> {
     if let Some(device_id) = normalized_device_id(&store.load_settings().jellyfin_device_id) {
         return Ok(device_id);
@@ -1421,14 +1199,4 @@ pub(crate) fn prepare_jellyfin_settings_update_with_login(
         &|| {},
         login,
     )
-}
-
-#[cfg(test)]
-pub(crate) fn update_jellyfin_settings(controller: &AppController, input: JellyfinSettingsInput) {
-    update_jellyfin_settings_input(controller, input);
-}
-
-#[cfg(test)]
-pub(crate) fn configure_local_source(controller: &AppController, input: LocalFolderHostInput) {
-    configure_local(controller, input);
 }

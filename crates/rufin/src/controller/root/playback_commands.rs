@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppController {
+impl PlaybackCommands {
     pub fn play_pause(&self) {
         self.send_session_command(playback::SessionCommand::PlayPause);
     }
@@ -57,14 +57,20 @@ impl AppController {
     }
 
     pub fn toggle_auto_dj(&self) {
-        let mut settings = self.load_settings();
-        settings.auto_dj_enabled = !settings.auto_dj_enabled;
+        let mut settings = self.settings.load_settings();
+        settings.ui.auto_dj_enabled = !settings.ui.auto_dj_enabled;
         self.save_and_apply_settings(&settings);
     }
 
     pub(in crate::controller) fn save_and_apply_settings(&self, settings: &StoredSettings) {
-        if let Err(error) = self.save_settings(settings) {
-            let _ = self.events.send(ControllerEvent::Error(error));
+        let result = self.settings.save_settings(settings).and_then(|committed| {
+            match self.playback_product_if_present() {
+                Some(product) => product.update_runtime_settings(&committed),
+                None => Ok(()),
+            }
+        });
+        if let Err(error) = result {
+            warn!(%error, "failed to save playback settings");
         }
     }
 }

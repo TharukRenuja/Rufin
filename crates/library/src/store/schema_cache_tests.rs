@@ -1,6 +1,7 @@
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
 use super::test_support::*;
+use crate::compare_tracks;
 use crate::{
     ActivityOutcome, LEGACY_ACTIVITY_PERIOD, LocalLibraryDelta, LocalManifestDelta, PagedResponse,
     PlaybackCheckpointRecord, PlaylistWriteMode, SourceEntityKind, SourceObjectMapping, StoreError,
@@ -4740,6 +4741,100 @@ fn schema_keep_boundaries() {
 }
 
 #[test]
+fn in_memory_track_order_matches_store_order_for_every_sort() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin track sort parity sync");
+    let mut first_album = album(1);
+    first_album.title = "zeta album".to_string();
+    first_album.artist = "zeta artist".to_string();
+    first_album.album_artist_credits = vec![
+        credit(ArtistId::fake(11), "Zulu credit"),
+        credit(ArtistId::fake(12), "Alpha credit"),
+    ];
+    let mut second_album = album(2);
+    second_album.title = "Alpha Album".to_string();
+    second_album.artist = "Alpha Artist".to_string();
+    second_album.album_artist_credits = vec![credit(ArtistId::fake(13), "Beta credit")];
+    let mut tracks = vec![
+        track(1, &first_album),
+        track(2, &first_album),
+        track(3, &second_album),
+        track(4, &second_album),
+    ];
+    for (index, track) in tracks.iter_mut().enumerate() {
+        track.album_artist_credits = if index < 2 {
+            first_album.album_artist_credits.clone()
+        } else {
+            second_album.album_artist_credits.clone()
+        };
+        track.title = ["zeta", "Alpha", "beta", "Älpha"][index].to_string();
+        track.release_date = Some(format!("2026-01-0{}", index + 1));
+        track.date_added = Some(format!("2026-02-0{}", 4 - index));
+        track.last_played = Some(format!("2026-03-0{}T10:00:00Z", index + 1));
+        track.play_count = Some([4, 1, 3, 2][index]);
+        track.user_rating = Some([2, 4, 1, 3][index]);
+        track.bpm = Some([120, 90, 110, 100][index]);
+        track.genres = match index {
+            0 => vec!["Zulu".to_string(), "alpha".to_string()],
+            1 => vec!["Beta".to_string()],
+            2 => vec!["delta".to_string(), "Charlie".to_string()],
+            _ => vec!["Echo".to_string()],
+        };
+    }
+    case.upsert_albums(
+        &case.id,
+        &[first_album.clone(), second_album.clone()],
+        generation,
+    )
+    .expect("upsert albums");
+    case.upsert_tracks(&case.id, &tracks, generation)
+        .expect("upsert tracks");
+    let hydrated = case
+        .load_tracks(&case.id, 0, 10)
+        .expect("load hydrated tracks")
+        .items;
+    let sorts = [
+        TrackSort::Title,
+        TrackSort::TrackNumber,
+        TrackSort::Artist,
+        TrackSort::AlbumArtist,
+        TrackSort::Album,
+        TrackSort::Year,
+        TrackSort::ReleaseDate,
+        TrackSort::DateAdded,
+        TrackSort::LastPlayed,
+        TrackSort::PlayCount,
+        TrackSort::UserRating,
+        TrackSort::Genre,
+        TrackSort::Bpm,
+        TrackSort::Duration,
+        TrackSort::Favorite,
+    ];
+
+    for sort in sorts {
+        for descending in [false, true] {
+            let actual = case
+                .load_tracks_sorted(&case.id, sort, descending, 0, 10)
+                .expect("load Store-sorted tracks")
+                .items;
+            let mut expected = hydrated.clone();
+            expected.sort_by(|left, right| compare_tracks(left, right, sort, descending));
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(|track| track.id.clone())
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|track| track.id.clone())
+                    .collect::<Vec<_>>(),
+                "Store/in-memory mismatch for {sort:?}, descending={descending}"
+            );
+        }
+    }
+}
+
+#[test]
 fn bpm_sort_projects_values_with_stable_null_last_order() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin bpm sort sync");
@@ -4843,6 +4938,16 @@ fn paged_search_read() {
     let genre_page = case
         .load_genres_matching(&case.id, "Needle Genre", 0, 10)
         .expect("search genres");
+    let genre_ids = case
+        .load_genre_ids_by_name(
+            &case.id,
+            &[
+                "needle genre".to_string(),
+                genres[0].name.clone(),
+                "Missing Genre".to_string(),
+            ],
+        )
+        .expect("resolve exact genre links in one read");
     let playlist_page = case
         .load_playlists_matching(&case.id, "Playlist 505", 0, 10)
         .expect("search playlists");
@@ -4853,6 +4958,10 @@ fn paged_search_read() {
     assert_eq!(genre_page.items.len(), 1);
     assert_eq!(genre_page.items[0].id, genres[504].id);
     assert_eq!(genre_page.items[0].name, genres[504].name);
+    assert_eq!(
+        genre_ids,
+        std::collections::HashMap::from([("needle genre".to_string(), genres[504].id.clone(),)])
+    );
     assert_eq!(
         genre_page.items[0]
             .representative_albums

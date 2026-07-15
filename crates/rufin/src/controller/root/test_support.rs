@@ -1,4 +1,8 @@
 use super::*;
+use async_channel::{Receiver, TryRecvError};
+use library::MusicFolder;
+use std::collections::HashMap;
+use std::time::Instant;
 
 const TEST_WAIT: Duration = Duration::from_secs(1);
 
@@ -42,10 +46,9 @@ pub(in crate::controller) fn library_track(
     }
 }
 
-pub(in crate::controller) fn controller_from_store_for_test(
+pub(in crate::controller) fn owners_from_store_for_test(
     store: StoreHandle,
-) -> (AppController, Receiver<ControllerEvent>) {
-    let (events, receiver) = channel();
+) -> (ProductOwners, ProductReceivers) {
     let runtime = Runtime::new()
         .map(Arc::new)
         .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
@@ -62,34 +65,84 @@ pub(in crate::controller) fn controller_from_store_for_test(
     let playback_source_id = active_source
         .as_ref()
         .map(|active| active.identity.id.clone());
-    let artwork = crate::controller::artwork::open_for_test(Arc::clone(&runtime), events.clone());
-    let controller = AppController {
-        settings: super::settings_controller::SettingsController::new(
-            store.clone(),
-            Arc::<dyn SecretStore>::clone(&secrets),
-        ),
-        store,
-        runtime,
-        active_source: Arc::new(std::sync::RwLock::new(active_source)),
-        secrets,
-        secret_switch,
-        playback_product: Arc::new(std::sync::RwLock::new(None)),
-        source_transitions: Arc::new(SourceTransitions::new()),
-        lyrics_request_generation: Arc::new(AtomicU64::new(0)),
-        waveform_request_key: Arc::new(Mutex::new(None)),
-        waveform_warm_generation: Arc::new(AtomicU64::new(0)),
-        sync_coordinator: Arc::new(Mutex::new(library_sync::SyncCoordinator::new())),
-        artwork,
-        events,
-        home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-        explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
+    let (artwork, artwork_events) = crate::controller::artwork::open_for_test(Arc::clone(&runtime));
+    let (source_events, library_events, playback_events, lyrics_events, receivers) =
+        product_event_channels(artwork_events);
+    let settings =
+        super::settings_controller::SettingsController::new(store.clone(), Arc::clone(&secrets));
+    let active_source = Arc::new(std::sync::RwLock::new(active_source));
+    let playback_product = Arc::new(std::sync::RwLock::new(None));
+    let source_transitions = Arc::new(SourceTransitions::new());
+    let lyrics_request_generation = Arc::new(AtomicU64::new(0));
+    let sync_coordinator = Arc::new(Mutex::new(library_sync::SyncCoordinator::new()));
+    let owners = ProductOwners {
+        source: SourceCommands {
+            store: store.clone(),
+            runtime: Arc::clone(&runtime),
+            active_source: Arc::clone(&active_source),
+            secrets: Arc::clone(&secrets),
+            playback_product: Arc::clone(&playback_product),
+            source_transitions: Arc::clone(&source_transitions),
+            sync_coordinator: Arc::clone(&sync_coordinator),
+            artwork: artwork.clone(),
+            source_events: source_events.clone(),
+            library_events: library_events.clone(),
+            playback_projection: playback_events.projection.clone(),
+        },
+        library: LibraryCommands {
+            store: store.clone(),
+            runtime: Arc::clone(&runtime),
+            active_source: Arc::clone(&active_source),
+            secrets: Arc::clone(&secrets),
+            library_events: library_events.clone(),
+            home_refresh_in_flight: InFlightGuards::new("Home refresh"),
+            explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
+        },
+        playback: PlaybackCommands {
+            store: store.clone(),
+            runtime: Arc::clone(&runtime),
+            active_source: Arc::clone(&active_source),
+            settings: settings.clone(),
+            playback_product: Arc::clone(&playback_product),
+            waveform_request_key: Arc::new(Mutex::new(None)),
+            waveform_warm_generation: Arc::new(AtomicU64::new(0)),
+            artwork: artwork.clone(),
+            library_events: library_events.clone(),
+            playback_events: playback_events.clone(),
+        },
+        artwork: ArtworkCommands {
+            active_source: Arc::clone(&active_source),
+            artwork,
+        },
+        lyrics: LyricsCommands {
+            store: store.clone(),
+            runtime: Arc::clone(&runtime),
+            active_source: Arc::clone(&active_source),
+            playback_product: Arc::clone(&playback_product),
+            lyrics_request_generation: Arc::clone(&lyrics_request_generation),
+            lyrics_events,
+        },
+        settings: UiSettingsStore {
+            store,
+            active_source,
+            secrets,
+            secret_switch,
+            settings,
+            playback_product,
+            source_transitions,
+            lyrics_request_generation,
+            sync_coordinator,
+            source_presentation: source_events.presentation,
+            library_sync_events: source_events.sync,
+        },
     };
     if let Some(source_id) = playback_source_id {
-        controller
+        owners
+            .playback
             .activate_playback_source(&source_id)
             .expect("activate playback source");
     }
-    (controller, receiver)
+    (owners, receivers)
 }
 
 fn active_source_for_saved_test(
@@ -569,97 +622,132 @@ pub(in crate::controller) fn provider_cover_ref() -> ImageRef {
     ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()))
 }
 
-pub(in crate::controller) fn wait_for_snapshot(
-    events: &Receiver<ControllerEvent>,
-) -> LibrarySnapshot {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::Snapshot(snapshot)
-        | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
-        | ControllerEvent::PlaylistChanged { snapshot, .. }
-        | ControllerEvent::SmartPlaylistChanged { snapshot, .. } => Some(*snapshot),
-        _ => None,
-    })
+pub(in crate::controller) fn wait_for_source_presentation(
+    events: &ProductReceivers,
+) -> SourcePresentationState {
+    wait_for_typed_event(
+        &events.source_presentation,
+        TEST_WAIT,
+        "source presentation",
+    )
+}
+pub(in crate::controller) fn wait_for_source_local_access(
+    events: &ProductReceivers,
+) -> SourceLocalAccessPresentation {
+    wait_for_typed_event(
+        &events.source_local_access,
+        TEST_WAIT,
+        "source local access",
+    )
 }
 pub(in crate::controller) fn wait_for_playback_projection(
-    events: &Receiver<ControllerEvent>,
+    events: &ProductReceivers,
 ) -> PlaybackProjection {
-    wait_for_event(events, "playback projection", |event| match event {
-        ControllerEvent::PlaybackProduct(projection) => Some(*projection),
-        _ => None,
-    })
+    wait_for_typed_event(
+        &events.playback_projection,
+        TEST_WAIT,
+        "playback projection",
+    )
 }
 pub(in crate::controller) fn wait_for_favorite_changed(
-    events: &Receiver<ControllerEvent>,
-) -> (FavoriteItemId, bool, LibrarySnapshot) {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::FavoriteChanged {
-            item_id,
-            favorite,
-            snapshot,
-        } => Some((item_id, favorite, *snapshot)),
+    events: &ProductReceivers,
+) -> (FavoriteItemId, bool) {
+    wait_for_library_event(events, "favorite change", |event| match event {
+        library::LibraryEvent::FavoriteChanged { item_id, favorite } => Some((item_id, favorite)),
+        library::LibraryEvent::FavoriteChangeFailed { error, .. } => {
+            panic!("favorite change failed: {error}")
+        }
         _ => None,
     })
 }
-pub(in crate::controller) fn wait_for_playlist_changed(
-    events: &Receiver<ControllerEvent>,
-) -> (PlaylistId, LibrarySnapshot) {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::PlaylistChanged {
-            playlist_id,
-            snapshot,
-        } => Some((playlist_id, *snapshot)),
+pub(in crate::controller) fn wait_for_playlist_changed(events: &ProductReceivers) -> PlaylistId {
+    wait_for_library_event(events, "playlist change", |event| match event {
+        library::LibraryEvent::Delta(delta) => {
+            let library::PlaylistDelta {
+                fields, entries, ..
+            } = delta.playlists;
+            fields
+                .into_iter()
+                .next()
+                .or_else(|| entries.into_iter().next())
+        }
         _ => None,
     })
 }
-pub(in crate::controller) fn wait_for_notice(events: &Receiver<ControllerEvent>) -> SourceNotice {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::SourceNotice(notice) => Some(notice),
+pub(in crate::controller) fn wait_for_smart_playlist_changed(
+    events: &ProductReceivers,
+) -> SmartPlaylistId {
+    wait_for_library_event(events, "smart playlist change", |event| match event {
+        library::LibraryEvent::Delta(delta) => delta.smart_playlists.fields.into_iter().next(),
         _ => None,
     })
+}
+pub(in crate::controller) fn wait_for_notice(events: &ProductReceivers) -> SourceNotice {
+    wait_for_typed_event(&events.source_notice, TEST_WAIT, "source notice")
 }
 pub(in crate::controller) fn wait_for_source_selection(
-    events: &Receiver<ControllerEvent>,
+    events: &ProductReceivers,
 ) -> LibrarySourceSelection {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::SourceSelectionChanged { selected_source } => Some(selected_source),
-        _ => None,
-    })
+    wait_for_typed_event(&events.source_selection, TEST_WAIT, "source selection").selected_source
 }
-fn wait_for_event<T>(
-    events: &Receiver<ControllerEvent>,
+fn wait_for_library_event<T>(
+    events: &ProductReceivers,
     context: &str,
-    mut select: impl FnMut(ControllerEvent) -> Option<T>,
+    mut select: impl FnMut(library::LibraryEvent) -> Option<T>,
 ) -> T {
     loop {
-        let event = events.recv_timeout(TEST_WAIT).expect(context);
-        match event {
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-            ControllerEvent::FavoriteChangeFailed { error, .. } => {
-                panic!("favorite change failed: {error}");
-            }
-            event => {
-                if let Some(value) = select(event) {
-                    return value;
-                }
-            }
+        let event = wait_for_typed_event(&events.library_fact, TEST_WAIT, context);
+        if let Some(value) = select(event) {
+            return value;
         }
     }
 }
 pub(in crate::controller) fn wait_for_lyrics(
-    events: &Receiver<ControllerEvent>,
+    events: &ProductReceivers,
 ) -> Option<metadata::Lyrics> {
-    wait_for_event(events, "controller event", |event| match event {
-        ControllerEvent::Lyrics { lyrics, .. } => Some(*lyrics),
-        _ => None,
-    })
+    loop {
+        match wait_for_typed_event(&events.metadata_lyrics, TEST_WAIT, "lyrics event") {
+            metadata::LyricsEvent::Loaded { lyrics, .. } => return *lyrics,
+            _ => continue,
+        }
+    }
+}
+
+pub(in crate::controller) fn wait_for_typed_event<T>(
+    receiver: &Receiver<T>,
+    timeout: Duration,
+    context: &str,
+) -> T {
+    recv_typed_event_timeout(receiver, timeout).unwrap_or_else(|error| panic!("{context}: {error}"))
+}
+
+pub(in crate::controller) fn recv_typed_event_timeout<T>(
+    receiver: &Receiver<T>,
+    timeout: Duration,
+) -> Result<T, TryRecvError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Err(TryRecvError::Empty) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            result => return result,
+        }
+    }
+}
+
+pub(in crate::controller) fn drain_typed_events<T>(receiver: &Receiver<T>) -> Vec<T> {
+    std::iter::from_fn(|| receiver.try_recv().ok()).collect()
 }
 pub(in crate::controller) fn assert_playlist_order(
-    controller: &AppController,
+    library: &LibraryCommands,
+    source_id: &SourceId,
     playlist_id: &PlaylistId,
     ids: &[&str],
 ) {
-    let detail = controller
-        .cached_playlist_detail(playlist_id)
+    let detail = library
+        .library_query(source_id.clone())
+        .playlist_detail(playlist_id)
         .expect("playlist detail")
         .expect("playlist detail");
     assert_eq!(

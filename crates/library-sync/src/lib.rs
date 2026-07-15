@@ -19,12 +19,19 @@ mod local;
 mod local_access;
 
 pub use coordinator::{
-    CancellationToken, CancelledRun, Finish, LibraryCommitted, RequestKind, SourceSyncChanged,
-    Start, SyncCoordinator, SyncPhase,
+    CancellationToken, CancelledRun, Finish, RequestKind, SourceSyncChanged, Start,
+    SyncCoordinator, SyncPhase,
 };
 pub use freshness::Freshness;
+pub use library::LibraryCommitted;
 pub use local::{LocalObservation, acquire_local, commit_local};
 pub use local_access::LocalAccessObservation;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LibrarySyncEvent {
+    Committed(LibraryCommitted),
+    SyncChanged(SourceSyncChanged),
+}
 
 const PAGE_SIZE: usize = 500;
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(250);

@@ -193,13 +193,23 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
-        self.read_snapshot(|store| store.load_albums_inner(source_id, offset, limit))
+        self.read_snapshot(|store| store.load_albums_inner(source_id, offset, limit, None))
+    }
+    pub(crate) fn load_complete_albums_if_within(
+        &self,
+        source_id: &SourceId,
+        max_total: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
+        self.read_snapshot(|store| {
+            store.load_albums_inner(source_id, 0, max_total, Some(max_total))
+        })
     }
     fn load_albums_inner(
         &self,
         source_id: &SourceId,
         offset: usize,
         limit: usize,
+        max_total: Option<usize>,
     ) -> StoreResult<PagedResponse<Album>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
@@ -207,6 +217,9 @@ impl Store {
         } else {
             self.count("albums", source_id)?
         };
+        if max_total.is_some_and(|max_total| total > max_total) {
+            return Ok(PagedResponse::new(Vec::new(), total));
+        }
         let mut items = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
                 "
@@ -670,6 +683,10 @@ impl Store {
         albums: &[Album],
         tracks: &[Track],
     ) -> StoreResult<Vec<Album>> {
+        let mut seen_album_ids = albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<HashSet<_>>();
         let mut album_ids = Vec::new();
         let mut statement = self.connection.prepare(
             "
@@ -685,37 +702,42 @@ impl Store {
             })?,
         )?;
         for album_id in linked_album_ids {
-            if albums.iter().any(|album| album.id == album_id) || album_ids.contains(&album_id) {
-                continue;
+            if seen_album_ids.insert(album_id.clone()) {
+                album_ids.push(album_id);
             }
-            album_ids.push(album_id);
         }
         for track in tracks
             .iter()
             .filter(|track| track_matches_artist(track, artist_id))
         {
-            if albums.iter().any(|album| album.id == track.album_id)
-                || album_ids.contains(&track.album_id)
-            {
-                continue;
+            if seen_album_ids.insert(track.album_id.clone()) {
+                album_ids.push(track.album_id.clone());
             }
-            album_ids.push(track.album_id.clone());
         }
-        let mut appears_on = Vec::new();
-        for album_id in album_ids {
-            let album = match self.load_album_detail(source_id, &album_id)? {
-                Some((album, _tracks)) => album,
-                None => {
-                    let album_tracks = tracks
-                        .iter()
-                        .filter(|track| track.album_id == album_id)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    synthesize_album_from_tracks(&album_id, &album_tracks)
-                }
-            };
-            appears_on.push(album);
+        let mut loaded = self
+            .load_albums_by_ids_inner(source_id, &album_ids)?
+            .into_iter()
+            .map(|album| (album.id.clone(), album))
+            .collect::<HashMap<_, _>>();
+        let appears_on_ids = album_ids.iter().cloned().collect::<HashSet<_>>();
+        let mut fallback_tracks = HashMap::<AlbumId, Vec<Track>>::new();
+        for track in tracks {
+            if appears_on_ids.contains(&track.album_id) {
+                fallback_tracks
+                    .entry(track.album_id.clone())
+                    .or_default()
+                    .push(track.clone());
+            }
         }
+        let mut appears_on = album_ids
+            .into_iter()
+            .map(|album_id| {
+                loaded.remove(&album_id).unwrap_or_else(|| {
+                    let tracks = fallback_tracks.remove(&album_id).unwrap_or_default();
+                    synthesize_album_from_tracks(&album_id, &tracks)
+                })
+            })
+            .collect::<Vec<_>>();
         appears_on.sort_by(|left, right| {
             left.year
                 .cmp(&right.year)
@@ -828,7 +850,25 @@ impl Store {
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
         self.read_snapshot(|store| {
-            store.load_tracks_sorted_inner(source_id, sort_key, descending, offset, limit)
+            store.load_tracks_sorted_inner(source_id, sort_key, descending, offset, limit, None)
+        })
+    }
+    pub(crate) fn load_complete_tracks_sorted_if_within(
+        &self,
+        source_id: &SourceId,
+        sort_key: TrackSort,
+        descending: bool,
+        max_total: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
+        self.read_snapshot(|store| {
+            store.load_tracks_sorted_inner(
+                source_id,
+                sort_key,
+                descending,
+                0,
+                max_total,
+                Some(max_total),
+            )
         })
     }
     fn load_tracks_sorted_inner(
@@ -838,6 +878,7 @@ impl Store {
         descending: bool,
         offset: usize,
         limit: usize,
+        max_total: Option<usize>,
     ) -> StoreResult<PagedResponse<Track>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
@@ -845,6 +886,9 @@ impl Store {
         } else {
             self.count("tracks", source_id)?
         };
+        if max_total.is_some_and(|max_total| total > max_total) {
+            return Ok(PagedResponse::new(Vec::new(), total));
+        }
         let order_by = track_order_by_sql("t", sort_key, descending);
         let mut items = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(

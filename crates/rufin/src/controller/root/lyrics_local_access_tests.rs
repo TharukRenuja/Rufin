@@ -17,11 +17,11 @@ fn active_source_for_test(
 fn controller_with_current_track(
     saved: &StoredSource,
     track: &Track,
-) -> (AppController, Receiver<ControllerEvent>) {
+) -> (ProductOwners, ProductReceivers) {
     let store = StoreHandle::open_memory().expect("memory store");
     seed_cached_library(&store, saved, &[], std::slice::from_ref(track), &[]);
     seed_playback_checkpoint(&store, &saved.source_id, track, 0);
-    controller_from_store_for_test(store)
+    owners_from_store_for_test(store)
 }
 
 fn media_key(source_id: &SourceId, track_id: &TrackId) -> playback::MediaKey {
@@ -73,29 +73,33 @@ pub(in crate::controller) fn store_album_favorite_updates_projection() {
     let saved = local_source_saved();
     let album = local_album_with_image_ref(ImageRef::new("local:album:favorite", None));
     seed_cached_library(&store, &saved, std::slice::from_ref(&album), &[], &[]);
-    let (controller, events) = controller_from_store_for_test(store);
+    let (owners, events) = owners_from_store_for_test(store);
 
-    controller.set_album_favorite(album.id.clone(), true);
-    let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
+    owners.library.set_album_favorite(album.id.clone(), true);
+    let (item_id, favorite) = wait_for_favorite_changed(&events);
     assert_eq!(item_id, FavoriteItemId::Album(album.id.clone()));
     assert!(favorite);
     assert!(
-        snapshot
-            .albums
-            .iter()
-            .find(|candidate| candidate.id == album.id)
+        owners
+            .library
+            .library_query(saved.source_id.clone())
+            .album_detail(&album.id)
+            .expect("album detail")
+            .map(|(album, _)| album)
             .expect("cached album")
             .favorite
     );
-    controller.set_album_favorite(album.id.clone(), false);
-    let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
+    owners.library.set_album_favorite(album.id.clone(), false);
+    let (item_id, favorite) = wait_for_favorite_changed(&events);
     assert_eq!(item_id, FavoriteItemId::Album(album.id.clone()));
     assert!(!favorite);
     assert!(
-        !snapshot
-            .albums
-            .iter()
-            .find(|candidate| candidate.id == album.id)
+        !owners
+            .library
+            .library_query(saved.source_id.clone())
+            .album_detail(&album.id)
+            .expect("album detail")
+            .map(|(album, _)| album)
             .expect("cached album")
             .favorite
     );
@@ -113,25 +117,37 @@ pub(in crate::controller) fn store_empty_playlist_has_empty_detail() {
         path: root.to_string_lossy().into_owned(),
     }];
     store.save_settings(&settings).expect("save local settings");
-    let (controller, events) = controller_from_store_for_test(store);
+    let (owners, events) = owners_from_store_for_test(store);
 
-    controller.create_playlist("Empty Playlist".to_string(), Vec::new());
-    let snapshot = wait_for_snapshot(&events);
-    let playlist = snapshot
-        .playlists
-        .iter()
-        .find(|playlist| playlist.name == "Empty Playlist")
+    owners
+        .library
+        .create_playlist("Empty Playlist".to_string(), Vec::new());
+    let playlist_id = wait_for_playlist_changed(&events);
+    let playlist = owners
+        .library
+        .library_query(saved.source_id.clone())
+        .playlists_page(0, 10)
+        .expect("playlists")
+        .items
+        .into_iter()
+        .find(|playlist| playlist.id == playlist_id)
         .expect("created playlist");
 
     assert_eq!(playlist.track_count, 0);
     assert_eq!(playlist.duration_seconds, 0);
     assert!(
-        controller
-            .cached_playlist_detail(&playlist.id)
+        owners
+            .library
+            .library_query(saved.source_id.clone())
+            .playlist_detail(&playlist.id)
             .expect("playlist detail")
             .expect("playlist detail")
             .entries
             .is_empty()
+    );
+    assert!(
+        events.source_presentation.try_recv().is_err(),
+        "playlist creation must not publish source presentation"
     );
     let _cleanup = fs::remove_dir_all(root);
 }
@@ -153,19 +169,22 @@ pub(in crate::controller) fn store_playlist_commands_preserve_exact_order() {
         &[first.clone(), second.clone(), third.clone()],
         &[],
     );
-    let (controller, events) = controller_from_store_for_test(store.clone());
+    let (owners, events) = owners_from_store_for_test(store.clone());
 
-    controller.create_playlist(
+    owners.library.create_playlist(
         "Local Playlist".to_string(),
         vec![first.clone(), second.clone()],
     );
-    let snapshot = wait_for_snapshot(&events);
-    let playlist = snapshot
-        .playlists
-        .iter()
-        .find(|playlist| playlist.name == "Local Playlist")
-        .expect("created local playlist")
-        .clone();
+    let created_id = wait_for_playlist_changed(&events);
+    let playlist = owners
+        .library
+        .library_query(saved.source_id.clone())
+        .playlists_page(0, 10)
+        .expect("playlists")
+        .items
+        .into_iter()
+        .find(|playlist| playlist.id == created_id)
+        .expect("created local playlist");
     assert_eq!(
         store
             .with_store(|store| store.playlist_owner(&saved.source_id, &playlist.id))
@@ -173,44 +192,171 @@ pub(in crate::controller) fn store_playlist_commands_preserve_exact_order() {
         Some(SourceFeatureOwner::Store)
     );
     assert_playlist_order(
-        &controller,
+        &owners.library,
+        &saved.source_id,
         &playlist.id,
         &[first.id.as_str(), second.id.as_str()],
     );
 
-    let detail = controller
-        .cached_playlist_detail(&playlist.id)
+    let detail = owners
+        .library
+        .library_query(saved.source_id.clone())
+        .playlist_detail(&playlist.id)
         .expect("playlist detail")
         .expect("playlist detail");
-    controller.move_playlist_entry(playlist.id.clone(), detail.entries[1].entry_id.clone(), 0);
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    owners
+        .library
+        .move_playlist_entry(playlist.id.clone(), detail.entries[1].entry_id.clone(), 0);
+    let changed_id = wait_for_playlist_changed(&events);
     assert_eq!(changed_id, playlist.id);
     assert_playlist_order(
-        &controller,
+        &owners.library,
+        &saved.source_id,
         &playlist.id,
         &[second.id.as_str(), first.id.as_str()],
     );
 
-    controller.add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    owners
+        .library
+        .add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
+    let changed_id = wait_for_playlist_changed(&events);
     assert_eq!(changed_id, playlist.id);
     assert_playlist_order(
-        &controller,
+        &owners.library,
+        &saved.source_id,
         &playlist.id,
         &[second.id.as_str(), first.id.as_str(), third.id.as_str()],
     );
 
-    let detail = controller
-        .cached_playlist_detail(&playlist.id)
+    let detail = owners
+        .library
+        .library_query(saved.source_id.clone())
+        .playlist_detail(&playlist.id)
         .expect("playlist detail")
         .expect("playlist detail");
-    controller.remove_playlist_entry(playlist.id.clone(), detail.entries[0].entry_id.clone());
-    let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+    owners
+        .library
+        .remove_playlist_entry(playlist.id.clone(), detail.entries[0].entry_id.clone());
+    let changed_id = wait_for_playlist_changed(&events);
     assert_eq!(changed_id, playlist.id);
     assert_playlist_order(
-        &controller,
+        &owners.library,
+        &saved.source_id,
         &playlist.id,
         &[first.id.as_str(), third.id.as_str()],
+    );
+
+    owners
+        .library
+        .rename_playlist(playlist.id.clone(), "Renamed Playlist".to_string());
+    assert_eq!(wait_for_playlist_changed(&events), playlist.id);
+    assert_eq!(
+        owners
+            .library
+            .library_query(saved.source_id.clone())
+            .playlist_detail(&playlist.id)
+            .expect("renamed playlist detail")
+            .expect("renamed playlist")
+            .playlist
+            .name,
+        "Renamed Playlist"
+    );
+
+    owners.library.delete_playlist(playlist.id.clone());
+    assert_eq!(wait_for_playlist_changed(&events), playlist.id);
+    assert!(
+        owners
+            .library
+            .library_query(saved.source_id.clone())
+            .playlist_detail(&playlist.id)
+            .expect("deleted playlist detail")
+            .is_none()
+    );
+    assert!(
+        events.source_presentation.try_recv().is_err(),
+        "playlist mutations must not publish source presentation"
+    );
+}
+
+#[test]
+pub(in crate::controller) fn smart_playlist_commands_publish_library_facts_only() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    seed_cached_library(&store, &saved, &[], &[], &[]);
+    let (owners, events) = owners_from_store_for_test(store);
+    let query = owners.library.library_query(saved.source_id.clone());
+    let definition =
+        library::smart_playlists::builtin_definition(SmartPlaylistBuiltin::NeverPlayed);
+
+    owners
+        .library
+        .save_smart_playlist("Custom Smart".to_string(), definition.clone());
+    let custom_id = wait_for_smart_playlist_changed(&events);
+    assert_eq!(
+        query
+            .smart_playlist_detail(&custom_id)
+            .expect("created smart playlist detail")
+            .expect("created smart playlist")
+            .smart_playlist
+            .name,
+        "Custom Smart"
+    );
+
+    owners.library.update_smart_playlist(
+        custom_id.clone(),
+        "Updated Smart".to_string(),
+        definition,
+    );
+    assert_eq!(wait_for_smart_playlist_changed(&events), custom_id);
+    assert_eq!(
+        query
+            .smart_playlist_detail(&custom_id)
+            .expect("updated smart playlist detail")
+            .expect("updated smart playlist")
+            .smart_playlist
+            .name,
+        "Updated Smart"
+    );
+
+    let builtins = query
+        .smart_playlists_page(0, 100)
+        .expect("smart playlist index");
+    let most_played_id = builtins
+        .items
+        .iter()
+        .find(|playlist| playlist.builtin == Some(SmartPlaylistBuiltin::MostPlayed))
+        .expect("Most Played smart playlist")
+        .id
+        .clone();
+    owners
+        .library
+        .move_smart_playlist(custom_id.clone(), most_played_id.clone(), false);
+    assert_eq!(wait_for_smart_playlist_changed(&events), custom_id);
+
+    owners.library.delete_smart_playlist(custom_id.clone());
+    assert_eq!(wait_for_smart_playlist_changed(&events), custom_id);
+    assert!(
+        query
+            .smart_playlist_detail(&custom_id)
+            .expect("deleted smart playlist detail")
+            .is_none()
+    );
+
+    owners.library.delete_smart_playlist(most_played_id.clone());
+    assert_eq!(wait_for_smart_playlist_changed(&events), most_played_id);
+    owners
+        .library
+        .restore_builtin_smart_playlist(SmartPlaylistBuiltin::MostPlayed);
+    assert_eq!(wait_for_smart_playlist_changed(&events), most_played_id);
+    assert!(
+        query
+            .smart_playlist_detail(&most_played_id)
+            .expect("restored smart playlist detail")
+            .is_some()
+    );
+    assert!(
+        events.source_presentation.try_recv().is_err(),
+        "smart playlist mutations must not publish source presentation"
     );
 }
 
@@ -225,9 +371,9 @@ pub(in crate::controller) fn lyrics_emit_event() {
     track.id = TrackId::new("local:track:without-sidecar");
     track.album_id = AlbumId::new("local:album:without-sidecar");
     track.local_path = Some(media_path.to_string_lossy().into_owned());
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&saved.source_id, &track.id),
         metadata::LyricsRequestKind::ServerOnly,
     );
@@ -257,7 +403,7 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
     let saved = config.into_stored();
     let track = restored_track();
     let source_id = saved.source_id.clone();
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -267,13 +413,15 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
             start_millis: None,
         }],
     };
-    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
-    controller
+    save_cached_lyrics(&owners.lyrics.store, &source_id, &remote_lyrics)
+        .expect("save remote lyrics");
+    owners
+        .source
         .secrets
         .save_token(source_id.as_str(), "lyrics-token")
         .expect("save lyrics token");
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&source_id, &track.id),
         metadata::LyricsRequestKind::ServerOnly,
     );
@@ -284,7 +432,8 @@ pub(in crate::controller) fn server_only_ignores_cached_remote_and_calls_native(
         .expect("native lyrics request");
     assert!(request.starts_with("GET /Audio/lyrics/Lyrics HTTP/1.1"));
     assert_eq!(
-        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load ignored cache"),
+        load_cached_lyrics(&owners.lyrics.store, &source_id, &track.id)
+            .expect("load ignored cache"),
         Some(remote_lyrics)
     );
     server.join().expect("lyrics server");
@@ -294,7 +443,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     let saved = saved_source();
     let track = restored_track();
     let source_id = saved.source_id.clone();
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -304,18 +453,19 @@ pub(in crate::controller) fn lyrics_remove_cache() {
             start_millis: None,
         }],
     };
-    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
+    save_cached_lyrics(&owners.lyrics.store, &source_id, &remote_lyrics)
+        .expect("save remote lyrics");
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
     assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
-    controller.clear_remote_lyrics_for_current();
+    owners.lyrics.clear_remote_lyrics_for_current();
 
     assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
-        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load lyrics"),
+        load_cached_lyrics(&owners.lyrics.store, &source_id, &track.id).expect("load lyrics"),
         None
     );
 }
@@ -324,7 +474,7 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
     let saved = saved_source();
     let track = restored_track();
     let source_id = saved.source_id.clone();
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -334,9 +484,10 @@ pub(in crate::controller) fn lyrics_auto_uses_cached_remote() {
             start_millis: None,
         }],
     };
-    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics).expect("save remote lyrics");
+    save_cached_lyrics(&owners.lyrics.store, &source_id, &remote_lyrics)
+        .expect("save remote lyrics");
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
@@ -353,12 +504,12 @@ pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
     track.artist.clear();
     track.artist_id = None;
     let source_id = saved.source_id.clone();
-    let (controller, events) = controller_with_current_track(&saved, &track);
-    let mut settings = controller.store.load_settings();
-    settings.metadata.external_lyrics_enabled = true;
-    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
-    controller
-        .store
+    let (owners, events) = controller_with_current_track(&saved, &track);
+    let mut settings = owners.settings.load_settings();
+    settings.ui.metadata.external_lyrics_enabled = true;
+    settings.ui.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Netease];
+    owners
+        .settings
         .save_settings(&settings)
         .expect("save Netease cache policy");
     let remote_lyrics = Lyrics {
@@ -376,17 +527,17 @@ pub(in crate::controller) fn invalid_cached_netease_placeholder_is_deleted() {
             },
         ],
     };
-    save_cached_lyrics(&controller.store, &source_id, &remote_lyrics)
+    save_cached_lyrics(&owners.lyrics.store, &source_id, &remote_lyrics)
         .expect("seed invalid cached lyrics");
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
 
     assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
-        load_cached_lyrics(&controller.store, &source_id, &track.id).expect("load lyrics"),
+        load_cached_lyrics(&owners.lyrics.store, &source_id, &track.id).expect("load lyrics"),
         None
     );
 }
@@ -395,7 +546,7 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
     let saved = saved_source();
     let track = restored_track();
     let source_id = saved.source_id.clone();
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
@@ -405,10 +556,11 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
             start_millis: None,
         }],
     };
-    save_cached_lyrics(&controller.store, &source_id, &server_lyrics).expect("save server lyrics");
+    save_cached_lyrics(&owners.lyrics.store, &source_id, &server_lyrics)
+        .expect("save server lyrics");
 
-    controller.clear_remote_lyrics_for_current();
-    controller.request_lyrics_for_media(
+    owners.lyrics.clear_remote_lyrics_for_current();
+    owners.lyrics.request_lyrics_for_media(
         media_key(&source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
@@ -440,8 +592,8 @@ pub(in crate::controller) fn lyrics_emit_current() {
         .expect("seed restored state");
     save_cached_lyrics(&store, &saved.source_id, &lyrics).expect("seed restored lyrics");
     seed_playback_checkpoint(&store, &saved.source_id, &track, 12_000);
-    let (controller, events) = controller_from_store_for_test(store);
-    controller.request_lyrics_for_media(
+    let (owners, events) = owners_from_store_for_test(store);
+    owners.lyrics.request_lyrics_for_media(
         media_key(&saved.source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
@@ -462,9 +614,9 @@ pub(in crate::controller) fn lyrics_skip_stale_track_request() {
         })
         .expect("seed restored state");
     seed_playback_checkpoint(&store, &saved.source_id, &track, 0);
-    let (controller, events) = controller_from_store_for_test(store);
+    let (owners, events) = owners_from_store_for_test(store);
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(
             &saved.source_id,
             &TrackId::new("jellyfin:track:stale-lyrics"),
@@ -472,25 +624,27 @@ pub(in crate::controller) fn lyrics_skip_stale_track_request() {
         metadata::LyricsRequestKind::Configured,
     );
 
-    let _error = events
-        .recv_timeout(std::time::Duration::from_millis(100))
-        .expect_err("lyrics event should not be emitted");
+    let _error = recv_typed_event_timeout(
+        &events.metadata_lyrics,
+        std::time::Duration::from_millis(100),
+    )
+    .expect_err("lyrics event should not be emitted");
 }
 
 #[test]
 pub(in crate::controller) fn lyrics_preview_rejects_a_disabled_provider() {
     let saved = saved_source();
     let track = restored_track();
-    let (controller, events) = controller_with_current_track(&saved, &track);
-    let mut settings = controller.load_settings();
-    settings.metadata.external_lyrics_enabled = true;
-    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
-    controller
-        .store
+    let (owners, events) = controller_with_current_track(&saved, &track);
+    let mut settings = owners.settings.load_settings();
+    settings.ui.metadata.external_lyrics_enabled = true;
+    settings.ui.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
+    owners
+        .settings
         .save_settings(&settings)
         .expect("save lyrics settings");
 
-    controller.preview_lyrics_search_result(
+    owners.lyrics.preview_lyrics_search_result(
         media_key(&saved.source_id, &track.id),
         LyricsSearchResult {
             provider: ExternalLyricsProvider::Lrclib,
@@ -504,11 +658,10 @@ pub(in crate::controller) fn lyrics_preview_rejects_a_disabled_provider() {
         },
     );
 
-    events
-        .recv_timeout(Duration::from_millis(100))
+    recv_typed_event_timeout(&events.metadata_lyrics, Duration::from_millis(100))
         .expect_err("disabled provider result should not be applied");
     assert_eq!(
-        load_cached_lyrics(&controller.store, &saved.source_id, &track.id)
+        load_cached_lyrics(&owners.lyrics.store, &saved.source_id, &track.id)
             .expect("load lyrics cache"),
         None
     );
@@ -518,7 +671,7 @@ pub(in crate::controller) fn lyrics_preview_rejects_a_disabled_provider() {
 pub(in crate::controller) fn lyrics_settings_invalidate_a_queued_result() {
     let saved = saved_source();
     let track = restored_track();
-    let (controller, events) = controller_with_current_track(&saved, &track);
+    let (owners, events) = controller_with_current_track(&saved, &track);
     let lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
@@ -528,31 +681,33 @@ pub(in crate::controller) fn lyrics_settings_invalidate_a_queued_result() {
             start_millis: None,
         }],
     };
-    save_cached_lyrics(&controller.store, &saved.source_id, &lyrics).expect("save cached lyrics");
+    save_cached_lyrics(&owners.lyrics.store, &saved.source_id, &lyrics)
+        .expect("save cached lyrics");
 
-    controller.request_lyrics_for_media(
+    owners.lyrics.request_lyrics_for_media(
         media_key(&saved.source_id, &track.id),
         metadata::LyricsRequestKind::Configured,
     );
     let generation = loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("lyrics event")
-        {
-            ControllerEvent::Lyrics { generation, .. } => break generation,
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+        match wait_for_typed_event(
+            &events.metadata_lyrics,
+            Duration::from_secs(5),
+            "lyrics event",
+        ) {
+            metadata::LyricsEvent::Loaded { generation, .. } => break generation,
             _ => {}
         }
     };
-    assert!(controller.lyrics_result_is_current(generation));
+    assert!(owners.lyrics.lyrics_result_is_current(generation));
 
-    let mut settings = controller.load_settings();
-    settings.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
-    controller
+    let mut settings = owners.settings.load_settings();
+    settings.ui.metadata.external_lyrics_providers = vec![ExternalLyricsProvider::Genius];
+    owners
+        .settings
         .save_settings(&settings)
         .expect("disable lyrics provider");
 
-    assert!(!controller.lyrics_result_is_current(generation));
+    assert!(!owners.lyrics.lyrics_result_is_current(generation));
 }
 
 #[test]
@@ -828,7 +983,7 @@ pub(in crate::controller) fn lyrics_local_access_status() {
             .map(|_| ())
         })
         .expect("seed tracks");
-    let snapshot = super::load_snapshot(&store).expect("load snapshot");
+    let snapshot = super::load_source_presentation(&store).expect("load snapshot");
     assert_eq!(snapshot.local_access_status.total_track_count, 4);
     assert_eq!(snapshot.local_access_status.direct_match_count, 1);
     assert_eq!(snapshot.local_access_status.prefix_match_count, 2);
@@ -854,11 +1009,61 @@ pub(in crate::controller) fn lyrics_include_access() {
             store.set_active_source(&saved.source_id)
         })
         .expect("save server");
-    let snapshot = super::load_snapshot(&store).expect("load snapshot");
+    let snapshot = super::load_source_presentation(&store).expect("load snapshot");
     assert_eq!(snapshot.local_access, Some(access));
 }
+
 #[test]
-pub(in crate::controller) fn controller_events_are_sendable() {
+pub(in crate::controller) fn local_access_commands_emit_only_local_access_projection() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = self::saved_source();
+    store
+        .with_store(|store| {
+            store.save_source(&saved)?;
+            store.set_active_source(&saved.source_id)
+        })
+        .expect("save server");
+    let (owners, events) = owners_from_store_for_test(store);
+
+    owners.source.save_source_local_access(
+        saved.source_id.clone(),
+        PathBuf::from("/home/demo/Music"),
+        Some("/server/music".to_string()),
+        Some("/home/demo/Music".to_string()),
+    );
+    let saved_access = wait_for_source_local_access(&events);
+    assert_eq!(saved_access.source_id, saved.source_id);
+    assert_eq!(
+        saved_access
+            .access
+            .as_ref()
+            .map(|access| access.root_path.as_str()),
+        Some("/home/demo/Music")
+    );
+    assert!(events.source_presentation.try_recv().is_err());
+
+    owners
+        .source
+        .clear_source_local_access(saved.source_id.clone());
+    let cleared_access = wait_for_source_local_access(&events);
+    assert_eq!(cleared_access.source_id, saved.source_id);
+    assert!(cleared_access.access.is_none());
+    assert!(events.source_presentation.try_recv().is_err());
+}
+
+#[test]
+pub(in crate::controller) fn product_events_are_sendable() {
     pub(in crate::controller) fn assert_send<T: Send>() {}
-    assert_send::<ControllerEvent>();
+    assert_send::<SourcePresentationState>();
+    assert_send::<sources::SourceLocalAccessPresentation>();
+    assert_send::<sources::SourceSelectionChanged>();
+    assert_send::<sources::ServerDiscoveryUpdate>();
+    assert_send::<sources::SourceNotice>();
+    assert_send::<sources::SourceTransitionFailed>();
+    assert_send::<library_sync::LibrarySyncEvent>();
+    assert_send::<library::LibraryEvent>();
+    assert_send::<playback::PlaybackProjection>();
+    assert_send::<playback::WaveformProjection>();
+    assert_send::<metadata::LyricsEvent>();
+    assert_send::<artwork::ArtworkEvent>();
 }

@@ -20,6 +20,29 @@ static SECRET_SERVICE_KEYRING: Mutex<Option<Arc<oo7::Keyring>>> = Mutex::new(Non
 #[cfg(unix)]
 static SECRET_SERVICE_KEYRING_INIT: Mutex<()> = Mutex::new(());
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecretStorageMode {
+    ConfigFile,
+    SystemKeyring,
+}
+
+impl Default for SecretStorageMode {
+    fn default() -> Self {
+        default_secret_storage_mode()
+    }
+}
+
+#[cfg(unix)]
+fn default_secret_storage_mode() -> SecretStorageMode {
+    SecretStorageMode::SystemKeyring
+}
+
+#[cfg(not(unix))]
+fn default_secret_storage_mode() -> SecretStorageMode {
+    SecretStorageMode::ConfigFile
+}
+
 #[derive(Debug, Error)]
 pub enum SecretError {
     #[error("secret store lock was poisoned")]
@@ -545,7 +568,7 @@ mod tests {
     use super::SecretServiceStore;
     use super::{
         CachedSecretStore, ConfigSecretStore, MemorySecretStore, SecretError, SecretKey,
-        SecretResult, SecretStore, SwitchableSecretStore,
+        SecretResult, SecretStorageMode, SecretStore, SwitchableSecretStore,
     };
     use std::fs;
     use std::sync::{Arc, Mutex};
@@ -571,6 +594,27 @@ mod tests {
         );
         store.delete_token(SOURCE).expect("delete token");
         assert_eq!(store.load_token(SOURCE).expect("load token"), None);
+    }
+
+    #[test]
+    fn secret_storage_mode_preserves_stored_names() {
+        assert_eq!(
+            serde_json::to_string(&SecretStorageMode::ConfigFile)
+                .expect("serialize config-file mode"),
+            "\"config-file\""
+        );
+        assert_eq!(
+            serde_json::from_str::<SecretStorageMode>("\"system-keyring\"")
+                .expect("deserialize system-keyring mode"),
+            SecretStorageMode::SystemKeyring
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            SecretStorageMode::default(),
+            SecretStorageMode::SystemKeyring
+        );
+        #[cfg(not(unix))]
+        assert_eq!(SecretStorageMode::default(), SecretStorageMode::ConfigFile);
     }
 
     #[test]

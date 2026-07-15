@@ -94,7 +94,7 @@ fn save_non_source_settings(
     store.update_settings(move |current| {
         persisted.sources = current.sources.clone();
         persisted.jellyfin_device_id = current.jellyfin_device_id.clone();
-        persisted.secret_storage_mode = current.secret_storage_mode;
+        persisted.ui.secret_storage_mode = current.ui.secret_storage_mode;
         persisted.secret_scope_id = current.secret_scope_id.clone();
         *current = persisted;
         Ok(())
@@ -118,8 +118,8 @@ fn persist_scrobbling_secret_values(
         persist_secret_value(
             secrets,
             &scrobbling_secret_key(*descriptor),
-            descriptor.value(&settings.scrobbling),
-            descriptor.value_mut(&mut persisted.scrobbling),
+            descriptor.value(&settings.ui.scrobbling),
+            descriptor.value_mut(&mut persisted.ui.scrobbling),
             missing_action,
             &mut migrated,
         )?;
@@ -175,7 +175,7 @@ fn hydrate_scrobbling_secret_values(secrets: &Arc<dyn SecretStore>, settings: &m
         hydrate_secret_value(
             secrets,
             &scrobbling_secret_key(*descriptor),
-            descriptor.value_mut(&mut settings.scrobbling),
+            descriptor.value_mut(&mut settings.ui.scrobbling),
         );
     }
     settings.migrate_defaults();
@@ -198,6 +198,7 @@ mod tests {
     use scrobbling::{AudioscrobblerSettings, LASTFM_SESSION, ListenBrainzSettings, Settings};
     use secrets::{SecretError, SecretResult};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use ui::Settings as UiSettings;
 
     struct UnexpectedSecretStore {
         touched: Arc<AtomicBool>,
@@ -246,18 +247,21 @@ mod tests {
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = StoredSettings {
-            scrobbling: Settings {
-                lastfm: AudioscrobblerSettings {
-                    api_key: "lastfm-key".to_string(),
-                    api_secret: "lastfm-secret".to_string(),
-                    session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerSettings::default()
+            ui: UiSettings {
+                scrobbling: Settings {
+                    lastfm: AudioscrobblerSettings {
+                        api_key: "lastfm-key".to_string(),
+                        api_secret: "lastfm-secret".to_string(),
+                        session_key: "lastfm-session".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    listenbrainz: ListenBrainzSettings {
+                        user_token: "listenbrainz-token".to_string(),
+                        ..ListenBrainzSettings::default()
+                    },
+                    ..Settings::default()
                 },
-                listenbrainz: ListenBrainzSettings {
-                    user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzSettings::default()
-                },
-                ..Settings::default()
+                ..UiSettings::default()
             },
             ..StoredSettings::default()
         };
@@ -265,17 +269,17 @@ mod tests {
 
         let loaded = controller.load_settings();
 
-        assert_eq!(loaded.scrobbling.lastfm.api_secret, "lastfm-secret");
-        assert_eq!(loaded.scrobbling.lastfm.session_key, "lastfm-session");
+        assert_eq!(loaded.ui.scrobbling.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(loaded.ui.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
-            loaded.scrobbling.listenbrainz.user_token,
+            loaded.ui.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
         let persisted = store.load_settings();
-        assert_eq!(persisted.scrobbling.lastfm.api_secret, "lastfm-secret");
-        assert_eq!(persisted.scrobbling.lastfm.session_key, "lastfm-session");
+        assert_eq!(persisted.ui.scrobbling.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(persisted.ui.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
-            persisted.scrobbling.listenbrainz.user_token,
+            persisted.ui.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
         assert!(!touched.load(Ordering::Relaxed));
@@ -288,18 +292,21 @@ mod tests {
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = StoredSettings {
-            scrobbling: Settings {
-                lastfm: AudioscrobblerSettings {
-                    api_key: "lastfm-key".to_string(),
-                    api_secret: "lastfm-secret".to_string(),
-                    session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerSettings::default()
+            ui: UiSettings {
+                scrobbling: Settings {
+                    lastfm: AudioscrobblerSettings {
+                        api_key: "lastfm-key".to_string(),
+                        api_secret: "lastfm-secret".to_string(),
+                        session_key: "lastfm-session".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    listenbrainz: ListenBrainzSettings {
+                        user_token: "listenbrainz-token".to_string(),
+                        ..ListenBrainzSettings::default()
+                    },
+                    ..Settings::default()
                 },
-                listenbrainz: ListenBrainzSettings {
-                    user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzSettings::default()
-                },
-                ..Settings::default()
+                ..UiSettings::default()
             },
             ..StoredSettings::default()
         };
@@ -307,10 +314,10 @@ mod tests {
 
         let loaded = controller.load_settings_with_scrobbling_secrets();
 
-        assert_eq!(loaded.scrobbling.lastfm.api_secret, "lastfm-secret");
-        assert_eq!(loaded.scrobbling.lastfm.session_key, "lastfm-session");
+        assert_eq!(loaded.ui.scrobbling.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(loaded.ui.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
-            loaded.scrobbling.listenbrainz.user_token,
+            loaded.ui.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
         assert_eq!(
@@ -320,9 +327,9 @@ mod tests {
             Some("lastfm-session".to_string())
         );
         let persisted = store.load_settings();
-        assert_eq!(persisted.scrobbling.lastfm.api_secret, "");
-        assert_eq!(persisted.scrobbling.lastfm.session_key, "");
-        assert_eq!(persisted.scrobbling.listenbrainz.user_token, "");
+        assert_eq!(persisted.ui.scrobbling.lastfm.api_secret, "");
+        assert_eq!(persisted.ui.scrobbling.lastfm.session_key, "");
+        assert_eq!(persisted.ui.scrobbling.listenbrainz.user_token, "");
     }
 
     #[test]
@@ -352,7 +359,7 @@ mod tests {
 
         let settings = load_settings_with_secrets(&store, &secrets);
 
-        assert_eq!(settings.scrobbling.lastfm.session_key, "lastfm-session");
+        assert_eq!(settings.ui.scrobbling.lastfm.session_key, "lastfm-session");
         fs::remove_file(path).expect("remove config secret file");
     }
 
@@ -363,22 +370,25 @@ mod tests {
         let controller =
             SettingsController::new(store.clone(), Arc::<dyn SecretStore>::clone(&secrets));
         let settings = StoredSettings {
-            lastfm_api_key: "cover-key".to_string(),
-            scrobbling: Settings {
-                lastfm: AudioscrobblerSettings {
-                    api_key: "scrobble-key".to_string(),
-                    api_secret: "lastfm-secret".to_string(),
-                    session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerSettings::default()
+            ui: UiSettings {
+                lastfm_api_key: "cover-key".to_string(),
+                scrobbling: Settings {
+                    lastfm: AudioscrobblerSettings {
+                        api_key: "scrobble-key".to_string(),
+                        api_secret: "lastfm-secret".to_string(),
+                        session_key: "lastfm-session".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    librefm: AudioscrobblerSettings {
+                        session_key: "librefm-session".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    listenbrainz: ListenBrainzSettings {
+                        user_token: "listenbrainz-token".to_string(),
+                        ..ListenBrainzSettings::default()
+                    },
                 },
-                librefm: AudioscrobblerSettings {
-                    session_key: "librefm-session".to_string(),
-                    ..AudioscrobblerSettings::default()
-                },
-                listenbrainz: ListenBrainzSettings {
-                    user_token: "listenbrainz-token".to_string(),
-                    ..ListenBrainzSettings::default()
-                },
+                ..UiSettings::default()
             },
             ..StoredSettings::default()
         };
@@ -386,22 +396,25 @@ mod tests {
         let committed = controller.save_settings(&settings).expect("save settings");
 
         let persisted = store.load_settings();
-        assert_eq!(persisted.lastfm_api_key, "cover-key");
-        assert!(persisted.scrobbling.lastfm.api_key.is_empty());
-        assert_eq!(persisted.scrobbling.lastfm.api_secret, "");
-        assert_eq!(persisted.scrobbling.lastfm.session_key, "");
-        assert_eq!(persisted.scrobbling.librefm.session_key, "");
-        assert_eq!(persisted.scrobbling.listenbrainz.user_token, "");
+        assert_eq!(persisted.ui.lastfm_api_key, "cover-key");
+        assert!(persisted.ui.scrobbling.lastfm.api_key.is_empty());
+        assert_eq!(persisted.ui.scrobbling.lastfm.api_secret, "");
+        assert_eq!(persisted.ui.scrobbling.lastfm.session_key, "");
+        assert_eq!(persisted.ui.scrobbling.librefm.session_key, "");
+        assert_eq!(persisted.ui.scrobbling.listenbrainz.user_token, "");
 
-        assert_eq!(committed.scrobbling.lastfm.api_secret, "lastfm-secret");
-        assert_eq!(committed.scrobbling.lastfm.session_key, "lastfm-session");
+        assert_eq!(committed.ui.scrobbling.lastfm.api_secret, "lastfm-secret");
+        assert_eq!(committed.ui.scrobbling.lastfm.session_key, "lastfm-session");
         assert_eq!(
             committed.scrobbling_runtime_settings().lastfm.api_key,
             "cover-key"
         );
-        assert_eq!(committed.scrobbling.librefm.session_key, "librefm-session");
         assert_eq!(
-            committed.scrobbling.listenbrainz.user_token,
+            committed.ui.scrobbling.librefm.session_key,
+            "librefm-session"
+        );
+        assert_eq!(
+            committed.ui.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
     }
@@ -412,12 +425,15 @@ mod tests {
         let secrets: Arc<dyn SecretStore> = Arc::new(FailingSecretStore);
         let controller = SettingsController::new(store.clone(), secrets);
         let settings = StoredSettings {
-            scrobbling: Settings {
-                lastfm: AudioscrobblerSettings {
-                    session_key: "lastfm-session".to_string(),
-                    ..AudioscrobblerSettings::default()
+            ui: UiSettings {
+                scrobbling: Settings {
+                    lastfm: AudioscrobblerSettings {
+                        session_key: "lastfm-session".to_string(),
+                        ..AudioscrobblerSettings::default()
+                    },
+                    ..Settings::default()
                 },
-                ..Settings::default()
+                ..UiSettings::default()
             },
             ..StoredSettings::default()
         };
@@ -428,7 +444,7 @@ mod tests {
 
         assert!(error.contains("failed to save scrobbling secret"));
         let persisted = store.load_settings();
-        assert_eq!(persisted.scrobbling.lastfm.session_key, "");
+        assert_eq!(persisted.ui.scrobbling.lastfm.session_key, "");
     }
 
     #[test]
@@ -441,7 +457,10 @@ mod tests {
             .save_secret(&scrobbling_secret_key(LASTFM_SESSION), "lastfm-session")
             .expect("seed secret");
         let settings = StoredSettings {
-            language: "en".to_string(),
+            ui: UiSettings {
+                language: "en".to_string(),
+                ..UiSettings::default()
+            },
             ..StoredSettings::default()
         };
 
@@ -466,24 +485,30 @@ mod tests {
             path: "/music".to_string(),
         }];
         current.jellyfin_device_id = "rufin-current".to_string();
-        current.secret_storage_mode = SecretStorageMode::ConfigFile;
+        current.ui.secret_storage_mode = SecretStorageMode::ConfigFile;
         current.secret_scope_id = "current-scope".to_string();
         store.save_settings(&current).expect("seed settings");
 
         let stale = StoredSettings {
-            language: "tr".to_string(),
+            ui: UiSettings {
+                language: "tr".to_string(),
+                secret_storage_mode: SecretStorageMode::SystemKeyring,
+                ..UiSettings::default()
+            },
             jellyfin_device_id: "rufin-stale".to_string(),
-            secret_storage_mode: SecretStorageMode::SystemKeyring,
             secret_scope_id: "stale-scope".to_string(),
             ..StoredSettings::default()
         };
         controller.save_settings(&stale).expect("save settings");
 
         let persisted = store.load_settings();
-        assert_eq!(persisted.language, "tr");
+        assert_eq!(persisted.ui.language, "tr");
         assert_eq!(persisted.sources, current.sources);
         assert_eq!(persisted.jellyfin_device_id, "rufin-current");
-        assert_eq!(persisted.secret_storage_mode, SecretStorageMode::ConfigFile);
+        assert_eq!(
+            persisted.ui.secret_storage_mode,
+            SecretStorageMode::ConfigFile
+        );
         assert_eq!(persisted.secret_scope_id, "current-scope");
     }
 
