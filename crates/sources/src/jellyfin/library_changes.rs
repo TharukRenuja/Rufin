@@ -68,10 +68,11 @@ impl LibraryChangeResolver for JellyfinSource {
                     if !known.matches_only(raw_id, SourceEntityKind::Playlist) {
                         return Ok(LibraryChangeResolution::Full);
                     }
-                    let Some(detail) = self.playlist_detail_from_item(item.clone()).await? else {
+                    let playlist = playlist_from_item(item.clone());
+                    let Some(snapshot) = self.read_playlist_snapshot(playlist).await? else {
                         return Ok(LibraryChangeResolution::Full);
                     };
-                    observation.add_playlist(raw_id, detail);
+                    observation.add_playlist(raw_id, snapshot);
                 }
                 CurrentItemKind::Other if known.kinds(raw_id).is_none() => {
                     observation.ignored_source_objects.insert(raw_id.clone());
@@ -177,7 +178,7 @@ struct Observation {
     tracks: BTreeMap<String, Track>,
     artists: BTreeMap<String, Artist>,
     album_artists: BTreeMap<String, Artist>,
-    playlists: BTreeMap<String, PlaylistDetail>,
+    playlists: BTreeMap<String, PlaylistSnapshot>,
 }
 
 impl Observation {
@@ -217,14 +218,14 @@ impl Observation {
         }
     }
 
-    fn add_playlist(&mut self, raw_id: &str, detail: PlaylistDetail) {
+    fn add_playlist(&mut self, raw_id: &str, snapshot: PlaylistSnapshot) {
         self.add_mapping(
             raw_id,
             SourceEntityKind::Playlist,
-            detail.playlist.id.as_str().to_string(),
+            snapshot.playlist.id.as_str().to_string(),
         );
         self.playlists
-            .insert(detail.playlist.id.as_str().to_string(), detail);
+            .insert(snapshot.playlist.id.as_str().to_string(), snapshot);
     }
 
     fn add_mapping(&mut self, raw_id: &str, kind: SourceEntityKind, entity_id: String) {
@@ -279,43 +280,12 @@ impl JellyfinSource {
                 .append_pair("Recursive", "true")
                 .append_pair("Ids", &chunk.join(","))
                 .append_pair("Limit", &chunk.len().to_string())
-                .append_pair("Fields", ITEM_FIELDS);
+                .append_pair("Fields", MIXED_ITEM_FIELDS);
             let response = self.get_json::<ItemQueryResult>(url).await?;
             for item in response.items {
                 items.insert(item.id.clone(), item);
             }
         }
         Ok(items)
-    }
-
-    async fn playlist_detail_from_item(
-        &self,
-        item: JellyfinItem,
-    ) -> SourceResult<Option<PlaylistDetail>> {
-        let raw_id = item.id.clone();
-        let playlist = playlist_from_item(item);
-        let Some(items) = self.read_playlist_items(&raw_id).await? else {
-            return Ok(None);
-        };
-        let entries = items
-            .into_iter()
-            .map(|item| {
-                let entry_id = item
-                    .playlist_item_id
-                    .clone()
-                    .filter(|id| !id.is_empty())
-                    .unwrap_or_else(|| item.id.clone());
-                PlaylistEntry {
-                    entry_id,
-                    track: track_from_item(item),
-                }
-            })
-            .collect::<Vec<_>>();
-        let tracks = entries.iter().map(|entry| entry.track.clone()).collect();
-        Ok(Some(PlaylistDetail {
-            playlist,
-            tracks,
-            entries,
-        }))
     }
 }

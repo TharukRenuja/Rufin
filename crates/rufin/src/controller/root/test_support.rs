@@ -487,6 +487,21 @@ pub(in crate::controller) fn commit_cached_library(
         })
     })
     .collect();
+    let playlist_snapshots = observation
+        .playlists
+        .into_iter()
+        .map(|detail| library::PlaylistSnapshot {
+            playlist: detail.playlist,
+            entries: detail
+                .entries
+                .into_iter()
+                .map(|entry| library::PlaylistEntryKey {
+                    entry_id: entry.entry_id,
+                    track_id: entry.track.id,
+                })
+                .collect(),
+        })
+        .collect();
     let local_access =
         (!observation.local_matches.is_empty()).then_some(library::LocalAccessUpdate {
             manifest: library::LocalManifestDelta::default(),
@@ -503,7 +518,7 @@ pub(in crate::controller) fn commit_cached_library(
             artists: observation.artists,
             album_artists: observation.album_artists,
             genres: observation.genres,
-            playlists: observation.playlists,
+            playlists: playlist_snapshots,
             home_sections: observation.home_sections,
             mappings,
             coverage: library::SyncCoverage::All {

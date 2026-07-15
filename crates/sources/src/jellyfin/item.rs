@@ -9,7 +9,11 @@ use serde::Deserialize;
 
 use super::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ALBUM_FIELDS: &str = "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount";
+pub(super) const TRACK_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags";
+pub(super) const PLAYLIST_FIELDS: &str = "RunTimeTicks,ImageTags,ChildCount";
+pub(super) const FOLDER_FIELDS: &str = "ParentId";
+pub(super) const MIXED_ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]

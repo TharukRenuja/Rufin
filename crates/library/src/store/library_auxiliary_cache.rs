@@ -505,6 +505,23 @@ impl Store {
         entries: &[PlaylistEntry],
         mode: PlaylistWriteMode,
     ) -> StoreResult<()> {
+        let entries = entries
+            .iter()
+            .map(|entry| PlaylistEntryKey {
+                entry_id: entry.entry_id.clone(),
+                track_id: entry.track.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.upsert_playlist_entry_keys_with_mode(source_id, playlist_id, &entries, mode)
+    }
+
+    fn upsert_playlist_entry_keys_with_mode(
+        &self,
+        source_id: &SourceId,
+        playlist_id: &PlaylistId,
+        entries: &[PlaylistEntryKey],
+        mode: PlaylistWriteMode,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
             if let PlaylistWriteMode::NativeSync { generation } = mode {
                 self.require_current_sync_generation(source_id, generation)?;
@@ -533,7 +550,7 @@ impl Store {
                     source_id.as_str(),
                     playlist_id.as_str(),
                     entry.entry_id,
-                    entry.track.id.as_str(),
+                    entry.track_id.as_str(),
                     position as i64,
                     generation,
                 ])?;
@@ -567,19 +584,24 @@ impl Store {
         &self,
         source_id: &SourceId,
         playlist_id: &PlaylistId,
-        entries: &[PlaylistEntry],
+        entries: &[PlaylistEntryKey],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let before_playlist = self.load_playlist_for_delta(source_id, playlist_id)?;
         let before = self.playlist_entry_keys(source_id, playlist_id)?;
         let wanted = entries
             .iter()
-            .map(|entry| (entry.entry_id.clone(), entry.track.id.clone()))
+            .map(|entry| (entry.entry_id.clone(), entry.track_id.clone()))
             .collect::<Vec<_>>();
         if before == wanted {
             return Ok(LibraryDelta::default());
         }
-        self.upsert_playlist_entries(source_id, playlist_id, entries, generation)?;
+        self.upsert_playlist_entry_keys_with_mode(
+            source_id,
+            playlist_id,
+            entries,
+            PlaylistWriteMode::NativeSync { generation },
+        )?;
         let after = self.playlist_entry_keys(source_id, playlist_id)?;
         let after_playlist = self.load_playlist_for_delta(source_id, playlist_id)?;
         let changed = before != after || playlist_stats_changed(before_playlist, after_playlist);

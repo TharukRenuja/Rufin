@@ -53,17 +53,6 @@ pub(super) fn raw_id_string(id: &SubsonicId) -> String {
 pub(super) fn playlist_entry_id(playlist_id: &PlaylistId, index: usize, track_id: &str) -> String {
     format!("{}:{index}:{track_id}", playlist_id.as_str())
 }
-pub(super) fn page<T>(items: Vec<T>, request: PagedRequest) -> PagedResponse<T> {
-    let total = items.len();
-    PagedResponse::new(
-        items
-            .into_iter()
-            .skip(request.offset)
-            .take(request.limit)
-            .collect(),
-        total,
-    )
-}
 pub(super) fn current_year() -> u16 {
     let days_since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)

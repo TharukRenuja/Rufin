@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use library::{
     Album, AlbumDetail, AlbumId, Artist, FavoriteItemId, FolderDetail, FolderId, Genre,
     GenreDetail, GenreId, HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId,
-    PagedResponse, Playlist, PlaylistDetail, PlaylistId, SearchResults, SourceEntityKind,
-    SourceObjectMapping, Track, TrackId,
+    PagedResponse, Playlist, PlaylistDetail, PlaylistId, PlaylistSnapshot, SearchResults,
+    SourceEntityKind, SourceObjectMapping, Track, TrackId,
 };
 use thiserror::Error;
 
@@ -53,6 +53,12 @@ pub enum SourceError {
 }
 
 pub type SourceResult<T> = Result<T, SourceError>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistCollections {
+    pub artists: Vec<Artist>,
+    pub album_artists: Vec<Artist>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PageState {
@@ -131,9 +137,8 @@ pub trait MusicSource {
     async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>>;
     async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail>;
     async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>>;
-    async fn artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>>;
-    async fn album_artists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Artist>>;
-    async fn genres(&self, request: PagedRequest) -> SourceResult<PagedResponse<Genre>>;
+    async fn artist_collections(&self) -> SourceResult<ArtistCollections>;
+    async fn genres(&self) -> SourceResult<Vec<Genre>>;
     async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail>;
     async fn track(&self, track_id: &TrackId) -> SourceResult<Track>;
     async fn search(&self, query: &str) -> SourceResult<SearchResults>;
@@ -142,11 +147,11 @@ pub trait MusicSource {
 #[async_trait(?Send)]
 pub trait MusicFolderProvider {
     async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>>;
-    async fn tracks_in_music_folder(
+    async fn track_ids_in_music_folder(
         &self,
         folder_id: &MusicFolderId,
         request: PagedRequest,
-    ) -> SourceResult<PagedResponse<Track>>;
+    ) -> SourceResult<PagedResponse<TrackId>>;
 }
 
 pub trait SourceObjectKeyProvider {
@@ -201,7 +206,7 @@ pub struct LibraryObjectObservation {
     pub artists: Vec<Artist>,
     pub album_artists: Vec<Artist>,
     pub genres: Vec<Genre>,
-    pub playlists: Vec<PlaylistDetail>,
+    pub playlists: Vec<PlaylistSnapshot>,
     pub home_sections: Vec<HomeSection>,
     pub track_music_folders: Vec<(TrackId, Vec<MusicFolderId>)>,
 }
@@ -259,7 +264,8 @@ pub trait FolderBrowser {
 
 #[async_trait(?Send)]
 pub trait PlaylistReader {
-    async fn playlists(&self, request: PagedRequest) -> SourceResult<PagedResponse<Playlist>>;
+    async fn playlists(&self) -> SourceResult<Vec<Playlist>>;
+    async fn playlist_snapshot(&self, playlist: &Playlist) -> SourceResult<PlaylistSnapshot>;
     async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail>;
 }
 

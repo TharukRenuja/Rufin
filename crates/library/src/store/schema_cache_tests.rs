@@ -5051,13 +5051,13 @@ fn playlist_entries_derive_cached_stats() {
             &case.id,
             &playlist.id,
             &[
-                PlaylistEntry {
+                PlaylistEntryKey {
                     entry_id: "entry-one".to_string(),
-                    track: track_one,
+                    track_id: track_one.id,
                 },
-                PlaylistEntry {
+                PlaylistEntryKey {
                     entry_id: "entry-two".to_string(),
-                    track: track_two,
+                    track_id: track_two.id,
                 },
             ],
             generation,
@@ -5104,13 +5104,13 @@ fn track_genre_change_refreshes_playlist_top_genres() {
         &case.id,
         &playlist.id,
         &[
-            PlaylistEntry {
+            PlaylistEntryKey {
                 entry_id: "entry-one".to_string(),
-                track: track_one,
+                track_id: track_one.id,
             },
-            PlaylistEntry {
+            PlaylistEntryKey {
                 entry_id: "entry-two".to_string(),
-                track: track_two.clone(),
+                track_id: track_two.id.clone(),
             },
         ],
         generation,

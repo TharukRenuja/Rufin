@@ -420,17 +420,15 @@ async fn enumerate_remote(
                 |request| {
                     source
                         .music_folders
-                        .tracks_in_music_folder(&folder.id, request)
+                        .track_ids_in_music_folder(&folder.id, request)
                 },
                 |items| {
-                    if items.iter().any(|track| {
-                        !seen_folder_tracks.insert((folder.id.clone(), track.id.clone()))
+                    if items.iter().any(|track_id| {
+                        !seen_folder_tracks.insert((folder.id.clone(), track_id.clone()))
                     }) {
                         return Err(SyncError::Unstable);
                     }
-                    snapshot
-                        .track_ids
-                        .extend(items.iter().map(|track| track.id.clone()));
+                    snapshot.track_ids.extend_from_slice(items);
                     Ok(())
                 },
             )
@@ -441,95 +439,67 @@ async fn enumerate_remote(
         music_folders: folder_snapshots,
     };
 
-    for (collection, kind, album_artist) in [
-        (Collection::Artists, SourceEntityKind::Artist, false),
-        (
-            Collection::AlbumArtists,
-            SourceEntityKind::AlbumArtist,
-            true,
-        ),
-    ] {
-        progress(Progress::CollectionStarted(collection));
-        read_pages(
-            collection,
-            cancelled,
-            progress,
-            false,
-            |request| {
-                if album_artist {
-                    source.core.album_artists(request)
-                } else {
-                    source.core.artists(request)
-                }
-            },
-            |items| {
-                record_entities(
-                    sync,
-                    &mut seen,
-                    source.keys,
-                    kind,
-                    items.iter().map(|artist| artist.id.as_str()),
-                    |sync| {
-                        if album_artist {
-                            sync.album_artists.extend_from_slice(items);
-                        } else {
-                            sync.artists.extend_from_slice(items);
-                        }
-                    },
-                )
-            },
-        )
-        .await?;
-    }
+    progress(Progress::CollectionStarted(Collection::Artists));
+    let artist_collections = await_source(cancelled, source.core.artist_collections()).await?;
+    let artist_ids = artist_collections
+        .artists
+        .iter()
+        .map(|artist| artist.id.as_str().to_string())
+        .collect::<Vec<_>>();
+    record_entities(
+        sync,
+        &mut seen,
+        source.keys,
+        SourceEntityKind::Artist,
+        artist_ids.iter().map(String::as_str),
+        |sync| sync.artists = artist_collections.artists,
+    )?;
+
+    progress(Progress::CollectionStarted(Collection::AlbumArtists));
+    let album_artist_ids = artist_collections
+        .album_artists
+        .iter()
+        .map(|artist| artist.id.as_str().to_string())
+        .collect::<Vec<_>>();
+    record_entities(
+        sync,
+        &mut seen,
+        source.keys,
+        SourceEntityKind::AlbumArtist,
+        album_artist_ids.iter().map(String::as_str),
+        |sync| sync.album_artists = artist_collections.album_artists,
+    )?;
 
     progress(Progress::CollectionStarted(Collection::Genres));
-    read_pages(
-        Collection::Genres,
-        cancelled,
-        progress,
-        false,
-        |request| source.core.genres(request),
-        |items| {
-            record_entities(
-                sync,
-                &mut seen,
-                source.keys,
-                SourceEntityKind::Genre,
-                items.iter().map(|genre| genre.id.as_str()),
-                |sync| sync.genres.extend_from_slice(items),
-            )
-        },
-    )
-    .await?;
+    let genres = await_source(cancelled, source.core.genres()).await?;
+    let genre_ids = genres
+        .iter()
+        .map(|genre| genre.id.as_str().to_string())
+        .collect::<Vec<_>>();
+    record_entities(
+        sync,
+        &mut seen,
+        source.keys,
+        SourceEntityKind::Genre,
+        genre_ids.iter().map(String::as_str),
+        |sync| sync.genres = genres,
+    )?;
 
     progress(Progress::CollectionStarted(Collection::Playlists));
-    let mut pages = PageState::default();
-    loop {
-        let page = await_source(
-            cancelled,
-            source.playlists.playlists(pages.request(PAGE_SIZE)),
-        )
-        .await?;
-        let finished = pages
-            .add(page.items.len(), (page.total > 0).then_some(page.total))
-            .ok_or(SyncError::Unstable)?;
-        record_entities(
-            sync,
-            &mut seen,
-            source.keys,
-            SourceEntityKind::Playlist,
-            page.items.iter().map(|playlist| playlist.id.as_str()),
-            |_| {},
+    let playlists = await_source(cancelled, source.playlists.playlists()).await?;
+    record_entities(
+        sync,
+        &mut seen,
+        source.keys,
+        SourceEntityKind::Playlist,
+        playlists.iter().map(|playlist| playlist.id.as_str()),
+        |_| {},
+    )?;
+    for playlist in &playlists {
+        let snapshot = required_relation(
+            await_source(cancelled, source.playlists.playlist_snapshot(playlist)).await,
         )?;
-        for playlist in &page.items {
-            let detail = required_relation(
-                await_source(cancelled, source.playlists.playlist_detail(&playlist.id)).await,
-            )?;
-            sync.playlists.push(detail);
-        }
-        if finished {
-            break;
-        }
+        sync.playlists.push(snapshot);
     }
     Ok(())
 }
@@ -647,13 +617,13 @@ mod tests {
 
     use async_trait::async_trait;
     use library::{
-        Album, AlbumDetail, AlbumId, Artist, Genre, GenreDetail, GenreId, HomeSection,
-        LocalFileFacts, LocalManifestEntry, MusicFolder, MusicFolderId, Playlist, PlaylistDetail,
-        PlaylistId, SearchResults, Track, TrackId,
+        Album, AlbumDetail, AlbumId, Genre, GenreDetail, GenreId, HomeSection, LocalFileFacts,
+        LocalManifestEntry, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistId,
+        PlaylistSnapshot, SearchResults, Track, TrackId,
     };
     use library::{SourceLocalAccess, StoredSource};
-    use sources::SourceIdentity;
     use sources::local::LocalManifestScan;
+    use sources::{ArtistCollections, SourceIdentity};
 
     use super::*;
 
@@ -884,28 +854,18 @@ mod tests {
             Ok(self.page(&self.tracks, request, self.tracks.len()))
         }
 
-        async fn artists(
-            &self,
-            request: PagedRequest,
-        ) -> sources::SourceResult<PagedResponse<Artist>> {
+        async fn artist_collections(&self) -> sources::SourceResult<ArtistCollections> {
             self.artist_reads.fetch_add(1, Ordering::Relaxed);
-            Ok(self.page(&[], request, 0))
-        }
-
-        async fn album_artists(
-            &self,
-            request: PagedRequest,
-        ) -> sources::SourceResult<PagedResponse<Artist>> {
             self.album_artist_reads.fetch_add(1, Ordering::Relaxed);
-            Ok(self.page(&[], request, 0))
+            Ok(ArtistCollections {
+                artists: Vec::new(),
+                album_artists: Vec::new(),
+            })
         }
 
-        async fn genres(
-            &self,
-            request: PagedRequest,
-        ) -> sources::SourceResult<PagedResponse<Genre>> {
+        async fn genres(&self) -> sources::SourceResult<Vec<Genre>> {
             self.genre_reads.fetch_add(1, Ordering::Relaxed);
-            Ok(self.page(&[], request, 0))
+            Ok(Vec::new())
         }
 
         async fn genre_detail(&self, _genre_id: &GenreId) -> sources::SourceResult<GenreDetail> {
@@ -928,11 +888,11 @@ mod tests {
             Ok(vec![music_folder()])
         }
 
-        async fn tracks_in_music_folder(
+        async fn track_ids_in_music_folder(
             &self,
             _folder_id: &MusicFolderId,
             request: PagedRequest,
-        ) -> sources::SourceResult<PagedResponse<Track>> {
+        ) -> sources::SourceResult<PagedResponse<TrackId>> {
             self.folder_track_reads.fetch_add(1, Ordering::Relaxed);
             Ok(self.page(&[], request, 0))
         }
@@ -940,19 +900,26 @@ mod tests {
 
     #[async_trait(?Send)]
     impl PlaylistReader for AlbumSource {
-        async fn playlists(
-            &self,
-            request: PagedRequest,
-        ) -> sources::SourceResult<PagedResponse<Playlist>> {
+        async fn playlists(&self) -> sources::SourceResult<Vec<Playlist>> {
             self.playlist_reads.fetch_add(1, Ordering::Relaxed);
-            Ok(self.page(&[playlist()], request, 1))
+            Ok(vec![playlist()])
+        }
+
+        async fn playlist_snapshot(
+            &self,
+            playlist: &Playlist,
+        ) -> sources::SourceResult<PlaylistSnapshot> {
+            self.playlist_detail_reads.fetch_add(1, Ordering::Relaxed);
+            Ok(PlaylistSnapshot {
+                playlist: playlist.clone(),
+                entries: Vec::new(),
+            })
         }
 
         async fn playlist_detail(
             &self,
             playlist_id: &PlaylistId,
         ) -> sources::SourceResult<PlaylistDetail> {
-            self.playlist_detail_reads.fetch_add(1, Ordering::Relaxed);
             Ok(PlaylistDetail {
                 playlist: Playlist {
                     id: playlist_id.clone(),

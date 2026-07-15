@@ -1,7 +1,7 @@
 use crate::CredentialSourceConfig;
 use crate::config::{decode_provider_payload, encode_provider_payload, require_payload_version};
 use crate::{
-    FavoriteMutator, FolderBrowser, GeneratedTrackProvider, GeneratedTrackSeed,
+    ArtistCollections, FavoriteMutator, FolderBrowser, GeneratedTrackProvider, GeneratedTrackSeed,
     GeneratedTrackStrategy, GeneratedTracksRequest, ImageBytes, ImageProvider, LibraryChange,
     LibraryChangeFeed, LibraryChangeResolution, LibraryChangeResolver, LibraryObjectObservation,
     LyricsProvider, LyricsSearch, MusicFolderProvider, MusicSource, NativeLyricLine, NativeLyrics,
@@ -14,15 +14,16 @@ use crate::{
 use async_trait::async_trait;
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
-    ITEM_FIELDS, ItemQueryResult, JellyfinItem, album_from_item, artist_from_item,
-    folder_from_item, genre_from_item, is_audio_item, parent_folder_id, playlist_from_item,
-    track_from_item,
+    ALBUM_FIELDS, FOLDER_FIELDS, ItemQueryResult, JellyfinItem, MIXED_ITEM_FIELDS, PLAYLIST_FIELDS,
+    TRACK_FIELDS, album_from_item, artist_from_item, folder_from_item, genre_from_item,
+    is_audio_item, parent_folder_id, playlist_from_item, track_from_item,
 };
 use library::{
     Album, AlbumDetail, AlbumId, Artist, FavoriteItemId, Folder, FolderDetail, FolderId, Genre,
     GenreDetail, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef,
-    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    SearchResults, SourceEntityKind, SourceId, SourceObjectMapping, Track, TrackId,
+    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SearchResults, SourceEntityKind, SourceId,
+    SourceObjectMapping, Track, TrackId,
 };
 #[cfg(test)]
 use library::{ArtistCredit, ArtistId};
@@ -57,6 +58,25 @@ const COLLECTION_PAGE_SIZE: usize = 500;
 
 pub const JELLYFIN_SOURCE_ID: &str = "jellyfin";
 const SOURCE_CONFIG_VERSION: u32 = 1;
+
+async fn collect_pages<T, F, Fut>(mut fetch: F) -> SourceResult<Vec<T>>
+where
+    F: FnMut(PagedRequest) -> Fut,
+    Fut: std::future::Future<Output = SourceResult<PagedResponse<T>>>,
+{
+    let mut pages = PageState::default();
+    let mut items = Vec::new();
+    loop {
+        let page = fetch(pages.request(COLLECTION_PAGE_SIZE)).await?;
+        let finished = pages
+            .add(page.items.len(), (page.total > 0).then_some(page.total))
+            .ok_or_else(|| SourceError::Other("Jellyfin returned an unstable page".to_string()))?;
+        items.extend(page.items);
+        if finished {
+            return Ok(items);
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct JellyfinSourcePayload {
@@ -256,6 +276,12 @@ impl JellyfinSource {
         sort_by: &str,
         sort_order: &str,
     ) -> SourceResult<PagedResponse<JellyfinItem>> {
+        let fields = match include_types {
+            "MusicAlbum" => ALBUM_FIELDS,
+            "Audio" => TRACK_FIELDS,
+            "Playlist" => PLAYLIST_FIELDS,
+            _ => MIXED_ITEM_FIELDS,
+        };
         let mut url = endpoint(&self.base_url, "Items")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -263,7 +289,7 @@ impl JellyfinSource {
             .append_pair("IncludeItemTypes", include_types)
             .append_pair("StartIndex", &request.offset.to_string())
             .append_pair("Limit", &request.limit.to_string())
-            .append_pair("Fields", ITEM_FIELDS)
+            .append_pair("Fields", fields)
             .append_pair("SortBy", sort_by)
             .append_pair("SortOrder", sort_order);
 
@@ -344,7 +370,7 @@ impl JellyfinSource {
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
             .append_pair("Limit", &limit.clamp(1, 500).to_string())
-            .append_pair("Fields", ITEM_FIELDS);
+            .append_pair("Fields", TRACK_FIELDS);
         let response = self.get_json::<ItemQueryResult>(url).await?;
         Ok(response
             .items
@@ -363,7 +389,7 @@ impl JellyfinSource {
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
             .append_pair("Limit", &limit.clamp(1, 500).to_string())
-            .append_pair("Fields", ITEM_FIELDS);
+            .append_pair("Fields", TRACK_FIELDS);
         let response = self.get_json::<ItemQueryResult>(url).await?;
         Ok(response
             .items
@@ -440,7 +466,7 @@ impl JellyfinSource {
             .append_pair("UserId", &self.user_id)
             .append_pair("ParentId", raw_parent_id)
             .append_pair("Recursive", "false")
-            .append_pair("Fields", ITEM_FIELDS)
+            .append_pair("Fields", TRACK_FIELDS)
             .append_pair("SortBy", "SortName")
             .append_pair("SortOrder", "Ascending");
         let response = self.get_json::<ItemQueryResult>(url).await?;

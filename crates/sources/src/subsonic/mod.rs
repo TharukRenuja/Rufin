@@ -1,7 +1,7 @@
 use crate::CredentialSourceConfig;
 use crate::config::{decode_provider_payload, encode_provider_payload, require_payload_version};
 use crate::{
-    FavoriteMutator, FolderBrowser, GeneratedTrackProvider, GeneratedTrackSeed,
+    ArtistCollections, FavoriteMutator, FolderBrowser, GeneratedTrackProvider, GeneratedTrackSeed,
     GeneratedTracksRequest, ImageBytes, ImageProvider, LibraryFreshnessProbe, LibraryProbeResult,
     LyricsProvider, LyricsSearch, MusicFolderProvider, MusicSource, NativeLyricLine, NativeLyrics,
     NativeLyricsOrigin, PagedRequest, PlaybackReport, PlaybackReportKind, PlaybackReporter,
@@ -14,8 +14,9 @@ use async_trait::async_trait;
 use library::{
     Album, AlbumDetail, AlbumId, Artist, ArtistId, FavoriteItemId, Folder, FolderDetail, FolderId,
     Genre, GenreDetail, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef,
-    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    SearchResults, SourceEntityKind, SourceId, Track, TrackId, normalize_release_types,
+    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SearchResults, SourceEntityKind, SourceId,
+    Track, TrackId, normalize_release_types,
 };
 use reqwest::{Client, Url};
 use serde::Deserialize;

@@ -41,6 +41,18 @@ pub struct PlaylistEntry {
     pub track: Track,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaylistEntryKey {
+    pub entry_id: String,
+    pub track_id: TrackId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaylistSnapshot {
+    pub playlist: Playlist,
+    pub entries: Vec<PlaylistEntryKey>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AlbumDetail {
     pub album: Album,

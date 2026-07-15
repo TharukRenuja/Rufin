@@ -541,21 +541,19 @@ pub(in crate::controller) fn startup_add_syncs() {
 #[test]
 pub(in crate::controller) fn startup_reuse_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let remote = saved_source();
     let local = local_source_saved();
-    let root = unique_test_dir("stale-local-source-selection");
+    let root = unique_test_dir("startup-reuse-cache");
     fs::create_dir_all(&root).expect("create root");
     let mut settings = StoredSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Source(remote.source_id.clone()));
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
     settings.sources.local_folders = vec![LocalLibraryFolder {
         path: root.to_string_lossy().into_owned(),
     }];
     store.save_settings(&settings).expect("save settings");
     store
         .with_store(|store| {
-            store.save_source(&remote)?;
             store.save_source(&local)?;
-            store.set_active_source(&remote.source_id)?;
+            store.set_active_source(&local.source_id)?;
             let generation = store.begin_sync(&local.source_id)?;
             commit_cached_library(
                 store,
@@ -571,19 +569,16 @@ pub(in crate::controller) fn startup_reuse_cache() {
             )
         })
         .expect("seed local cache");
-    let (owners, events) = owners_from_store_for_test(store);
+    let (owners, _events) = owners_from_store_for_test(store);
 
-    owners.source.select_source(LibrarySourceSelection::Local);
-
-    let playback = wait_for_playback_projection(&events);
+    let playback = owners
+        .playback
+        .playback_product()
+        .and_then(|product| product.initial_projection())
+        .expect("restore local playback");
     assert_eq!(
         playback.view.transport.source_id.as_str(),
         LOCAL_SOURCE_IDENTITY_ID
-    );
-    let snapshot = wait_for_source_presentation(&events);
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Local)
     );
     assert_eq!(
         owners
@@ -2253,10 +2248,12 @@ pub(in crate::controller) fn playlist_refresh_replace() {
                         artists: vec![sync_artist.clone()],
                         album_artists: vec![sync_artist.clone()],
                         genres: Vec::new(),
-                        playlists: vec![PlaylistDetail {
+                        playlists: vec![library::PlaylistSnapshot {
                             playlist: fresh_playlist.clone(),
-                            tracks: vec![fresh_track.clone()],
-                            entries: vec![fresh_entry.clone()],
+                            entries: vec![library::PlaylistEntryKey {
+                                entry_id: fresh_entry.entry_id.clone(),
+                                track_id: fresh_entry.track.id.clone(),
+                            }],
                         }],
                         home_sections: Vec::new(),
                         mappings: vec![

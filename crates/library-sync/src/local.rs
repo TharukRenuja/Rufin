@@ -178,18 +178,17 @@ async fn collect_snapshot(
     progress(Progress::CollectionStarted(Collection::Albums));
     let albums = load_all(cancelled, |request| source.albums(request)).await?;
     progress(Progress::CollectionStarted(Collection::Artists));
-    let artists = load_all(cancelled, |request| source.artists(request)).await?;
+    let artist_collections = await_source(cancelled, source.artist_collections()).await?;
     progress(Progress::CollectionStarted(Collection::AlbumArtists));
-    let album_artists = load_all(cancelled, |request| source.album_artists(request)).await?;
     progress(Progress::CollectionStarted(Collection::Genres));
-    let genres = load_all(cancelled, |request| source.genres(request)).await?;
+    let genres = await_source(cancelled, source.genres()).await?;
     progress(Progress::CollectionStarted(Collection::HomeSections));
     let home_sections = await_source(cancelled, source.home_sections()).await?;
     Ok(LocalSnapshot {
         tracks,
         albums,
-        artists,
-        album_artists,
+        artists: artist_collections.artists,
+        album_artists: artist_collections.album_artists,
         genres,
         home_sections,
     })
