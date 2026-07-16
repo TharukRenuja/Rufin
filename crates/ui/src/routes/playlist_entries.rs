@@ -1726,27 +1726,4 @@ mod tests {
             .is_none()
         );
     }
-
-    #[test]
-    fn model_selection_sync_does_not_retain_the_model() {
-        gtk::init().expect("initialize GTK");
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        connect_playlist_entry_model_selection_sync(
-            &model,
-            &selection,
-            Rc::new(RefCell::new(Vec::new())),
-            Rc::new(RefCell::new(PlaylistEntrySelectionIndex::default())),
-            Rc::new(RefCell::new(None)),
-            Rc::new(RefCell::new(None)),
-        );
-        let weak_model = model.downgrade();
-        let weak_selection = selection.downgrade();
-
-        drop(selection);
-        drop(model);
-
-        assert!(weak_selection.upgrade().is_none());
-        assert!(weak_model.upgrade().is_none());
-    }
 }

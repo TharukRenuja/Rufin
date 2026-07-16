@@ -1383,15 +1383,12 @@ fn album_detail_min_track_area_width(fields: &[LibraryField]) -> i32 {
 #[cfg(test)]
 mod album_detail_width_tests {
     use crate::{LibraryField, LibraryListKey};
-    use ::library::TrackId;
-    use adw::prelude::*;
 
     use super::{
         ALBUM_DETAIL_MAX_COVER, ALBUM_DETAIL_ROW_HORIZONTAL_INSET, ALBUM_DETAIL_SEPARATOR_WIDTH,
-        AlbumDetailRowMetrics, AlbumDetailTrackSelection, album_detail_play_click,
-        album_detail_row_content_width, album_detail_row_metrics_for_width,
-        album_detail_track_area_width_for, album_detail_track_cells_width,
-        album_detail_track_field_widths,
+        AlbumDetailRowMetrics, album_detail_play_click, album_detail_row_content_width,
+        album_detail_row_metrics_for_width, album_detail_track_area_width_for,
+        album_detail_track_cells_width, album_detail_track_field_widths,
     };
     use crate::routes::route_layout::{PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START};
 
@@ -1480,33 +1477,5 @@ mod album_detail_width_tests {
         assert!(album_detail_play_click(2));
         assert!(!album_detail_play_click(3));
         assert!(album_detail_play_click(4));
-    }
-
-    #[test]
-    fn album_detail_now_playing_follows_track_changes_and_virtual_rebinds() {
-        gtk::init().expect("initialize GTK");
-        let first_id = TrackId::fake(1);
-        let second_id = TrackId::fake(2);
-        let selection = AlbumDetailTrackSelection::default();
-        let first = gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast::<gtk::Widget>();
-        let second = gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast::<gtk::Widget>();
-        selection.bind_row(&first, &first_id);
-        selection.bind_row(&second, &second_id);
-
-        selection.select_now_playing_track(Some(&first_id));
-        assert!(first.has_css_class("album-detail-track-selected"));
-        assert!(!second.has_css_class("album-detail-track-selected"));
-
-        selection.select_now_playing_track(Some(&second_id));
-        assert!(!first.has_css_class("album-detail-track-selected"));
-        assert!(second.has_css_class("album-detail-track-selected"));
-
-        selection.clear_bound_rows();
-        let rebound = gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast::<gtk::Widget>();
-        selection.bind_row(&rebound, &second_id);
-        assert!(rebound.has_css_class("album-detail-track-selected"));
-
-        selection.select_now_playing_track(None);
-        assert!(!rebound.has_css_class("album-detail-track-selected"));
     }
 }

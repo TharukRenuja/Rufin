@@ -76,22 +76,37 @@ impl CollectionGridCacheBound {
         let Some(grid) = self.grid.upgrade() else {
             return;
         };
-        let available_width = allocation_width
-            .saturating_sub(grid.margin_start())
-            .saturating_sub(grid.margin_end())
-            .max(1);
-        let minimum_slot_width = self
-            .minimum_card_width
-            .max(1)
-            .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
-        let maximum_columns = (available_width / minimum_slot_width)
-            .max(1)
-            .min(self.maximum_columns.max(1) as i32) as u32;
+        let maximum_columns = collection_grid_column_limit(
+            allocation_width,
+            grid.margin_start(),
+            grid.margin_end(),
+            self.minimum_card_width,
+            self.maximum_columns,
+        );
         if grid.max_columns() == maximum_columns {
             return;
         }
         grid.set_max_columns(maximum_columns);
     }
+}
+
+fn collection_grid_column_limit(
+    allocation_width: i32,
+    margin_start: i32,
+    margin_end: i32,
+    minimum_card_width: i32,
+    maximum_columns: u32,
+) -> u32 {
+    let available_width = allocation_width
+        .saturating_sub(margin_start)
+        .saturating_sub(margin_end)
+        .max(1);
+    let minimum_slot_width = minimum_card_width
+        .max(1)
+        .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
+    (available_width / minimum_slot_width)
+        .max(1)
+        .min(maximum_columns.max(1) as i32) as u32
 }
 
 #[derive(Clone)]
@@ -1585,4 +1600,63 @@ fn install_dynamic_grid_label_link(
         click_shell.navigate(route);
     });
     target.add_controller(click);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::library_fields::ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH;
+    use super::*;
+
+    fn fixed_slot(store: &gio::ListStore, position: u32) -> FixedPageSlot<u8> {
+        store
+            .item(position)
+            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+            .expect("fixed page slot")
+            .borrow::<FixedPageSlot<u8>>()
+            .clone()
+    }
+
+    #[test]
+    fn fixed_page_slots_keep_source_positions_and_fill_the_page() {
+        let source = gio::ListStore::new::<glib::BoxedAnyObject>();
+        source.append(&glib::BoxedAnyObject::new(7_u8));
+        let presentation = gio::ListStore::new::<glib::BoxedAnyObject>();
+
+        refill_fixed_page_slots::<u8>(&source, &presentation, 3);
+
+        assert_eq!(presentation.n_items(), 3);
+        assert!(matches!(
+            fixed_slot(&presentation, 0),
+            FixedPageSlot::Item {
+                position: 0,
+                value: 7
+            }
+        ));
+        assert!(matches!(fixed_slot(&presentation, 1), FixedPageSlot::Empty));
+        assert!(matches!(fixed_slot(&presentation, 2), FixedPageSlot::Empty));
+    }
+
+    #[test]
+    fn collection_grid_column_limit_uses_the_card_minimum() {
+        assert_eq!(
+            collection_grid_column_limit(
+                600,
+                0,
+                0,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            3
+        );
+        assert_eq!(
+            collection_grid_column_limit(
+                600,
+                0,
+                0,
+                ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MAX_COLUMNS,
+            ),
+            2
+        );
+    }
 }

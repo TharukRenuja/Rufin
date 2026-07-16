@@ -10,7 +10,7 @@ _build:
     cargo build --locked
 
 check:
-    RUFIN_CONTAINER_HEADLESS=1 scripts/container run just _check-all
+    scripts/container run just _check-all
 
 _check-all:
     just _flatpak-sources-check
@@ -46,7 +46,7 @@ _release-check:
     cargo run --locked -p xtask -- verify local
 
 test *args:
-    RUFIN_CONTAINER_HEADLESS=1 scripts/container run just _test {{ args }}
+    scripts/container run just _test {{ args }}
 
 _test *args:
     just _icon-check

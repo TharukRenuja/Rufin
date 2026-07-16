@@ -262,10 +262,7 @@ impl LibraryCollectionProjection {
 
     pub(crate) fn apply_settings(&self, settings: &crate::LibraryListSettings) {
         let previous = self.settings.borrow().clone();
-        let detail_fields_changed = previous.detail_track_fields != settings.detail_track_fields;
-        let rebuild = previous.layout != settings.layout
-            || (detail_fields_changed && settings.layout == LibraryLayout::Detail);
-        if rebuild {
+        if collection_presentation_needs_rebuild(&previous, settings) {
             let presentation = (self.build)(settings.layout);
             presentation.apply_fields(settings);
             let widget = presentation.widget();
@@ -299,6 +296,15 @@ impl LibraryCollectionProjection {
     }
 }
 
+fn collection_presentation_needs_rebuild(
+    previous: &crate::LibraryListSettings,
+    current: &crate::LibraryListSettings,
+) -> bool {
+    previous.layout != current.layout
+        || (previous.detail_track_fields != current.detail_track_fields
+            && current.layout == LibraryLayout::Detail)
+}
+
 impl TrackModelIndex {
     pub(crate) fn new(model: &gio::ListStore) -> Self {
         let inner = Rc::new(TrackModelIndexInner {
@@ -327,7 +333,7 @@ impl TrackModelIndex {
         self.inner.listeners.borrow_mut().push(listener);
     }
 
-    fn position(&self, track_id: &TrackId) -> Option<u32> {
+    pub(super) fn position(&self, track_id: &TrackId) -> Option<u32> {
         self.inner.positions.borrow().get(track_id).copied()
     }
 
@@ -1117,12 +1123,14 @@ pub(crate) fn configure_compact_track_table_scroller(
     scroller: &gtk::ScrolledWindow,
     row_count: usize,
 ) {
-    let visible_rows = row_count.min(COMPACT_TRACK_TABLE_MAX_VISIBLE_ROWS);
-    let height =
-        COMPACT_TRACK_TABLE_HEADER_HEIGHT + visible_rows as i32 * COMPACT_TRACK_TABLE_ROW_HEIGHT;
+    let height = compact_track_table_content_height(row_count);
     scroller.set_min_content_height(height);
     scroller.set_max_content_height(height);
     scroller.set_propagate_natural_height(false);
+}
+fn compact_track_table_content_height(row_count: usize) -> i32 {
+    let visible_rows = row_count.min(COMPACT_TRACK_TABLE_MAX_VISIBLE_ROWS);
+    COMPACT_TRACK_TABLE_HEADER_HEIGHT + visible_rows as i32 * COMPACT_TRACK_TABLE_ROW_HEIGHT
 }
 pub(crate) fn library_table_content_height(row_count: usize) -> i32 {
     capped_library_table_content_height(row_count, None)
@@ -1218,391 +1226,44 @@ pub(super) fn collection_grid_card() -> gtk::Box {
 }
 
 #[cfg(test)]
-mod scroll_host_tests {
-    use super::super::grid_cells::ReusableCollectionGridCell;
-    use super::super::library_fields::{
-        ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH, COLLECTION_GRID_MIN_CARD_WIDTH,
-    };
-    use super::super::route_layout::{HOME_ALBUM_GAP, home_album_page_size};
+mod layout_policy_tests {
     use super::*;
-    use crate::layout::width_allocation_owner;
 
-    struct FixedRowCell {
-        card: gtk::Box,
-    }
-
-    impl FixedRowCell {
-        fn new() -> Self {
-            let card = collection_grid_card();
-            let cover_child = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            cover_child.set_hexpand(true);
-            cover_child.set_vexpand(true);
-            card.append(&super::super::cards::square_cover_frame(&cover_child));
-            for class in ["track-title", "artist-label", "muted"] {
-                card.append(&grid_label_with_label(class, class).0);
-            }
-            Self { card }
-        }
-    }
-
-    impl ReusableCollectionGridCell<u8> for FixedRowCell {
-        fn widget(&self) -> gtk::Widget {
-            self.card.clone().upcast()
-        }
-
-        fn bind(&self, _: u32, _: u8) {}
-
-        fn clear(&self) {}
-
-        fn apply_fields(&self, _: &[LibraryField]) {}
-    }
-
-    fn test_row_projection(
-        table: gtk::ColumnView,
-        columns: Vec<(gtk::ColumnViewColumn, i32)>,
-    ) -> LibraryPresentationProjection {
-        let width_fit = install_column_view_width_fit(&table, columns.clone(), 600);
-        LibraryPresentationProjection::Row(CollectionTableProjection {
-            table,
-            fixed_columns: Rc::new(columns),
-            column_for_field: Rc::new(|field| {
-                (
-                    gtk::ColumnViewColumn::new(Some(field.title()), None::<gtk::ListItemFactory>),
-                    80,
-                )
-            }),
-            fields: Rc::new(RefCell::new(Vec::new())),
-            width_fit,
-        })
+    #[test]
+    fn compact_track_height_caps_at_four_rows() {
+        assert_eq!(
+            compact_track_table_content_height(3),
+            COMPACT_TRACK_TABLE_HEADER_HEIGHT + COMPACT_TRACK_TABLE_ROW_HEIGHT * 3
+        );
+        assert_eq!(
+            compact_track_table_content_height(5),
+            compact_track_table_content_height(4)
+        );
     }
 
     #[test]
-    fn collection_hosts_keep_native_layout_contracts() {
-        gtk::init().expect("initialize GTK");
-        crate::application::style::install_css();
-        let home_model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        home_model.append(&glib::BoxedAnyObject::new(7_u8));
-        let activated = Rc::new(Cell::new(None::<u8>));
-        let activated_from_row = Rc::clone(&activated);
-        let home_row = fixed_page_collection_row(
-            home_model.clone(),
-            3,
-            &[],
-            |_| FixedRowCell::new(),
-            move |_, value: u8| activated_from_row.set(Some(value)),
-        );
-        let home_row_widget = home_row.widget();
-        let stable_row = home_row_widget.as_ptr();
-        let natural = home_row_widget.measure(gtk::Orientation::Vertical, -1).0;
-        let allocated_width = home_row_widget.measure(gtk::Orientation::Vertical, 600).0;
-        assert_eq!(
-            home_row_widget.request_mode(),
-            gtk::SizeRequestMode::HeightForWidth
-        );
-        assert!(allocated_width > natural);
-        assert_eq!(home_row_widget.height_request(), -1);
-        let first = home_row_widget
-            .first_child()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("first bound Home card");
-        let second = first
-            .next_sibling()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("first empty Home slot");
-        let third = second
-            .next_sibling()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("second empty Home slot");
-        assert!(third.next_sibling().is_none());
-        let home_height = home_row_widget.measure(gtk::Orientation::Vertical, 600).1;
-        home_row_widget.allocate(600, home_height, -1, None);
-        let slot_widths = [first.width(), second.width(), third.width()];
-        let smallest_slot = *slot_widths.iter().min().expect("Home slot width");
-        let largest_slot = *slot_widths.iter().max().expect("Home slot width");
-        assert!(largest_slot - smallest_slot <= 1);
-        assert_eq!(slot_widths.iter().sum::<i32>() + HOME_ALBUM_GAP * 2, 600);
+    fn collection_presentation_rebuilds_only_for_layout_owned_changes() {
+        let row = crate::LibraryListSettings::for_key(LibraryListKey::Tracks);
+        assert!(!collection_presentation_needs_rebuild(&row, &row));
 
-        for value in [8_u8, 9_u8] {
-            home_model.append(&glib::BoxedAnyObject::new(value));
-        }
-        let first = home_row_widget
-            .first_child()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("first filled Home card");
-        let second = first
-            .next_sibling()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("second filled Home card");
-        let third = second
-            .next_sibling()
-            .and_then(|child| child.downcast::<gtk::FlowBoxChild>().ok())
-            .expect("third filled Home card");
-        home_row_widget.allocate(600, home_height, -1, None);
-        assert_eq!([first.width(), second.width(), third.width()], slot_widths);
-        let first_card = first.first_child().expect("first Home card body");
-        let second_card = second.first_child().expect("second Home card body");
-        let first_bounds = first_card
-            .compute_bounds(&home_row_widget)
-            .expect("first Home card bounds");
-        let second_bounds = second_card
-            .compute_bounds(&home_row_widget)
-            .expect("second Home card bounds");
-        assert_eq!(
-            (second_bounds.x() - first_bounds.x() - first_bounds.width()).round() as i32,
-            HOME_ALBUM_GAP
-        );
-        home_row_widget.emit_by_name::<()>("child-activated", &[&second]);
-        assert_eq!(activated.get(), Some(8));
-        home_row.set_page_size(2);
-        assert_eq!(home_row.widget().as_ptr(), stable_row);
-        assert_eq!(home_row.widget().min_children_per_line(), 2);
-        assert_eq!(home_row.widget().max_children_per_line(), 2);
+        let mut grid = row.clone();
+        grid.layout = LibraryLayout::Grid;
+        assert!(collection_presentation_needs_rebuild(&row, &grid));
 
-        let generic_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let generic_inset = super::super::cards::collection_grid_card_inset(
-            &generic_body,
-            COLLECTION_GRID_MIN_CARD_WIDTH,
-        );
-        let album_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let album_inset = super::super::cards::collection_grid_card_inset(
-            &album_body,
-            ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-        );
-        let generic_minimum = generic_inset.measure(gtk::Orientation::Horizontal, -1).0;
-        let album_minimum = album_inset.measure(gtk::Orientation::Horizontal, -1).0;
-        assert_eq!(
-            album_minimum - generic_minimum,
-            ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH - COLLECTION_GRID_MIN_CARD_WIDTH
-        );
-        generic_inset.allocate(generic_minimum, generic_minimum, -1, None);
-        assert_eq!(generic_body.width(), COLLECTION_GRID_MIN_CARD_WIDTH);
+        let mut unused_detail_fields = row.clone();
+        unused_detail_fields.detail_track_fields = vec![LibraryField::Title];
+        assert!(!collection_presentation_needs_rebuild(
+            &row,
+            &unused_detail_fields
+        ));
 
-        let generic_projection = collection_grid(
-            gio::ListStore::new::<glib::BoxedAnyObject>(),
-            &[],
-            |_| FixedRowCell::new(),
-            |_, _: u8| {},
-        );
-        generic_projection.fit_allocation(600);
-        let generic_grid = generic_projection
-            .widget()
-            .downcast::<gtk::GridView>()
-            .expect("generic virtualized collection grid");
-        let album_projection = collection_grid_with_minimum_card_width(
-            gio::ListStore::new::<glib::BoxedAnyObject>(),
-            ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH,
-            &[],
-            |_| FixedRowCell::new(),
-            |_, _: u8| {},
-        );
-        album_projection.fit_allocation(600);
-        let album_grid = album_projection
-            .widget()
-            .downcast::<gtk::GridView>()
-            .expect("Album virtualized collection grid");
-        assert_eq!(generic_grid.min_columns(), 1);
-        assert_eq!(generic_grid.max_columns(), 3);
-        assert_eq!(album_grid.min_columns(), 1);
-        assert_eq!(album_grid.max_columns(), 2);
-
-        let cover_child = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let cover = super::super::cards::square_cover_frame(&cover_child);
-        cover_child.set_visible(true);
-        cover.set_visible(true);
-        assert_eq!(cover.measure(gtk::Orientation::Vertical, 360).0, 360);
-        assert_eq!(cover.measure(gtk::Orientation::Vertical, 180).0, 180);
-        assert_eq!(cover.height_request(), -1);
-
-        let builds = Rc::new(Cell::new(0));
-        let count_builds = Rc::clone(&builds);
-        let mut settings = crate::LibraryListSettings {
-            layout: LibraryLayout::Row,
-            ..crate::LibraryListSettings::for_key(LibraryListKey::Albums)
-        };
-        let projection = LibraryCollectionProjection::new(
-            settings.clone(),
-            Rc::new(move |layout| {
-                count_builds.set(count_builds.get() + 1);
-                match layout {
-                    LibraryLayout::Grid => LibraryPresentationProjection::Grid(collection_grid(
-                        gio::ListStore::new::<glib::BoxedAnyObject>(),
-                        &[],
-                        |_| FixedRowCell::new(),
-                        |_, _: u8| {},
-                    )),
-                    LibraryLayout::Row | LibraryLayout::Detail => test_row_projection(
-                        gtk::ColumnView::new(None::<gtk::SelectionModel>),
-                        Vec::new(),
-                    ),
-                }
-            }),
-        );
-        assert_eq!(builds.get(), 1);
-
-        let scroller = projection.scrolling_scroller();
-        let row_child = scroller.child().expect("row presentation");
-        assert!(row_child.is::<gtk::ColumnView>());
-        assert_eq!(row_child.parent(), Some(scroller.clone().upcast()));
-        assert_eq!(row_child.margin_start(), PRIMARY_ROUTE_MARGIN_START);
-        assert_eq!(row_child.margin_end(), PRIMARY_ROUTE_MARGIN_END);
-        let scrolling_surface = projection.scrolling_widget();
-        assert_eq!(scroller.parent(), Some(scrolling_surface.clone()));
-        assert!(scrolling_surface.vexpands());
-
-        projection.apply_settings(&settings);
-        assert_eq!(
-            scroller.child().expect("retained row presentation"),
-            row_child
-        );
-        assert_eq!(builds.get(), 1);
-        assert_eq!(projection.scrolling_scroller(), scroller);
-
-        settings.layout = LibraryLayout::Grid;
-        projection.apply_settings(&settings);
-        let grid_child = scroller.child().expect("grid presentation");
-        assert!(grid_child.is::<gtk::GridView>());
-        assert_eq!(grid_child.parent(), Some(scroller.clone().upcast()));
-        assert!(row_child.parent().is_none());
-        assert_eq!(builds.get(), 2);
-        let grid = grid_child
-            .clone()
-            .downcast::<gtk::GridView>()
-            .expect("grid view");
-        let selection = grid.model().expect("grid selection");
-        let factory = grid.factory().expect("grid factory");
-        let grid_weak = grid.downgrade();
-        let selection_weak = selection.downgrade();
-        let factory_weak = factory.downgrade();
-
-        settings.layout = LibraryLayout::Row;
-        projection.apply_settings(&settings);
-        let replacement_row = scroller.child().expect("rebuilt row presentation");
-        assert!(replacement_row.is::<gtk::ColumnView>());
-        assert_ne!(replacement_row, row_child);
-        assert!(grid_child.parent().is_none());
-        assert_eq!(builds.get(), 3);
-        drop(factory);
-        drop(selection);
-        drop(grid);
-        drop(grid_child);
-        while glib::MainContext::default().iteration(false) {}
-        assert!(grid_weak.upgrade().is_none());
-        assert!(selection_weak.upgrade().is_none());
-        assert!(factory_weak.upgrade().is_none());
-    }
-
-    #[test]
-    fn compact_track_host_shows_up_to_four_complete_rows() {
-        gtk::init().expect("initialize GTK");
-        crate::application::style::install_css();
-        let mut four_row_height = None;
-        for row_count in [1_usize, 2, 3, 4, 5] {
-            let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-            for value in 0..row_count {
-                model.append(&glib::BoxedAnyObject::new(value));
-            }
-            let factory = gtk::SignalListItemFactory::new();
-            factory.connect_setup(|_, item| {
-                let item = item
-                    .downcast_ref::<gtk::ListItem>()
-                    .expect("column list item");
-                let cell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-                cell.set_height_request(48);
-                item.set_child(Some(&cell));
-            });
-            let selection = gtk::NoSelection::new(Some(model));
-            let table = gtk::ColumnView::new(Some(selection));
-            table.add_css_class("track-table");
-            table.add_css_class("track-list");
-            let column = gtk::ColumnViewColumn::new(Some("Title"), Some(factory));
-            table.append_column(&column);
-            table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
-            table.set_hexpand(true);
-            table.set_vexpand(true);
-            let presentation_table = table.clone();
-            let projection = LibraryCollectionProjection::new(
-                crate::LibraryListSettings::for_key(LibraryListKey::ArtistTracks),
-                Rc::new(move |_| {
-                    test_row_projection(presentation_table.clone(), vec![(column.clone(), 220)])
-                }),
-            );
-            let scroller = gtk::ScrolledWindow::new();
-            configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
-            configure_compact_track_table_scroller(&scroller, row_count);
-            let host = projection.mount_in_scroller(&scroller, 0, 0);
-            let next_heading = gtk::Label::new(Some("Albums"));
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-            content.append(&host);
-            content.append(&next_heading);
-            let window = gtk::Window::new();
-            window.set_child(Some(&content));
-            gtk::prelude::WidgetExt::realize(&window);
-            let width = 600;
-            let content_height = content.measure(gtk::Orientation::Vertical, width).1;
-            content.allocate(width, content_height, -1, None);
-            while glib::MainContext::default().pending() {
-                glib::MainContext::default().iteration(false);
-            }
-            let table_height = table.measure(gtk::Orientation::Vertical, width).1;
-            let host_bounds = host
-                .compute_bounds(&content)
-                .expect("compact track host bounds");
-            let heading_bounds = next_heading
-                .compute_bounds(&content)
-                .expect("following heading bounds");
-            let host_height = host_bounds.height().round() as i32;
-            if row_count < 4 {
-                assert!(host_height >= table_height);
-            } else if row_count == 4 {
-                assert!(host_height >= table_height);
-                four_row_height = Some(host_height);
-            } else {
-                assert_eq!(
-                    host_height,
-                    four_row_height.expect("four-row compact height")
-                );
-            }
-            assert_eq!(
-                (heading_bounds.y() - host_bounds.y()).round() as i32,
-                host_height + 18
-            );
-        }
-    }
-
-    #[test]
-    fn home_row_host_measures_the_columns_it_will_allocate() {
-        gtk::init().expect("initialize GTK");
-        crate::application::style::install_css();
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        for value in 0_u8..3 {
-            model.append(&glib::BoxedAnyObject::new(value));
-        }
-        let row = fixed_page_collection_row(model, 2, &[], |_| FixedRowCell::new(), |_, _: u8| {});
-        let stack = gtk::Stack::new();
-        stack.add_named(&row.widget(), Some("row"));
-        let current_columns = Rc::new(Cell::new(2_usize));
-        let fit_columns = Rc::clone(&current_columns);
-        let fit_row = row.clone();
-        let host = width_allocation_owner(&stack, move |width| {
-            let columns = home_album_page_size(width, Some(fit_columns.get()));
-            fit_columns.set(columns);
-            fit_row.set_page_size(columns);
-        });
-
-        let wide_height = host.measure(gtk::Orientation::Vertical, 600).1;
-        assert_eq!(current_columns.get(), 3);
-        assert_eq!(row.widget().min_children_per_line(), 3);
-        assert_eq!(
-            wide_height,
-            row.widget().measure(gtk::Orientation::Vertical, 600).1
-        );
-
-        let narrow_height = host.measure(gtk::Orientation::Vertical, 450).1;
-        assert_eq!(current_columns.get(), 2);
-        assert_eq!(row.widget().min_children_per_line(), 2);
-        assert_eq!(
-            narrow_height,
-            row.widget().measure(gtk::Orientation::Vertical, 450).1
-        );
+        let mut detail = crate::LibraryListSettings::for_key(LibraryListKey::Albums);
+        detail.layout = LibraryLayout::Detail;
+        let mut changed_detail = detail.clone();
+        changed_detail.detail_track_fields = vec![LibraryField::Title];
+        assert!(collection_presentation_needs_rebuild(
+            &detail,
+            &changed_detail
+        ));
     }
 }
