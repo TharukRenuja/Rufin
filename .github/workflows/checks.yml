@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CACHIX_CACHE_NAME: rufin
+
 concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
@@ -21,6 +24,8 @@ jobs:
     outputs:
       container_mode: ${{ steps.classify.outputs.container_mode }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
+      nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
+      package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
       rust_cache_required: ${{ steps.classify.outputs.rust_cache_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
 
@@ -45,6 +50,8 @@ jobs:
             {
               echo "container_mode=full"
               echo "current_nix_required=true"
+              echo "nix_package_required=true"
+              echo "package_dependencies_required=true"
               echo "rust_cache_required=true"
               echo "rust_required=true"
             } >> "$GITHUB_OUTPUT"
@@ -69,10 +76,14 @@ jobs:
           rust_cache_required=false
           container_mode=none
           current_nix_required=false
+          nix_package_required=false
+          package_dependencies_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             rust_required=true
             container_mode=full
             current_nix_required=true
+            nix_package_required=true
+            package_dependencies_required=true
           fi
 
           for path in "${changed_paths[@]}"; do
@@ -80,7 +91,7 @@ jobs:
               .github/workflows/checks.yml|.github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
                 container_mode=full
                 ;;
-              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
+              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 if [[ "$container_mode" != "full" ]]; then
                   container_mode=aur
                 fi
@@ -90,6 +101,18 @@ jobs:
             case "$path" in
               flake.lock|flake.nix)
                 current_nix_required=true
+                ;;
+            esac
+
+            case "$path" in
+              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix|.github/workflows/checks.yml)
+                nix_package_required=true
+                ;;
+            esac
+
+            case "$path" in
+              crates/*/Cargo.toml|flake.nix|justfile|scripts/check-deps|packaging/aur/rufin/PKGBUILD|packaging/aur/rufin-git/PKGBUILD)
+                package_dependencies_required=true
                 ;;
             esac
 
@@ -110,53 +133,72 @@ jobs:
             esac
           done
 
-          native_dependencies_at() {
-            {
-              git grep -h -E \
-                '^(adw|gdk-pixbuf|glib|gstreamer|gstreamer-audio|gtk)([.]workspace|[[:space:]]*=)' \
-                "$1" -- 'crates/*/Cargo.toml' 2>/dev/null || true
-            } |
-              sed -E 's/^([A-Za-z0-9_-]+).*/\1/' |
-              sort -u
-          }
-
-          before_native="$(native_dependencies_at "$base")"
-          after_native="$(native_dependencies_at "$HEAD_SHA")"
-          if [[ "$before_native" != "$after_native" ]]; then
-            required_native_metadata=(
-              flake.nix
-              packaging/aur/rufin/PKGBUILD
-              packaging/aur/rufin/.SRCINFO
-              packaging/aur/rufin-git/PKGBUILD
-              packaging/aur/rufin-git/.SRCINFO
-            )
-            for required_path in "${required_native_metadata[@]}"; do
-              metadata_changed=false
-              for changed_path in "${changed_paths[@]}"; do
-                if [[ "$changed_path" == "$required_path" ]]; then
-                  metadata_changed=true
-                  break
-                fi
-              done
-              if [[ "$metadata_changed" != "true" ]]; then
-                echo "Native Cargo dependencies changed without updating $required_path" >&2
-                exit 1
-              fi
-            done
-            current_nix_required=true
-            if [[ "$container_mode" != "full" ]]; then
-              container_mode=aur
-            fi
-          fi
-
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
           {
             echo "container_mode=$container_mode"
             echo "current_nix_required=$current_nix_required"
+            echo "nix_package_required=$nix_package_required"
+            echo "package_dependencies_required=$package_dependencies_required"
             echo "rust_cache_required=$rust_cache_required"
             echo "rust_required=$rust_required"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Check Linux package dependencies
+        if: steps.classify.outputs.package_dependencies_required == 'true'
+        run: bash scripts/check-deps --check
+
+  nix-package:
+    name: Nix package
+    needs: changes
+    if: github.event_name != 'push' && needs.changes.outputs.nix_package_required == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+            connect-timeout = 10
+            download-attempts = 5
+            extra-substituters = https://rufin.cachix.org
+            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
+            max-substitution-jobs = 4
+            stalled-download-timeout = 90
+
+      - name: Configure trusted Cachix upload
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor == github.repository_owner
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: ${{ env.CACHIX_CACHE_NAME }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Check flake outputs
+        run: bash scripts/retry-nix nix flake check --no-build --no-write-lock-file
+
+      - name: Build app
+        id: build
+        run: |
+          set -euo pipefail
+          store_path="$(bash scripts/retry-nix nix build .#rufin --no-link --print-out-paths --print-build-logs)"
+          echo "store-path=$store_path" >> "$GITHUB_OUTPUT"
+
+      - name: Verify package layout
+        env:
+          STORE_PATH: ${{ steps.build.outputs.store-path }}
+        run: cargo run --locked -p xtask -- verify package-layout "$STORE_PATH" /
+
+      - name: Verify wrapped app
+        run: bash scripts/retry-nix nix run .# -- --help >/dev/null
 
   container:
     name: Container
@@ -304,6 +346,7 @@ jobs:
     name: Required
     needs:
       - changes
+      - nix-package
       - container
       - workspace
       - cargo-deny
@@ -318,6 +361,8 @@ jobs:
           CONTAINER_MODE: ${{ needs.changes.outputs.container_mode }}
           CONTAINER_RESULT: ${{ needs.container.result }}
           EVENT_NAME: ${{ github.event_name }}
+          NIX_PACKAGE_REQUIRED: ${{ needs.changes.outputs.nix_package_required }}
+          NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
           RUST_CACHE_REQUIRED: ${{ needs.changes.outputs.rust_cache_required }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
@@ -340,6 +385,11 @@ jobs:
             fi
             echo "Rust cache updated."
             exit 0
+          fi
+
+          if [[ "$NIX_PACKAGE_REQUIRED" == "true" && "$NIX_PACKAGE_RESULT" != "success" ]]; then
+            echo "Nix package check did not pass: $NIX_PACKAGE_RESULT" >&2
+            exit 1
           fi
 
           if [[ "$CONTAINER_MODE" != "none" && "$CONTAINER_RESULT" != "success" ]]; then

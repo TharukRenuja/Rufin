@@ -15,6 +15,7 @@ check:
 _check-all:
     just _flatpak-sources-check
     just _i18n-template-check
+    just _check-deps
     just _fmt-check
     if command -v ast-grep >/dev/null 2>&1; then \
         just _ast-grep; \
@@ -96,6 +97,9 @@ _flatpak-sources-check:
 
 _i18n-template-check:
     cargo run --locked -p xtask -- generate i18n-template --check
+
+_check-deps:
+    bash scripts/check-deps --check
 
 _icon-check:
     cargo run --locked -p xtask -- verify icons
