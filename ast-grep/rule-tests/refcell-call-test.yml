@@ -1,4 +1,4 @@
-id: finish-state-change-before-call
+id: finish-refcell-borrow-before-call
 valid:
   - |
       fn remove(rules: Rc<RefCell<Vec<u8>>>, rerender: Rc<dyn Fn()>) {

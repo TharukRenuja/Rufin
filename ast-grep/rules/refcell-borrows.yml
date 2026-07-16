@@ -1,7 +1,7 @@
-id: finish-state-change-before-call
+id: finish-refcell-borrow-before-call
 language: Rust
 severity: error
-message: Finish changing this shared state before calling another function.
+message: Finish the RefCell borrow before calling another function.
 rule:
   pattern: "{ $$$PREFIX let mut $STATE = $CELL.borrow_mut(); $$$BEFORE; $CALL($$$CALL_ARGS); $$$AFTER }"
 constraints:
@@ -11,10 +11,10 @@ constraints:
       - not:
           regex: ^drop$
 ---
-id: finish-state-change-before-widget-update
+id: finish-refcell-borrow-before-widget-update
 language: Rust
 severity: error
-message: Finish changing this shared state before updating the widget.
+message: Finish the RefCell borrow before updating the widget.
 rule:
   any:
     - all:
@@ -38,10 +38,10 @@ rule:
             pattern: let mut $STATE = $CELL.borrow_mut();
             stopBy: end
 ---
-id: copy-shared-value-before-call
+id: copy-refcell-value-before-call
 language: Rust
 severity: error
-message: Copy this shared value into a local variable before passing it to another function.
+message: Copy the RefCell value into a local variable before passing it to another function.
 rule:
   any:
     - pattern: $CALL($CELL.borrow().clone())

@@ -19,7 +19,7 @@ _check-all:
     if command -v ast-grep >/dev/null 2>&1; then \
         just _ast-grep; \
     else \
-        echo "ast-grep is unavailable; skipping shared-state checks."; \
+        echo "ast-grep is unavailable; skipping RefCell checks."; \
     fi
     just _lint
     just _test
@@ -76,7 +76,7 @@ _fmt-check:
 
 _ast-grep:
     if ! command -v ast-grep >/dev/null 2>&1; then \
-        echo "ast-grep is required for shared-state checks." >&2; \
+        echo "ast-grep is required for RefCell checks." >&2; \
         exit 1; \
     fi
     ast-grep test --skip-snapshot-tests

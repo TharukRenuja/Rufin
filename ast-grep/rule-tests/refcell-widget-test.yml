@@ -1,4 +1,4 @@
-id: finish-state-change-before-widget-update
+id: finish-refcell-borrow-before-widget-update
 valid:
   - |
       fn select(draft: Rc<RefCell<Draft>>, name: Entry) {

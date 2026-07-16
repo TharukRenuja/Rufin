@@ -255,7 +255,7 @@ jobs:
         if: github.event_name != 'push'
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
-      - name: Check shared-state calls
+      - name: Check RefCell borrows
         if: github.event_name != 'push'
         run: >-
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
