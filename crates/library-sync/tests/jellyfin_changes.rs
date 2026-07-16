@@ -388,8 +388,8 @@ async fn run_change(
     changes: &SourceObjectChanges,
 ) -> ChangeSyncOutcome {
     let generation = store.begin_sync(source_id).expect("begin change sync");
-    let base_cache_revision = store
-        .source_cache_revision(source_id)
+    let base_sync_input_revision = store
+        .source_sync_input_revision(source_id)
         .expect("cache revision");
     let cancellation = CancellationToken::new();
     let mut progress = |_| {};
@@ -397,7 +397,7 @@ async fn run_change(
         store,
         source_id,
         generation,
-        base_cache_revision,
+        base_sync_input_revision,
         cancellation: &cancellation,
         progress: &mut progress,
     };
@@ -424,14 +424,14 @@ fn seed_cached_observation(
     .into_stored();
     store.save_source(&stored).expect("save source");
     let generation = store.begin_sync(&source_id).expect("begin seed sync");
-    let base_cache_revision = store
-        .source_cache_revision(&source_id)
+    let base_sync_input_revision = store
+        .source_sync_input_revision(&source_id)
         .expect("cache revision");
     store
         .commit_library_sync(
             &source_id,
             generation,
-            base_cache_revision,
+            base_sync_input_revision,
             LibrarySync {
                 albums: observation.albums.clone(),
                 tracks: observation.tracks.clone(),

@@ -229,7 +229,6 @@ fn source_warm_requests(
 
 fn push_home(plan: &mut Plan, query: &ActiveLibraryQuery, key: &WarmKey) -> Result<(), String> {
     let sections = query.home_sections()?;
-    let albums = query.albums_page(0, 64)?.items;
     let mut section_count = 0;
     for block in &key.home_blocks {
         if plan.full() {
@@ -237,7 +236,7 @@ fn push_home(plan: &mut Plan, query: &ActiveLibraryQuery, key: &WarmKey) -> Resu
         }
         match block {
             HomeBlockKind::Showcase => {
-                if let Some(album) = showcase_album(&sections, &albums, key.showcase_seed) {
+                if let Some(album) = showcase_album(&sections, None, key.showcase_seed) {
                     plan.push(ArtworkBinding::album(&album), Shape::Grid);
                 }
             }

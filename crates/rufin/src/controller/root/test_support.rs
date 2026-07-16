@@ -96,7 +96,6 @@ pub(in crate::controller) fn owners_from_store_for_test(
             secrets: Arc::clone(&secrets),
             library_events: library_events.clone(),
             home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-            explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
         },
         playback: PlaybackCommands {
             store: store.clone(),
@@ -509,11 +508,11 @@ pub(in crate::controller) fn commit_cached_library(
             manifest: library::LocalManifestDelta::default(),
             matches: observation.local_matches,
         });
-    let base_cache_revision = store.source_cache_revision(source_id)?;
+    let base_sync_input_revision = store.source_sync_input_revision(source_id)?;
     store.commit_library_sync(
         source_id,
         generation,
-        base_cache_revision,
+        base_sync_input_revision,
         library::LibrarySync {
             albums: observation.albums,
             tracks: observation.tracks,

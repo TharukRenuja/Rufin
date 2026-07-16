@@ -23,7 +23,7 @@ use rusqlite::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 28;
+const SCHEMA_VERSION: i64 = 29;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 
 #[derive(Debug, Error)]
@@ -194,6 +194,7 @@ pub struct SyncState {
     pub source_id: SourceId,
     pub generation: i64,
     pub cache_revision: i64,
+    pub sync_input_revision: i64,
     pub status: String,
     pub last_started_at: Option<String>,
     pub last_completed_at: Option<String>,
@@ -559,6 +560,7 @@ pub struct Store {
 
 mod activity;
 mod artwork_projection;
+mod home_projection;
 mod identity;
 mod library_auxiliary_cache;
 mod library_cache_reads;
@@ -580,8 +582,8 @@ pub use identity::local_file_source_object_id;
 pub use local_manifest::{LocalLibraryDelta, LocalManifestDelta};
 pub use playback_checkpoint::PlaybackCheckpointRecord;
 pub use sync::{
-    LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, SyncCommit, SyncCoverage,
-    TrackFolderMembership,
+    HomeSectionCommit, LibrarySync, LocalAccessUpdate, MusicFolderSnapshot, SyncCommit,
+    SyncCoverage, TrackFolderMembership,
 };
 
 #[cfg(test)]

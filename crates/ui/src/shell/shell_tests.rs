@@ -60,6 +60,7 @@ pub(crate) fn shell_commit_ignores_inactive_or_stale_update() {
     assert!(!stale_applied);
     assert_eq!(library.cache.revision(), 5);
 }
+
 #[test]
 pub(crate) fn shell_match_snapshot() {
     let old_source = SourceId::new("jellyfin:server:old");

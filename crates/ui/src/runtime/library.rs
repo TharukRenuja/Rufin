@@ -45,7 +45,6 @@ pub trait LibraryPort: Send + Sync {
     );
 
     fn refresh_home_section(&self, source_id: SourceId, kind: HomeSectionKind);
-    fn prefetch_explore(&self, source_id: SourceId);
     fn save_explore_projection(&self, source_id: SourceId, section: HomeSection);
 }
 

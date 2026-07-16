@@ -1490,13 +1490,7 @@ pub(in crate::controller) fn startup_track_cards() {
 
     let section = store
         .with_store(|store| {
-            let state = store.sync_state(&local.source_id)?;
-            store.save_home_section_prefetch(
-                &local.source_id,
-                state.generation,
-                state.cache_revision,
-                &section,
-            )?;
+            store.save_home_section_prefetch(&local.source_id, &section)?;
             store.load_home_section_prefetch(&local.source_id, HomeSectionKind::Explore)
         })
         .expect("reload projected Home section")
@@ -2241,14 +2235,14 @@ pub(in crate::controller) fn playlist_refresh_replace() {
             let generation = store
                 .begin_sync(&saved.source_id)
                 .map_err(|error| error.to_string())?;
-            let base_cache_revision = store
-                .source_cache_revision(&saved.source_id)
+            let base_sync_input_revision = store
+                .source_sync_input_revision(&saved.source_id)
                 .map_err(|error| error.to_string())?;
             store
                 .commit_library_sync(
                     &saved.source_id,
                     generation,
-                    base_cache_revision,
+                    base_sync_input_revision,
                     library::LibrarySync {
                         albums: vec![album.clone()],
                         tracks: vec![fresh_track.clone()],
@@ -2368,14 +2362,6 @@ pub(in crate::controller) fn startup_replace_section() {
         &[stale_track.clone(), fresh_track.clone()],
         &stale_sections,
     );
-    let (generation, cache_revision) = store
-        .with_store(|store| {
-            store
-                .sync_state(&saved.source_id)
-                .map(|state| (state.generation, state.cache_revision))
-        })
-        .expect("section generation");
-
     cache_home_section(
         &store,
         &saved.source_id,
@@ -2384,8 +2370,6 @@ pub(in crate::controller) fn startup_replace_section() {
             albums: vec![fresh_album.clone()],
             tracks: Vec::new(),
         },
-        generation,
-        cache_revision,
     )
     .expect("replace Explore");
     let after = store
@@ -2396,9 +2380,6 @@ pub(in crate::controller) fn startup_replace_section() {
     assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
     assert_eq!(after[1].tracks[0].id, stale_track.id);
 
-    let cache_revision = store
-        .with_store(|store| store.source_cache_revision(&saved.source_id))
-        .expect("Home cache revision");
     cache_home_section(
         &store,
         &saved.source_id,
@@ -2407,8 +2388,6 @@ pub(in crate::controller) fn startup_replace_section() {
             albums: Vec::new(),
             tracks: vec![fresh_track.clone()],
         },
-        generation,
-        cache_revision,
     )
     .expect("replace Most Played");
     let after = store
@@ -2446,22 +2425,8 @@ pub(in crate::controller) fn startup_promote_prefetch() {
         &[],
         std::slice::from_ref(&visible),
     );
-    let (generation, cache_revision) = store
-        .with_store(|store| {
-            store
-                .sync_state(&saved.source_id)
-                .map(|state| (state.generation, state.cache_revision))
-        })
-        .expect("prefetch generation");
     store
-        .with_store(|store| {
-            store.save_home_section_prefetch(
-                &saved.source_id,
-                generation,
-                cache_revision,
-                &prefetched,
-            )
-        })
+        .with_store(|store| store.save_home_section_prefetch(&saved.source_id, &prefetched))
         .expect("stage prefetched Explore");
     let visible_before = store
         .with_store(|store| store.load_home_sections(&saved.source_id))
@@ -2476,8 +2441,8 @@ pub(in crate::controller) fn startup_promote_prefetch() {
             .expect("load prefetched Explore")
             .is_some()
     );
-    save_home_section_projection(&store, &saved.source_id, &prefetched)
-        .expect("promote prefetched Explore");
+    save_home_section_projection(&store, &saved.source_id, &visible)
+        .expect("prefer persisted prefetch over the older rotation");
     let visible_after = store
         .with_store(|store| store.load_home_sections(&saved.source_id))
         .expect("load promoted sections");

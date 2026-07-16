@@ -277,7 +277,7 @@ fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert!(
         store
             .table_has_column("sources", "provider_payload")
@@ -428,6 +428,58 @@ fn current_schema_initializes_empty_database() {
 }
 
 #[test]
+fn version_28_migration_preserves_saved_source() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "home-projection-source-preservation"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = stored_source_with_id("jellyfin:server:home-projection-migration");
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+        store
+            .set_active_source(&saved.source_id)
+            .expect("set active source");
+    }
+
+    let connection = rusqlite::Connection::open(&path).expect("open version 28 database");
+    connection
+        .execute_batch(
+            "
+            DROP TABLE home_projection_state;
+            ALTER TABLE sync_state DROP COLUMN sync_input_revision;
+            PRAGMA user_version = 28;
+            ",
+        )
+        .expect("simulate version 28 schema");
+    drop(connection);
+
+    let store = Store::open(&path).expect("migrate home projection schema");
+    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(
+        store.list_sources().expect("list sources"),
+        vec![saved.clone()]
+    );
+    assert_eq!(store.active_source().expect("active source"), Some(saved));
+    assert!(
+        store
+            .table_exists("home_projection_state")
+            .expect("home projection table")
+    );
+    assert!(
+        store
+            .table_has_column("sync_state", "sync_input_revision")
+            .expect("sync input revision")
+    );
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
 fn version_27_removes_artwork_mirrors_without_losing_owned_facts() {
     let path = std::env::temp_dir().join(format!(
         "library-test-{}-{}.sqlite",
@@ -509,7 +561,7 @@ fn version_27_removes_artwork_mirrors_without_losing_owned_facts() {
     drop(connection);
 
     let store = Store::open(&path).expect("migrate artwork owner schema");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     let migrated = store
         .load_albums(&saved.source_id, 0, 10)
         .expect("load migrated albums")
@@ -612,7 +664,7 @@ fn version_25_migrates_sources_to_opaque_provider_payload() {
 
     store.migrate().expect("migrate version 25");
 
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert_eq!(
         store
             .stored_source(&jellyfin.source_id)
@@ -755,7 +807,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
 
     store.migrate().expect("migrate version 24");
 
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     let state = store.sync_state(&saved.source_id).expect("sync state");
     assert_eq!(state.cache_revision, 0);
     assert_eq!(
@@ -1037,7 +1089,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -1089,7 +1141,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
@@ -1118,7 +1170,7 @@ fn schema_reopen_preserves_opaque_source_payload() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -1180,7 +1232,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -1373,7 +1425,7 @@ fn schema_upgrade_backfills_artist_label_links() {
     }
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     let track_link_count: i64 = store
         .connection
         .query_row(
@@ -1586,7 +1638,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     let local_override_count = store
         .connection
         .query_row(
@@ -1639,7 +1691,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1662,12 +1714,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 29)
+        .pragma_update(None, "user_version", 30)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1844,11 +1896,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 28);
+        assert_eq!(store.schema_version().expect("schema version"), 29);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1864,7 +1916,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 28);
+        assert_eq!(store.schema_version().expect("schema version"), 29);
     }
 
     let store =
@@ -1874,7 +1926,7 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 28);
+    assert_eq!(store.schema_version().expect("schema version"), 29);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));

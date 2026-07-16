@@ -99,10 +99,6 @@ impl LibraryPort for LibraryCommands {
         LibraryCommands::refresh_home_section_for_active(self, source_id, kind);
     }
 
-    fn prefetch_explore(&self, source_id: SourceId) {
-        LibraryCommands::prefetch_explore_for_active(self, source_id);
-    }
-
     fn save_explore_projection(&self, source_id: SourceId, section: HomeSection) {
         LibraryCommands::save_explore_projection_for_active(self, source_id, section);
     }

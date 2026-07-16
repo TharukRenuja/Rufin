@@ -116,11 +116,11 @@ impl LibraryObservation {
                     .collect(),
             })
             .collect();
-        let base_cache_revision = store.source_cache_revision(source_id)?;
+        let base_sync_input_revision = store.source_sync_input_revision(source_id)?;
         store.commit_library_sync(
             source_id,
             generation,
-            base_cache_revision,
+            base_sync_input_revision,
             LibrarySync {
                 albums: self.albums,
                 tracks: self.tracks,

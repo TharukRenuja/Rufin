@@ -177,95 +177,81 @@ pub(in crate::controller) fn start_home_refresh_thread(
             drop(permit);
             return;
         };
-        let result = match target {
-            HomeRefreshTarget::Section(kind) => refresh_home_section_for_active(
-                &context.store,
-                &context.runtime,
-                &context.active_source,
-                &active,
-                kind,
-            ),
-        };
-        drop(permit);
+        let _home_write = active
+            .home_writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let HomeRefreshTarget::Section(kind) = target;
+        let result = refresh_home_section_for_active(
+            &context.store,
+            &context.runtime,
+            &context.active_source,
+            &active,
+            kind,
+        );
         match result {
-            Ok(()) => {
-                let _sent = context
-                    .library_events
-                    .try_send(library::LibraryEvent::HomeSectionsChanged { source_id });
+            Ok(projected) => {
+                let _sent =
+                    context
+                        .library_events
+                        .try_send(library::LibraryEvent::HomeSectionProjected {
+                            source_id: source_id.clone(),
+                            kind,
+                            section: projected.section.map(Box::new),
+                            showcase_fallback: projected.showcase_fallback.map(Box::new),
+                        });
+                if kind == HomeSectionKind::Explore {
+                    match prefetch_home_section_for_active(
+                        &context.store,
+                        &context.runtime,
+                        &context.active_source,
+                        &active,
+                        kind,
+                    ) {
+                        Ok(section) => {
+                            let _sent = context.library_events.try_send(
+                                library::LibraryEvent::HomeSectionPrefetched { source_id, section },
+                            );
+                        }
+                        Err(error) => {
+                            warn!(%error, "failed to prefetch Explore section");
+                        }
+                    }
+                }
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
             }
         }
-    });
-}
-pub(in crate::controller) fn start_explore_prefetch_thread(
-    context: ExplorePrefetchContext,
-    source_id: SourceId,
-) {
-    let permit = match context
-        .explore_prefetch_in_flight
-        .acquire(source_id.clone())
-    {
-        Ok(Some(permit)) => permit,
-        Ok(None) => return,
-        Err(error) => {
-            warn!(%error, %source_id, "failed to acquire Explore prefetch guard");
-            return;
-        }
-    };
-
-    thread::spawn(move || {
-        let saved = context
-            .store
-            .with_store(|store| store.active_source())
-            .ok()
-            .flatten()
-            .filter(|saved| saved.source_id == source_id);
-        let Some(saved) = saved else {
-            drop(permit);
-            return;
-        };
-        if saved_server_needs_auth(&context.secrets, &saved) {
-            drop(permit);
-            return;
-        }
-        let Ok(active) = selected_active_source(&context.active_source, &source_id) else {
-            drop(permit);
-            return;
-        };
-        let result = prefetch_home_section_for_active(
-            &context.store,
-            &context.runtime,
-            &context.active_source,
-            &active,
-            HomeSectionKind::Explore,
-        );
         drop(permit);
-        match result {
-            Ok(section) => {
-                let _sent = context
-                    .library_events
-                    .try_send(library::LibraryEvent::HomeSectionPrefetched { source_id, section });
-            }
-            Err(error) => {
-                warn!(%error, "failed to prefetch Explore section");
-            }
-        }
     });
 }
 pub(in crate::controller) fn start_home_promotion(
     store: StoreHandle,
     library_events: Sender<library::LibraryEvent>,
+    active_source: ActiveSourceSlot,
+    active: Arc<ActiveSource>,
     source_id: SourceId,
     section: HomeSection,
 ) {
     thread::spawn(move || {
-        if let Err(error) = save_home_section_projection(&store, &source_id, &section) {
-            warn!(%error, "failed to promote prefetched home section");
+        let _home_write = active
+            .home_writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match crate::source_setup::with_active_source_instance(&active_source, &active, || {
+            save_home_section_projection(&store, &source_id, &section)
+        }) {
+            Ok(commit) => {
+                let section = commit.section.unwrap_or(section);
+                let _sent =
+                    library_events.try_send(library::LibraryEvent::HomeSectionProjectionFinished {
+                        source_id,
+                        section,
+                    });
+            }
+            Err(error) => warn!(%error, "failed to promote prefetched home section"),
         }
-        let _sent = library_events
-            .try_send(library::LibraryEvent::HomeSectionProjectionFinished { source_id, section });
     });
 }
 
@@ -280,9 +266,9 @@ pub(crate) fn local_sync_operation(
             if cancellation.is_cancelled() {
                 return Err(library_sync::SyncError::Cancelled);
             }
-            let base_cache_revision = store.with_store_sync(|store| {
+            let base_sync_input_revision = store.with_store_sync(|store| {
                 store
-                    .source_cache_revision(&source_id)
+                    .source_sync_input_revision(&source_id)
                     .map_err(library_sync::SyncError::from)
             })?;
             let (source, complete_coverage) = {
@@ -347,7 +333,7 @@ pub(crate) fn local_sync_operation(
                     store,
                     source_id: &source_id,
                     generation,
-                    base_cache_revision,
+                    base_sync_input_revision,
                     cancellation,
                     progress,
                 };
@@ -375,12 +361,12 @@ where
         move |store, runtime, scope, generation, progress, cancellation| {
             info!(generation, "started source cache sync");
             store.with_store_sync(|store| {
-                let base_cache_revision = store.source_cache_revision(&source_id)?;
+                let base_sync_input_revision = store.source_sync_input_revision(&source_id)?;
                 let mut attempt = library_sync::SyncAttempt {
                     store,
                     source_id: &source_id,
                     generation,
-                    base_cache_revision,
+                    base_sync_input_revision,
                     cancellation,
                     progress,
                 };
@@ -510,16 +496,14 @@ pub(in crate::controller) fn refresh_home_section_for_active(
     active_source: &ActiveSourceSlot,
     active: &Arc<ActiveSource>,
     kind: HomeSectionKind,
-) -> Result<(), String> {
+) -> Result<library::HomeSectionCommit, String> {
     let source_id = &active.identity.id;
-    let (generation, base_cache_revision) = store.with_store(|store| {
-        let state = store.sync_state(source_id)?;
-        Ok((state.generation, state.cache_revision))
-    })?;
     let section = (active.home_section)(store, runtime, kind)?;
-    crate::source_setup::with_active_source_instance(active_source, active, || {
-        cache_home_section(store, source_id, &section, generation, base_cache_revision).map(|_| ())
-    })
+    let projected =
+        crate::source_setup::with_active_source_instance(active_source, active, || {
+            cache_home_section(store, source_id, &section)
+        })?;
+    Ok(projected)
 }
 pub(in crate::controller) fn prefetch_home_section_for_active(
     store: &StoreHandle,
@@ -529,24 +513,14 @@ pub(in crate::controller) fn prefetch_home_section_for_active(
     kind: HomeSectionKind,
 ) -> Result<HomeSection, String> {
     let source_id = &active.identity.id;
-    let (generation, base_cache_revision) = store.with_store(|store| {
-        let state = store.sync_state(source_id)?;
-        Ok((state.generation, state.cache_revision))
-    })?;
     let section = (active.home_section)(store, runtime, kind)?;
     let projected =
         crate::source_setup::with_active_source_instance(active_source, active, || {
-            store.with_store(|store| {
-                store.save_home_section_prefetch(
-                    source_id,
-                    generation,
-                    base_cache_revision,
-                    &section,
-                )?;
-                store.load_home_section_prefetch(source_id, kind)
-            })
+            store.with_store(|store| store.save_home_section_prefetch(source_id, &section))
         })?;
-    projected.ok_or_else(|| "The prefetched Home section was not retained.".to_string())
+    projected
+        .section
+        .ok_or_else(|| "The prefetched Home section was not retained.".to_string())
 }
 #[cfg(test)]
 pub(in crate::controller) async fn sync_local_source_with_events(
@@ -555,10 +529,10 @@ pub(in crate::controller) async fn sync_local_source_with_events(
     source: &LocalSource,
     library_sync_events: Sender<library_sync::LibrarySyncEvent>,
 ) -> Result<(), String> {
-    let (generation, base_cache_revision) = store.with_store(|store| {
+    let (generation, base_sync_input_revision) = store.with_store(|store| {
         Ok((
             store.begin_sync(source_id)?,
-            store.source_cache_revision(source_id)?,
+            store.source_sync_input_revision(source_id)?,
         ))
     })?;
     let cancellation = library_sync::CancellationToken::new();
@@ -567,7 +541,7 @@ pub(in crate::controller) async fn sync_local_source_with_events(
         source_id,
         source,
         generation,
-        base_cache_revision,
+        base_sync_input_revision,
         &mut |progress| {
             let _sent = library_sync_events.try_send(library_sync::LibrarySyncEvent::SyncChanged(
                 library_sync::SourceSyncChanged {
@@ -591,10 +565,10 @@ pub(in crate::controller) async fn sync_local_source_outcome(
     source_id: &SourceId,
     source: &LocalSource,
 ) -> Result<SyncCommit, String> {
-    let (generation, base_cache_revision) = store.with_store(|store| {
+    let (generation, base_sync_input_revision) = store.with_store(|store| {
         Ok((
             store.begin_sync(source_id)?,
-            store.source_cache_revision(source_id)?,
+            store.source_sync_input_revision(source_id)?,
         ))
     })?;
     let cancellation = library_sync::CancellationToken::new();
@@ -603,7 +577,7 @@ pub(in crate::controller) async fn sync_local_source_outcome(
         source_id,
         source,
         generation,
-        base_cache_revision,
+        base_sync_input_revision,
         &mut |_| {},
         &cancellation,
     )
@@ -615,7 +589,7 @@ async fn sync_local_source_for_test(
     source_id: &SourceId,
     source: &LocalSource,
     generation: i64,
-    base_cache_revision: i64,
+    base_sync_input_revision: i64,
     progress: &mut dyn FnMut(library_sync::Progress),
     cancellation: &library_sync::CancellationToken,
 ) -> Result<SyncCommit, String> {
@@ -632,7 +606,7 @@ async fn sync_local_source_for_test(
             store,
             source_id,
             generation,
-            base_cache_revision,
+            base_sync_input_revision,
             cancellation,
             progress,
         };

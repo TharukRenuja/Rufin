@@ -71,7 +71,6 @@ pub(crate) fn bootstrap() -> Result<ProductAssembly, String> {
         secrets: Arc::clone(&secrets),
         library_events: library_events.clone(),
         home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-        explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
     };
     let playback_commands = PlaybackCommands {
         store: store.clone(),
@@ -170,7 +169,6 @@ pub(in crate::controller) fn bootstrap_memory_for_test() -> ProductAssembly {
             secrets: Arc::clone(&secrets),
             library_events: library_events.clone(),
             home_refresh_in_flight: InFlightGuards::new("Home refresh"),
-            explore_prefetch_in_flight: InFlightGuards::new("Explore prefetch"),
         },
         playback: PlaybackCommands {
             store: store.clone(),

@@ -4,27 +4,15 @@ pub(in crate::controller) fn save_home_section_projection(
     store: &StoreHandle,
     source_id: &SourceId,
     section: &HomeSection,
-) -> Result<(), String> {
-    let (generation, base_cache_revision) = store.with_store(|store| {
-        let state = store.sync_state(source_id)?;
-        Ok((state.generation, state.cache_revision))
-    })?;
-    store
-        .with_store(|store| {
-            store.promote_home_section(source_id, generation, base_cache_revision, section)
-        })
-        .map(|_| ())
+) -> Result<library::HomeSectionCommit, String> {
+    store.with_store(|store| store.promote_home_section(source_id, section))
 }
 pub(in crate::controller) fn cache_home_section(
     store: &StoreHandle,
     source_id: &SourceId,
     section: &HomeSection,
-    generation: i64,
-    base_cache_revision: i64,
-) -> Result<SyncCommit, String> {
-    store.with_store(|store| {
-        store.replace_home_section(source_id, generation, base_cache_revision, section)
-    })
+) -> Result<library::HomeSectionCommit, String> {
+    store.with_store(|store| store.replace_home_section(source_id, section))
 }
 pub(in crate::controller) fn emit_source_presentation(
     store: &StoreHandle,

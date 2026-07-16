@@ -1,6 +1,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use library::{HomeSection, HomeSectionKind, SourceFeatureOwner, SourceId, Track, TrackId};
 use library::{SourceLocalAccess, Store, StoreResult, StoredSource};
@@ -189,6 +189,7 @@ pub(crate) struct AutoDjCandidateOperation {
 /// Everything the selected source can do, including which inputs each action accepts
 pub(crate) struct ActiveSource {
     pub(crate) identity: SourceIdentity,
+    pub(crate) home_writes: Mutex<()>,
     pub(crate) sync: LibrarySyncOperation,
     pub(crate) freshness: Option<library_sync::Freshness>,
     pub(crate) home_section: HomeSectionLoader,
