@@ -1,3 +1,13 @@
+:root {
+  --dim-opacity: 70%;
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --dim-opacity: 90%;
+  }
+}
+
 window {
   background: var(--window-bg-color);
   color: var(--window-fg-color);
