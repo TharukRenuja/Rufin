@@ -278,8 +278,10 @@ pub(in crate::controller) fn disk_store_for_test(label: &str) -> (StoreHandle, P
     let _cleanup = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create store root");
     let store = StoreHandle::Path {
-        cache_database_path: root.join(CACHE_DATABASE_FILE_NAME),
-        settings_path: root.join("config").join(SETTINGS_FILE_NAME),
+        cache_database_path: root.join(super::app_paths::CACHE_DATABASE_FILE_NAME),
+        settings_path: root
+            .join("config")
+            .join(super::app_paths::SETTINGS_FILE_NAME),
         settings: Arc::new(Mutex::new(StoredSettings::default())),
         write_gate: library::StoreWriteGate::default(),
     };

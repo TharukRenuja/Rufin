@@ -11,7 +11,6 @@ use crate::source_setup::{
     map_server_path_to_local, selected_active_source,
 };
 use async_channel::Sender;
-use directories::ProjectDirs;
 #[cfg(test)]
 use library::ImageRef;
 use library::{
@@ -68,6 +67,7 @@ use tracing::{debug, info, warn};
 #[cfg(test)]
 use ui::runtime::ProductReceivers;
 
+mod app_paths;
 mod auto_dj;
 pub(crate) use auto_dj::{cached_auto_dj_operation, native_auto_dj_operation};
 mod bounded_runner;
@@ -77,7 +77,7 @@ pub(crate) use controller_bootstrap::bootstrap;
 mod controller_settings;
 mod controller_startup;
 mod event_ports;
-mod folder_search_commands;
+mod folder_commands;
 mod library_mutations;
 mod local_source_commands;
 mod lyrics_commands;
@@ -86,7 +86,6 @@ use lyrics_commands::metadata_runner;
 use lyrics_commands::{load_cached_lyrics, save_cached_lyrics};
 mod playback_commands;
 mod playback_product;
-mod playback_queue;
 mod playback_waveforms;
 mod playlist_commands;
 mod queue_commands;
@@ -128,7 +127,6 @@ pub(in crate::controller) use playback_product::{
     activate_playback_source, clear_playback_product_slot, current_playback_entry_from_slot,
     playback_product_if_present_from_slot, send_session_command_to_slot,
 };
-pub(in crate::controller) use playback_queue::*;
 use playback_waveforms::WaveformKey;
 use source_presentation::{
     load_runtime_source_presentation, load_source_local_access_presentation,
@@ -144,15 +142,6 @@ pub(in crate::controller) use test_support::*;
 
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_PROVIDER_CANDIDATE_LIMIT: usize = AUTO_DJ_ITEM_COUNT * 4;
-const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
-const SETTINGS_FILE_NAME: &str = "settings.json";
-const CONFIG_SECRETS_FILE_NAME: &str = "secrets.json";
-const STORE_DIR_NAME: &str = "store";
-const ARTWORK_CACHE_DIR_NAME: &str = "covers";
-const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
-const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
-const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
-const TMP_CACHE_DIR_NAME: &str = "tmp";
 pub(crate) const LOCAL_SOURCE_IDENTITY_ID: &str = "local:server:library";
 
 #[derive(Clone)]
@@ -362,6 +351,17 @@ pub(in crate::controller) struct ExplorePrefetchContext {
 pub(in crate::controller) enum HomeRefreshTarget {
     Section(HomeSectionKind),
 }
+
+fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// Keep one current settings value and save one complete change at a time
 #[derive(Clone)]
 pub(crate) enum StoreHandle {
@@ -391,13 +391,13 @@ impl StoreHandle {
     }
 
     pub(in crate::controller) fn open_for_app() -> Result<Self, String> {
-        if let Some(cache_root) = cache_dir() {
-            ensure_app_cache_dirs(&cache_root)?;
-            if let Err(error) = remove_waveform_tmp(&cache_root) {
+        if let Some(cache_root) = app_paths::cache_dir() {
+            app_paths::ensure_app_cache_dirs(&cache_root)?;
+            if let Err(error) = playback_waveforms::remove_waveform_tmp(&cache_root) {
                 warn!(%error, "failed to remove waveform temp cache");
             }
         }
-        let cache_database_path = app_cache_database_path();
+        let cache_database_path = app_paths::app_cache_database_path();
         if let Some(parent) = cache_database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -411,7 +411,7 @@ impl StoreHandle {
             .prepare_smart_playlist_defaults()
             .map_err(|error| error.to_string())?;
 
-        let settings_path = app_settings_path();
+        let settings_path = app_paths::app_settings_path();
         let settings = match fs::read_to_string(&settings_path) {
             Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string())?,
             Err(error) if error.kind() == ErrorKind::NotFound => StoredSettings::default(),

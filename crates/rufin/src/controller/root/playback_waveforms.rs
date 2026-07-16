@@ -1,6 +1,6 @@
 use super::{
-    ActiveSourceSlot, BoundedRunner, PlaybackCommands, StoreHandle, encode_key_part,
-    resolve_stream_request, waveform_cache_path_for_key,
+    ActiveSourceSlot, BoundedRunner, PlaybackCommands, StoreHandle, app_paths,
+    resolve_stream_request,
 };
 use async_channel::Sender;
 use library::{SourceId, TrackId};
@@ -11,6 +11,7 @@ use sources::{StreamQuality, StreamRequest};
 use std::{
     collections::HashSet,
     fs,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -18,11 +19,13 @@ use std::{
     time::Duration,
 };
 use tokio::runtime::Runtime;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 const WAVEFORM_CACHE_VERSION: u8 = 2;
 const WAVEFORM_WARM_QUEUE_LIMIT: usize = 4;
 const WAVEFORM_WARM_DELAY: Duration = Duration::from_millis(750);
+const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
+const TMP_CACHE_DIR_NAME: &str = "tmp";
 
 static WAVEFORM_IN_FLIGHT: OnceLock<Mutex<HashSet<WaveformKey>>> = OnceLock::new();
 
@@ -475,6 +478,81 @@ fn is_dsd_waveform_format(value: &str) -> bool {
         .split(|character: char| !character.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())
         .any(|part| matches!(part, "dsf" | "dff" | "dsdiff") || part.starts_with("dsd"))
+}
+
+fn waveform_cache_dir(cache_dir: &Path) -> PathBuf {
+    app_paths::playback_cache_dir(cache_dir).join(WAVEFORM_CACHE_DIR_NAME)
+}
+
+fn waveform_cache_path_for_key(key: &str) -> Option<PathBuf> {
+    app_paths::cache_dir().map(|dir| waveform_cache_dir(&dir).join(key))
+}
+
+fn encode_key_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+            _ => '_',
+        })
+        .collect()
+}
+
+pub(super) fn remove_waveform_tmp(cache_dir: &Path) -> Result<(), String> {
+    remove_dir_if_exists(
+        &cache_dir
+            .join(TMP_CACHE_DIR_NAME)
+            .join(WAVEFORM_CACHE_DIR_NAME),
+    )?;
+    match fs::remove_dir(cache_dir.join(TMP_CACHE_DIR_NAME)) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[track_caller]
+fn clear_disk_waveform_cache(source_id: &SourceId) -> Result<(), String> {
+    let Some(path) = app_paths::cache_dir()
+        .map(|dir| waveform_cache_dir(&dir).join(encode_key_part(source_id.as_str())))
+    else {
+        return Ok(());
+    };
+    let caller = std::panic::Location::caller();
+    info!(
+        source_id = %source_id,
+        path = %path.display(),
+        caller_file = caller.file(),
+        caller_line = caller.line(),
+        "clearing disk waveform cache"
+    );
+    remove_dir_if_exists(&path)
+}
+
+#[track_caller]
+pub(super) fn clear_store_disk_waveform_cache(
+    store: &StoreHandle,
+    source_id: &SourceId,
+) -> Result<(), String> {
+    if !store.uses_disk_storage() {
+        return Ok(());
+    }
+    clear_disk_waveform_cache(source_id)
+}
+
+fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn load_cached_waveform(cache_key: &str, duration_seconds: u32) -> Option<Vec<(f64, f64)>> {

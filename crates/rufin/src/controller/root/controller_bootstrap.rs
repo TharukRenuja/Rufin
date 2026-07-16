@@ -4,7 +4,7 @@ pub(crate) fn bootstrap() -> Result<ProductAssembly, String> {
     let runtime = Runtime::new()
         .map(Arc::new)
         .map_err(|error| format!("failed to create Tokio runtime: {error}"))?;
-    let artwork_root = artwork_cache_dir().unwrap_or_else(|| PathBuf::from("covers"));
+    let artwork_root = super::app_paths::artwork_cache_dir();
     let (artwork, artwork_events) =
         crate::controller::artwork::open(&artwork_root, Arc::clone(&runtime))?;
     let (source_events, library_events, playback_events, lyrics_events, receivers) =

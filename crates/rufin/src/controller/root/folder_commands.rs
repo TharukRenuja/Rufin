@@ -25,6 +25,23 @@ impl SourceCommands {
 
 impl LibraryCommands {
     pub(crate) fn folder_for_active(&self, path: &[FolderId]) -> Result<FolderDetail, String> {
-        load_folder_detail(&self.store, &self.runtime, &self.active_source, path)
+        let (saved, selected_music_folder_id) = self
+            .store
+            .with_store_fast(|store| {
+                let Some(saved) = store.active_source()? else {
+                    return Ok(None);
+                };
+                let selected_music_folder_id = store.selected_music_folder_id(&saved.source_id)?;
+                Ok(Some((saved, selected_music_folder_id)))
+            })?
+            .ok_or_else(|| "No active server.".to_string())?;
+        let active = selected_active_source(&self.active_source, &saved.source_id)?;
+        let browser = active
+            .folders
+            .as_ref()
+            .ok_or_else(|| "Folder browsing is not supported by the active source.".to_string())?;
+        self.runtime
+            .block_on(browser.folder(path.last(), selected_music_folder_id.as_ref()))
+            .map_err(|error| error.to_string())
     }
 }
