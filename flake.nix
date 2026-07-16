@@ -31,17 +31,18 @@
             pname = "rufin";
             version = workspaceManifest.workspace.package.version;
 
-            src = lib.cleanSourceWith {
-              src = ./.;
-              filter =
-                path: type:
-                lib.cleanSourceFilter path type
-                && !(lib.elem (baseNameOf path) [
-                  ".flatpak-builder"
-                  ".local"
-                  "result"
-                  "target"
-                ]);
+            src = lib.fileset.toSource {
+              root = ./.;
+              fileset = lib.fileset.unions [
+                ./Cargo.lock
+                ./Cargo.toml
+                ./LICENSE
+                ./README.md
+                ./crates
+                ./data/icons/hicolor
+                ./data/io.github.screwys.Rufin.desktop
+                ./data/io.github.screwys.Rufin.metainfo.xml
+              ];
             };
 
             cargoLock = {

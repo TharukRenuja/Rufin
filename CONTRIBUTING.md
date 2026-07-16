@@ -89,13 +89,9 @@ To enable the debug logging, refer to [README.md#troubleshooting](README.md#trou
 On a native host, this also needs rustfmt, clippy, cargo-deny, and gettext.
 cargo-nextest is used when available.
 
-For release or package metadata changes:
-
-```bash
-just release-check
-```
-These commands work the same for local and contrainer development. If container is set up; `just build`, `just fmt`, `just test`, `just check`, and `just release-check`
-uses the container environment. Its state is kept under `.local/container`. Use
+These commands work the same for local and container development. If the container is set up,
+`just build`, `just fmt`, `just test`, and `just check` use the container environment. Its state
+is kept under `.local/container`. Use
 `just container shell` for an interactive shell, `just container disable` to
 return those commands to the host, or `just container reset` to clear the
 container state. `just debug` always runs on the host and is unavailable inside
