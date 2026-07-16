@@ -35,6 +35,41 @@ impl Store {
         self.read_snapshot(|store| store.materialize_play_context_items_inner(source_id, context))
     }
 
+    pub fn materialize_saved_smart_playlist_context(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+    ) -> StoreResult<Option<(PlayContext, Vec<PlayContextItem>)>> {
+        self.read_snapshot(|store| {
+            store.materialize_saved_smart_playlist_context_inner(source_id, smart_playlist_id)
+        })
+    }
+
+    fn materialize_saved_smart_playlist_context_inner(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+    ) -> StoreResult<Option<(PlayContext, Vec<PlayContextItem>)>> {
+        let Some(definition_json) =
+            self.smart_playlist_definition_json(source_id, smart_playlist_id)?
+        else {
+            return Ok(None);
+        };
+        let definition: SmartPlaylistDefinition = serde_json::from_str(&definition_json)?;
+        let music_folder_id = self.selected_music_folder_id(source_id)?;
+        let projection =
+            self.smart_playlist_projection(source_id, &definition, music_folder_id.as_ref(), None)?;
+        let context = PlayContext {
+            descriptor: PlayContextDescriptor::SmartPlaylist {
+                smart_playlist_id: smart_playlist_id.clone(),
+                definition_fingerprint: definition_json,
+                music_folder_id,
+            },
+            order: PlayContextOrder::SmartPlaylist,
+        };
+        Ok(Some((context, smart_playlist_items(projection.tracks))))
+    }
+
     fn materialize_play_context_inner(
         &self,
         source_id: &SourceId,
@@ -150,15 +185,7 @@ impl Store {
         let PlayContextOrder::SmartPlaylist = order else {
             return Err(StoreError::UnsupportedPlayContext);
         };
-        let definition_json = self
-            .connection
-            .query_row(
-                "SELECT definition_json FROM smart_playlists
-                 WHERE source_id = ?1 AND smart_playlist_id = ?2",
-                params![source_id.as_str(), smart_playlist_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
+        let definition_json = self.smart_playlist_definition_json(source_id, smart_playlist_id)?;
         let Some(definition_json) = definition_json else {
             return Err(StoreError::PlayContextAnchorNotFound);
         };
@@ -166,32 +193,25 @@ impl Store {
             return Err(StoreError::StaleSmartPlaylistDefinition);
         }
         let definition: SmartPlaylistDefinition = serde_json::from_str(&definition_json)?;
-        let mut items = Vec::new();
-        let mut offset = 0;
-        loop {
-            let page = self.smart_playlist_track_rows_in_folder(
-                source_id,
-                &definition,
-                music_folder_id,
-                offset,
-                MATERIALIZATION_PAGE_SIZE,
-            )?;
-            let page_len = page.len();
-            items.extend(
-                page.into_iter()
-                    .enumerate()
-                    .map(|(index, track)| PlayContextItem {
-                        track,
-                        source_rank: offset + index,
-                        source_item_id: None,
-                    }),
-            );
-            if page_len < MATERIALIZATION_PAGE_SIZE {
-                break;
-            }
-            offset += page_len;
-        }
-        Ok(items)
+        let projection =
+            self.smart_playlist_projection(source_id, &definition, music_folder_id, None)?;
+        Ok(smart_playlist_items(projection.tracks))
+    }
+
+    fn smart_playlist_definition_json(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+    ) -> StoreResult<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT definition_json FROM smart_playlists
+                 WHERE source_id = ?1 AND smart_playlist_id = ?2",
+                params![source_id.as_str(), smart_playlist_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
     }
 
     fn track_context_query(
@@ -384,6 +404,18 @@ impl Store {
     }
 }
 
+fn smart_playlist_items(tracks: Vec<Track>) -> Vec<PlayContextItem> {
+    tracks
+        .into_iter()
+        .enumerate()
+        .map(|(source_rank, track)| PlayContextItem {
+            track,
+            source_rank,
+            source_item_id: None,
+        })
+        .collect()
+}
+
 fn descriptor_music_folder(descriptor: &PlayContextDescriptor) -> Option<&MusicFolderId> {
     match descriptor {
         PlayContextDescriptor::Album {
@@ -493,7 +525,9 @@ fn track_columns() -> String {
 mod tests {
     use super::*;
     use crate::play_context::TrackFilter;
-    use crate::store::test_support::{LibraryObservation, StoreCase, album, artist, genre, track};
+    use crate::store::test_support::{
+        LibraryObservation, StoreCase, album, artist, genre, trace_read_statements, track,
+    };
     use crate::{
         MusicFolder, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode,
         SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
@@ -665,6 +699,92 @@ mod tests {
     }
 
     #[test]
+    fn saved_smart_playlist_context_keeps_folder_order_limit_and_fingerprint() {
+        let case = StoreCase::open();
+        let album = album(1);
+        let mut outside = track(1, &album);
+        outside.title = "Zulu Match".to_string();
+        let mut middle = track(2, &album);
+        middle.title = "Bravo Match".to_string();
+        let mut last = track(3, &album);
+        last.title = "Alpha Match".to_string();
+        let mut first = track(4, &album);
+        first.title = "Charlie Match".to_string();
+        let folder = MusicFolder {
+            id: MusicFolderId::fake(1),
+            name: "Selected".to_string(),
+        };
+        let generation = case.start_sync("begin saved smart context sync");
+        case.commit_library(
+            generation,
+            LibraryObservation {
+                albums: vec![album],
+                tracks: vec![outside, middle.clone(), last.clone(), first.clone()],
+                music_folders: vec![(folder.clone(), vec![middle.clone(), last, first.clone()])],
+                ..LibraryObservation::default()
+            },
+            "commit saved smart context library",
+        );
+        case.set_selected_music_folder_id(&case.id, Some(&folder.id))
+            .expect("select music folder");
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                    field: SmartPlaylistRuleField::Title,
+                    operator: SmartPlaylistRuleOperator::Contains,
+                    value: Some(SmartPlaylistRuleValue::Text("Match".to_string())),
+                })],
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: true,
+            limit: Some(2),
+        };
+        let smart_id = SmartPlaylistId::new("custom:saved-context");
+        case.save_smart_playlist(&case.id, &smart_id, "Saved Context", &definition)
+            .expect("save smart playlist");
+        let fingerprint = serde_json::to_string(&definition).expect("definition fingerprint");
+
+        let (context, items) = case
+            .materialize_saved_smart_playlist_context(&case.id, &smart_id)
+            .expect("materialize saved smart playlist")
+            .expect("saved smart playlist");
+
+        assert_eq!(
+            context,
+            PlayContext {
+                descriptor: PlayContextDescriptor::SmartPlaylist {
+                    smart_playlist_id: smart_id.clone(),
+                    definition_fingerprint: fingerprint,
+                    music_folder_id: Some(folder.id),
+                },
+                order: PlayContextOrder::SmartPlaylist,
+            }
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (
+                    &item.track.id,
+                    item.source_rank,
+                    item.source_item_id.as_deref(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![(&first.id, 0, None), (&middle.id, 1, None)]
+        );
+        let changed_definition = SmartPlaylistDefinition {
+            descending: false,
+            ..definition
+        };
+        case.save_smart_playlist(&case.id, &smart_id, "Saved Context", &changed_definition)
+            .expect("change smart playlist definition");
+        let error = case
+            .materialize_play_context_items(&case.id, &context)
+            .expect_err("saved context fingerprint should reject a changed definition");
+        assert!(matches!(error, StoreError::StaleSmartPlaylistDefinition));
+    }
+
+    #[test]
     fn folder_context_reports_its_source_owned_boundary() {
         let case = StoreCase::open();
         let context = PlayContext {
@@ -689,11 +809,16 @@ mod tests {
     }
 
     #[test]
-    fn complete_context_crosses_the_bounded_sql_page() {
+    fn complete_contexts_cross_the_bounded_sql_page() {
         let case = StoreCase::open();
         let album = album(1);
+        const RULE_MARKER: &str = "complete smart projection";
         let tracks = (1..=520)
-            .map(|number| track(number, &album))
+            .map(|number| {
+                let mut track = track(number, &album);
+                track.title = format!("{RULE_MARKER} {number:03}");
+                track
+            })
             .collect::<Vec<_>>();
         let generation = case.start_sync("begin large context sync");
         case.commit_library(
@@ -731,6 +856,40 @@ mod tests {
         assert_eq!(materialized.items.len(), 520);
         assert_eq!(materialized.items[500].source_rank, 500);
         assert_eq!(materialized.items[519].track.id, TrackId::fake(520));
+
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                    field: SmartPlaylistRuleField::Title,
+                    operator: SmartPlaylistRuleOperator::Contains,
+                    value: Some(SmartPlaylistRuleValue::Text(RULE_MARKER.to_string())),
+                })],
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: false,
+            limit: None,
+        };
+        let smart_id = SmartPlaylistId::new("custom:complete-context");
+        case.save_smart_playlist(&case.id, &smart_id, "Complete Context", &definition)
+            .expect("save complete smart playlist");
+        let (saved, statements) = trace_read_statements(&case, || {
+            case.materialize_saved_smart_playlist_context(&case.id, &smart_id)
+                .expect("materialize complete smart playlist")
+                .expect("complete smart playlist")
+        });
+
+        assert_eq!(saved.1.len(), 520);
+        assert_eq!(saved.1[500].source_rank, 500);
+        assert_eq!(saved.1[519].source_rank, 519);
+        assert_eq!(saved.1[519].track.id, TrackId::fake(520));
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|sql| sql.contains(RULE_MARKER))
+                .count(),
+            1
+        );
     }
 
     #[test]

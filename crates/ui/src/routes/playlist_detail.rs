@@ -25,7 +25,9 @@ use crate::shell::cover::GRID_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::{MountedRoute, MountedRouteDeltaApplier};
 use localization::{msgid, tr, track_count_text};
-use playback::{PlaylistEntryPlayRequest, RadioPlayRequest, RadioSeed, SmartPlaylistPlayRequest};
+use playback::{
+    PlaylistEntryPlayRequest, QueuePlacement, RadioPlayRequest, RadioSeed, SmartPlaylistPlayRequest,
+};
 
 use super::collection_routes::{
     MountedRefreshLoader, MountedRouteRefresh, smart_playlist_detail_affected,
@@ -197,12 +199,6 @@ impl Shell {
             tracks: initial_tracks,
         } = detail;
         let initial_tracks = Arc::new(initial_tracks);
-        // Actions retain only lightweight playlist metadata and the queue anchor. The track
-        // projection below owns the full track vector, so this route does not keep a second
-        // SmartPlaylistDetail copy alive beside its GTK model.
-        let anchor_track_id = Rc::new(RefCell::new(
-            initial_tracks.first().map(|track| track.id.clone()),
-        ));
         let seed = stable_seed(smart_playlist.id.as_str());
         let artwork = ArtworkBinding::smart_playlist_slots(&smart_playlist);
         let current_smart_playlist = Rc::new(RefCell::new(smart_playlist));
@@ -234,15 +230,12 @@ impl Shell {
         actions.set_halign(gtk::Align::Start);
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
-        let play_smart_playlist = Rc::clone(&current_smart_playlist);
-        let play_anchor_track_id = Rc::clone(&anchor_track_id);
-        let play_music_folder_id = selected_music_folder_id(self);
+        let play_smart_playlist_id = smart_playlist_id.clone();
         play.connect_clicked(move |_| {
-            controller.play_smart_playlist(SmartPlaylistPlayRequest {
-                playlist: play_smart_playlist.borrow().clone(),
-                anchor_track_id: play_anchor_track_id.borrow().clone(),
-                music_folder_id: play_music_folder_id.clone(),
-            });
+            controller.play_smart_playlist(SmartPlaylistPlayRequest::new(
+                play_smart_playlist_id.clone(),
+                QueuePlacement::Now,
+            ));
         });
         actions.append(&play);
         let edit = detail_action_button(EDIT_ICON, "Edit");
@@ -323,7 +316,6 @@ impl Shell {
         let apply_loaded: Rc<dyn Fn(Result<Option<SmartPlaylistDetail>, String>)> = {
             let shell = Rc::clone(self);
             let current_smart_playlist = Rc::clone(&current_smart_playlist);
-            let anchor_track_id = Rc::clone(&anchor_track_id);
             let route_stack = route_stack.clone();
             let title = title.clone();
             let summary = summary.clone();
@@ -347,7 +339,6 @@ impl Shell {
                     tracks: next_tracks,
                 } = next;
                 let next_tracks = Arc::new(next_tracks);
-                let next_anchor_track_id = next_tracks.first().map(|track| track.id.clone());
                 title.set_text(&smart_playlist_display_name(&next_smart_playlist));
                 summary.set(
                     next_smart_playlist.track_count,
@@ -368,7 +359,6 @@ impl Shell {
                 } else {
                     "tracks"
                 });
-                anchor_track_id.replace(next_anchor_track_id);
                 current_smart_playlist.replace(next_smart_playlist);
                 route_stack.set_visible_child_name("detail");
             })

@@ -1023,8 +1023,7 @@ impl Shell {
         library_query: ActiveLibraryQuery,
         playlists: Vec<::library::SmartPlaylist>,
     ) -> MountedRoute {
-        let initial_query = library_query.clone();
-        let content_query = library_query;
+        let initial_query = library_query;
         CollectionRouteSpec {
             key: LibraryListKey::SmartPlaylists,
             empty_body: msgid("Smart playlists will appear here after the default set is seeded."),
@@ -1037,9 +1036,7 @@ impl Shell {
             }),
             matches_query: Rc::new(smart_playlist_matches_query),
             populate_model: Rc::new(populate_smart_playlist_model),
-            build_content: Rc::new(move |shell, model| {
-                smart_playlist_collection_projection(shell, model, content_query.clone())
-            }),
+            build_content: Rc::new(smart_playlist_collection_projection),
             affected: Rc::new(|delta| {
                 delta.reset.is_some()
                     || !delta.tracks.added.is_empty()
