@@ -579,25 +579,53 @@ fn mood_projection_uses_track_metadata() {
         )
         .expect("upsert tracks");
 
-    let moods = store
-        .load_moods(&saved.source_id, 0, 20)
-        .expect("load moods");
-    let matching = store
-        .load_moods_matching(&saved.source_id, "focus", 0, 20)
-        .expect("search moods");
-    let detail = store
-        .load_mood_detail(&saved.source_id, &MoodId::new("Focused"))
-        .expect("load mood detail")
-        .expect("mood detail");
+    let ((moods, matching, detail), statements) = trace_read_statements(&store, || {
+        let moods = store
+            .load_moods(&saved.source_id, 0, 20)
+            .expect("load moods");
+        let matching = store
+            .load_moods_matching(&saved.source_id, "focus", 0, 20)
+            .expect("search moods");
+        let detail = store
+            .load_mood_detail(&saved.source_id, &MoodId::new("Focused"))
+            .expect("load mood detail")
+            .expect("mood detail");
+        (moods, matching, detail)
+    });
+    let aggregate_queries = statements
+        .iter()
+        .filter(|sql| sql.contains("FROM track_moods tm") && sql.contains("COUNT(*)"))
+        .collect::<Vec<_>>();
+    assert_eq!(aggregate_queries.len(), 3);
+    for sql in aggregate_queries {
+        let plan = explain_query_plan(&store, sql);
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("track_moods_source_mood_idx")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .all(|detail| !detail.contains("count(DISTINCT)")),
+            "{plan:?}"
+        );
+    }
 
     assert_eq!(moods.total, 2);
     assert_eq!(
         moods
             .items
             .iter()
-            .map(|mood| mood.name.as_str())
+            .map(|mood| (mood.name.as_str(), mood.track_count, mood.duration_seconds))
             .collect::<Vec<_>>(),
-        vec!["Energetic", "Focused"]
+        vec![
+            ("Energetic", 1, first.duration_seconds),
+            (
+                "Focused",
+                2,
+                first.duration_seconds + second.duration_seconds
+            ),
+        ]
     );
     assert_eq!(matching.total, 1);
     assert_eq!(matching.items[0].name, "Focused");
@@ -608,6 +636,10 @@ fn mood_projection_uses_track_metadata() {
     );
     assert_eq!(detail.mood.name, "Focused");
     assert_eq!(detail.mood.track_count, 2);
+    assert_eq!(
+        detail.mood.duration_seconds,
+        first.duration_seconds + second.duration_seconds
+    );
     assert_eq!(detail.albums, vec![album]);
     assert_eq!(
         detail

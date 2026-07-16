@@ -1004,7 +1004,6 @@ impl Store {
             "artists"
         };
         let artist_filter = artist_list_filter_for_alias(album_artist, "a");
-        let total = self.count_artists(source_id, album_artist)?;
         let sql = format!(
             "
             SELECT a.artist_id, a.name, a.album_count, a.track_count,
@@ -1023,6 +1022,11 @@ impl Store {
             params![source_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)?;
+        let total = if items.len() < limit && (offset == 0 || !items.is_empty()) {
+            offset + items.len()
+        } else {
+            self.count_artists(source_id, album_artist)?
+        };
         self.attach_artist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }

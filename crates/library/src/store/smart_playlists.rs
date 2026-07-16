@@ -107,11 +107,6 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<SmartPlaylist>> {
-        let total = self.connection.query_row(
-            "SELECT COUNT(*) FROM smart_playlists WHERE source_id = ?1",
-            params![source_id.as_str()],
-            |row| row.get::<_, i64>(0),
-        )?;
         let mut statement = self.connection.prepare(
             "
             SELECT smart_playlist_id, name, builtin_key, definition_json, position
@@ -125,11 +120,22 @@ impl Store {
             params![source_id.as_str(), limit as i64, offset as i64],
             smart_playlist_row_from_row,
         )?)?;
+        let total = if rows.len() < limit && (offset == 0 || !rows.is_empty()) {
+            offset + rows.len()
+        } else {
+            self.connection
+                .query_row(
+                    "SELECT COUNT(*) FROM smart_playlists WHERE source_id = ?1",
+                    params![source_id.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(u32_from_i64)? as usize
+        };
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             items.push(self.smart_playlist_from_record(source_id, row)?);
         }
-        Ok(PagedResponse::new(items, u32_from_i64(total) as usize))
+        Ok(PagedResponse::new(items, total))
     }
 
     pub fn load_smart_playlist_detail(

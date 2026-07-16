@@ -23,7 +23,7 @@ use rusqlite::{
 };
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 29;
+const SCHEMA_VERSION: i64 = 30;
 pub const LOCAL_MANIFEST_VERSION: i64 = 4;
 
 #[derive(Debug, Error)]

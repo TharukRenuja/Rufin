@@ -47,6 +47,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 28,
         run: migrate_to_home_projection_schema,
     },
+    SchemaMigration {
+        from_version: 29,
+        run: migrate_to_favorite_track_index_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
@@ -59,6 +63,7 @@ const LIBRARY_SYNC_SCHEMA_VERSION: i64 = 25;
 const PROVIDER_PAYLOAD_SCHEMA_VERSION: i64 = 26;
 const PLAYBACK_OWNER_SCHEMA_VERSION: i64 = 27;
 const ARTWORK_OWNER_SCHEMA_VERSION: i64 = 28;
+const HOME_PROJECTION_SCHEMA_VERSION: i64 = 29;
 const SCHEMA_TABLES: &[&str] = &[
     "playback_checkpoints",
     "sources",
@@ -804,6 +809,16 @@ fn migrate_to_home_projection_schema(store: &Store) -> StoreResult<()> {
     store.create_home_projection_schema()
 }
 
+fn migrate_to_favorite_track_index_schema(store: &Store) -> StoreResult<()> {
+    store.connection.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS tracks_source_favorite_idx
+            ON tracks(source_id) WHERE favorite = 1;
+        ",
+    )?;
+    Ok(())
+}
+
 fn collapse_provider_provenance_duplicates(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
@@ -1025,7 +1040,7 @@ impl Store {
                 SUPPORTED_SCHEMA_COLUMNS,
             )? && self
                 .schema_has_required_parts(&[], PRE_HOME_PROJECTION_SCHEMA_COLUMNS)?),
-            SCHEMA_VERSION => Ok(self
+            HOME_PROJECTION_SCHEMA_VERSION | SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
             _ => Ok(false),
@@ -1431,6 +1446,8 @@ impl Store {
                 ON tracks(source_id, title);
             CREATE INDEX IF NOT EXISTS tracks_source_title_nocase_idx
                 ON tracks(source_id, title COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS tracks_source_favorite_idx
+                ON tracks(source_id) WHERE favorite = 1;
             CREATE INDEX IF NOT EXISTS artists_source_name_nocase_idx
                 ON artists(source_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS album_artists_source_name_nocase_idx
@@ -2676,6 +2693,44 @@ mod tests {
         );
         assert!(schema_migration_path(1, 4, MIGRATIONS).is_none());
         assert!(schema_migration_path(4, 3, MIGRATIONS).is_none());
+    }
+
+    #[test]
+    fn favorite_track_index_migration_rolls_back_with_schema_transaction() {
+        let store = Store::open_memory().expect("open Store");
+        store
+            .connection
+            .execute("DROP INDEX tracks_source_favorite_idx", [])
+            .expect("drop current index");
+        store
+            .connection
+            .pragma_update(None, "user_version", HOME_PROJECTION_SCHEMA_VERSION)
+            .expect("set previous schema version");
+
+        let result: StoreResult<()> = store.write_batch(|_| {
+            migrate_to_favorite_track_index_schema(&store)?;
+            store
+                .connection
+                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            Err(StoreError::InvalidSyncBatch(
+                "roll back migration".to_string(),
+            ))
+        });
+
+        assert!(matches!(result, Err(StoreError::InvalidSyncBatch(_))));
+        assert_eq!(
+            store.schema_version().expect("schema version"),
+            HOME_PROJECTION_SCHEMA_VERSION
+        );
+        let index_exists = store
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'tracks_source_favorite_idx')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("index lookup");
+        assert!(!index_exists);
     }
 
     #[test]
