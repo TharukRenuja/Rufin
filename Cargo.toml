@@ -19,7 +19,6 @@ async-channel = "2.5.0"
 async-trait = "0.1.89"
 artwork = { path = "crates/artwork" }
 base64 = "0.22.1"
-clap = "4.6.1"
 directories = "6.0.0"
 futures-executor = "0.3.32"
 futures-util = "0.3.32"

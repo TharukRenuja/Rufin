@@ -20,7 +20,6 @@
           inherit (pkgs) lib;
           workspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           gstRuntimePlugins = with pkgs.gst_all_1; [
-            gst-plugins-base
             gst-plugins-good
             gst-plugins-bad
             gst-plugins-ugly
@@ -60,8 +59,7 @@
             buildInputs =
               with pkgs;
               [
-                gdk-pixbuf
-                gettext
+                glib
                 gtk4
                 libadwaita
               ]
@@ -163,7 +161,7 @@
                 rustfmt
               ]
               ++ (with pkgs; [
-                gdk-pixbuf
+                glib
                 gtk4
                 libadwaita
               ])

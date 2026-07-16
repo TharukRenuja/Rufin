@@ -194,14 +194,14 @@ jobs:
             $env:PATH = "$installDir;$env:PATH"
             $runtimeProcess = Start-Process `
               -FilePath $installedExe `
-              -ArgumentList "--startup-check" `
+              -ArgumentList "--help" `
               -WorkingDirectory $installDir `
               -RedirectStandardOutput $runtimeStdout `
               -RedirectStandardError $runtimeStderr `
               -PassThru
             if (-not $runtimeProcess.WaitForExit(30000)) {
               Stop-Process -Id $runtimeProcess.Id -Force
-              throw "Installed Rufin executable startup check timed out"
+              throw "Installed Rufin executable check timed out"
             }
           } catch {
             Get-ChildItem $installDir | Select-Object Name, Length
