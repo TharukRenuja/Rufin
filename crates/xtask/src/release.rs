@@ -228,7 +228,6 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
 
     prepare_version(&plain_version, &summary)?;
     generate::flatpak_sources(false)?;
-    update_nix_cargo_hash()?;
     verify_nix_flake()?;
     if !working_tree_clean()? {
         git_add_existing(&[
@@ -238,7 +237,6 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
             "data/io.github.screwys.Rufin.metainfo.xml",
             ".github/ISSUE_TEMPLATE/bug_report.yml",
             "packaging/flatpak/cargo-sources.json",
-            "flake.nix",
         ])?;
         run_command(
             "git",
@@ -339,18 +337,6 @@ fn git_add_existing(paths: &[&str]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn update_nix_cargo_hash() -> Result<()> {
-    if !Path::new("flake.nix").is_file() {
-        return Ok(());
-    }
-    if !find_on_path("nix") {
-        return Err(
-            "nix is required to refresh flake.nix cargoHash during release preparation".into(),
-        );
-    }
-    generate::nix_cargo_hash(false)
 }
 
 fn verify_nix_flake() -> Result<()> {

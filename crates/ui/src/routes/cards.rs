@@ -206,12 +206,9 @@ mod collection_grid_card_inset_imp {
             };
             let total_inset = super::COLLECTION_GRID_CARD_MARGIN * 2;
             if orientation == gtk::Orientation::Horizontal {
-                let slot_width = self
-                    .minimum_content_width
-                    .get()
-                    .max(1)
-                    .saturating_add(total_inset);
-                return (slot_width, slot_width, -1, -1);
+                return super::collection_grid_card_horizontal_measure(
+                    self.minimum_content_width.get(),
+                );
             }
             let child_for_size = if for_size < 0 {
                 -1
@@ -260,6 +257,13 @@ mod collection_grid_card_inset_imp {
     }
 }
 
+fn collection_grid_card_horizontal_measure(minimum_content_width: i32) -> (i32, i32, i32, i32) {
+    let slot_width = minimum_content_width
+        .max(1)
+        .saturating_add(COLLECTION_GRID_CARD_MARGIN.saturating_mul(2));
+    (slot_width, slot_width, -1, -1)
+}
+
 gtk::glib::wrapper! {
     pub struct CollectionGridCardInset(ObjectSubclass<collection_grid_card_inset_imp::CollectionGridCardInset>)
         @extends gtk::Widget,
@@ -288,25 +292,26 @@ mod collection_grid_card_inset_tests {
     }
 
     #[test]
-    fn grid_slot_width_does_not_depend_on_metadata_length() {
-        gtk::init().expect("initialize GTK");
-        let minimum = 160;
-        let short = gtk::Label::new(Some("EP"));
-        let long = gtk::Label::new(Some(
-            "A release title long enough to exceed the configured grid-card minimum",
-        ));
-        assert!(long.measure(gtk::Orientation::Horizontal, -1).1 > minimum);
-
-        let short = collection_grid_card_inset(&short, minimum);
-        let long = collection_grid_card_inset(&long, minimum);
-        let expected = minimum + COLLECTION_GRID_CARD_MARGIN * 2;
+    fn grid_slot_width_uses_the_configured_card_width() {
+        let expected = 160 + COLLECTION_GRID_CARD_MARGIN * 2;
         assert_eq!(
-            short.measure(gtk::Orientation::Horizontal, -1),
+            collection_grid_card_horizontal_measure(160),
             (expected, expected, -1, -1)
         );
+    }
+
+    #[test]
+    fn square_cover_height_follows_the_allocated_width() {
+        assert_eq!(square_cover_vertical_measure(360), (360, 360, -1, -1));
+        assert_eq!(square_cover_vertical_measure(180), (180, 180, -1, -1));
         assert_eq!(
-            long.measure(gtk::Orientation::Horizontal, -1),
-            (expected, expected, -1, -1)
+            square_cover_vertical_measure(-1),
+            (
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                COLLECTION_GRID_MIN_CARD_WIDTH,
+                -1,
+                -1
+            )
         );
     }
 }
@@ -357,12 +362,7 @@ mod square_cover_frame_imp {
 
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
             if orientation == gtk::Orientation::Vertical {
-                let size = if for_size >= 0 {
-                    for_size
-                } else {
-                    super::COLLECTION_GRID_MIN_CARD_WIDTH
-                };
-                (size, size, -1, -1)
+                super::square_cover_vertical_measure(for_size)
             } else {
                 self.obj()
                     .first_child()
@@ -383,6 +383,15 @@ mod square_cover_frame_imp {
             }
         }
     }
+}
+
+fn square_cover_vertical_measure(for_size: i32) -> (i32, i32, i32, i32) {
+    let size = if for_size >= 0 {
+        for_size
+    } else {
+        COLLECTION_GRID_MIN_CARD_WIDTH
+    };
+    (size, size, -1, -1)
 }
 
 gtk::glib::wrapper! {

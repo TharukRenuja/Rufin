@@ -45,7 +45,9 @@
                 ]);
             };
 
-            cargoHash = "sha256-fVaK4umgrvC4lZAxCGCYsHbvgnv6BqfEKvHI/BdDUAs=";
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
             strictDeps = true;
 

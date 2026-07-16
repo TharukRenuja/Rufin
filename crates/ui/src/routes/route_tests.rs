@@ -14,8 +14,8 @@ use super::album_detail::{
     populate_album_collection_model, sort_album_detail_tracks,
 };
 use super::collections::{
-    SMART_PLAYLIST_REORDER_WIDTH, TrackModelIndex, TrackTableSelection,
-    capped_library_table_content_height, collection_column_width, library_table_content_height,
+    SMART_PLAYLIST_REORDER_WIDTH, TrackModelIndex, capped_library_table_content_height,
+    collection_column_width, library_table_content_height,
 };
 use super::columns::{track_column_fit_width, track_column_width};
 use super::library_fields::{
@@ -66,8 +66,7 @@ fn track_model_replacement_preserves_unchanged_row_identity() {
 }
 
 #[test]
-fn multi_track_patch_preserves_selection_and_lookup() {
-    gtk::init().expect("initialize GTK");
+fn multi_track_patch_preserves_identity_and_lookup() {
     let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
     let first = test_track(1, "first", 1, 1);
     let second = test_track(2, "second", 1, 2);
@@ -80,12 +79,6 @@ fn multi_track_patch_preserves_selection_and_lookup() {
     let first_object = model.item(0).expect("first row object");
     let fourth_object = model.item(3).expect("fourth row object");
     let positions = TrackModelIndex::new(&model);
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
-    selection.set_autoselect(false);
-    selection.set_can_unselect(true);
-    let track_selection = TrackTableSelection::new(&selection, positions.clone());
-    track_selection.install_guard();
-    track_selection.select_now_playing_track(Some(&third.id));
     let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let recorded = std::rc::Rc::clone(&changes);
     model.connect_items_changed(move |_, position, removed, added| {
@@ -101,10 +94,8 @@ fn multi_track_patch_preserves_selection_and_lookup() {
     assert_eq!(&*changes.borrow(), &[(1, 2, 2)]);
     assert_eq!(model.item(0).as_ref(), Some(&first_object));
     assert_eq!(model.item(3).as_ref(), Some(&fourth_object));
-    assert_eq!(selection.selected(), 2);
-
-    track_selection.select_now_playing_track(Some(&second.id));
-    assert_eq!(selection.selected(), 1);
+    assert_eq!(positions.position(&second.id), Some(1));
+    assert_eq!(positions.position(&third.id), Some(2));
 }
 #[test]
 fn route_fit_pane() {

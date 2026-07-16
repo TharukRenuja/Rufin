@@ -128,12 +128,6 @@ container_run() {
     container_command=(
         nix --accept-flake-config develop "git+file://${repo_root}" --command "$@"
     )
-    if [[ "${RUFIN_CONTAINER_HEADLESS:-0}" == "1" ]]; then
-        container_command=(
-            xvfb-run -a dbus-run-session -- "${container_command[@]}"
-        )
-    fi
-
     exec "${runtime}" "${runtime_args[@]}" \
         --workdir "${repo_root}" \
         --env "CARGO_TARGET_DIR=${repo_root}/target" \
@@ -200,9 +194,6 @@ case "${action}" in
             exit 2
         fi
         if [[ "${RUFIN_CONTAINER:-0}" == "1" || ! -f "${enabled_file}" ]]; then
-            if [[ "${RUFIN_CONTAINER:-0}" == "1" && "${RUFIN_CONTAINER_HEADLESS:-0}" == "1" ]]; then
-                exec xvfb-run -a dbus-run-session -- "$@"
-            fi
             exec "$@"
         fi
         container_run "$@"
