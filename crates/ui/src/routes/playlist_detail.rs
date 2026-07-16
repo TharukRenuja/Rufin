@@ -281,7 +281,8 @@ impl Shell {
         let shell = Rc::clone(self);
         let edit_smart_playlist = Rc::clone(&current_smart_playlist);
         edit.connect_clicked(move |_| {
-            shell.edit_smart_playlist_dialog(edit_smart_playlist.borrow().clone())
+            let smart_playlist = edit_smart_playlist.borrow().clone();
+            shell.edit_smart_playlist_dialog(smart_playlist);
         });
         actions.append(&edit);
         let delete = detail_delete_button("Delete");
@@ -574,10 +575,8 @@ impl Shell {
             let playlist_id_for_rename = detail.playlist.id.clone();
             let current_name = Rc::clone(&current_name);
             rename.connect_clicked(move |_| {
-                shell.rename_playlist_dialog(
-                    playlist_id_for_rename.clone(),
-                    current_name.borrow().clone(),
-                )
+                let current_name = current_name.borrow().clone();
+                shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name);
             });
             actions.append(&rename);
         }

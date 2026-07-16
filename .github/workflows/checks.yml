@@ -255,11 +255,17 @@ jobs:
         if: github.event_name != 'push'
         run: bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
+      - name: Check structural Rust rules
+        if: github.event_name != 'push'
+        run: >-
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
+          just _ast-grep
+
       - name: Check Rust lints
         if: github.event_name != 'push'
         run: >-
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
-          cargo clippy --workspace --all-targets --locked
+          just _lint
 
       - name: Run Rust tests
         if: github.event_name != 'push'
