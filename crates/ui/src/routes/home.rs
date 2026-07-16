@@ -13,7 +13,8 @@ use crate::shell::Shell;
 use crate::shell::cover::presentation::{add_album_seed_gradient_class, next_home_showcase_seed};
 use crate::shell::route::MountedRoute;
 use ::library::{
-    ActiveLibraryQuery, Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Track,
+    ActiveLibraryQuery, Album, Genre, HomeBlockKind, HomeOverview, HomeSection, HomeSectionKind,
+    Track,
 };
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -33,25 +34,13 @@ use super::route_layout::{
     ROUTE_TOP_MARGIN, home_album_content_width, home_album_page_size, route_scroller_widget,
 };
 
+pub(crate) const HOME_GENRE_LIMIT: usize = 12;
+pub(crate) const HOME_SHOWCASE_ALBUM_LIMIT: usize = 64;
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum HomeSectionContent {
     Albums,
     Tracks,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct HomeRouteData {
-    sections: Vec<HomeSection>,
-    genres: Vec<Genre>,
-    albums: Vec<Album>,
-}
-
-fn load_home_route_data(query: &ActiveLibraryQuery) -> Result<HomeRouteData, String> {
-    Ok(HomeRouteData {
-        sections: query.home_sections()?,
-        genres: query.genres_page(0, 12)?.items,
-        albums: query.albums_page(0, 64)?.items,
-    })
 }
 
 fn upsert_home_section(sections: &mut Vec<HomeSection>, section: HomeSection) {
@@ -366,7 +355,7 @@ struct HomeRouteProjection {
 }
 
 impl HomeRouteProjection {
-    fn replace(&self, data: HomeRouteData) {
+    fn replace(&self, data: HomeOverview) {
         if *self.sections.borrow() == data.sections
             && *self.genres.borrow() == data.genres
             && *self.albums.borrow() == data.albums
@@ -553,16 +542,11 @@ pub(crate) fn showcase_album(
 }
 
 impl Shell {
-    pub(crate) fn home_route(self: &Rc<Self>) -> MountedRoute {
-        let Some(library_query) = self.library.query.borrow().clone() else {
-            return MountedRoute::static_widget(
-                self.route_empty_view(msgid("Cached entries will appear here after sync finishes")),
-            );
-        };
-        let mut home_data = load_home_route_data(&library_query).unwrap_or_else(|error| {
-            tracing::warn!(%error, "failed to load Home projection");
-            HomeRouteData::default()
-        });
+    pub(crate) fn home_route_from_prepared(
+        self: &Rc<Self>,
+        library_query: ActiveLibraryQuery,
+        mut home_data: HomeOverview,
+    ) -> MountedRoute {
         self.overlay_pending_home_explore(library_query.source_id(), &mut home_data.sections);
         let scroller = gtk::ScrolledWindow::new();
         configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
@@ -629,7 +613,7 @@ impl Shell {
         projection.apply_block_settings();
         projection.prepare_next_hidden_projection();
         let widget = route_scroller_widget(scroller);
-        let apply_loaded: Rc<dyn Fn(Result<HomeRouteData, String>)> = {
+        let apply_loaded: Rc<dyn Fn(Result<HomeOverview, String>)> = {
             let shell = Rc::clone(self);
             let apply_projection = projection.clone();
             let source_id = library_query.source_id().clone();
@@ -657,8 +641,8 @@ impl Shell {
             })
         };
         let load_query = library_query;
-        let load: MountedRefreshLoader<Result<HomeRouteData, String>> =
-            Arc::new(move || load_home_route_data(&load_query));
+        let load: MountedRefreshLoader<Result<HomeOverview, String>> =
+            Arc::new(move || load_query.home_overview(HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT));
         let refresh = MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Home");
         let affected_by = Rc::new(home_projection_overlay_invalidated_by);
         let apply_delta = {
