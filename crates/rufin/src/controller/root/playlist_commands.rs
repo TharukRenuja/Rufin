@@ -421,6 +421,125 @@ impl LibraryCommands {
     }
 }
 
+fn sync_playlist_mutation(
+    runtime: &Runtime,
+    active: &ActiveSource,
+    operation: SourcePlaylistOperation,
+    before: &library::PlaylistDetail,
+    after: &library::PlaylistDetail,
+) -> Result<library::PlaylistDetail, String> {
+    let reader = match operation {
+        SourcePlaylistOperation::AddTracks => {
+            let operation = active.playlist_rows.add_tracks.as_ref().ok_or_else(|| {
+                "Adding tracks is not supported for native playlists by the active source."
+                    .to_string()
+            })?;
+            let before_ids = before
+                .entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<HashSet<_>>();
+            let added = after
+                .entries
+                .iter()
+                .filter(|entry| !before_ids.contains(entry.entry_id.as_str()))
+                .map(|entry| entry.track.id.clone())
+                .collect::<Vec<_>>();
+            if !added.is_empty() {
+                runtime
+                    .block_on(
+                        operation
+                            .executor
+                            .add_playlist_tracks(&before.playlist.id, &added),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            &operation.readback
+        }
+        SourcePlaylistOperation::RemoveEntries => {
+            let operation = active
+                .playlist_rows
+                .remove_entries
+                .as_ref()
+                .ok_or_else(|| {
+                    "Removing entries is not supported for native playlists by the active source."
+                        .to_string()
+                })?;
+            let after_ids = after
+                .entries
+                .iter()
+                .map(|entry| entry.entry_id.as_str())
+                .collect::<HashSet<_>>();
+            let removed = before
+                .entries
+                .iter()
+                .filter(|entry| !after_ids.contains(entry.entry_id.as_str()))
+                .map(|entry| entry.entry_id.clone())
+                .collect::<Vec<_>>();
+            if !removed.is_empty() {
+                runtime
+                    .block_on(
+                        operation
+                            .executor
+                            .remove_playlist_entries(&before.playlist.id, &removed),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            &operation.readback
+        }
+        SourcePlaylistOperation::ReorderEntries => {
+            let operation = active.playlist_rows.move_entry.as_ref().ok_or_else(|| {
+                "Reordering entries is not supported for native playlists by the active source."
+                    .to_string()
+            })?;
+            for (new_index, entry) in after.entries.iter().enumerate() {
+                let Some(old_index) = before
+                    .entries
+                    .iter()
+                    .position(|candidate| candidate.entry_id == entry.entry_id)
+                else {
+                    continue;
+                };
+                if old_index != new_index {
+                    runtime
+                        .block_on(operation.executor.move_playlist_entry(
+                            &before.playlist.id,
+                            &entry.entry_id,
+                            new_index,
+                        ))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            &operation.readback
+        }
+        SourcePlaylistOperation::Rename | SourcePlaylistOperation::Delete => {
+            return Err("The requested operation does not mutate playlist entries.".to_string());
+        }
+    };
+    runtime
+        .block_on(reader.playlist_detail(&before.playlist.id))
+        .map_err(|error| error.to_string())
+}
+
+fn playlist_entries_for_tracks(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<PlaylistEntry> {
+    let prefix = unique_millis().unwrap_or(0);
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| PlaylistEntry {
+            entry_id: format!("{}:{prefix}:{index}", playlist_id.as_str()),
+            track: track.clone(),
+        })
+        .collect()
+}
+
+fn unique_millis() -> Option<u128> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+}
+
 fn emit_playlist_changed_result(
     library_events: &Sender<library::LibraryEvent>,
     playlist_id: PlaylistId,

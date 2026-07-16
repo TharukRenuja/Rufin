@@ -284,7 +284,10 @@ impl SourceCommands {
                 ) {
                     warn!(%error, source_id = %saved.source_id, "failed to invalidate Local artwork");
                 }
-                if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
+                if let Err(error) = super::playback_waveforms::clear_store_disk_waveform_cache(
+                    &store,
+                    &saved.source_id,
+                ) {
                     warn!(%error, source_id = %saved.source_id, "failed to clear Local waveform cache");
                 }
             }

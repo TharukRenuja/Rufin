@@ -61,7 +61,10 @@ pub(in crate::controller) fn platform_secret_store(
 ) -> Arc<dyn SecretStore> {
     match settings.ui.secret_storage_mode {
         SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
-            ConfigSecretStore::with_scope(config_secrets_path(), settings.secret_scope_id.clone()),
+            ConfigSecretStore::with_scope(
+                super::app_paths::config_secrets_path(),
+                settings.secret_scope_id.clone(),
+            ),
         ))),
         SecretStorageMode::SystemKeyring => system_keyring_secret_store(&settings.secret_scope_id),
     }

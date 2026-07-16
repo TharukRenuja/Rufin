@@ -29,7 +29,9 @@ impl SourceCommands {
             {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
-            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
+            if let Err(error) =
+                super::playback_waveforms::clear_store_disk_waveform_cache(&store, &saved.source_id)
+            {
                 warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
             let _sent = source_notice.try_send(SourceNotice::CacheCleared);
@@ -80,7 +82,9 @@ impl SourceCommands {
             {
                 warn!(%error, source_id = %saved.source_id, "failed to invalidate source artwork");
             }
-            if let Err(error) = clear_store_disk_waveform_cache(&store, &saved.source_id) {
+            if let Err(error) =
+                super::playback_waveforms::clear_store_disk_waveform_cache(&store, &saved.source_id)
+            {
                 warn!(%error, source_id = %saved.source_id, "failed to clear source waveform cache");
             }
             let _sent = source_notice.try_send(SourceNotice::CacheCleared);
