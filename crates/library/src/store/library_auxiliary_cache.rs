@@ -98,7 +98,6 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Genre>> {
-        let total = self.count_linked_genres(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT genre_id, name, album_count, track_count, duration_seconds,
@@ -125,6 +124,11 @@ impl Store {
             params![source_id.as_str(), limit as i64, offset as i64],
             genre_from_row,
         )?)?;
+        let total = if items.len() < limit && (offset == 0 || !items.is_empty()) {
+            offset + items.len()
+        } else {
+            self.count_linked_genres(source_id)?
+        };
         self.attach_genre_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
