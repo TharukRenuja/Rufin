@@ -25,7 +25,6 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
             ensure_no_args(&args)?;
             icons()
         }
-        "local" => local(args),
         "package-layout" => package_layout(args),
         "release-tag" => release_tag(args),
         command => Err(format!("unknown verify command: {command}").into()),
@@ -102,22 +101,6 @@ fn flatpak_rufin_build_commands(manifest: &Path) -> Result<HashSet<String>> {
         .filter_map(serde_json::Value::as_str)
         .map(ToOwned::to_owned)
         .collect())
-}
-
-fn local(args: Vec<String>) -> Result<()> {
-    if print_help_if_requested(&args, "Usage: cargo run --locked -p xtask -- verify local")? {
-        return Ok(());
-    }
-    ensure_no_args(&args)?;
-
-    ensure_command("cargo")?;
-    ensure_command("cargo-deny")?;
-    ensure_command("just")?;
-
-    let root = repo_root()?;
-    env::set_current_dir(&root)?;
-    run_command("just", ["check"])?;
-    Ok(())
 }
 
 fn package_layout(args: Vec<String>) -> Result<()> {

@@ -39,12 +39,6 @@ fmt:
 _fmt:
     cargo fmt --all
 
-release-check:
-    scripts/container run just _release-check
-
-_release-check:
-    cargo run --locked -p xtask -- verify local
-
 test *args:
     scripts/container run just _test {{ args }}
 
@@ -76,8 +70,7 @@ _fmt-check:
     cargo fmt --all -- --check
 
 _lint:
-    cargo clippy --workspace --lib --bins --locked
-    cargo clippy --workspace --tests --benches --examples --locked
+    cargo clippy --workspace --all-targets --locked
 
 _deps:
     cargo deny --locked check -D unmatched-skip
