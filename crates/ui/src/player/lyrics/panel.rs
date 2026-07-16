@@ -52,11 +52,9 @@ impl Shell {
                 lyrics.as_ref(),
             )
         });
-        let offset_enabled = lyrics
-            .as_ref()
-            .is_some_and(|lyrics| lyrics.lines.iter().any(|line| line.start_millis.is_some()));
+        let lyrics_available = lyrics.is_some();
         drop(settings);
-        pane.set_save_action(&tr("Save Lyrics"), lyrics.is_some());
+        pane.set_save_action(&tr("Save Lyrics"), lyrics_available);
         pane.set_search_action(&search_label, search_enabled);
         pane.set_clear_auto_search_action(
             &tr("Clear fetched lyrics for this track"),
@@ -67,7 +65,7 @@ impl Shell {
             &tr("Decrease"),
             &tr("Increase"),
             self.lyrics.offset_millis.get(),
-            offset_enabled,
+            lyrics_available,
         );
         let empty_status = self.lyrics_empty_status();
         let seek_shell = Rc::clone(self);
