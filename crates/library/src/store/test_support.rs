@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 pub(super) use crate::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistEntry,
@@ -9,6 +11,59 @@ pub(super) use super::{
     LibrarySync, MusicFolderSnapshot, SourceLocalAccess, SourceObjectMapping, Store, StoreResult,
     StoredSource, SyncCommit, SyncCoverage,
 };
+
+thread_local! {
+    static READ_STATEMENTS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+fn record_read_statement(event: rusqlite::trace::TraceEvent<'_>) {
+    let rusqlite::trace::TraceEvent::Stmt(statement, sql) = event else {
+        return;
+    };
+    let sql = statement.expanded_sql().unwrap_or_else(|| sql.to_string());
+    let trimmed = sql.trim_start();
+    if !trimmed.starts_with("SELECT") && !trimmed.starts_with("WITH") {
+        return;
+    }
+    READ_STATEMENTS.with(|statements| {
+        if let Some(statements) = statements.borrow_mut().as_mut() {
+            statements.push(sql);
+        }
+    });
+}
+
+pub(super) fn trace_read_statements<T>(
+    store: &Store,
+    read: impl FnOnce() -> T,
+) -> (T, Vec<String>) {
+    READ_STATEMENTS.with(|statements| statements.replace(Some(Vec::new())));
+    store.connection.trace_v2(
+        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+        Some(record_read_statement),
+    );
+    let result = read();
+    store
+        .connection
+        .trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, None);
+    let statements = READ_STATEMENTS.with(|statements| {
+        statements
+            .replace(None)
+            .expect("read statements should be traced")
+    });
+    (result, statements)
+}
+
+pub(super) fn explain_query_plan(store: &Store, sql: &str) -> Vec<String> {
+    let mut statement = store
+        .connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .expect("prepare query plan");
+    statement
+        .query_map([], |row| row.get::<_, String>(3))
+        .expect("query plan")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect query plan")
+}
 
 pub(super) fn sqlite_sidecar_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     super::sources::sqlite_sidecar_path(path, suffix)

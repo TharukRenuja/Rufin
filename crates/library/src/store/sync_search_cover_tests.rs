@@ -1,25 +1,5 @@
 use super::test_support::*;
 use crate::{ActivityOutcome, PlaybackCheckpointRecord, StoreError};
-use std::cell::Cell;
-
-thread_local! {
-    static HOME_READ_STATEMENTS: Cell<Option<usize>> = const { Cell::new(None) };
-}
-
-fn count_home_read_statement(event: rusqlite::trace::TraceEvent<'_>) {
-    let rusqlite::trace::TraceEvent::Stmt(_, sql) = event else {
-        return;
-    };
-    let sql = sql.trim_start();
-    if !sql.starts_with("SELECT") && !sql.starts_with("WITH") {
-        return;
-    }
-    HOME_READ_STATEMENTS.with(|count| {
-        if let Some(current) = count.get() {
-            count.set(Some(current + 1));
-        }
-    });
-}
 
 #[test]
 fn sync_hide_artist() {
@@ -428,6 +408,84 @@ fn sync_replace_section() {
     );
 }
 
+fn page_shape<T>(page: crate::PagedResponse<T>) -> (usize, usize) {
+    (page.total, page.items.len())
+}
+
+fn collection_shapes(
+    store: &Store,
+    source_id: &SourceId,
+    offset: usize,
+    limit: usize,
+) -> StoreResult<[(usize, usize); 5]> {
+    Ok([
+        page_shape(store.load_artists(source_id, false, offset, limit)?),
+        page_shape(store.load_artists(source_id, true, offset, limit)?),
+        page_shape(store.load_moods(source_id, offset, limit)?),
+        page_shape(store.load_playlists(source_id, offset, limit)?),
+        page_shape(store.load_smart_playlists(source_id, offset, limit)?),
+    ])
+}
+
+#[test]
+fn complete_collection_reads_skip_only_exact_terminal_counts() {
+    let store = Store::open_memory().expect("open store");
+    let source_id = SourceId::new("test:complete-collections");
+    let limit = i64::MAX as usize;
+
+    let (pages, statements) = trace_read_statements(&store, || {
+        collection_shapes(&store, &source_id, 0, limit).expect("load empty collections")
+    });
+    assert_eq!(pages, [(0, 0); 5]);
+    assert_eq!(statements.len(), 5);
+
+    let (pages, statements) = trace_read_statements(&store, || {
+        collection_shapes(&store, &source_id, 1, limit).expect("load beyond empty collections")
+    });
+    assert_eq!(pages, [(0, 0); 5]);
+    assert_eq!(statements.len(), 10);
+}
+
+#[test]
+fn complete_collection_totals_preserve_paged_contract() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let album = album(1);
+    let mut tracks = vec![track(1, &album), track(2, &album)];
+    tracks[0].moods = vec!["Calm".to_string()];
+    tracks[1].moods = vec!["Focused".to_string()];
+    let mut artists = vec![artist(1, None), artist(2, None)];
+    let mut album_artists = vec![artist(11, None), artist(12, None)];
+    for artist in artists.iter_mut().chain(album_artists.iter_mut()) {
+        artist.track_count = 1;
+    }
+    let playlists = vec![playlist(1, None), playlist(2, None)];
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, &tracks, generation)
+        .expect("upsert tracks");
+    case.upsert_artists(&case.id, &artists, false, generation)
+        .expect("upsert artists");
+    case.upsert_artists(&case.id, &album_artists, true, generation)
+        .expect("upsert album artists");
+    case.upsert_playlists(&case.id, &playlists, generation)
+        .expect("upsert playlists");
+
+    let limit = i64::MAX as usize;
+    assert_eq!(
+        collection_shapes(&case, &case.id, 0, limit).expect("load complete collections"),
+        [(2, 2), (2, 2), (2, 2), (2, 2), (3, 3)]
+    );
+    assert_eq!(
+        collection_shapes(&case, &case.id, 0, 1).expect("load first pages"),
+        [(2, 1), (2, 1), (2, 1), (2, 1), (3, 1)]
+    );
+    assert_eq!(
+        collection_shapes(&case, &case.id, 10, limit).expect("load beyond collection ends"),
+        [(2, 0), (2, 0), (2, 0), (2, 0), (3, 0)]
+    );
+}
+
 #[test]
 fn home_overview_reads_all_sections_once() {
     let store = Store::open_memory().expect("open store");
@@ -466,22 +524,15 @@ fn home_overview_reads_all_sections_once() {
         .upsert_home_sections(&saved.source_id, &sections, generation)
         .expect("upsert Home sections");
 
-    store.connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_home_read_statement),
-    );
-    HOME_READ_STATEMENTS.with(|count| count.set(Some(0)));
-    let overview = store
-        .load_home_overview_projection(&saved.source_id, 12)
-        .expect("load Home overview");
-    let statement_count = HOME_READ_STATEMENTS.with(|count| count.take().expect("statement count"));
-    store
-        .connection
-        .trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, None);
+    let (overview, statements) = trace_read_statements(&store, || {
+        store
+            .load_home_overview_projection(&saved.source_id, 12)
+            .expect("load Home overview")
+    });
 
     assert_eq!(overview.sections.len(), 5);
     assert_eq!(overview.genres.len(), 1);
-    assert_eq!(statement_count, 11);
+    assert_eq!(statements.len(), 11);
 
     let mut album_without_direct_art = album;
     album_without_direct_art.image_ref = None;
@@ -492,22 +543,14 @@ fn home_overview_reads_all_sections_once() {
             generation,
         )
         .expect("remove direct album art");
-    store.connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_home_read_statement),
-    );
-    HOME_READ_STATEMENTS.with(|count| count.set(Some(0)));
-    let overview = store
-        .load_home_overview_projection(&saved.source_id, 12)
-        .expect("load Home overview with album art fallback");
-    let fallback_statement_count =
-        HOME_READ_STATEMENTS.with(|count| count.take().expect("fallback statement count"));
-    store
-        .connection
-        .trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, None);
+    let (overview, statements) = trace_read_statements(&store, || {
+        store
+            .load_home_overview_projection(&saved.source_id, 12)
+            .expect("load Home overview with album art fallback")
+    });
 
     assert_eq!(overview.sections.len(), 5);
-    assert_eq!(fallback_statement_count, 12);
+    assert_eq!(statements.len(), 12);
 }
 
 #[test]

@@ -199,11 +199,10 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Mood>> {
-        let total = self.count_moods(source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT tm.mood_name, tm.mood_name,
-                   COUNT(DISTINCT tm.track_id),
+                   COUNT(*),
                    COALESCE(SUM(t.duration_seconds), 0),
                    NULL, NULL
             FROM track_moods tm
@@ -220,6 +219,11 @@ impl Store {
             params![source_id.as_str(), limit as i64, offset as i64],
             mood_from_row,
         )?)?;
+        let total = if items.len() < limit && (offset == 0 || !items.is_empty()) {
+            offset + items.len()
+        } else {
+            self.count_moods(source_id)?
+        };
         self.attach_mood_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
@@ -247,7 +251,7 @@ impl Store {
         let mut statement = self.connection.prepare(
             "
             SELECT tm.mood_name, tm.mood_name,
-                   COUNT(DISTINCT tm.track_id),
+                   COUNT(*),
                    COALESCE(SUM(t.duration_seconds), 0),
                    NULL, NULL
             FROM track_moods tm
@@ -423,7 +427,6 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Playlist>> {
-        let total = self.count("playlists", source_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT playlist_id, name, track_count, duration_seconds, top_genres_json,
@@ -438,6 +441,11 @@ impl Store {
             params![source_id.as_str(), limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
+        let total = if items.len() < limit && (offset == 0 || !items.is_empty()) {
+            offset + items.len()
+        } else {
+            self.count("playlists", source_id)?
+        };
         self.attach_playlist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
@@ -871,7 +879,7 @@ impl Store {
             .query_row(
                 "
                 SELECT tm.mood_name,
-                       COUNT(DISTINCT tm.track_id),
+                       COUNT(*),
                        COALESCE(SUM(t.duration_seconds), 0)
                 FROM track_moods tm
                 JOIN tracks t
@@ -1038,46 +1046,62 @@ impl Store {
     }
     fn load_favorite_tracks_inner(&self, source_id: &SourceId) -> StoreResult<Vec<Track>> {
         let selected_folder = self.selected_music_folder_id(source_id)?;
-        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
-            let sql = format!(
-                "
+        let folder_filter = if selected_folder.is_some() {
+            "
+              AND EXISTS (
+                  SELECT 1
+                  FROM track_music_folders tmf
+                  WHERE tmf.source_id = t.source_id
+                    AND tmf.track_id = t.track_id
+                    AND tmf.folder_id = ?2
+              )"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "
+            WITH favorite_tracks AS MATERIALIZED (
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag, t.bpm
-                FROM tracks t
+                       t.duration_seconds, 1 AS favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag, t.bpm
+                FROM tracks t INDEXED BY tracks_source_favorite_idx
+                LEFT JOIN item_favorite_overrides o
+                  ON o.source_id = t.source_id
+                 AND o.item_kind = 'track'
+                 AND o.item_id = t.track_id
                 WHERE t.source_id = ?1
-                  AND {favorite} = 1
-                  AND EXISTS (
-                      SELECT 1
-                      FROM track_music_folders tmf
-                      WHERE tmf.source_id = t.source_id
-                        AND tmf.track_id = t.track_id
-                        AND tmf.folder_id = ?2
-                )
-                ORDER BY t.title COLLATE NOCASE
-                ",
-                favorite = effective_track_favorite_sql("t"),
-            );
-            let mut statement = self.connection.prepare(&sql)?;
+                  AND t.favorite = 1
+                  AND (o.favorite IS NULL OR o.favorite = 1)
+                  {folder_filter}
+
+                UNION ALL
+
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, 1 AS favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag, t.bpm
+                FROM item_favorite_overrides o
+                JOIN tracks t
+                  ON t.source_id = o.source_id AND t.track_id = o.item_id
+                WHERE o.source_id = ?1
+                  AND o.item_kind = 'track'
+                  AND o.favorite = 1
+                  AND t.favorite != 1
+                  {folder_filter}
+            )
+            SELECT *
+            FROM favorite_tracks
+            ORDER BY title COLLATE NOCASE
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             collect_rows(statement.query_map(
                 params![source_id.as_str(), folder_id.as_str()],
                 track_from_row,
             )?)?
         } else {
-            let sql = format!(
-                "
-                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
-                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                       t.duration_seconds, {favorite} AS favorite, t.disc_number,
-                       t.track_number, t.image_item_id, t.image_tag, t.bpm
-                FROM tracks t
-                WHERE t.source_id = ?1 AND {favorite} = 1
-                ORDER BY title COLLATE NOCASE
-                ",
-                favorite = effective_track_favorite_sql("t"),
-            );
-            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(params![source_id.as_str()], track_from_row)?)?
         };
         self.attach_track_metadata(source_id, &mut tracks)?;

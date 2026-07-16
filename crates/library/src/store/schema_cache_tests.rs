@@ -277,7 +277,7 @@ fn table_has_column(connection: &rusqlite::Connection, table: &str, column: &str
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert!(
         store
             .table_has_column("sources", "provider_payload")
@@ -334,6 +334,28 @@ fn current_schema_initializes_empty_database() {
     assert!(
         store.table_exists("track_moods").expect("table lookup"),
         "track_moods should exist"
+    );
+    let mut statement = store
+        .connection
+        .prepare("PRAGMA table_info(track_moods)")
+        .expect("track mood schema");
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+        })
+        .expect("query track mood schema")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("collect track mood schema")
+        .into_iter()
+        .filter(|(_, position)| *position > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        primary_key,
+        vec![
+            ("source_id".to_string(), 1),
+            ("track_id".to_string(), 2),
+            ("mood_name".to_string(), 3),
+        ]
     );
     assert!(
         store
@@ -457,7 +479,7 @@ fn version_28_migration_preserves_saved_source() {
     drop(connection);
 
     let store = Store::open(&path).expect("migrate home projection schema");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -473,6 +495,115 @@ fn version_28_migration_preserves_saved_source() {
             .table_has_column("sync_state", "sync_input_revision")
             .expect("sync input revision")
     );
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn version_29_adds_favorite_index_without_losing_state() {
+    let path = std::env::temp_dir().join(format!(
+        "library-test-{}-{}.sqlite",
+        std::process::id(),
+        "favorite-track-index-migration"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = stored_source_with_id("jellyfin:server:favorite-index-migration");
+    let source_id = saved.source_id.clone();
+    let album = album(1);
+    let mut native = track(1, &album);
+    native.title = "Zulu Native".to_string();
+    native.favorite = true;
+    let mut hidden = track(2, &album);
+    hidden.title = "Beta Hidden".to_string();
+    hidden.favorite = true;
+    let mut promoted = track(3, &album);
+    promoted.title = "alpha Promoted".to_string();
+    promoted.favorite = false;
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_source(&saved).expect("save source");
+        store
+            .set_active_source(&saved.source_id)
+            .expect("set active source");
+        let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+        store
+            .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(
+                &saved.source_id,
+                &[native.clone(), hidden.clone(), promoted.clone()],
+                generation,
+            )
+            .expect("upsert tracks");
+        store
+            .set_track_favorite_for_owner(
+                &saved.source_id,
+                &hidden.id,
+                false,
+                SourceFeatureOwner::Store,
+            )
+            .expect("hide native favorite");
+        store
+            .set_track_favorite_for_owner(
+                &saved.source_id,
+                &promoted.id,
+                true,
+                SourceFeatureOwner::Store,
+            )
+            .expect("promote track favorite");
+    }
+
+    let connection = rusqlite::Connection::open(&path).expect("open version 29 database");
+    connection
+        .execute_batch(
+            "
+            DROP INDEX tracks_source_favorite_idx;
+            PRAGMA user_version = 29;
+            ",
+        )
+        .expect("simulate version 29 schema");
+    drop(connection);
+
+    let store = Store::open(&path).expect("migrate favorite track index");
+    assert_eq!(store.schema_version().expect("schema version"), 30);
+    assert!(index_exists(&store, "tracks", "tracks_source_favorite_idx"));
+    assert_eq!(
+        store.list_sources().expect("list sources"),
+        vec![saved.clone()]
+    );
+    assert_eq!(
+        store.active_source().expect("active source"),
+        Some(saved.clone())
+    );
+    assert_eq!(
+        store
+            .count("tracks", &source_id)
+            .expect("count preserved tracks"),
+        3
+    );
+    let favorites = store
+        .load_favorite_tracks(&source_id)
+        .expect("load migrated favorites");
+    assert_eq!(
+        favorites
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![promoted.id, native.id]
+    );
+    assert!(favorites.iter().all(|track| track.favorite));
+    let override_count = store
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM item_favorite_overrides WHERE source_id = ?1 AND item_kind = 'track'",
+            rusqlite::params![source_id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("count preserved overrides");
+    assert_eq!(override_count, 2);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -561,7 +692,7 @@ fn version_27_removes_artwork_mirrors_without_losing_owned_facts() {
     drop(connection);
 
     let store = Store::open(&path).expect("migrate artwork owner schema");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     let migrated = store
         .load_albums(&saved.source_id, 0, 10)
         .expect("load migrated albums")
@@ -664,7 +795,7 @@ fn version_25_migrates_sources_to_opaque_provider_payload() {
 
     store.migrate().expect("migrate version 25");
 
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert_eq!(
         store
             .stored_source(&jellyfin.source_id)
@@ -807,7 +938,7 @@ fn version_24_migrates_sync_state_and_source_objects() {
 
     store.migrate().expect("migrate version 24");
 
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     let state = store.sync_state(&saved.source_id).expect("sync state");
     assert_eq!(state.cache_revision, 0);
     assert_eq!(
@@ -866,6 +997,7 @@ fn schema_create_indexes() {
         ("albums", "albums_source_title_nocase_idx"),
         ("albums", "albums_source_artist_idx"),
         ("tracks", "tracks_source_artist_idx"),
+        ("tracks", "tracks_source_favorite_idx"),
         ("artists", "artists_source_name_nocase_idx"),
         ("album_artists", "album_artists_source_name_nocase_idx"),
         ("genres", "genres_source_name_nocase_idx"),
@@ -873,6 +1005,7 @@ fn schema_create_indexes() {
         ("playlist_tracks", "playlist_tracks_order_idx"),
         ("album_genres", "album_genres_source_genre_idx"),
         ("track_genres", "track_genres_source_genre_idx"),
+        ("track_moods", "track_moods_source_mood_idx"),
         ("album_artist_links", "album_artist_links_source_artist_idx"),
         ("track_artist_links", "track_artist_links_source_artist_idx"),
         ("track_music_folders", "track_music_folders_folder_idx"),
@@ -1089,7 +1222,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -1141,7 +1274,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
@@ -1170,7 +1303,7 @@ fn schema_reopen_preserves_opaque_source_payload() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -1232,7 +1365,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert_eq!(
         store.list_sources().expect("list sources"),
         vec![saved.clone()]
@@ -1425,7 +1558,7 @@ fn schema_upgrade_backfills_artist_label_links() {
     }
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     let track_link_count: i64 = store
         .connection
         .query_row(
@@ -1638,7 +1771,7 @@ fn schema_twenty_one_local_favorites_seed_overrides() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     let local_override_count = store
         .connection
         .query_row(
@@ -1691,7 +1824,7 @@ fn schema_seventeen_resets() {
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1714,12 +1847,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 30)
+        .pragma_update(None, "user_version", 31)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     assert!(store.list_sources().expect("list sources").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1896,11 +2029,11 @@ fn store_fast_read_has_no_busy_timeout() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 29);
+        assert_eq!(store.schema_version().expect("schema version"), 30);
     }
     let store = Store::open_fast_read(&path).expect("open fast read store");
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 0);
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -1916,7 +2049,7 @@ fn current_schema_migrate_is_read_only() {
     let _cleanup = fs::remove_file(&path);
     {
         let store = Store::open(&path).expect("open file store");
-        assert_eq!(store.schema_version().expect("schema version"), 29);
+        assert_eq!(store.schema_version().expect("schema version"), 30);
     }
 
     let store =
@@ -1926,7 +2059,7 @@ fn current_schema_migrate_is_read_only() {
         .pragma_update(None, "query_only", true)
         .expect("enable query-only mode");
     store.migrate().expect("migrate current store");
-    assert_eq!(store.schema_version().expect("schema version"), 29);
+    assert_eq!(store.schema_version().expect("schema version"), 30);
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -3487,6 +3620,121 @@ fn schema_album_search_uses_selected_music_folder() {
     assert_eq!(fts_search.items[0].id, inside_album.id);
     assert_eq!(like_search.total, 1);
     assert_eq!(like_search.items[0].id, inside_album.id);
+}
+
+#[test]
+fn schema_favorite_tracks_use_native_and_store_sets() {
+    let case = StoreCase::open();
+    let generation = case.start_sync("begin sync");
+    let album = album(1);
+    let mut native = track(1, &album);
+    native.title = "zulu Native".to_string();
+    native.favorite = true;
+    let mut hidden = track(2, &album);
+    hidden.title = "Hidden Native".to_string();
+    hidden.favorite = true;
+    let mut native_override = track(3, &album);
+    native_override.title = "Beta Native Override".to_string();
+    native_override.favorite = true;
+    let mut promoted = track(4, &album);
+    promoted.title = "alpha Promoted".to_string();
+    promoted.favorite = false;
+    let mut negative = track(5, &album);
+    negative.favorite = false;
+    let plain = track(6, &album);
+    let tracks = vec![
+        native.clone(),
+        hidden.clone(),
+        native_override.clone(),
+        promoted.clone(),
+        negative.clone(),
+        plain.clone(),
+    ];
+    case.upsert_albums(&case.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    case.upsert_tracks(&case.id, &tracks, generation)
+        .expect("upsert tracks");
+    for (track, favorite) in [
+        (&hidden, false),
+        (&native_override, true),
+        (&promoted, true),
+        (&negative, false),
+    ] {
+        case.set_track_favorite_for_owner(&case.id, &track.id, favorite, SourceFeatureOwner::Store)
+            .expect("set Store favorite override");
+    }
+
+    let (favorites, statements) = trace_read_statements(&case, || {
+        case.load_favorite_tracks(&case.id).expect("load favorites")
+    });
+    assert_eq!(
+        favorites
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![promoted.id.clone(), native_override.id.clone(), native.id]
+    );
+    assert!(favorites.iter().all(|track| track.favorite));
+    let favorite_query = statements
+        .iter()
+        .find(|sql| sql.trim_start().starts_with("WITH favorite_tracks AS"))
+        .expect("favorite set query");
+    let plan = explain_query_plan(&case, favorite_query);
+    for index in [
+        "tracks_source_favorite_idx",
+        "item_favorite_overrides_lookup_idx",
+        "sqlite_autoindex_tracks_1",
+    ] {
+        assert!(
+            plan.iter().any(|detail| detail.contains(index)),
+            "{index}: {plan:?}"
+        );
+    }
+    assert!(
+        plan.iter()
+            .all(|detail| !detail.starts_with("SCAN t") && !detail.contains("CORRELATED")),
+        "{plan:?}"
+    );
+
+    let folder = MusicFolder {
+        id: MusicFolderId::fake(1),
+        name: "Selected".to_string(),
+    };
+    case.upsert_music_folders(&case.id, std::slice::from_ref(&folder), generation)
+        .expect("upsert folder");
+    case.upsert_track_music_folder_memberships(
+        &case.id,
+        &folder.id,
+        &[hidden, promoted.clone(), plain],
+        generation,
+    )
+    .expect("upsert folder memberships");
+    case.set_selected_music_folder_id(&case.id, Some(&folder.id))
+        .expect("select folder");
+
+    let (favorites, statements) = trace_read_statements(&case, || {
+        case.load_favorite_tracks(&case.id)
+            .expect("load selected-folder favorites")
+    });
+    assert_eq!(
+        favorites
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![promoted.id]
+    );
+    let favorite_query = statements
+        .iter()
+        .find(|sql| sql.trim_start().starts_with("WITH favorite_tracks AS"))
+        .expect("folder favorite set query");
+    let plan = explain_query_plan(&case, favorite_query);
+    assert!(
+        plan.iter().any(|detail| {
+            detail.contains("SEARCH tmf")
+                && detail.contains("(source_id=? AND track_id=? AND folder_id=?)")
+        }),
+        "{plan:?}"
+    );
 }
 
 #[test]
