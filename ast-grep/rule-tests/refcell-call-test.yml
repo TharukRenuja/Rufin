@@ -1,4 +1,4 @@
-id: refcell-mut-guard-across-call
+id: finish-refcell-borrow-before-call
 valid:
   - |
       fn remove(rules: Rc<RefCell<Vec<u8>>>, rerender: Rc<dyn Fn()>) {

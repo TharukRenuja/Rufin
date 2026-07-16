@@ -1,9 +1,9 @@
-id: refcell-mut-guard-across-call
+id: finish-refcell-borrow-before-call
 language: Rust
 severity: error
-message: Finish changing this shared state before calling another function.
+message: Finish the RefCell borrow before calling another function.
 rule:
-  pattern: "{ $$$PREFIX let mut $GUARD = $CELL.borrow_mut(); $$$BEFORE; $CALL($$$CALL_ARGS); $$$AFTER }"
+  pattern: "{ $$$PREFIX let mut $STATE = $CELL.borrow_mut(); $$$BEFORE; $CALL($$$CALL_ARGS); $$$AFTER }"
 constraints:
   CALL:
     all:
@@ -11,37 +11,37 @@ constraints:
       - not:
           regex: ^drop$
 ---
-id: refcell-mut-guard-before-signal-setter
+id: finish-refcell-borrow-before-widget-update
 language: Rust
 severity: error
-message: Finish changing this shared state before updating the widget.
+message: Finish the RefCell borrow before updating the widget.
 rule:
   any:
     - all:
         - pattern: $WIDGET.set_text($$$ARGS);
         - follows:
-            pattern: let mut $GUARD = $CELL.borrow_mut();
+            pattern: let mut $STATE = $CELL.borrow_mut();
             stopBy: end
     - all:
         - pattern: $WIDGET.set_active($$$ARGS);
         - follows:
-            pattern: let mut $GUARD = $CELL.borrow_mut();
+            pattern: let mut $STATE = $CELL.borrow_mut();
             stopBy: end
     - all:
         - pattern: $WIDGET.set_selected($$$ARGS);
         - follows:
-            pattern: let mut $GUARD = $CELL.borrow_mut();
+            pattern: let mut $STATE = $CELL.borrow_mut();
             stopBy: end
     - all:
         - pattern: $WIDGET.set_value($$$ARGS);
         - follows:
-            pattern: let mut $GUARD = $CELL.borrow_mut();
+            pattern: let mut $STATE = $CELL.borrow_mut();
             stopBy: end
 ---
-id: refcell-clone-call-argument
+id: copy-refcell-value-before-call
 language: Rust
 severity: error
-message: Copy this shared value into a local variable before passing it to another function.
+message: Copy the RefCell value into a local variable before passing it to another function.
 rule:
   any:
     - pattern: $CALL($CELL.borrow().clone())
