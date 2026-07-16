@@ -149,6 +149,7 @@
             packages =
               with pkgs;
               [
+                ast-grep
                 cargo
                 cargo-deny
                 cargo-nextest

@@ -1,0 +1,53 @@
+id: refcell-mut-guard-across-call
+language: Rust
+severity: error
+message: Finish changing this shared state before calling another function.
+rule:
+  pattern: "{ $$$PREFIX let mut $GUARD = $CELL.borrow_mut(); $$$BEFORE; $CALL($$$CALL_ARGS); $$$AFTER }"
+constraints:
+  CALL:
+    all:
+      - kind: identifier
+      - not:
+          regex: ^drop$
+---
+id: refcell-mut-guard-before-signal-setter
+language: Rust
+severity: error
+message: Finish changing this shared state before updating the widget.
+rule:
+  any:
+    - all:
+        - pattern: $WIDGET.set_text($$$ARGS);
+        - follows:
+            pattern: let mut $GUARD = $CELL.borrow_mut();
+            stopBy: end
+    - all:
+        - pattern: $WIDGET.set_active($$$ARGS);
+        - follows:
+            pattern: let mut $GUARD = $CELL.borrow_mut();
+            stopBy: end
+    - all:
+        - pattern: $WIDGET.set_selected($$$ARGS);
+        - follows:
+            pattern: let mut $GUARD = $CELL.borrow_mut();
+            stopBy: end
+    - all:
+        - pattern: $WIDGET.set_value($$$ARGS);
+        - follows:
+            pattern: let mut $GUARD = $CELL.borrow_mut();
+            stopBy: end
+---
+id: refcell-clone-call-argument
+language: Rust
+severity: error
+message: Copy this shared value into a local variable before passing it to another function.
+rule:
+  any:
+    - pattern: $CALL($CELL.borrow().clone())
+    - pattern: $CALL($$$BEFORE, $CELL.borrow().clone(), $$$AFTER)
+constraints:
+  CALL:
+    any:
+      - kind: identifier
+      - kind: field_expression

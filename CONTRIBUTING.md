@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Rufin! This document has some sim
 
 ## Development environment
 
-For development using host packages, please see
+For development using your host packages, please see
 [README.md#building-locally](README.md#building-locally).
 
 If you have nix available, it is easier to:
@@ -84,10 +84,10 @@ To run the broader testing suite:
 just check
 ```
 
-To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
+If you are testing natively, this also needs rustfmt, clippy, cargo-deny, and gettext.
+`cargo-nextest` and `ast-grep` (which CI runs by default) are used when available.
 
-On a native host, this also needs rustfmt, clippy, cargo-deny, and gettext.
-cargo-nextest is used when available.
+To enable the debug logging, refer to [README.md#troubleshooting](README.md#troubleshooting).
 
 These commands work the same for local and container development. If the container is set up,
 `just build`, `just fmt`, `just test`, and `just check` use the container environment. Its state

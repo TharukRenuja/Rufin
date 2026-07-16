@@ -475,7 +475,8 @@ pub(crate) fn detail_cover_projection(
     let open_seed = Rc::clone(&seed);
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| {
-        shell.present_full_artwork(open_candidates.borrow().clone(), open_seed.get());
+        let candidates = open_candidates.borrow().clone();
+        shell.present_full_artwork(candidates, open_seed.get());
     });
     DetailCoverProjection {
         button,
