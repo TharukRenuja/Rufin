@@ -18,6 +18,7 @@ use super::route_position::{
     RoutePositionKey, RoutePositionMemory, restore_route_position_before_snapshot,
 };
 use crate::routes::complete_prepared_items;
+use crate::routes::home::{HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT};
 use crate::routes::route::Route;
 use crate::routes::route_layout::{primary_route_scroll_adjustment, route_boundary};
 
@@ -496,6 +497,10 @@ impl Shell {
         let render_started = Instant::now();
         let generation = self.next_route_preparation_generation();
         match route.clone() {
+            Route::Home => {
+                self.prepare_home_overview_route(route, generation, render_started);
+                return;
+            }
             Route::Albums => {
                 self.prepare_albums_route(route, generation, render_started);
                 return;
@@ -537,7 +542,7 @@ impl Shell {
         };
 
         self.replace_mounted_route(route.clone(), render_started, None, || match route {
-            Route::Home => self.home_route(),
+            Route::Home => unreachable!(),
             Route::Albums
             | Route::Artists
             | Route::AlbumArtists
@@ -565,6 +570,7 @@ impl Shell {
         let render_started = Instant::now();
         let generation = self.next_route_preparation_generation();
         match route.clone() {
+            Route::Home => self.prepare_home_overview_route(route, generation, render_started),
             Route::Albums => self.prepare_albums_route(route, generation, render_started),
             Route::Tracks => self.prepare_tracks_route(route, generation, render_started),
             Route::AlbumDetail(_)
@@ -1205,6 +1211,37 @@ impl Shell {
             ),
             _ => unreachable!(),
         }
+    }
+
+    fn prepare_home_overview_route(
+        self: &Rc<Self>,
+        route: Route,
+        generation: u64,
+        render_started: Instant,
+    ) {
+        let Some(query) = self.library.query.borrow().clone() else {
+            self.replace_mounted_route(route, render_started, None, || {
+                MountedRoute::static_widget(self.route_empty_view(localization::msgid(
+                    "Cached entries will appear here after sync finishes",
+                )))
+            });
+            return;
+        };
+        self.prepare_store_route(
+            route,
+            generation,
+            render_started,
+            query,
+            |query, _| {
+                query
+                    .home_overview(HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT)
+                    .unwrap_or_else(|error| {
+                        warn!(%error, "failed to prepare Home route");
+                        library::HomeOverview::default()
+                    })
+            },
+            |shell, query, overview| shell.home_route_from_prepared(query, overview),
+        );
     }
 
     fn prepare_store_route<T, Load, Build>(
