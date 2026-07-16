@@ -4,54 +4,51 @@ use super::*;
 const REPRESENTATIVE_RELATION_WINDOW: usize = 16;
 
 impl Store {
-    pub fn load_genre_ids_by_name(
+    pub(super) fn resolve_genre_links(
         &self,
         source_id: &SourceId,
         names: &[String],
-    ) -> StoreResult<HashMap<String, GenreId>> {
-        let mut wanted = Vec::new();
-        let mut seen = HashSet::new();
-        for name in names {
-            let key = name.to_lowercase();
-            if !name.is_empty() && seen.insert(key) {
-                wanted.push(name.clone());
-            }
-        }
-        if wanted.is_empty() {
-            return Ok(HashMap::new());
+    ) -> StoreResult<Vec<GenreLink>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
         }
 
-        self.read_snapshot(|store| {
-            let wanted = serde_json::to_string(&wanted)?;
-            let mut statement = store.connection.prepare(
-                "WITH wanted(name) AS (
-                     SELECT CAST(value AS TEXT) FROM json_each(?2)
+        let wanted = serde_json::to_string(names)?;
+        let mut statement = self.connection.prepare(
+            "WITH wanted(position, name) AS (
+                     SELECT CAST(key AS INTEGER), CAST(value AS TEXT) FROM json_each(?2)
                  )
-                 SELECT w.name, g.genre_id
+                 SELECT w.name,
+                        (
+                            SELECT g.genre_id
+                            FROM genres g
+                            WHERE g.source_id = ?1
+                              AND g.name = TRIM(w.name) COLLATE NOCASE
+                              AND (
+                                  EXISTS (
+                                      SELECT 1 FROM album_genres ag
+                                      WHERE ag.source_id = g.source_id
+                                        AND ag.genre_name = g.name
+                                  ) OR EXISTS (
+                                      SELECT 1 FROM track_genres tg
+                                      WHERE tg.source_id = g.source_id
+                                        AND tg.genre_name = g.name
+                                  )
+                              )
+                            ORDER BY (g.name = TRIM(w.name)) DESC, g.genre_id
+                            LIMIT 1
+                        )
                  FROM wanted w
-                 JOIN genres g ON g.source_id = ?1 AND g.name = w.name COLLATE NOCASE
-                 WHERE EXISTS (
-                     SELECT 1 FROM album_genres ag
-                     WHERE ag.source_id = g.source_id AND ag.genre_name = g.name
-                 ) OR EXISTS (
-                     SELECT 1 FROM track_genres tg
-                     WHERE tg.source_id = g.source_id AND tg.genre_name = g.name
-                 )",
-            )?;
-            let pairs = collect_rows(statement.query_map(
-                params![source_id.as_str(), wanted],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        GenreId::new(row.get::<_, String>(1)?),
-                    ))
-                },
-            )?)?;
-            Ok(pairs
-                .into_iter()
-                .map(|(name, genre_id)| (name.to_lowercase(), genre_id))
-                .collect())
-        })
+                 ORDER BY w.position",
+        )?;
+        collect_rows(
+            statement.query_map(params![source_id.as_str(), wanted], |row| {
+                Ok(GenreLink {
+                    name: row.get(0)?,
+                    id: row.get::<_, Option<String>>(1)?.map(GenreId::new),
+                })
+            })?,
+        )
     }
 
     pub fn load_track_genre_names(&self, source_id: &SourceId) -> StoreResult<Vec<String>> {
@@ -710,6 +707,23 @@ impl Store {
     ) -> StoreResult<Option<PlaylistDetail>> {
         self.read_snapshot(|store| store.load_playlist_detail_inner(source_id, playlist_id))
     }
+
+    pub fn load_playlist_detail_projection(
+        &self,
+        source_id: &SourceId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Option<PlaylistDetailProjection>> {
+        self.read_snapshot(|store| {
+            let Some(detail) = store.load_playlist_detail_inner(source_id, playlist_id)? else {
+                return Ok(None);
+            };
+            let genre_links = store.resolve_genre_links(source_id, &detail.playlist.top_genres)?;
+            Ok(Some(PlaylistDetailProjection {
+                detail,
+                genre_links,
+            }))
+        })
+    }
     fn load_playlist_detail_inner(
         &self,
         source_id: &SourceId,
@@ -798,42 +812,6 @@ impl Store {
         };
         let sql = format!(
             "
-            SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
-                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
-                   a.image_item_id, a.image_tag
-            FROM albums a
-            WHERE a.source_id = ?1
-              AND (
-                  EXISTS (
-                      SELECT 1
-                      FROM album_genres ag
-                      WHERE ag.source_id = a.source_id
-                        AND ag.album_id = a.album_id
-                        AND ag.genre_name = ?2
-                  )
-                  OR EXISTS (
-                      SELECT 1
-                      FROM track_genres tg
-                      JOIN tracks t
-                          ON t.source_id = tg.source_id AND t.track_id = tg.track_id
-                      WHERE tg.source_id = a.source_id
-                        AND t.album_id = a.album_id
-                        AND tg.genre_name = ?2
-                  )
-              )
-            ORDER BY a.title COLLATE NOCASE
-            ",
-            favorite = effective_album_favorite_sql("a"),
-        );
-        let mut albums_statement = self.connection.prepare(&sql)?;
-        let mut albums = collect_rows(albums_statement.query_map(
-            params![source_id.as_str(), genre.name.as_str()],
-            album_from_row,
-        )?)?;
-        self.attach_album_metadata(source_id, &mut albums)?;
-        let sql = format!(
-            "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
                    t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
@@ -855,11 +833,7 @@ impl Store {
         self.attach_track_metadata(source_id, &mut tracks)?;
         genre.representative_albums =
             self.load_genre_representative_albums(source_id, &genre.id)?;
-        Ok(Some(CachedGenreDetail {
-            genre,
-            albums,
-            tracks,
-        }))
+        Ok(Some(CachedGenreDetail { genre, tracks }))
     }
 
     pub fn load_mood_detail(
@@ -906,29 +880,6 @@ impl Store {
         };
         let sql = format!(
             "
-            SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
-                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
-                   a.track_count, a.duration_seconds, {favorite} AS favorite, a.color_seed,
-                   a.image_item_id, a.image_tag
-            FROM albums a
-            JOIN tracks t
-                ON t.source_id = a.source_id AND t.album_id = a.album_id
-            JOIN track_moods tm
-                ON tm.source_id = t.source_id AND tm.track_id = t.track_id
-            WHERE a.source_id = ?1
-              AND tm.mood_name = ?2
-            ORDER BY a.title COLLATE NOCASE
-            ",
-            favorite = effective_album_favorite_sql("a"),
-        );
-        let mut albums_statement = self.connection.prepare(&sql)?;
-        let mut albums = collect_rows(albums_statement.query_map(
-            params![source_id.as_str(), mood.name.as_str()],
-            album_from_row,
-        )?)?;
-        self.attach_album_metadata(source_id, &mut albums)?;
-        let sql = format!(
-            "
             SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.release_date, t.date_added, t.last_played,
                    t.play_count, t.user_rating, t.duration_seconds, {favorite} AS favorite,
@@ -949,11 +900,7 @@ impl Store {
         )?)?;
         self.attach_track_metadata(source_id, &mut tracks)?;
         mood.representative_albums = self.load_mood_representative_albums(source_id, &mood.name)?;
-        Ok(Some(CachedMoodDetail {
-            mood,
-            albums,
-            tracks,
-        }))
+        Ok(Some(CachedMoodDetail { mood, tracks }))
     }
 
     fn attach_mood_representative_albums(

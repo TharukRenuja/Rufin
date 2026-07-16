@@ -20,7 +20,7 @@ use crate::shell::Shell;
 use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use localization::{msgid, tr};
 use playback::{
-    AlbumPlayRequest, ArtistWindowPlayRequest, CachedPlaylistPlayRequest, GenreWindowPlayRequest,
+    AlbumPlayRequest, ArtistWindowPlayRequest, CachedPlaylistPlayRequest, ContextPlayRequest,
     QueuePlacement, RadioPlayRequest, RadioSeed, SmartPlaylistPlayRequest,
 };
 
@@ -30,7 +30,10 @@ use super::playlist_entries::playlist_operation_supported;
 use super::playlist_entries::{
     PlaylistEntryContextMenuAction, PlaylistEntryContextMenuState, confirm_remove_playlist_entry,
 };
-use super::playlist_picker::{context_menu_can_add_to_playlist, context_menu_picker_button};
+use super::playlist_picker::{
+    context_menu_can_add_to_playlist, context_menu_context_picker_button,
+    context_menu_picker_button,
+};
 use super::route::Route;
 
 pub(crate) fn install_track_context_menu(
@@ -728,7 +731,6 @@ pub(crate) fn present_genre_context_menu(
     genre: Genre,
     position: Option<(f64, f64)>,
 ) {
-    let library_query = shell.library.query.borrow().clone();
     let main_menu = context_menu_box();
     main_menu.append(&context_menu_action("Play", "genre.play", PLAY_ICON));
     main_menu.append(&context_menu_action(
@@ -749,20 +751,14 @@ pub(crate) fn present_genre_context_menu(
     ));
 
     if context_menu_can_add_to_playlist(shell) {
-        let library_query = library_query.clone();
-        let genre_id = genre.id.clone();
-        let track_source: Rc<dyn Fn() -> Vec<Track>> = Rc::new(move || {
-            library_query
-                .as_ref()
-                .and_then(|query| query.genre_detail(&genre_id).ok().flatten())
-                .map(|detail| detail.tracks)
-                .unwrap_or_default()
-        });
-        main_menu.append(&context_menu_picker_button(
+        main_menu.append(&context_menu_context_picker_button(
             "Add to Playlist",
             ADD_TO_PLAYLIST_ICON,
             shell,
-            track_source,
+            ::library::play_context::PlayContextDescriptor::Genre {
+                genre_id: genre.id.clone(),
+                music_folder_id: selected_music_folder_id(shell),
+            },
         ));
     }
 
@@ -771,22 +767,16 @@ pub(crate) fn present_genre_context_menu(
 
     surface.add_action("play", {
         let controller = shell.products.playback.queue.clone();
-        let library_query = library_query.clone();
         let genre_id = genre.id.clone();
+        let music_folder_id = selected_music_folder_id(shell);
         move || {
-            if let Some(detail) = library_query
-                .as_ref()
-                .and_then(|query| query.genre_detail(&genre_id).ok().flatten())
-            {
-                let tracks = detail.tracks;
-                let total_items = tracks.len();
-                controller.play_genre_window(GenreWindowPlayRequest {
+            controller.play_context(ContextPlayRequest::store(
+                ::library::play_context::PlayContextDescriptor::Genre {
                     genre_id: genre_id.clone(),
-                    total_items,
-                    anchor_index: 0,
-                    track_at: Box::new(move |index| tracks.get(index).cloned()),
-                });
-            }
+                    music_folder_id: music_folder_id.clone(),
+                },
+                QueuePlacement::Now,
+            ));
         }
     });
 
@@ -816,31 +806,31 @@ pub(crate) fn present_genre_context_menu(
 
     surface.add_action("play-next", {
         let controller = shell.products.playback.queue.clone();
-        let library_query = library_query.clone();
         let genre_id = genre.id.clone();
+        let music_folder_id = selected_music_folder_id(shell);
         move || {
-            if let Some(detail) = library_query
-                .as_ref()
-                .and_then(|query| query.genre_detail(&genre_id).ok().flatten())
-            {
-                for track in detail.tracks.iter().rev() {
-                    controller.play_next(track.clone());
-                }
-            }
+            controller.play_context(ContextPlayRequest::store(
+                ::library::play_context::PlayContextDescriptor::Genre {
+                    genre_id: genre_id.clone(),
+                    music_folder_id: music_folder_id.clone(),
+                },
+                QueuePlacement::Next,
+            ));
         }
     });
 
     surface.add_action("play-last", {
         let controller = shell.products.playback.queue.clone();
-        let library_query = library_query.clone();
         let genre_id = genre.id.clone();
+        let music_folder_id = selected_music_folder_id(shell);
         move || {
-            if let Some(detail) = library_query
-                .as_ref()
-                .and_then(|query| query.genre_detail(&genre_id).ok().flatten())
-            {
-                controller.play_last(detail.tracks);
-            }
+            controller.play_context(ContextPlayRequest::store(
+                ::library::play_context::PlayContextDescriptor::Genre {
+                    genre_id: genre_id.clone(),
+                    music_folder_id: music_folder_id.clone(),
+                },
+                QueuePlacement::Last,
+            ));
         }
     });
 

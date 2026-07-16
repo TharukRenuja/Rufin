@@ -12,11 +12,11 @@ use crate::shell::actions::PLAY_ICON;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::MountedRoute;
 use localization::track_count_text;
-use playback::MoodWindowPlayRequest;
+use playback::{ContextPlayRequest, QueuePlacement};
 
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
 use super::detail_showcase::{
-    append_track_query_batch_queue_actions, detail_action_row, detail_primary_action_button,
+    append_loaded_context_batch_queue_actions, detail_action_row, detail_primary_action_button,
 };
 use super::grouped_detail::GroupedDetailData;
 use super::play_context::selected_music_folder_id;
@@ -48,7 +48,12 @@ impl Shell {
         let mood = detail.mood;
         let artwork = ArtworkBinding::mood_slots(&mood);
         let kind_row = self.mood_detail_kind_row();
-        let actions = self.mood_detail_actions(&library_query, mood_id.clone());
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+        let source_descriptor = PlayContextDescriptor::Mood {
+            mood_id: mood_id.clone(),
+            music_folder_id: selected_music_folder_id(self),
+        };
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::MoodTracks,
             kind_row: Some(kind_row.upcast()),
@@ -56,14 +61,12 @@ impl Shell {
             artwork,
             seed,
             summary_items,
-            actions: Some(actions.upcast()),
+            actions: Some(actions.clone().upcast()),
             tracks: detail.tracks,
             table_context: "mood-detail",
-            source_descriptor: Some(PlayContextDescriptor::Mood {
-                mood_id: mood_id.clone(),
-                music_folder_id: selected_music_folder_id(self),
-            }),
+            source_descriptor: Some(source_descriptor.clone()),
         });
+        self.install_mood_detail_actions(&actions, &grouped, source_descriptor);
         let mounted_track_count = Rc::new(Cell::new(u64::from(mood.track_count)));
         let track_count_for_locale = Rc::clone(&mounted_track_count);
         grouped.bind_summary_text_with(0, move || track_count_text(track_count_for_locale.get()));
@@ -167,50 +170,31 @@ impl Shell {
         row
     }
 
-    fn mood_detail_actions(
+    fn install_mood_detail_actions(
         self: &Rc<Self>,
-        library_query: &ActiveLibraryQuery,
-        mood_id: ::library::MoodId,
-    ) -> gtk::Box {
-        let actions = detail_action_row();
-        actions.set_halign(gtk::Align::Start);
-
+        actions: &gtk::Box,
+        grouped: &super::grouped_detail::GroupedDetailView,
+        descriptor: PlayContextDescriptor,
+    ) {
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
-        let play_query = library_query.clone();
-        let play_mood_id = mood_id.clone();
+        let play_grouped = grouped.clone();
+        let play_descriptor = descriptor.clone();
         play.connect_clicked(move |_| {
-            let tracks = play_query
-                .mood_detail(&play_mood_id)
-                .ok()
-                .flatten()
-                .map(|detail| detail.tracks)
-                .unwrap_or_default();
-            let total_items = tracks.len();
-            controller.play_mood_window(MoodWindowPlayRequest {
-                mood_id: play_mood_id.clone(),
-                total_items,
-                anchor_index: 0,
-                track_at: Box::new(move |index| tracks.get(index).cloned()),
-            });
+            controller.play_context(ContextPlayRequest::loaded(
+                play_descriptor.clone(),
+                QueuePlacement::Now,
+                play_grouped.source_tracks(),
+            ));
         });
         actions.append(&play);
 
-        let batch_query = library_query.clone();
-        let batch_mood_id = mood_id;
-        append_track_query_batch_queue_actions(
-            &actions,
+        let batch_grouped = grouped.clone();
+        append_loaded_context_batch_queue_actions(
+            actions,
             &self.products.playback.queue,
-            Rc::new(move || {
-                batch_query
-                    .mood_detail(&batch_mood_id)
-                    .ok()
-                    .flatten()
-                    .map(|detail| detail.tracks)
-                    .unwrap_or_default()
-            }),
+            descriptor,
+            Rc::new(move || batch_grouped.source_tracks()),
         );
-
-        actions
     }
 }

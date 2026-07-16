@@ -27,6 +27,14 @@ impl Store {
         self.read_snapshot(|store| store.materialize_play_context_inner(source_id, context, anchor))
     }
 
+    pub fn materialize_play_context_items(
+        &self,
+        source_id: &SourceId,
+        context: &PlayContext,
+    ) -> StoreResult<Vec<PlayContextItem>> {
+        self.read_snapshot(|store| store.materialize_play_context_items_inner(source_id, context))
+    }
+
     fn materialize_play_context_inner(
         &self,
         source_id: &SourceId,
@@ -34,11 +42,34 @@ impl Store {
         anchor: &PlayContextAnchor,
     ) -> StoreResult<MaterializedPlayContext> {
         let descriptor = &context.descriptor;
+        let items = self.materialize_play_context_items_inner(source_id, context)?;
+        let smart_playlist = matches!(descriptor, PlayContextDescriptor::SmartPlaylist { .. });
+        let anchor_index = items
+            .iter()
+            .position(|item| {
+                (smart_playlist || item.source_rank == anchor.source_rank)
+                    && item.track.id == anchor.track_id
+                    && item.source_item_id == anchor.source_item_id
+            })
+            .ok_or(StoreError::PlayContextAnchorNotFound)?;
+
+        Ok(MaterializedPlayContext {
+            items,
+            anchor_index,
+        })
+    }
+
+    fn materialize_play_context_items_inner(
+        &self,
+        source_id: &SourceId,
+        context: &PlayContext,
+    ) -> StoreResult<Vec<PlayContextItem>> {
+        let descriptor = &context.descriptor;
         if matches!(descriptor, PlayContextDescriptor::Folder { .. }) {
             return Err(StoreError::UnsupportedFolderPlayContext);
         }
 
-        let items = match descriptor {
+        Ok(match descriptor {
             PlayContextDescriptor::Playlist { playlist_id } => {
                 self.materialize_playlist_context(source_id, playlist_id, &context.order)?
             }
@@ -57,21 +88,6 @@ impl Store {
                 let query = self.track_context_query(source_id, descriptor, &context.order)?;
                 self.materialize_query_pages(source_id, query, 0, None)?
             }
-        };
-
-        let smart_playlist = matches!(descriptor, PlayContextDescriptor::SmartPlaylist { .. });
-        let anchor_index = items
-            .iter()
-            .position(|item| {
-                (smart_playlist || item.source_rank == anchor.source_rank)
-                    && item.track.id == anchor.track_id
-                    && item.source_item_id == anchor.source_item_id
-            })
-            .ok_or(StoreError::PlayContextAnchorNotFound)?;
-
-        Ok(MaterializedPlayContext {
-            items,
-            anchor_index,
         })
     }
 
@@ -545,6 +561,16 @@ mod tests {
             },
         ];
         for context in contexts {
+            let items = case
+                .materialize_play_context_items(&case.id, &context)
+                .expect("materialize context without a UI anchor");
+            assert_eq!(
+                items
+                    .iter()
+                    .map(|item| item.track.id.clone())
+                    .collect::<Vec<_>>(),
+                vec![first.id.clone(), second.id.clone()]
+            );
             assert_eq!(
                 materialized_ids(&case, &context, &first.id),
                 vec![first.id.clone(), second.id.clone()]

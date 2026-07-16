@@ -348,6 +348,37 @@ pub(crate) fn append_track_query_batch_queue_actions(
     actions.append(&play_later);
 }
 
+pub(crate) fn append_loaded_context_batch_queue_actions(
+    actions: &gtk::Box,
+    controller: &playback::QueueHandle,
+    descriptor: ::library::play_context::PlayContextDescriptor,
+    tracks: Rc<dyn Fn() -> std::sync::Arc<Vec<Track>>>,
+) {
+    let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
+    let next_controller = controller.clone();
+    let next_descriptor = descriptor.clone();
+    let next_tracks = Rc::clone(&tracks);
+    play_next.connect_clicked(move |_| {
+        next_controller.play_context(playback::ContextPlayRequest::loaded(
+            next_descriptor.clone(),
+            playback::QueuePlacement::Next,
+            next_tracks(),
+        ));
+    });
+    actions.append(&play_next);
+
+    let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
+    let later_controller = controller.clone();
+    play_later.connect_clicked(move |_| {
+        later_controller.play_context(playback::ContextPlayRequest::loaded(
+            descriptor.clone(),
+            playback::QueuePlacement::Last,
+            tracks(),
+        ));
+    });
+    actions.append(&play_later);
+}
+
 pub(crate) fn detail_title_label(text: &str) -> gtk::Label {
     let title = gtk::Label::new(Some(text));
     title.add_css_class("detail-title");

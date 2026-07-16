@@ -7,10 +7,11 @@ use std::{
 };
 
 use crate::{
-    Album, AlbumArtwork, AlbumId, Artist, ArtistCredit, ArtistId, FavoriteItemId, Genre, GenreId,
-    HomeSection, HomeSectionKind, ImageRef, LocalCueDependency, LocalCueTrackSource,
-    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId,
-    MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
+    Album, AlbumArtwork, AlbumDetail, AlbumDetailProjection, AlbumId, Artist, ArtistCredit,
+    ArtistId, FavoriteItemId, Genre, GenreId, GenreLink, HomeSection, HomeSectionKind, ImageRef,
+    LocalCueDependency, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
+    LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId, MusicFolder, MusicFolderId,
+    PagedResponse, Playlist, PlaylistDetail, PlaylistDetailProjection, PlaylistEntry,
     PlaylistEntryKey, PlaylistId, PlaylistSnapshot, RandomTrackQuery, SmartPlaylist,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
@@ -467,14 +468,12 @@ pub struct CachedArtistDetail {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CachedGenreDetail {
     pub genre: Genre,
-    pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CachedMoodDetail {
     pub mood: Mood,
-    pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
 }
 

@@ -7,8 +7,8 @@ use library::play_context::{
 use library::{MusicFolderId, PlaylistId, SourceId, Track, TrackId};
 use playback::{
     AlbumPlayRequest, ArtistWindowPlayRequest, Batch, BatchItem, CachedPlaylistPlayRequest,
-    FolderWindowPlayRequest, GenreWindowPlayRequest, LibraryWindowPlayRequest, MaterializationId,
-    MoodWindowPlayRequest, OccurrenceId, Placement, PlaylistEntryPlayRequest, Provenance,
+    ContextPlayRequest, ContextTrackSource, FolderWindowPlayRequest, LibraryWindowPlayRequest,
+    MaterializationId, OccurrenceId, Placement, PlaylistEntryPlayRequest, Provenance,
     QueuePlacement, RepeatMode, SessionCommand, SmartPlaylistPlayRequest,
 };
 use tracing::warn;
@@ -248,46 +248,12 @@ impl PlaybackCommands {
         )
     }
 
-    pub fn play_genre_window(&self, mut request: GenreWindowPlayRequest) -> bool {
-        let Some(anchor) = context_anchor(
-            request.total_items,
-            request.anchor_index,
-            &mut request.track_at,
-        ) else {
-            return false;
+    pub fn play_context(&self, request: ContextPlayRequest) -> bool {
+        let context = PlayContext {
+            descriptor: request.descriptor,
+            order: PlayContextOrder::Canonical,
         };
-        self.play_store_context(
-            PlayContext {
-                descriptor: PlayContextDescriptor::Genre {
-                    genre_id: request.genre_id,
-                    music_folder_id: Self::active_music_folder(&self.store),
-                },
-                order: PlayContextOrder::Canonical,
-            },
-            anchor,
-            true,
-        )
-    }
-
-    pub fn play_mood_window(&self, mut request: MoodWindowPlayRequest) -> bool {
-        let Some(anchor) = context_anchor(
-            request.total_items,
-            request.anchor_index,
-            &mut request.track_at,
-        ) else {
-            return false;
-        };
-        self.play_store_context(
-            PlayContext {
-                descriptor: PlayContextDescriptor::Mood {
-                    mood_id: request.mood_id,
-                    music_folder_id: Self::active_music_folder(&self.store),
-                },
-                order: PlayContextOrder::Canonical,
-            },
-            anchor,
-            true,
-        )
+        self.enqueue_context(context, request.tracks, request.placement)
     }
 
     pub fn play_next(&self, track: Track) {
@@ -421,6 +387,74 @@ impl PlaybackCommands {
                 )
             })
             .collect())
+    }
+
+    fn enqueue_context(
+        &self,
+        context: PlayContext,
+        tracks: ContextTrackSource,
+        placement: QueuePlacement,
+    ) -> bool {
+        if matches!(&tracks, ContextTrackSource::Loaded(tracks) if tracks.is_empty()) {
+            self.queue_error(if placement == QueuePlacement::Now {
+                "No tracks are available to play."
+            } else {
+                "No tracks are available to add to the queue."
+            });
+            return false;
+        }
+        let reservation = match self.reserve_queue_materialization(placement.into()) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.queue_error(error);
+                return false;
+            }
+        };
+        let context_id = context_id(&context);
+        let shuffled_start = placement == QueuePlacement::Now;
+        let controller = self.clone();
+        let rejected = reservation.clone();
+        if let Err(error) = self.submit_playback_materialization(move || {
+            let items = match tracks {
+                ContextTrackSource::Store => controller
+                    .store
+                    .with_store(|store| {
+                        store.materialize_play_context_items(&reservation.source_id, &context)
+                    })
+                    .map(|items| context_batch_items(items, &context_id)),
+                ContextTrackSource::Loaded(tracks) => {
+                    let tracks =
+                        Arc::try_unwrap(tracks).unwrap_or_else(|tracks| tracks.as_ref().clone());
+                    Ok(tracks
+                        .into_iter()
+                        .enumerate()
+                        .map(|(source_rank, track)| {
+                            BatchItem::new(
+                                track,
+                                Provenance::Context {
+                                    context_id: context_id.clone(),
+                                    source_rank,
+                                },
+                            )
+                        })
+                        .collect())
+                }
+            };
+            match items {
+                Ok(items) => {
+                    if let Err(error) =
+                        controller.apply_reserved_batch(reservation.clone(), items, shuffled_start)
+                    {
+                        controller.reject_queue_materialization(reservation, error);
+                    }
+                }
+                Err(error) => controller.reject_queue_materialization(reservation, error),
+            }
+        }) {
+            self.reject_queue_materialization(rejected, error);
+            return false;
+        }
+        true
     }
 
     fn play_store_context(

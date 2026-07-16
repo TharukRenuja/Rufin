@@ -1,10 +1,10 @@
 use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 
-use ::library::{ActiveLibraryQuery, Genre, Mood, Track};
+use ::library::{ActiveLibraryQuery, Genre, Mood, play_context::PlayContextDescriptor};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
-use playback::{GenreWindowPlayRequest, MoodWindowPlayRequest};
+use playback::{ContextPlayRequest, QueuePlacement};
 use tracing::warn;
 
 use super::collection_context::install_genre_context_menu;
@@ -32,6 +32,7 @@ use super::grid_cells::{
 use super::library_fields::{
     apply_desc, clear_list_item_child, cmp_string, column_width, item_at_from_item,
 };
+use super::play_context::selected_music_folder_id;
 use super::route::Route;
 use super::table_sizing::route_column_view_initial_width;
 
@@ -180,64 +181,23 @@ impl NamedCollectionItem {
         }
     }
 
-    fn play_now(&self, controller: &playback::QueueHandle, query: &ActiveLibraryQuery) {
-        match self {
-            Self::Genre(genre) => {
-                let genre_id = genre.id.clone();
-                if let Ok(Some(detail)) = query.genre_detail(&genre_id) {
-                    let tracks = detail.tracks;
-                    let total_items = tracks.len();
-                    controller.play_genre_window(GenreWindowPlayRequest {
-                        genre_id,
-                        total_items,
-                        anchor_index: 0,
-                        track_at: Box::new(move |index| tracks.get(index).cloned()),
-                    });
-                }
-            }
-            Self::Mood(mood) => {
-                let mood_id = mood.id.clone();
-                if let Ok(Some(detail)) = query.mood_detail(&mood_id) {
-                    let tracks = detail.tracks;
-                    let total_items = tracks.len();
-                    controller.play_mood_window(MoodWindowPlayRequest {
-                        mood_id,
-                        total_items,
-                        anchor_index: 0,
-                        track_at: Box::new(move |index| tracks.get(index).cloned()),
-                    });
-                }
-            }
-        }
-    }
-
-    fn play_next(&self, controller: &playback::QueueHandle, query: &ActiveLibraryQuery) {
-        if let Some(tracks) = self.tracks(query) {
-            for track in tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
-    }
-
-    fn play_last(&self, controller: &playback::QueueHandle, query: &ActiveLibraryQuery) {
-        if let Some(tracks) = self.tracks(query) {
-            controller.play_last(tracks);
-        }
-    }
-
-    fn tracks(&self, query: &ActiveLibraryQuery) -> Option<Vec<Track>> {
-        match self {
-            Self::Genre(genre) => query
-                .genre_detail(&genre.id)
-                .ok()
-                .flatten()
-                .map(|detail| detail.tracks),
-            Self::Mood(mood) => query
-                .mood_detail(&mood.id)
-                .ok()
-                .flatten()
-                .map(|detail| detail.tracks),
-        }
+    fn play(
+        &self,
+        controller: &playback::QueueHandle,
+        placement: QueuePlacement,
+        music_folder_id: Option<::library::MusicFolderId>,
+    ) {
+        let descriptor = match self {
+            Self::Genre(genre) => PlayContextDescriptor::Genre {
+                genre_id: genre.id.clone(),
+                music_folder_id,
+            },
+            Self::Mood(mood) => PlayContextDescriptor::Mood {
+                mood_id: mood.id.clone(),
+                music_folder_id,
+            },
+        };
+        controller.play_context(ContextPlayRequest::store(descriptor, placement));
     }
 
     fn install_context_menu(&self, widget: &impl IsA<gtk::Widget>, shell: &Rc<Shell>) {
@@ -309,7 +269,6 @@ pub(crate) fn named_collection_projection(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     kind: NamedCollectionKind,
-    query: ActiveLibraryQuery,
 ) -> LibraryCollectionProjection {
     let key = kind.key();
     let settings = shell.settings.current.borrow().library_list(key);
@@ -323,7 +282,7 @@ pub(crate) fn named_collection_projection(
                 kind,
             )),
             LibraryLayout::Grid | LibraryLayout::Detail => LibraryPresentationProjection::Grid(
-                named_collection_grid(&shell, model.clone(), kind, query.clone()),
+                named_collection_grid(&shell, model.clone(), kind),
             ),
         }),
     )
@@ -333,7 +292,6 @@ fn named_collection_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     kind: NamedCollectionKind,
-    query: ActiveLibraryQuery,
 ) -> CollectionGridProjection {
     let fields = shell
         .settings
@@ -346,9 +304,7 @@ fn named_collection_grid(
     collection_grid(
         model,
         &fields,
-        move |fields| {
-            NamedCollectionGridCell::new(Rc::clone(&cell_shell), kind, fields, query.clone())
-        },
+        move |fields| NamedCollectionGridCell::new(Rc::clone(&cell_shell), kind, fields),
         move |_, item: NamedCollectionItem| activate_shell.navigate(item.route()),
     )
 }
@@ -452,7 +408,6 @@ impl NamedCollectionGridCell {
         shell: Rc<Shell>,
         kind: NamedCollectionKind,
         fields: &[LibraryField],
-        query: ActiveLibraryQuery,
     ) -> Self {
         let current_item = Rc::new(RefCell::new(None::<NamedCollectionItem>));
         let current_genre = Rc::new(RefCell::new(None::<Genre>));
@@ -471,29 +426,41 @@ impl NamedCollectionGridCell {
 
         let controls = cards::cover_play_hover_controls(0, kind.play_label());
         let controller = shell.products.playback.queue.clone();
-        let play_query = query.clone();
+        let play_shell = Rc::clone(&shell);
         let play_item = Rc::clone(&current_item);
         controls.play.connect_clicked(move |_| {
             if let Some(item) = play_item.borrow().as_ref() {
-                item.play_now(&controller, &play_query);
+                item.play(
+                    &controller,
+                    QueuePlacement::Now,
+                    selected_music_folder_id(&play_shell),
+                );
             }
         });
 
         let controller = shell.products.playback.queue.clone();
-        let next_query = query.clone();
+        let next_shell = Rc::clone(&shell);
         let next_item = Rc::clone(&current_item);
         controls.play_next.connect_clicked(move |_| {
             if let Some(item) = next_item.borrow().as_ref() {
-                item.play_next(&controller, &next_query);
+                item.play(
+                    &controller,
+                    QueuePlacement::Next,
+                    selected_music_folder_id(&next_shell),
+                );
             }
         });
 
         let controller = shell.products.playback.queue.clone();
-        let last_query = query;
+        let last_shell = Rc::clone(&shell);
         let last_item = Rc::clone(&current_item);
         controls.play_last.connect_clicked(move |_| {
             if let Some(item) = last_item.borrow().as_ref() {
-                item.play_last(&controller, &last_query);
+                item.play(
+                    &controller,
+                    QueuePlacement::Last,
+                    selected_music_folder_id(&last_shell),
+                );
             }
         });
         controls.add_to_overlay(&overlay);
@@ -555,16 +522,13 @@ fn named_collection_route_spec(
     query: ActiveLibraryQuery,
 ) -> CollectionRouteSpec<NamedCollectionItem> {
     let load_query = query.clone();
-    let content_query = query;
     CollectionRouteSpec {
         key: kind.key(),
         empty_body: kind.fallback_warning(),
         load_items: Arc::new(move || kind.load_items(&load_query)),
         matches_query: Rc::new(|item, query| item.matches_query(query)),
         populate_model: Rc::new(populate_named_collection_model),
-        build_content: Rc::new(move |shell, model| {
-            named_collection_projection(shell, model, kind, content_query.clone())
-        }),
+        build_content: Rc::new(move |shell, model| named_collection_projection(shell, model, kind)),
         affected: Rc::new(move |delta| {
             delta.reset.is_some()
                 || match kind {

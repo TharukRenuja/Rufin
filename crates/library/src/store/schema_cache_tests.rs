@@ -8,7 +8,7 @@ use crate::{
     TrackActivitySummary, local_file_source_object_id,
 };
 use crate::{
-    AlbumId, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, LocalCueTrackSource,
+    AlbumId, ArtistCredit, ArtistId, GenreLink, HomeSection, HomeSectionKind, LocalCueTrackSource,
     LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
     SmartPlaylistBuiltin, SourceFeatureOwner, SourceId, TrackId,
 };
@@ -5194,7 +5194,11 @@ fn paged_search_read() {
     let case = StoreCase::open();
     let generation = case.start_sync("begin sync");
     let mut albums = (1..=505).map(album).collect::<Vec<_>>();
-    albums[504].genres = vec!["Needle Genre".to_string()];
+    albums[504].genres = vec![
+        "Missing Genre".to_string(),
+        "Needle Genre".to_string(),
+        "needle genre".to_string(),
+    ];
     let tracks = (1..=1005)
         .map(|number| track(number, &albums[(number as usize - 1) % albums.len()]))
         .collect::<Vec<_>>();
@@ -5238,16 +5242,10 @@ fn paged_search_read() {
     let genre_page = case
         .load_genres_matching(&case.id, "Needle Genre", 0, 10)
         .expect("search genres");
-    let genre_ids = case
-        .load_genre_ids_by_name(
-            &case.id,
-            &[
-                "needle genre".to_string(),
-                genres[0].name.clone(),
-                "Missing Genre".to_string(),
-            ],
-        )
-        .expect("resolve exact genre links in one read");
+    let album_detail = case
+        .load_album_detail_projection(&case.id, &albums[504].id)
+        .expect("load Album detail projection")
+        .expect("Album detail projection");
     let playlist_page = case
         .load_playlists_matching(&case.id, "Playlist 505", 0, 10)
         .expect("search playlists");
@@ -5259,8 +5257,21 @@ fn paged_search_read() {
     assert_eq!(genre_page.items[0].id, genres[504].id);
     assert_eq!(genre_page.items[0].name, genres[504].name);
     assert_eq!(
-        genre_ids,
-        std::collections::HashMap::from([("needle genre".to_string(), genres[504].id.clone(),)])
+        album_detail.genre_links,
+        vec![
+            GenreLink {
+                name: "Missing Genre".to_string(),
+                id: None,
+            },
+            GenreLink {
+                name: "Needle Genre".to_string(),
+                id: Some(genres[504].id.clone()),
+            },
+            GenreLink {
+                name: "needle genre".to_string(),
+                id: Some(genres[504].id.clone()),
+            },
+        ]
     );
     assert_eq!(
         genre_page.items[0]
@@ -5344,6 +5355,17 @@ fn playlist_entries_derive_cached_stats() {
         generation,
     )
     .expect("upsert tracks");
+    let rock = Genre {
+        id: GenreId::new("genre:rock"),
+        name: "Rock".to_string(),
+        album_count: 0,
+        track_count: 0,
+        duration_seconds: 0,
+        image_ref: None,
+        representative_albums: Vec::new(),
+    };
+    case.upsert_genres(&case.id, std::slice::from_ref(&rock), generation)
+        .expect("upsert resolved Genre");
     case.upsert_playlists(&case.id, std::slice::from_ref(&playlist), generation)
         .expect("upsert playlist");
     let delta = case
@@ -5378,6 +5400,23 @@ fn playlist_entries_derive_cached_stats() {
     assert_eq!(detail.playlist.track_count, 2);
     assert_eq!(detail.playlist.duration_seconds, 330);
     assert_eq!(detail.playlist.top_genres, vec!["Rock", "Pop"]);
+    let projection = case
+        .load_playlist_detail_projection(&case.id, &playlist.id)
+        .expect("load Playlist detail projection")
+        .expect("Playlist detail projection");
+    assert_eq!(
+        projection.genre_links,
+        vec![
+            GenreLink {
+                name: "Rock".to_string(),
+                id: Some(rock.id),
+            },
+            GenreLink {
+                name: "Pop".to_string(),
+                id: None,
+            },
+        ]
+    );
 }
 
 #[test]

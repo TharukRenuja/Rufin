@@ -312,6 +312,10 @@ impl TrackListProjection {
         self.model.source_is_empty()
     }
 
+    pub(crate) fn source_tracks(&self) -> Arc<Vec<Track>> {
+        self.model.source_tracks()
+    }
+
     pub(crate) fn set_source_descriptor(&self, descriptor: PlayContextDescriptor) {
         if let Some(current) = self.source_descriptor.as_ref() {
             *current.borrow_mut() = descriptor;

@@ -5,10 +5,11 @@ use std::time::Instant;
 use tracing::warn;
 
 use crate::{
-    Album, AlbumId, Artist, ArtistId, CachedArtistDetail, CachedGenreDetail, CachedMoodDetail,
-    Genre, GenreId, HomeSection, Mood, MoodId, PagedResponse, Playlist, PlaylistDetail, PlaylistId,
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDetail, SmartPlaylistId, SourceId, Store,
-    StoreAccess, StoreResult, Track, TrackId, TrackSort,
+    Album, AlbumDetailProjection, AlbumId, Artist, ArtistId, CachedArtistDetail, CachedGenreDetail,
+    CachedMoodDetail, Genre, GenreId, HomeSection, Mood, MoodId, PagedResponse, Playlist,
+    PlaylistDetail, PlaylistDetailProjection, PlaylistId, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDetail, SmartPlaylistId, SourceId, Store, StoreAccess, StoreResult, Track,
+    TrackId, TrackSort,
 };
 
 const SLOW_SMART_PLAYLIST_DETAIL_MS: u64 = 100;
@@ -522,6 +523,33 @@ impl ActiveLibraryQuery {
             .map_err(|error| error.to_string())
     }
 
+    pub fn album_detail_projection(
+        &self,
+        album_id: &AlbumId,
+    ) -> Result<Option<AlbumDetailProjection>, String> {
+        self.store
+            .with_fast_read(|store| store.load_album_detail_projection(&self.source_id, album_id))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn album_detail_projection_for_revision(
+        &self,
+        revision: i64,
+        album_id: &AlbumId,
+    ) -> Result<Option<AlbumDetailProjection>, String> {
+        if let Some(detail) = self.prepared_album_detail_if_cached(revision, album_id) {
+            return detail
+                .map(|(album, tracks)| {
+                    self.store.with_fast_read(|store| {
+                        store.album_detail_projection(&self.source_id, album, tracks)
+                    })
+                })
+                .transpose()
+                .map_err(|error| error.to_string());
+        }
+        self.album_detail_projection(album_id)
+    }
+
     pub fn album_detail_for_revision(
         &self,
         revision: i64,
@@ -589,6 +617,17 @@ impl ActiveLibraryQuery {
     ) -> Result<Option<PlaylistDetail>, String> {
         self.store
             .with_fast_read(|store| store.load_playlist_detail(&self.source_id, playlist_id))
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn playlist_detail_projection(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> Result<Option<PlaylistDetailProjection>, String> {
+        self.store
+            .with_fast_read(|store| {
+                store.load_playlist_detail_projection(&self.source_id, playlist_id)
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -702,12 +741,6 @@ impl ActiveLibraryQuery {
             .with_fast_read(|store| {
                 store.load_genres_matching(&self.source_id, query, offset, limit)
             })
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn genre_ids_by_name(&self, names: &[String]) -> Result<HashMap<String, GenreId>, String> {
-        self.store
-            .with_fast_read(|store| store.load_genre_ids_by_name(&self.source_id, names))
             .map_err(|error| error.to_string())
     }
 

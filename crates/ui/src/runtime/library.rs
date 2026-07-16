@@ -3,7 +3,7 @@ use std::sync::Arc;
 use library::{
     ActiveLibraryQuery, AlbumId, ArtistId, FolderDetail, FolderId, HomeSection, HomeSectionKind,
     PlaylistId, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceFeatureOwner,
-    SourceId, Track, TrackId,
+    SourceId, Track, TrackId, play_context::PlayContextDescriptor,
 };
 use sources::SourcePlaylistOperation;
 
@@ -22,9 +22,16 @@ pub trait LibraryPort: Send + Sync {
         operation: SourcePlaylistOperation,
     ) -> bool;
     fn create_playlist(&self, name: String, tracks: Vec<Track>);
+    fn create_playlist_from_context(&self, name: String, context: PlayContextDescriptor);
     fn rename_playlist(&self, playlist_id: PlaylistId, name: String);
     fn delete_playlist(&self, playlist_id: PlaylistId);
     fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>);
+    fn add_context_to_playlist(
+        &self,
+        playlist_id: PlaylistId,
+        context: PlayContextDescriptor,
+        skip_duplicates: bool,
+    );
     fn remove_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String);
     fn move_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String, new_index: usize);
 

@@ -57,12 +57,30 @@ pub struct AlbumDetail {
     pub tracks: Vec<Track>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenreLink {
+    pub name: String,
+    pub id: Option<GenreId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlbumDetailProjection {
+    pub detail: AlbumDetail,
+    pub genre_links: Vec<GenreLink>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<PlaylistEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaylistDetailProjection {
+    pub detail: PlaylistDetail,
+    pub genre_links: Vec<GenreLink>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

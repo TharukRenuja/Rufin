@@ -1,4 +1,8 @@
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 use ::library::{ActiveLibraryQuery, play_context::PlayContextDescriptor};
 use adw::prelude::*;
@@ -12,11 +16,11 @@ use crate::shell::actions::PLAY_ICON;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::route::MountedRoute;
 use localization::track_count_text;
-use playback::{GenreWindowPlayRequest, RadioPlayRequest, RadioSeed};
+use playback::{ContextPlayRequest, QueuePlacement, RadioPlayRequest, RadioSeed};
 
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
 use super::detail_showcase::{
-    append_track_query_batch_queue_actions, detail_action_row, detail_primary_action_button,
+    append_loaded_context_batch_queue_actions, detail_action_row, detail_primary_action_button,
     detail_radio_button,
 };
 use super::grouped_detail::GroupedDetailData;
@@ -46,9 +50,15 @@ impl Shell {
             ));
         }
         let genre = detail.genre;
+        let current_genre = Rc::new(RefCell::new(genre.clone()));
         let artwork = ArtworkBinding::genre_slots(&genre);
-        let kind_row = self.genre_detail_kind_row(&library_query, &genre_id);
-        let actions = self.genre_detail_actions(&library_query, genre_id.clone());
+        let kind_row = self.genre_detail_kind_row(Rc::clone(&current_genre));
+        let actions = detail_action_row();
+        actions.set_halign(gtk::Align::Start);
+        let source_descriptor = PlayContextDescriptor::Genre {
+            genre_id: genre_id.clone(),
+            music_folder_id: selected_music_folder_id(self),
+        };
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::GenreTracks,
             kind_row: Some(kind_row.upcast()),
@@ -56,14 +66,12 @@ impl Shell {
             artwork,
             seed,
             summary_items,
-            actions: Some(actions.upcast()),
+            actions: Some(actions.clone().upcast()),
             tracks: detail.tracks,
             table_context: "genre-detail",
-            source_descriptor: Some(PlayContextDescriptor::Genre {
-                genre_id: genre_id.clone(),
-                music_folder_id: selected_music_folder_id(self),
-            }),
+            source_descriptor: Some(source_descriptor.clone()),
         });
+        self.install_genre_detail_actions(&actions, &grouped, source_descriptor);
         let mounted_track_count = Rc::new(Cell::new(u64::from(genre.track_count)));
         let track_count_for_locale = Rc::clone(&mounted_track_count);
         grouped.bind_summary_text_with(0, move || track_count_text(track_count_for_locale.get()));
@@ -81,6 +89,7 @@ impl Shell {
         let apply_stack = route_stack.clone();
         let delta_grouped = grouped.clone();
         let delta_track_count = Rc::clone(&mounted_track_count);
+        let apply_current_genre = Rc::clone(&current_genre);
         let apply_loaded: Rc<dyn Fn(Result<Option<::library::CachedGenreDetail>, String>)> =
             Rc::new(move |result| {
                 let detail = match result {
@@ -115,6 +124,7 @@ impl Shell {
                     seed,
                     detail.tracks,
                 );
+                apply_current_genre.replace(detail.genre);
                 apply_stack.set_visible_child_name("detail");
             });
         let load_query = library_query.clone();
@@ -153,8 +163,7 @@ impl Shell {
 
     fn genre_detail_kind_row(
         self: &Rc<Self>,
-        library_query: &ActiveLibraryQuery,
-        genre_id: &::library::GenreId,
+        current_genre: Rc<RefCell<::library::Genre>>,
     ) -> gtk::Box {
         let kind = localized_label("Genre");
         kind.add_css_class("eyebrow");
@@ -172,61 +181,40 @@ impl Shell {
 
         let radio = detail_radio_button();
         let controller = self.products.playback.radio.clone();
-        let library_query = library_query.clone();
-        let genre_id = genre_id.clone();
         radio.connect_clicked(move |_| {
-            if let Ok(Some(detail)) = library_query.genre_detail(&genre_id) {
-                controller.play_radio(RadioPlayRequest::now(RadioSeed::Genre(detail.genre)));
-            }
+            controller.play_radio(RadioPlayRequest::now(RadioSeed::Genre(
+                current_genre.borrow().clone(),
+            )));
         });
         row.append(&radio);
         row
     }
 
-    fn genre_detail_actions(
+    fn install_genre_detail_actions(
         self: &Rc<Self>,
-        library_query: &ActiveLibraryQuery,
-        genre_id: ::library::GenreId,
-    ) -> gtk::Box {
-        let actions = detail_action_row();
-        actions.set_halign(gtk::Align::Start);
-
+        actions: &gtk::Box,
+        grouped: &super::grouped_detail::GroupedDetailView,
+        descriptor: PlayContextDescriptor,
+    ) {
         let play = detail_primary_action_button(PLAY_ICON, "Play");
         let controller = self.products.playback.queue.clone();
-        let play_query = library_query.clone();
-        let play_genre_id = genre_id.clone();
+        let play_grouped = grouped.clone();
+        let play_descriptor = descriptor.clone();
         play.connect_clicked(move |_| {
-            let tracks = play_query
-                .genre_detail(&play_genre_id)
-                .ok()
-                .flatten()
-                .map(|detail| detail.tracks)
-                .unwrap_or_default();
-            let total_items = tracks.len();
-            controller.play_genre_window(GenreWindowPlayRequest {
-                genre_id: play_genre_id.clone(),
-                total_items,
-                anchor_index: 0,
-                track_at: Box::new(move |index| tracks.get(index).cloned()),
-            });
+            controller.play_context(ContextPlayRequest::loaded(
+                play_descriptor.clone(),
+                QueuePlacement::Now,
+                play_grouped.source_tracks(),
+            ));
         });
         actions.append(&play);
 
-        let batch_query = library_query.clone();
-        let batch_genre_id = genre_id;
-        append_track_query_batch_queue_actions(
-            &actions,
+        let batch_grouped = grouped.clone();
+        append_loaded_context_batch_queue_actions(
+            actions,
             &self.products.playback.queue,
-            Rc::new(move || {
-                batch_query
-                    .genre_detail(&batch_genre_id)
-                    .ok()
-                    .flatten()
-                    .map(|detail| detail.tracks)
-                    .unwrap_or_default()
-            }),
+            descriptor,
+            Rc::new(move || batch_grouped.source_tracks()),
         );
-
-        actions
     }
 }

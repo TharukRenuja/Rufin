@@ -230,6 +230,34 @@ impl Store {
     ) -> StoreResult<Option<(Album, Vec<Track>)>> {
         self.read_snapshot(|store| store.load_album_detail_inner(source_id, album_id))
     }
+
+    pub fn load_album_detail_projection(
+        &self,
+        source_id: &SourceId,
+        album_id: &AlbumId,
+    ) -> StoreResult<Option<AlbumDetailProjection>> {
+        self.read_snapshot(|store| {
+            let Some((album, tracks)) = store.load_album_detail_inner(source_id, album_id)? else {
+                return Ok(None);
+            };
+            store
+                .album_detail_projection(source_id, album, tracks)
+                .map(Some)
+        })
+    }
+
+    pub(crate) fn album_detail_projection(
+        &self,
+        source_id: &SourceId,
+        album: Album,
+        tracks: Vec<Track>,
+    ) -> StoreResult<AlbumDetailProjection> {
+        let genre_links = self.resolve_genre_links(source_id, &album.genres)?;
+        Ok(AlbumDetailProjection {
+            detail: AlbumDetail { album, tracks },
+            genre_links,
+        })
+    }
     fn load_album_detail_inner(
         &self,
         source_id: &SourceId,

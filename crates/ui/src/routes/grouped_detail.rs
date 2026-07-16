@@ -76,6 +76,10 @@ impl GroupedDetailView {
         self.summary.bind_text_with(index, text);
     }
 
+    pub(crate) fn source_tracks(&self) -> std::sync::Arc<Vec<Track>> {
+        self.tracks.source_tracks()
+    }
+
     pub(crate) fn apply_library_list_settings(
         &self,
         key: LibraryListKey,

@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     rc::Rc,
     sync::Arc,
 };
@@ -9,8 +8,8 @@ use ::library::play_context::{
     PlayContextDescriptor, PlaylistSort, smart_playlist_definition_fingerprint,
 };
 use ::library::{
-    ActiveLibraryQuery, LibraryDelta, Playlist, PlaylistDetail, PlaylistEntry, PlaylistId,
-    SmartPlaylistDetail, SmartPlaylistId,
+    ActiveLibraryQuery, GenreLink, LibraryDelta, Playlist, PlaylistDetailProjection, PlaylistEntry,
+    PlaylistId, SmartPlaylistDetail, SmartPlaylistId,
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -56,31 +55,11 @@ const PLAYLIST_DETAIL_TINY_COVER_SIZE: i32 = 150;
 const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
 const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
 
-pub(crate) struct PlaylistDetailRefresh {
-    detail: Option<PlaylistDetail>,
-    genre_ids: HashMap<String, ::library::GenreId>,
-}
-
 pub(crate) fn load_playlist_detail_refresh(
     query: &ActiveLibraryQuery,
     playlist_id: &PlaylistId,
-) -> Result<PlaylistDetailRefresh, String> {
-    let detail = query.playlist_detail(playlist_id)?;
-    let genre_ids = detail
-        .as_ref()
-        .map(|detail| playlist_genre_ids(query, &detail.playlist.top_genres))
-        .unwrap_or_default();
-    Ok(PlaylistDetailRefresh { detail, genre_ids })
-}
-
-fn playlist_genre_ids(
-    query: &ActiveLibraryQuery,
-    genres: &[String],
-) -> HashMap<String, ::library::GenreId> {
-    query.genre_ids_by_name(genres).unwrap_or_else(|error| {
-        tracing::warn!(%error, "failed to resolve Playlist genre links");
-        HashMap::new()
-    })
+) -> Result<Option<PlaylistDetailProjection>, String> {
+    query.playlist_detail_projection(playlist_id)
 }
 
 #[derive(Clone)]
@@ -156,19 +135,8 @@ pub(crate) fn playlist_cover_size(width: i32) -> i32 {
 impl Shell {
     fn playlist_detail_kind_row(
         self: &Rc<Self>,
-        library_query: &ActiveLibraryQuery,
-        genres: &[String],
+        genre_links: &[GenreLink],
         radio_playlist: Option<Playlist>,
-    ) -> gtk::Box {
-        let genre_ids = playlist_genre_ids(library_query, genres);
-        self.playlist_detail_kind_row_with_ids(genres, radio_playlist, &genre_ids)
-    }
-
-    fn playlist_detail_kind_row_with_ids(
-        self: &Rc<Self>,
-        genres: &[String],
-        radio_playlist: Option<Playlist>,
-        genre_ids: &HashMap<String, ::library::GenreId>,
     ) -> gtk::Box {
         let kind = localized_label("Playlist");
         kind.add_css_class("eyebrow");
@@ -197,9 +165,9 @@ impl Shell {
             row.append(&radio);
         }
 
-        for genre_name in genres {
-            let button = detail_genre_pill_button(genre_name);
-            if let Some(genre_id) = genre_ids.get(&genre_name.to_lowercase()).cloned() {
+        for link in genre_links {
+            let button = detail_genre_pill_button(&link.name);
+            if let Some(genre_id) = link.id.clone() {
                 let shell = Rc::clone(self);
                 button
                     .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
@@ -257,7 +225,7 @@ impl Shell {
         let title = detail_title_label(&smart_playlist_display_name(
             &current_smart_playlist.borrow(),
         ));
-        let kind_row = self.playlist_detail_kind_row(&library_query, &[], None);
+        let kind_row = self.playlist_detail_kind_row(&[], None);
         let summary = PlaylistDetailSummary::new(
             current_smart_playlist.borrow().track_count,
             current_smart_playlist.borrow().duration_seconds,
@@ -447,12 +415,12 @@ impl Shell {
         self: &Rc<Self>,
         library_query: ActiveLibraryQuery,
         playlist_id: PlaylistId,
-        loaded: Option<PlaylistDetailRefresh>,
+        loaded: Option<PlaylistDetailProjection>,
     ) -> MountedRoute {
         let settings = self.settings.current.borrow().clone();
-        let Some(PlaylistDetailRefresh {
-            detail: Some(detail),
-            genre_ids,
+        let Some(PlaylistDetailProjection {
+            detail,
+            genre_links,
         }) = loaded
         else {
             return MountedRoute::static_widget(
@@ -485,11 +453,7 @@ impl Shell {
         );
         cover.widget().add_css_class("playlist-detail-cover");
         let title = detail_title_label(&detail.playlist.name);
-        let kind_row = self.playlist_detail_kind_row_with_ids(
-            &detail.playlist.top_genres,
-            Some(detail.playlist.clone()),
-            &genre_ids,
-        );
+        let kind_row = self.playlist_detail_kind_row(&genre_links, Some(detail.playlist.clone()));
         let kind_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
         kind_slot.append(&kind_row);
         let summary = PlaylistDetailSummary::new(
@@ -651,7 +615,7 @@ impl Shell {
         );
         route_stack.set_visible_child_name("content");
 
-        let apply_loaded: Rc<dyn Fn(Result<PlaylistDetailRefresh, String>)> = {
+        let apply_loaded: Rc<dyn Fn(Result<Option<PlaylistDetailProjection>, String>)> = {
             let shell = Rc::clone(self);
             let route_stack = route_stack.clone();
             let entry_projection = entry_projection.clone();
@@ -663,16 +627,19 @@ impl Shell {
             let current_playlist = Rc::clone(&current_playlist);
             let applied_playlist_artwork = Rc::clone(&applied_playlist_artwork);
             Rc::new(move |result| {
-                let PlaylistDetailRefresh { detail, genre_ids } = match result {
-                    Ok(loaded) => loaded,
+                let PlaylistDetailProjection {
+                    detail,
+                    genre_links,
+                } = match result {
+                    Ok(Some(loaded)) => loaded,
+                    Ok(None) => {
+                        route_stack.set_visible_child_name("missing");
+                        return;
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "failed to refresh Playlist detail projection");
                         return;
                     }
-                };
-                let Some(detail) = detail else {
-                    route_stack.set_visible_child_name("missing");
-                    return;
                 };
                 title.set_text(&detail.playlist.name);
                 *current_name.borrow_mut() = detail.playlist.name.clone();
@@ -696,17 +663,15 @@ impl Shell {
                 while let Some(child) = kind_slot.first_child() {
                     kind_slot.remove(&child);
                 }
-                kind_slot.append(&shell.playlist_detail_kind_row_with_ids(
-                    &detail.playlist.top_genres,
-                    Some(detail.playlist.clone()),
-                    &genre_ids,
-                ));
+                kind_slot.append(
+                    &shell.playlist_detail_kind_row(&genre_links, Some(detail.playlist.clone())),
+                );
                 route_stack.set_visible_child_name("content");
             })
         };
         let load_query = library_query.clone();
         let load_playlist_id = playlist_id.clone();
-        let load: MountedRefreshLoader<Result<PlaylistDetailRefresh, String>> =
+        let load: MountedRefreshLoader<Result<Option<PlaylistDetailProjection>, String>> =
             Arc::new(move || load_playlist_detail_refresh(&load_query, &load_playlist_id));
         let refresh = MountedRouteRefresh::new(
             Rc::downgrade(&apply_loaded),
