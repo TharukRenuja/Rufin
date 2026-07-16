@@ -29,9 +29,7 @@ just container setup
 
 ## Project structure
 
-Rufin's crates follow a product ownership model. Each major part of the app
-lives in the crate that owns it, while `rufin` starts the app and connects the
-crates.
+Rufin's crates try to follow a product ownership model. The goal is to separate parts that can grow vertically (or parts we want to scale) and work on them independently, while only doing minimal or no work for their integration with other parts.
 
 | Crate | What it is for |
 | :--- | :--- |
