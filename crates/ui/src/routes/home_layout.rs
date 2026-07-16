@@ -26,10 +26,18 @@ pub(super) fn home_section_header(title: &str) -> HomeSectionHeader {
     let heading = localized_label(title);
     heading.add_css_class("section-heading");
     heading.set_xalign(0.0);
-    heading.set_hexpand(true);
+    heading.set_hexpand(false);
     heading.set_width_chars(1);
     heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
     header.append(&heading);
+
+    let refresh = icon_button("view-refresh-symbolic", "Refresh section");
+    refresh.add_css_class("home-section-control-button");
+    header.append(&refresh);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    header.append(&spacer);
 
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     controls.set_halign(gtk::Align::End);
@@ -37,12 +45,9 @@ pub(super) fn home_section_header(title: &str) -> HomeSectionHeader {
 
     let previous = icon_button("go-previous-symbolic", "Previous page");
     let next = icon_button("go-next-symbolic", "Next page");
-    let refresh = icon_button("view-refresh-symbolic", "Refresh section");
     next.add_css_class("home-section-control-button");
-    refresh.add_css_class("home-section-control-button");
     controls.append(&previous);
     controls.append(&next);
-    controls.append(&refresh);
     header.append(&controls);
 
     HomeSectionHeader {
