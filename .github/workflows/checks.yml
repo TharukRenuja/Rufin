@@ -77,7 +77,7 @@ jobs:
               .github/workflows/checks.yml|.github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
                 container_mode=full
                 ;;
-              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO)
+              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
                 if [[ "$container_mode" != "full" ]]; then
                   container_mode=aur
                 fi
@@ -91,7 +91,7 @@ jobs:
             esac
 
             case "$path" in
-              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO)
+              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -100,6 +100,45 @@ jobs:
                 ;;
             esac
           done
+
+          native_dependencies_at() {
+            {
+              git grep -h -E \
+                '^(adw|gdk-pixbuf|glib|gstreamer|gstreamer-audio|gtk)([.]workspace|[[:space:]]*=)' \
+                "$1" -- 'crates/*/Cargo.toml' 2>/dev/null || true
+            } |
+              sed -E 's/^([A-Za-z0-9_-]+).*/\1/' |
+              sort -u
+          }
+
+          before_native="$(native_dependencies_at "$base")"
+          after_native="$(native_dependencies_at "$HEAD_SHA")"
+          if [[ "$before_native" != "$after_native" ]]; then
+            required_native_metadata=(
+              flake.nix
+              packaging/aur/rufin/PKGBUILD
+              packaging/aur/rufin/.SRCINFO
+              packaging/aur/rufin-git/PKGBUILD
+              packaging/aur/rufin-git/.SRCINFO
+            )
+            for required_path in "${required_native_metadata[@]}"; do
+              metadata_changed=false
+              for changed_path in "${changed_paths[@]}"; do
+                if [[ "$changed_path" == "$required_path" ]]; then
+                  metadata_changed=true
+                  break
+                fi
+              done
+              if [[ "$metadata_changed" != "true" ]]; then
+                echo "Native Cargo dependencies changed without updating $required_path" >&2
+                exit 1
+              fi
+            done
+            current_nix_required=true
+            if [[ "$container_mode" != "full" ]]; then
+              container_mode=aur
+            fi
+          fi
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
@@ -134,8 +173,13 @@ jobs:
           RUFIN_CONTAINER_RUNTIME: docker
         run: |
           scripts/container setup
-          scripts/container run bash -lc \
-            'set -euo pipefail; cd packaging/aur/rufin; diff -u .SRCINFO <(makepkg --printsrcinfo)'
+          scripts/container run bash -lc '
+            set -euo pipefail
+            cd packaging/aur/rufin
+            diff -u .SRCINFO <(makepkg --printsrcinfo)
+            cd ../rufin-git
+            diff -u .SRCINFO <(makepkg --printsrcinfo)
+          '
 
       - name: Check Rufin through container
         if: needs.changes.outputs.container_mode == 'full'
@@ -180,9 +224,6 @@ jobs:
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
-      - name: Install GTK test display
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y dbus-x11 xvfb
-
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -210,7 +251,7 @@ jobs:
         run: |
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo run --locked -p xtask -- verify icons
-          xvfb-run -a dbus-run-session -- bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
   cargo-deny:

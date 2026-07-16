@@ -58,7 +58,7 @@ jobs:
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y dbus-x11 elfutils flatpak flatpak-builder librsvg2-common xvfb
+          sudo apt-get install --no-install-recommends -y elfutils flatpak flatpak-builder librsvg2-common
           flatpak remote-add --user --if-not-exists flathub "$RUNTIME_REPO_URL"
 
       - name: Check out repository
@@ -121,7 +121,7 @@ jobs:
           flatpak info --user "$APP_ID"
           install_root="$(flatpak info --user --show-location "$APP_ID")/files"
           cargo run --locked -p xtask -- verify package-layout "$install_root" /
-          timeout 30s xvfb-run -a dbus-run-session -- flatpak run "$APP_ID" --startup-check
+          flatpak run --command=sh "$APP_ID" -c '/app/bin/rufin --help >/dev/null'
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

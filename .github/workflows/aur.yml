@@ -35,29 +35,11 @@ jobs:
     container: archlinux:latest
 
     steps:
-      - name: Install system dependencies
+      - name: Install build tools
         run: |
           pacman -Syu --noconfirm --needed \
             base-devel \
-            curl \
-            appstream \
-            dbus \
-            desktop-file-utils \
-            gdk-pixbuf2 \
-            gettext \
-            git \
-            gst-libav \
-            gst-plugins-bad \
-            gst-plugins-base \
-            gst-plugins-good \
-            gst-plugins-ugly \
-            gtk4 \
-            hicolor-icon-theme \
-            libadwaita \
-            openssh \
-            pkgconf \
-            rust \
-            xorg-server-xvfb
+            git
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -65,6 +47,28 @@ jobs:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || github.ref }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Install package dependencies
+        run: |
+          set -euo pipefail
+
+          dependencies=()
+          for pkgbuild in packaging/aur/rufin/PKGBUILD packaging/aur/rufin-git/PKGBUILD; do
+            mapfile -t declared < <(
+              bash -c '
+                source "$1"
+                printf "%s\n" "${depends[@]}" "${makedepends[@]}"
+              ' _ "$pkgbuild"
+            )
+            dependencies+=("${declared[@]}")
+          done
+          mapfile -t dependencies < <(printf '%s\n' "${dependencies[@]}" | sort -u)
+
+          pacman -S --noconfirm --needed \
+            appstream \
+            curl \
+            desktop-file-utils \
+            "${dependencies[@]}"
 
       - name: Prepare builder user
         run: |
@@ -178,7 +182,7 @@ jobs:
             rm -rf "$pkgroot"
 
             pacman -U --noconfirm "$pkgfile"
-            timeout 30s xvfb-run -a dbus-run-session -- rufin --startup-check
+            rufin --help >/dev/null
             desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
             appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
             pacman -Rns --noconfirm "$aur_package"

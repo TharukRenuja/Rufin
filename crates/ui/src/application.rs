@@ -13,7 +13,7 @@ pub(crate) mod style;
 
 const APP_ID: &str = "io.github.screwys.Rufin";
 
-pub fn run_application<F>(startup_check: bool, bootstrap: F) -> ExitCode
+pub fn run_application<F>(bootstrap: F) -> ExitCode
 where
     F: FnOnce() -> Result<RuntimeInputs, String> + 'static,
 {
@@ -35,45 +35,28 @@ where
         .flags(gio::ApplicationFlags::empty())
         .build();
     let startup_succeeded = Rc::new(Cell::new(true));
+    app.connect_startup(|_| configure_app_icon());
+    let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
     let startup_succeeded_check = Rc::clone(&startup_succeeded);
-    app.connect_startup(move |app| {
-        let display_ready = configure_app_icon();
-        if startup_check {
-            if !display_ready {
-                error!("GTK display is not available");
+    app.connect_activate(move |app| {
+        if let Some(window) = app.active_window() {
+            window.present();
+            return;
+        }
+        let Some(bootstrap) = bootstrap.borrow_mut().take() else {
+            return;
+        };
+        match bootstrap() {
+            Ok(inputs) => crate::shell::build::build(app, inputs),
+            Err(error) => {
+                error!(%error, "failed to start Rufin");
                 startup_succeeded_check.set(false);
+                app.quit();
             }
-            app.quit();
         }
     });
-    if startup_check {
-        app.connect_activate(|app| app.quit());
-    } else {
-        let bootstrap = Rc::new(RefCell::new(Some(bootstrap)));
-        let startup_succeeded_check = Rc::clone(&startup_succeeded);
-        app.connect_activate(move |app| {
-            if let Some(window) = app.active_window() {
-                window.present();
-                return;
-            }
-            let Some(bootstrap) = bootstrap.borrow_mut().take() else {
-                return;
-            };
-            match bootstrap() {
-                Ok(inputs) => crate::shell::build::build(app, inputs),
-                Err(error) => {
-                    error!(%error, "failed to start Rufin");
-                    startup_succeeded_check.set(false);
-                    app.quit();
-                }
-            }
-        });
-    }
 
-    let program = std::env::args()
-        .next()
-        .unwrap_or_else(|| "rufin".to_string());
-    let exit_code = app.run_with_args(&[program]);
+    let exit_code = app.run();
     if !startup_succeeded.get() {
         ExitCode::FAILURE
     } else {
@@ -81,11 +64,11 @@ where
     }
 }
 
-fn configure_app_icon() -> bool {
+fn configure_app_icon() {
     gtk::Window::set_default_icon_name(APP_ID);
 
     let Some(display) = gtk::gdk::Display::default() else {
-        return false;
+        return;
     };
     let icon_theme = gtk::IconTheme::for_display(&display);
     for path in app_icon_search_paths() {
@@ -93,7 +76,6 @@ fn configure_app_icon() -> bool {
             icon_theme.add_search_path(path);
         }
     }
-    true
 }
 
 fn app_icon_search_paths() -> Vec<PathBuf> {

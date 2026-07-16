@@ -10,7 +10,7 @@ url='https://github.com/screwys/Rufin'
 license=('GPL-3.0-or-later')
 depends=(
   'gcc-libs'
-  'gdk-pixbuf2'
+  'glib2'
   'glibc'
   'gst-libav'
   'gst-plugins-bad'

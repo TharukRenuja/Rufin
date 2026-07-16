@@ -6,28 +6,15 @@ mod source_setup;
 
 pub(crate) use settings::StoredSettings;
 
-use clap::Parser;
 use std::process::ExitCode;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
-#[derive(Clone, Debug, Parser)]
-#[command(
-    name = "rufin",
-    about = "Native GTK4/libadwaita music client for Jellyfin, Navidrome, OpenSubsonic, and local libraries written in Rust"
-)]
-struct Cli {
-    #[arg(long, hide = true)]
-    startup_check: bool,
-}
-
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-
     init_tracing();
     info!("starting Rufin native shell");
 
-    ui::run_application(cli.startup_check, controller::runtime_inputs)
+    ui::run_application(controller::runtime_inputs)
 }
 
 fn init_tracing() {

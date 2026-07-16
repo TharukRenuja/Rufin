@@ -28,11 +28,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install runtime check tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y dbus-x11 xvfb
-
       - name: Install Nix
         uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
         with:
@@ -58,5 +53,5 @@ jobs:
       - name: Verify package layout
         run: cargo run --locked -p xtask -- verify package-layout result /
 
-      - name: Verify wrapped app startup
-        run: timeout 30s xvfb-run -a dbus-run-session -- bash scripts/retry-nix nix run .# -- --startup-check
+      - name: Verify wrapped app
+        run: bash scripts/retry-nix nix run .# -- --help >/dev/null

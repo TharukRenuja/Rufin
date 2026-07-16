@@ -21,7 +21,6 @@ path = "src/main.rs"
 async-channel.workspace = true
 async-trait.workspace = true
 artwork.workspace = true
-clap = { workspace = true, features = ["derive"] }
 directories.workspace = true
 getrandom.workspace = true
 glib.workspace = true
