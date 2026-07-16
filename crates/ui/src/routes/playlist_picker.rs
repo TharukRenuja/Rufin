@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use ::library::{ActiveLibraryQuery, Playlist, PlaylistId, Track};
+use ::library::{
+    ActiveLibraryQuery, Playlist, PlaylistId, Track, play_context::PlayContextDescriptor,
+};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use sources::SourcePlaylistOperation;
@@ -43,10 +45,14 @@ pub(crate) struct PlaylistPickerHandle {
 pub(crate) struct PlaylistPickerState {
     pub(crate) active: RefCell<Option<PlaylistPickerHandle>>,
 }
-fn present_context_playlist_picker_dialog(
-    shell: &Rc<Shell>,
-    track_source: Rc<dyn Fn() -> Vec<Track>>,
-) {
+
+#[derive(Clone)]
+enum PlaylistTrackSource {
+    Loaded(Rc<dyn Fn() -> Vec<Track>>),
+    Context(PlayContextDescriptor),
+}
+
+fn present_context_playlist_picker_dialog(shell: &Rc<Shell>, track_source: PlaylistTrackSource) {
     let content = context_playlist_picker(shell, track_source);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
@@ -66,10 +72,7 @@ fn present_context_playlist_picker_dialog(
     });
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
-fn context_playlist_picker(
-    shell: &Rc<Shell>,
-    track_source: Rc<dyn Fn() -> Vec<Track>>,
-) -> gtk::Box {
+fn context_playlist_picker(shell: &Rc<Shell>, track_source: PlaylistTrackSource) -> gtk::Box {
     let library_query = shell.library.query.borrow().clone();
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
     root.add_css_class("context-playlist-picker");
@@ -128,11 +131,16 @@ fn context_playlist_picker(
 
     let library = shell.products.library.clone();
     let library_query_for_add = library_query.clone();
-    let track_source_for_create = Rc::clone(&track_source);
+    let track_source_for_create = track_source.clone();
     create.connect_clicked(move |_| {
         let name = search.text().trim().to_string();
         if !name.is_empty() {
-            library.create_playlist(name, track_source_for_create());
+            match &track_source_for_create {
+                PlaylistTrackSource::Loaded(tracks) => library.create_playlist(name, tracks()),
+                PlaylistTrackSource::Context(descriptor) => {
+                    library.create_playlist_from_context(name, descriptor.clone())
+                }
+            }
             search.set_text("");
         }
     });
@@ -141,33 +149,52 @@ fn context_playlist_picker(
     let library = shell.products.library.clone();
     let toast_overlay = shell.chrome.quick_toast_overlay.clone();
     add_button.connect_clicked(move |button| {
-        let tracks = track_source();
-        if tracks.is_empty() {
-            close_context_surface(button);
-            return;
-        }
         let mut added_tracks = 0;
         let mut changed_playlists = 0;
-        for row in rows_for_add
-            .borrow()
-            .iter()
-            .filter(|row| row.check.is_active())
-        {
-            let tracks = playlist_tracks_to_add(
-                library_query_for_add.as_ref(),
-                &row.playlist.id,
-                &tracks,
-                skip.is_active(),
-            );
-            if !tracks.is_empty() {
-                added_tracks += tracks.len();
-                changed_playlists += 1;
-                library.add_tracks_to_playlist(row.playlist.id.clone(), tracks);
+        match &track_source {
+            PlaylistTrackSource::Loaded(track_source) => {
+                let tracks = track_source();
+                if tracks.is_empty() {
+                    close_context_surface(button);
+                    return;
+                }
+                for row in rows_for_add
+                    .borrow()
+                    .iter()
+                    .filter(|row| row.check.is_active())
+                {
+                    let tracks = playlist_tracks_to_add(
+                        library_query_for_add.as_ref(),
+                        &row.playlist.id,
+                        &tracks,
+                        skip.is_active(),
+                    );
+                    if !tracks.is_empty() {
+                        added_tracks += tracks.len();
+                        changed_playlists += 1;
+                        library.add_tracks_to_playlist(row.playlist.id.clone(), tracks);
+                    }
+                }
+            }
+            PlaylistTrackSource::Context(descriptor) => {
+                for row in rows_for_add
+                    .borrow()
+                    .iter()
+                    .filter(|row| row.check.is_active())
+                {
+                    library.add_context_to_playlist(
+                        row.playlist.id.clone(),
+                        descriptor.clone(),
+                        skip.is_active(),
+                    );
+                }
             }
         }
-        let toast = adw::Toast::new(&playlist_add_toast(added_tracks, changed_playlists));
-        toast.set_timeout(2);
-        toast_overlay.add_toast(toast);
+        if matches!(track_source, PlaylistTrackSource::Loaded(_)) {
+            let toast = adw::Toast::new(&playlist_add_toast(added_tracks, changed_playlists));
+            toast.set_timeout(2);
+            toast_overlay.add_toast(toast);
+        }
         close_context_surface(button);
     });
 
@@ -390,7 +417,28 @@ pub(crate) fn context_menu_picker_button(
     let shell = Rc::clone(shell);
     button.connect_clicked(move |button| {
         close_context_surface(button);
-        present_context_playlist_picker_dialog(&shell, Rc::clone(&track_source));
+        present_context_playlist_picker_dialog(
+            &shell,
+            PlaylistTrackSource::Loaded(Rc::clone(&track_source)),
+        );
+    });
+    button
+}
+
+pub(crate) fn context_menu_context_picker_button(
+    label: &str,
+    icon_name: &str,
+    shell: &Rc<Shell>,
+    descriptor: PlayContextDescriptor,
+) -> gtk::Button {
+    let button = context_menu_button(&tr(label), icon_name);
+    let shell = Rc::clone(shell);
+    button.connect_clicked(move |button| {
+        close_context_surface(button);
+        present_context_playlist_picker_dialog(
+            &shell,
+            PlaylistTrackSource::Context(descriptor.clone()),
+        );
     });
     button
 }

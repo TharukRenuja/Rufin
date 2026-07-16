@@ -1,5 +1,10 @@
 use super::*;
 
+enum PlaylistTrackMaterialization {
+    Loaded(Vec<Track>),
+    Context(library::play_context::PlayContextDescriptor),
+}
+
 impl LibraryCommands {
     pub fn playlist_creation_supported(&self) -> bool {
         current_active_source(&self.active_source).is_some()
@@ -15,15 +20,47 @@ impl LibraryCommands {
     }
 
     pub fn create_playlist(&self, name: String, tracks: Vec<Track>) {
+        self.create_playlist_with(name, PlaylistTrackMaterialization::Loaded(tracks));
+    }
+
+    pub fn create_playlist_from_context(
+        &self,
+        name: String,
+        descriptor: library::play_context::PlayContextDescriptor,
+    ) {
+        self.create_playlist_with(name, PlaylistTrackMaterialization::Context(descriptor));
+    }
+
+    fn create_playlist_with(&self, name: String, tracks: PlaylistTrackMaterialization) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
         let library_events = self.library_events.clone();
         thread::spawn(move || {
-            let Some(saved) = store
-                .with_store(|store| store.active_source())
-                .unwrap_or(None)
-            else {
+            let loaded = store.with_store(|store| {
+                let Some(saved) = store.active_source()? else {
+                    return Ok(None);
+                };
+                let tracks = match tracks {
+                    PlaylistTrackMaterialization::Loaded(tracks) => tracks,
+                    PlaylistTrackMaterialization::Context(descriptor) => store
+                        .materialize_play_context_items(
+                            &saved.source_id,
+                            &library::play_context::PlayContext {
+                                descriptor,
+                                order: library::play_context::PlayContextOrder::Canonical,
+                            },
+                        )?
+                        .into_iter()
+                        .map(|item| item.track)
+                        .collect(),
+                };
+                Ok(Some((saved, tracks)))
+            });
+            let Some((saved, tracks)) = loaded.unwrap_or_else(|error| {
+                warn!(%error, "failed to prepare playlist creation");
+                None
+            }) else {
                 warn!("cannot create a playlist without an active source");
                 return;
             };
@@ -294,12 +331,51 @@ impl LibraryCommands {
         self.mutate_playlist_entries(
             playlist_id,
             SourcePlaylistOperation::AddTracks,
-            move |mut detail| {
+            move |_, _, mut detail| {
                 let mut entries = detail.entries;
                 entries.extend(playlist_entries_for_tracks(&detail.playlist.id, &tracks));
                 detail.tracks.extend(tracks);
                 detail.entries = entries;
+                Ok(Some(detail))
+            },
+        );
+    }
+
+    pub fn add_context_to_playlist(
+        &self,
+        playlist_id: PlaylistId,
+        descriptor: library::play_context::PlayContextDescriptor,
+        skip_duplicates: bool,
+    ) {
+        self.mutate_playlist_entries(
+            playlist_id,
+            SourcePlaylistOperation::AddTracks,
+            move |store, saved, mut detail| {
+                let context = library::play_context::PlayContext {
+                    descriptor,
+                    order: library::play_context::PlayContextOrder::Canonical,
+                };
+                let mut tracks = store
+                    .materialize_play_context_items(&saved.source_id, &context)?
+                    .into_iter()
+                    .map(|item| item.track)
+                    .collect::<Vec<_>>();
+                if skip_duplicates {
+                    let existing = detail
+                        .entries
+                        .iter()
+                        .map(|entry| &entry.track.id)
+                        .collect::<HashSet<_>>();
+                    tracks.retain(|track| !existing.contains(&track.id));
+                }
+                if tracks.is_empty() {
+                    return Ok(None);
+                }
                 detail
+                    .entries
+                    .extend(playlist_entries_for_tracks(&detail.playlist.id, &tracks));
+                detail.tracks.extend(tracks);
+                Ok(Some(detail))
             },
         );
     }
@@ -307,14 +383,14 @@ impl LibraryCommands {
         self.mutate_playlist_entries(
             playlist_id,
             SourcePlaylistOperation::RemoveEntries,
-            move |mut detail| {
+            move |_, _, mut detail| {
                 detail.entries.retain(|entry| entry.entry_id != entry_id);
                 detail.tracks = detail
                     .entries
                     .iter()
                     .map(|entry| entry.track.clone())
                     .collect();
-                detail
+                Ok(Some(detail))
             },
         );
     }
@@ -322,7 +398,7 @@ impl LibraryCommands {
         self.mutate_playlist_entries(
             playlist_id,
             SourcePlaylistOperation::ReorderEntries,
-            move |mut detail| {
+            move |_, _, mut detail| {
                 if let Some(old_index) = detail
                     .entries
                     .iter()
@@ -338,7 +414,7 @@ impl LibraryCommands {
                         .map(|entry| entry.track.clone())
                         .collect();
                 }
-                detail
+                Ok(Some(detail))
             },
         );
     }
@@ -346,34 +422,41 @@ impl LibraryCommands {
         &self,
         playlist_id: PlaylistId,
         operation: SourcePlaylistOperation,
-        mutate: impl FnOnce(library::PlaylistDetail) -> library::PlaylistDetail + Send + 'static,
+        mutate: impl FnOnce(
+            &Store,
+            &StoredSource,
+            library::PlaylistDetail,
+        ) -> StoreResult<Option<library::PlaylistDetail>>
+        + Send
+        + 'static,
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let active_source = Arc::clone(&self.active_source);
         let library_events = self.library_events.clone();
         thread::spawn(move || {
-            let Some(saved) = store
-                .with_store(|store| store.active_source())
-                .unwrap_or(None)
-            else {
-                warn!(%playlist_id, "cannot mutate playlist entries without an active source");
+            let prepared = store.with_store(|store| {
+                let Some(saved) = store.active_source()? else {
+                    return Ok(None);
+                };
+                let Some(before) = store.load_playlist_detail(&saved.source_id, &playlist_id)?
+                else {
+                    return Ok(None);
+                };
+                let Some(after) = mutate(store, &saved, before.clone())? else {
+                    return Ok(None);
+                };
+                Ok(Some((saved, before, after)))
+            });
+            let Some((saved, before, mut after)) = (match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    warn!(%error, %playlist_id, "failed to prepare playlist mutation");
+                    return;
+                }
+            }) else {
                 return;
             };
-            let before = match store
-                .with_store(|store| store.load_playlist_detail(&saved.source_id, &playlist_id))
-            {
-                Ok(Some(detail)) => detail,
-                Ok(None) => {
-                    warn!(%playlist_id, "cannot mutate missing cached playlist");
-                    return;
-                }
-                Err(error) => {
-                    warn!(%error, %playlist_id, "failed to load playlist before mutation");
-                    return;
-                }
-            };
-            let mut after = mutate(before.clone());
             let Some(owner) = cached_playlist_owner(&store, &saved, &playlist_id) else {
                 return;
             };

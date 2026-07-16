@@ -216,9 +216,13 @@ pub(in crate::controller) fn store_playlist_commands_preserve_exact_order() {
         &[second.id.as_str(), first.id.as_str()],
     );
 
-    owners
-        .library
-        .add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
+    owners.library.add_context_to_playlist(
+        playlist.id.clone(),
+        library::play_context::PlayContextDescriptor::Global {
+            music_folder_id: None,
+        },
+        true,
+    );
     let changed_id = wait_for_playlist_changed(&events);
     assert_eq!(changed_id, playlist.id);
     assert_playlist_order(

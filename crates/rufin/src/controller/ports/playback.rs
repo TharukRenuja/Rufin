@@ -1,8 +1,8 @@
 use playback::{
-    AlbumPlayRequest, ArtistWindowPlayRequest, CachedPlaylistPlayRequest, FolderWindowPlayRequest,
-    GenreWindowPlayRequest, LibraryWindowPlayRequest, MoodWindowPlayRequest, PlaybackHandles,
-    PlaylistEntryPlayRequest, QueueCommandPort as QueuePort, QueueReorderRequest,
-    RadioCommandPort as RadioPort, RadioPlayRequest, RandomPlayRequest, SmartPlaylistPlayRequest,
+    AlbumPlayRequest, ArtistWindowPlayRequest, CachedPlaylistPlayRequest, ContextPlayRequest,
+    FolderWindowPlayRequest, LibraryWindowPlayRequest, PlaybackHandles, PlaylistEntryPlayRequest,
+    QueueCommandPort as QueuePort, QueueReorderRequest, RadioCommandPort as RadioPort,
+    RadioPlayRequest, RandomPlayRequest, SmartPlaylistPlayRequest,
     TransportCommandPort as TransportPort, WaveformCommandPort as WaveformPort,
 };
 use std::sync::Arc;
@@ -137,12 +137,8 @@ impl QueuePort for PlaybackCommands {
         PlaybackCommands::play_artist_window(self, request)
     }
 
-    fn play_genre_window(&self, request: GenreWindowPlayRequest) -> bool {
-        PlaybackCommands::play_genre_window(self, request)
-    }
-
-    fn play_mood_window(&self, request: MoodWindowPlayRequest) -> bool {
-        PlaybackCommands::play_mood_window(self, request)
+    fn play_context(&self, request: ContextPlayRequest) -> bool {
+        PlaybackCommands::play_context(self, request)
     }
 
     fn play_next(&self, track: library::Track) {

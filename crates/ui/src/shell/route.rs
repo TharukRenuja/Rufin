@@ -1015,7 +1015,6 @@ impl Shell {
                             revision,
                             &load_album_id,
                         )
-                        .map(Some)
                         .unwrap_or_else(|error| {
                             warn!(%error, "failed to prepare Album detail route");
                             None
@@ -1103,7 +1102,6 @@ impl Shell {
                     query,
                     move |query, _| {
                         crate::routes::load_playlist_detail_refresh(&query, &load_playlist_id)
-                            .map(Some)
                             .unwrap_or_else(|error| {
                                 warn!(%error, "failed to prepare Playlist detail route");
                                 None

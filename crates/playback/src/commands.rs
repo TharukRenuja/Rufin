@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use library::play_context::{ArtistTrackScope, PlayContextDescriptor, PlaylistSort};
 use library::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, MoodId, MusicFolderId, Playlist,
-    PlaylistEntry, PlaylistId, SmartPlaylist, Track, TrackId, TrackSort,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, MusicFolderId, Playlist, PlaylistEntry,
+    PlaylistId, SmartPlaylist, Track, TrackId, TrackSort,
 };
 use sources::{GeneratedTrackSeedKind, PlayedFilter, RandomTrackDomain};
 
@@ -94,18 +94,37 @@ pub struct ArtistWindowPlayRequest {
     pub track_at: TrackLookup,
 }
 
-pub struct GenreWindowPlayRequest {
-    pub genre_id: GenreId,
-    pub total_items: usize,
-    pub anchor_index: usize,
-    pub track_at: TrackLookup,
+pub enum ContextTrackSource {
+    Store,
+    Loaded(Arc<Vec<Track>>),
 }
 
-pub struct MoodWindowPlayRequest {
-    pub mood_id: MoodId,
-    pub total_items: usize,
-    pub anchor_index: usize,
-    pub track_at: TrackLookup,
+pub struct ContextPlayRequest {
+    pub descriptor: PlayContextDescriptor,
+    pub placement: QueuePlacement,
+    pub tracks: ContextTrackSource,
+}
+
+impl ContextPlayRequest {
+    pub fn store(descriptor: PlayContextDescriptor, placement: QueuePlacement) -> Self {
+        Self {
+            descriptor,
+            placement,
+            tracks: ContextTrackSource::Store,
+        }
+    }
+
+    pub fn loaded(
+        descriptor: PlayContextDescriptor,
+        placement: QueuePlacement,
+        tracks: Arc<Vec<Track>>,
+    ) -> Self {
+        Self {
+            descriptor,
+            placement,
+            tracks: ContextTrackSource::Loaded(tracks),
+        }
+    }
 }
 
 pub struct QueueReorderRequest {
@@ -174,8 +193,7 @@ pub trait QueueCommandPort: Send + Sync {
     fn play_library_window(&self, request: LibraryWindowPlayRequest) -> bool;
     fn play_folder_window(&self, request: FolderWindowPlayRequest) -> bool;
     fn play_artist_window(&self, request: ArtistWindowPlayRequest) -> bool;
-    fn play_genre_window(&self, request: GenreWindowPlayRequest) -> bool;
-    fn play_mood_window(&self, request: MoodWindowPlayRequest) -> bool;
+    fn play_context(&self, request: ContextPlayRequest) -> bool;
     fn play_next(&self, track: Track);
     fn play_last(&self, tracks: Vec<Track>);
     fn remove(&self, occurrence: OccurrenceId);

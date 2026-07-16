@@ -67,6 +67,7 @@ fn track_collection_model_is_complete_shared_and_lazy() {
 
     assert_eq!(model.n_items(), TRACK_COUNT as u32);
     assert!(model.source_is(&tracks));
+    assert!(Arc::ptr_eq(&model.source_tracks(), &tracks));
     assert!(
         model
             .with_track(0, |track| std::ptr::eq(track, &tracks[0]))

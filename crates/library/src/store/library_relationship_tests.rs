@@ -349,14 +349,20 @@ fn genre_detail_tracks() {
     store
         .upsert_genres(&saved.source_id, std::slice::from_ref(&genre), generation)
         .expect("upsert genre");
-    let detail = store
-        .load_genre_detail(&saved.source_id, &genre.id)
-        .expect("load genre detail")
-        .expect("genre detail");
+    let (detail, statements) = trace_read_statements(&store, || {
+        store
+            .load_genre_detail(&saved.source_id, &genre.id)
+            .expect("load genre detail")
+            .expect("genre detail")
+    });
+    assert!(
+        statements
+            .iter()
+            .all(|sql| !sql.contains("SELECT DISTINCT a.album_id"))
+    );
     assert_eq!(detail.genre.name, genre.name);
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
-    assert_eq!(detail.albums[0].id, album.id);
     assert_eq!(detail.tracks[0].id, track.id);
 }
 
@@ -596,6 +602,11 @@ fn mood_projection_uses_track_metadata() {
         .iter()
         .filter(|sql| sql.contains("FROM track_moods tm") && sql.contains("COUNT(*)"))
         .collect::<Vec<_>>();
+    assert!(
+        statements
+            .iter()
+            .all(|sql| !sql.contains("SELECT DISTINCT a.album_id"))
+    );
     assert_eq!(aggregate_queries.len(), 3);
     for sql in aggregate_queries {
         let plan = explain_query_plan(&store, sql);
@@ -640,7 +651,6 @@ fn mood_projection_uses_track_metadata() {
         detail.mood.duration_seconds,
         first.duration_seconds + second.duration_seconds
     );
-    assert_eq!(detail.albums, vec![album]);
     assert_eq!(
         detail
             .tracks
@@ -699,7 +709,6 @@ fn track_only_counts() {
     assert_eq!(genres.items[0].track_count, 1);
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
-    assert_eq!(detail.albums[0].id, album.id);
     assert_eq!(detail.tracks[0].id, track.id);
 }
 
@@ -744,7 +753,6 @@ fn missing_album_counts() {
     assert_eq!(genres.items[0].track_count, 1);
     assert_eq!(detail.genre.album_count, 0);
     assert_eq!(detail.genre.track_count, 1);
-    assert!(detail.albums.is_empty());
     assert_eq!(detail.tracks, vec![track]);
 }
 

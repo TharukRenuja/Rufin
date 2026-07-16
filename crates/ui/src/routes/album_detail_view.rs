@@ -1,12 +1,12 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     rc::Rc,
     sync::Arc,
 };
 
 use ::library::{
-    ActiveLibraryQuery, Album, AlbumId, FavoriteItemId, play_context::PlayContextDescriptor,
+    ActiveLibraryQuery, AlbumDetail, AlbumDetailProjection, AlbumId, FavoriteItemId, GenreLink,
+    play_context::PlayContextDescriptor,
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
@@ -49,46 +49,19 @@ use super::routes::SearchableTrackOptions;
 
 const ALBUM_DETAIL_ROUTE_INSET: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 
-pub(crate) struct AlbumDetailRefresh {
-    detail: Option<(Album, Vec<::library::Track>)>,
-    genre_ids: HashMap<String, ::library::GenreId>,
-}
-
 fn load_album_detail_refresh(
     query: &ActiveLibraryQuery,
     album_id: &AlbumId,
-) -> Result<AlbumDetailRefresh, String> {
-    let detail = query.album_detail(album_id)?;
-    let genre_ids = detail
-        .as_ref()
-        .map(|(album, _)| album_genre_ids(query, album))
-        .unwrap_or_default();
-    Ok(AlbumDetailRefresh { detail, genre_ids })
+) -> Result<Option<AlbumDetailProjection>, String> {
+    query.album_detail_projection(album_id)
 }
 
 pub(crate) fn load_album_detail_for_revision(
     query: &ActiveLibraryQuery,
     revision: i64,
     album_id: &AlbumId,
-) -> Result<AlbumDetailRefresh, String> {
-    let detail = query.album_detail_for_revision(revision, album_id)?;
-    let genre_ids = detail
-        .as_ref()
-        .map(|(album, _)| album_genre_ids(query, album))
-        .unwrap_or_default();
-    Ok(AlbumDetailRefresh { detail, genre_ids })
-}
-
-fn album_genre_ids(
-    query: &ActiveLibraryQuery,
-    album: &Album,
-) -> HashMap<String, ::library::GenreId> {
-    query
-        .genre_ids_by_name(&album.genres)
-        .unwrap_or_else(|error| {
-            warn!(%error, "failed to resolve Album genre links");
-            HashMap::new()
-        })
+) -> Result<Option<AlbumDetailProjection>, String> {
+    query.album_detail_projection_for_revision(revision, album_id)
 }
 
 impl Shell {
@@ -96,11 +69,11 @@ impl Shell {
         self: &Rc<Self>,
         library_query: ActiveLibraryQuery,
         album_id: AlbumId,
-        loaded: Option<AlbumDetailRefresh>,
+        loaded: Option<AlbumDetailProjection>,
     ) -> MountedRoute {
-        let Some(AlbumDetailRefresh {
-            detail: Some((album, tracks)),
-            genre_ids,
+        let Some(AlbumDetailProjection {
+            detail: AlbumDetail { album, tracks },
+            genre_links,
         }) = loaded
         else {
             let active_source_id = library_query.source_id().to_string();
@@ -193,7 +166,7 @@ impl Shell {
         kind_row.append(&radio);
         let genres = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         kind_row.append(&genres);
-        self.replace_album_genre_buttons(&genres, &album, &genre_ids);
+        self.replace_album_genre_buttons(&genres, &genre_links);
         let title = fitted_detail_title_label(&album.title);
         let artist = gtk::Label::new(Some(&album.artist));
         artist.add_css_class("detail-artist");
@@ -358,62 +331,66 @@ impl Shell {
         let apply_current_album = Rc::clone(&current_album);
         let apply_external_link_policy = Rc::clone(&applied_external_link_policy);
         let delta_track_projection = track_projection.clone();
-        let apply_loaded: Rc<dyn Fn(Result<AlbumDetailRefresh, String>)> = Rc::new(move |result| {
-            let AlbumDetailRefresh { detail, genre_ids } = match result {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    warn!(%error, "failed to refresh Album detail projection");
-                    return;
+        let apply_loaded: Rc<dyn Fn(Result<Option<AlbumDetailProjection>, String>)> =
+            Rc::new(move |result| {
+                let AlbumDetailProjection {
+                    detail: AlbumDetail { album, tracks },
+                    genre_links,
+                } = match result {
+                    Ok(Some(loaded)) => loaded,
+                    Ok(None) => {
+                        apply_stack.set_visible_child_name("missing");
+                        return;
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to refresh Album detail projection");
+                        return;
+                    }
+                };
+                let album_kind = album_release_kind_label(&album);
+                apply_kind_message.replace(album_kind.to_string());
+                kind.set_text(&tr(album_kind));
+                title.set_text(&album.title);
+                title.remove_css_class("detail-text-long");
+                title.remove_css_class("detail-text-very-long");
+                fit_detail_text(&title, &album.title);
+                artist.set_text(&album.artist);
+                artist.remove_css_class("detail-text-long");
+                artist.remove_css_class("detail-text-very-long");
+                fit_detail_text(&artist, &album.artist);
+                facts.replace(&[
+                    ("x-office-calendar-symbolic", album.year.to_string()),
+                    (
+                        "rufin-route-tracks-symbolic",
+                        track_count_text(album.track_count.into()),
+                    ),
+                    (
+                        "appointment-soon-symbolic",
+                        format_duration_units(album.duration_seconds),
+                    ),
+                ]);
+                apply_fact_track_count.set(u64::from(album.track_count));
+                shell.replace_album_genre_buttons(&genres, &genre_links);
+                while let Some(child) = apply_external_links.first_child() {
+                    apply_external_links.remove(&child);
                 }
-            };
-            let Some((album, tracks)) = detail else {
-                apply_stack.set_visible_child_name("missing");
-                return;
-            };
-            let album_kind = album_release_kind_label(&album);
-            apply_kind_message.replace(album_kind.to_string());
-            kind.set_text(&tr(album_kind));
-            title.set_text(&album.title);
-            title.remove_css_class("detail-text-long");
-            title.remove_css_class("detail-text-very-long");
-            fit_detail_text(&title, &album.title);
-            artist.set_text(&album.artist);
-            artist.remove_css_class("detail-text-long");
-            artist.remove_css_class("detail-text-very-long");
-            fit_detail_text(&artist, &album.artist);
-            facts.replace(&[
-                ("x-office-calendar-symbolic", album.year.to_string()),
-                (
-                    "rufin-route-tracks-symbolic",
-                    track_count_text(album.track_count.into()),
-                ),
-                (
-                    "appointment-soon-symbolic",
-                    format_duration_units(album.duration_seconds),
-                ),
-            ]);
-            apply_fact_track_count.set(u64::from(album.track_count));
-            shell.replace_album_genre_buttons(&genres, &album, &genre_ids);
-            while let Some(child) = apply_external_links.first_child() {
-                apply_external_links.remove(&child);
-            }
-            if let Some(links) = album_external_links(&shell, &album) {
-                apply_external_links.append(&links);
-            }
-            {
-                let settings = shell.settings.current.borrow();
-                apply_external_link_policy
-                    .replace((settings.private_mode, settings.external_site_links.clone()));
-            }
-            set_favorite_button_active(&favorite, album.favorite);
-            cover.replace(&shell, ArtworkBinding::album(&album), album.color_seed);
-            delta_track_projection.replace(tracks);
-            apply_current_album.replace(album);
-            apply_stack.set_visible_child_name("detail");
-        });
+                if let Some(links) = album_external_links(&shell, &album) {
+                    apply_external_links.append(&links);
+                }
+                {
+                    let settings = shell.settings.current.borrow();
+                    apply_external_link_policy
+                        .replace((settings.private_mode, settings.external_site_links.clone()));
+                }
+                set_favorite_button_active(&favorite, album.favorite);
+                cover.replace(&shell, ArtworkBinding::album(&album), album.color_seed);
+                delta_track_projection.replace(tracks);
+                apply_current_album.replace(album);
+                apply_stack.set_visible_child_name("detail");
+            });
         let load_query = library_query.clone();
         let load_album_id = album_id;
-        let load: MountedRefreshLoader<Result<AlbumDetailRefresh, String>> =
+        let load: MountedRefreshLoader<Result<Option<AlbumDetailProjection>, String>> =
             Arc::new(move || load_album_detail_refresh(&load_query, &load_album_id));
         let refresh =
             MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Album detail");
@@ -460,23 +437,17 @@ impl Shell {
         MountedRoute::new(route_stack.upcast(), affected_by, apply_delta, resume)
     }
 
-    fn replace_album_genre_buttons(
-        self: &Rc<Self>,
-        row: &gtk::Box,
-        album: &Album,
-        genre_ids: &HashMap<String, ::library::GenreId>,
-    ) {
+    fn replace_album_genre_buttons(self: &Rc<Self>, row: &gtk::Box, genre_links: &[GenreLink]) {
         while let Some(child) = row.first_child() {
             row.remove(&child);
         }
-        for genre_name in album
-            .genres
+        for link in genre_links
             .iter()
-            .map(|name| name.trim())
-            .filter(|name| !name.is_empty())
+            .filter(|link| !link.name.trim().is_empty())
         {
+            let genre_name = link.name.trim();
             let button = detail_genre_pill_button(genre_name);
-            if let Some(genre_id) = genre_ids.get(&genre_name.to_lowercase()).cloned() {
+            if let Some(genre_id) = link.id.clone() {
                 let shell = Rc::clone(self);
                 button
                     .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));

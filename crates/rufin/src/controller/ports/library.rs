@@ -1,7 +1,7 @@
 use library::{
     ActiveLibraryQuery, AlbumId, ArtistId, FolderDetail, FolderId, HomeSection, HomeSectionKind,
     PlaylistId, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceFeatureOwner,
-    SourceId, Track, TrackId,
+    SourceId, Track, TrackId, play_context::PlayContextDescriptor,
 };
 use sources::SourcePlaylistOperation;
 use ui::runtime::library::LibraryPort;
@@ -45,6 +45,10 @@ impl LibraryPort for LibraryCommands {
         LibraryCommands::create_playlist(self, name, tracks);
     }
 
+    fn create_playlist_from_context(&self, name: String, context: PlayContextDescriptor) {
+        LibraryCommands::create_playlist_from_context(self, name, context);
+    }
+
     fn rename_playlist(&self, playlist_id: PlaylistId, name: String) {
         LibraryCommands::rename_playlist(self, playlist_id, name);
     }
@@ -55,6 +59,15 @@ impl LibraryPort for LibraryCommands {
 
     fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>) {
         LibraryCommands::add_tracks_to_playlist(self, playlist_id, tracks);
+    }
+
+    fn add_context_to_playlist(
+        &self,
+        playlist_id: PlaylistId,
+        context: PlayContextDescriptor,
+        skip_duplicates: bool,
+    ) {
+        LibraryCommands::add_context_to_playlist(self, playlist_id, context, skip_duplicates);
     }
 
     fn remove_playlist_entry(&self, playlist_id: PlaylistId, entry_id: String) {

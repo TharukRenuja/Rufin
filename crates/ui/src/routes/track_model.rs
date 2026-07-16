@@ -252,6 +252,10 @@ impl TrackCollectionModel {
         self.with_state(|state| state.tracks.is_empty())
     }
 
+    pub(crate) fn source_tracks(&self) -> Arc<Vec<Track>> {
+        self.with_state(|state| Arc::clone(&state.tracks))
+    }
+
     pub(crate) fn visible_count(&self) -> usize {
         self.with_state(|state| state.order.len())
     }
