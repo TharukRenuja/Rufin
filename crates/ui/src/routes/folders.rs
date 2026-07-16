@@ -90,9 +90,11 @@ impl FolderRouteProjection {
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
 
-        wrapper.append(&library_route_inset(
-            folder_breadcrumbs(shell, &path).upcast(),
-        ));
+        if !path.is_empty() {
+            wrapper.append(&library_route_inset(
+                folder_breadcrumbs(shell, &path).upcast(),
+            ));
+        }
 
         let search = gtk::SearchEntry::new();
         search.add_css_class("folder-search");

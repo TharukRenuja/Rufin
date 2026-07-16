@@ -53,12 +53,13 @@
 
 # Screenshots
 
+![Tracks page](data/tracks_page.png)
 ![Album page](data/album_page.png)
 ![Artist page](data/artist_page.png)
 ![Fullscreen player](data/player_visualizer.png)
 ![Smart playlists](data/smart_playlists.png)
 ![Library settings](data/library_settings.png)
-![Scrobbling settings](data/scrobbling_settings.png)
+![Playback settings](data/playback_settings.png)
 ![Layout settings](data/layout_settings.png)
 ![Lyrics search](data/lyrics_search.png)
 
