@@ -1,8 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use ::library::{ActiveLibraryQuery, play_context::PlayContextDescriptor};
 use adw::prelude::*;
@@ -19,7 +15,6 @@ use localization::track_count_text;
 use playback::MoodWindowPlayRequest;
 
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
-use super::collections::TrackTableSelectionHandle;
 use super::detail_showcase::{
     append_track_query_batch_queue_actions, detail_action_row, detail_primary_action_button,
 };
@@ -53,7 +48,6 @@ impl Shell {
         let mood = detail.mood;
         let artwork = ArtworkBinding::mood_slots(&mood);
         let kind_row = self.mood_detail_kind_row();
-        let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
         let actions = self.mood_detail_actions(&library_query, mood_id.clone());
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::MoodTracks,
@@ -63,7 +57,6 @@ impl Shell {
             seed,
             summary_items,
             actions: Some(actions.upcast()),
-            selection_handle: Some(track_selection),
             tracks: detail.tracks,
             table_context: "mood-detail",
             source_descriptor: Some(PlayContextDescriptor::Mood {

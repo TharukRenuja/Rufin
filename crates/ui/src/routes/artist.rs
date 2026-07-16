@@ -30,8 +30,7 @@ use super::artist_releases::{
 };
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
 use super::collections::{
-    COMPACT_TRACK_TABLE_HEADER_HEIGHT, TrackTableSelectionHandle,
-    configure_compact_track_table_scroller, library_route_inset,
+    COMPACT_TRACK_TABLE_HEADER_HEIGHT, configure_compact_track_table_scroller, library_route_inset,
 };
 use super::detail_showcase::{
     DetailCoverProjection, MediaDetailShowcase, append_track_query_batch_queue_actions,
@@ -236,8 +235,6 @@ impl Shell {
             )))
         };
         let favorite_tracks = favorite_artist_tracks(&tracks);
-        let favorite_track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
-
         let wrapper = detail_route_wrapper(0);
         let header = self.artist_detail_header(artist, Arc::clone(&tracks), summary_facts);
         let favorite_section = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -259,7 +256,6 @@ impl Shell {
                 }),
                 favorites_only: true,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle: Some(Rc::clone(&favorite_track_selection)),
                 fixed_layout: Some(crate::LibraryLayout::Row),
             },
         );
@@ -564,7 +560,6 @@ impl Shell {
                 }),
                 favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle: None,
                 fixed_layout: None,
             },
         );

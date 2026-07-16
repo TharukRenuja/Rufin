@@ -22,7 +22,7 @@ use crate::routes::home::HOME_GENRE_LIMIT;
 use crate::routes::route::Route;
 use crate::routes::route_layout::{primary_route_scroll_adjustment, route_boundary};
 
-const SLOW_ROUTE_RENDER_MS: u64 = 100;
+const SLOW_ROUTE_RENDER_MS: u64 = 250;
 
 fn commit_refreshes_visible_route(route: &Route, manual: bool) -> bool {
     manual || !matches!(route, Route::Home)

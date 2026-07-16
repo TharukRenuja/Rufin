@@ -8,7 +8,7 @@ use crate::LibraryListKey;
 use crate::shell::Shell;
 use crate::shell::cover::{CoverGroupProjection, GRID_COVER_SIZE};
 
-use super::collections::{TrackTableSelectionHandle, library_route_inset};
+use super::collections::library_route_inset;
 use super::detail_showcase::{
     CollectionDetailShowcase, DetailSummaryProjection, collection_detail_showcase,
 };
@@ -30,7 +30,6 @@ pub(crate) struct GroupedDetailData {
     pub(super) seed: u32,
     pub(super) summary_items: Vec<(&'static str, String)>,
     pub(super) actions: Option<gtk::Widget>,
-    pub(super) selection_handle: Option<TrackTableSelectionHandle>,
     pub(super) tracks: Vec<Track>,
     pub(super) table_context: &'static str,
     pub(super) source_descriptor: Option<PlayContextDescriptor>,
@@ -100,7 +99,6 @@ impl Shell {
             seed,
             summary_items,
             actions,
-            selection_handle,
             tracks,
             table_context,
             source_descriptor,
@@ -157,7 +155,6 @@ impl Shell {
                 source_descriptor,
                 favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle,
                 fixed_layout: None,
             },
         );

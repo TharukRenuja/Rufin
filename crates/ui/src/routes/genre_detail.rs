@@ -1,8 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use ::library::{ActiveLibraryQuery, play_context::PlayContextDescriptor};
 use adw::prelude::*;
@@ -19,7 +15,6 @@ use localization::track_count_text;
 use playback::{GenreWindowPlayRequest, RadioPlayRequest, RadioSeed};
 
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
-use super::collections::TrackTableSelectionHandle;
 use super::detail_showcase::{
     append_track_query_batch_queue_actions, detail_action_row, detail_primary_action_button,
     detail_radio_button,
@@ -53,7 +48,6 @@ impl Shell {
         let genre = detail.genre;
         let artwork = ArtworkBinding::genre_slots(&genre);
         let kind_row = self.genre_detail_kind_row(&library_query, &genre_id);
-        let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
         let actions = self.genre_detail_actions(&library_query, genre_id.clone());
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::GenreTracks,
@@ -63,7 +57,6 @@ impl Shell {
             seed,
             summary_items,
             actions: Some(actions.upcast()),
-            selection_handle: Some(track_selection),
             tracks: detail.tracks,
             table_context: "genre-detail",
             source_descriptor: Some(PlayContextDescriptor::Genre {

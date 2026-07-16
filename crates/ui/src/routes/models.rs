@@ -8,7 +8,7 @@ use crate::LibraryListSettings;
 
 use super::library_fields::{
     album_field_missing, apply_desc, artist_field_missing, compare_album, compare_artist,
-    sort_playlists, sort_smart_playlists, sort_tracks,
+    sort_playlists, sort_smart_playlists,
 };
 
 pub(crate) fn populate_album_model(
@@ -53,22 +53,6 @@ pub(crate) fn populate_smart_playlist_model(
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
-}
-
-pub(crate) fn tracks_for_settings(
-    tracks: &[Track],
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-) -> Vec<Track> {
-    let query = query.trim().to_lowercase();
-    let mut values = tracks
-        .iter()
-        .filter(|track| query.is_empty() || track_matches_query(track, &query))
-        .cloned()
-        .collect::<Vec<_>>();
-    sort_tracks(&mut values, settings, favorite_first);
-    values
 }
 
 pub(crate) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {

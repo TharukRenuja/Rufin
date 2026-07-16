@@ -214,30 +214,14 @@ pub(crate) fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
 pub(crate) fn smart_playlist_matches_query(playlist: &SmartPlaylist, query: &str) -> bool {
     playlist.name.to_lowercase().contains(query)
 }
-#[derive(Clone)]
-struct Presented<T> {
-    item: T,
-    artwork: ArtworkPresentation,
-}
-
 fn boxed_item<T: Clone + 'static>(boxed: &glib::BoxedAnyObject) -> Option<T> {
-    if let Ok(item) = boxed.try_borrow::<T>() {
-        return Some(item.clone());
-    }
-    boxed
-        .try_borrow::<Presented<T>>()
-        .ok()
-        .map(|presented| presented.item.clone())
+    boxed.try_borrow::<T>().ok().map(|item| item.clone())
 }
 
-fn boxed_artwork<T: 'static>(boxed: &glib::BoxedAnyObject) -> Option<ArtworkBinding> {
-    boxed
-        .try_borrow::<Presented<T>>()
-        .ok()
-        .map(|presented| presented.artwork.primary().clone())
-}
-
-pub(crate) fn item_at<T: Clone + 'static>(model: &gio::ListStore, position: u32) -> Option<T> {
+pub(crate) fn item_at<T: Clone + 'static>(
+    model: &impl IsA<gio::ListModel>,
+    position: u32,
+) -> Option<T> {
     model
         .item(position)
         .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
@@ -248,77 +232,16 @@ pub(crate) fn item_at_from_item<T: Clone + 'static>(item: &gtk::ListItem) -> Opt
         .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
         .and_then(|boxed| boxed_item(&boxed))
 }
-pub(crate) fn track_artwork_at(model: &gio::ListStore, position: u32) -> Option<ArtworkBinding> {
-    let boxed = model
-        .item(position)
-        .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())?;
-    boxed_artwork::<Track>(&boxed).or_else(|| {
-        boxed_item::<Track>(&boxed)
-            .map(|track| ArtworkPresentation::track(&track).primary().clone())
-    })
-}
 pub(crate) fn track_artwork_at_from_item(item: &gtk::ListItem) -> Option<ArtworkBinding> {
     let boxed = item
         .item()
         .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())?;
-    boxed_artwork::<Track>(&boxed).or_else(|| {
-        boxed_item::<Track>(&boxed)
-            .map(|track| ArtworkPresentation::track(&track).primary().clone())
-    })
-}
-pub(crate) fn track_model_item(track: Track) -> glib::BoxedAnyObject {
-    let artwork = ArtworkPresentation::track(&track);
-    glib::BoxedAnyObject::new(Presented {
-        item: track,
-        artwork,
-    })
+    boxed_item::<Track>(&boxed).map(|track| ArtworkPresentation::track(&track).primary().clone())
 }
 pub(crate) fn clear_list_item_child(_: &gtk::SignalListItemFactory, item: &glib::Object) {
     if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
         item.set_child(None::<&gtk::Widget>);
     }
-}
-pub(crate) fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec<Track>) {
-    let existing_len = model.n_items() as usize;
-    let shared_len = existing_len.min(tracks.len());
-    let mut prefix = 0;
-    while prefix < shared_len
-        && model.item(prefix as u32).is_some_and(|item| {
-            item.downcast::<glib::BoxedAnyObject>()
-                .ok()
-                .and_then(|boxed| boxed_item::<Track>(&boxed))
-                .is_some_and(|track| track == tracks[prefix])
-        })
-    {
-        prefix += 1;
-    }
-
-    let mut suffix = 0;
-    while suffix < shared_len.saturating_sub(prefix)
-        && model
-            .item((existing_len - 1 - suffix) as u32)
-            .is_some_and(|item| {
-                item.downcast::<glib::BoxedAnyObject>()
-                    .ok()
-                    .and_then(|boxed| boxed_item::<Track>(&boxed))
-                    .is_some_and(|track| track == tracks[tracks.len() - 1 - suffix])
-            })
-    {
-        suffix += 1;
-    }
-
-    let changed_end = tracks.len().saturating_sub(suffix);
-    let additions = tracks
-        .into_iter()
-        .skip(prefix)
-        .take(changed_end.saturating_sub(prefix))
-        .map(track_model_item)
-        .collect::<Vec<_>>();
-    let removed = existing_len.saturating_sub(prefix + suffix);
-    if removed == 0 && additions.is_empty() {
-        return;
-    }
-    model.splice(prefix as u32, removed as u32, &additions);
 }
 pub(crate) fn replace_album_items(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
     let additions = rows

@@ -1,16 +1,16 @@
 use std::{cell::RefCell, rc::Rc};
 
-use ::library::{MusicFolderId, Track, play_context::PlayContextDescriptor};
+use ::library::{MusicFolderId, TrackId, play_context::PlayContextDescriptor};
 
 use crate::shell::Shell;
-use crate::{LibraryListKey, LibraryListSettings};
 use playback::{LibraryWindowPlayRequest, QueueHandle};
+
+use super::track_model::TrackCollectionModel;
 
 #[derive(Clone)]
 pub(crate) struct LoadedTrackPlayContext {
     descriptor: Rc<RefCell<PlayContextDescriptor>>,
-    settings: Rc<dyn Fn() -> LibraryListSettings>,
-    query: Rc<RefCell<String>>,
+    model: TrackCollectionModel,
     favorites_only: bool,
     favorite_first: bool,
 }
@@ -19,22 +19,34 @@ impl LoadedTrackPlayContext {
     pub(crate) fn play_window(
         &self,
         controller: &QueueHandle,
-        total_items: usize,
         anchor_index: usize,
-        track_at: impl FnMut(usize) -> Option<Track> + 'static,
+        anchor_track_id: TrackId,
     ) -> bool {
-        let settings = (self.settings)();
-        controller.play_library_window(LibraryWindowPlayRequest {
+        controller.play_library_window(self.request(anchor_index, anchor_track_id))
+    }
+
+    pub(crate) fn request(
+        &self,
+        anchor_index: usize,
+        anchor_track_id: TrackId,
+    ) -> LibraryWindowPlayRequest {
+        let settings = self.model.settings();
+        let total_items = self.model.visible_count();
+        let lookup = self.model.clone();
+        LibraryWindowPlayRequest {
             descriptor: self.descriptor.borrow().clone(),
             sort: settings.sort_key.track_sort(),
             descending: settings.descending,
-            query: self.query.borrow().to_string(),
+            query: self.model.query(),
             favorites_only: self.favorites_only,
             favorite_first: self.favorite_first,
             total_items,
             anchor_index,
-            track_at: Box::new(track_at),
-        })
+            track_at: Box::new(move |index| {
+                let candidate = lookup.track_at(index as u32)?;
+                (index != anchor_index || candidate.id == anchor_track_id).then_some(candidate)
+            }),
+        }
     }
 }
 
@@ -48,18 +60,14 @@ pub(crate) fn selected_music_folder_id(shell: &Shell) -> Option<MusicFolderId> {
 }
 
 pub(crate) fn track_collection_play_context(
-    shell: &Rc<Shell>,
     descriptor: Rc<RefCell<PlayContextDescriptor>>,
-    key: LibraryListKey,
-    query: Rc<RefCell<String>>,
+    model: TrackCollectionModel,
     favorites_only: bool,
     favorite_first: bool,
 ) -> LoadedTrackPlayContext {
-    let shell = Rc::clone(shell);
     LoadedTrackPlayContext {
         descriptor,
-        settings: Rc::new(move || shell.settings.current.borrow().library_list(key)),
-        query,
+        model,
         favorites_only,
         favorite_first,
     }

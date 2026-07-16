@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     rc::Rc,
 };
 
@@ -30,7 +29,7 @@ use super::grid_cells::{
 use super::library_fields::{
     ALBUM_COLLECTION_GRID_MIN_CARD_WIDTH, COLLECTION_GRID_CARD_GAP, COLLECTION_GRID_MIN_CARD_WIDTH,
     clear_list_item_child, column_width, compact_header_column_width, grid_label_with_label,
-    item_at, item_at_from_item, track_model_item,
+    item_at, item_at_from_item,
 };
 use super::play_context::LoadedTrackPlayContext;
 use super::route::Route;
@@ -39,6 +38,7 @@ use super::table_sizing::{
     ColumnViewWidthFit, column_view_initial_width, install_column_view_width_fit,
     route_column_view_initial_width,
 };
+use super::track_model::TrackCollectionModel;
 
 pub(super) const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
 pub(super) const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
@@ -53,29 +53,18 @@ const HOME_ALBUM_GRID_FIELDS: [LibraryField; HOME_GRID_FIELD_COUNT] =
 const HOME_TRACK_GRID_FIELDS: [LibraryField; HOME_GRID_FIELD_COUNT] =
     [LibraryField::Artist, LibraryField::Album];
 
-type TrackModelIndexListener = Rc<dyn Fn(&HashMap<TrackId, u32>) -> bool>;
-
-struct TrackModelIndexInner {
-    positions: RefCell<HashMap<TrackId, u32>>,
-    listeners: RefCell<Vec<TrackModelIndexListener>>,
-    patching: Cell<bool>,
-}
-
-#[derive(Clone)]
-pub(crate) struct TrackModelIndex {
-    model: glib::WeakRef<gio::ListStore>,
-    inner: Rc<TrackModelIndexInner>,
+struct TrackTableSelectionInner {
+    selection: glib::WeakRef<gtk::SingleSelection>,
+    model: glib::WeakRef<TrackCollectionModel>,
+    model_handler: RefCell<Option<glib::SignalHandlerId>>,
+    selected_track_id: RefCell<Option<TrackId>>,
+    selected_position: Cell<u32>,
 }
 
 #[derive(Clone)]
 pub(crate) struct TrackTableSelection {
-    selection: glib::WeakRef<gtk::SingleSelection>,
-    positions: TrackModelIndex,
-    selected_track_id: Rc<RefCell<Option<TrackId>>>,
-    selected_position: Rc<Cell<u32>>,
+    inner: Rc<TrackTableSelectionInner>,
 }
-
-pub(crate) type TrackTableSelectionHandle = Rc<RefCell<Option<TrackTableSelection>>>;
 
 #[derive(Clone)]
 pub(crate) struct CollectionTableProjection {
@@ -305,129 +294,49 @@ fn collection_presentation_needs_rebuild(
             && current.layout == LibraryLayout::Detail)
 }
 
-impl TrackModelIndex {
-    pub(crate) fn new(model: &gio::ListStore) -> Self {
-        let inner = Rc::new(TrackModelIndexInner {
-            positions: RefCell::new(track_position_index(model)),
-            listeners: RefCell::new(Vec::new()),
-            patching: Cell::new(false),
+impl TrackTableSelection {
+    pub(crate) fn new(selection: &gtk::SingleSelection, model: &TrackCollectionModel) -> Self {
+        selection.set_selected(gtk::INVALID_LIST_POSITION);
+        let inner = Rc::new(TrackTableSelectionInner {
+            selection: selection.downgrade(),
+            model: model.downgrade(),
+            model_handler: RefCell::new(None),
+            selected_track_id: RefCell::new(None),
+            selected_position: Cell::new(gtk::INVALID_LIST_POSITION),
         });
         let weak_inner = Rc::downgrade(&inner);
-        model.connect_items_changed(move |model, _, _, _| {
+        let handler = model.connect_items_changed(move |model, _, _, _| {
             let Some(inner) = weak_inner.upgrade() else {
                 return;
             };
-            if inner.patching.get() {
+            let Some(selection) = inner.selection.upgrade() else {
                 return;
+            };
+            let position = inner
+                .selected_track_id
+                .borrow()
+                .as_ref()
+                .and_then(|track_id| model.position(track_id))
+                .unwrap_or(gtk::INVALID_LIST_POSITION);
+            inner.selected_position.set(position);
+            if selection.selected() != position {
+                selection.set_selected(position);
             }
-            inner.positions.replace(track_position_index(model));
-            notify_track_index_listeners(&inner);
         });
-        Self {
-            model: model.downgrade(),
-            inner,
-        }
-    }
-
-    fn connect_changed(&self, listener: TrackModelIndexListener) {
-        self.inner.listeners.borrow_mut().push(listener);
-    }
-
-    pub(super) fn position(&self, track_id: &TrackId) -> Option<u32> {
-        self.inner.positions.borrow().get(track_id).copied()
-    }
-
-    pub(crate) fn replace_existing(&self, replacements: impl IntoIterator<Item = Track>) {
-        let Some(model) = self.model.upgrade() else {
-            return;
-        };
-        let positions = self.inner.positions.borrow();
-        let mut rows = replacements
-            .into_iter()
-            .filter_map(|track| {
-                positions
-                    .get(&track.id)
-                    .copied()
-                    .map(|position| (position, track))
-            })
-            .collect::<Vec<_>>();
-        drop(positions);
-        if rows.is_empty() {
-            return;
-        }
-        rows.sort_unstable_by_key(|(position, _)| *position);
-
-        self.inner.patching.set(true);
-        let mut start = 0;
-        while start < rows.len() {
-            let mut end = start + 1;
-            while end < rows.len() && rows[end].0 == rows[end - 1].0 + 1 {
-                end += 1;
-            }
-            let additions = rows[start..end]
-                .iter()
-                .map(|(_, track)| track_model_item(track.clone()))
-                .collect::<Vec<_>>();
-            model.splice(rows[start].0, additions.len() as u32, &additions);
-            start = end;
-        }
-        self.inner.patching.set(false);
-        notify_track_index_listeners(&self.inner);
-    }
-
-    fn is_bound(&self) -> bool {
-        self.model.upgrade().is_some()
-    }
-}
-
-fn notify_track_index_listeners(inner: &TrackModelIndexInner) {
-    let positions = inner.positions.borrow();
-    inner
-        .listeners
-        .borrow_mut()
-        .retain(|listener| listener(&positions));
-}
-
-impl TrackTableSelection {
-    pub(crate) fn new(selection: &gtk::SingleSelection, positions: TrackModelIndex) -> Self {
-        selection.set_selected(gtk::INVALID_LIST_POSITION);
-        let selected_track_id = Rc::new(RefCell::new(None::<TrackId>));
-        let selected_position = Rc::new(Cell::new(gtk::INVALID_LIST_POSITION));
-        {
-            let selected_track_id = Rc::clone(&selected_track_id);
-            let selected_position = Rc::clone(&selected_position);
-            let selection = selection.downgrade();
-            positions.connect_changed(Rc::new(move |positions| {
-                let Some(selection) = selection.upgrade() else {
-                    return false;
-                };
-                let position = selected_track_id
-                    .borrow()
-                    .as_ref()
-                    .and_then(|track_id| positions.get(track_id).copied())
-                    .unwrap_or(gtk::INVALID_LIST_POSITION);
-                selected_position.set(position);
-                if selection.selected() != position {
-                    selection.set_selected(position);
-                }
-                true
-            }));
-        }
-        Self {
-            selection: selection.downgrade(),
-            positions,
-            selected_track_id,
-            selected_position,
-        }
+        inner.model_handler.replace(Some(handler));
+        Self { inner }
     }
 
     pub(crate) fn install_guard(&self) {
-        let Some(selection) = self.selection.upgrade() else {
+        let Some(selection) = self.inner.selection.upgrade() else {
             return;
         };
-        let selected_position = Rc::clone(&self.selected_position);
+        let weak_inner = Rc::downgrade(&self.inner);
         selection.connect_selection_changed(move |selection, _, _| {
-            let selected = selected_position.get();
+            let Some(inner) = weak_inner.upgrade() else {
+                return;
+            };
+            let selected = inner.selected_position.get();
             if selection.selected() != selected {
                 selection.set_selected(selected);
             }
@@ -435,22 +344,24 @@ impl TrackTableSelection {
     }
 
     pub(crate) fn select(&self, position: u32) {
-        self.selected_position.set(position);
-        if let Some(selection) = self.selection.upgrade() {
+        self.inner.selected_position.set(position);
+        if let Some(selection) = self.inner.selection.upgrade() {
             selection.set_selected(position);
         }
     }
 
     fn clear_now_playing(&self) {
-        self.selected_track_id.borrow_mut().take();
+        self.inner.selected_track_id.borrow_mut().take();
         self.select(gtk::INVALID_LIST_POSITION);
     }
 
     fn select_track_id(&self, track_id: &TrackId) {
-        *self.selected_track_id.borrow_mut() = Some(track_id.clone());
+        *self.inner.selected_track_id.borrow_mut() = Some(track_id.clone());
         let position = self
-            .positions
-            .position(track_id)
+            .inner
+            .model
+            .upgrade()
+            .and_then(|model| model.position(track_id))
             .unwrap_or(gtk::INVALID_LIST_POSITION);
         self.select(position);
     }
@@ -464,19 +375,19 @@ impl TrackTableSelection {
     }
 
     pub(crate) fn is_bound(&self) -> bool {
-        self.positions.is_bound() && self.selection.upgrade().is_some()
+        self.inner.model.upgrade().is_some() && self.inner.selection.upgrade().is_some()
     }
 }
 
-fn track_position_index(model: &gio::ListStore) -> HashMap<TrackId, u32> {
-    let mut positions = HashMap::with_capacity(model.n_items() as usize);
-    for position in 0..model.n_items() {
-        let Some(track) = item_at::<Track>(model, position) else {
-            continue;
+impl Drop for TrackTableSelectionInner {
+    fn drop(&mut self) {
+        let Some(model) = self.model.upgrade() else {
+            return;
         };
-        positions.entry(track.id.clone()).or_insert(position);
+        if let Some(handler) = self.model_handler.take() {
+            model.disconnect(handler);
+        }
     }
-    positions
 }
 
 pub(crate) fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
@@ -586,13 +497,11 @@ pub(crate) fn smart_playlist_collection_projection(
 }
 pub(crate) fn track_collection_projection(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
+    model: TrackCollectionModel,
     key: LibraryListKey,
     settings: crate::LibraryListSettings,
     play_context: Option<LoadedTrackPlayContext>,
     content_inset: i32,
-    selection_handle: Option<TrackTableSelectionHandle>,
-    positions: TrackModelIndex,
 ) -> LibraryCollectionProjection {
     let shell = Rc::clone(shell);
     LibraryCollectionProjection::new(
@@ -613,8 +522,6 @@ pub(crate) fn track_collection_projection(
                         detail: false,
                         play_context: play_context.clone(),
                         content_inset,
-                        selection_handle: selection_handle.clone(),
-                        positions: positions.clone(),
                     },
                 ))
             }
@@ -626,33 +533,22 @@ pub(crate) struct TrackTableOptions {
     pub(crate) detail: bool,
     pub(crate) play_context: Option<LoadedTrackPlayContext>,
     pub(crate) content_inset: i32,
-    pub(crate) selection_handle: Option<TrackTableSelectionHandle>,
-    pub(crate) positions: TrackModelIndex,
 }
 
 pub(super) fn track_model_play_action(
     shell: &Rc<Shell>,
-    model: &gio::ListStore,
     play_context: LoadedTrackPlayContext,
     position: u32,
     track: Track,
 ) -> Rc<dyn Fn()> {
     let controller = shell.products.playback.queue.clone();
-    let model = model.clone();
     Rc::new(move || {
-        play_track_from_model(
-            &controller,
-            &model,
-            Some(&play_context),
-            position,
-            track.clone(),
-        );
+        play_track_from_model(&controller, Some(&play_context), position, track.clone());
     })
 }
 
 fn play_track_from_model(
     controller: &playback::QueueHandle,
-    model: &gio::ListStore,
     play_context: Option<&LoadedTrackPlayContext>,
     position: u32,
     track: Track,
@@ -661,18 +557,7 @@ fn play_track_from_model(
         controller.play_now(track);
         return;
     };
-    let anchor_index = position as usize;
-    let track_id = track.id;
-    let lookup_model = model.clone();
-    play_context.play_window(
-        controller,
-        model.n_items() as usize,
-        anchor_index,
-        move |index| {
-            let candidate = item_at::<Track>(&lookup_model, index as u32)?;
-            (index != anchor_index || candidate.id == track_id).then_some(candidate)
-        },
-    );
+    play_context.play_window(controller, position as usize, track.id);
 }
 
 pub(crate) fn album_grid(
@@ -760,7 +645,7 @@ pub(crate) fn smart_playlist_grid(
 }
 pub(crate) fn track_grid(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
+    model: TrackCollectionModel,
     key: LibraryListKey,
     play_context: Option<LoadedTrackPlayContext>,
 ) -> CollectionGridProjection {
@@ -771,29 +656,14 @@ pub(crate) fn track_grid(
         .library_list(key)
         .grid_fields;
     let cell_shell = Rc::clone(shell);
-    let cell_model = model.clone();
     let cell_play_context = play_context.clone();
     let controller = shell.products.playback.queue.clone();
-    let activate_model = model.clone();
     collection_grid(
         model,
         &fields,
-        move |fields| {
-            TrackGridCell::new(
-                Rc::clone(&cell_shell),
-                fields,
-                cell_model.clone(),
-                cell_play_context.clone(),
-            )
-        },
+        move |fields| TrackGridCell::new(Rc::clone(&cell_shell), fields, cell_play_context.clone()),
         move |position, track: Track| {
-            play_track_from_model(
-                &controller,
-                &activate_model,
-                play_context.as_ref(),
-                position,
-                track,
-            );
+            play_track_from_model(&controller, play_context.as_ref(), position, track);
         },
     )
 }
@@ -819,13 +689,12 @@ pub(crate) fn home_track_row(
     columns: usize,
 ) -> FixedPageCollectionRow {
     let cell_shell = Rc::clone(shell);
-    let cell_model = model.clone();
     let controller = shell.products.playback.queue.clone();
     fixed_page_collection_row(
         model,
         columns,
         &HOME_TRACK_GRID_FIELDS,
-        move |fields| TrackGridCell::new(Rc::clone(&cell_shell), fields, cell_model.clone(), None),
+        move |fields| TrackGridCell::new(Rc::clone(&cell_shell), fields, None),
         move |_, track: Track| {
             controller.play_now(track);
         },
@@ -947,8 +816,8 @@ pub(super) fn collection_column_width(field: LibraryField) -> i32 {
     }
 }
 
-pub(super) fn dynamic_collection_table<T>(
-    model: gio::ListStore,
+pub(super) fn dynamic_collection_table<T, M>(
+    model: M,
     fields: &[LibraryField],
     fixed_columns: Vec<(gtk::ColumnViewColumn, i32)>,
     column_for_field: impl Fn(LibraryField) -> gtk::ColumnViewColumn + 'static,
@@ -960,6 +829,7 @@ pub(super) fn dynamic_collection_table<T>(
 ) -> CollectionTableProjection
 where
     T: Clone + 'static,
+    M: IsA<gio::ListModel> + Clone + 'static,
 {
     let column_for_field = Rc::new(move |field| {
         let column = column_for_field(field);
@@ -985,8 +855,8 @@ where
     }
 }
 
-fn collection_table_with_width<T>(
-    model: gio::ListStore,
+fn collection_table_with_width<T, M>(
+    model: M,
     columns: Vec<(gtk::ColumnViewColumn, i32)>,
     initial_width: i32,
     single_click_activate: bool,
@@ -995,6 +865,7 @@ fn collection_table_with_width<T>(
 ) -> (gtk::ColumnView, ColumnViewWidthFit)
 where
     T: Clone + 'static,
+    M: IsA<gio::ListModel> + Clone + 'static,
 {
     let selection =
         selection.unwrap_or_else(|| gtk::NoSelection::new(Some(model.clone())).upcast());
@@ -1041,17 +912,14 @@ pub(crate) fn smart_playlist_reorder_column(shell: &Rc<Shell>) -> gtk::ColumnVie
 }
 pub(crate) fn track_table(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
+    model: TrackCollectionModel,
     key: LibraryListKey,
     options: TrackTableOptions,
 ) -> CollectionTableProjection {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
-    let track_selection = TrackTableSelection::new(&selection, options.positions);
-    if let Some(selection_handle) = options.selection_handle.as_ref() {
-        *selection_handle.borrow_mut() = Some(track_selection.clone());
-    }
+    let track_selection = TrackTableSelection::new(&selection, &model);
     let source_id = shell
         .library
         .query
@@ -1080,16 +948,9 @@ pub(crate) fn track_table(
         shell.settings.current.borrow().library_list(key).row_fields
     };
     let controller = shell.products.playback.queue.clone();
-    let activate_model = model.clone();
     let play_context = options.play_context.clone();
     let activate = Box::new(move |position, track: Track| {
-        play_track_from_model(
-            &controller,
-            &activate_model,
-            play_context.as_ref(),
-            position,
-            track,
-        );
+        play_track_from_model(&controller, play_context.as_ref(), position, track);
     });
     let column_shell = Rc::clone(shell);
     let table = dynamic_collection_table(
