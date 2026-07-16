@@ -12,7 +12,7 @@ use crate::{
     TrackId, TrackSort,
 };
 
-const SLOW_SMART_PLAYLIST_DETAIL_MS: u64 = 100;
+const SLOW_SMART_PLAYLIST_DETAIL_MS: u64 = 250;
 const PREPARED_ALBUM_LIMIT: usize = 500;
 const PREPARED_TRACK_LIMIT: usize = 40_000;
 

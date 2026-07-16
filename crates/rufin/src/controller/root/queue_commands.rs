@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use library::play_context::{
     PlayContext, PlayContextAnchor, PlayContextDescriptor, PlayContextItem, PlayContextOrder,
-    PlaylistSort, TrackFilter, context_id, smart_playlist_definition_fingerprint,
+    PlaylistSort, TrackFilter, context_id,
 };
-use library::{MusicFolderId, PlaylistId, SourceId, Track, TrackId};
+use library::{MusicFolderId, PlaylistId, SmartPlaylistId, SourceId, Track, TrackId};
 use playback::{
     AlbumPlayRequest, ArtistWindowPlayRequest, Batch, BatchItem, CachedPlaylistPlayRequest,
     ContextPlayRequest, ContextTrackSource, FolderWindowPlayRequest, LibraryWindowPlayRequest,
@@ -138,26 +138,8 @@ impl PlaybackCommands {
     }
 
     pub fn play_smart_playlist(&self, request: SmartPlaylistPlayRequest) {
-        let context = PlayContext {
-            descriptor: PlayContextDescriptor::SmartPlaylist {
-                smart_playlist_id: request.playlist.id,
-                definition_fingerprint: smart_playlist_definition_fingerprint(
-                    &request.playlist.definition,
-                ),
-                music_folder_id: request.music_folder_id,
-            },
-            order: PlayContextOrder::SmartPlaylist,
-        };
-        let Some(track_id) = request.anchor_track_id else {
-            self.queue_error("No tracks are available to play.");
-            return;
-        };
-        let anchor = PlayContextAnchor {
-            track_id,
-            source_rank: 0,
-            source_item_id: None,
-        };
-        self.play_store_context(context, anchor, true);
+        let shuffled_start = request.placement == QueuePlacement::Now;
+        self.play_smart_playlist_at(request.smart_playlist_id, request.placement, shuffled_start);
     }
 
     pub fn play_library_window(&self, mut request: LibraryWindowPlayRequest) -> bool {
@@ -356,6 +338,42 @@ impl PlaybackCommands {
         }
     }
 
+    fn play_smart_playlist_at(
+        &self,
+        smart_playlist_id: SmartPlaylistId,
+        placement: QueuePlacement,
+        shuffled_start: bool,
+    ) {
+        let reservation = match self.reserve_queue_materialization(placement.into()) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.queue_error(error);
+                return;
+            }
+        };
+        let controller = self.clone();
+        let rejected = reservation.clone();
+        if let Err(error) = self.submit_playback_materialization(move || {
+            let result = controller.load_smart_playlist_context_items(
+                &reservation.source_id,
+                &smart_playlist_id,
+                placement,
+            );
+            match result {
+                Ok(items) => {
+                    if let Err(error) =
+                        controller.apply_reserved_batch(reservation.clone(), items, shuffled_start)
+                    {
+                        controller.reject_queue_materialization(reservation, error);
+                    }
+                }
+                Err(error) => controller.reject_queue_materialization(reservation, error),
+            }
+        }) {
+            self.reject_queue_materialization(rejected, error);
+        }
+    }
+
     fn load_playlist_context_items(
         &self,
         source_id: &SourceId,
@@ -387,6 +405,28 @@ impl PlaybackCommands {
                 )
             })
             .collect())
+    }
+
+    fn load_smart_playlist_context_items(
+        &self,
+        source_id: &SourceId,
+        smart_playlist_id: &SmartPlaylistId,
+        placement: QueuePlacement,
+    ) -> Result<Vec<BatchItem>, String> {
+        let materialized = self.store.with_store(|store| {
+            store.materialize_saved_smart_playlist_context(source_id, smart_playlist_id)
+        })?;
+        let Some((context, items)) = materialized else {
+            return Err("The selected smart playlist was not found.".to_string());
+        };
+        if items.is_empty() {
+            return Err(if placement == QueuePlacement::Now {
+                "No tracks are available to play.".to_string()
+            } else {
+                "No tracks are available to add to the queue.".to_string()
+            });
+        }
+        Ok(context_batch_items(items, &context_id(&context)))
     }
 
     fn enqueue_context(
@@ -707,4 +747,189 @@ fn context_batch_items(items: Vec<PlayContextItem>, context_id: &str) -> Vec<Bat
 fn source_query(query: &str) -> Option<String> {
     let query = query.trim();
     (!query.is_empty()).then(|| query.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controller::root::test_support::{
+        CachedLibraryObservation, commit_cached_library, library_album, library_track,
+        owners_from_store_for_test, saved_source, wait_for_playback_projection,
+    };
+    use library::{
+        MusicFolder, SmartPlaylistDefinition, SmartPlaylistMatchMode, SmartPlaylistRuleGroup,
+        SmartPlaylistSortField,
+    };
+
+    #[test]
+    fn smart_playlist_placement_materializes_one_ordered_batch() {
+        let store = StoreHandle::open_memory().expect("open store");
+        let saved = saved_source();
+        let album = library_album(1, "Artist", "Album", None);
+        let mut tracks = (1..=4)
+            .map(|number| {
+                library_track(
+                    number,
+                    album.artist_id.clone(),
+                    album.id.clone(),
+                    "Artist",
+                    &[],
+                )
+            })
+            .collect::<Vec<_>>();
+        tracks[0].title = "Charlie".to_string();
+        tracks[1].title = "Alpha".to_string();
+        tracks[2].title = "Bravo".to_string();
+        tracks[3].title = "Aardvark outside folder".to_string();
+        let folder = MusicFolder {
+            id: MusicFolderId::fake(1),
+            name: "Selected".to_string(),
+        };
+        let smart_playlist_id = SmartPlaylistId::new("custom:queue-placement");
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: Vec::new(),
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: false,
+            limit: Some(2),
+        };
+        store
+            .with_store(|store| {
+                store.save_source(&saved)?;
+                store.set_active_source(&saved.source_id)?;
+                let generation = store.begin_sync(&saved.source_id)?;
+                commit_cached_library(
+                    store,
+                    &saved.source_id,
+                    generation,
+                    CachedLibraryObservation {
+                        albums: vec![album],
+                        tracks: tracks.clone(),
+                        music_folders: vec![(folder.clone(), tracks[..3].to_vec())],
+                        ..CachedLibraryObservation::default()
+                    },
+                )?;
+                store.set_selected_music_folder_id(&saved.source_id, Some(&folder.id))?;
+                store.save_smart_playlist(
+                    &saved.source_id,
+                    &smart_playlist_id,
+                    "Queue placement",
+                    &definition,
+                )
+            })
+            .expect("seed smart playlist");
+
+        let expected = [tracks[1].clone(), tracks[2].clone()];
+        let (owners, events) = owners_from_store_for_test(store);
+        let before_seed = sequence_snapshot(&owners).revision();
+        owners.playback.play_tracks_now(vec![expected[0].clone()]);
+        wait_for_queue_revision(&events, before_seed + 1);
+        let before_shuffle = sequence_snapshot(&owners).revision();
+        owners.playback.set_shuffle(true);
+        wait_for_queue_revision(&events, before_shuffle + 1);
+
+        let before_next = sequence_snapshot(&owners).revision();
+        owners
+            .playback
+            .play_smart_playlist(SmartPlaylistPlayRequest::new(
+                smart_playlist_id.clone(),
+                QueuePlacement::Next,
+            ));
+        wait_for_queue_revision(&events, before_next + 1);
+        let after_next = sequence_snapshot(&owners);
+        assert_eq!(after_next.revision(), before_next + 1);
+        assert_eq!(
+            track_ids(&after_next),
+            vec![
+                expected[0].id.clone(),
+                expected[0].id.clone(),
+                expected[1].id.clone(),
+            ]
+        );
+        assert_eq!(context_ranks(&after_next), vec![0, 1]);
+
+        let before_last = after_next.revision();
+        owners
+            .playback
+            .play_smart_playlist(SmartPlaylistPlayRequest::new(
+                smart_playlist_id.clone(),
+                QueuePlacement::Last,
+            ));
+        wait_for_queue_revision(&events, before_last + 1);
+        let after_last = sequence_snapshot(&owners);
+        assert_eq!(after_last.revision(), before_last + 1);
+        assert_eq!(
+            track_ids(&after_last),
+            vec![
+                expected[0].id.clone(),
+                expected[0].id.clone(),
+                expected[1].id.clone(),
+                expected[0].id.clone(),
+                expected[1].id.clone(),
+            ]
+        );
+        assert_eq!(context_ranks(&after_last), vec![0, 1, 0, 1]);
+
+        let before_now = after_last.revision();
+        owners
+            .playback
+            .play_smart_playlist(SmartPlaylistPlayRequest::new(
+                smart_playlist_id,
+                QueuePlacement::Now,
+            ));
+        wait_for_queue_revision(&events, before_now + 1);
+        let after_now = sequence_snapshot(&owners);
+        assert_eq!(after_now.revision(), before_now + 1);
+        assert_eq!(
+            track_ids(&after_now),
+            expected
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(context_ranks(&after_now), vec![0, 1]);
+        assert_eq!(
+            after_now.selected().map(|entry| &entry.track.id),
+            Some(&expected[1].id)
+        );
+    }
+
+    fn sequence_snapshot(owners: &super::super::ProductOwners) -> playback::Sequence {
+        owners
+            .playback
+            .playback_product()
+            .expect("playback product")
+            .sequence_snapshot()
+            .expect("sequence")
+    }
+
+    fn wait_for_queue_revision(events: &super::super::ProductReceivers, revision: u64) {
+        loop {
+            let projection = wait_for_playback_projection(events);
+            if projection.view.queue.revision >= revision {
+                return;
+            }
+        }
+    }
+
+    fn track_ids(sequence: &playback::Sequence) -> Vec<TrackId> {
+        sequence
+            .entries()
+            .iter()
+            .map(|entry| entry.track.id.clone())
+            .collect()
+    }
+
+    fn context_ranks(sequence: &playback::Sequence) -> Vec<usize> {
+        sequence
+            .entries()
+            .iter()
+            .filter_map(|entry| match &entry.provenance {
+                Provenance::Context { source_rank, .. } => Some(*source_rank),
+                _ => None,
+            })
+            .collect()
+    }
 }

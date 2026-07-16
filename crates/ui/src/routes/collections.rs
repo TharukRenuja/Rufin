@@ -478,7 +478,6 @@ pub(crate) fn playlist_collection_projection(
 pub(crate) fn smart_playlist_collection_projection(
     shell: &Rc<Shell>,
     model: gio::ListStore,
-    query: ActiveLibraryQuery,
 ) -> LibraryCollectionProjection {
     let key = LibraryListKey::SmartPlaylists;
     let settings = shell.settings.current.borrow().library_list(key);
@@ -489,9 +488,9 @@ pub(crate) fn smart_playlist_collection_projection(
             LibraryLayout::Row => {
                 LibraryPresentationProjection::Row(smart_playlist_table(&shell, model.clone()))
             }
-            LibraryLayout::Grid | LibraryLayout::Detail => LibraryPresentationProjection::Grid(
-                smart_playlist_grid(&shell, model.clone(), query.clone()),
-            ),
+            LibraryLayout::Grid | LibraryLayout::Detail => {
+                LibraryPresentationProjection::Grid(smart_playlist_grid(&shell, model.clone()))
+            }
         }),
     )
 }
@@ -624,7 +623,6 @@ pub(crate) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> Collect
 pub(crate) fn smart_playlist_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
-    query: ActiveLibraryQuery,
 ) -> CollectionGridProjection {
     let fields = shell
         .settings
@@ -637,7 +635,7 @@ pub(crate) fn smart_playlist_grid(
     collection_grid(
         model,
         &fields,
-        move |fields| SmartPlaylistGridCell::new(Rc::clone(&cell_shell), fields, query.clone()),
+        move |fields| SmartPlaylistGridCell::new(Rc::clone(&cell_shell), fields),
         move |_, playlist: SmartPlaylist| {
             activate_shell.navigate(Route::SmartPlaylistDetail(playlist.id));
         },

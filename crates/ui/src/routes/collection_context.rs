@@ -978,7 +978,6 @@ pub(crate) fn present_smart_playlist_context_menu(
     playlist: SmartPlaylist,
     position: Option<(f64, f64)>,
 ) {
-    let library_query = shell.library.query.borrow().clone();
     let menu = context_menu_box();
     menu.append(&context_menu_action(
         "Play",
@@ -1001,21 +1000,12 @@ pub(crate) fn present_smart_playlist_context_menu(
 
     surface.add_action("play", {
         let controller = shell.products.playback.queue.clone();
-        let shell = Rc::clone(shell);
-        let library_query = library_query.clone();
         let playlist_id = playlist.id.clone();
         move || {
-            if let Some(detail) = library_query
-                .as_ref()
-                .and_then(|query| query.smart_playlist_detail(&playlist_id).ok().flatten())
-            {
-                let first_track_id = detail.tracks.first().map(|track| track.id.clone());
-                controller.play_smart_playlist(SmartPlaylistPlayRequest {
-                    playlist: detail.smart_playlist,
-                    anchor_track_id: first_track_id,
-                    music_folder_id: selected_music_folder_id(&shell),
-                });
-            }
+            controller.play_smart_playlist(SmartPlaylistPlayRequest::new(
+                playlist_id.clone(),
+                QueuePlacement::Now,
+            ));
         }
     });
 

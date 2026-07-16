@@ -43,7 +43,7 @@ use super::library_fields::{
     grid_title_with_label, item_at, item_at_from_item, playlist_field, smart_playlist_display_name,
     smart_playlist_field, track_field,
 };
-use super::play_context::{LoadedTrackPlayContext, selected_music_folder_id};
+use super::play_context::LoadedTrackPlayContext;
 use super::route::Route;
 use super::route_layout::{HOME_ALBUM_GAP, HOME_ALBUM_MIN_SIZE};
 
@@ -1112,11 +1112,7 @@ pub(super) struct SmartPlaylistGridCell {
 }
 
 impl SmartPlaylistGridCell {
-    pub(super) fn new(
-        shell: Rc<Shell>,
-        fields: &[LibraryField],
-        query: ActiveLibraryQuery,
-    ) -> Self {
+    pub(super) fn new(shell: Rc<Shell>, fields: &[LibraryField]) -> Self {
         let current_playlist = Rc::new(RefCell::new(None::<SmartPlaylist>));
 
         let overlay = cards::elastic_cover_overlay();
@@ -1152,8 +1148,6 @@ impl SmartPlaylistGridCell {
         });
 
         let controller = shell.products.playback.queue.clone();
-        let play_query = query.clone();
-        let play_shell = Rc::clone(&shell);
         let play_playlist = Rc::clone(&current_playlist);
         controls.play.connect_clicked(move |_| {
             let Some(playlist_id) = play_playlist
@@ -1163,18 +1157,13 @@ impl SmartPlaylistGridCell {
             else {
                 return;
             };
-            if let Ok(Some(detail)) = play_query.smart_playlist_detail(&playlist_id) {
-                let first_track_id = detail.tracks.first().map(|track| track.id.clone());
-                controller.play_smart_playlist(SmartPlaylistPlayRequest {
-                    playlist: detail.smart_playlist,
-                    anchor_track_id: first_track_id,
-                    music_folder_id: selected_music_folder_id(&play_shell),
-                });
-            }
+            controller.play_smart_playlist(SmartPlaylistPlayRequest::new(
+                playlist_id,
+                QueuePlacement::Now,
+            ));
         });
 
         let controller = shell.products.playback.queue.clone();
-        let next_query = query.clone();
         let next_playlist = Rc::clone(&current_playlist);
         controls.play_next.connect_clicked(move |_| {
             let Some(playlist_id) = next_playlist
@@ -1184,15 +1173,13 @@ impl SmartPlaylistGridCell {
             else {
                 return;
             };
-            if let Ok(Some(detail)) = next_query.smart_playlist_detail(&playlist_id) {
-                for track in detail.tracks.iter().rev() {
-                    controller.play_next(track.clone());
-                }
-            }
+            controller.play_smart_playlist(SmartPlaylistPlayRequest::new(
+                playlist_id,
+                QueuePlacement::Next,
+            ));
         });
 
         let controller = shell.products.playback.queue.clone();
-        let last_query = query;
         let last_playlist = Rc::clone(&current_playlist);
         controls.play_last.connect_clicked(move |_| {
             let Some(playlist_id) = last_playlist
@@ -1202,9 +1189,10 @@ impl SmartPlaylistGridCell {
             else {
                 return;
             };
-            if let Ok(Some(detail)) = last_query.smart_playlist_detail(&playlist_id) {
-                controller.play_last(detail.tracks);
-            }
+            controller.play_smart_playlist(SmartPlaylistPlayRequest::new(
+                playlist_id,
+                QueuePlacement::Last,
+            ));
         });
         controls.add_to_overlay(&overlay);
         controls.connect_hover(&overlay);

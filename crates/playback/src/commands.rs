@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use library::play_context::{ArtistTrackScope, PlayContextDescriptor, PlaylistSort};
 use library::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, MusicFolderId, Playlist, PlaylistEntry,
-    PlaylistId, SmartPlaylist, Track, TrackId, TrackSort,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, Playlist, PlaylistEntry, PlaylistId,
+    SmartPlaylistId, Track, TrackSort,
 };
 use sources::{GeneratedTrackSeedKind, PlayedFilter, RandomTrackDomain};
 
@@ -60,9 +60,17 @@ impl CachedPlaylistPlayRequest {
 }
 
 pub struct SmartPlaylistPlayRequest {
-    pub playlist: SmartPlaylist,
-    pub anchor_track_id: Option<TrackId>,
-    pub music_folder_id: Option<MusicFolderId>,
+    pub smart_playlist_id: SmartPlaylistId,
+    pub placement: QueuePlacement,
+}
+
+impl SmartPlaylistPlayRequest {
+    pub fn new(smart_playlist_id: SmartPlaylistId, placement: QueuePlacement) -> Self {
+        Self {
+            smart_playlist_id,
+            placement,
+        }
+    }
 }
 
 pub struct LibraryWindowPlayRequest {
