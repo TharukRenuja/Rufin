@@ -3,10 +3,11 @@ use crate::{
 };
 use ::library::{
     Album, AlbumId, Playlist, PlaylistId, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId,
+    SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackDelta,
+    TrackId,
 };
 use gtk::prelude::{Cast, ListModelExt};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use super::album_detail::{
     AlbumCollectionModels, AlbumDetailItem, album_detail_items_for, album_detail_track_cells_width,
@@ -14,16 +15,18 @@ use super::album_detail::{
     populate_album_collection_model, sort_album_detail_tracks,
 };
 use super::collections::{
-    SMART_PLAYLIST_REORDER_WIDTH, TrackModelIndex, capped_library_table_content_height,
-    collection_column_width, library_table_content_height,
+    SMART_PLAYLIST_REORDER_WIDTH, capped_library_table_content_height, collection_column_width,
+    library_table_content_height,
 };
 use super::columns::{track_column_fit_width, track_column_width};
 use super::library_fields::{
-    album_field, column_width, compact_header_column_width, playlist_field,
-    replace_tracks_in_model, smart_playlist_field, sort_tracks, track_field,
+    album_field, column_width, compact_header_column_width, playlist_field, smart_playlist_field,
+    sort_tracks, track_field,
 };
+use super::play_context::track_collection_play_context;
 use super::route_shell::{library_toolbar_end_margin, toolbar_sort_width_for_labels};
 use super::table_sizing::fitted_column_widths;
+use super::track_model::TrackCollectionModel;
 #[test]
 fn route_track_visible() {
     assert_eq!(library_table_content_height(0), 150);
@@ -42,43 +45,120 @@ fn embedded_track_preview_keeps_scrollable_height() {
 }
 
 #[test]
-fn track_model_replacement_preserves_unchanged_row_identity() {
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    let first = test_track(1, "first", 1, 1);
-    let second = test_track(2, "second", 1, 2);
-    let third = test_track(3, "third", 1, 3);
-    replace_tracks_in_model(&model, vec![first.clone(), second.clone(), third.clone()]);
-    let first_object = model.item(0).expect("first row object");
-    let third_object = model.item(2).expect("third row object");
-    let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let recorded = std::rc::Rc::clone(&changes);
-    model.connect_items_changed(move |_, position, removed, added| {
-        recorded.borrow_mut().push((position, removed, added));
-    });
+fn track_collection_model_is_complete_shared_and_lazy() {
+    const TRACK_COUNT: usize = 2_297;
+    let tracks = Arc::new(
+        (0..TRACK_COUNT)
+            .map(|index| {
+                test_track(
+                    index as u32 + 1,
+                    &format!("Track {index:04}"),
+                    1,
+                    index as u16 + 1,
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    let model = TrackCollectionModel::new(
+        Arc::clone(&tracks),
+        LibraryListSettings::for_key(LibraryListKey::Tracks),
+        true,
+    );
 
-    let mut changed_second = second;
-    changed_second.title = "changed".to_string();
-    replace_tracks_in_model(&model, vec![first, changed_second, third]);
+    assert_eq!(model.n_items(), TRACK_COUNT as u32);
+    assert!(model.source_is(&tracks));
+    assert!(
+        model
+            .with_track(0, |track| std::ptr::eq(track, &tracks[0]))
+            .is_some_and(|shared| shared)
+    );
+    assert_eq!(
+        model.test_stats(),
+        super::track_model::TrackModelTestStats {
+            order_rebuilds: 1,
+            source_visits: TRACK_COUNT,
+            row_materializations: 0,
+            live_rows: 0,
+        }
+    );
 
-    assert_eq!(&*changes.borrow(), &[(1, 1, 1)]);
-    assert_eq!(model.item(0).as_ref(), Some(&first_object));
-    assert_eq!(model.item(2).as_ref(), Some(&third_object));
+    let source_owners = Arc::strong_count(&tracks);
+    let first = model.item(0).expect("first row");
+    let middle = model.item((TRACK_COUNT / 2) as u32).expect("middle row");
+    let last = model.item((TRACK_COUNT - 1) as u32).expect("last row");
+    assert!(model.item(TRACK_COUNT as u32).is_none());
+    assert_eq!(model.item(0).as_ref(), Some(&first));
+    assert_eq!(model.test_stats().live_rows, 3);
+    assert_eq!(model.test_stats().row_materializations, 3);
+    assert_eq!(Arc::strong_count(&tracks), source_owners);
+
+    drop((first, middle, last));
+    assert_eq!(model.test_stats().live_rows, 0);
 }
 
 #[test]
-fn multi_track_patch_preserves_identity_and_lookup() {
-    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
-    let first = test_track(1, "first", 1, 1);
-    let second = test_track(2, "second", 1, 2);
-    let third = test_track(3, "third", 1, 3);
-    let fourth = test_track(4, "fourth", 1, 4);
-    replace_tracks_in_model(
-        &model,
-        vec![first.clone(), second.clone(), third.clone(), fourth.clone()],
+fn track_collection_model_search_sort_and_positions_share_one_order() {
+    let mut gamma = test_track(1, "Gamma", 1, 3);
+    gamma.artist = "Needle Artist".to_string();
+    let mut alpha = test_track(2, "Alpha", 1, 1);
+    alpha.album = "Needle Album".to_string();
+    let mut beta = test_track(3, "Beta", 1, 2);
+    beta.year = 1999;
+    let tracks = Arc::new(vec![gamma.clone(), alpha.clone(), beta.clone()]);
+    let mut settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+    let model = TrackCollectionModel::new(Arc::clone(&tracks), settings.clone(), false);
+
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![alpha.id.clone(), beta.id.clone(), gamma.id.clone()]
     );
-    let first_object = model.item(0).expect("first row object");
-    let fourth_object = model.item(3).expect("fourth row object");
-    let positions = TrackModelIndex::new(&model);
+    let held_beta = model
+        .item(model.position(&beta.id).expect("Beta position"))
+        .expect("Beta row");
+
+    model.set_query("  NEEDLE ARTIST  ");
+    assert_eq!(model.query(), "NEEDLE ARTIST");
+    assert_eq!(displayed_track_ids(&model), vec![gamma.id.clone()]);
+    assert_eq!(model.position(&beta.id), None);
+    assert_eq!(model.test_stats().live_rows, 1);
+
+    model.set_query("needle album");
+    assert_eq!(displayed_track_ids(&model), vec![alpha.id.clone()]);
+    model.set_query("1999");
+    assert_eq!(displayed_track_ids(&model), vec![beta.id.clone()]);
+    let rebuilds = model.test_stats().order_rebuilds;
+    assert!(!model.set_query("1999"));
+    assert_eq!(model.test_stats().order_rebuilds, rebuilds);
+
+    model.set_query("");
+    assert_eq!(model.n_items(), 3);
+    settings.descending = true;
+    model.apply_settings(settings);
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![gamma.id.clone(), beta.id.clone(), alpha.id.clone()]
+    );
+    let beta_after = model
+        .item(model.position(&beta.id).expect("restored Beta position"))
+        .expect("restored Beta row");
+    assert_eq!(beta_after, held_beta);
+    assert_eq!(model.test_stats().order_rebuilds, 6);
+}
+
+#[test]
+fn track_collection_model_patches_without_an_extra_index_pass() {
+    let first = test_track(1, "Alpha", 1, 1);
+    let second = test_track(2, "Beta", 1, 2);
+    let third = test_track(3, "Gamma", 1, 3);
+    let model = TrackCollectionModel::new(
+        Arc::new(vec![first.clone(), second.clone(), third.clone()]),
+        LibraryListSettings::for_key(LibraryListKey::Tracks),
+        true,
+    );
+    let held_first = model.item(0).expect("first row");
+    let second_position = model.position(&second.id).expect("second position");
+    let held_second = model.item(second_position).expect("second row");
+    let held_third = model.item(2).expect("third row");
     let changes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let recorded = std::rc::Rc::clone(&changes);
     model.connect_items_changed(move |_, position, removed, added| {
@@ -86,17 +166,134 @@ fn multi_track_patch_preserves_identity_and_lookup() {
     });
 
     let mut changed_second = second.clone();
-    changed_second.play_count = Some(12);
-    let mut changed_third = third.clone();
-    changed_third.favorite = true;
-    positions.replace_existing([changed_second, changed_third]);
+    changed_second.favorite = true;
+    model.patch(
+        vec![changed_second.clone()],
+        &TrackDelta {
+            favorite: vec![second.id.clone()],
+            ..TrackDelta::default()
+        },
+    );
 
-    assert_eq!(&*changes.borrow(), &[(1, 2, 2)]);
-    assert_eq!(model.item(0).as_ref(), Some(&first_object));
-    assert_eq!(model.item(3).as_ref(), Some(&fourth_object));
-    assert_eq!(positions.position(&second.id), Some(1));
-    assert_eq!(positions.position(&third.id), Some(2));
+    assert_eq!(&*changes.borrow(), &[(second_position, 1, 1)]);
+    assert_eq!(model.test_stats().order_rebuilds, 1);
+    assert_eq!(model.position(&second.id), Some(second_position));
+    assert_ne!(model.item(second_position).as_ref(), Some(&held_second));
+    assert_eq!(model.track_at(second_position), Some(changed_second));
+    assert_eq!(model.item(0).as_ref(), Some(&held_first));
+    assert_eq!(model.item(2).as_ref(), Some(&held_third));
+
+    changes.borrow_mut().clear();
+    let mut favorite_settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+    favorite_settings.sort_key = LibraryField::Favorite;
+    model.apply_settings(favorite_settings);
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![first.id.clone(), third.id.clone(), second.id.clone()]
+    );
+    assert_eq!(
+        model.item(model.position(&third.id).expect("third position")),
+        Some(held_third.clone())
+    );
+    let rebuilds = model.test_stats().order_rebuilds;
+    let mut changed_first = first.clone();
+    changed_first.favorite = true;
+    model.patch(
+        vec![changed_first],
+        &TrackDelta {
+            favorite: vec![first.id.clone()],
+            ..TrackDelta::default()
+        },
+    );
+    assert_eq!(model.test_stats().order_rebuilds, rebuilds + 1);
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![third.id.clone(), first.id.clone(), second.id.clone()]
+    );
+
+    let added = test_track(4, "Delta", 1, 4);
+    let rebuilds = model.test_stats().order_rebuilds;
+    model.patch(
+        vec![added.clone()],
+        &TrackDelta {
+            added: vec![added.id.clone()],
+            ..TrackDelta::default()
+        },
+    );
+    assert_eq!(model.n_items(), 4);
+    assert_eq!(model.test_stats().order_rebuilds, rebuilds + 1);
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![
+            third.id.clone(),
+            added.id.clone(),
+            first.id.clone(),
+            second.id.clone(),
+        ]
+    );
+    assert_eq!(
+        model.item(model.position(&third.id).expect("third position")),
+        Some(held_third)
+    );
+    let rebuilds = model.test_stats().order_rebuilds;
+    model.patch(
+        Vec::new(),
+        &TrackDelta {
+            deleted: vec![third.id.clone()],
+            ..TrackDelta::default()
+        },
+    );
+    assert_eq!(model.n_items(), 3);
+    assert_eq!(model.test_stats().order_rebuilds, rebuilds + 1);
+    assert_eq!(
+        displayed_track_ids(&model),
+        vec![added.id, first.id, second.id]
+    );
+    assert_eq!(model.position(&third.id), None);
 }
+
+#[test]
+fn track_collection_play_request_uses_current_model_order() {
+    let alpha = test_track(1, "Match Alpha", 1, 1);
+    let beta = test_track(2, "Match Beta", 1, 2);
+    let gamma = test_track(3, "Match Gamma", 1, 3);
+    let excluded = test_track(4, "Other", 1, 4);
+    let mut settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+    settings.descending = true;
+    let model = TrackCollectionModel::new(
+        Arc::new(vec![alpha.clone(), beta.clone(), gamma.clone(), excluded]),
+        settings,
+        false,
+    );
+    model.set_query("  Match  ");
+    let descriptor = ::library::play_context::PlayContextDescriptor::Global {
+        music_folder_id: Some(::library::MusicFolderId::new("folder:test")),
+    };
+    let context = track_collection_play_context(
+        std::rc::Rc::new(std::cell::RefCell::new(descriptor.clone())),
+        model.clone(),
+        true,
+        false,
+    );
+    let mut request = context.request(1, beta.id.clone());
+
+    assert_eq!(request.descriptor, descriptor);
+    assert_eq!(request.sort, ::library::TrackSort::Title);
+    assert!(request.descending);
+    assert_eq!(request.query, "Match");
+    assert!(request.favorites_only);
+    assert!(!request.favorite_first);
+    assert_eq!(request.total_items, 3);
+    assert_eq!(request.anchor_index, 1);
+    assert_eq!(
+        (0..request.total_items)
+            .map(|position| (request.track_at)(position).expect("play request Track").id)
+            .collect::<Vec<_>>(),
+        vec![gamma.id, beta.id, alpha.id]
+    );
+    assert_eq!(model.test_stats().live_rows, 0);
+}
+
 #[test]
 fn route_fit_pane() {
     let fields = [
@@ -424,6 +621,12 @@ fn route_bpm_is_blank_when_missing_and_sorts_stably() {
             .collect::<Vec<_>>(),
         vec![high_second.id, high_first.id, low.id, missing.id]
     );
+}
+
+fn displayed_track_ids(model: &TrackCollectionModel) -> Vec<TrackId> {
+    (0..model.n_items())
+        .map(|position| model.track_at(position).expect("displayed Track").id)
+        .collect()
 }
 
 fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Track {

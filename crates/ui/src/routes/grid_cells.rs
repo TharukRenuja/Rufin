@@ -41,7 +41,7 @@ use super::detail_links::album_artist_route;
 use super::library_fields::{
     COLLECTION_GRID_CARD_MARGIN, COLLECTION_GRID_MIN_CARD_WIDTH, album_field, artist_field,
     grid_title_with_label, item_at, item_at_from_item, playlist_field, smart_playlist_display_name,
-    smart_playlist_field, track_artwork_at, track_field,
+    smart_playlist_field, track_field,
 };
 use super::play_context::{LoadedTrackPlayContext, selected_music_folder_id};
 use super::route::Route;
@@ -177,8 +177,8 @@ impl CollectionGridProjection {
     }
 }
 
-pub(super) fn collection_grid<T, Cell, Make, Activate>(
-    model: gio::ListStore,
+pub(super) fn collection_grid<T, Cell, Make, Activate, M>(
+    model: M,
     fields: &[LibraryField],
     make_cell: Make,
     activate: Activate,
@@ -188,6 +188,7 @@ where
     Cell: ReusableCollectionGridCell<T>,
     Make: Fn(&[LibraryField]) -> Cell + 'static,
     Activate: Fn(u32, T) + 'static,
+    M: IsA<gio::ListModel> + Clone + 'static,
 {
     collection_grid_with_column_bounds(
         model,
@@ -200,8 +201,8 @@ where
     )
 }
 
-pub(super) fn collection_grid_with_minimum_card_width<T, Cell, Make, Activate>(
-    model: gio::ListStore,
+pub(super) fn collection_grid_with_minimum_card_width<T, Cell, Make, Activate, M>(
+    model: M,
     minimum_card_width: i32,
     fields: &[LibraryField],
     make_cell: Make,
@@ -212,6 +213,7 @@ where
     Cell: ReusableCollectionGridCell<T>,
     Make: Fn(&[LibraryField]) -> Cell + 'static,
     Activate: Fn(u32, T) + 'static,
+    M: IsA<gio::ListModel> + Clone + 'static,
 {
     collection_grid_with_column_bounds(
         model,
@@ -317,8 +319,8 @@ where
     }
 }
 
-fn collection_grid_with_column_bounds<T, Cell, Make, Activate>(
-    model: gio::ListStore,
+fn collection_grid_with_column_bounds<T, Cell, Make, Activate, M>(
+    model: M,
     min_columns: u32,
     max_columns: u32,
     minimum_card_width: i32,
@@ -331,6 +333,7 @@ where
     Cell: ReusableCollectionGridCell<T>,
     Make: Fn(&[LibraryField]) -> Cell + 'static,
     Activate: Fn(u32, T) + 'static,
+    M: IsA<gio::ListModel> + Clone + 'static,
 {
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -419,7 +422,6 @@ where
 pub(super) struct TrackGridCell {
     body: CollectionGridCardCell,
     shell: Rc<Shell>,
-    model: gio::ListStore,
     play_context: Option<LoadedTrackPlayContext>,
     cover_tile: ArtworkTile,
     favorite: gtk::Button,
@@ -431,7 +433,6 @@ impl TrackGridCell {
     pub(super) fn new(
         shell: Rc<Shell>,
         fields: &[LibraryField],
-        model: gio::ListStore,
         play_context: Option<LoadedTrackPlayContext>,
     ) -> Self {
         let current_track = Rc::new(RefCell::new(None::<Track>));
@@ -533,7 +534,6 @@ impl TrackGridCell {
         Self {
             body,
             shell,
-            model,
             play_context,
             cover_tile,
             favorite,
@@ -550,16 +550,9 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
 
     fn bind(&self, position: u32, track: Track) {
         let play_action = self.play_context.as_ref().map(|context| {
-            track_model_play_action(
-                &self.shell,
-                &self.model,
-                context.clone(),
-                position,
-                track.clone(),
-            )
+            track_model_play_action(&self.shell, context.clone(), position, track.clone())
         });
-        let artwork = track_artwork_at(&self.model, position)
-            .unwrap_or_else(|| ArtworkBinding::track(&track));
+        let artwork = ArtworkBinding::track(&track);
         self.shell.bind_artwork_tile(
             &self.cover_tile,
             artwork,

@@ -31,9 +31,7 @@ use playback::{PlaylistEntryPlayRequest, RadioPlayRequest, RadioSeed, SmartPlayl
 use super::collection_routes::{
     MountedRefreshLoader, MountedRouteRefresh, smart_playlist_detail_affected,
 };
-use super::collections::{
-    LibraryCollectionProjection, TrackTableSelectionHandle, library_route_inset,
-};
+use super::collections::{LibraryCollectionProjection, library_route_inset};
 use super::detail_showcase::{
     PlaylistDetailShowcase, detail_action_button, detail_action_row, detail_delete_button,
     detail_genre_pill_button, detail_primary_action_button, detail_radio_button,
@@ -249,8 +247,6 @@ impl Shell {
         wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(ROUTE_TOP_MARGIN);
-        let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
-
         let cover = self.cover_group_projection_for_artwork(
             &artwork,
             seed,
@@ -319,14 +315,12 @@ impl Shell {
                 music_folder_id: selected_music_folder_id(self),
             }
         };
-        let (tracks_widget, tracks, tracks_toolbar) = self
-            .scrolling_track_projection_with_selection(
-                initial_tracks,
-                LibraryListKey::SmartPlaylistTracks,
-                "smart-playlist-detail",
-                Some(initial_descriptor),
-                Some(track_selection),
-            );
+        let (tracks_widget, tracks, tracks_toolbar) = self.scrolling_track_projection(
+            initial_tracks,
+            LibraryListKey::SmartPlaylistTracks,
+            "smart-playlist-detail",
+            Some(initial_descriptor),
+        );
         let tracks_stack = gtk::Stack::new();
         tracks_stack.set_hexpand(true);
         tracks_stack.set_vexpand(true);

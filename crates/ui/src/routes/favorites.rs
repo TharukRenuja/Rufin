@@ -51,7 +51,6 @@ impl Shell {
                 }),
                 favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle: None,
                 fixed_layout: None,
             },
         );

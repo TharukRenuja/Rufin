@@ -29,9 +29,7 @@ use playback::{AlbumPlayRequest, RadioPlayRequest, RadioSeed};
 use tracing::warn;
 
 use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
-use super::collections::{
-    TrackTableSelectionHandle, library_route_inset, set_library_table_content_height,
-};
+use super::collections::{library_route_inset, set_library_table_content_height};
 use super::detail_links::album_artist_route;
 use super::detail_showcase::{
     DetailSummaryProjection, MediaDetailShowcase, album_external_links,
@@ -164,7 +162,6 @@ impl Shell {
         facts.bind_text_with(1, move || {
             track_count_text(fact_track_count_for_locale.get())
         });
-        let track_selection: TrackTableSelectionHandle = Rc::new(RefCell::new(None));
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
@@ -321,7 +318,6 @@ impl Shell {
                 }),
                 favorites_only: false,
                 content_inset: ALBUM_DETAIL_ROUTE_INSET,
-                selection_handle: Some(track_selection),
                 fixed_layout: None,
             },
         );

@@ -28,21 +28,20 @@ use super::collection_routes::{
     CollectionRouteSpec, MountedRefreshLoader, MountedRouteRefresh, load_complete_cached_items,
 };
 use super::collections::{
-    TrackModelIndex, TrackTableSelectionHandle, album_collection_projection,
-    artist_collection_projection, library_route_inset, playlist_collection_projection,
-    smart_playlist_collection_projection, track_collection_projection,
+    album_collection_projection, artist_collection_projection, library_route_inset,
+    playlist_collection_projection, smart_playlist_collection_projection,
+    track_collection_projection,
 };
 use super::library_fields::{
-    album_matches_query, artist_matches_query, playlist_matches_query, replace_tracks_in_model,
-    smart_playlist_matches_query,
+    album_matches_query, artist_matches_query, playlist_matches_query, smart_playlist_matches_query,
 };
 use super::models::{
     populate_artist_model, populate_playlist_model, populate_smart_playlist_model,
-    tracks_for_settings,
 };
 use super::play_context::{selected_music_folder_id, track_collection_play_context};
 use super::route::Route;
 use super::route_shell::{LibraryPageShell, LibraryPageShellOptions, LibraryToolbarProjection};
+use super::track_model::TrackCollectionModel;
 
 const SLOW_LIBRARY_ROUTE_SETUP_MS: u64 = 100;
 const EMBEDDED_SCROLL_LATCH_MS: u128 = 280;
@@ -74,30 +73,6 @@ fn retain_confirmed_track_deletions(
         .retain(|track_id| !present_track_ids.contains(track_id));
 }
 
-fn track_delta_can_preserve_model_order(
-    delta: &::library::TrackDelta,
-    sort_key: crate::LibraryField,
-) -> bool {
-    if !delta.added.is_empty()
-        || !delta.deleted.is_empty()
-        || !delta.fields.is_empty()
-        || !delta.metadata.is_empty()
-    {
-        return false;
-    }
-    if !delta.stats.is_empty()
-        && matches!(
-            sort_key,
-            crate::LibraryField::LastPlayed
-                | crate::LibraryField::PlayCount
-                | crate::LibraryField::UserRating
-        )
-    {
-        return false;
-    }
-    delta.favorite.is_empty() || sort_key != crate::LibraryField::Favorite
-}
-
 fn release_replaced_tracks(tracks: Arc<Vec<Track>>) {
     let Some(tracks) = Arc::into_inner(tracks) else {
         return;
@@ -120,7 +95,6 @@ pub(crate) struct SearchableTrackOptions {
     pub(crate) source_descriptor: Option<PlayContextDescriptor>,
     pub(crate) favorites_only: bool,
     pub(crate) content_inset: i32,
-    pub(crate) selection_handle: Option<TrackTableSelectionHandle>,
     pub(crate) fixed_layout: Option<LibraryLayout>,
 }
 
@@ -129,12 +103,9 @@ pub(crate) struct TrackListProjection {
     key: LibraryListKey,
     search: gtk::SearchEntry,
     collection: super::collections::LibraryCollectionProjection,
-    track_index: TrackModelIndex,
-    source_tracks: Rc<RefCell<Arc<Vec<Track>>>>,
-    replace_tracks: Rc<dyn Fn(Arc<Vec<Track>>)>,
-    refresh_tracks: Rc<dyn Fn()>,
+    model: TrackCollectionModel,
+    on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
     source_descriptor: Option<Rc<RefCell<PlayContextDescriptor>>>,
-    settings: Rc<RefCell<crate::LibraryListSettings>>,
     fixed_layout: Option<LibraryLayout>,
 }
 
@@ -277,7 +248,6 @@ impl MountedTracksDeltaQueue {
         retain_confirmed_track_deletions(&mut delta.tracks, &present_track_ids);
         self.projection.patch(changed, &delta.tracks);
         self.page_shell.set_empty(self.projection.source_is_empty());
-        shell.refresh_current_route_now_playing_selections();
         self.start_next();
     }
 
@@ -328,44 +298,18 @@ impl TrackListProjection {
     }
 
     pub(crate) fn replace_shared(&self, tracks: Arc<Vec<Track>>) {
-        (self.replace_tracks)(tracks);
+        let replaced = self.model.replace_tracks(tracks);
+        release_replaced_tracks(replaced);
+        self.notify_visible_count();
     }
 
     pub(crate) fn patch(&self, changed: Vec<Track>, delta: &::library::TrackDelta) {
-        let deleted = delta.deleted.iter().cloned().collect::<HashSet<_>>();
-        let mut changed = changed
-            .into_iter()
-            .map(|track| (track.id.clone(), track))
-            .collect::<HashMap<_, _>>();
-        let model_changes = changed.clone();
-        let added_unknown;
-        {
-            let mut shared_source = self.source_tracks.borrow_mut();
-            let source = Arc::make_mut(&mut *shared_source);
-            source.retain_mut(|track| {
-                if deleted.contains(&track.id) {
-                    return false;
-                }
-                if let Some(replacement) = changed.remove(&track.id) {
-                    *track = replacement;
-                }
-                true
-            });
-            added_unknown = !changed.is_empty();
-            source.extend(changed.into_values());
-        }
-        if !added_unknown
-            && track_delta_can_preserve_model_order(delta, self.settings.borrow().sort_key)
-        {
-            self.track_index
-                .replace_existing(model_changes.into_values());
-        } else {
-            (self.refresh_tracks)();
-        }
+        self.model.patch(changed, delta);
+        self.notify_visible_count();
     }
 
     pub(crate) fn source_is_empty(&self) -> bool {
-        self.source_tracks.borrow().is_empty()
+        self.model.source_is_empty()
     }
 
     pub(crate) fn set_source_descriptor(&self, descriptor: PlayContextDescriptor) {
@@ -386,12 +330,18 @@ impl TrackListProjection {
         if let Some(layout) = self.fixed_layout {
             settings.layout = layout;
         }
-        let previous = self.settings.borrow().clone();
+        let previous = self.model.settings();
+        self.model.apply_settings(settings.clone());
         if previous.sort_key != settings.sort_key || previous.descending != settings.descending {
-            (self.refresh_tracks)();
+            self.notify_visible_count();
         }
         self.collection.apply_settings(&settings);
-        *self.settings.borrow_mut() = settings;
+    }
+
+    fn notify_visible_count(&self) {
+        if let Some(on_visible_count_changed) = self.on_visible_count_changed.as_ref() {
+            on_visible_count_changed(self.model.visible_count());
+        }
     }
 }
 
@@ -790,7 +740,6 @@ impl Shell {
                 }),
                 favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle: None,
                 fixed_layout: None,
             },
         );
@@ -1102,13 +1051,12 @@ impl Shell {
         }
         .view_from_items(self, playlists)
     }
-    pub(crate) fn scrolling_track_projection_with_selection(
+    pub(crate) fn scrolling_track_projection(
         self: &Rc<Self>,
         tracks: impl Into<Arc<Vec<Track>>>,
         key: LibraryListKey,
         context: &str,
         source_descriptor: Option<PlayContextDescriptor>,
-        selection_handle: Option<TrackTableSelectionHandle>,
     ) -> (gtk::Widget, TrackListProjection, LibraryToolbarProjection) {
         let projection = self.searchable_track_collection_shared(
             tracks.into(),
@@ -1118,7 +1066,6 @@ impl Shell {
                 source_descriptor,
                 favorites_only: false,
                 content_inset: PRIMARY_ROUTE_HORIZONTAL_INSET,
-                selection_handle,
                 fixed_layout: None,
             },
         );
@@ -1168,68 +1115,28 @@ impl Shell {
         options: SearchableTrackOptions,
         initial_tracks_are_sorted: bool,
     ) -> TrackListProjection {
-        let source_tracks = Rc::new(RefCell::new(tracks));
-        let query = Rc::new(RefCell::new(String::new()));
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let mut settings = self.settings.current.borrow().library_list(key);
         if let Some(layout) = options.fixed_layout {
             settings.layout = layout;
         }
-        // The global Tracks route has just loaded this complete vector from the Store with the
-        // same sort settings. Seed the GTK model from that proven order instead of sorting it a
-        // second time. This is only a construction fast path, not a retained route/data cache;
-        // search, settings changes, and deltas still rebuild through `tracks_for_settings`.
-        let visible_tracks = if initial_tracks_are_sorted {
-            source_tracks.borrow().iter().cloned().collect()
-        } else {
-            tracks_for_settings(source_tracks.borrow().as_slice(), &settings, "", false)
-        };
-        let visible_count = visible_tracks.len();
-        replace_tracks_in_model(&model, visible_tracks);
-        let track_index = TrackModelIndex::new(&model);
+        // The global Tracks route has loaded this complete vector from the Store in the current
+        // order. The model keeps that Arc and builds its ID positions in the same source pass.
+        let model = TrackCollectionModel::new(tracks, settings.clone(), initial_tracks_are_sorted);
         if let Some(on_visible_count_changed) = options.on_visible_count_changed.as_ref() {
-            on_visible_count_changed(visible_count);
+            on_visible_count_changed(model.visible_count());
         }
         let search = gtk::SearchEntry::new();
         bind_search_placeholder(&search, "Search");
         search.set_hexpand(true);
-        let refresh_tracks = {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let source_tracks = Rc::clone(&source_tracks);
-            let on_visible_count_changed = options.on_visible_count_changed.clone();
-            let query = Rc::clone(&query);
-            Rc::new(move || {
-                let settings = shell.settings.current.borrow().library_list(key);
-                let visible_tracks = tracks_for_settings(
-                    source_tracks.borrow().as_slice(),
-                    &settings,
-                    &query.borrow(),
-                    false,
-                );
-                let visible_count = visible_tracks.len();
-                replace_tracks_in_model(&model, visible_tracks);
-                shell.refresh_current_route_now_playing_selections();
-                if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
-                    on_visible_count_changed(visible_count);
-                }
-            }) as Rc<dyn Fn()>
-        };
-        let replace_tracks = {
-            let source_tracks = Rc::clone(&source_tracks);
-            let refresh_tracks = Rc::clone(&refresh_tracks);
-            Rc::new(move |tracks: Arc<Vec<Track>>| {
-                let replaced = source_tracks.replace(tracks);
-                release_replaced_tracks(replaced);
-                refresh_tracks();
-            }) as Rc<dyn Fn(Arc<Vec<Track>>)>
-        };
         {
-            let query = Rc::clone(&query);
-            let refresh_tracks = Rc::clone(&refresh_tracks);
+            let model = model.clone();
+            let on_visible_count_changed = options.on_visible_count_changed.clone();
             search.connect_search_changed(move |entry| {
-                *query.borrow_mut() = entry.text().trim().to_string();
-                refresh_tracks();
+                if model.set_query(entry.text().as_str())
+                    && let Some(on_visible_count_changed) = on_visible_count_changed.as_ref()
+                {
+                    on_visible_count_changed(model.visible_count());
+                }
             });
         }
         let source_descriptor = options
@@ -1237,10 +1144,8 @@ impl Shell {
             .map(|descriptor| Rc::new(RefCell::new(descriptor)));
         let play_context = source_descriptor.as_ref().map(|descriptor| {
             track_collection_play_context(
-                self,
                 Rc::clone(descriptor),
-                key,
-                Rc::clone(&query),
+                model.clone(),
                 options.favorites_only,
                 false,
             )
@@ -1252,19 +1157,14 @@ impl Shell {
             settings.clone(),
             play_context,
             options.content_inset,
-            options.selection_handle,
-            track_index.clone(),
         );
         TrackListProjection {
             key,
             search,
             collection,
-            track_index,
-            source_tracks,
-            replace_tracks,
-            refresh_tracks,
+            model,
+            on_visible_count_changed: options.on_visible_count_changed,
             source_descriptor,
-            settings: Rc::new(RefCell::new(settings)),
             fixed_layout: options.fixed_layout,
         }
     }

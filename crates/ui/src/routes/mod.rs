@@ -31,6 +31,7 @@ mod route_shell;
 mod routes;
 mod table_links;
 mod table_sizing;
+mod track_model;
 
 use std::cell::{Cell, RefCell};
 
