@@ -1,4 +1,4 @@
-id: refcell-clone-call-argument
+id: copy-shared-value-before-call
 valid:
   - |
       fn refresh(albums: Rc<RefCell<Vec<Album>>>, replace: Rc<dyn Fn(Vec<Album>)>) {
