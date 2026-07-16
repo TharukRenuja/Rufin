@@ -1503,6 +1503,18 @@ pub(super) fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
         HomeSectionKind::RecentlyReleased => "recently_released",
     }
 }
+pub(super) fn home_section_kind_from_key(value: &str) -> StoreResult<HomeSectionKind> {
+    match value {
+        "explore" => Ok(HomeSectionKind::Explore),
+        "most_played" => Ok(HomeSectionKind::MostPlayed),
+        "newly_added" => Ok(HomeSectionKind::NewlyAdded),
+        "recently_played" => Ok(HomeSectionKind::RecentlyPlayed),
+        "recently_released" => Ok(HomeSectionKind::RecentlyReleased),
+        other => Err(StoreError::InvalidSourceObject(format!(
+            "invalid Home section kind: {other}"
+        ))),
+    }
+}
 pub(super) fn home_membership(section: &HomeSection) -> Vec<(String, i64, String)> {
     section
         .albums

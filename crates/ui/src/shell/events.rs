@@ -220,22 +220,25 @@ fn apply_library_fact(shell: &Rc<Shell>, event: ::library::LibraryEvent) {
             }
             shell.apply_library_delta(*delta);
         }
-        ::library::LibraryEvent::HomeSectionsChanged { source_id } => {
+        ::library::LibraryEvent::HomeSectionProjected {
+            source_id,
+            kind,
+            section,
+            showcase_fallback,
+        } => {
             if shell
                 .library
                 .query
                 .borrow()
-                .clone()
                 .as_ref()
-                .is_none_or(|query| query.source_id() != &source_id)
+                .is_some_and(|query| query.source_id() == &source_id)
             {
-                return;
+                shell.apply_home_section_to_mounted_route(
+                    kind,
+                    section.map(|section| *section),
+                    showcase_fallback.map(|album| *album),
+                );
             }
-            let delta = LibraryDelta {
-                home_changed: true,
-                ..LibraryDelta::default()
-            };
-            shell.apply_library_delta(delta);
         }
         ::library::LibraryEvent::HomeSectionPrefetched { source_id, section } => {
             let active_source_id = shell

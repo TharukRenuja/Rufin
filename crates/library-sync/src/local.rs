@@ -87,7 +87,7 @@ pub fn commit_local(
     let commit = attempt.store.commit_local_library_delta(
         attempt.source_id,
         attempt.generation,
-        attempt.base_cache_revision,
+        attempt.base_sync_input_revision,
         complete_coverage,
         delta,
     )?;

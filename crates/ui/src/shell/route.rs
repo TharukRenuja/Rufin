@@ -18,7 +18,7 @@ use super::route_position::{
     RoutePositionKey, RoutePositionMemory, restore_route_position_before_snapshot,
 };
 use crate::routes::complete_prepared_items;
-use crate::routes::home::{HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT};
+use crate::routes::home::HOME_GENRE_LIMIT;
 use crate::routes::route::Route;
 use crate::routes::route_layout::{primary_route_scroll_adjustment, route_boundary};
 
@@ -368,6 +368,8 @@ impl Shell {
 pub(crate) type MountedRouteDeltaApplier = Rc<dyn Fn(&LibraryDelta)>;
 pub(crate) type MountedRouteDeltaPredicate = Rc<dyn Fn(&LibraryDelta) -> bool>;
 pub(crate) type MountedRouteResume = Rc<dyn Fn()>;
+pub(crate) type MountedHomeSectionApplier =
+    Rc<dyn Fn(library::HomeSectionKind, Option<library::HomeSection>, Option<library::Album>)>;
 
 #[derive(Clone)]
 pub(crate) struct MountedRoute {
@@ -375,6 +377,7 @@ pub(crate) struct MountedRoute {
     affected_by: MountedRouteDeltaPredicate,
     apply_delta: MountedRouteDeltaApplier,
     resume: MountedRouteResume,
+    apply_home_section: Option<MountedHomeSectionApplier>,
 }
 
 impl MountedRoute {
@@ -389,6 +392,7 @@ impl MountedRoute {
             affected_by,
             apply_delta,
             resume,
+            apply_home_section: None,
         }
     }
 
@@ -398,7 +402,16 @@ impl MountedRoute {
             affected_by: Rc::new(|_| false),
             apply_delta: Rc::new(|_| {}),
             resume: Rc::new(|| {}),
+            apply_home_section: None,
         }
+    }
+
+    pub(crate) fn with_home_section_applier(
+        mut self,
+        apply_home_section: MountedHomeSectionApplier,
+    ) -> Self {
+        self.apply_home_section = Some(apply_home_section);
+        self
     }
 
     pub(crate) fn widget(&self) -> gtk::Widget {
@@ -415,6 +428,17 @@ impl MountedRoute {
 
     pub(crate) fn resume(&self) {
         (self.resume)();
+    }
+
+    pub(crate) fn apply_home_section(
+        &self,
+        kind: library::HomeSectionKind,
+        section: Option<library::HomeSection>,
+        showcase_fallback: Option<library::Album>,
+    ) {
+        if let Some(apply) = &self.apply_home_section {
+            apply(kind, section, showcase_fallback);
+        }
     }
 }
 
@@ -1234,7 +1258,7 @@ impl Shell {
             query,
             |query, _| {
                 query
-                    .home_overview(HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT)
+                    .home_overview(HOME_GENRE_LIMIT)
                     .unwrap_or_else(|error| {
                         warn!(%error, "failed to prepare Home route");
                         library::HomeOverview::default()
@@ -1504,6 +1528,24 @@ impl Shell {
             .filter(|view| view.affected_by(delta));
         if let Some(view) = active_view {
             view.apply_delta(delta);
+        }
+    }
+
+    pub(crate) fn apply_home_section_to_mounted_route(
+        &self,
+        kind: library::HomeSectionKind,
+        section: Option<library::HomeSection>,
+        showcase_fallback: Option<library::Album>,
+    ) {
+        let active_view = self
+            .route_viewport
+            .mounted_route
+            .borrow()
+            .as_ref()
+            .filter(|entry| entry.route == Route::Home)
+            .map(|entry| entry.view.clone());
+        if let Some(view) = active_view {
+            view.apply_home_section(kind, section, showcase_fallback);
         }
     }
 

@@ -11,8 +11,11 @@ pub struct LibraryCommitted {
 #[derive(Clone, Debug)]
 pub enum LibraryEvent {
     Delta(Box<LibraryDelta>),
-    HomeSectionsChanged {
+    HomeSectionProjected {
         source_id: SourceId,
+        kind: crate::HomeSectionKind,
+        section: Option<Box<HomeSection>>,
+        showcase_fallback: Option<Box<crate::Album>>,
     },
     HomeSectionPrefetched {
         source_id: SourceId,

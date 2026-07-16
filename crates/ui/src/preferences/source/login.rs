@@ -554,7 +554,7 @@ impl SourceSetupFlow for JellyfinSetupFlow {
         let use_instant_mix = Rc::clone(&self.use_instant_mix);
         instant_mix.connect_active_notify(move |row| use_instant_mix.set(row.is_active()));
 
-        content.append(&discovered_servers_group(shell, &host, &self.draft));
+        content.append(&discovered_servers_group(shell, &host));
         let use_instant_mix = Rc::clone(&self.use_instant_mix);
         let submit = Rc::clone(&self.submit);
         append_credential_connect(
@@ -1071,11 +1071,7 @@ fn begin_connect_attempt(
     }
 }
 
-fn discovered_servers_group(
-    shell: &Rc<Shell>,
-    host: &CredentialHost,
-    draft: &Rc<RefCell<CredentialHostDraft>>,
-) -> adw::PreferencesGroup {
+fn discovered_servers_group(shell: &Rc<Shell>, host: &CredentialHost) -> adw::PreferencesGroup {
     let status = shell.source.discovery_status.borrow().clone();
     let running = shell.source.discovery_running.get();
     let servers = shell.source.discovered_servers.borrow().clone();
@@ -1110,11 +1106,7 @@ fn discovered_servers_group(
             row.set_activatable(true);
             let name = host.name.clone();
             let url = host.url.clone();
-            let draft = Rc::clone(draft);
             row.connect_activated(move |_| {
-                let mut draft = draft.borrow_mut();
-                draft.name = server.name.clone();
-                draft.url = server.address.clone();
                 name.set_text(&server.name);
                 url.set_text(&server.address);
             });

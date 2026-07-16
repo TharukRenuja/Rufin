@@ -167,7 +167,6 @@ pub(crate) struct LibraryCommands {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     pub(in crate::controller) library_events: LibraryEventSender,
     home_refresh_in_flight: InFlightGuards<SourceId>,
-    explore_prefetch_in_flight: InFlightGuards<SourceId>,
 }
 
 #[derive(Clone)]
@@ -338,14 +337,6 @@ pub(in crate::controller) struct HomeRefreshContext {
     secrets: Arc<dyn SecretStore>,
     library_events: LibraryEventSender,
     home_refresh_in_flight: InFlightGuards<SourceId>,
-}
-pub(in crate::controller) struct ExplorePrefetchContext {
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    active_source: ActiveSourceSlot,
-    secrets: Arc<dyn SecretStore>,
-    library_events: LibraryEventSender,
-    explore_prefetch_in_flight: InFlightGuards<SourceId>,
 }
 #[derive(Clone, Copy, Debug)]
 pub(in crate::controller) enum HomeRefreshTarget {

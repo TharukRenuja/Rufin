@@ -43,6 +43,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 27,
         run: migrate_to_artwork_owner_schema,
     },
+    SchemaMigration {
+        from_version: 28,
+        run: migrate_to_home_projection_schema,
+    },
 ];
 const MIN_SUPPORTED_SCHEMA_VERSION: i64 = 18;
 const GENRE_DURATION_SCHEMA_VERSION: i64 = 19;
@@ -54,6 +58,7 @@ const ARTIST_RELATION_SCHEMA_VERSION: i64 = 24;
 const LIBRARY_SYNC_SCHEMA_VERSION: i64 = 25;
 const PROVIDER_PAYLOAD_SCHEMA_VERSION: i64 = 26;
 const PLAYBACK_OWNER_SCHEMA_VERSION: i64 = 27;
+const ARTWORK_OWNER_SCHEMA_VERSION: i64 = 28;
 const SCHEMA_TABLES: &[&str] = &[
     "playback_checkpoints",
     "sources",
@@ -65,6 +70,7 @@ const SCHEMA_TABLES: &[&str] = &[
     "source_library_preferences",
     "active_source",
     "sync_state",
+    "home_projection_state",
     "albums",
     "tracks",
     "artists",
@@ -215,6 +221,21 @@ const PROVIDER_PAYLOAD_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("sync_state", "cache_revision"),
     ("sync_state", "last_all_completed_at"),
 ];
+const PRE_HOME_PROJECTION_SCHEMA_COLUMNS: &[(&str, &str)] = &[
+    ("genres", "duration_seconds"),
+    ("tracks", "bpm"),
+    ("playlists", "owner"),
+    ("item_favorite_overrides", "updated_at"),
+    ("sources", "kind"),
+    ("sources", "provider_payload"),
+    ("source_objects", "source_object_kind"),
+    ("sync_state", "cache_revision"),
+    ("sync_state", "last_all_completed_at"),
+    ("playback_checkpoints", "revision"),
+    ("playback_checkpoints", "payload"),
+    ("track_activity_period", "period"),
+    ("track_activity_period", "qualified_plays"),
+];
 const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("genres", "duration_seconds"),
     ("tracks", "bpm"),
@@ -225,6 +246,8 @@ const CURRENT_SCHEMA_COLUMNS: &[(&str, &str)] = &[
     ("source_objects", "source_object_kind"),
     ("sync_state", "cache_revision"),
     ("sync_state", "last_all_completed_at"),
+    ("sync_state", "sync_input_revision"),
+    ("home_projection_state", "pending_sync_mask"),
     ("playback_checkpoints", "revision"),
     ("playback_checkpoints", "payload"),
     ("track_activity_period", "period"),
@@ -392,6 +415,14 @@ fn schema_tables_before_source_identity() -> Vec<&'static str> {
     PRE_ARTWORK_OWNER_SCHEMA_TABLES
         .iter()
         .map(|table| schema_table_before_source_identity(table))
+        .collect()
+}
+
+fn schema_tables_before_home_projection() -> Vec<&'static str> {
+    SCHEMA_TABLES
+        .iter()
+        .copied()
+        .filter(|table| *table != "home_projection_state")
         .collect()
 }
 
@@ -764,6 +795,15 @@ fn migrate_to_artwork_owner_schema(store: &Store) -> StoreResult<()> {
     Ok(())
 }
 
+fn migrate_to_home_projection_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column(
+        "sync_state",
+        "sync_input_revision",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    store.create_home_projection_schema()
+}
+
 fn collapse_provider_provenance_duplicates(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
@@ -979,7 +1019,12 @@ impl Store {
                 PRE_ARTWORK_OWNER_SCHEMA_TABLES,
                 PRE_ARTWORK_OWNER_SCHEMA_COLUMNS,
             )? && self
-                .schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
+                .schema_has_required_parts(&[], PRE_HOME_PROJECTION_SCHEMA_COLUMNS)?),
+            ARTWORK_OWNER_SCHEMA_VERSION => Ok(self.schema_has_required_parts(
+                &schema_tables_before_home_projection(),
+                SUPPORTED_SCHEMA_COLUMNS,
+            )? && self
+                .schema_has_required_parts(&[], PRE_HOME_PROJECTION_SCHEMA_COLUMNS)?),
             SCHEMA_VERSION => Ok(self
                 .schema_has_required_parts(SCHEMA_TABLES, SUPPORTED_SCHEMA_COLUMNS)?
                 && self.schema_has_required_parts(&[], CURRENT_SCHEMA_COLUMNS)?),
@@ -1156,6 +1201,7 @@ impl Store {
                 source_id TEXT PRIMARY KEY REFERENCES sources(source_id) ON DELETE CASCADE,
                 generation INTEGER NOT NULL DEFAULT 0,
                 cache_revision INTEGER NOT NULL DEFAULT 0,
+                sync_input_revision INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'idle',
                 last_started_at TEXT,
                 last_completed_at TEXT,
@@ -1447,6 +1493,12 @@ impl Store {
         self.create_favorite_override_schema()?;
         self.ensure_column("genres", "duration_seconds", "INTEGER NOT NULL DEFAULT 0")?;
         self.ensure_column("sync_state", "cache_revision", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column(
+            "sync_state",
+            "sync_input_revision",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        self.create_home_projection_schema()?;
         self.ensure_column("sync_state", "last_all_completed_at", "TEXT")?;
         self.create_entity_identity_schema()?;
         self.connection
@@ -2269,7 +2321,8 @@ impl Store {
         self.connection
             .query_row(
                 "
-                SELECT source_id, generation, cache_revision, status, last_started_at,
+                SELECT source_id, generation, cache_revision, sync_input_revision,
+                       status, last_started_at,
                        last_completed_at, last_all_completed_at, last_error
                 FROM sync_state
                 WHERE source_id = ?1
@@ -2280,11 +2333,12 @@ impl Store {
                         source_id: SourceId::new(row.get::<_, String>(0)?),
                         generation: row.get(1)?,
                         cache_revision: row.get(2)?,
-                        status: row.get(3)?,
-                        last_started_at: row.get(4)?,
-                        last_completed_at: row.get(5)?,
-                        last_all_completed_at: row.get(6)?,
-                        last_error: row.get(7)?,
+                        sync_input_revision: row.get(3)?,
+                        status: row.get(4)?,
+                        last_started_at: row.get(5)?,
+                        last_completed_at: row.get(6)?,
+                        last_all_completed_at: row.get(7)?,
+                        last_error: row.get(8)?,
                     })
                 },
             )
@@ -2326,6 +2380,15 @@ impl Store {
         self.connection
             .query_row(
                 "SELECT cache_revision FROM sync_state WHERE source_id = ?1",
+                params![source_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(StoreError::from)
+    }
+    pub fn source_sync_input_revision(&self, source_id: &SourceId) -> StoreResult<i64> {
+        self.connection
+            .query_row(
+                "SELECT sync_input_revision FROM sync_state WHERE source_id = ?1",
                 params![source_id.as_str()],
                 |row| row.get::<_, i64>(0),
             )
@@ -2416,6 +2479,22 @@ impl Store {
             })
         }
     }
+    pub(super) fn require_source_sync_input_revision(
+        &self,
+        source_id: &SourceId,
+        revision: i64,
+    ) -> StoreResult<()> {
+        let current = self.source_sync_input_revision(source_id)?;
+        if current == revision {
+            Ok(())
+        } else {
+            Err(StoreError::StaleCacheRevision {
+                source_id: source_id.as_str().to_string(),
+                revision,
+                current,
+            })
+        }
+    }
     pub(super) fn advance_source_cache_revision(
         &self,
         source_id: &SourceId,
@@ -2424,9 +2503,32 @@ impl Store {
         let updated = self.connection.execute(
             "
             UPDATE sync_state
-            SET cache_revision = cache_revision + 1
+            SET cache_revision = cache_revision + 1,
+                sync_input_revision = sync_input_revision + 1
             WHERE source_id = ?1 AND cache_revision = ?2
             ",
+            params![source_id.as_str(), expected],
+        )?;
+        if updated == 1 {
+            Ok(expected + 1)
+        } else {
+            self.require_source_cache_revision(source_id, expected)?;
+            Err(StoreError::StaleCacheRevision {
+                source_id: source_id.as_str().to_string(),
+                revision: expected,
+                current: expected,
+            })
+        }
+    }
+    pub(super) fn advance_home_cache_revision(
+        &self,
+        source_id: &SourceId,
+        expected: i64,
+    ) -> StoreResult<i64> {
+        let updated = self.connection.execute(
+            "UPDATE sync_state
+             SET cache_revision = cache_revision + 1
+             WHERE source_id = ?1 AND cache_revision = ?2",
             params![source_id.as_str(), expected],
         )?;
         if updated == 1 {

@@ -44,8 +44,16 @@ pub enum PreparedRead<T> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HomeOverview {
     pub sections: Vec<HomeSection>,
-    pub genres: Vec<Genre>,
-    pub albums: Vec<Album>,
+    pub genres: Vec<HomeGenre>,
+    pub showcase_fallback: Option<Album>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HomeGenre {
+    pub id: GenreId,
+    pub name: String,
+    pub album_count: u32,
+    pub track_count: u32,
 }
 
 impl Store {
@@ -53,15 +61,8 @@ impl Store {
         &self,
         source_id: &SourceId,
         genre_limit: usize,
-        album_limit: usize,
     ) -> StoreResult<HomeOverview> {
-        self.read_snapshot(|store| {
-            Ok(HomeOverview {
-                sections: store.load_home_sections(source_id)?,
-                genres: store.load_genres(source_id, 0, genre_limit)?.items,
-                albums: store.load_albums(source_id, 0, album_limit)?.items,
-            })
-        })
+        self.read_snapshot(|store| store.load_home_overview_projection(source_id, genre_limit))
     }
 }
 
@@ -827,15 +828,9 @@ impl ActiveLibraryQuery {
             .map_err(|error| error.to_string())
     }
 
-    pub fn home_overview(
-        &self,
-        genre_limit: usize,
-        album_limit: usize,
-    ) -> Result<HomeOverview, String> {
+    pub fn home_overview(&self, genre_limit: usize) -> Result<HomeOverview, String> {
         self.store
-            .with_fast_read(|store| {
-                store.load_home_overview(&self.source_id, genre_limit, album_limit)
-            })
+            .with_fast_read(|store| store.load_home_overview(&self.source_id, genre_limit))
             .map_err(|error| error.to_string())
     }
 

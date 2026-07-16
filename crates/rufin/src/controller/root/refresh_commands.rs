@@ -26,34 +26,20 @@ impl LibraryCommands {
     pub fn refresh_home_section_for_active(&self, source_id: SourceId, kind: HomeSectionKind) {
         self.start_home_refresh(source_id, HomeRefreshTarget::Section(kind));
     }
-    pub fn prefetch_explore_for_active(&self, source_id: SourceId) {
-        self.start_explore_prefetch(source_id);
-    }
     pub fn save_explore_projection_for_active(&self, source_id: SourceId, section: HomeSection) {
         if section.kind != HomeSectionKind::Explore {
             return;
         }
-        if selected_active_source(&self.active_source, &source_id).is_err() {
+        let Ok(active) = selected_active_source(&self.active_source, &source_id) else {
             return;
-        }
+        };
         start_home_promotion(
             self.store.clone(),
             self.library_events.clone(),
+            Arc::clone(&self.active_source),
+            active,
             source_id,
             section,
-        );
-    }
-    pub(in crate::controller) fn start_explore_prefetch(&self, source_id: SourceId) {
-        start_explore_prefetch_thread(
-            ExplorePrefetchContext {
-                store: self.store.clone(),
-                runtime: Arc::clone(&self.runtime),
-                active_source: Arc::clone(&self.active_source),
-                secrets: Arc::clone(&self.secrets),
-                library_events: self.library_events.clone(),
-                explore_prefetch_in_flight: self.explore_prefetch_in_flight.clone(),
-            },
-            source_id,
         );
     }
     pub(in crate::controller) fn start_home_refresh(

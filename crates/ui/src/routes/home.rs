@@ -13,8 +13,8 @@ use crate::shell::Shell;
 use crate::shell::cover::presentation::{add_album_seed_gradient_class, next_home_showcase_seed};
 use crate::shell::route::MountedRoute;
 use ::library::{
-    ActiveLibraryQuery, Album, Genre, HomeBlockKind, HomeOverview, HomeSection, HomeSectionKind,
-    Track,
+    ActiveLibraryQuery, Album, HomeBlockKind, HomeGenre, HomeOverview, HomeSection,
+    HomeSectionKind, Track,
 };
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -35,7 +35,6 @@ use super::route_layout::{
 };
 
 pub(crate) const HOME_GENRE_LIMIT: usize = 12;
-pub(crate) const HOME_SHOWCASE_ALBUM_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum HomeSectionContent {
@@ -51,6 +50,17 @@ fn upsert_home_section(sections: &mut Vec<HomeSection>, section: HomeSection) {
         *current = section;
     } else {
         sections.push(section);
+    }
+}
+
+fn replace_home_section_projection(
+    sections: &mut Vec<HomeSection>,
+    kind: HomeSectionKind,
+    section: Option<HomeSection>,
+) {
+    match section {
+        Some(section) => upsert_home_section(sections, section),
+        None => sections.retain(|section| section.kind != kind),
     }
 }
 
@@ -342,8 +352,8 @@ struct HomeRouteProjection {
     shell: Rc<Shell>,
     query: ActiveLibraryQuery,
     sections: Rc<RefCell<Vec<HomeSection>>>,
-    genres: Rc<RefCell<Vec<Genre>>>,
-    albums: Rc<RefCell<Vec<Album>>>,
+    genres: Rc<RefCell<Vec<HomeGenre>>>,
+    showcase_fallback: Rc<RefCell<Option<Album>>>,
     section_views: Rc<RefCell<HashMap<HomeSectionKind, MountedHomeSection>>>,
     section_slots: Rc<HashMap<HomeSectionKind, gtk::Box>>,
     content: gtk::Box,
@@ -358,25 +368,22 @@ impl HomeRouteProjection {
     fn replace(&self, data: HomeOverview) {
         if *self.sections.borrow() == data.sections
             && *self.genres.borrow() == data.genres
-            && *self.albums.borrow() == data.albums
+            && *self.showcase_fallback.borrow() == data.showcase_fallback
         {
             self.prepare_next_hidden_projection();
             return;
         }
         *self.sections.borrow_mut() = data.sections;
         *self.genres.borrow_mut() = data.genres;
-        *self.albums.borrow_mut() = data.albums;
+        *self.showcase_fallback.borrow_mut() = data.showcase_fallback;
         self.update_mounted_models();
         self.apply_block_settings();
         self.prepare_next_hidden_projection();
     }
 
     fn prepare_next_hidden_projection(&self) {
-        self.shell.prepare_next_home_explore_rotation(
-            self.query.source_id(),
-            &self.sections.borrow(),
-            &self.albums.borrow(),
-        );
+        self.shell
+            .prepare_next_home_explore_rotation(self.query.source_id(), &self.sections.borrow());
     }
 
     fn update_mounted_models(&self) {
@@ -410,26 +417,8 @@ impl HomeRouteProjection {
             }
             visible |= section.is_some();
         }
-        if let Some(slot) = &self.showcase_slot {
-            while let Some(child) = slot.first_child() {
-                slot.remove(&child);
-            }
-            let showcase = blocks.contains(&HomeBlockKind::Showcase).then(|| {
-                self.shell.home_showcase_block(
-                    &sections,
-                    &self.albums.borrow(),
-                    self.shell.library.home_showcase_seed.get(),
-                    &self.query,
-                )
-            });
-            if let Some(showcase) = showcase.flatten() {
-                slot.append(&showcase);
-                slot.set_visible(true);
-                visible = true;
-            } else {
-                slot.set_visible(false);
-            }
-        }
+        drop(section_views);
+        visible |= self.update_showcase(&blocks);
         if let Some(slot) = &self.genres_slot {
             while let Some(child) = slot.first_child() {
                 slot.remove(&child);
@@ -446,6 +435,76 @@ impl HomeRouteProjection {
             }
         }
         self.empty.set_visible(!visible);
+    }
+
+    fn update_showcase(&self, blocks: &[HomeBlockKind]) -> bool {
+        if let Some(slot) = &self.showcase_slot {
+            while let Some(child) = slot.first_child() {
+                slot.remove(&child);
+            }
+            let sections = self.sections.borrow();
+            let showcase = blocks.contains(&HomeBlockKind::Showcase).then(|| {
+                self.shell.home_showcase_block(
+                    &sections,
+                    self.showcase_fallback.borrow().as_ref(),
+                    self.shell.library.home_showcase_seed.get(),
+                    &self.query,
+                )
+            });
+            if let Some(showcase) = showcase.flatten() {
+                slot.append(&showcase);
+                slot.set_visible(true);
+                return true;
+            } else {
+                slot.set_visible(false);
+            }
+        }
+        false
+    }
+
+    fn replace_section(
+        &self,
+        kind: HomeSectionKind,
+        section: Option<HomeSection>,
+        showcase_fallback: Option<Album>,
+    ) {
+        {
+            let mut sections = self.sections.borrow_mut();
+            replace_home_section_projection(&mut sections, kind, section);
+        }
+        *self.showcase_fallback.borrow_mut() = showcase_fallback;
+
+        let blocks = self.shell.settings.current.borrow().home_blocks.clone();
+        if let Some(slot) = self.section_slots.get(&kind) {
+            let enabled = HomeBlockKind::all()
+                .into_iter()
+                .find(|block| block.section_kind() == Some(kind))
+                .is_some_and(|block| blocks.contains(&block));
+            let sections = self.sections.borrow();
+            let section = enabled
+                .then(|| sections.iter().find(|section| section.kind == kind))
+                .flatten();
+            let mut section_views = self.section_views.borrow_mut();
+            if let Some(section) = section {
+                let view = section_views.entry(kind).or_insert_with(|| {
+                    let view = self.shell.mounted_home_section(
+                        kind,
+                        None,
+                        &self.query,
+                        Rc::clone(&self.sections),
+                    );
+                    slot.append(&view.root);
+                    view
+                });
+                view.replace(Some(section));
+            } else if let Some(view) = section_views.remove(&kind) {
+                view.replace(None);
+                slot.remove(&view.root);
+            }
+        }
+        self.update_showcase(&blocks);
+        self.apply_block_settings();
+        self.prepare_next_hidden_projection();
     }
 
     fn apply_block_settings(&self) {
@@ -500,21 +559,14 @@ impl HomeRouteProjection {
 
 pub(crate) fn showcase_album(
     home_sections: &[HomeSection],
-    albums: &[Album],
+    fallback: Option<&Album>,
     seed: u64,
 ) -> Option<Album> {
-    let explore_first_id = home_sections
-        .iter()
-        .find(|section| section.kind == HomeSectionKind::Explore)
-        .and_then(|section| section.albums.first())
-        .map(|album| album.id.clone());
-
     let mut seen = HashSet::new();
     let section_candidates = home_sections
         .iter()
         .filter(|section| section.kind != HomeSectionKind::Explore)
         .flat_map(|section| section.albums.iter())
-        .filter(|album| explore_first_id.as_ref() != Some(&album.id))
         .filter(|album| seen.insert(album.id.clone()))
         .collect::<Vec<_>>();
 
@@ -524,21 +576,12 @@ pub(crate) fn showcase_album(
             .map(|album| (*album).clone());
     }
 
-    if !albums.is_empty() {
-        let mut album_index = (seed as usize) % albums.len();
-        if explore_first_id.as_ref() == Some(&albums[album_index].id) {
-            album_index = (album_index + 1) % albums.len();
-        }
-        if explore_first_id.as_ref() != Some(&albums[album_index].id) {
-            return albums.get(album_index).cloned();
-        }
-    }
-
     home_sections
         .iter()
         .find(|section| section.kind == HomeSectionKind::Explore)
         .and_then(|section| section.albums.first())
         .cloned()
+        .or_else(|| fallback.cloned())
 }
 
 impl Shell {
@@ -562,7 +605,7 @@ impl Shell {
 
         let sections = Rc::new(RefCell::new(home_data.sections));
         let genres = Rc::new(RefCell::new(home_data.genres));
-        let albums = Rc::new(RefCell::new(home_data.albums));
+        let showcase_fallback = Rc::new(RefCell::new(home_data.showcase_fallback));
         let section_views = HashMap::new();
         let mut section_slots = HashMap::new();
         let mut showcase_slot = None;
@@ -599,7 +642,7 @@ impl Shell {
             query: library_query.clone(),
             sections,
             genres,
-            albums,
+            showcase_fallback,
             section_views: Rc::new(RefCell::new(section_views)),
             section_slots: Rc::new(section_slots),
             content,
@@ -642,7 +685,7 @@ impl Shell {
         };
         let load_query = library_query;
         let load: MountedRefreshLoader<Result<HomeOverview, String>> =
-            Arc::new(move || load_query.home_overview(HOME_GENRE_LIMIT, HOME_SHOWCASE_ALBUM_LIMIT));
+            Arc::new(move || load_query.home_overview(HOME_GENRE_LIMIT));
         let refresh = MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Home");
         let affected_by = Rc::new(home_projection_overlay_invalidated_by);
         let apply_delta = {
@@ -653,23 +696,31 @@ impl Shell {
                 refresh.request();
             })
         };
+        let resume_projection = projection.clone();
         let resume = Rc::new(move || {
-            projection.reconcile_block_settings();
+            resume_projection.reconcile_block_settings();
         });
+        let apply_home_section = {
+            let projection = projection.clone();
+            Rc::new(move |kind, section, showcase_fallback| {
+                projection.replace_section(kind, section, showcase_fallback)
+            })
+        };
         MountedRoute::new(widget, affected_by, apply_delta, resume)
+            .with_home_section_applier(apply_home_section)
     }
 
     fn home_showcase_block(
         self: &Rc<Self>,
         home_sections: &[HomeSection],
-        albums: &[Album],
+        showcase_fallback: Option<&Album>,
         seed: u64,
         query: &ActiveLibraryQuery,
     ) -> Option<gtk::Widget> {
         let width = home_album_content_width(self);
         let mode = home_showcase_mode(width);
         let cover_size = home_showcase_cover_size(width);
-        let album = showcase_album(home_sections, albums, seed)?;
+        let album = showcase_album(home_sections, showcase_fallback, seed)?;
 
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
@@ -800,7 +851,7 @@ impl Shell {
         row
     }
 
-    fn home_genres_block(self: &Rc<Self>, genres: &[Genre]) -> Option<gtk::Widget> {
+    fn home_genres_block(self: &Rc<Self>, genres: &[HomeGenre]) -> Option<gtk::Widget> {
         if genres.is_empty() {
             return None;
         }
@@ -829,7 +880,7 @@ impl Shell {
         Some(section.upcast())
     }
 
-    fn home_genre_chip(self: &Rc<Self>, genre: &Genre) -> gtk::Widget {
+    fn home_genre_chip(self: &Rc<Self>, genre: &HomeGenre) -> gtk::Widget {
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("home-genre-chip");
@@ -950,9 +1001,6 @@ impl Shell {
         refresh.connect_clicked(move |_| {
             refresh_view.reset_page();
             library.refresh_home_section(source_id.clone(), section_kind);
-            if section_kind == HomeSectionKind::Explore {
-                library.prefetch_explore(source_id.clone());
-            }
         });
         view
     }
@@ -1017,7 +1065,6 @@ impl Shell {
         &self,
         source_id: &::library::SourceId,
         sections: &[HomeSection],
-        albums: &[Album],
     ) {
         let mut prepared = self.library.prepared_home_explore.borrow_mut();
         if prepared.as_ref().is_some_and(|prepared| {
@@ -1026,14 +1073,13 @@ impl Shell {
         }) {
             return;
         }
-        *prepared =
-            cached_explore_section(sections, albums, self.library.next_home_showcase_seed.get())
-                .map(|section| {
-                    PreparedHomeExplore::Rotation(SourceHomeSection {
-                        source_id: source_id.clone(),
-                        section,
-                    })
-                });
+        *prepared = cached_explore_section(sections, self.library.next_home_showcase_seed.get())
+            .map(|section| {
+                PreparedHomeExplore::Rotation(SourceHomeSection {
+                    source_id: source_id.clone(),
+                    section,
+                })
+            });
     }
 
     pub(crate) fn remember_prefetched_home_explore(
@@ -1108,11 +1154,7 @@ fn home_transition_prepares_hidden_projection(previous: &Route, next: &Route) ->
     matches!(previous, Route::Home) && !matches!(next, Route::Home)
 }
 
-fn cached_explore_section(
-    home_sections: &[HomeSection],
-    albums: &[Album],
-    seed: u64,
-) -> Option<HomeSection> {
+fn cached_explore_section(home_sections: &[HomeSection], seed: u64) -> Option<HomeSection> {
     if let Some(section) = home_sections
         .iter()
         .find(|section| section.kind == HomeSectionKind::Explore)
@@ -1166,7 +1208,7 @@ fn cached_explore_section(
         });
     }
 
-    showcase_album(home_sections, albums, seed).map(|album| HomeSection {
+    showcase_album(home_sections, None, seed).map(|album| HomeSection {
         kind: HomeSectionKind::Explore,
         albums: vec![album],
         tracks: Vec::new(),
@@ -1193,7 +1235,8 @@ mod tests {
 
     use super::{
         home_projection_overlay_invalidated_by, home_promotion_matches,
-        home_transition_prepares_hidden_projection, overlay_source_home_section, showcase_album,
+        home_transition_prepares_hidden_projection, overlay_source_home_section,
+        replace_home_section_projection, showcase_album,
     };
     use crate::routes::SourceHomeSection;
     use crate::routes::route::Route;
@@ -1300,10 +1343,14 @@ mod tests {
 
     #[test]
     fn home_use_candidate() {
-        let albums = vec![album(1), album(2), album(3)];
+        let sections = vec![HomeSection {
+            kind: HomeSectionKind::NewlyAdded,
+            albums: vec![album(1), album(2), album(3)],
+            tracks: Vec::new(),
+        }];
 
-        let first = showcase_album(&[], &albums, 0).expect("first showcase album");
-        let second = showcase_album(&[], &albums, 1).expect("second showcase album");
+        let first = showcase_album(&sections, None, 0).expect("first showcase album");
+        let second = showcase_album(&sections, None, 1).expect("second showcase album");
 
         assert_eq!(first.id, AlbumId::fake(1));
         assert_eq!(second.id, AlbumId::fake(2));
@@ -1311,16 +1358,77 @@ mod tests {
 
     #[test]
     fn home_showcase_possible() {
-        let albums = vec![album(1), album(2)];
         let sections = vec![HomeSection {
             kind: HomeSectionKind::Explore,
             albums: vec![album(1)],
             tracks: Vec::new(),
         }];
 
-        let selected = showcase_album(&sections, &albums, 0).expect("showcase album");
+        let selected = showcase_album(&sections, None, 0).expect("showcase album");
 
-        assert_eq!(selected.id, AlbumId::fake(2));
+        assert_eq!(selected.id, AlbumId::fake(1));
+    }
+
+    #[test]
+    fn sparse_home_uses_its_fallback_showcase() {
+        let fallback = album(7);
+        let selected = showcase_album(&[], Some(&fallback), 0).expect("showcase fallback");
+
+        assert_eq!(selected.id, fallback.id);
+    }
+
+    #[test]
+    fn explore_refresh_does_not_rotate_showcase() {
+        let sections = vec![
+            HomeSection {
+                kind: HomeSectionKind::NewlyAdded,
+                albums: vec![album(1), album(2), album(3)],
+                tracks: Vec::new(),
+            },
+            HomeSection {
+                kind: HomeSectionKind::Explore,
+                albums: vec![album(1)],
+                tracks: Vec::new(),
+            },
+        ];
+        let before = showcase_album(&sections, None, 1).expect("showcase before refresh");
+        let mut refreshed = sections;
+        refreshed[1].albums = vec![album(2)];
+        let after = showcase_album(&refreshed, None, 1).expect("showcase after refresh");
+
+        assert_eq!(before.id, AlbumId::fake(2));
+        assert_eq!(after.id, before.id);
+    }
+
+    #[test]
+    fn exact_home_projection_preserves_other_sections() {
+        let mut sections = vec![
+            HomeSection {
+                kind: HomeSectionKind::Explore,
+                albums: vec![album(1)],
+                tracks: Vec::new(),
+            },
+            HomeSection {
+                kind: HomeSectionKind::NewlyAdded,
+                albums: vec![album(2)],
+                tracks: Vec::new(),
+            },
+        ];
+
+        replace_home_section_projection(
+            &mut sections,
+            HomeSectionKind::Explore,
+            Some(HomeSection {
+                kind: HomeSectionKind::Explore,
+                albums: vec![album(3)],
+                tracks: Vec::new(),
+            }),
+        );
+
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].albums[0].id, AlbumId::fake(3));
+        assert_eq!(sections[1].kind, HomeSectionKind::NewlyAdded);
+        assert_eq!(sections[1].albums[0].id, AlbumId::fake(2));
     }
 
     fn album(number: u32) -> Album {

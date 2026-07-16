@@ -1,3 +1,4 @@
+use super::home_projection::home_section_kind_mask;
 use super::identity::{
     upsert_album_entity_data_on_connection, upsert_artist_credit_entity_data_on_connection,
     upsert_artist_entity_data_on_connection, upsert_track_entity_data_on_connection,
@@ -364,25 +365,35 @@ impl Store {
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut changed = false;
+        let home_write_mask = self.home_write_mask(source_id)?;
         for kind in home_section_kinds() {
+            if home_write_mask & home_section_kind_mask(kind) != 0 {
+                continue;
+            }
             let before = self.load_home_membership_from("home_section_items", source_id, kind)?;
-            let after = sections
+            let section = sections
                 .iter()
                 .find(|section| section.kind == kind)
-                .map(home_membership)
-                .unwrap_or_default();
+                .cloned()
+                .unwrap_or(HomeSection {
+                    kind,
+                    albums: Vec::new(),
+                    tracks: Vec::new(),
+                });
+            let after = home_membership(&section);
             if before != after {
                 changed = true;
-                break;
+                self.upsert_home_section(source_id, &section, generation)?;
             }
         }
-        if !changed {
-            return Ok(LibraryDelta::default());
-        }
-        self.upsert_home_sections(source_id, sections, generation)?;
-        Ok(LibraryDelta {
-            home_changed: true,
-            ..LibraryDelta::default()
+        self.clear_home_write_mask(source_id)?;
+        Ok(if changed {
+            LibraryDelta {
+                home_changed: true,
+                ..LibraryDelta::default()
+            }
+        } else {
+            LibraryDelta::default()
         })
     }
 

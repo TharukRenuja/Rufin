@@ -129,7 +129,7 @@ pub struct SyncAttempt<'a> {
     pub store: &'a Store,
     pub source_id: &'a SourceId,
     pub generation: i64,
-    pub base_cache_revision: i64,
+    pub base_sync_input_revision: i64,
     pub cancellation: &'a CancellationToken,
     pub progress: &'a mut dyn FnMut(Progress),
 }
@@ -244,7 +244,7 @@ pub async fn sync_remote_changes(
     let commit = match attempt.store.commit_library_sync(
         attempt.source_id,
         attempt.generation,
-        attempt.base_cache_revision,
+        attempt.base_sync_input_revision,
         sync,
     ) {
         Ok(commit) => commit,
@@ -335,7 +335,7 @@ pub async fn sync_remote(
     let commit = attempt.store.commit_library_sync(
         attempt.source_id,
         attempt.generation,
-        attempt.base_cache_revision,
+        attempt.base_sync_input_revision,
         sync,
     )?;
     (attempt.progress)(Progress::Finished);
@@ -1001,12 +1001,12 @@ mod tests {
         progress: &mut dyn FnMut(Progress),
     ) -> SyncResult<SyncCommit> {
         let generation = store.begin_sync(source_id)?;
-        let base_cache_revision = store.source_cache_revision(source_id)?;
+        let base_sync_input_revision = store.source_sync_input_revision(source_id)?;
         let mut attempt = SyncAttempt {
             store,
             source_id,
             generation,
-            base_cache_revision,
+            base_sync_input_revision,
             cancellation,
             progress,
         };
@@ -1040,7 +1040,7 @@ mod tests {
                 store: &store,
                 source_id: &source_id,
                 generation,
-                base_cache_revision: revision,
+                base_sync_input_revision: revision,
                 cancellation: &cancellation,
                 progress: &mut report,
             };
@@ -1083,7 +1083,7 @@ mod tests {
             store: &store,
             source_id: &source_id,
             generation,
-            base_cache_revision: revision,
+            base_sync_input_revision: revision,
             cancellation: &cancellation,
             progress: &mut progress,
         };

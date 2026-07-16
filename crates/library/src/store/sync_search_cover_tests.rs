@@ -1,5 +1,25 @@
 use super::test_support::*;
 use crate::{ActivityOutcome, PlaybackCheckpointRecord, StoreError};
+use std::cell::Cell;
+
+thread_local! {
+    static HOME_READ_STATEMENTS: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+fn count_home_read_statement(event: rusqlite::trace::TraceEvent<'_>) {
+    let rusqlite::trace::TraceEvent::Stmt(_, sql) = event else {
+        return;
+    };
+    let sql = sql.trim_start();
+    if !sql.starts_with("SELECT") && !sql.starts_with("WITH") {
+        return;
+    }
+    HOME_READ_STATEMENTS.with(|count| {
+        if let Some(current) = count.get() {
+            count.set(Some(current + 1));
+        }
+    });
+}
 
 #[test]
 fn sync_hide_artist() {
@@ -426,6 +446,218 @@ fn sync_replace_section() {
             .expect("load cleared prefetched Explore")
             .is_none()
     );
+}
+
+#[test]
+fn home_overview_reads_all_sections_once() {
+    let store = Store::open_memory().expect("open store");
+    let saved = stored_source();
+    store.save_source(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+    let genre = genre(1, None);
+    let mut album = album_with_image(1);
+    album.genres = vec![genre.name.clone()];
+    let mut track = track(1, &album);
+    track.genres = album.genres.clone();
+    store
+        .upsert_genres(&saved.source_id, std::slice::from_ref(&genre), generation)
+        .expect("upsert genre");
+    store
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    let sections = [
+        (HomeSectionKind::Explore, true),
+        (HomeSectionKind::MostPlayed, false),
+        (HomeSectionKind::NewlyAdded, true),
+        (HomeSectionKind::RecentlyPlayed, false),
+        (HomeSectionKind::RecentlyReleased, true),
+    ]
+    .into_iter()
+    .map(|(kind, albums)| HomeSection {
+        kind,
+        albums: albums.then(|| album.clone()).into_iter().collect(),
+        tracks: (!albums).then(|| track.clone()).into_iter().collect(),
+    })
+    .collect::<Vec<_>>();
+    store
+        .upsert_home_sections(&saved.source_id, &sections, generation)
+        .expect("upsert Home sections");
+
+    store.connection.trace_v2(
+        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+        Some(count_home_read_statement),
+    );
+    HOME_READ_STATEMENTS.with(|count| count.set(Some(0)));
+    let overview = store
+        .load_home_overview_projection(&saved.source_id, 12)
+        .expect("load Home overview");
+    let statement_count = HOME_READ_STATEMENTS.with(|count| count.take().expect("statement count"));
+    store
+        .connection
+        .trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, None);
+
+    assert_eq!(overview.sections.len(), 5);
+    assert_eq!(overview.genres.len(), 1);
+    assert_eq!(statement_count, 11);
+
+    let mut album_without_direct_art = album;
+    album_without_direct_art.image_ref = None;
+    store
+        .upsert_albums(
+            &saved.source_id,
+            std::slice::from_ref(&album_without_direct_art),
+            generation,
+        )
+        .expect("remove direct album art");
+    store.connection.trace_v2(
+        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+        Some(count_home_read_statement),
+    );
+    HOME_READ_STATEMENTS.with(|count| count.set(Some(0)));
+    let overview = store
+        .load_home_overview_projection(&saved.source_id, 12)
+        .expect("load Home overview with album art fallback");
+    let fallback_statement_count =
+        HOME_READ_STATEMENTS.with(|count| count.take().expect("fallback statement count"));
+    store
+        .connection
+        .trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, None);
+
+    assert_eq!(overview.sections.len(), 5);
+    assert_eq!(fallback_statement_count, 12);
+}
+
+#[test]
+fn track_only_home_uses_its_album_as_showcase_fallback() {
+    let store = Store::open_memory().expect("open store");
+    let saved = stored_source();
+    store.save_source(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+    let album = album_with_image(1);
+    let track = track(1, &album);
+    store
+        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .upsert_home_sections(
+            &saved.source_id,
+            &[HomeSection {
+                kind: HomeSectionKind::MostPlayed,
+                albums: Vec::new(),
+                tracks: vec![track],
+            }],
+            generation,
+        )
+        .expect("upsert track-only Home");
+
+    let overview = store
+        .load_home_overview_projection(&saved.source_id, 12)
+        .expect("load track-only Home");
+
+    assert_eq!(overview.sections.len(), 1);
+    assert_eq!(
+        overview.showcase_fallback.expect("showcase fallback").id,
+        album.id
+    );
+}
+
+#[test]
+fn home_projection_survives_a_running_source_sync() {
+    let store = Store::open_memory().expect("open store");
+    let saved = stored_source();
+    store.save_source(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
+    let visible_album = album_with_image(1);
+    let hidden_album = album_with_image(2);
+    LibraryObservation {
+        albums: vec![visible_album.clone(), hidden_album.clone()],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source_id, generation)
+    .expect("seed mapped albums");
+    let visible = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![visible_album.clone()],
+        tracks: Vec::new(),
+    };
+    let hidden = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![hidden_album.clone()],
+        tracks: Vec::new(),
+    };
+    let sync_cache_revision = store
+        .source_cache_revision(&saved.source_id)
+        .expect("sync cache revision");
+    let sync_input_revision = store
+        .source_sync_input_revision(&saved.source_id)
+        .expect("sync input revision");
+
+    let sync_generation = store
+        .begin_sync(&saved.source_id)
+        .expect("begin source sync");
+    let visible_commit = store
+        .replace_home_section(&saved.source_id, &visible)
+        .expect("commit visible Explore during sync");
+    let hidden_commit = store
+        .save_home_section_prefetch(&saved.source_id, &hidden)
+        .expect("commit hidden Explore during sync");
+
+    let stale = store
+        .require_source_cache_revision(&saved.source_id, sync_cache_revision)
+        .expect_err("the old shared cache revision is stale");
+    assert!(matches!(
+        stale,
+        StoreError::StaleCacheRevision {
+            revision,
+            current,
+            ..
+        } if revision == sync_cache_revision && current == hidden_commit.commit.cache_revision
+    ));
+    assert_eq!(
+        store
+            .source_sync_input_revision(&saved.source_id)
+            .expect("unchanged sync input revision"),
+        sync_input_revision
+    );
+
+    let source_explore = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![hidden_album.clone()],
+        tracks: Vec::new(),
+    };
+    let sync_commit = LibraryObservation {
+        albums: vec![visible_album, hidden_album],
+        home_sections: vec![source_explore],
+        ..LibraryObservation::default()
+    }
+    .commit(&store, &saved.source_id, sync_generation)
+    .expect("commit source sync without overwriting Home");
+
+    assert_eq!(
+        visible_commit.commit.cache_revision,
+        sync_cache_revision + 1
+    );
+    assert_eq!(
+        hidden_commit.commit.cache_revision,
+        visible_commit.commit.cache_revision + 1
+    );
+    assert_eq!(
+        sync_commit.cache_revision,
+        hidden_commit.commit.cache_revision + 1
+    );
+    let visible_after_sync = store
+        .load_home_sections(&saved.source_id)
+        .expect("load visible Explore after sync");
+    assert_eq!(visible_after_sync[0].albums[0].id, visible.albums[0].id);
+    let committed_hidden = hidden_commit.section.expect("hidden Explore projection");
+    assert_eq!(committed_hidden.kind, hidden.kind);
+    assert_eq!(committed_hidden.albums[0].id, hidden.albums[0].id);
 }
 #[test]
 fn sync_remove_state() {

@@ -8,6 +8,13 @@ pub struct SyncCommit {
 }
 
 #[derive(Clone, Debug)]
+pub struct HomeSectionCommit {
+    pub commit: SyncCommit,
+    pub section: Option<HomeSection>,
+    pub showcase_fallback: Option<Album>,
+}
+
+#[derive(Clone, Debug)]
 pub struct LibrarySync {
     pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
@@ -66,6 +73,7 @@ pub(super) struct AggregateStats {
     genres: HashMap<String, (i64, i64, i64)>,
 }
 
+#[derive(Clone, Copy)]
 enum HomeWrite {
     Visible,
     Prefetch,
@@ -215,63 +223,44 @@ impl Store {
     pub fn replace_home_section(
         &self,
         source_id: &SourceId,
-        generation: i64,
-        base_cache_revision: i64,
         section: &HomeSection,
-    ) -> StoreResult<SyncCommit> {
-        self.commit_home_write(
-            source_id,
-            generation,
-            base_cache_revision,
-            section,
-            HomeWrite::Visible,
-        )
+    ) -> StoreResult<HomeSectionCommit> {
+        self.commit_home_write(source_id, section, HomeWrite::Visible)
     }
 
     pub fn save_home_section_prefetch(
         &self,
         source_id: &SourceId,
-        generation: i64,
-        base_cache_revision: i64,
         section: &HomeSection,
-    ) -> StoreResult<SyncCommit> {
-        self.commit_home_write(
-            source_id,
-            generation,
-            base_cache_revision,
-            section,
-            HomeWrite::Prefetch,
-        )
+    ) -> StoreResult<HomeSectionCommit> {
+        self.commit_home_write(source_id, section, HomeWrite::Prefetch)
     }
 
     pub fn promote_home_section(
         &self,
         source_id: &SourceId,
-        generation: i64,
-        base_cache_revision: i64,
         section: &HomeSection,
-    ) -> StoreResult<SyncCommit> {
-        self.commit_home_write(
-            source_id,
-            generation,
-            base_cache_revision,
-            section,
-            HomeWrite::Promote,
-        )
+    ) -> StoreResult<HomeSectionCommit> {
+        self.commit_home_write(source_id, section, HomeWrite::Promote)
     }
 
     fn commit_home_write(
         &self,
         source_id: &SourceId,
-        generation: i64,
-        base_cache_revision: i64,
         section: &HomeSection,
         write: HomeWrite,
-    ) -> StoreResult<SyncCommit> {
+    ) -> StoreResult<HomeSectionCommit> {
         self.write_batch(|_| {
-            self.require_current_sync_generation(source_id, generation)?;
-            self.require_source_cache_revision(source_id, base_cache_revision)?;
-            self.require_home_entities(source_id, section)?;
+            let state = self.sync_state(source_id)?;
+            let generation = state.generation;
+            let base_cache_revision = state.cache_revision;
+            let section = if matches!(write, HomeWrite::Promote) {
+                self.load_home_section_prefetch(source_id, section.kind)?
+                    .unwrap_or_else(|| section.clone())
+            } else {
+                section.clone()
+            };
+            self.require_home_entities(source_id, &section)?;
             let mut collector = LibraryDeltaCollector::new();
             match write {
                 HomeWrite::Visible | HomeWrite::Promote => {
@@ -280,9 +269,9 @@ impl Store {
                         source_id,
                         section.kind,
                     )?;
-                    let visible_changed = before != home_membership(section);
+                    let visible_changed = before != home_membership(&section);
                     if visible_changed {
-                        self.upsert_home_section(source_id, section, generation)?;
+                        self.upsert_home_section(source_id, &section, generation)?;
                         collector.merge(LibraryDelta {
                             home_changed: true,
                             ..LibraryDelta::default()
@@ -302,15 +291,18 @@ impl Store {
                         source_id,
                         section.kind,
                     )?;
-                    let changed = before != home_membership(section);
+                    let changed = before != home_membership(&section);
                     if changed {
-                        self.upsert_home_section_prefetch(source_id, section, generation)?;
+                        self.upsert_home_section_prefetch(source_id, &section, generation)?;
                     }
                 }
             }
+            if matches!(write, HomeWrite::Visible | HomeWrite::Promote) {
+                self.mark_home_write(source_id, section.kind)?;
+            }
             let delta = collector.finish();
             let cache_revision =
-                self.advance_source_cache_revision(source_id, base_cache_revision)?;
+                self.advance_home_cache_revision(source_id, base_cache_revision)?;
             self.connection.execute(
                 "
                 UPDATE sync_state
@@ -319,9 +311,24 @@ impl Store {
                 ",
                 params![source_id.as_str()],
             )?;
-            Ok(SyncCommit {
-                delta,
-                cache_revision,
+            let section = match write {
+                HomeWrite::Visible | HomeWrite::Promote => {
+                    self.load_home_section_inner(source_id, section.kind)?
+                }
+                HomeWrite::Prefetch => self.load_home_section_prefetch(source_id, section.kind)?,
+            };
+            let showcase_fallback = if matches!(write, HomeWrite::Visible | HomeWrite::Promote) {
+                self.load_home_showcase_fallback(source_id)?
+            } else {
+                None
+            };
+            Ok(HomeSectionCommit {
+                commit: SyncCommit {
+                    delta,
+                    cache_revision,
+                },
+                section,
+                showcase_fallback,
             })
         })
     }
@@ -372,14 +379,15 @@ impl Store {
         &self,
         source_id: &SourceId,
         generation: i64,
-        base_cache_revision: i64,
+        base_sync_input_revision: i64,
         complete_coverage: bool,
         apply: impl FnOnce() -> StoreResult<LibraryDelta>,
     ) -> StoreResult<SyncCommit> {
         // Save library rows, refresh aggregate facts, and advance the cache revision all at once.
         self.write_batch(|_| {
             self.require_current_sync_generation(source_id, generation)?;
-            self.require_source_cache_revision(source_id, base_cache_revision)?;
+            self.require_source_sync_input_revision(source_id, base_sync_input_revision)?;
+            let cache_revision = self.source_cache_revision(source_id)?;
             let aggregate_stats_before = complete_coverage
                 .then(|| load_aggregate_stats(self, source_id))
                 .transpose()?;
@@ -392,8 +400,7 @@ impl Store {
             } else if !delta.is_empty() {
                 self.refresh_finite_stats(source_id, &mut delta)?;
             }
-            let cache_revision =
-                self.advance_source_cache_revision(source_id, base_cache_revision)?;
+            let cache_revision = self.advance_source_cache_revision(source_id, cache_revision)?;
             self.connection.execute(
                 "
                 UPDATE sync_state
@@ -626,13 +633,17 @@ impl Store {
         &self,
         source_id: &SourceId,
         generation: i64,
-        base_cache_revision: i64,
+        base_sync_input_revision: i64,
         sync: LibrarySync,
     ) -> StoreResult<SyncCommit> {
         let complete = matches!(sync.coverage, SyncCoverage::All { .. });
-        self.finish_library_sync(source_id, generation, base_cache_revision, complete, || {
-            self.apply_library_sync(source_id, generation, sync)
-        })
+        self.finish_library_sync(
+            source_id,
+            generation,
+            base_sync_input_revision,
+            complete,
+            || self.apply_library_sync(source_id, generation, sync),
+        )
     }
 
     fn apply_library_sync(
@@ -1750,8 +1761,8 @@ mod tests {
         let committed = store
             .load_tracks(&saved.source_id, 0, 10)
             .expect("load committed tracks");
-        let base_cache_revision = store
-            .source_cache_revision(&saved.source_id)
+        let base_sync_input_revision = store
+            .source_sync_input_revision(&saved.source_id)
             .expect("load base revision");
         let generation = store.begin_sync(&saved.source_id).expect("begin sync");
         let replacement_album = album(2);
@@ -1768,7 +1779,7 @@ mod tests {
                 "metadata".to_string(),
             )],
         });
-        (generation, base_cache_revision, sync, committed)
+        (generation, base_sync_input_revision, sync, committed)
     }
 
     #[test]
@@ -2192,11 +2203,8 @@ mod tests {
             albums: Vec::new(),
             tracks: vec![track],
         };
-        let revision = store
-            .source_cache_revision(&saved.source_id)
-            .expect("cache revision");
         store
-            .replace_home_section(&saved.source_id, generation, revision, &section)
+            .replace_home_section(&saved.source_id, &section)
             .expect("save Home");
         let folder = MusicFolder {
             id: MusicFolderId::new("other-folder"),
@@ -2214,15 +2222,11 @@ mod tests {
                 .expect("filtered Home")
                 .is_empty()
         );
-        let revision = store
-            .source_cache_revision(&saved.source_id)
-            .expect("cache revision");
-
         let commit = store
-            .replace_home_section(&saved.source_id, generation, revision, &section)
+            .replace_home_section(&saved.source_id, &section)
             .expect("save identical Home");
 
-        assert!(commit.delta.is_empty());
+        assert!(commit.commit.delta.is_empty());
     }
 
     #[test]
@@ -2540,15 +2544,15 @@ mod tests {
         let cached_album = album(1);
         let cached_track = track(1, &cached_album);
         let generation = store.begin_sync(&saved.source_id).expect("begin sync");
-        let base_cache_revision = store
-            .source_cache_revision(&saved.source_id)
+        let base_sync_input_revision = store
+            .source_sync_input_revision(&saved.source_id)
             .expect("cache revision");
 
         let committed = store
             .commit_local_library_delta(
                 &saved.source_id,
                 generation,
-                base_cache_revision,
+                base_sync_input_revision,
                 true,
                 LocalLibraryDelta {
                     tracks: vec![cached_track.clone()],

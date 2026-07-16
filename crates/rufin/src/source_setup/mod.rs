@@ -7,7 +7,7 @@ mod active;
 pub(crate) use active::*;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -912,6 +912,7 @@ fn build_local_active_source(
     let home_section = cached_home_section_loader(identity.id.clone());
     Arc::new(ActiveSource {
         identity,
+        home_writes: Mutex::new(()),
         sync,
         freshness: Some(freshness),
         home_section,
@@ -963,6 +964,7 @@ fn build_jellyfin_active_source(
     let home_section = native_home_section_loader(source.clone());
     Arc::new(ActiveSource {
         identity,
+        home_writes: Mutex::new(()),
         sync,
         freshness: Some(freshness),
         home_section,
@@ -1023,6 +1025,7 @@ fn build_subsonic_active_source(source: SubsonicSource) -> Arc<ActiveSource> {
     let home_section = native_home_section_loader(source.clone());
     Arc::new(ActiveSource {
         identity,
+        home_writes: Mutex::new(()),
         sync,
         freshness: Some(freshness),
         home_section,
