@@ -1,11 +1,10 @@
 use crate::play_context::{
     ArtistTrackScope, MaterializedPlayContext, PlayContext, PlayContextAnchor,
-    PlayContextDescriptor, PlayContextItem, PlayContextOrder, PlaylistSort, SearchSort,
-    TrackFilter,
+    PlayContextDescriptor, PlayContextItem, PlayContextOrder, PlaylistSort, TrackFilter,
 };
 
 use super::library_track_sort::track_order_by_sql;
-use super::sources::{collect_rows, fts_query, like_pattern, track_from_row_at};
+use super::sources::{collect_rows, like_pattern, track_from_row_at};
 use super::*;
 
 const MATERIALIZATION_PAGE_SIZE: usize = 500;
@@ -186,45 +185,15 @@ impl Store {
         order: &PlayContextOrder,
     ) -> StoreResult<ContextQuery> {
         let music_folder_id = descriptor_music_folder(descriptor);
-        let search_fts = match descriptor {
-            PlayContextDescriptor::Search { query, .. } => match fts_query(query) {
-                Some(query)
-                    if self.search_fts_has_tracks(source_id, &query, music_folder_id)? =>
-                {
-                    Some(query)
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        let mut query = if let Some(search_fts) = search_fts.as_ref() {
-            ContextQuery {
-                from: "library_fts f JOIN tracks t
-                       ON t.source_id = f.source_id AND t.track_id = f.item_id"
-                    .to_string(),
-                predicates: vec![
-                    "f.source_id = ?".to_string(),
-                    "f.item_type = 'track'".to_string(),
-                    "library_fts MATCH ?".to_string(),
-                ],
-                params: vec![
-                    Value::Text(source_id.as_str().to_string()),
-                    Value::Text(search_fts.clone()),
-                ],
-                order_by: String::new(),
-                source_item_id: "NULL",
-            }
-        } else {
-            ContextQuery {
-                from: "tracks t".to_string(),
-                predicates: vec!["t.source_id = ?".to_string()],
-                params: vec![Value::Text(source_id.as_str().to_string())],
-                order_by: String::new(),
-                source_item_id: "NULL",
-            }
+        let mut query = ContextQuery {
+            from: "tracks t".to_string(),
+            predicates: vec!["t.source_id = ?".to_string()],
+            params: vec![Value::Text(source_id.as_str().to_string())],
+            order_by: String::new(),
+            source_item_id: "NULL",
         };
 
-        self.append_descriptor_filter(&mut query, descriptor, search_fts.is_some())?;
+        self.append_descriptor_filter(&mut query, descriptor)?;
         if let Some(folder_id) = music_folder_id {
             query.predicates.push(
                 "EXISTS (
@@ -250,11 +219,6 @@ impl Store {
                 append_track_filter(&mut query, filter);
                 displayed_track_order(*sort, *descending, *favorite_first)
             }
-            PlayContextOrder::Search { sort }
-                if matches!(descriptor, PlayContextDescriptor::Search { .. }) =>
-            {
-                search_order(*sort, search_fts.is_some())
-            }
             _ => return Err(StoreError::UnsupportedPlayContext),
         };
         Ok(query)
@@ -264,7 +228,6 @@ impl Store {
         &self,
         query: &mut ContextQuery,
         descriptor: &PlayContextDescriptor,
-        search_uses_fts: bool,
     ) -> StoreResult<()> {
         match descriptor {
             PlayContextDescriptor::Album { album_id, .. } => {
@@ -343,12 +306,7 @@ impl Store {
             PlayContextDescriptor::Favorites { .. } => query
                 .predicates
                 .push(format!("{} = 1", effective_track_favorite_sql("t"))),
-            PlayContextDescriptor::Search { query: text, .. } if !search_uses_fts => {
-                if let Some(pattern) = like_pattern(text) {
-                    append_text_filter(query, &pattern);
-                }
-            }
-            PlayContextDescriptor::Search { .. } | PlayContextDescriptor::Global { .. } => {}
+            PlayContextDescriptor::Global { .. } => {}
             PlayContextDescriptor::Playlist { .. }
             | PlayContextDescriptor::SmartPlaylist { .. }
             | PlayContextDescriptor::Folder { .. } => {
@@ -356,49 +314,6 @@ impl Store {
             }
         }
         Ok(())
-    }
-
-    fn search_fts_has_tracks(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        music_folder_id: Option<&MusicFolderId>,
-    ) -> StoreResult<bool> {
-        let folder_filter = if music_folder_id.is_some() {
-            "AND EXISTS (
-                SELECT 1 FROM track_music_folders tmf
-                WHERE tmf.source_id = t.source_id
-                  AND tmf.track_id = t.track_id
-                  AND tmf.folder_id = ?3
-            )"
-        } else {
-            ""
-        };
-        let sql = format!(
-            "SELECT EXISTS (
-                SELECT 1
-                FROM library_fts f
-                JOIN tracks t
-                  ON t.source_id = f.source_id AND t.track_id = f.item_id
-                WHERE f.source_id = ?1
-                  AND f.item_type = 'track'
-                  AND library_fts MATCH ?2
-                  {folder_filter}
-            )"
-        );
-        if let Some(folder_id) = music_folder_id {
-            self.connection
-                .query_row(
-                    &sql,
-                    params![source_id.as_str(), query, folder_id.as_str()],
-                    |row| row.get(0),
-                )
-                .map_err(StoreError::from)
-        } else {
-            self.connection
-                .query_row(&sql, params![source_id.as_str(), query], |row| row.get(0))
-                .map_err(StoreError::from)
-        }
     }
 
     fn materialize_query_pages(
@@ -476,9 +391,6 @@ fn descriptor_music_folder(descriptor: &PlayContextDescriptor) -> Option<&MusicF
         | PlayContextDescriptor::Favorites {
             music_folder_id, ..
         }
-        | PlayContextDescriptor::Search {
-            music_folder_id, ..
-        }
         | PlayContextDescriptor::Global {
             music_folder_id, ..
         } => music_folder_id.as_ref(),
@@ -548,17 +460,6 @@ fn playlist_order_by(sort: PlaylistSort, descending: bool) -> String {
         PlaylistSort::Album => "LOWER(t.album)",
     };
     format!("{primary} {direction}, pt.position {direction}, pt.entry_id {direction}")
-}
-
-fn search_order(sort: SearchSort, has_fts: bool) -> String {
-    match (sort, has_fts) {
-        (SearchSort::Relevance, true) => "bm25(library_fts), t.track_id".to_string(),
-        (SearchSort::Relevance | SearchSort::Title, false) | (SearchSort::Title, true) => {
-            "t.title COLLATE NOCASE, t.album COLLATE NOCASE,
-             t.disc_number, t.track_number, t.track_id"
-                .to_string()
-        }
-    }
 }
 
 fn track_columns() -> String {
@@ -641,15 +542,6 @@ mod tests {
                     music_folder_id: folder_id.clone(),
                 },
                 order: title_order(TrackFilter::default()),
-            },
-            PlayContext {
-                descriptor: PlayContextDescriptor::Search {
-                    query: "Track".to_string(),
-                    music_folder_id: folder_id.clone(),
-                },
-                order: PlayContextOrder::Search {
-                    sort: SearchSort::Relevance,
-                },
             },
         ];
         for context in contexts {

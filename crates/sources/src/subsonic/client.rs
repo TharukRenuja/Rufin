@@ -314,45 +314,6 @@ impl MusicSource for SubsonicSource {
             .await?;
         Ok(track_from_dto(self, body.song))
     }
-
-    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
-        let body: SearchBody = self
-            .get_json(
-                "search3",
-                &[
-                    ("query", query.to_string()),
-                    ("artistCount", "25".to_string()),
-                    ("artistOffset", "0".to_string()),
-                    ("albumCount", "25".to_string()),
-                    ("albumOffset", "0".to_string()),
-                    ("songCount", "50".to_string()),
-                    ("songOffset", "0".to_string()),
-                ],
-            )
-            .await?;
-        let result = body.search_result.unwrap_or_default();
-        Ok(SearchResults {
-            albums: result
-                .album
-                .unwrap_or_default()
-                .into_iter()
-                .map(|album| album_from_dto(self, album))
-                .collect(),
-            tracks: result
-                .song
-                .unwrap_or_default()
-                .into_iter()
-                .map(|song| track_from_dto(self, song))
-                .collect(),
-            artists: result
-                .artist
-                .unwrap_or_default()
-                .into_iter()
-                .map(|artist| artist_from_dto(self, artist))
-                .collect(),
-            playlists: Vec::new(),
-        })
-    }
 }
 
 #[async_trait(?Send)]

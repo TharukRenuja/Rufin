@@ -443,15 +443,6 @@ impl Store {
         self.attach_track_metadata(source_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
-    pub(super) fn search_artists(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<Vec<Artist>> {
-        self.search_artists_page(source_id, false, query, 0, limit, limit)
-            .map(|page| page.items)
-    }
 }
 impl Store {
     pub(super) fn search_artists_page(
@@ -555,15 +546,6 @@ impl Store {
         )?)?;
         self.attach_artist_representative_albums(source_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
-    }
-    pub(super) fn search_playlists(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<Vec<Playlist>> {
-        self.search_playlists_page(source_id, query, 0, limit, limit)
-            .map(|page| page.items)
     }
     pub(super) fn search_playlists_page(
         &self,

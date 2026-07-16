@@ -1436,31 +1436,6 @@ impl Store {
             Ok(deleted > 0)
         })
     }
-    pub fn search_library(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<SearchResults> {
-        self.read_snapshot(|store| store.search_library_inner(source_id, query, limit))
-    }
-    fn search_library_inner(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<SearchResults> {
-        let Some(query) = fts_query(query) else {
-            return Ok(SearchResults::default());
-        };
-        Ok(SearchResults {
-            albums: self.search_albums(source_id, &query, limit)?,
-            tracks: self.search_tracks(source_id, &query, limit)?,
-            artists: self.search_artists(source_id, &query, limit)?,
-            playlists: self.search_playlists(source_id, &query, limit)?,
-        })
-    }
-
     pub fn schema_version(&self) -> StoreResult<i64> {
         self.connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
@@ -1493,15 +1468,6 @@ impl Store {
             |row| row.get::<_, i64>(0),
         )?;
         Ok(exists == 1)
-    }
-    pub(super) fn search_albums(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<Vec<Album>> {
-        self.search_albums_page(source_id, query, 0, limit, limit)
-            .map(|page| page.items)
     }
     pub(super) fn search_albums_page(
         &self,
@@ -1835,16 +1801,6 @@ impl Store {
             append_collection_album_artwork(self, source_id, &mut artwork_by_id, rows)?;
         }
         Ok(artwork_by_id)
-    }
-
-    pub(super) fn search_tracks(
-        &self,
-        source_id: &SourceId,
-        query: &str,
-        limit: usize,
-    ) -> StoreResult<Vec<Track>> {
-        self.search_tracks_page(source_id, query, 0, limit, limit)
-            .map(|page| page.items)
     }
 }
 

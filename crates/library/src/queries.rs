@@ -2,9 +2,7 @@ use std::cmp::Ordering;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, Playlist, Track, TrackId,
-};
+use crate::{Album, AlbumId, ArtistId, Folder, FolderId, Genre, GenreId, Playlist, Track, TrackId};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PagedResponse<T> {
@@ -81,14 +79,6 @@ pub struct FolderDetail {
     pub parent_id: Option<FolderId>,
     pub folders: Vec<Folder>,
     pub tracks: Vec<Track>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SearchResults {
-    pub albums: Vec<Album>,
-    pub tracks: Vec<Track>,
-    pub artists: Vec<Artist>,
-    pub playlists: Vec<Playlist>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

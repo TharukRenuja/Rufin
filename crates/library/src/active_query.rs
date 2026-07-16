@@ -7,8 +7,8 @@ use tracing::warn;
 use crate::{
     Album, AlbumId, Artist, ArtistId, CachedArtistDetail, CachedGenreDetail, CachedMoodDetail,
     Genre, GenreId, HomeSection, Mood, MoodId, PagedResponse, Playlist, PlaylistDetail, PlaylistId,
-    SearchResults, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDetail, SmartPlaylistId,
-    SourceId, Store, StoreAccess, StoreResult, Track, TrackId, TrackSort,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDetail, SmartPlaylistId, SourceId, Store,
+    StoreAccess, StoreResult, Track, TrackId, TrackSort,
 };
 
 const SLOW_SMART_PLAYLIST_DETAIL_MS: u64 = 100;
@@ -837,12 +837,6 @@ impl ActiveLibraryQuery {
     pub fn favorite_tracks(&self) -> Result<Vec<Track>, String> {
         self.store
             .with_fast_read(|store| store.load_favorite_tracks(&self.source_id))
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn search(&self, query: &str) -> Result<SearchResults, String> {
-        self.store
-            .with_fast_read(|store| store.search_library(&self.source_id, query, 50))
             .map_err(|error| error.to_string())
     }
 }
