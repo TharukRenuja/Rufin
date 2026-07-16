@@ -15,8 +15,8 @@ use library::{
     Album, AlbumDetail, AlbumId, Artist, ArtistId, FavoriteItemId, Folder, FolderDetail, FolderId,
     Genre, GenreDetail, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef,
     MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
-    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SearchResults, SourceEntityKind, SourceId,
-    Track, TrackId, normalize_release_types,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SourceEntityKind, SourceId, Track, TrackId,
+    normalize_release_types,
 };
 use reqwest::{Client, Url};
 use serde::Deserialize;

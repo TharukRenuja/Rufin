@@ -656,27 +656,6 @@ pub(super) fn file_revision(path: &Path) -> Option<String> {
 fn path_revision_fallback(path: &Path) -> String {
     format!("path:{:016x}", stable_hash(&path.to_string_lossy()))
 }
-pub(super) fn normalize_search(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-pub(super) fn searchable_matches<'a>(
-    query: &str,
-    mut values: impl Iterator<Item = &'a String>,
-) -> bool {
-    values.any(|value| normalize_search(value).contains(query))
-}
 pub(super) fn decode_cover_id(item_id: &str) -> Option<String> {
     item_id
         .strip_prefix("local:cover:")

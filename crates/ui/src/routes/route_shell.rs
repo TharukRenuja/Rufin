@@ -621,15 +621,6 @@ fn set_library_command_button_content(
     button.set_child(Some(&content));
 }
 
-pub(crate) fn non_propagating_width_clip(child: gtk::Widget) -> gtk::Widget {
-    child.set_hexpand(true);
-    child.set_halign(gtk::Align::Fill);
-
-    let clip = non_propagating_width_scroller();
-    clip.set_child(Some(&child));
-    clip.upcast()
-}
-
 pub(crate) fn non_propagating_width_scroller() -> gtk::ScrolledWindow {
     let clip = gtk::ScrolledWindow::new();
     clip.add_css_class("non-propagating-width-clip");

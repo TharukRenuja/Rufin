@@ -47,10 +47,6 @@ pub enum PlayContextDescriptor {
     Favorites {
         music_folder_id: Option<MusicFolderId>,
     },
-    Search {
-        query: String,
-        music_folder_id: Option<MusicFolderId>,
-    },
     Global {
         music_folder_id: Option<MusicFolderId>,
     },
@@ -62,12 +58,6 @@ pub enum PlaylistSort {
     Title,
     Artist,
     Album,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SearchSort {
-    Relevance,
-    Title,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -89,9 +79,6 @@ pub enum PlayContextOrder {
         query: Option<String>,
         sort: PlaylistSort,
         descending: bool,
-    },
-    Search {
-        sort: SearchSort,
     },
     SmartPlaylist,
 }

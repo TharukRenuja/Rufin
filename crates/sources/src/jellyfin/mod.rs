@@ -22,7 +22,7 @@ use library::{
     Album, AlbumDetail, AlbumId, Artist, FavoriteItemId, Folder, FolderDetail, FolderId, Genre,
     GenreDetail, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef,
     MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
-    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SearchResults, SourceEntityKind, SourceId,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, SourceEntityKind, SourceId,
     SourceObjectMapping, Track, TrackId,
 };
 #[cfg(test)]

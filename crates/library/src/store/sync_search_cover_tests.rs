@@ -213,26 +213,6 @@ fn sync_cache_genre() {
     );
 }
 #[test]
-fn search_uses_local_fts_rows() {
-    let store = Store::open_memory().expect("open store");
-    let saved = stored_source();
-    store.save_source(&saved).expect("save server");
-    let generation = store.begin_sync(&saved.source_id).expect("begin sync");
-    let album = album(7);
-    let track = track(4, &album);
-    store
-        .upsert_albums(&saved.source_id, std::slice::from_ref(&album), generation)
-        .expect("upsert album");
-    store
-        .upsert_tracks(&saved.source_id, std::slice::from_ref(&track), generation)
-        .expect("upsert track");
-    let results = store
-        .search_library(&saved.source_id, "Album 7", 10)
-        .expect("search");
-    assert_eq!(results.albums, vec![album]);
-    assert_eq!(results.tracks[0].id, track.id);
-}
-#[test]
 fn sync_prune_success() {
     let store = Store::open_memory().expect("open store");
     let saved = stored_source();

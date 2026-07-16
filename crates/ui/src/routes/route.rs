@@ -2,15 +2,6 @@ use library::{AlbumId, ArtistId, FolderId, GenreId, MoodId, PlaylistId, SmartPla
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub(crate) enum SearchKind {
-    All,
-    Tracks,
-    Albums,
-    Artists,
-    Playlists,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub(crate) struct FolderPathItem {
     pub(crate) id: FolderId,
     pub(crate) name: String,
@@ -37,5 +28,4 @@ pub(crate) enum Route {
     PlaylistDetail(PlaylistId),
     SmartPlaylists,
     SmartPlaylistDetail(SmartPlaylistId),
-    Search { query: String, kind: SearchKind },
 }

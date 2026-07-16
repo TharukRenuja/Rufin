@@ -585,7 +585,6 @@ impl Shell {
             | Route::MoodDetail(_)
             | Route::PlaylistDetail(_) => unreachable!(),
             Route::Folders { path } => self.folders_route(path),
-            Route::Search { query, kind } => self.search_route(&query, kind),
         });
     }
 

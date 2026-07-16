@@ -829,9 +829,6 @@ msgstr ""
 msgid "No Servers Found"
 msgstr ""
 
-msgid "No cached results found."
-msgstr ""
-
 msgid "No cached server path yet"
 msgstr ""
 

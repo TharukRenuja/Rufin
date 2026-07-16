@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use library::{
     Album, AlbumDetail, AlbumId, Artist, FavoriteItemId, FolderDetail, FolderId, Genre,
     GenreDetail, GenreId, HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId,
-    PagedResponse, Playlist, PlaylistDetail, PlaylistId, PlaylistSnapshot, SearchResults,
-    SourceEntityKind, SourceObjectMapping, Track, TrackId,
+    PagedResponse, Playlist, PlaylistDetail, PlaylistId, PlaylistSnapshot, SourceEntityKind,
+    SourceObjectMapping, Track, TrackId,
 };
 use thiserror::Error;
 
@@ -141,7 +141,6 @@ pub trait MusicSource {
     async fn genres(&self) -> SourceResult<Vec<Genre>>;
     async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail>;
     async fn track(&self, track_id: &TrackId) -> SourceResult<Track>;
-    async fn search(&self, query: &str) -> SourceResult<SearchResults>;
 }
 
 #[async_trait(?Send)]

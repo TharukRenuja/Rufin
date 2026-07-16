@@ -7,8 +7,8 @@ use library::{
     Album, AlbumDetail, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderDetail, FolderId,
     Genre, GenreDetail, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef,
     LocalCueDependency, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
-    LocalManifestCoverKind, LocalManifestEntry, MusicFolderId, PagedResponse, SearchResults,
-    SourceId, Track, TrackId,
+    LocalManifestCoverKind, LocalManifestEntry, MusicFolderId, PagedResponse, SourceId, Track,
+    TrackId,
 };
 use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
@@ -480,47 +480,6 @@ impl MusicSource for LocalSource {
             .find(|track| track.id == *track_id)
             .cloned()
             .ok_or(SourceError::NotFound)
-    }
-
-    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
-        let query = normalize_search(query);
-        if query.is_empty() {
-            return Ok(SearchResults::default());
-        }
-        Ok(SearchResults {
-            albums: self
-                .library
-                .albums
-                .iter()
-                .filter(|album| {
-                    searchable_matches(&query, [&album.title, &album.artist].into_iter())
-                })
-                .take(50)
-                .cloned()
-                .collect(),
-            tracks: self
-                .library
-                .tracks
-                .iter()
-                .filter(|track| {
-                    searchable_matches(
-                        &query,
-                        [&track.title, &track.artist, &track.album].into_iter(),
-                    )
-                })
-                .take(50)
-                .cloned()
-                .collect(),
-            artists: self
-                .library
-                .artists
-                .iter()
-                .filter(|artist| searchable_matches(&query, [&artist.name].into_iter()))
-                .take(50)
-                .cloned()
-                .collect(),
-            playlists: Vec::new(),
-        })
     }
 }
 

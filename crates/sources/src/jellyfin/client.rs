@@ -285,35 +285,6 @@ impl MusicSource for JellyfinSource {
             .await
             .map(track_from_item)
     }
-
-    async fn search(&self, query: &str) -> SourceResult<SearchResults> {
-        if query.trim().is_empty() {
-            return Ok(SearchResults::default());
-        }
-
-        let mut url = endpoint(&self.base_url, "Items")?;
-        url.query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("Recursive", "true")
-            .append_pair("SearchTerm", query)
-            .append_pair("IncludeItemTypes", "Audio,MusicAlbum,MusicArtist,Playlist")
-            .append_pair("Limit", "100")
-            .append_pair("Fields", MIXED_ITEM_FIELDS);
-        let response = self.get_json::<ItemQueryResult>(url).await?;
-        let mut results = SearchResults::default();
-        for item in response.items {
-            match item.item_type.as_deref() {
-                Some("Audio") => results.tracks.push(track_from_item(item)),
-                Some("MusicAlbum") => results.albums.push(album_from_item(item)),
-                Some("MusicArtist") | Some("Artist") => {
-                    results.artists.push(artist_from_item(item))
-                }
-                Some("Playlist") => results.playlists.push(playlist_from_item(item)),
-                _ => {}
-            }
-        }
-        Ok(results)
-    }
 }
 
 #[async_trait(?Send)]

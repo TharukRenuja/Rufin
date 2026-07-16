@@ -725,7 +725,6 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
         Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => {
             Some(NAV_ROUTE_SMART_PLAYLISTS_CLASS)
         }
-        Route::Search { .. } => None,
     }
 }
 

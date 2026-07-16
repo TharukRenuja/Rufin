@@ -11,7 +11,7 @@ use crate::{
     HomeSection, HomeSectionKind, ImageRef, LocalCueDependency, LocalCueTrackSource,
     LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, Mood, MoodId,
     MusicFolder, MusicFolderId, PagedResponse, Playlist, PlaylistDetail, PlaylistEntry,
-    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, RandomTrackQuery, SearchResults, SmartPlaylist,
+    PlaylistEntryKey, PlaylistId, PlaylistSnapshot, RandomTrackQuery, SmartPlaylist,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
     SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistSortField, SourceEntityKind,

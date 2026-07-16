@@ -439,10 +439,6 @@ pub(super) struct SearchBody {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SearchResult {
     #[serde(default)]
-    pub(super) album: Option<Vec<SubsonicAlbum>>,
-    #[serde(default)]
-    pub(super) artist: Option<Vec<SubsonicArtist>>,
-    #[serde(default)]
     pub(super) song: Option<Vec<SubsonicSong>>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]

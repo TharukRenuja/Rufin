@@ -623,7 +623,7 @@ mod tests {
     use library::{
         Album, AlbumDetail, AlbumId, Genre, GenreDetail, GenreId, HomeSection, LocalFileFacts,
         LocalManifestEntry, MusicFolder, MusicFolderId, Playlist, PlaylistDetail, PlaylistId,
-        PlaylistSnapshot, SearchResults, Track, TrackId,
+        PlaylistSnapshot, Track, TrackId,
     };
     use library::{SourceLocalAccess, StoredSource};
     use sources::local::LocalManifestScan;
@@ -878,10 +878,6 @@ mod tests {
 
         async fn track(&self, _track_id: &TrackId) -> sources::SourceResult<Track> {
             Err(SourceError::NotFound)
-        }
-
-        async fn search(&self, _query: &str) -> sources::SourceResult<SearchResults> {
-            Ok(SearchResults::default())
         }
     }
 
