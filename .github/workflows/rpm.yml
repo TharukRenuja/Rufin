@@ -66,11 +66,13 @@ jobs:
           fi
           echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
 
-      - name: Verify release tag and architecture
+      - name: Verify release context
         run: |
           set -euo pipefail
           gpg --batch --import .github/release-gpg.pub
-          cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
+          fi
           test "$(uname -m)" = "${{ matrix.arch }}"
 
       - name: Build source and binary RPMs

@@ -60,7 +60,7 @@ fn generate_srpm(tag: &str, output: &Path) -> Result<()> {
     let vendor_name = format!("Rufin-{version}-vendor.tar.xz");
     refuse_existing_artifacts(&output, [&source_name, &vendor_name, "SHA256SUMS"])?;
 
-    verify_tag(&tag)?;
+    verify_tag(&root, &tag)?;
     verify_release_inputs(&root, &spec, &tag, &version)?;
 
     let temp = temp_path("rpm-srpm");
@@ -222,10 +222,23 @@ fn set_archive_permissions(_path: &Path) -> Result<()> {
     Err("RPM source generation is only supported on Unix".into())
 }
 
-fn verify_tag(tag: &str) -> Result<()> {
+fn verify_tag(root: &Path, tag: &str) -> Result<()> {
     run(
-        Command::new("git").args(["tag", "--verify", tag]),
+        Command::new("git")
+            .current_dir(root)
+            .args(["tag", "--verify", tag]),
         "git tag --verify",
+    )?;
+
+    let tag_commit = format!("{tag}^{{commit}}");
+    run(
+        Command::new("git").current_dir(root).args([
+            "merge-base",
+            "--is-ancestor",
+            &tag_commit,
+            "origin/main",
+        ]),
+        "release tag ancestry",
     )
 }
 
