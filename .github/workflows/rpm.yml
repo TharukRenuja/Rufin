@@ -19,27 +19,23 @@ permissions:
   contents: read
 
 concurrency:
-  group: rpm-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+  group: rpm-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  build:
-    name: Build RPM (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+  srpm:
+    name: Generate source RPM
+    runs-on: ubuntu-24.04
     container:
       image: registry.fedoraproject.org/fedora-minimal:44
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
 
     steps:
       - name: Install build tooling
-        run: dnf -y --setopt=install_weak_deps=False install cargo dnf5-plugins git gnupg2 rpm-build rpmlint
+        run: dnf -y --setopt=install_weak_deps=False install bash cargo git gnupg2 rpm-build
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -73,48 +69,25 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
             cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
           fi
-          test "$(uname -m)" = "${{ matrix.arch }}"
 
-      - name: Build source and binary RPMs
+      - name: Generate source RPM
         run: |
           set -euo pipefail
-          build_dir="dist/build-${{ matrix.arch }}"
-          cargo run --locked -p xtask -- generate rpm-srpm "$RELEASE_TAG" --output "$build_dir"
-          dnf -y --setopt=install_weak_deps=False builddep "$build_dir"/*.src.rpm
-          rpmbuild --rebuild "$build_dir"/*.src.rpm
+          cargo run --locked -p xtask -- generate rpm-srpm "$RELEASE_TAG" --output dist
 
-      - name: Verify and collect RPMs
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release
-          rpm_path="$(find /root/rpmbuild/RPMS/${{ matrix.arch }} -maxdepth 1 -name 'rufin-[0-9]*.${{ matrix.arch }}.rpm' -print -quit)"
-          test -n "$rpm_path"
-          cp "$rpm_path" dist/release/
-          if [[ "${{ matrix.arch }}" == "x86_64" ]]; then
-            cp dist/build-${{ matrix.arch }}/*.src.rpm dist/release/
-          fi
-          install_root="$(mktemp -d)"
-          rpm2cpio "$rpm_path" | cpio -idm --quiet -D "$install_root"
-          cargo run --locked -p xtask -- verify package-layout "$install_root" /usr
-          rpmlint "$rpm_path"
-          (
-            cd dist/release
-            sha256sum -- ./* > "SHA256SUMS-${{ matrix.arch }}"
-          )
-
-      - name: Upload workflow artifact
+      - name: Upload source RPM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: rpm-${{ matrix.arch }}
-          path: dist/release/*
+          name: rpm-srpm
+          path: dist/*.src.rpm
           if-no-files-found: error
           retention-days: 7
 
   copr:
     name: Build RPMs in COPR
     if: github.event_name == 'release' || inputs.upload_release_tag != ''
-    needs: build
-    runs-on: ubuntu-latest
+    needs: srpm
+    runs-on: ubuntu-24.04
     container:
       image: registry.fedoraproject.org/fedora-minimal:44
     permissions:
@@ -122,12 +95,21 @@ jobs:
 
     steps:
       - name: Install COPR client
-        run: dnf -y --setopt=install_weak_deps=False install copr-cli
+        run: dnf -y --setopt=install_weak_deps=False install bash cargo cpio copr-cli curl findutils gawk git gnupg2 grep rpm rpmlint
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          persist-credentials: false
+
+      - name: Trust checked-out repository
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Download source RPM
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: rpm-x86_64
+          name: rpm-srpm
           path: dist
 
       - name: Configure COPR
@@ -140,18 +122,85 @@ jobs:
           printf '%s\n' "$COPR_CONFIG" > "$HOME/.config/copr"
           chmod 600 "$HOME/.config/copr"
 
-      - name: Submit source RPM
+      - name: Trust COPR package key
+        run: |
+          set -euo pipefail
+          key_path="$(mktemp)"
+          curl -fsSL \
+            https://download.copr.fedorainfracloud.org/results/screwyy/rufin/pubkey.gpg \
+            -o "$key_path"
+          fingerprint="$(
+            gpg --show-keys --with-colons "$key_path" \
+              | awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test "$fingerprint" = 3C724C8F016C6D63890CFDBFD57ADF06B547821C
+          rpm --import "$key_path"
+
+      - name: Build source RPM in COPR
         run: |
           set -euo pipefail
           srpm="$(find dist -maxdepth 1 -name 'rufin-*.src.rpm' -print -quit)"
           test -n "$srpm"
-          copr-cli build screwyy/rufin "$srpm"
+          output="$(copr-cli build \
+            --nowait \
+            --chroot fedora-43-x86_64 \
+            --chroot fedora-43-aarch64 \
+            --chroot fedora-44-x86_64 \
+            --chroot fedora-44-aarch64 \
+            screwyy/rufin \
+            "$srpm")"
+          printf '%s\n' "$output"
+          build_line="$(printf '%s\n' "$output" | grep -E '^Created builds: [0-9]+$')"
+          build_id="${build_line#Created builds: }"
+          [[ "$build_id" =~ ^[0-9]+$ ]]
+          echo "COPR_BUILD_ID=$build_id" >> "$GITHUB_ENV"
+          copr-cli watch-build "$build_id"
+
+      - name: Collect Fedora 44 packages
+        run: |
+          set -euo pipefail
+          copr-cli download-build \
+            --rpms \
+            --dest dist/copr \
+            --chroot fedora-44-x86_64 \
+            --chroot fedora-44-aarch64 \
+            "$COPR_BUILD_ID"
+          mkdir -p dist/release
+          for arch in x86_64 aarch64; do
+            mapfile -t rpm_paths < <(
+              find "dist/copr/fedora-44-${arch}" \
+                -type f \
+                -name "rufin-[0-9]*.${arch}.rpm" \
+                -print
+            )
+            test "${#rpm_paths[@]}" -eq 1
+            rpm_path="${rpm_paths[0]}"
+            rpm -K "$rpm_path"
+            install_root="$(mktemp -d)"
+            rpm2cpio "$rpm_path" | cpio -idm --quiet -D "$install_root"
+            cargo run --locked -p xtask -- verify package-layout "$install_root" /usr
+            rpmlint "$rpm_path"
+            cp "$rpm_path" dist/release/
+          done
+          cp dist/*.src.rpm dist/release/
+          (
+            cd dist/release
+            sha256sum -- ./* > SHA256SUMS
+          )
+
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rpm-release
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
 
   release:
     name: Upload RPM release assets
     if: github.event_name == 'release' || inputs.upload_release_tag != ''
-    needs: build
-    runs-on: ubuntu-latest
+    needs: copr
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
@@ -162,9 +211,8 @@ jobs:
       - name: Download workflow artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: rpm-*
+          name: rpm-release
           path: dist
-          merge-multiple: true
 
       - name: Verify release assets
         run: |
@@ -172,12 +220,10 @@ jobs:
           test "$(find dist -maxdepth 1 -name 'rufin-*.x86_64.rpm' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -name 'rufin-*.aarch64.rpm' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -name 'rufin-*.src.rpm' | wc -l)" -eq 1
-          test -f dist/SHA256SUMS-x86_64
-          test -f dist/SHA256SUMS-aarch64
+          test -f dist/SHA256SUMS
           (
             cd dist
-            sha256sum --check SHA256SUMS-x86_64
-            sha256sum --check SHA256SUMS-aarch64
+            sha256sum --check SHA256SUMS
           )
 
       - name: Attest RPMs
@@ -194,6 +240,6 @@ jobs:
           gh release upload \
             "$RELEASE_TAG" \
             dist/*.rpm \
-            dist/SHA256SUMS-* \
+            dist/SHA256SUMS \
             --clobber \
             --repo "$GITHUB_REPOSITORY"
