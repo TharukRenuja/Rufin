@@ -125,6 +125,7 @@ jobs:
           runuser -u builder -- git -C "$GITHUB_WORKSPACE" worktree add --detach "$source_dir" "$RELEASE_TAG"
           runuser -u builder -- bash -lc "
             set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
             CARGO_TARGET_DIR=/home/builder/target \
               cargo run --locked -p xtask -- verify release-tag '$RELEASE_TAG'
@@ -152,6 +153,7 @@ jobs:
           install -d -o builder -g builder "$staging"
           runuser -u builder -- bash -lc "
             set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
             CARGO_TARGET_DIR='$target_dir' cargo build --frozen --release -p rufin
           "
@@ -181,6 +183,7 @@ jobs:
           done
 
           runuser -u builder -- bash -lc "
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
             CARGO_TARGET_DIR='$target_dir' \
               cargo run --locked -p xtask -- verify package-layout '$staging' /usr
@@ -224,6 +227,7 @@ jobs:
           chown -R builder:builder "$output"
           runuser -u builder -- bash -lc "
             set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$output'
             makepkg --cleanbuild --clean --noconfirm --noprogressbar
             makepkg --printsrcinfo > .SRCINFO
@@ -300,6 +304,7 @@ jobs:
         run: |
           runuser -u builder -- bash -lc "
             set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
             makepkg --cleanbuild --clean --noconfirm --noprogressbar
             makepkg --printsrcinfo > .SRCINFO
