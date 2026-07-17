@@ -12,6 +12,7 @@ use crate::process::{
 };
 
 const FLATHUB_MANIFEST: &str = "packaging/flatpak/io.github.screwys.Rufin.flathub.json";
+const RPM_SPEC: &str = "packaging/rpm/rufin.spec";
 
 pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     if args.is_empty() {
@@ -55,6 +56,7 @@ fn prepare_version(version: &str, notes: &str) -> Result<()> {
     };
 
     replace_workspace_version(version)?;
+    update_rpm_spec_version(version)?;
     run_command("cargo", ["generate-lockfile", "--offline"])?;
     update_metainfo_release(version, &release_date, notes)?;
     update_issue_template_versions(version)?;
@@ -237,6 +239,7 @@ fn create_tag(mut args: Vec<String>) -> Result<()> {
             "data/io.github.screwys.Rufin.metainfo.xml",
             ".github/ISSUE_TEMPLATE/bug_report.yml",
             "packaging/flatpak/cargo-sources.json",
+            RPM_SPEC,
         ])?;
         run_command(
             "git",
@@ -793,6 +796,34 @@ fn replace_workspace_version(version: &str) -> Result<()> {
     write_string(&path, &output)
 }
 
+fn update_rpm_spec_version(version: &str) -> Result<()> {
+    let path = PathBuf::from(RPM_SPEC);
+    let input = read_to_string(&path)?;
+    let output = update_rpm_spec_version_in(&input, version)?;
+    write_string(&path, &output)
+}
+
+fn update_rpm_spec_version_in(input: &str, version: &str) -> Result<String> {
+    let mut output = String::new();
+    let mut replaced = false;
+
+    for line in input.lines() {
+        if line.starts_with("Version:") {
+            output.push_str(&format!("Version:        {version}\n"));
+            replaced = true;
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+
+    if replaced {
+        Ok(output)
+    } else {
+        Err("missing RPM spec version".into())
+    }
+}
+
 fn replace_workspace_version_in_toml(input: &str, version: &str) -> Result<String> {
     let mut output = String::new();
     let mut in_workspace_package = false;
@@ -1085,4 +1116,21 @@ fn quoted_value(line: &str, key: &str) -> Option<String> {
     line.strip_prefix(&prefix)
         .and_then(|value| value.strip_suffix('"'))
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_rpm_spec_version_in;
+
+    #[test]
+    fn release_prepare_updates_rpm_spec_version() {
+        let input = "Name:           rufin\nVersion:        0.9.0\nRelease:        1%{?dist}\n";
+
+        let output = update_rpm_spec_version_in(input, "0.10.0").unwrap();
+
+        assert_eq!(
+            output,
+            "Name:           rufin\nVersion:        0.10.0\nRelease:        1%{?dist}\n"
+        );
+    }
 }

@@ -73,6 +73,13 @@
   </a>
 </p>
 
+## Fedora
+
+```bash
+sudo dnf copr enable screwyy/rufin
+sudo dnf install rufin
+```
+
 ## AUR
 
 - AUR package is built from this repository at the same time with all releases. `rufin` for release binaries, `rufin-git` to build it from source

@@ -1,0 +1,389 @@
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::Result;
+use crate::process::{ensure_command, read_to_string, repo_root, temp_path};
+use crate::release::normalize_plain_version;
+
+const REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+pub(crate) fn srpm_command(mut args: Vec<String>) -> Result<()> {
+    let usage = "Usage: cargo run --locked -p xtask -- generate rpm-srpm TAG --output PATH";
+    let mut tag = None;
+    let mut output = None;
+
+    while !args.is_empty() {
+        match args.remove(0).as_str() {
+            "-h" | "--help" => {
+                eprintln!("{usage}");
+                return Ok(());
+            }
+            "--output" => {
+                if args.is_empty() {
+                    return Err("--output requires a path".into());
+                }
+                output = Some(PathBuf::from(args.remove(0)));
+            }
+            arg if arg.starts_with('-') => return Err(format!("unknown option: {arg}").into()),
+            arg if tag.is_none() => tag = Some(arg.to_owned()),
+            arg => return Err(format!("unexpected argument: {arg}").into()),
+        }
+    }
+
+    let tag = tag.ok_or("generate rpm-srpm requires TAG")?;
+    let output = output.ok_or("generate rpm-srpm requires --output PATH")?;
+    generate_srpm(&tag, &output)
+}
+
+fn generate_srpm(tag: &str, output: &Path) -> Result<()> {
+    for command in ["cargo", "git", "rpmbuild", "sha256sum", "tar", "xz"] {
+        ensure_command(command)?;
+    }
+
+    let version = normalize_plain_version(tag)?;
+    let tag = format!("v{version}");
+    let root = repo_root()?;
+    let output = if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        root.join(output)
+    };
+    let spec = root.join("packaging/rpm/rufin.spec");
+    if !spec.is_file() {
+        return Err(format!("missing RPM spec: {}", spec.display()).into());
+    }
+
+    let source_name = format!("Rufin-{version}.tar.xz");
+    let vendor_name = format!("Rufin-{version}-vendor.tar.xz");
+    refuse_existing_artifacts(&output, [&source_name, &vendor_name, "SHA256SUMS"])?;
+
+    verify_tag(&tag)?;
+    verify_release_inputs(&root, &spec, &tag, &version)?;
+
+    let temp = temp_path("rpm-srpm");
+    let result = generate_srpm_inner(
+        &root,
+        &spec,
+        &tag,
+        &version,
+        &source_name,
+        &vendor_name,
+        &output,
+        &temp,
+    );
+    let _ = fs::remove_dir_all(&temp);
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_srpm_inner(
+    root: &Path,
+    spec: &Path,
+    tag: &str,
+    version: &str,
+    source_name: &str,
+    vendor_name: &str,
+    output: &Path,
+    temp: &Path,
+) -> Result<()> {
+    let stage = temp.join("stage");
+    let source_tree = temp.join(format!("Rufin-{version}"));
+    let raw_source = temp.join(format!("Rufin-{version}.tar"));
+    let topdir = temp.join("rpmbuild");
+    for directory in [
+        &stage,
+        &topdir,
+        &topdir.join("BUILD"),
+        &topdir.join("BUILDROOT"),
+    ] {
+        fs::create_dir_all(directory)?;
+    }
+
+    run(
+        Command::new("git")
+            .current_dir(root)
+            .args(["archive", "--format=tar"])
+            .arg(format!("--prefix=Rufin-{version}/"))
+            .args(["--output"])
+            .arg(&raw_source)
+            .arg(tag),
+        "git archive",
+    )?;
+    run(
+        Command::new("xz")
+            .args(["--check=crc64", "--force", "--keep", "-9", "--threads=0"])
+            .arg(&raw_source),
+        "xz",
+    )?;
+    let staged_source = stage.join(source_name);
+    fs::rename(raw_source.with_extension("tar.xz"), &staged_source)?;
+    set_archive_permissions(&staged_source)?;
+
+    let staged_vendor = stage.join(vendor_name);
+    run(
+        Command::new("tar")
+            .args(["-xf"])
+            .arg(&raw_source)
+            .args(["-C"])
+            .arg(temp),
+        "tar",
+    )?;
+    run(
+        Command::new("cargo")
+            .current_dir(&source_tree)
+            .args(["vendor", "--locked", "--versioned-dirs", "vendor"])
+            .stdin(Stdio::null()),
+        "cargo vendor",
+    )?;
+
+    let timestamp_output = Command::new("git")
+        .current_dir(root)
+        .args(["show", "-s", "--format=%ct", &format!("{tag}^{{commit}}")])
+        .output()?;
+    if !timestamp_output.status.success() {
+        return Err(format!("could not read the commit timestamp for {tag}").into());
+    }
+    let timestamp = String::from_utf8(timestamp_output.stdout)?;
+    run(
+        Command::new("tar")
+            .args([
+                "--sort=name",
+                &format!("--mtime=@{}", timestamp.trim()),
+                "--owner=0",
+                "--group=0",
+                "--numeric-owner",
+                "--format=gnu",
+                "-cJf",
+            ])
+            .arg(&staged_vendor)
+            .args(["-C"])
+            .arg(&source_tree)
+            .arg("vendor"),
+        "tar",
+    )?;
+    set_archive_permissions(&staged_vendor)?;
+
+    let staged_spec = stage.join("rufin.spec");
+    fs::copy(spec, &staged_spec)?;
+    set_archive_permissions(&staged_spec)?;
+
+    run(
+        Command::new("rpmbuild")
+            .arg("-bs")
+            .args(["--define", &format!("_topdir {}", topdir.display())])
+            .args(["--define", &format!("_sourcedir {}", stage.display())])
+            .args(["--define", &format!("_srcrpmdir {}", stage.display())])
+            .arg(&staged_spec),
+        "rpmbuild",
+    )?;
+
+    let srpm = fs::read_dir(&stage)?
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.to_string_lossy().ends_with(".src.rpm"))
+        .ok_or("rpmbuild did not create a source RPM")?;
+    let srpm_name = srpm
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("source RPM name is not valid UTF-8")?
+        .to_owned();
+
+    let checksums = Command::new("sha256sum")
+        .current_dir(&stage)
+        .args([source_name, vendor_name, &srpm_name])
+        .output()?;
+    if !checksums.status.success() {
+        return Err(format!("sha256sum failed with status {}", checksums.status).into());
+    }
+    fs::write(stage.join("SHA256SUMS"), checksums.stdout)?;
+    set_archive_permissions(&stage.join("SHA256SUMS"))?;
+
+    fs::create_dir_all(output)?;
+    for name in [source_name, vendor_name, &srpm_name, "SHA256SUMS"] {
+        fs::copy(stage.join(name), output.join(name))?;
+    }
+
+    eprintln!("Created {}", output.join(&srpm_name).display());
+    eprintln!("Sources and checksums are in {}", output.display());
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_archive_permissions(path: &Path) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_archive_permissions(_path: &Path) -> Result<()> {
+    Err("RPM source generation is only supported on Unix".into())
+}
+
+fn verify_tag(tag: &str) -> Result<()> {
+    run(
+        Command::new("git").args(["tag", "--verify", tag]),
+        "git tag --verify",
+    )
+}
+
+fn verify_release_inputs(root: &Path, spec: &Path, tag: &str, version: &str) -> Result<()> {
+    let spec_contents = read_to_string(spec)?;
+    let spec_version = spec_version(&spec_contents)?;
+    if spec_version != version {
+        return Err(format!(
+            "RPM spec version is {spec_version}, but {tag} contains version {version}"
+        )
+        .into());
+    }
+
+    let cargo_toml = git_file(root, tag, "Cargo.toml")?;
+    let cargo_version = workspace_version(&cargo_toml)?;
+    if cargo_version != version {
+        return Err(
+            format!("{tag} Cargo.toml version is {cargo_version}, expected {version}").into(),
+        );
+    }
+
+    let metainfo = git_file(root, tag, "data/io.github.screwys.Rufin.metainfo.xml")?;
+    let metainfo_version = latest_metainfo_version(&metainfo)?;
+    if metainfo_version != version {
+        return Err(
+            format!("{tag} metainfo release is {metainfo_version}, expected {version}").into(),
+        );
+    }
+
+    verify_lock_sources(&git_file(root, tag, "Cargo.lock")?)
+}
+
+fn git_file(root: &Path, tag: &str, path: &str) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["show", &format!("{tag}:{path}")])
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("could not read {path} from {tag}").into());
+    }
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+fn spec_version(spec: &str) -> Result<&str> {
+    spec.lines()
+        .find_map(|line| line.strip_prefix("Version:").map(str::trim))
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| "RPM spec has no Version field".into())
+}
+
+fn workspace_version(cargo_toml: &str) -> Result<&str> {
+    let mut in_workspace_package = false;
+    for line in cargo_toml.lines() {
+        if line == "[workspace.package]" {
+            in_workspace_package = true;
+            continue;
+        }
+        if in_workspace_package && line.starts_with('[') {
+            break;
+        }
+        if in_workspace_package
+            && let Some(version) = line
+                .strip_prefix("version = \"")
+                .and_then(|value| value.strip_suffix('"'))
+        {
+            return Ok(version);
+        }
+    }
+    Err("Cargo.toml has no workspace package version".into())
+}
+
+fn latest_metainfo_version(metainfo: &str) -> Result<&str> {
+    metainfo
+        .lines()
+        .find_map(|line| {
+            line.split_once("<release version=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(version, _)| version)
+        })
+        .ok_or_else(|| "metainfo has no release version".into())
+}
+
+fn verify_lock_sources(lock: &str) -> Result<()> {
+    for source in lock.lines().filter_map(|line| {
+        line.strip_prefix("source = \"")
+            .and_then(|value| value.strip_suffix('"'))
+    }) {
+        if source != REGISTRY_SOURCE {
+            return Err(
+                format!("Cargo.lock contains an unsupported remote source: {source}").into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn refuse_existing_artifacts<'a>(
+    output: &Path,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    for name in names {
+        let path = output.join(name);
+        if path.exists() {
+            return Err(format!("refusing to overwrite {}", path.display()).into());
+        }
+    }
+    if output.is_dir()
+        && fs::read_dir(output)?.any(|entry| {
+            entry
+                .ok()
+                .is_some_and(|entry| entry.path().to_string_lossy().ends_with(".src.rpm"))
+        })
+    {
+        return Err(format!("refusing to overwrite source RPM in {}", output.display()).into());
+    }
+    Ok(())
+}
+
+fn run(command: &mut Command, label: &str) -> Result<()> {
+    let status = command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{label} failed with status {status}").into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{latest_metainfo_version, spec_version, verify_lock_sources, workspace_version};
+
+    #[test]
+    fn release_versions_come_from_their_owner_fields() {
+        assert_eq!(
+            spec_version("Name: rufin\nVersion: 0.9.0\n").unwrap(),
+            "0.9.0"
+        );
+        assert_eq!(
+            workspace_version("[workspace.package]\nversion = \"0.9.0\"\n[dependencies]\n")
+                .unwrap(),
+            "0.9.0"
+        );
+        assert_eq!(
+            latest_metainfo_version(
+                "<releases>\n<release version=\"0.9.0\" date=\"2026-07-16\"/>\n</releases>"
+            )
+            .unwrap(),
+            "0.9.0"
+        );
+    }
+
+    #[test]
+    fn remote_git_dependencies_are_rejected() {
+        let lock = "source = \"git+https://example.com/dependency\"\n";
+        assert!(verify_lock_sources(lock).is_err());
+    }
+}

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+requested_arch="${1:-}"
+
+case "${requested_arch}" in
+    ""|x86|x86_64)
+        rpm_arch="x86_64"
+        container_arch="amd64"
+        ;;
+    arm|arm64|aarch64)
+        rpm_arch="aarch64"
+        container_arch="arm64"
+        ;;
+    *)
+        echo "usage: scripts/build-rpm [arm]" >&2
+        exit 2
+        ;;
+esac
+
+if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then
+    echo "Build RPMs from the host." >&2
+    exit 1
+fi
+
+for command in cargo git podman; do
+    if ! command -v "${command}" >/dev/null 2>&1; then
+        echo "${command} is required to build an RPM." >&2
+        exit 1
+    fi
+done
+
+tag="${RUFIN_RPM_TAG:-$(git describe --tags --abbrev=0 --match 'v[0-9]*')}"
+fedora_version="${RUFIN_RPM_FEDORA_VERSION:-44}"
+if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$ ]]; then
+    echo "Invalid RPM release tag: ${tag}" >&2
+    exit 1
+fi
+if [[ ! "${fedora_version}" =~ ^[0-9]+$ ]]; then
+    echo "RUFIN_RPM_FEDORA_VERSION must be a Fedora release number." >&2
+    exit 1
+fi
+
+artifact_dir="${repo_root}/.local/release-artifacts/${tag}/rpm/${rpm_arch}"
+image="registry.fedoraproject.org/fedora-minimal:${fedora_version}"
+
+rm -rf "${artifact_dir}"
+mkdir -p "${artifact_dir}"
+
+cd "${repo_root}"
+cargo run --locked -p xtask -- generate rpm-srpm "${tag}" --output "${artifact_dir}"
+
+podman run --rm \
+    --arch "${container_arch}" \
+    --security-opt label=disable \
+    --volume "${artifact_dir}:/work:rw" \
+    "${image}" \
+    bash -euc '
+        dnf -y --setopt=install_weak_deps=False install dnf5-plugins rpm-build
+        dnf -y --setopt=install_weak_deps=False builddep /work/*.src.rpm
+        rpmbuild --rebuild /work/*.src.rpm
+        cp /root/rpmbuild/RPMS/*/rufin-*.rpm /work/
+    '
+
+echo "Created ${rpm_arch} RPMs in ${artifact_dir}"

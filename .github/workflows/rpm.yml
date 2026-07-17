@@ -1,0 +1,198 @@
+name: RPM
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        default: main
+      upload_release_tag:
+        description: Optional existing GitHub release tag to upload the RPMs to
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpm-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build RPM (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: registry.fedoraproject.org/fedora-minimal:44
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Install build tooling
+        run: dnf -y --setopt=install_weak_deps=False install cargo dnf5-plugins git gnupg2 rpm-build rpmlint
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select release tag
+        env:
+          BUILD_REF: ${{ inputs.ref }}
+          REQUESTED_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          release_tag="$REQUESTED_TAG"
+          if [[ -z "$release_tag" ]]; then
+            release_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$BUILD_REF" != "$release_tag" && "$BUILD_REF" != "refs/tags/$release_tag" ]]; then
+            echo "Manual release uploads must build the same tag they upload" >&2
+            exit 1
+          fi
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
+
+      - name: Verify release tag and architecture
+        run: |
+          set -euo pipefail
+          gpg --batch --import .github/release-gpg.pub
+          cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
+          test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Build source and binary RPMs
+        run: |
+          set -euo pipefail
+          build_dir="dist/build-${{ matrix.arch }}"
+          cargo run --locked -p xtask -- generate rpm-srpm "$RELEASE_TAG" --output "$build_dir"
+          dnf -y --setopt=install_weak_deps=False builddep "$build_dir"/*.src.rpm
+          rpmbuild --rebuild "$build_dir"/*.src.rpm
+
+      - name: Verify and collect RPMs
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          rpm_path="$(find /root/rpmbuild/RPMS/${{ matrix.arch }} -maxdepth 1 -name 'rufin-[0-9]*.${{ matrix.arch }}.rpm' -print -quit)"
+          test -n "$rpm_path"
+          cp "$rpm_path" dist/release/
+          if [[ "${{ matrix.arch }}" == "x86_64" ]]; then
+            cp dist/build-${{ matrix.arch }}/*.src.rpm dist/release/
+          fi
+          install_root="$(mktemp -d)"
+          rpm2cpio "$rpm_path" | cpio -idm --quiet -D "$install_root"
+          cargo run --locked -p xtask -- verify package-layout "$install_root" /usr
+          rpmlint "$rpm_path"
+          (
+            cd dist/release
+            sha256sum -- ./* > "SHA256SUMS-${{ matrix.arch }}"
+          )
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  copr:
+    name: Build RPMs in COPR
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: registry.fedoraproject.org/fedora-minimal:44
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install COPR client
+        run: dnf -y --setopt=install_weak_deps=False install copr-cli
+
+      - name: Download source RPM
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: rpm-x86_64
+          path: dist
+
+      - name: Configure COPR
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "$COPR_CONFIG"
+          install -d -m 700 "$HOME/.config"
+          printf '%s\n' "$COPR_CONFIG" > "$HOME/.config/copr"
+          chmod 600 "$HOME/.config/copr"
+
+      - name: Submit source RPM
+        run: |
+          set -euo pipefail
+          srpm="$(find dist -maxdepth 1 -name 'rufin-*.src.rpm' -print -quit)"
+          test -n "$srpm"
+          copr-cli build screwyy/rufin "$srpm"
+
+  release:
+    name: Upload RPM release assets
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: rpm-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -name 'rufin-*.x86_64.rpm' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -name 'rufin-*.aarch64.rpm' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -name 'rufin-*.src.rpm' | wc -l)" -eq 1
+          test -f dist/SHA256SUMS-x86_64
+          test -f dist/SHA256SUMS-aarch64
+          (
+            cd dist
+            sha256sum --check SHA256SUMS-x86_64
+            sha256sum --check SHA256SUMS-aarch64
+          )
+
+      - name: Attest RPMs
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: dist/*.rpm
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload \
+            "$RELEASE_TAG" \
+            dist/*.rpm \
+            dist/SHA256SUMS-* \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
