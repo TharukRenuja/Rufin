@@ -1,7 +1,7 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -67,69 +67,6 @@ where
     } else {
         Err(format!("{program} failed with status {status}").into())
     }
-}
-
-pub(crate) fn capture_retry_without_ld_preload<I, S>(args: I) -> Result<CapturedOutput>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let root = repo_root()?;
-    let mut command = Command::new("bash");
-    command
-        .arg("scripts/retry-nix")
-        .args(args)
-        .current_dir(root)
-        .env_remove("LD_PRELOAD")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    capture_streaming(command)
-}
-
-fn capture_streaming(mut command: Command) -> Result<CapturedOutput> {
-    let mut child = command.spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("streaming command stdout was not captured")?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or("streaming command stderr was not captured")?;
-    let stdout_thread = std::thread::spawn(move || forward_stream(stdout, io::stdout()));
-    let stderr_thread = std::thread::spawn(move || forward_stream(stderr, io::stderr()));
-    let status = child.wait()?;
-    let stdout = stdout_thread
-        .join()
-        .map_err(|_| "stdout reader thread panicked")??;
-    let stderr = stderr_thread
-        .join()
-        .map_err(|_| "stderr reader thread panicked")??;
-
-    Ok(CapturedOutput {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-fn forward_stream<R, W>(mut reader: R, mut writer: W) -> io::Result<String>
-where
-    R: Read,
-    W: Write,
-{
-    let mut captured = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        writer.write_all(&buffer[..read])?;
-        writer.flush()?;
-        captured.extend_from_slice(&buffer[..read]);
-    }
-    Ok(String::from_utf8_lossy(&captured).into_owned())
 }
 
 pub(crate) fn run_retry_without_ld_preload<I, S>(args: I) -> Result<()>

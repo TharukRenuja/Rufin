@@ -42,7 +42,6 @@ fn print_usage() {
         "Usage:
   cargo run --locked -p xtask -- generate flatpak-sources [--check]
   cargo run --locked -p xtask -- generate i18n-template [--check] [--output PATH]
-  cargo run --locked -p xtask -- generate aur-stable [--check] [--skip-srcinfo] VERSION
   cargo run --locked -p xtask -- generate rpm-srpm TAG --output PATH
   cargo run --locked -p xtask -- release prepare VERSION SUMMARY
   cargo run --locked -p xtask -- release create-tag [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY

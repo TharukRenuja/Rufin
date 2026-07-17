@@ -28,6 +28,7 @@ jobs:
       package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
       rust_cache_required: ${{ steps.classify.outputs.rust_cache_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
+      workflows_required: ${{ steps.classify.outputs.workflows_required }}
 
     steps:
       - name: Check out repository
@@ -54,6 +55,7 @@ jobs:
               echo "package_dependencies_required=true"
               echo "rust_cache_required=true"
               echo "rust_required=true"
+              echo "workflows_required=true"
             } >> "$GITHUB_OUTPUT"
             echo "Manual runs execute the container and full Rust checks."
             exit 0
@@ -78,6 +80,7 @@ jobs:
           current_nix_required=false
           nix_package_required=false
           package_dependencies_required=false
+          workflows_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             rust_required=true
             container_mode=full
@@ -88,10 +91,16 @@ jobs:
 
           for path in "${changed_paths[@]}"; do
             case "$path" in
+              .github/workflows/*.yml|.github/workflows/*.yaml)
+                workflows_required=true
+                ;;
+            esac
+
+            case "$path" in
               .github/workflows/checks.yml|.github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
                 container_mode=full
                 ;;
-              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
+              packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 if [[ "$container_mode" != "full" ]]; then
                   container_mode=aur
                 fi
@@ -111,19 +120,19 @@ jobs:
             esac
 
             case "$path" in
-              crates/*/Cargo.toml|flake.nix|justfile|scripts/check-deps|packaging/aur/rufin/PKGBUILD|packaging/aur/rufin-git/PKGBUILD)
+              crates/*/Cargo.toml|flake.nix|justfile|scripts/check-deps|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD)
                 package_dependencies_required=true
                 ;;
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
+              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command|.github/workflows/checks.yml)
                 rust_cache_required=true
                 ;;
             esac
 
             case "$path" in
-              packaging/aur/rufin/PKGBUILD|packaging/aur/rufin/.SRCINFO|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
+              .github/workflows/aur.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -142,11 +151,27 @@ jobs:
             echo "package_dependencies_required=$package_dependencies_required"
             echo "rust_cache_required=$rust_cache_required"
             echo "rust_required=$rust_required"
+            echo "workflows_required=$workflows_required"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check Linux package dependencies
         if: steps.classify.outputs.package_dependencies_required == 'true'
         run: bash scripts/check-deps --check
+
+      - name: Check workflows
+        if: steps.classify.outputs.workflows_required == 'true'
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
 
   nix-package:
     name: Nix package
@@ -227,9 +252,15 @@ jobs:
           scripts/container setup
           scripts/container run bash -lc '
             set -euo pipefail
-            cd packaging/aur/rufin
-            diff -u .SRCINFO <(makepkg --printsrcinfo)
-            cd ../rufin-git
+            rm -rf /tmp/rufin-bin-metadata
+            mkdir /tmp/rufin-bin-metadata
+            sed \
+              -e "s/@PKGVER@/0.0.0_beta.1/g" \
+              -e "s/@ASSET_VERSION@/0.0.0-beta.1/g" \
+              -e "s/@X86_64_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g" \
+              packaging/aur/rufin-bin/PKGBUILD.template > /tmp/rufin-bin-metadata/PKGBUILD
+            (cd /tmp/rufin-bin-metadata && makepkg --printsrcinfo >/dev/null)
+            cd packaging/aur/rufin-git
             diff -u .SRCINFO <(makepkg --printsrcinfo)
           '
 
@@ -282,6 +313,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-bin: "false"
+          prefix-key: v1-rust
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           cmd-format: bash scripts/rust-cache-command "${{ steps.nix-environment.outputs.target }}" {0}
 
@@ -317,11 +349,11 @@ jobs:
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
-      - name: Warm Rust build cache
+      - name: Warm Rust test cache
         if: github.event_name == 'push'
-        run: >-
-          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command
-          cargo check --workspace --all-targets --locked
+        run: |
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            cargo test --workspace --locked --no-run --lib --bins --tests --benches --examples
 
   cargo-deny:
     name: cargo-deny
