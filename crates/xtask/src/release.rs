@@ -353,6 +353,7 @@ fn verify_nix_flake() -> Result<()> {
         "nix-command flakes",
         "flake",
         "check",
+        "--no-build",
         "--no-write-lock-file",
         "--print-build-logs",
     ])

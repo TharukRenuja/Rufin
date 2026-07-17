@@ -19,12 +19,6 @@
           pkgs = import nixpkgs { inherit system; };
           inherit (pkgs) lib;
           workspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          gstRuntimePlugins = with pkgs.gst_all_1; [
-            gst-plugins-good
-            gst-plugins-bad
-            gst-plugins-ugly
-            gst-libav
-          ];
         in
         rec {
           rufin = pkgs.rustPlatform.buildRustPackage {
@@ -57,6 +51,7 @@
               wrapGAppsHook4
             ];
 
+            # Generated Linux package dependencies start.
             buildInputs =
               with pkgs;
               [
@@ -67,8 +62,12 @@
               ++ (with gst_all_1; [
                 gstreamer
                 gst-plugins-base
-              ])
-              ++ gstRuntimePlugins;
+                gst-plugins-good
+                gst-plugins-bad
+                gst-plugins-ugly
+                gst-libav
+              ]);
+            # Generated Linux package dependencies end.
 
             cargoBuildFlags = [
               "-p"
@@ -162,6 +161,7 @@
                 rustc
                 rustfmt
               ]
+              # Generated Linux development dependencies start.
               ++ (with pkgs; [
                 glib
                 gtk4
@@ -175,6 +175,7 @@
                 gst-plugins-ugly
                 gst-libav
               ]);
+            # Generated Linux development dependencies end.
 
             RUFIN_LOCALEDIR = "crates/localization/locales";
           };

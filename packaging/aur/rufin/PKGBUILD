@@ -8,6 +8,7 @@ pkgdesc='Native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome a
 arch=('x86_64' 'aarch64')
 url='https://github.com/screwys/Rufin'
 license=('GPL-3.0-or-later')
+# Generated Linux package dependencies start.
 depends=(
   'gcc-libs'
   'glib2'
@@ -28,6 +29,7 @@ makedepends=(
   'gettext'
   'pkgconf'
 )
+# Generated Linux package dependencies end.
 conflicts=('rufin-git')
 options=('!lto')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/screwys/Rufin/archive/refs/tags/v${pkgver}.tar.gz")
