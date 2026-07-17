@@ -33,6 +33,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/check-deps [--check]
        scripts/check-deps --nix-package PATH
+       scripts/check-deps --arch-build-packages
 USAGE
 }
 
@@ -82,13 +83,18 @@ render_flake_development() {
 }
 
 render_pkgbuild() {
+  printf '%s\n' 'depends=('
+  printf "  '%s'\n" "${arch_dependencies[@]}"
+  printf '%s\n' ')'
+  if [[ "$1" == bin ]]; then
+    return
+  fi
+
   local -a build_dependencies=("${arch_build_dependencies[@]}")
   if [[ "$1" == git ]]; then
     build_dependencies=("${arch_git_build_dependencies[@]}")
   fi
-  printf '%s\n' 'depends=('
-  printf "  '%s'\n" "${arch_dependencies[@]}"
-  printf '%s\n' ')' 'makedepends=('
+  printf '%s\n' 'makedepends=('
   printf "  '%s'\n" "${build_dependencies[@]}"
   printf '%s\n' ')'
 }
@@ -157,6 +163,12 @@ case "${1:-}" in
     verify_nix_package "$2"
     exit
     ;;
+  --arch-build-packages)
+    [[ $# -eq 1 ]] || { usage; exit 1; }
+    printf '%s\n' "${arch_dependencies[@]}" "${arch_build_dependencies[@]}" |
+      sort -u
+    exit
+    ;;
   --check)
     [[ $# -eq 1 ]] || { usage; exit 1; }
     mode=check
@@ -177,7 +189,7 @@ esac
 verify_cargo_crates
 render_flake_package > "$tmpdir/flake-package"
 render_flake_development > "$tmpdir/flake-development"
-render_pkgbuild stable > "$tmpdir/aur-stable"
+render_pkgbuild bin > "$tmpdir/aur-bin"
 render_pkgbuild git > "$tmpdir/aur-git"
 project_file \
   "$root/flake.nix" "$tmpdir/flake-package" "$mode" \
@@ -186,7 +198,7 @@ project_file \
   "$root/flake.nix" "$tmpdir/flake-development" "$mode" \
   "$development_start_marker" "$development_end_marker"
 project_file \
-  "$root/packaging/aur/rufin/PKGBUILD" "$tmpdir/aur-stable" "$mode" \
+  "$root/packaging/aur/rufin-bin/PKGBUILD.template" "$tmpdir/aur-bin" "$mode" \
   "$package_start_marker" "$package_end_marker"
 project_file \
   "$root/packaging/aur/rufin-git/PKGBUILD" "$tmpdir/aur-git" "$mode" \

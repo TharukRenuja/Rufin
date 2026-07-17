@@ -44,8 +44,19 @@ jobs:
           RUFIN_CONTAINER_RUNTIME: docker
         run: |
           scripts/container setup
-          scripts/container run bash -lc \
-            'set -euo pipefail; (cd packaging/aur/rufin && diff -u .SRCINFO <(makepkg --printsrcinfo)); just check'
+          scripts/container run bash -lc '
+            set -euo pipefail
+            rm -rf /tmp/rufin-bin-metadata
+            mkdir /tmp/rufin-bin-metadata
+            sed \
+              -e "s/@PKGVER@/0.0.0_beta.1/g" \
+              -e "s/@ASSET_VERSION@/0.0.0-beta.1/g" \
+              -e "s/@X86_64_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g" \
+              packaging/aur/rufin-bin/PKGBUILD.template > /tmp/rufin-bin-metadata/PKGBUILD
+            (cd /tmp/rufin-bin-metadata && makepkg --printsrcinfo >/dev/null)
+            (cd packaging/aur/rufin-git && diff -u .SRCINFO <(makepkg --printsrcinfo))
+            just check
+          '
 
       - name: Log in to GHCR
         env:
