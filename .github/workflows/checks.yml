@@ -129,7 +129,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
+              .github/workflows/aur-build.yml|.github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 aur_required=true
                 ;;
             esac
@@ -171,7 +171,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|scripts/build-rpm|scripts/check-deps|scripts/container|scripts/retry-nix)
+              .github/workflows/aur-build.yml|.github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|scripts/build-rpm|scripts/check-deps|scripts/container|scripts/retry-nix)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -221,7 +221,7 @@ jobs:
     name: AUR package
     needs: changes
     if: github.event_name != 'push' && needs.changes.outputs.aur_required == 'true'
-    uses: ./.github/workflows/aur.yml
+    uses: ./.github/workflows/aur-build.yml
     with:
       package: both
       release_tag: ${{ needs.changes.outputs.aur_release_tag }}
@@ -250,7 +250,28 @@ jobs:
     name: Container
     needs: changes
     if: needs.changes.outputs.container_required == 'true' && github.event_name != 'push'
-    uses: ./.github/workflows/container-image.yml
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build container image
+        run: |
+          docker build \
+            --file packaging/container/Containerfile \
+            --tag localhost/rufin-dev:ci \
+            packaging/container
+
+      - name: Check Rufin through container
+        env:
+          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
+          RUFIN_CONTAINER_RUNTIME: docker
+        run: |
+          scripts/container setup
+          scripts/container run just check
 
   workspace:
     name: Workspace

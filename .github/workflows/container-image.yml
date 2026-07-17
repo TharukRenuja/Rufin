@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - packaging/container/**
-  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -42,7 +41,9 @@ jobs:
         env:
           RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
           RUFIN_CONTAINER_RUNTIME: docker
-        run: scripts/container run just check
+        run: |
+          scripts/container setup
+          scripts/container run just check
 
       - name: Log in to GHCR
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')

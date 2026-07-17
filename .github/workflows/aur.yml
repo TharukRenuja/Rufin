@@ -4,22 +4,6 @@ on:
   release:
     types:
       - published
-  workflow_call:
-    inputs:
-      package:
-        required: true
-        type: string
-      release_tag:
-        required: false
-        default: ""
-        type: string
-      publish:
-        required: false
-        default: false
-        type: boolean
-    secrets:
-      AUR_SSH_PRIVATE_KEY:
-        required: false
   workflow_dispatch:
     inputs:
       package:
@@ -49,332 +33,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare:
-    name: Prepare AUR build
-    runs-on: ubuntu-latest
-    outputs:
-      package: ${{ steps.select.outputs.package }}
-      release_tag: ${{ steps.select.outputs.release_tag }}
-
-    steps:
-      - name: Select packages and release
-        id: select
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
-          PUBLISH: ${{ inputs.publish }}
-          REQUESTED_PACKAGE: ${{ inputs.package }}
-          REQUESTED_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            package="rufin-bin"
-            release_tag="$RELEASE_EVENT_TAG"
-          else
-            package="$REQUESTED_PACKAGE"
-            release_tag="$REQUESTED_TAG"
-          fi
-
-          case "$package" in
-            rufin-bin|rufin-git|both) ;;
-            *) echo "Unknown package: $package" >&2; exit 1 ;;
-          esac
-
-          if [[ "$package" == "rufin-bin" || "$package" == "both" ]]; then
-            if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-              echo "rufin-bin requires a release tag such as v0.9.0" >&2
-              exit 1
-            fi
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$PUBLISH" == "true" && "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
-            echo "Manual AUR publishing must be dispatched from $DEFAULT_BRANCH" >&2
-            exit 1
-          fi
-
-          {
-            echo "package=$package"
-            echo "release_tag=$release_tag"
-          } >> "$GITHUB_OUTPUT"
-
-  bin-package:
-    name: Build rufin-bin package
-    needs: prepare
-    if: needs.prepare.outputs.package == 'rufin-bin' || needs.prepare.outputs.package == 'both'
-    runs-on: ubuntu-24.04
-    container: archlinux:latest
-
-    steps:
-      - name: Install bootstrap tools
-        run: pacman -Syu --noconfirm --needed base-devel git
-
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          ref: ${{ github.event_name == 'release' && needs.prepare.outputs.release_tag || github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install build and runtime dependencies
-        run: |
-          set -euo pipefail
-          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
-          test -n "$dependency_output"
-          mapfile -t dependencies <<< "$dependency_output"
-          pacman -S --noconfirm --needed \
-            appstream \
-            desktop-file-utils \
-            gnupg \
-            "${dependencies[@]}"
-          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
-            command -v "$command"
-          done
-
-      - name: Prepare builder user
-        run: |
-          useradd -m builder
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-          install -d -o builder -g builder /home/builder/target "$GITHUB_WORKSPACE/dist"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Verify release tag and architecture
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          source_dir="/home/builder/rufin-source"
-          target="$(runuser -u builder -- rustc -vV | sed -n 's/^host: //p')"
-          runuser -u builder -- git -C "$GITHUB_WORKSPACE" worktree add --detach "$source_dir" "$RELEASE_TAG"
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$source_dir'
-            cargo fetch --locked --target '$target'
-            CARGO_TARGET_DIR=/home/builder/target \
-              cargo run --frozen -p xtask -- verify release-tag '$RELEASE_TAG'
-          "
-          test "$(uname -m)" = "x86_64"
-
-      - name: Build release payload
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          source_dir="/home/builder/rufin-source"
-          version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$source_dir/Cargo.toml" | head -n 1)"
-          metainfo_version="$(
-            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' \
-              "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" |
-              head -n 1
-          )"
-          test "$cargo_version" = "$version"
-          test "$metainfo_version" = "$version"
-
-          staging="/home/builder/package-root"
-          target_dir="/home/builder/target"
-          install -d -o builder -g builder "$staging"
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$source_dir'
-            CARGO_TARGET_DIR='$target_dir' cargo build --frozen --release -p rufin
-          "
-
-          install -Dm755 "$target_dir/release/rufin" "$staging/usr/bin/rufin"
-          strip --strip-unneeded "$staging/usr/bin/rufin"
-          install -Dm644 "$source_dir/data/io.github.screwys.Rufin.desktop" \
-            "$staging/usr/share/applications/io.github.screwys.Rufin.desktop"
-          install -Dm644 "$source_dir/data/io.github.screwys.Rufin.metainfo.xml" \
-            "$staging/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
-          install -Dm644 "$source_dir/data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" \
-            "$staging/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/scalable/actions" \
-            "$source_dir"/data/icons/hicolor/scalable/actions/*.svg
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/scalable/status" \
-            "$source_dir"/data/icons/hicolor/scalable/status/*.svg
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/512x512/apps" \
-            "$source_dir"/data/icons/hicolor/512x512/apps/*.png
-          install -Dm644 -t "$staging/usr/share/icons/hicolor/64x64/apps" \
-            "$source_dir"/data/icons/hicolor/64x64/apps/*.png
-          for po_file in "$source_dir"/crates/localization/locales/*.po; do
-            language="${po_file##*/}"
-            language="${language%.po}"
-            install -dm755 "$staging/usr/share/locale/$language/LC_MESSAGES"
-            msgfmt "$po_file" \
-              -o "$staging/usr/share/locale/$language/LC_MESSAGES/rufin.mo"
-          done
-
-          runuser -u builder -- bash -lc "
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$source_dir'
-            CARGO_TARGET_DIR='$target_dir' \
-              cargo run --locked -p xtask -- verify package-layout '$staging' /usr
-          "
-          commit_time="$(runuser -u builder -- git -C "$source_dir" show -s --format=%ct HEAD)"
-          tar \
-            --sort=name \
-            --mtime="@$commit_time" \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            --use-compress-program='zstd -19 -T0' \
-            -cf "$GITHUB_WORKSPACE/dist/rufin-${version}-archlinux-x86_64.tar.zst" \
-            -C "$staging" \
-            usr
-
-      - name: Render and build rufin-bin
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          asset_version="${RELEASE_TAG#v}"
-          pkgver="${asset_version//-/_}"
-          output="$GITHUB_WORKSPACE/dist/aur-bin"
-          archive="dist/rufin-${asset_version}-archlinux-x86_64.tar.zst"
-          checksum="$(sha256sum "$archive" | awk '{print $1}')"
-          install -d -o builder -g builder "$output"
-          sed \
-            -e "s/@PKGVER@/$pkgver/g" \
-            -e "s/@ASSET_VERSION@/$asset_version/g" \
-            -e "s/@X86_64_SHA256@/$checksum/g" \
-            packaging/aur/rufin-bin/PKGBUILD.template > "$output/PKGBUILD"
-          if grep -nE '@(PKGVER|ASSET_VERSION|X86_64_SHA256)@' "$output/PKGBUILD"; then
-            echo "Rendered PKGBUILD still contains placeholders" >&2
-            exit 1
-          fi
-          cp "$archive" "$output/"
-          chown -R builder:builder "$output"
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$output'
-            makepkg --cleanbuild --clean --noconfirm --noprogressbar
-            makepkg --printsrcinfo > .SRCINFO
-          "
-
-      - name: Verify built rufin-bin package
-        run: |
-          set -euo pipefail
-          pkgfile="$(find dist/aur-bin -maxdepth 1 -name 'rufin-bin-*.pkg.tar.zst' -print -quit)"
-          test -n "$pkgfile"
-          pkgroot="$(mktemp -d)"
-          bsdtar -xf "$pkgfile" -C "$pkgroot"
-          test -x "$pkgroot/usr/bin/rufin"
-          test -f "$pkgroot/usr/share/applications/io.github.screwys.Rufin.desktop"
-          test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
-          pacman -U --noconfirm "$pkgfile"
-          rufin --help >/dev/null
-          desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
-          appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
-          pacman -Rns --noconfirm rufin-bin
-
-      - name: Upload Arch payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: archlinux-x86_64
-          path: dist/rufin-*-archlinux-x86_64.tar.zst
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload rufin-bin metadata
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: aur-bin-metadata
-          path: |
-            dist/aur-bin/PKGBUILD
-            dist/aur-bin/.SRCINFO
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 7
-
-  git-package:
-    name: Build rufin-git package
-    needs: prepare
-    if: needs.prepare.outputs.package == 'rufin-git' || needs.prepare.outputs.package == 'both'
-    runs-on: ubuntu-24.04
-    container: archlinux:latest
-
-    steps:
-      - name: Install bootstrap tools
-        run: pacman -Syu --noconfirm --needed base-devel git
-
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-
-      - name: Install package dependencies
-        run: |
-          set -euo pipefail
-          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
-          test -n "$dependency_output"
-          mapfile -t dependencies <<< "$dependency_output"
-          pacman -S --noconfirm --needed \
-            appstream \
-            desktop-file-utils \
-            gnupg \
-            "${dependencies[@]}"
-          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
-            command -v "$command"
-          done
-
-      - name: Prepare builder user
-        run: |
-          useradd -m builder
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Build package
-        run: |
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
-            diff -u .SRCINFO <(makepkg --printsrcinfo)
-            makepkg --cleanbuild --clean --noconfirm --noprogressbar
-            makepkg --printsrcinfo > .SRCINFO
-          "
-
-      - name: Verify built package
-        run: |
-          set -euo pipefail
-          pkgfile="$(find packaging/aur/rufin-git -maxdepth 1 -name 'rufin-git-*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)"
-          test -n "$pkgfile"
-          pkgroot="$(mktemp -d)"
-          bsdtar -xf "$pkgfile" -C "$pkgroot"
-          test -x "$pkgroot/usr/bin/rufin"
-          test -f "$pkgroot/usr/share/applications/io.github.screwys.Rufin.desktop"
-          test -f "$pkgroot/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
-          pacman -U --noconfirm "$pkgfile"
-          rufin --help >/dev/null
-          desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
-          appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
-          pacman -Rns --noconfirm rufin-git
-
-      - name: Stage rufin-git metadata
-        run: |
-          mkdir -p dist/aur-git
-          cp packaging/aur/rufin-git/PKGBUILD packaging/aur/rufin-git/.SRCINFO dist/aur-git/
-
-      - name: Upload rufin-git metadata
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: aur-git-metadata
-          path: |
-            dist/aur-git/PKGBUILD
-            dist/aur-git/.SRCINFO
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 7
+  build:
+    name: Build AUR packages
+    uses: ./.github/workflows/aur-build.yml
+    with:
+      package: ${{ github.event_name == 'release' && 'rufin-bin' || inputs.package }}
+      release_tag: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+      publish: ${{ github.event_name == 'release' || inputs.publish }}
 
   release-assets:
     name: Upload Arch release assets
-    needs:
-      - prepare
-      - bin-package
-    if: github.event_name == 'release' || inputs.publish
+    needs: build
+    if: >-
+      (github.event_name == 'release' || inputs.publish) &&
+      (needs.build.outputs.package == 'rufin-bin' || needs.build.outputs.package == 'both')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -403,7 +75,7 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
         run: |
           set -euo pipefail
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
@@ -416,9 +88,7 @@ jobs:
   publish:
     name: Publish AUR packages
     needs:
-      - prepare
-      - bin-package
-      - git-package
+      - build
       - release-assets
     if: always() && (github.event_name == 'release' || inputs.publish)
     runs-on: ubuntu-latest
@@ -427,32 +97,28 @@ jobs:
     steps:
       - name: Validate package results
         env:
-          BIN_RESULT: ${{ needs.bin-package.result }}
-          GIT_RESULT: ${{ needs.git-package.result }}
-          PACKAGE: ${{ needs.prepare.outputs.package }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          PACKAGE: ${{ needs.build.outputs.package }}
           RELEASE_ASSETS_RESULT: ${{ needs.release-assets.result }}
         run: |
           set -euo pipefail
+          test "$BUILD_RESULT" = "success"
           if [[ "$PACKAGE" == "rufin-bin" || "$PACKAGE" == "both" ]]; then
-            test "$BIN_RESULT" = "success"
             test "$RELEASE_ASSETS_RESULT" = "success"
-          fi
-          if [[ "$PACKAGE" == "rufin-git" || "$PACKAGE" == "both" ]]; then
-            test "$GIT_RESULT" = "success"
           fi
 
       - name: Install publish dependencies
         run: pacman -Syu --noconfirm --needed git openssh
 
       - name: Download rufin-bin metadata
-        if: needs.prepare.outputs.package == 'rufin-bin' || needs.prepare.outputs.package == 'both'
+        if: needs.build.outputs.package == 'rufin-bin' || needs.build.outputs.package == 'both'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: aur-bin-metadata
           path: packages/rufin-bin
 
       - name: Download rufin-git metadata
-        if: needs.prepare.outputs.package == 'rufin-git' || needs.prepare.outputs.package == 'both'
+        if: needs.build.outputs.package == 'rufin-git' || needs.build.outputs.package == 'both'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: aur-git-metadata
@@ -506,7 +172,7 @@ jobs:
 
       - name: Publish packages
         env:
-          REQUESTED_PACKAGE: ${{ needs.prepare.outputs.package }}
+          REQUESTED_PACKAGE: ${{ needs.build.outputs.package }}
         run: |
           set -euo pipefail
           case "$REQUESTED_PACKAGE" in
