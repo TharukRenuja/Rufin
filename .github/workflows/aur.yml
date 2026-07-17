@@ -229,9 +229,6 @@ jobs:
             exit 1
           fi
           cp "$archive" "$output/"
-          printf '%s  %s\n' \
-            "$checksum" \
-            "$(basename "$archive")" > "$output/SHA256SUMS-archlinux"
           chown -R builder:builder "$output"
           runuser -u builder -- bash -lc "
             set -euo pipefail
@@ -272,7 +269,6 @@ jobs:
           path: |
             dist/aur-bin/PKGBUILD
             dist/aur-bin/.SRCINFO
-            dist/aur-bin/SHA256SUMS-archlinux
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
@@ -377,18 +373,10 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Download checksums
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: aur-bin-metadata
-          path: metadata
-
       - name: Verify release assets
         run: |
           set -euo pipefail
           test "$(find dist -maxdepth 1 -name 'rufin-*-archlinux-x86_64.tar.zst' | wc -l)" -eq 1
-          cp metadata/SHA256SUMS-archlinux dist/
-          (cd dist && sha256sum --check SHA256SUMS-archlinux)
 
       - name: Attest Arch payloads
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
@@ -405,7 +393,6 @@ jobs:
           gh release upload \
             "$RELEASE_TAG" \
             dist/*.tar.zst \
-            dist/SHA256SUMS-archlinux \
             --clobber \
             --repo "$GITHUB_REPOSITORY"
 
