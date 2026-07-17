@@ -22,6 +22,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
+      aur_required: ${{ steps.classify.outputs.aur_required }}
       container_mode: ${{ steps.classify.outputs.container_mode }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
       nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
@@ -49,6 +50,7 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             {
+              echo "aur_required=true"
               echo "container_mode=full"
               echo "current_nix_required=true"
               echo "nix_package_required=true"
@@ -76,12 +78,14 @@ jobs:
 
           rust_required=false
           rust_cache_required=false
+          aur_required=false
           container_mode=none
           current_nix_required=false
           nix_package_required=false
           package_dependencies_required=false
           workflows_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
+            aur_required=true
             rust_required=true
             container_mode=full
             current_nix_required=true
@@ -97,13 +101,14 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/checks.yml|.github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
+              .github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
                 container_mode=full
                 ;;
-              packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
-                if [[ "$container_mode" != "full" ]]; then
-                  container_mode=aur
-                fi
+            esac
+
+            case "$path" in
+              .github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
+                aur_required=true
                 ;;
             esac
 
@@ -114,7 +119,7 @@ jobs:
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix|.github/workflows/checks.yml)
+              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix)
                 nix_package_required=true
                 ;;
             esac
@@ -126,13 +131,13 @@ jobs:
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command|.github/workflows/checks.yml)
+              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
                 rust_cache_required=true
                 ;;
             esac
 
             case "$path" in
-              .github/workflows/aur.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO)
+              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -145,6 +150,7 @@ jobs:
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
           {
+            echo "aur_required=$aur_required"
             echo "container_mode=$container_mode"
             echo "current_nix_required=$current_nix_required"
             echo "nix_package_required=$nix_package_required"
@@ -172,6 +178,74 @@ jobs:
           printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint"
+
+  aur-package:
+    name: AUR package
+    needs: changes
+    if: github.event_name != 'push' && needs.changes.outputs.aur_required == 'true'
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+
+    steps:
+      - name: Install bootstrap tools
+        run: pacman -Syu --noconfirm --needed base-devel git
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install package dependencies
+        run: |
+          set -euo pipefail
+          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
+          test -n "$dependency_output"
+          mapfile -t dependencies <<< "$dependency_output"
+          pacman -S --noconfirm --needed \
+            appstream \
+            desktop-file-utils \
+            gnupg \
+            "${dependencies[@]}"
+          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
+            command -v "$command"
+          done
+
+      - name: Check package metadata as builder
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -lc "
+            set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+            command -v cargo
+            command -v makepkg
+            rm -rf /tmp/rufin-bin-metadata
+            mkdir /tmp/rufin-bin-metadata
+            sed \
+              -e 's/@PKGVER@/0.0.0_beta.1/g' \
+              -e 's/@ASSET_VERSION@/0.0.0-beta.1/g' \
+              -e 's/@X86_64_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g' \
+              '$GITHUB_WORKSPACE/packaging/aur/rufin-bin/PKGBUILD.template' > /tmp/rufin-bin-metadata/PKGBUILD
+            cd /tmp/rufin-bin-metadata
+            makepkg --printsrcinfo >/dev/null
+            cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
+            diff -u .SRCINFO <(makepkg --printsrcinfo)
+          "
+
+      - name: Build Rufin in the package environment
+        run: |
+          set -euo pipefail
+          install -d -o builder -g builder /home/builder/target
+          target="$(runuser -u builder -- rustc -vV | sed -n 's/^host: //p')"
+          runuser -u builder -- bash -lc "
+            set -euo pipefail
+            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+            cd '$GITHUB_WORKSPACE'
+            cargo fetch --locked --target '$target'
+            CARGO_TARGET_DIR=/home/builder/target cargo build --frozen --release -p rufin
+          "
+          test -x /home/builder/target/release/rufin
 
   nix-package:
     name: Nix package
@@ -244,28 +318,7 @@ jobs:
             --tag localhost/rufin-dev:ci \
             packaging/container
 
-      - name: Check AUR metadata through container
-        env:
-          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
-          RUFIN_CONTAINER_RUNTIME: docker
-        run: |
-          scripts/container setup
-          scripts/container run bash -lc '
-            set -euo pipefail
-            rm -rf /tmp/rufin-bin-metadata
-            mkdir /tmp/rufin-bin-metadata
-            sed \
-              -e "s/@PKGVER@/0.0.0_beta.1/g" \
-              -e "s/@ASSET_VERSION@/0.0.0-beta.1/g" \
-              -e "s/@X86_64_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g" \
-              packaging/aur/rufin-bin/PKGBUILD.template > /tmp/rufin-bin-metadata/PKGBUILD
-            (cd /tmp/rufin-bin-metadata && makepkg --printsrcinfo >/dev/null)
-            cd packaging/aur/rufin-git
-            diff -u .SRCINFO <(makepkg --printsrcinfo)
-          '
-
       - name: Check Rufin through container
-        if: needs.changes.outputs.container_mode == 'full'
         env:
           RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
           RUFIN_CONTAINER_RUNTIME: docker
@@ -378,6 +431,7 @@ jobs:
     name: Required
     needs:
       - changes
+      - aur-package
       - nix-package
       - container
       - workspace
@@ -388,6 +442,8 @@ jobs:
     steps:
       - name: Enforce check policy
         env:
+          AUR_REQUIRED: ${{ needs.changes.outputs.aur_required }}
+          AUR_RESULT: ${{ needs.aur-package.result }}
           CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           CONTAINER_MODE: ${{ needs.changes.outputs.container_mode }}
@@ -421,6 +477,11 @@ jobs:
 
           if [[ "$NIX_PACKAGE_REQUIRED" == "true" && "$NIX_PACKAGE_RESULT" != "success" ]]; then
             echo "Nix package check did not pass: $NIX_PACKAGE_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$AUR_REQUIRED" == "true" && "$AUR_RESULT" != "success" ]]; then
+            echo "AUR package check did not pass: $AUR_RESULT" >&2
             exit 1
           fi
 

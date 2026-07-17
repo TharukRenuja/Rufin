@@ -103,11 +103,17 @@ jobs:
       - name: Install build and runtime dependencies
         run: |
           set -euo pipefail
-          mapfile -t dependencies < <(bash scripts/check-deps --arch-build-packages)
+          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
+          test -n "$dependency_output"
+          mapfile -t dependencies <<< "$dependency_output"
           pacman -S --noconfirm --needed \
             appstream \
             desktop-file-utils \
+            gnupg \
             "${dependencies[@]}"
+          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
+            command -v "$command"
+          done
 
       - name: Prepare builder user
         run: |
@@ -122,13 +128,15 @@ jobs:
         run: |
           set -euo pipefail
           source_dir="/home/builder/rufin-source"
+          target="$(runuser -u builder -- rustc -vV | sed -n 's/^host: //p')"
           runuser -u builder -- git -C "$GITHUB_WORKSPACE" worktree add --detach "$source_dir" "$RELEASE_TAG"
           runuser -u builder -- bash -lc "
             set -euo pipefail
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$source_dir'
+            cargo fetch --locked --target '$target'
             CARGO_TARGET_DIR=/home/builder/target \
-              cargo run --locked -p xtask -- verify release-tag '$RELEASE_TAG'
+              cargo run --frozen -p xtask -- verify release-tag '$RELEASE_TAG'
           "
           test "$(uname -m)" = "x86_64"
 
@@ -288,11 +296,17 @@ jobs:
       - name: Install package dependencies
         run: |
           set -euo pipefail
-          mapfile -t dependencies < <(bash scripts/check-deps --arch-build-packages)
+          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
+          test -n "$dependency_output"
+          mapfile -t dependencies <<< "$dependency_output"
           pacman -S --noconfirm --needed \
             appstream \
             desktop-file-utils \
+            gnupg \
             "${dependencies[@]}"
+          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
+            command -v "$command"
+          done
 
       - name: Prepare builder user
         run: |
