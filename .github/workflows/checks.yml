@@ -22,9 +22,11 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
+      aur_release_tag: ${{ steps.classify.outputs.aur_release_tag }}
       aur_required: ${{ steps.classify.outputs.aur_required }}
-      container_mode: ${{ steps.classify.outputs.container_mode }}
+      container_required: ${{ steps.classify.outputs.container_required }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
+      dependency_policy_required: ${{ steps.classify.outputs.dependency_policy_required }}
       nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
       package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
       rpm_required: ${{ steps.classify.outputs.rpm_required }}
@@ -51,9 +53,11 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             {
+              echo "aur_release_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
               echo "aur_required=true"
-              echo "container_mode=full"
+              echo "container_required=true"
               echo "current_nix_required=true"
+              echo "dependency_policy_required=true"
               echo "nix_package_required=true"
               echo "package_dependencies_required=true"
               echo "rpm_required=true"
@@ -82,16 +86,18 @@ jobs:
           rust_cache_required=false
           aur_required=false
           rpm_required=false
-          container_mode=none
+          container_required=false
           current_nix_required=false
+          dependency_policy_required=false
           nix_package_required=false
           package_dependencies_required=false
           workflows_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             aur_required=true
+            container_required=true
+            dependency_policy_required=true
             rpm_required=true
             rust_required=true
-            container_mode=full
             current_nix_required=true
             nix_package_required=true
             package_dependencies_required=true
@@ -105,8 +111,20 @@ jobs:
             esac
 
             case "$path" in
+              .github/workflows/checks.yml)
+                aur_required=true
+                container_required=true
+                dependency_policy_required=true
+                nix_package_required=true
+                package_dependencies_required=true
+                rpm_required=true
+                rust_required=true
+                ;;
+            esac
+
+            case "$path" in
               .github/workflows/container-image.yml|justfile|scripts/container|packaging/container/*)
-                container_mode=full
+                container_required=true
                 ;;
             esac
 
@@ -117,7 +135,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/rpm-source.yml|.github/workflows/rpm.yml)
+              .github/workflows/rpm-source.yml|.github/workflows/rpm.yml|crates/xtask/src/rpm.rs|packaging/rpm/*|scripts/build-rpm)
                 rpm_required=true
                 ;;
             esac
@@ -129,8 +147,14 @@ jobs:
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix)
+              .github/workflows/nix.yml|Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/check-deps|scripts/retry-nix)
                 nix_package_required=true
+                ;;
+            esac
+
+            case "$path" in
+              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|deny.toml)
+                dependency_policy_required=true
                 ;;
             esac
 
@@ -147,7 +171,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
+              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/container-image.yml|.github/workflows/nix.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|deny.toml|packaging/aur/*|packaging/container/*|packaging/rpm/*|scripts/build-rpm|scripts/check-deps|scripts/container|scripts/retry-nix)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -159,10 +183,13 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
+          aur_release_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
           {
+            echo "aur_release_tag=$aur_release_tag"
             echo "aur_required=$aur_required"
-            echo "container_mode=$container_mode"
+            echo "container_required=$container_required"
             echo "current_nix_required=$current_nix_required"
+            echo "dependency_policy_required=$dependency_policy_required"
             echo "nix_package_required=$nix_package_required"
             echo "package_dependencies_required=$package_dependencies_required"
             echo "rpm_required=$rpm_required"
@@ -194,55 +221,11 @@ jobs:
     name: AUR package
     needs: changes
     if: github.event_name != 'push' && needs.changes.outputs.aur_required == 'true'
-    runs-on: ubuntu-24.04
-    container: archlinux:latest
-
-    steps:
-      - name: Install bootstrap tools
-        run: pacman -Syu --noconfirm --needed base-devel git
-
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-
-      - name: Install package dependencies
-        run: |
-          set -euo pipefail
-          dependency_output="$(bash scripts/check-deps --arch-build-packages)"
-          test -n "$dependency_output"
-          mapfile -t dependencies <<< "$dependency_output"
-          pacman -S --noconfirm --needed \
-            appstream \
-            desktop-file-utils \
-            gnupg \
-            "${dependencies[@]}"
-          for command in appstreamcli bsdtar cargo desktop-file-validate git gpg makepkg msgfmt pkg-config rustc strip tar zstd; do
-            command -v "$command"
-          done
-
-      - name: Check package metadata as builder
-        run: |
-          set -euo pipefail
-          useradd -m builder
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            command -v cargo
-            command -v makepkg
-            rm -rf /tmp/rufin-bin-metadata
-            mkdir /tmp/rufin-bin-metadata
-            sed \
-              -e 's/@PKGVER@/0.0.0_beta.1/g' \
-              -e 's/@ASSET_VERSION@/0.0.0-beta.1/g' \
-              -e 's/@X86_64_SHA256@/0000000000000000000000000000000000000000000000000000000000000000/g' \
-              '$GITHUB_WORKSPACE/packaging/aur/rufin-bin/PKGBUILD.template' > /tmp/rufin-bin-metadata/PKGBUILD
-            cd /tmp/rufin-bin-metadata
-            makepkg --printsrcinfo >/dev/null
-            cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
-            diff -u .SRCINFO <(makepkg --printsrcinfo)
-          "
+    uses: ./.github/workflows/aur.yml
+    with:
+      package: both
+      release_tag: ${{ needs.changes.outputs.aur_release_tag }}
+      publish: false
 
   rpm-package:
     name: RPM source package
@@ -256,85 +239,25 @@ jobs:
     name: Nix package
     needs: changes
     if: github.event_name != 'push' && needs.changes.outputs.nix_package_required == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
-        with:
-          extra_nix_config: |
-            accept-flake-config = true
-            connect-timeout = 10
-            download-attempts = 5
-            extra-substituters = https://rufin.cachix.org
-            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
-            max-substitution-jobs = 4
-            stalled-download-timeout = 90
-
-      - name: Configure trusted Cachix upload
-        if: >-
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          github.actor == github.repository_owner
-        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
-        with:
-          name: ${{ env.CACHIX_CACHE_NAME }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - name: Check flake outputs
-        run: bash scripts/retry-nix nix flake check --no-build --no-write-lock-file
-
-      - name: Build app
-        id: build
-        run: |
-          set -euo pipefail
-          store_path="$(bash scripts/retry-nix nix build .#rufin --no-link --print-out-paths --print-build-logs)"
-          echo "store-path=$store_path" >> "$GITHUB_OUTPUT"
-
-      - name: Verify package layout
-        env:
-          STORE_PATH: ${{ steps.build.outputs.store-path }}
-        run: cargo run --locked -p xtask -- verify package-layout "$STORE_PATH" /
-
-      - name: Verify wrapped app
-        run: bash scripts/retry-nix nix run .# -- --help >/dev/null
+    uses: ./.github/workflows/nix.yml
+    with:
+      ref: ${{ github.sha }}
+      upload_cache: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
   container:
     name: Container
     needs: changes
-    if: needs.changes.outputs.container_mode != 'none' && github.event_name != 'push'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-
-      - name: Build container image
-        run: |
-          docker build \
-            --file packaging/container/Containerfile \
-            --tag localhost/rufin-dev:ci \
-            packaging/container
-
-      - name: Check Rufin through container
-        env:
-          RUFIN_CONTAINER_IMAGE: localhost/rufin-dev:ci
-          RUFIN_CONTAINER_RUNTIME: docker
-        run: scripts/container run just check
+    if: needs.changes.outputs.container_required == 'true' && github.event_name != 'push'
+    uses: ./.github/workflows/container-image.yml
 
   workspace:
     name: Workspace
     needs: changes
     if: >-
       (github.event_name == 'push' && needs.changes.outputs.rust_cache_required == 'true') ||
-      (github.event_name != 'push' && needs.changes.outputs.rust_required == 'true' && needs.changes.outputs.container_mode != 'full')
+      (github.event_name != 'push' && needs.changes.outputs.rust_required == 'true' && needs.changes.outputs.container_required != 'true')
     runs-on: ubuntu-latest
 
     steps:
@@ -416,7 +339,10 @@ jobs:
   cargo-deny:
     name: cargo-deny
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.rust_required == 'true' && needs.changes.outputs.container_mode != 'full'
+    if: >-
+      github.event_name != 'push' &&
+      needs.changes.outputs.dependency_policy_required == 'true' &&
+      needs.changes.outputs.container_required != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -452,8 +378,9 @@ jobs:
           AUR_RESULT: ${{ needs.aur-package.result }}
           CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          CONTAINER_MODE: ${{ needs.changes.outputs.container_mode }}
+          CONTAINER_REQUIRED: ${{ needs.changes.outputs.container_required }}
           CONTAINER_RESULT: ${{ needs.container.result }}
+          DEPENDENCY_POLICY_REQUIRED: ${{ needs.changes.outputs.dependency_policy_required }}
           EVENT_NAME: ${{ github.event_name }}
           NIX_PACKAGE_REQUIRED: ${{ needs.changes.outputs.nix_package_required }}
           NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
@@ -498,8 +425,13 @@ jobs:
             exit 1
           fi
 
-          if [[ "$CONTAINER_MODE" != "none" && "$CONTAINER_RESULT" != "success" ]]; then
+          if [[ "$CONTAINER_REQUIRED" == "true" && "$CONTAINER_RESULT" != "success" ]]; then
             echo "Container build did not pass: $CONTAINER_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$DEPENDENCY_POLICY_REQUIRED" == "true" && "$CONTAINER_REQUIRED" != "true" && "$CARGO_DENY_RESULT" != "success" ]]; then
+            echo "cargo-deny check did not pass: $CARGO_DENY_RESULT" >&2
             exit 1
           fi
 
@@ -508,18 +440,13 @@ jobs:
             exit 0
           fi
 
-          if [[ "$CONTAINER_MODE" == "full" ]]; then
+          if [[ "$CONTAINER_REQUIRED" == "true" ]]; then
             echo "Required Rust checks passed through the container."
             exit 0
           fi
 
           if [[ "$WORKSPACE_RESULT" != "success" ]]; then
             echo "Workspace check did not pass: $WORKSPACE_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$CARGO_DENY_RESULT" != "success" ]]; then
-            echo "cargo-deny check did not pass: $CARGO_DENY_RESULT" >&2
             exit 1
           fi
 

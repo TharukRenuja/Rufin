@@ -4,6 +4,22 @@ on:
   release:
     types:
       - published
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+      release_tag:
+        required: false
+        default: ""
+        type: string
+      publish:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       package:
@@ -316,6 +332,7 @@ jobs:
             set -euo pipefail
             export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
             cd '$GITHUB_WORKSPACE/packaging/aur/rufin-git'
+            diff -u .SRCINFO <(makepkg --printsrcinfo)
             makepkg --cleanbuild --clean --noconfirm --noprogressbar
             makepkg --printsrcinfo > .SRCINFO
           "

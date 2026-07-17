@@ -4,6 +4,21 @@ on:
   release:
     types:
       - published
+  push:
+    branches:
+      - main
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      upload_cache:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       ref:
@@ -15,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-${{ github.ref }}
+  group: nix-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -27,19 +42,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Validate cached build ref
+      - name: Validate manual build ref
+        if: github.event_name == 'workflow_dispatch'
         env:
           BUILD_REF: ${{ inputs.ref }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || '' }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
-            ref="$RELEASE_TAG"
-          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            ref="$RELEASE_TAG"
-          else
-            ref="$BUILD_REF"
-          fi
+          ref="$BUILD_REF"
 
           if [[ "$ref" == "main" || "$ref" == "refs/heads/main" ]]; then
             exit 0
@@ -56,20 +65,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
+        if: github.event_name == 'release' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
         run: cargo run --locked -p xtask -- verify release-tag "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || github.event_name == 'push'
+        if: github.event_name == 'release'
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -89,23 +98,32 @@ jobs:
             accept-flake-config = true
             connect-timeout = 10
             download-attempts = 5
+            extra-substituters = https://rufin.cachix.org
+            extra-trusted-public-keys = rufin.cachix.org-1:7+XHqna/b9jZpCorYvZIoE0UjLju4IKbXlJGt35+SNc=
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
       - name: Configure Cachix
+        if: github.event_name != 'pull_request' || inputs.upload_cache
         uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Check flake
-        run: bash scripts/retry-nix nix flake check --print-build-logs
+        run: bash scripts/retry-nix nix flake check --no-write-lock-file --print-build-logs
 
       - name: Build app
-        run: bash scripts/retry-nix nix build .#rufin --print-build-logs
+        id: build
+        run: |
+          set -euo pipefail
+          store_path="$(bash scripts/retry-nix nix build .#rufin --no-link --print-out-paths --print-build-logs)"
+          echo "store-path=$store_path" >> "$GITHUB_OUTPUT"
 
       - name: Verify package layout
-        run: cargo run --locked -p xtask -- verify package-layout result /
+        env:
+          STORE_PATH: ${{ steps.build.outputs.store-path }}
+        run: cargo run --locked -p xtask -- verify package-layout "$STORE_PATH" /
 
       - name: Verify wrapped app
         run: bash scripts/retry-nix nix run .# -- --help >/dev/null
