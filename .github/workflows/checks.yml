@@ -27,6 +27,7 @@ jobs:
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
       nix_package_required: ${{ steps.classify.outputs.nix_package_required }}
       package_dependencies_required: ${{ steps.classify.outputs.package_dependencies_required }}
+      rpm_required: ${{ steps.classify.outputs.rpm_required }}
       rust_cache_required: ${{ steps.classify.outputs.rust_cache_required }}
       rust_required: ${{ steps.classify.outputs.rust_required }}
       workflows_required: ${{ steps.classify.outputs.workflows_required }}
@@ -55,6 +56,7 @@ jobs:
               echo "current_nix_required=true"
               echo "nix_package_required=true"
               echo "package_dependencies_required=true"
+              echo "rpm_required=true"
               echo "rust_cache_required=true"
               echo "rust_required=true"
               echo "workflows_required=true"
@@ -79,6 +81,7 @@ jobs:
           rust_required=false
           rust_cache_required=false
           aur_required=false
+          rpm_required=false
           container_mode=none
           current_nix_required=false
           nix_package_required=false
@@ -86,6 +89,7 @@ jobs:
           workflows_required=false
           if [[ "${#changed_paths[@]}" -eq 0 ]]; then
             aur_required=true
+            rpm_required=true
             rust_required=true
             container_mode=full
             current_nix_required=true
@@ -109,6 +113,12 @@ jobs:
             case "$path" in
               .github/workflows/aur.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 aur_required=true
+                ;;
+            esac
+
+            case "$path" in
+              .github/workflows/rpm-source.yml|.github/workflows/rpm.yml)
+                rpm_required=true
                 ;;
             esac
 
@@ -137,7 +147,7 @@ jobs:
             esac
 
             case "$path" in
-              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
+              .github/workflows/aur.yml|.github/workflows/checks.yml|.github/workflows/rpm-source.yml|.github/workflows/rpm.yml|packaging/aur/rufin-bin/PKGBUILD.template|packaging/aur/rufin-git/PKGBUILD|packaging/aur/rufin-git/.SRCINFO|scripts/check-deps)
                 ;;
               *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp)
                 ;;
@@ -155,6 +165,7 @@ jobs:
             echo "current_nix_required=$current_nix_required"
             echo "nix_package_required=$nix_package_required"
             echo "package_dependencies_required=$package_dependencies_required"
+            echo "rpm_required=$rpm_required"
             echo "rust_cache_required=$rust_cache_required"
             echo "rust_required=$rust_required"
             echo "workflows_required=$workflows_required"
@@ -233,19 +244,13 @@ jobs:
             diff -u .SRCINFO <(makepkg --printsrcinfo)
           "
 
-      - name: Build Rufin in the package environment
-        run: |
-          set -euo pipefail
-          install -d -o builder -g builder /home/builder/target
-          target="$(runuser -u builder -- rustc -vV | sed -n 's/^host: //p')"
-          runuser -u builder -- bash -lc "
-            set -euo pipefail
-            export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
-            cd '$GITHUB_WORKSPACE'
-            cargo fetch --locked --target '$target'
-            CARGO_TARGET_DIR=/home/builder/target cargo build --frozen --release -p rufin
-          "
-          test -x /home/builder/target/release/rufin
+  rpm-package:
+    name: RPM source package
+    needs: changes
+    if: github.event_name != 'push' && needs.changes.outputs.rpm_required == 'true'
+    uses: ./.github/workflows/rpm-source.yml
+    with:
+      ref: ${{ github.sha }}
 
   nix-package:
     name: Nix package
@@ -432,6 +437,7 @@ jobs:
     needs:
       - changes
       - aur-package
+      - rpm-package
       - nix-package
       - container
       - workspace
@@ -451,6 +457,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           NIX_PACKAGE_REQUIRED: ${{ needs.changes.outputs.nix_package_required }}
           NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
+          RPM_REQUIRED: ${{ needs.changes.outputs.rpm_required }}
+          RPM_RESULT: ${{ needs.rpm-package.result }}
           RUST_CACHE_REQUIRED: ${{ needs.changes.outputs.rust_cache_required }}
           RUST_REQUIRED: ${{ needs.changes.outputs.rust_required }}
           WORKSPACE_RESULT: ${{ needs.workspace.result }}
@@ -482,6 +490,11 @@ jobs:
 
           if [[ "$AUR_REQUIRED" == "true" && "$AUR_RESULT" != "success" ]]; then
             echo "AUR package check did not pass: $AUR_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$RPM_REQUIRED" == "true" && "$RPM_RESULT" != "success" ]]; then
+            echo "RPM source package check did not pass: $RPM_RESULT" >&2
             exit 1
           fi
 
