@@ -37,7 +37,7 @@ Usage: scripts/check-deps [--check]
 USAGE
 }
 
-root="$(git rev-parse --show-toplevel)"
+root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 package_start_marker='# Generated Linux package dependencies start.'
 package_end_marker='# Generated Linux package dependencies end.'
 development_start_marker='# Generated Linux development dependencies start.'
