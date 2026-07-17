@@ -26,6 +26,7 @@ pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
         "flatpak-sources" => flatpak_sources_command(args),
         "i18n-template" => i18n_template_command(args),
         "aur-stable" => aur_stable_command(args),
+        "rpm-srpm" => crate::rpm::srpm_command(args),
         command => Err(format!("unknown generate command: {command}").into()),
     }
 }

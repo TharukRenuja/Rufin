@@ -71,6 +71,9 @@ This adds a new source without building new library, syncing, playback, secrets,
 
 ```bash
 just build # builds the app
+just build flatpak # builds the Flatpak
+just build rpm # builds Fedora RPMs for x86_64
+just build rpm arm # builds Fedora RPMs for AArch64
 just debug # runs the development app on the host
 just fmt # formats Rust code
 just test # runs the test suite

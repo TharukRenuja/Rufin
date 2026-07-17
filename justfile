@@ -3,11 +3,32 @@ set shell := ["bash", "-euc"]
 default:
     @just --list
 
-build:
-    scripts/container run just _build
+build target="" architecture="":
+    if [[ "{{ target }}" == "rpm" ]]; then \
+        scripts/build-rpm "{{ architecture }}"; \
+    elif [[ "{{ target }}" == "flatpak" && -z "{{ architecture }}" ]]; then \
+        just _build-flatpak; \
+    elif [[ -z "{{ target }}" && -z "{{ architecture }}" ]]; then \
+        scripts/container run just _build; \
+    else \
+        echo "usage: just build [flatpak|rpm [arm]]" >&2; \
+        exit 2; \
+    fi
 
 _build:
     cargo build --locked
+
+_build-flatpak:
+    if [[ "${RUFIN_CONTAINER:-0}" == "1" ]]; then \
+        echo "Build the Flatpak from the host." >&2; \
+        exit 1; \
+    fi
+    flatpak-builder \
+        --user \
+        --install-deps-from=flathub \
+        --force-clean \
+        .local/flatpak/build \
+        packaging/flatpak/io.github.screwys.Rufin.json
 
 check:
     scripts/container run just _check-all
