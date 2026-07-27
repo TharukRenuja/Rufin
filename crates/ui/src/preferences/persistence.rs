@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{LeftSidebarMode, LibraryListKey, LibraryListSettings};
+use crate::{LeftSidebarMode, LibraryColumnWidth, LibraryListKey, LibraryListSettings};
 use ::library::HomeBlockKind;
 use adw::prelude::*;
 use desktop_integration::{DisplayType, LinkType};
@@ -455,6 +455,72 @@ impl Shell {
         if committed.is_some() {
             self.reconcile_mounted_route();
         }
+    }
+
+    pub(crate) fn save_library_column_widths(
+        &self,
+        key: LibraryListKey,
+        widths: Vec<LibraryColumnWidth>,
+    ) {
+        self.update_app_settings("library column widths", |settings| {
+            if !settings.library_lists.iter().any(|entry| entry.key == key) {
+                settings
+                    .library_lists
+                    .push(crate::LibraryListSettingsEntry {
+                        key,
+                        settings: LibraryListSettings::for_key(key),
+                    });
+            }
+            let Some(list) = settings
+                .library_lists
+                .iter_mut()
+                .find(|entry| entry.key == key)
+                .map(|entry| &mut entry.settings)
+            else {
+                return false;
+            };
+            let previous = list.row_column_widths.clone();
+            for width in widths {
+                if let Some(saved) = list
+                    .row_column_widths
+                    .iter_mut()
+                    .find(|saved| saved.field == width.field)
+                {
+                    *saved = width;
+                } else {
+                    list.row_column_widths.push(width);
+                }
+            }
+            list.row_column_widths != previous
+        });
+    }
+
+    pub(crate) fn save_folder_column_widths(&self, widths: [i32; 3]) {
+        self.update_app_settings("folder column widths", |settings| {
+            let next = [Some(widths[0]), Some(widths[1]), Some(widths[2])];
+            let previous = [
+                settings.folder_view.name_column_width,
+                settings.folder_view.detail_column_width,
+                settings.folder_view.duration_column_width,
+            ];
+            if next == previous {
+                return false;
+            }
+            settings.folder_view.name_column_width = next[0];
+            settings.folder_view.detail_column_width = next[1];
+            settings.folder_view.duration_column_width = next[2];
+            true
+        });
+    }
+
+    pub(crate) fn save_folder_tree_width(&self, width: i32) {
+        self.update_app_settings("folder tree width", |settings| {
+            if settings.folder_view.tree_width == Some(width) {
+                return false;
+            }
+            settings.folder_view.tree_width = Some(width);
+            true
+        });
     }
 
     pub(crate) fn update_playback_settings(

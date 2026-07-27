@@ -88,6 +88,59 @@ fn unknown_library_layout_falls_back_to_grid() {
 }
 
 #[test]
+fn saved_table_widths_round_trip_with_safe_bounds() {
+    let mut settings = Settings::default();
+    let tracks = settings
+        .library_lists
+        .iter_mut()
+        .find(|entry| entry.key == LibraryListKey::Tracks)
+        .expect("default Tracks settings");
+    tracks.settings.row_column_widths = vec![
+        super::LibraryColumnWidth {
+            field: LibraryField::Title,
+            width: 12,
+        },
+        super::LibraryColumnWidth {
+            field: LibraryField::Title,
+            width: 900,
+        },
+        super::LibraryColumnWidth {
+            field: LibraryField::RowIndex,
+            width: 80,
+        },
+    ];
+    settings.folder_view.tree_width = Some(10_000);
+    settings.folder_view.name_column_width = Some(12);
+    settings.folder_view.detail_column_width = Some(10_000);
+    settings.sanitize();
+
+    let value = serde_json::to_value(&settings).expect("serialize saved table widths");
+    let restored =
+        serde_json::from_value::<Settings>(value).expect("deserialize saved table widths");
+    let tracks = restored.library_list(LibraryListKey::Tracks);
+
+    assert_eq!(
+        tracks.row_column_widths,
+        [super::LibraryColumnWidth {
+            field: LibraryField::Title,
+            width: super::MIN_TABLE_COLUMN_WIDTH,
+        }]
+    );
+    assert_eq!(
+        restored.folder_view.tree_width,
+        Some(super::MAX_TABLE_COLUMN_WIDTH)
+    );
+    assert_eq!(
+        restored.folder_view.name_column_width,
+        Some(super::MIN_TABLE_COLUMN_WIDTH)
+    );
+    assert_eq!(
+        restored.folder_view.detail_column_width,
+        Some(super::MAX_TABLE_COLUMN_WIDTH)
+    );
+}
+
+#[test]
 fn default_library_rows_skip_redundant_album_artist() {
     for key in [LibraryListKey::Albums, LibraryListKey::ArtistAlbums] {
         let settings = super::LibraryListSettings::for_key(key);
@@ -266,6 +319,7 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         detail_track_fields: Vec::new(),
         sort_key: LibraryField::Title,
         descending: false,
+        row_column_widths: Vec::new(),
         layout_version: 2,
     };
     playlists.sanitize(LibraryListKey::Playlists);
@@ -286,6 +340,7 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         detail_track_fields: Vec::new(),
         sort_key: LibraryField::Title,
         descending: false,
+        row_column_widths: Vec::new(),
         layout_version: 3,
     };
     smart_playlists.sanitize(LibraryListKey::SmartPlaylists);
@@ -303,6 +358,7 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         ],
         sort_key: LibraryField::Title,
         descending: false,
+        row_column_widths: Vec::new(),
         layout_version: 4,
     };
     albums.sanitize(LibraryListKey::Albums);
@@ -327,6 +383,7 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         detail_track_fields: available_detail_track_fields().to_vec(),
         sort_key: LibraryField::Title,
         descending: false,
+        row_column_widths: Vec::new(),
         layout_version: 6,
     };
     favorite_tracks.sanitize(LibraryListKey::FavoriteTracks);
@@ -357,6 +414,7 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         ],
         sort_key: LibraryField::Title,
         descending: false,
+        row_column_widths: Vec::new(),
         layout_version: 7,
     };
     tracks.sanitize(LibraryListKey::Tracks);

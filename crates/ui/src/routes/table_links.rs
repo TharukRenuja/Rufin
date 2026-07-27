@@ -177,6 +177,5 @@ where
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(false);
     column
 }

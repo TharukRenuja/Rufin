@@ -12,9 +12,9 @@ use secrets::SecretStorageMode;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ExternalSiteLinkSettings, LayoutSettings, LibraryListKey, LibraryListSettings,
-    LibraryListSettingsEntry, SidebarSettings, ThemePreference, default_library_list_settings,
-    sanitized_window_size,
+    ExternalSiteLinkSettings, FolderViewSettings, LayoutSettings, LibraryListKey,
+    LibraryListSettings, LibraryListSettingsEntry, SidebarSettings, ThemePreference,
+    default_library_list_settings, sanitized_window_size,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -80,6 +80,8 @@ pub struct Settings {
     pub queue_lyrics_height: Option<i32>,
     #[serde(default)]
     pub library_lists: Vec<LibraryListSettingsEntry>,
+    #[serde(default, skip_serializing_if = "FolderViewSettings::is_default")]
+    pub folder_view: FolderViewSettings,
 }
 
 impl Default for Settings {
@@ -117,6 +119,7 @@ impl Default for Settings {
             lyrics_panel_visible: true,
             queue_lyrics_height: None,
             library_lists: default_library_list_settings(),
+            folder_view: FolderViewSettings::default(),
         }
     }
 }
@@ -165,6 +168,7 @@ impl Settings {
         }
         sanitize_home_blocks(&mut self.home_blocks);
         migrate_library_lists(&mut self.library_lists);
+        self.folder_view.sanitize();
     }
 
     pub fn library_list(&self, key: LibraryListKey) -> LibraryListSettings {

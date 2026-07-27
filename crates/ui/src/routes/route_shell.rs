@@ -15,7 +15,7 @@ use crate::localization::{
 };
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{ADD_ICON, MORE_ICON, icon_button, sort_order_icon};
+use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon};
 use crate::shell::layout::WINDOW_CHROME_MARGIN_END;
 use crate::{
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
@@ -423,8 +423,6 @@ impl Shell {
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
         header.set_title_widget(Some(&title));
-        let reset = icon_button("view-refresh-symbolic", "Reset display");
-        header.pack_end(&reset);
         toolbar.add_top_bar(&header);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -437,15 +435,24 @@ impl Shell {
             .title(tr("Layout"))
             .description(tr("Choose the current page layout."))
             .build();
+        let reset = gtk::Button::with_label(&tr("Reset"));
+        reset.add_css_class("destructive-action");
+        reset.set_valign(gtk::Align::End);
+        reset.set_margin_end(16);
+        bind_widget_tooltip(&reset, msgid("Reset to defaults"));
+        layout_group.set_header_suffix(Some(&reset));
         let layout_row = adw::ActionRow::builder().title(tr("View")).build();
         let layout_buttons = Rc::new(RefCell::new(
             Vec::<(LibraryLayout, gtk::ToggleButton)>::new(),
         ));
         let layout_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         layout_box.add_css_class("linked");
+        layout_box.add_css_class("preference-selection-buttons");
+        layout_box.set_valign(gtk::Align::Center);
         let mut first_button: Option<gtk::ToggleButton> = None;
         for layout in supported_layouts(key) {
             let button = gtk::ToggleButton::new();
+            button.add_css_class("preference-selection-button");
             button.set_child(Some(&layout_button_content(layout)));
             button.set_tooltip_text(Some(&tr(layout_title(layout))));
             if let Some(first) = &first_button {
