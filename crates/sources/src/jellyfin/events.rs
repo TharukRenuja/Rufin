@@ -9,12 +9,13 @@ use futures_util::{SinkExt, StreamExt};
 use getrandom::fill;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use std::time::Instant;
 use tokio::time::{Duration, interval, sleep};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, protocol::Role},
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::*;
 use crate::SourceLibraryChange;
@@ -28,9 +29,17 @@ const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 impl JellyfinSource {
     async fn connect_library_socket(&self) -> SourceResult<WebSocketStream<reqwest::Upgraded>> {
         let key = websocket_key()?;
+        let url = endpoint(&self.base_url, "socket")?;
+        debug!(
+            service = "jellyfin",
+            method = "GET",
+            %url,
+            "sending WebSocket upgrade request"
+        );
+        let started = Instant::now();
         let response = self
             .client
-            .get(endpoint(&self.base_url, "socket")?)
+            .get(url)
             .version(reqwest::Version::HTTP_11)
             .header(header::AUTHORIZATION, self.authorization.clone())
             .header(header::CONNECTION, "Upgrade")
@@ -40,6 +49,14 @@ impl JellyfinSource {
             .send()
             .await
             .map_err(|error| SourceError::Network(error.to_string()))?;
+        debug!(
+            service = "jellyfin",
+            method = "GET",
+            endpoint = "/socket",
+            status = response.status().as_u16(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "received WebSocket upgrade response"
+        );
         if response.status() != StatusCode::SWITCHING_PROTOCOLS {
             return Err(SourceError::Server {
                 status: response.status().as_u16(),

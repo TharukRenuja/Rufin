@@ -1,8 +1,4 @@
-use std::{
-    cell::Cell,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::Cell, rc::Rc};
 
 use crate::{
     LayoutProfile, LayoutSettings, LeftSidebarMode, MAX_RIGHT_SIDEBAR_WIDTH,
@@ -10,7 +6,7 @@ use crate::{
 };
 use adw::prelude::*;
 use gtk::glib;
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::Shell;
 
@@ -28,8 +24,6 @@ const LEFT_SIDEBAR_COLLAPSE_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH - 40;
 const LEFT_SIDEBAR_EXPAND_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH;
 const SIDEBAR_KEY_STEP: i32 = 10;
 const SIDEBAR_KEY_PAGE_STEP: i32 = 50;
-const RESIZE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_millis(100);
-
 type ShellAllocationCallback = Rc<dyn Fn(i32, i32)>;
 
 mod shell_allocation_owner_imp {
@@ -42,7 +36,6 @@ mod shell_allocation_owner_imp {
     #[derive(Default)]
     pub struct ShellAllocationOwner {
         pub(super) before_allocate: RefCell<Option<AllocationCallback>>,
-        pub(super) after_allocate: RefCell<Option<AllocationCallback>>,
     }
 
     #[glib::object_subclass]
@@ -55,7 +48,6 @@ mod shell_allocation_owner_imp {
     impl ObjectImpl for ShellAllocationOwner {
         fn dispose(&self) {
             self.before_allocate.take();
-            self.after_allocate.take();
             while let Some(child) = self.obj().first_child() {
                 child.unparent();
             }
@@ -86,11 +78,6 @@ mod shell_allocation_owner_imp {
             if let Some(child) = self.obj().first_child() {
                 child.allocate(width, height, baseline, None);
             }
-
-            let after_allocate = self.after_allocate.borrow().clone();
-            if let Some(after_allocate) = after_allocate {
-                after_allocate(width, height);
-            }
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -119,19 +106,12 @@ impl ShellAllocationOwner {
         owner
     }
 
-    fn set_callbacks(
-        &self,
-        before_allocate: impl Fn(i32, i32) + 'static,
-        after_allocate: impl Fn(i32, i32) + 'static,
-    ) {
+    fn set_before_allocate(&self, before_allocate: impl Fn(i32, i32) + 'static) {
         use gtk::subclass::prelude::ObjectSubclassIsExt;
 
         self.imp()
             .before_allocate
             .replace(Some(Rc::new(before_allocate) as ShellAllocationCallback));
-        self.imp()
-            .after_allocate
-            .replace(Some(Rc::new(after_allocate) as ShellAllocationCallback));
     }
 }
 
@@ -145,9 +125,6 @@ pub(super) struct ShellLayoutState {
     pub(super) owner: ShellAllocationOwner,
     left_drag_preview: Cell<Option<LeftSidebarDragPreview>>,
     right_drag_width: Cell<Option<i32>>,
-    last_resolved: Cell<Option<ResolvedLayout>>,
-    last_allocation_log: Cell<Option<Instant>>,
-    post_allocation_log_pending: Cell<bool>,
 }
 
 impl ShellLayoutState {
@@ -156,29 +133,8 @@ impl ShellLayoutState {
             owner: ShellAllocationOwner::new(root_stack),
             left_drag_preview: Cell::new(None),
             right_drag_width: Cell::new(None),
-            last_resolved: Cell::new(None),
-            last_allocation_log: Cell::new(None),
-            post_allocation_log_pending: Cell::new(false),
         }
     }
-}
-
-fn diagnostics_flag_enabled(name: &str) -> bool {
-    matches!(
-        std::env::var(name)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes" | "on"
-    )
-}
-
-fn layout_diagnostics_enabled() -> bool {
-    diagnostics_flag_enabled("RUFIN_DEBUG_LAYOUT")
-}
-
-fn resize_diagnostics_enabled() -> bool {
-    diagnostics_flag_enabled("RUFIN_RESIZE_DEBUG")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -412,59 +368,6 @@ pub(crate) fn route_content_width(shell: &Shell) -> i32 {
 }
 
 impl Shell {
-    fn log_layout_snapshot(&self, stage: &'static str) {
-        if !layout_diagnostics_enabled() && !resize_diagnostics_enabled() {
-            return;
-        }
-        if self.right_panel.right_split.width() <= 1 && self.route_viewport.route_host.width() <= 1
-        {
-            return;
-        }
-
-        let route = self
-            .navigation
-            .routes
-            .try_borrow()
-            .ok()
-            .map(|routes| routes.current().clone());
-        let active_surface = self.route_viewport.route_host.visible_child();
-        let route_chain = active_surface
-            .as_ref()
-            .map(widget_width_chain)
-            .unwrap_or_default();
-        let main_child_width = self
-            .right_panel
-            .right_split
-            .start_child()
-            .map_or(0, |child| child.width());
-        let right_child_width = self
-            .right_panel
-            .right_split
-            .end_child()
-            .map_or(0, |child| child.width());
-        info!(
-            stage,
-            ?route,
-            window_width = self.layout_width(),
-            root_stack_width = self.chrome.root_stack.width(),
-            app_root_width = self.chrome.app_root.width(),
-            split_width = self.right_panel.right_split.width(),
-            split_position = self.right_panel.right_split.position(),
-            split_max_position = self.right_panel.right_split.max_position(),
-            main_child_width,
-            right_child_width,
-            right_panel_slot_visible = self.right_panel.right_panel_slot.is_visible(),
-            right_panel_slot_width = self.right_panel.right_panel_slot.width(),
-            right_panel_width = self.right_panel.root.width(),
-            route_host_width = self.route_viewport.route_host.width(),
-            active_surface_width = active_surface.as_ref().map_or(0, gtk::Widget::width),
-            left_sidebar = ?self.left_sidebar_mode(),
-            right_sidebar_visible = self.right_sidebar_visible(),
-            %route_chain,
-            "layout snapshot"
-        );
-    }
-
     pub(crate) fn left_sidebar_mode(&self) -> ResolvedLeftSidebarMode {
         if !self.navigation_view.split_view.is_collapsed() {
             ResolvedLeftSidebarMode::Full
@@ -487,7 +390,7 @@ impl Shell {
         self.layout_state.owner.queue_allocate();
     }
 
-    fn apply_layout_allocation(self: &Rc<Self>, width: i32, height: i32) {
+    fn apply_layout_allocation(self: &Rc<Self>, width: i32, _height: i32) {
         // Startup visibility belongs to this allocation owner. Commit a ready
         // route before choosing and allocating the Stack child so the reveal
         // never depends on a second allocation request from inside this one.
@@ -501,39 +404,7 @@ impl Shell {
             left_drag_preview,
             right_drag_width,
         );
-        let previous_resolved = self.layout_state.last_resolved.replace(Some(resolved));
-        let resolved_changed = previous_resolved != Some(resolved);
-        let presentation_changed = previous_resolved.is_none_or(|previous| {
-            previous.profile != resolved.profile
-                || previous.left_sidebar != resolved.left_sidebar
-                || previous.right_sidebar != resolved.right_sidebar
-        });
-        let diagnostics_enabled = layout_diagnostics_enabled() || resize_diagnostics_enabled();
-        let now = Instant::now();
-        let log_due = self
-            .layout_state
-            .last_allocation_log
-            .get()
-            .is_none_or(|previous| now.duration_since(previous) >= RESIZE_DIAGNOSTIC_INTERVAL);
-        if diagnostics_enabled && resolved_changed && (presentation_changed || log_due) {
-            self.layout_state.last_allocation_log.set(Some(now));
-            self.layout_state.post_allocation_log_pending.set(true);
-            info!(
-                allocation_width = width,
-                allocation_height = height,
-                ?left_drag_preview,
-                right_drag_width,
-                ?resolved,
-                "resolved shell layout before child allocation"
-            );
-        }
         self.apply_resolved_layout_for_allocation(resolved);
-    }
-
-    fn finish_layout_allocation(self: &Rc<Self>) {
-        if self.layout_state.post_allocation_log_pending.replace(false) {
-            self.log_layout_snapshot("shell_allocation_complete");
-        }
     }
 
     fn apply_resolved_layout_for_allocation(self: &Rc<Self>, resolved: ResolvedLayout) {
@@ -1069,36 +940,19 @@ fn right_sidebar_handle_hit(start: f64, width: i32, x: f64) -> bool {
 }
 
 fn connect_layout_allocation_owner(shell: &Rc<Shell>) {
-    let before_shell = Rc::downgrade(shell);
-    let after_shell = Rc::downgrade(shell);
-    shell.layout_state.owner.set_callbacks(
-        move |width, height| {
-            if let Some(shell) = before_shell.upgrade() {
-                shell.apply_layout_allocation(width, height);
-            }
-        },
-        move |_, _| {
-            if let Some(shell) = after_shell.upgrade() {
-                shell.finish_layout_allocation();
-            }
-        },
-    );
+    let owner = shell.layout_state.owner.clone();
+    let shell = Rc::downgrade(shell);
+    owner.set_before_allocate(move |width, height| {
+        if let Some(shell) = shell.upgrade() {
+            shell.apply_layout_allocation(width, height);
+        }
+    });
 }
 
 pub(super) fn connect_shell_layout(shell: &Rc<Shell>) {
     connect_layout_allocation_owner(shell);
     connect_left_sidebar_resize(shell);
     connect_right_sidebar_resize(shell);
-}
-
-fn widget_width_chain(widget: &gtk::Widget) -> String {
-    let mut parts = Vec::new();
-    let mut current = Some(widget.clone());
-    while let Some(widget) = current {
-        parts.push(format!("{}:{}", widget.type_().name(), widget.width()));
-        current = widget.parent();
-    }
-    parts.join(" <- ")
 }
 
 #[cfg(test)]

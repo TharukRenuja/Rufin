@@ -14,6 +14,7 @@ pub(super) const JELLYFIN_JSON_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const JELLYFIN_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const JELLYFIN_ERROR_BODY_MAX_BYTES: usize = 64 * 1024;
 const JELLYFIN_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
+    service: "jellyfin",
     auth_context: "Jellyfin returned",
     error_body: BodyLimit {
         max_bytes: JELLYFIN_ERROR_BODY_MAX_BYTES,

@@ -1070,6 +1070,9 @@ impl GstEngine {
                 }
                 self.handle_stream_start();
             }
+            MessageView::Tag(tag) if self.is_active_slot(slot) => {
+                self.log_stream_diagnostics(slot, &tag.tags());
+            }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
                 if self.pending_seek.is_none()
                     && let Some(duration) = self.active_pipeline().duration()
@@ -1138,6 +1141,38 @@ impl GstEngine {
             }
             _ => {}
         }
+    }
+
+    fn log_stream_diagnostics(&self, slot: Slot, tags: &gst::TagListRef) {
+        let codec = tags
+            .get::<gst::tags::AudioCodec>()
+            .map(|value| value.get().to_string())
+            .or_else(|| {
+                tags.get::<gst::tags::Codec>()
+                    .map(|value| value.get().to_string())
+            })
+            .or_else(|| {
+                tags.get::<gst::tags::ContainerFormat>()
+                    .map(|value| value.get().to_string())
+            });
+        let bitrate = tags
+            .get::<gst::tags::Bitrate>()
+            .map(|value| value.get())
+            .or_else(|| {
+                tags.get::<gst::tags::NominalBitrate>()
+                    .map(|value| value.get())
+            })
+            .map(|bits_per_second| bits_per_second / 1_000);
+        if codec.is_none() && bitrate.is_none() {
+            return;
+        }
+        let run = self.run_for_slot(slot).or_else(|| self.timing_run_id());
+        debug!(
+            run = run.map(RunId::get).unwrap_or_default(),
+            codec = codec.as_deref().unwrap_or("unknown"),
+            reported_bitrate_kbps = bitrate,
+            "received GStreamer stream metadata"
+        );
     }
 
     fn handle_transition_error(&mut self, slot: Slot, error: &str) -> bool {

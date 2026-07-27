@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use reqwest::{blocking::Client, header::AUTHORIZATION};
 use serde_json::{Value, json};
 use tracing::debug;
@@ -12,6 +14,18 @@ pub(crate) fn submit(
     settings: &ListenBrainzSettings,
     submission: &Submission,
 ) -> Result<(), DeliveryError> {
+    let operation = match submission {
+        Submission::NowPlaying(_) => "playing_now",
+        Submission::Scrobble { .. } => "single",
+    };
+    debug!(
+        service = "ListenBrainz",
+        method = "POST",
+        url = API_URL,
+        operation,
+        "sending remote request"
+    );
+    let started = Instant::now();
     let response = client
         .post(API_URL)
         .header(AUTHORIZATION, authorization_header(&settings.user_token))
@@ -19,6 +33,14 @@ pub(crate) fn submit(
         .send()
         .map_err(|error| DeliveryError::retry(error.to_string()))?;
     let status = response.status();
+    debug!(
+        service = "ListenBrainz",
+        method = "POST",
+        operation,
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "received remote response"
+    );
     if let Some(error) = delivery_error(status) {
         return Err(error);
     }

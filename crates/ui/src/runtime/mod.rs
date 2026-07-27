@@ -2,6 +2,7 @@
 //!
 //! `rufin` constructs these handles; the crates behind them implement the behavior.
 
+mod diagnostics;
 mod events;
 mod inputs;
 mod release_update;
@@ -11,6 +12,7 @@ pub mod source;
 mod waveform;
 
 pub use ::playback::PlaybackHandles;
+pub use diagnostics::{DiagnosticsHandle, DiagnosticsPort};
 pub use events::ProductReceivers;
 pub use inputs::{
     FavoriteFailure, HomePublication, RuntimeInputs, SelectedLibrary, SelectedLibraryUpdate,

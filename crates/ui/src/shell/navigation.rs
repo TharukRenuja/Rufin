@@ -412,6 +412,12 @@ fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::
     ));
     wrapper.append(&primary_menu_action_row(
         &popover,
+        &tr("Troubleshooting"),
+        "win.troubleshooting",
+        "utilities-terminal-symbolic",
+    ));
+    wrapper.append(&primary_menu_action_row(
+        &popover,
         &tr("About Rufin"),
         "win.about",
         "help-about-symbolic",

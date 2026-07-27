@@ -157,27 +157,28 @@ Testing, Nix, and container controls are documented in
 
 # Troubleshooting
 
-If you are experiencing a problem with the app, please open an issue and include logs. To run the app with extra debug logging:
+Open **Troubleshooting** from the main menu, enable **Debug logging**, reproduce the problem, then click `Save Log`. Crash logs also appear here on
+the next launch. Logs have secrets and absolute folder paths redacted, but you may still review the logs before sharing it.
+
+Or you can just run Rufin from the terminal:
+
+For flatpak:
 
 ```bash
-flatpak run --env=RUST_LOG=FLAG_HERE io.github.screwys.Rufin 2>&1
+flatpak run --env=RUST_LOG=debug io.github.screwys.Rufin 2>&1
 ```
 
-or for native builds:
+For native packages:
 
 ```bash
-RUST_LOG=FLAG_HERE just debug
+RUST_LOG=debug rufin
 ```
 
-Where `RUST_LOG` flags are:
+For development build:
 
-- `rufin=debug` enables app, UI, controller, and sync logs.
-- `playback=debug` enables playback and GStreamer logs.
-- `lofty=debug` enables metadata parser logs.
-
-You can combine multiple `RUST_LOG` flags with `,`, for example `rufin=debug,playback=debug`.
-
-For UI bugs, replace `RUST_LOG=FLAG_HERE` with `RUFIN_DEBUG_LAYOUT=1` or `RUFIN_RESIZE_DEBUG=1`.
+```bash
+just debug
+```
 
 # Project scope
 

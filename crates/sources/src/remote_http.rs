@@ -1,7 +1,11 @@
 use crate::{ImageBytes, SourceError, SourceResult};
 use reqwest::{Client, StatusCode, header};
 use serde::de::DeserializeOwned;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use tracing::{debug, warn};
+
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BodyLimit {
@@ -11,6 +15,7 @@ pub struct BodyLimit {
 
 #[derive(Clone, Copy)]
 pub struct RemoteHttpPolicy {
+    pub service: &'static str,
     pub auth_context: &'static str,
     pub error_body: BodyLimit,
     pub redact_error_url: Option<fn(&mut reqwest::Url)>,
@@ -40,9 +45,29 @@ pub async fn json<T: DeserializeOwned>(
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
 ) -> SourceResult<T> {
-    let response = checked_response(request, policy).await?;
-    let bytes = response_bytes_bounded(response, policy, limit).await?;
-    serde_json::from_slice::<T>(&bytes).map_err(|error| SourceError::Other(error.to_string()))
+    let checked = checked_response(request, policy).await?;
+    let bytes =
+        response_bytes_bounded(checked.response, policy, limit, Some(&checked.request)).await?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+    serde_path_to_error::deserialize::<_, T>(&mut deserializer).map_err(|error| {
+        let field = error.path().to_string();
+        warn!(
+            request = checked.request.id,
+            service = checked.request.service,
+            method = %checked.request.method,
+            endpoint = %checked.request.endpoint,
+            %field,
+            error = %error.inner(),
+            "remote JSON response did not match the expected shape"
+        );
+        SourceError::Other(format!(
+            "{} response at {} field {}: {}",
+            checked.request.service,
+            checked.request.endpoint,
+            field,
+            error.inner()
+        ))
+    })
 }
 
 pub async fn unit(request: reqwest::RequestBuilder, policy: RemoteHttpPolicy) -> SourceResult<()> {
@@ -55,13 +80,15 @@ pub async fn bytes(
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
 ) -> SourceResult<ImageBytes> {
-    let response = checked_response(request, policy).await?;
-    let content_type = response
+    let checked = checked_response(request, policy).await?;
+    let content_type = checked
+        .response
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let bytes = response_bytes_bounded(response, policy, limit).await?;
+    let bytes =
+        response_bytes_bounded(checked.response, policy, limit, Some(&checked.request)).await?;
     Ok(ImageBytes {
         bytes,
         content_type,
@@ -93,12 +120,42 @@ pub fn map_reqwest_error(mut error: reqwest::Error, policy: RemoteHttpPolicy) ->
 async fn checked_response(
     request: reqwest::RequestBuilder,
     policy: RemoteHttpPolicy,
-) -> SourceResult<reqwest::Response> {
-    let response = request
-        .send()
-        .await
-        .map_err(|error| map_reqwest_error(error, policy))?;
+) -> SourceResult<CheckedResponse> {
+    let (client, request) = request.build_split();
+    let request = request.map_err(|error| map_reqwest_error(error, policy))?;
+    let request_metadata = RequestMetadata::new(&request, policy.service);
+    let started = Instant::now();
+    debug!(
+        request = request_metadata.id,
+        service = request_metadata.service,
+        method = %request_metadata.method,
+        endpoint = %request_metadata.endpoint,
+        query_keys = %request_metadata.query_keys,
+        "sending remote request"
+    );
+    let response = client.execute(request).await.map_err(|error| {
+        let error = map_reqwest_error(error, policy);
+        warn!(
+            request = request_metadata.id,
+            service = request_metadata.service,
+            method = %request_metadata.method,
+            endpoint = %request_metadata.endpoint,
+            elapsed_ms = started.elapsed().as_millis(),
+            %error,
+            "remote request failed"
+        );
+        error
+    })?;
     let status = response.status();
+    debug!(
+        request = request_metadata.id,
+        service = request_metadata.service,
+        method = %request_metadata.method,
+        endpoint = %request_metadata.endpoint,
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "received remote response"
+    );
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         return Err(SourceError::Auth(format!(
             "{} {}",
@@ -110,21 +167,26 @@ async fn checked_response(
         return Err(SourceError::NotFound);
     }
     if status.is_client_error() || status.is_server_error() {
-        let message = response_text_or_status(response, status, policy).await;
+        let message =
+            response_text_or_status(response, status, policy, Some(&request_metadata)).await;
         return Err(SourceError::Server {
             status: status.as_u16(),
             message,
         });
     }
-    Ok(response)
+    Ok(CheckedResponse {
+        response,
+        request: request_metadata,
+    })
 }
 
 async fn response_text_or_status(
     response: reqwest::Response,
     status: StatusCode,
     policy: RemoteHttpPolicy,
+    request: Option<&RequestMetadata>,
 ) -> String {
-    match response_bytes_bounded(response, policy, policy.error_body).await {
+    match response_bytes_bounded(response, policy, policy.error_body, request).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => status.to_string(),
     }
@@ -134,6 +196,7 @@ async fn response_bytes_bounded(
     mut response: reqwest::Response,
     policy: RemoteHttpPolicy,
     limit: BodyLimit,
+    request: Option<&RequestMetadata>,
 ) -> SourceResult<Vec<u8>> {
     if response
         .content_length()
@@ -162,7 +225,47 @@ async fn response_bytes_bounded(
         }
         bytes.extend_from_slice(&chunk);
     }
+    if let Some(request) = request {
+        debug!(
+            request = request.id,
+            service = request.service,
+            method = %request.method,
+            endpoint = %request.endpoint,
+            bytes = bytes.len(),
+            "read remote response body"
+        );
+    }
     Ok(bytes)
+}
+
+struct CheckedResponse {
+    response: reqwest::Response,
+    request: RequestMetadata,
+}
+
+struct RequestMetadata {
+    id: u64,
+    service: &'static str,
+    method: String,
+    endpoint: String,
+    query_keys: String,
+}
+
+impl RequestMetadata {
+    fn new(request: &reqwest::Request, service: &'static str) -> Self {
+        Self {
+            id: NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed),
+            service,
+            method: request.method().to_string(),
+            endpoint: request.url().path().to_string(),
+            query_keys: request
+                .url()
+                .query_pairs()
+                .map(|(key, _)| key.into_owned())
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
 }
 
 fn size_error(limit: BodyLimit) -> SourceError {
@@ -185,6 +288,7 @@ mod tests {
         context: "test response",
     };
     const POLICY: RemoteHttpPolicy = RemoteHttpPolicy {
+        service: "test-server",
         auth_context: "Test server returned",
         error_body: BodyLimit {
             max_bytes: 32,
@@ -196,6 +300,21 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Payload {
         value: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[expect(dead_code, reason = "the fixture must fail before producing Songs")]
+    struct Songs {
+        songs: Vec<Song>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[expect(
+        dead_code,
+        reason = "the invalid duration is the deserialization boundary"
+    )]
+    struct Song {
+        duration: u32,
     }
 
     #[tokio::test]
@@ -223,6 +342,34 @@ mod tests {
         .expect("payload");
 
         assert_eq!(payload.value, "ok");
+    }
+
+    #[tokio::test]
+    async fn json_errors_name_the_endpoint_and_field_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/songs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "songs": [{"duration": 747.9273376464844}]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = Client::new();
+        let error = json::<Songs>(
+            client.get(format!("{}/songs", server.uri())),
+            POLICY,
+            BodyLimit {
+                max_bytes: 1_024,
+                context: "test JSON response",
+            },
+        )
+        .await
+        .expect_err("invalid duration");
+
+        let message = error.to_string();
+        assert!(message.contains("/songs"));
+        assert!(message.contains("songs[0].duration"));
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 pub(crate) mod build;
 pub(crate) mod chrome;
+mod diagnostics;
 pub(crate) mod layout;
 pub(crate) mod navigation;
 use crate::favorites::FavoriteState;
@@ -14,7 +15,7 @@ use crate::preferences::persistence::SettingsState;
 use crate::preferences::source::SourceState;
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
-use crate::runtime::ProductHandles;
+use crate::runtime::{DiagnosticsHandle, ProductHandles};
 use actions::ControlFeedbackState;
 use chrome::WindowChrome;
 use cover::ArtworkState;
@@ -35,6 +36,7 @@ mod window_state;
 use route::RouteViewport;
 
 pub(crate) struct Shell {
+    pub(crate) diagnostics: DiagnosticsHandle,
     pub(crate) settings: SettingsState,
     pub(crate) navigation: NavigationState,
     pub(crate) library: LibraryState,

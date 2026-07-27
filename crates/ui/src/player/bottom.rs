@@ -8,7 +8,6 @@ use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::glib;
 use playback::{CurrentMediaId, PlaybackView, RepeatMode, TransportStatus};
-use tracing::info;
 
 use crate::favorites::{favorite_icon_button, set_favorite_button_active};
 use localization::{msgid, tr};
@@ -92,14 +91,10 @@ pub(crate) struct PlayerControls {
     pub(crate) menu_button: gtk::Button,
     artist: gtk::Label,
     album: gtk::Label,
-    identity: gtk::Box,
-    identity_slot: gtk::ScrolledWindow,
-    title_row: gtk::Box,
     now_playing_wall: gtk::Box,
     tiny_row: gtk::Box,
     tiny_controls: gtk::Box,
     tiny_layout: Cell<bool>,
-    allocation_log_source: RefCell<Option<glib::SourceId>>,
     transport: gtk::Box,
     transport_slot: gtk::Box,
     transport_buttons: gtk::Fixed,
@@ -142,9 +137,6 @@ struct NowPlayingControls {
     menu_button: gtk::Button,
     artist: gtk::Label,
     album: gtk::Label,
-    identity: gtk::Box,
-    identity_slot: gtk::ScrolledWindow,
-    title_row: gtk::Box,
 }
 
 struct TransportControls {
@@ -722,9 +714,6 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         menu_button,
         artist,
         album,
-        identity,
-        identity_slot,
-        title_row,
     } = build_now_playing_controls();
 
     let TransportControls {
@@ -809,14 +798,10 @@ pub(crate) fn build_bottom_player() -> PlayerControls {
         menu_button,
         artist,
         album,
-        identity,
-        identity_slot,
-        title_row,
         now_playing_wall,
         tiny_row,
         tiny_controls,
         tiny_layout: Cell::new(false),
-        allocation_log_source: RefCell::new(None),
         transport,
         transport_slot,
         transport_buttons,
@@ -921,9 +906,6 @@ fn build_now_playing_controls() -> NowPlayingControls {
         menu_button,
         artist,
         album,
-        identity,
-        identity_slot,
-        title_row,
     }
 }
 
@@ -1701,36 +1683,7 @@ fn connect_bottom_player_resize(shell: &Rc<Shell>) {
                 return;
             };
             resize_shell.apply_bottom_player_width(width);
-            schedule_bottom_player_allocation_log(&resize_shell);
         });
-}
-
-fn schedule_bottom_player_allocation_log(shell: &Rc<Shell>) {
-    if std::env::var_os("RUFIN_RESIZE_DEBUG").is_none() {
-        return;
-    }
-
-    let player = &shell.player_view.player_controls;
-    if let Some(source) = player.allocation_log_source.borrow_mut().take() {
-        source.remove();
-    }
-    let shell = Rc::downgrade(shell);
-    let source = glib::timeout_add_local_once(Duration::from_millis(40), move || {
-        let Some(shell) = shell.upgrade() else {
-            return;
-        };
-        shell
-            .player_view
-            .player_controls
-            .allocation_log_source
-            .borrow_mut()
-            .take();
-        let content_width = shell.player_view.player_controls.root.width();
-        let player_width = content_width + BOTTOM_PLAYER_EDGE_PADDING * 2;
-        shell
-            .log_bottom_player_allocation(player_width, bottom_player_progress_width(player_width));
-    });
-    player.allocation_log_source.replace(Some(source));
 }
 
 impl Shell {
@@ -1784,57 +1737,6 @@ impl Shell {
                 .widget()
                 .set_content_width(progress_width);
         }
-    }
-
-    fn log_bottom_player_allocation(&self, player_width: i32, desired_progress_width: i32) {
-        if std::env::var_os("RUFIN_RESIZE_DEBUG").is_none() {
-            return;
-        }
-
-        let player = &self.player_view.player_controls;
-        let root = &player.root;
-        let play_bounds = player.play_button.compute_bounds(root);
-        let title_bounds = player.title.compute_bounds(root);
-        let menu_bounds = player.menu_button.compute_bounds(root);
-        let play_center_x = play_bounds
-            .as_ref()
-            .map(|bounds| bounds.x() + bounds.width() / 2.0);
-        let expected_play_center_x = root.width() as f32 / 2.0;
-        let play_center_delta = play_center_x.map(|center| center - expected_play_center_x);
-        let title_menu_gap = title_bounds
-            .as_ref()
-            .zip(menu_bounds.as_ref())
-            .map(|(title, menu)| menu.x() - (title.x() + title.width()));
-        let (_, action_natural_width, _, _) =
-            player.actions.measure(gtk::Orientation::Horizontal, -1);
-
-        info!(
-            player_width,
-            content_width = root.width(),
-            tiny = player.tiny_layout.get(),
-            actions = ?bottom_player_actions(player_width),
-            desired_progress_width,
-            requested_progress_width = player.progress.width_request(),
-            allocated_progress_width = player.progress_stack.width(),
-            action_natural_width,
-            play_center_x,
-            expected_play_center_x,
-            play_center_delta,
-            title_menu_gap,
-            play_bounds = ?play_bounds,
-            identity_slot_bounds = ?player.identity_slot.compute_bounds(root),
-            identity_bounds = ?player.identity.compute_bounds(root),
-            title_row_bounds = ?player.title_row.compute_bounds(root),
-            title_bounds = ?title_bounds,
-            menu_bounds = ?menu_bounds,
-            artist_bounds = ?player.artist.compute_bounds(root),
-            album_bounds = ?player.album.compute_bounds(root),
-            actions_bounds = ?player.actions.compute_bounds(root),
-            transport_bounds = ?player.transport_slot.compute_bounds(root),
-            progress_row_bounds = ?player.progress_row.compute_bounds(root),
-            now_playing_bounds = ?player.now_playing_wall.compute_bounds(root),
-            "bottom player allocation"
-        );
     }
 
     fn apply_bottom_player_tiny(&self, tiny: bool) {

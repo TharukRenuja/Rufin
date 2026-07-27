@@ -27,6 +27,12 @@ pub(crate) fn cache_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+pub(crate) fn state_dir() -> PathBuf {
+    project_dirs()
+        .and_then(|dirs| dirs.state_dir().map(Path::to_path_buf))
+        .unwrap_or_else(cache_dir)
+}
+
 pub(crate) fn settings_file() -> PathBuf {
     config_dir().join(SETTINGS_FILE)
 }

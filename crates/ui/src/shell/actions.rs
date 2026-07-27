@@ -64,6 +64,13 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
     shell.chrome.window.add_action(&preferences);
 
+    let troubleshooting = gio::SimpleAction::new("troubleshooting", None);
+    let troubleshooting_shell = Rc::clone(shell);
+    troubleshooting.connect_activate(move |_, _| {
+        super::diagnostics::present_diagnostics(&troubleshooting_shell);
+    });
+    shell.chrome.window.add_action(&troubleshooting);
+
     let toggle_left_sidebar = gio::SimpleAction::new("toggle-left-sidebar", None);
     let toggle_left_sidebar_shell = Rc::clone(shell);
     toggle_left_sidebar.connect_activate(move |_, _| {

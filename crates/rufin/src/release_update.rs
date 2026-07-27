@@ -5,7 +5,7 @@
 //! policy, and records the version whose toast was shown.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_channel::Sender;
 use tracing::debug;
@@ -123,10 +123,26 @@ fn fetch_flathub_release_update() -> Result<Option<FetchedReleaseUpdate>, String
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| error.to_string())?;
-    let value = client
+    debug!(
+        service = "flathub",
+        method = "GET",
+        url = FLATHUB_APPSTREAM_URL,
+        "sending remote request"
+    );
+    let started = Instant::now();
+    let response = client
         .get(FLATHUB_APPSTREAM_URL)
         .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| error.to_string())?;
+    debug!(
+        service = "flathub",
+        method = "GET",
+        status = response.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "received remote response"
+    );
+    let value = response
+        .error_for_status()
         .map_err(|error| error.to_string())?
         .json::<serde_json::Value>()
         .map_err(|error| error.to_string())?;

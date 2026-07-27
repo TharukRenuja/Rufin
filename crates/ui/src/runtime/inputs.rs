@@ -7,7 +7,7 @@ use playback::{LoadedPlayRequest, PlaybackProjection, QueuePlacement, SourceSess
 use std::sync::Arc;
 
 use super::source::{ConfiguredSources, SourceOperation};
-use super::{ProductHandles, ProductReceivers};
+use super::{DiagnosticsHandle, ProductHandles, ProductReceivers};
 
 #[derive(Clone)]
 pub struct SelectedLibrary {
@@ -113,6 +113,7 @@ pub struct FavoriteFailure {
 }
 
 pub struct RuntimeInputs {
+    pub diagnostics: DiagnosticsHandle,
     pub products: ProductHandles,
     pub settings: SettingsHandle,
     pub receivers: ProductReceivers,
