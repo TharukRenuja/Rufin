@@ -109,3 +109,63 @@ fn incompatible_lyrics_input_discards_the_rebuildable_row() {
             .is_none()
     );
 }
+
+#[test]
+fn clearing_fetched_track_lyrics_removes_every_language_variant_only() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let library =
+        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+    let source_id = SourceId::new("subsonic:lyrics-cache");
+    let track_id = TrackId::new("track:variants");
+    let input = LyricsCacheInput {
+        version: 1,
+        digest: [3; 32],
+    };
+    for (role, language, authority) in [
+        ("original", "", LyricsCacheAuthority::External),
+        ("translation", "en", LyricsCacheAuthority::External),
+        ("translation", "fr", LyricsCacheAuthority::Source),
+    ] {
+        library
+            .store_lyrics(LyricsCacheWrite {
+                key: LyricsCacheKey {
+                    source_id: source_id.clone(),
+                    track_id: track_id.clone(),
+                    role: role.to_string(),
+                    language: language.to_string(),
+                    script: String::new(),
+                },
+                authority,
+                input: input.clone(),
+                payload: "{}".to_string(),
+                cached_at: 1,
+            })
+            .expect("store lyrics variant");
+    }
+
+    assert_eq!(
+        library
+            .remove_track_lyrics_by_authority(
+                source_id.clone(),
+                track_id.clone(),
+                LyricsCacheAuthority::External,
+            )
+            .expect("clear fetched variants"),
+        2
+    );
+    assert!(
+        library
+            .cached_lyrics(
+                LyricsCacheKey {
+                    source_id,
+                    track_id,
+                    role: "translation".to_string(),
+                    language: "fr".to_string(),
+                    script: String::new(),
+                },
+                input,
+            )
+            .expect("read source variant")
+            .is_some()
+    );
+}

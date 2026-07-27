@@ -917,18 +917,26 @@ impl JellyfinSource {
 pub(super) fn lyrics_from_dto(origin: NativeLyricsOrigin, dto: LyricDto) -> NativeLyrics {
     NativeLyrics {
         origin,
-        lines: dto
-            .lyrics
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|line| {
-                let text = line.text.unwrap_or_default();
-                (!text.trim().is_empty()).then_some(NativeLyricLine {
-                    text,
-                    start_millis: ticks_to_millis(line.start),
+        documents: vec![NativeLyricsDocument {
+            role: NativeLyricsRole::Original,
+            language: None,
+            offset_millis: 0,
+            lines: dto
+                .lyrics
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|line| {
+                    let text = line.text.unwrap_or_default();
+                    (!text.trim().is_empty()).then_some(NativeLyricLine {
+                        text,
+                        start_millis: ticks_to_millis(line.start),
+                        end_millis: None,
+                        cue_lines: Vec::new(),
+                    })
                 })
-            })
-            .collect(),
+                .collect(),
+            agents: Vec::new(),
+        }],
     }
 }
 

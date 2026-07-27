@@ -95,6 +95,17 @@ impl Library {
         validate_key(&key)?;
         Ok(self.store.remove_lyrics_if_authority(key, authority)?)
     }
+
+    pub fn remove_track_lyrics_by_authority(
+        &self,
+        source_id: SourceId,
+        track_id: TrackId,
+        authority: LyricsCacheAuthority,
+    ) -> LibraryResult<u64> {
+        Ok(self
+            .store
+            .remove_track_lyrics_by_authority(source_id, track_id, authority)?)
+    }
 }
 
 fn validate_key(key: &LyricsCacheKey) -> LibraryResult<()> {

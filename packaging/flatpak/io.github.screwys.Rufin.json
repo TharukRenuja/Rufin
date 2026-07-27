@@ -11,7 +11,8 @@
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": {
-      "CARGO_NET_OFFLINE": "true"
+      "CARGO_NET_OFFLINE": "true",
+      "LINDERA_DICTIONARIES_PATH": "/run/build/rufin/lindera-dictionaries"
     }
   },
   "finish-args": [

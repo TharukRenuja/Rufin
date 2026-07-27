@@ -11,6 +11,10 @@ use crate::process::{
 use crate::{Result, parse_check_flag};
 
 const CARGO_REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
+const IPADIC_ARCHIVE: &str = "mecab-ipadic-2.7.0-20250920.tar.gz";
+const IPADIC_SHA256: &str = "a7ba9f645ffe7094e56ae1c4a81d100df8fbb1e28bbe1792622e9728e162db3d";
+const IPADIC_URL: &str = "https://lindera.dev/mecab-ipadic-2.7.0-20250920.tar.gz";
+
 pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     if args.is_empty() {
         return Err("missing generate command".into());
@@ -99,6 +103,15 @@ fn generate_cargo_sources(lock: &str) -> Result<String> {
         flush_cargo_package(&current, &mut seen, &mut output)?;
     }
 
+    output.push_str("    {\n");
+    output.push_str("        \"type\": \"file\",\n");
+    output.push_str(&format!("        \"url\": \"{IPADIC_URL}\",\n"));
+    output.push_str(&format!("        \"sha256\": \"{IPADIC_SHA256}\",\n"));
+    output.push_str("        \"dest\": \"lindera-dictionaries/3.0.7\",\n");
+    output.push_str(&format!(
+        "        \"dest-filename\": \"{IPADIC_ARCHIVE}\"\n"
+    ));
+    output.push_str("    },\n");
     output.push_str("    {\n");
     output.push_str("        \"type\": \"inline\",\n");
     output.push_str(

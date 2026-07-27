@@ -1,13 +1,10 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
-use crate::{
-    LeftSidebarMode, LibraryListKey, LibraryListSettings, Settings as UiSettings, SettingsHandle,
-};
+use crate::{LeftSidebarMode, LibraryListKey, LibraryListSettings};
 use ::library::HomeBlockKind;
 use adw::prelude::*;
 use desktop_integration::{DisplayType, LinkType};
 use localization::set_language_preference;
-use lyrics::ExternalLyricsProvider;
 use playback::PlaybackSettings;
 use secrets::SecretStorageMode;
 use tracing::warn;
@@ -17,34 +14,7 @@ use crate::runtime::ScrobblingPreferences;
 use crate::shell::Shell;
 use crate::shell::layout::{ActiveLayoutProfile, ResolvedLeftSidebarMode, resolve_layout};
 
-pub(crate) struct SettingsState {
-    pub(crate) current: RefCell<UiSettings>,
-    pub(crate) persistence: SettingsHandle,
-}
-
 impl Shell {
-    pub(crate) fn update_app_settings(
-        &self,
-        warning_action: &'static str,
-        update: impl FnOnce(&mut UiSettings) -> bool,
-    ) -> Option<UiSettings> {
-        let mut settings = self.settings.persistence.load();
-        if !update(&mut settings) {
-            return None;
-        }
-        settings.sanitize();
-        match self.settings.persistence.save(&settings) {
-            Ok(committed) => {
-                *self.settings.current.borrow_mut() = committed.clone();
-                Some(committed)
-            }
-            Err(error) => {
-                warn!(%error, action = warning_action, "failed to save settings");
-                None
-            }
-        }
-    }
-
     pub(super) fn retry_external_artwork(self: &Rc<Self>, warning_action: &'static str) {
         if let Err(error) = self.products.artwork.retry_external() {
             warn!(%error, action = warning_action, "failed to retry external artwork");
@@ -53,7 +23,7 @@ impl Shell {
         self.refresh_artwork_policy();
     }
 
-    fn reconcile_lyrics_settings_ui(self: &Rc<Self>) {
+    pub(crate) fn reconcile_lyrics_settings_ui(self: &Rc<Self>) {
         let search_dialog = self
             .lyrics
             .search_dialog
@@ -64,22 +34,6 @@ impl Shell {
             dialog.close();
         }
         self.render_lyrics_panel();
-    }
-
-    pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("lyrics setting", |settings| {
-                if settings.lyrics.external_lyrics_enabled == enabled {
-                    return false;
-                }
-                settings.lyrics.external_lyrics_enabled = enabled;
-                true
-            })
-            .is_none()
-        {
-            return;
-        }
-        self.reconcile_lyrics_settings_ui();
     }
 
     pub(super) fn set_external_album_lookup_enabled(self: &Rc<Self>, enabled: bool) {
@@ -162,22 +116,6 @@ impl Shell {
         }
     }
 
-    pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
-        if self
-            .update_app_settings("lyrics search setting", |settings| {
-                if settings.lyrics.prefer_server_lyrics == enabled {
-                    return false;
-                }
-                settings.lyrics.prefer_server_lyrics = enabled;
-                true
-            })
-            .is_none()
-        {
-            return;
-        }
-        self.reconcile_lyrics_settings_ui();
-    }
-
     pub(super) fn set_prefer_server_playlist_covers(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("playlist cover setting", |settings| {
@@ -193,37 +131,6 @@ impl Shell {
         }
         self.reconcile_mounted_route();
         refresh_context_playlist_picker(self);
-    }
-
-    pub(super) fn set_external_lyrics_provider_enabled(
-        self: &Rc<Self>,
-        provider: ExternalLyricsProvider,
-        enabled: bool,
-    ) {
-        if self
-            .update_app_settings("lyrics provider setting", |settings| {
-                let has_provider = settings
-                    .lyrics
-                    .external_lyrics_providers
-                    .contains(&provider);
-                if has_provider == enabled {
-                    return false;
-                }
-                if enabled {
-                    settings.lyrics.external_lyrics_providers.push(provider);
-                } else {
-                    settings
-                        .lyrics
-                        .external_lyrics_providers
-                        .retain(|candidate| *candidate != provider);
-                }
-                true
-            })
-            .is_none()
-        {
-            return;
-        }
-        self.reconcile_lyrics_settings_ui();
     }
 
     pub(crate) fn set_private_mode(self: &Rc<Self>, enabled: bool) {

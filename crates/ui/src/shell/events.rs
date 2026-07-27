@@ -157,6 +157,10 @@ fn release_selected_source(shell: &Rc<Shell>) {
         }
         dialog.dialog.close();
     }
+    let settings_dialog = shell.lyrics.settings_dialog.borrow_mut().take();
+    if let Some(dialog) = settings_dialog {
+        dialog.dialog.close();
+    }
 
     shell.favorites.clear_all();
     shell.sync_bottom_player_favorite();

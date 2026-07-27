@@ -1323,7 +1323,7 @@ popover.audio-output-popover > contents {
     transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.lyrics-line-active {
+.lyrics-row-active .lyrics-line {
   color: var(--window-fg-color);
   font-weight: 800;
   opacity: 1;
@@ -1825,13 +1825,58 @@ listview.queue-list row {
 }
 
 .lyrics-panel:hover .lyrics-controls,
-.lyrics-control-bar:focus-within {
+.lyrics-panel:focus-within .lyrics-controls {
   opacity: 1;
 }
 
 .lyrics-controls .icon-button {
   min-width: 30px;
   min-height: 30px;
+  padding: 0;
+}
+
+.lyrics-track-heading {
+  margin-top: 14px;
+  font-size: 0.85em;
+  font-weight: 700;
+  color: var(--dim-label-color);
+}
+
+.lyrics-furigana {
+  font-size: 0.68em;
+  color: var(--dim-label-color);
+}
+
+.lyrics-romanization {
+  margin-top: 2px;
+  font-size: 15px;
+}
+
+.lyrics-cue {
+  transition: color 80ms linear, opacity 80ms linear;
+}
+
+.lyrics-cue-sung {
+  color: var(--accent-color);
+}
+
+.lyrics-cue-active {
+  font-weight: 700;
+}
+
+.lyrics-agent-name {
+  font-size: 0.72em;
+  color: var(--dim-label-color);
+}
+
+.lyrics-agent-background,
+.lyrics-agent-group {
+  opacity: 0.82;
+}
+
+.lyrics-provider-order button {
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
 }
 

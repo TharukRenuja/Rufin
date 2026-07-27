@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use playback::CurrentMediaId;
 
-use crate::{LyricsDocument, LyricsQuery, LyricsSearchResult};
+use crate::{LyricsDocument, LyricsOrigin, LyricsQuery, LyricsSearchResult};
 
 #[derive(Clone, Debug)]
 pub enum CurrentLyrics {
@@ -14,6 +14,8 @@ pub enum CurrentLyrics {
     Ready {
         media_id: CurrentMediaId,
         document: Option<Arc<LyricsDocument>>,
+        pronunciation: Option<Arc<LyricsDocument>>,
+        origin: Option<LyricsOrigin>,
     },
 }
 

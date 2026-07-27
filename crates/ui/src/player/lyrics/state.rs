@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use gtk::glib;
 use localization::tr;
-use lyrics::{CurrentLyrics, LyricsDocument};
+use lyrics::{CurrentLyrics, LyricsDocument, LyricsOrigin};
 
 use crate::player::lyrics::search::LyricsSearchDialog;
+use crate::player::lyrics::settings::LyricsSettingsDialog;
 use crate::player::state::{current_playback_media_id, current_playback_track_id};
 use crate::shell::Shell;
 
@@ -17,20 +18,46 @@ pub(crate) struct LyricsState {
     pub(crate) timing_source: RefCell<Option<glib::SourceId>>,
     pub(crate) panel_visible: Cell<bool>,
     pub(crate) search_dialog: RefCell<Option<LyricsSearchDialog>>,
+    pub(crate) settings_dialog: RefCell<Option<LyricsSettingsDialog>>,
 }
 
 impl Shell {
     pub(crate) fn visible_lyrics(&self) -> Option<Arc<LyricsDocument>> {
         let current_media = current_playback_media_id(&self.playback.player.borrow());
         match &*self.lyrics.projection.borrow() {
-            CurrentLyrics::Ready { media_id, document }
-                if current_media.as_ref() == Some(media_id) =>
-            {
-                document.clone()
-            }
+            CurrentLyrics::Ready {
+                media_id, document, ..
+            } if current_media.as_ref() == Some(media_id) => document.clone(),
             CurrentLyrics::Cleared
             | CurrentLyrics::Loading { .. }
             | CurrentLyrics::Ready { .. } => None,
+        }
+    }
+
+    pub(crate) fn visible_lyrics_have_word_timing(&self) -> bool {
+        self.visible_lyrics()
+            .is_some_and(|document| document.has_word_timing())
+    }
+
+    pub(crate) fn visible_lyrics_origin(&self) -> Option<LyricsOrigin> {
+        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        match &*self.lyrics.projection.borrow() {
+            CurrentLyrics::Ready {
+                media_id, origin, ..
+            } if current_media.as_ref() == Some(media_id) => *origin,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn visible_lyrics_pronunciation(&self) -> Option<Arc<LyricsDocument>> {
+        let current_media = current_playback_media_id(&self.playback.player.borrow());
+        match &*self.lyrics.projection.borrow() {
+            CurrentLyrics::Ready {
+                media_id,
+                pronunciation,
+                ..
+            } if current_media.as_ref() == Some(media_id) => pronunciation.clone(),
+            _ => None,
         }
     }
 
@@ -64,9 +91,9 @@ impl Shell {
             _ => false,
         };
         let (media_id, has_lyrics) = match &projection {
-            CurrentLyrics::Ready { media_id, document } => {
-                (Some(media_id.clone()), document.is_some())
-            }
+            CurrentLyrics::Ready {
+                media_id, document, ..
+            } => (Some(media_id.clone()), document.is_some()),
             CurrentLyrics::Loading { media_id } => (Some(media_id.clone()), false),
             CurrentLyrics::Cleared => (None, false),
         };
@@ -75,6 +102,7 @@ impl Shell {
             self.lyrics.offset_millis.set(0);
         }
         *self.lyrics.projection.borrow_mut() = projection;
+        crate::player::lyrics::settings::refresh_word_highlighting_availability(self);
         self.render_lyrics_panel();
         if let Some(media_id) = media_id
             && let Some(dialog) = self.lyrics.search_dialog.borrow().as_ref()
@@ -88,11 +116,19 @@ impl Shell {
                 tr("No lyrics found.")
             });
         }
-        let shell = Rc::clone(self);
-        glib::idle_add_local_once(move || {
-            shell.restart_lyrics_follow_tracking();
-            shell.update_lyrics_highlight();
-        });
+        if document_changed {
+            self.refocus_current_lyrics_highlight();
+            let shell = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                shell.refocus_current_lyrics_highlight();
+            });
+        } else {
+            let shell = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                shell.restart_lyrics_follow_tracking();
+                shell.update_lyrics_highlight();
+            });
+        }
     }
 
     fn restart_lyrics_follow_tracking(&self) {
@@ -101,6 +137,17 @@ impl Shell {
             .fullscreen_player
             .lyrics_pane
             .restart_follow_tracking();
+    }
+
+    pub(crate) fn refocus_current_lyrics_highlight(&self) {
+        let lyrics = self.visible_lyrics();
+        let position_millis = self.lyrics_position_millis(self.current_position_millis());
+        for pane in [
+            &self.right_panel.lyrics_pane,
+            &self.player_view.fullscreen_player.lyrics_pane,
+        ] {
+            pane.refocus_highlight(lyrics.as_deref(), position_millis);
+        }
     }
 
     pub(crate) fn request_initial_lyrics_if_needed(&self) {
@@ -121,9 +168,13 @@ impl Shell {
     }
 
     pub(crate) fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
+        let Some(media_id) = current_playback_media_id(&self.playback.player.borrow()) else {
+            return;
+        };
         let Some(track_id) = current_playback_track_id(&self.playback.player.borrow()) else {
             return;
         };
+        self.products.lyrics.clear_fetched(media_id);
         self.update_app_settings("lyrics auto-search setting", |settings| {
             settings.lyrics.suppress_auto_lyrics(&track_id)
         });

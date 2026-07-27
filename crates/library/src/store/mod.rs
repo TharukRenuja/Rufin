@@ -395,6 +395,17 @@ impl StoreLane {
         self.execute(move |worker| worker.remove_lyrics_if_authority(&key, authority))
     }
 
+    pub(crate) fn remove_track_lyrics_by_authority(
+        &self,
+        source_id: SourceId,
+        track_id: TrackId,
+        authority: LyricsCacheAuthority,
+    ) -> StoreResult<u64> {
+        self.execute(move |worker| {
+            worker.remove_track_lyrics_by_authority(&source_id, &track_id, authority)
+        })
+    }
+
     pub(crate) fn accept_album_release(
         &self,
         candidate: AlbumReleaseCandidate,
@@ -1840,6 +1851,24 @@ impl Worker {
                 authority.as_str(),
             ],
         )? == 1)
+    }
+
+    fn remove_track_lyrics_by_authority(
+        &mut self,
+        source_id: &SourceId,
+        track_id: &TrackId,
+        authority: LyricsCacheAuthority,
+    ) -> StoreResult<u64> {
+        self.connection
+            .execute(
+                "DELETE FROM lyrics_cache
+                 WHERE source_id = ?1
+                   AND track_id = ?2
+                   AND origin = ?3",
+                params![source_id.as_str(), track_id.as_str(), authority.as_str()],
+            )
+            .map(|removed| removed as u64)
+            .map_err(Into::into)
     }
 
     fn remove_lyrics(&mut self, key: &LyricsCacheKey) -> StoreResult<()> {

@@ -2,9 +2,9 @@ use crate::config::{decode_provider_payload, require_payload_version};
 use crate::{
     ConnectedSource, CredentialHostInput, GeneratedTracksRequest, ImageBytes,
     JellyfinSettingsInput, JellyfinSetupInput, LyricsSearch, NativeLyricLine, NativeLyrics,
-    NativeLyricsOrigin, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
-    SourceConfiguration, SourceEditResult, SourceError, SourceResult, StreamDescriptor,
-    StreamRequest,
+    NativeLyricsDocument, NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind,
+    PlayedFilter, RandomTrackRequest, SourceConfiguration, SourceEditResult, SourceError,
+    SourceResult, StreamDescriptor, StreamRequest,
 };
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{

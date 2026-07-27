@@ -39,7 +39,7 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
 
     let sharing_note = gtk::Label::builder()
         .label(tr(
-            "Logs have secrets and absolute folder paths redacted, but you may still review the logs before sharing them",
+            "Logs have secrets and absolute folder paths redacted, but you may still want to review the logs before sharing them",
         ))
         .wrap(true)
         .xalign(0.0)
