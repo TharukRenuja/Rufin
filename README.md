@@ -158,7 +158,7 @@ Testing, Nix, and container controls are documented in
 # Troubleshooting
 
 Open **Troubleshooting** from the main menu, enable **Debug logging**, reproduce the problem, then click `Save`. Crash logs also appear here on
-the next launch. Logs have secrets and absolute folder paths redacted, but you may still review the logs before sharing it.
+the next launch. Logs have secrets and absolute folder paths redacted, but you may still review the logs before sharing them.
 
 Or you can just run Rufin from the terminal:
 
