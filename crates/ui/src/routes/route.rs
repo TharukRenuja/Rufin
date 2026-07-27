@@ -10,6 +10,7 @@ pub(crate) struct FolderPathItem {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub(crate) enum Route {
     Home,
+    Search,
     Favorites,
     History,
     Albums,

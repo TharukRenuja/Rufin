@@ -8,6 +8,7 @@ use gtk::{gio, glib};
 use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use localization::tr;
 
+use crate::shell::Shell;
 use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 
 const CONTEXT_MENU_PLAYLIST_MAX_HEIGHT: i32 = 320;
@@ -23,6 +24,49 @@ type ContextMenuOpen = Rc<dyn Fn(&gtk::Widget, Option<(f64, f64)>)>;
 
 thread_local! {
     static OPEN_CONTEXT_SUBMENU: RefCell<Option<gtk::Popover>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn connect_transient_entry_focus_dismissal(shell: &Shell) {
+    install_focus_dismissal(
+        &shell.chrome.window,
+        vec![
+            shell.right_panel.queue_search.clone().upcast(),
+            shell.right_panel.lyrics_pane.focus_dismiss_target(),
+            shell
+                .player_view
+                .fullscreen_player
+                .lyrics_pane
+                .focus_dismiss_target(),
+        ],
+    );
+}
+
+fn install_focus_dismissal(window: &adw::ApplicationWindow, targets: Vec<gtk::Widget>) {
+    let click_root = window.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(0);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed(move |gesture, _, x, y| {
+        gesture.set_state(gtk::EventSequenceState::Denied);
+        let Some(focus) = gtk::prelude::RootExt::focus(&click_root) else {
+            return;
+        };
+        let Some(target) = targets
+            .iter()
+            .find(|target| target.has_focus() || focus.is_ancestor(*target))
+        else {
+            return;
+        };
+        if target.compute_bounds(&click_root).is_none_or(|bounds| {
+            bounds.contains_point(&gtk::graphene::Point::new(x as f32, y as f32))
+        }) {
+            return;
+        }
+        if let Some(root) = target.root() {
+            root.set_focus(None::<&gtk::Widget>);
+        }
+    });
+    window.add_controller(click);
 }
 
 pub(crate) struct ContextMenuSurface {

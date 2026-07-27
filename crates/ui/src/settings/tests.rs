@@ -246,6 +246,23 @@ fn history_is_an_enabled_ordered_track_route_by_default() {
 }
 
 #[test]
+fn search_is_available_in_the_sidebar_but_hidden_by_default() {
+    let settings = Settings::default();
+    let search = settings
+        .sidebar
+        .route_items
+        .iter()
+        .find(|entry| entry.item == SidebarRouteItem::Search)
+        .expect("Search is available");
+    assert!(!search.visible);
+    assert_eq!(settings.sidebar.route_items[0].item, SidebarRouteItem::Home);
+    assert_eq!(
+        settings.sidebar.route_items[1].item,
+        SidebarRouteItem::Search
+    );
+}
+
+#[test]
 fn default_albums_use_grid() {
     let settings = super::LibraryListSettings::for_key(LibraryListKey::Albums);
     assert_eq!(settings.layout, LibraryLayout::Grid);

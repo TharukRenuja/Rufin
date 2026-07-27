@@ -84,6 +84,74 @@ fn settings_input(
     }
 }
 
+#[tokio::test]
+async fn search3_returns_artist_album_and_track_results_in_one_query() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/search3.view"))
+        .and(query_param("query", "apple"))
+        .and(query_param("artistCount", "7"))
+        .and(query_param("artistOffset", "0"))
+        .and(query_param("albumCount", "7"))
+        .and(query_param("albumOffset", "0"))
+        .and(query_param("songCount", "7"))
+        .and(query_param("songOffset", "0"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "searchResult3": {
+                    "artist": [{
+                        "id": "external-artist",
+                        "name": "Apple Trees",
+                        "coverArt": "artist-cover"
+                    }],
+                    "album": [{
+                        "id": "external-album",
+                        "name": "Green Fields",
+                        "artist": "Apple Trees",
+                        "coverArt": "album-cover"
+                    }],
+                    "song": [{
+                        "id": "external-track",
+                        "title": "Orchard Walk",
+                        "album": "Green Fields",
+                        "artist": "Apple Trees",
+                        "coverArt": "track-cover"
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let results = source
+        .search(&library::SearchRequest::with_limit("apple", 7))
+        .await
+        .expect("search OpenSubsonic");
+
+    assert_eq!(
+        results.artists[0].id.as_str(),
+        "subsonic:artist:external-artist"
+    );
+    assert_eq!(
+        results.albums[0].id.as_str(),
+        "subsonic:album:external-album"
+    );
+    assert_eq!(
+        results.tracks[0].id.as_str(),
+        "subsonic:track:external-track"
+    );
+    assert_eq!(
+        results.tracks[0]
+            .image_ref
+            .as_ref()
+            .expect("Track cover")
+            .item_id,
+        "subsonic:cover:track-cover"
+    );
+}
+
 #[test]
 fn structured_lyrics_keep_independent_roles_and_karaoke_cues() {
     let body = serde_json::from_value::<StructuredLyricsBody>(serde_json::json!({

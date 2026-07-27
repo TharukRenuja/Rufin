@@ -161,6 +161,10 @@ impl LyricsPane {
         &self.root
     }
 
+    pub(crate) fn focus_dismiss_target(&self) -> gtk::Widget {
+        self.offset_entry.clone().upcast()
+    }
+
     pub fn connect_search_clicked(&self, search: impl Fn() + 'static) {
         self.search_button.connect_clicked(move |_| search());
     }
@@ -598,41 +602,6 @@ impl LyricsPane {
             LYRICS_SCROLL_READY_RETRIES,
         );
     }
-}
-
-pub(crate) fn install_offset_focus_dismissal(
-    window: &adw::ApplicationWindow,
-    panes: &[&LyricsPane],
-) {
-    let offset_entries = panes
-        .iter()
-        .map(|pane| pane.offset_entry.clone())
-        .collect::<Vec<_>>();
-    let click_root = window.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(0);
-    click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    click.connect_pressed(move |gesture, _, x, y| {
-        gesture.set_state(gtk::EventSequenceState::Denied);
-        let Some(focus) = gtk::prelude::RootExt::focus(&click_root) else {
-            return;
-        };
-        let Some(entry) = offset_entries
-            .iter()
-            .find(|entry| entry.has_focus() || focus.is_ancestor(*entry))
-        else {
-            return;
-        };
-        if entry.compute_bounds(&click_root).is_none_or(|bounds| {
-            bounds.contains_point(&gtk::graphene::Point::new(x as f32, y as f32))
-        }) {
-            return;
-        }
-        if let Some(root) = entry.root() {
-            root.set_focus(None::<&gtk::Widget>);
-        }
-    });
-    window.add_controller(click);
 }
 
 fn lyrics_label(text: &str) -> gtk::Label {

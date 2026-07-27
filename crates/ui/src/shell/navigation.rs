@@ -25,6 +25,7 @@ const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
 const PRIMARY_MENU_POPOVER_ANCHOR_Y: i32 = 148;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
+const NAV_ROUTE_SEARCH_CLASS: &str = "nav-route-search";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
 const NAV_ROUTE_HISTORY_CLASS: &str = "nav-route-history";
 const NAV_ROUTE_ALBUMS_CLASS: &str = "nav-route-albums";
@@ -36,11 +37,16 @@ const NAV_ROUTE_MOODS_CLASS: &str = "nav-route-moods";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
-const NAV_ROUTE_ICONS: [(&str, &str, &str); 12] = [
+const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     (
         NAV_ROUTE_HOME_CLASS,
         "rufin-route-home-symbolic",
         "rufin-route-home-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_SEARCH_CLASS,
+        "rufin-route-search-symbolic",
+        "rufin-route-search-selected-symbolic",
     ),
     (
         NAV_ROUTE_FAVORITES_CLASS,
@@ -566,6 +572,11 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             label: msgid("Home"),
             route: Route::Home,
         },
+        SidebarRouteItem::Search => NavItem {
+            icon_name: "rufin-route-search-symbolic",
+            label: msgid("Search"),
+            route: Route::Search,
+        },
         SidebarRouteItem::Favorites => NavItem {
             icon_name: "rufin-route-favorites-symbolic",
             label: msgid("Favorites"),
@@ -729,6 +740,7 @@ fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) ->
 fn nav_route_class(route: &Route) -> Option<&'static str> {
     match route {
         Route::Home => Some(NAV_ROUTE_HOME_CLASS),
+        Route::Search => Some(NAV_ROUTE_SEARCH_CLASS),
         Route::Favorites => Some(NAV_ROUTE_FAVORITES_CLASS),
         Route::History => Some(NAV_ROUTE_HISTORY_CLASS),
         Route::Albums | Route::AlbumDetail(_) => Some(NAV_ROUTE_ALBUMS_CLASS),

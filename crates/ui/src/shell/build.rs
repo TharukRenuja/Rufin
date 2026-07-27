@@ -7,6 +7,7 @@ use adw::prelude::*;
 use tracing::info;
 
 use crate::favorites::FavoriteState;
+use crate::interactions::connect_transient_entry_focus_dismissal;
 use crate::player::desktop::DesktopState;
 use crate::player::desktop::lifecycle::install_playback_shutdown;
 use crate::player::lyrics::search::connect_lyrics_search_controls;
@@ -471,6 +472,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);
     shell.connect_type_to_search();
+    connect_transient_entry_focus_dismissal(&shell);
     connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);

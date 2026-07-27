@@ -35,8 +35,9 @@ use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
     DiscoveryUpdate, EditableSource, FolderRequest, LocalAccessStatus, LocalFolder,
-    OpenSubsonicKind, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation, SourcePort,
-    SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup, SourceSummary,
+    OpenSubsonicKind, SearchRequest, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation,
+    SourcePort, SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup,
+    SourceSummary,
 };
 use ui::runtime::{
     FavoriteFailure, HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent,
@@ -3887,6 +3888,29 @@ impl SourcePort for SourceOwner {
         });
         receiver
     }
+
+    fn search(&self, request: SearchRequest) -> Receiver<Result<library::SearchResults, String>> {
+        let (result, receiver) = async_channel::bounded(1);
+        let selected = self.selected().filter(|selected| {
+            selected.source_id() == &request.source_id
+                && selected.source_session_epoch == request.source_session_epoch
+        });
+        let selected = selected.map(|selected| (selected.source, Arc::clone(&selected.loaded)));
+        self.shared.runtime.spawn(async move {
+            let search = request.search;
+            let value = match selected {
+                Some((Some(source), loaded)) => match source.search(&search).await {
+                    Ok(NativeSourceResult::Available(results)) => Ok(results),
+                    Ok(NativeSourceResult::Unavailable) => cached_search(loaded, search).await,
+                    Err(error) => Err(error.to_string()),
+                },
+                Some((None, loaded)) => cached_search(loaded, search).await,
+                None => Err("the search belongs to an inactive source session".to_string()),
+            };
+            let _ = result.send(value).await;
+        });
+        receiver
+    }
 }
 
 fn cached_folder_contents(
@@ -3897,6 +3921,13 @@ fn cached_folder_contents(
         .local_folder_contents(folder_id)
         .map(|contents| contents.unwrap_or_default())
         .map_err(string_error)
+}
+
+async fn cached_search(
+    loaded: Arc<LoadedLibrary>,
+    request: library::SearchRequest,
+) -> Result<library::SearchResults, String> {
+    blocking(move || loaded.search(&request).map_err(string_error)).await
 }
 
 impl ui::runtime::SmartPlaylistPort for SourceOwner {

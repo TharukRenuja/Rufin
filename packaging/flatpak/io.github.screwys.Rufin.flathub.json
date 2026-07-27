@@ -76,6 +76,8 @@
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-moods-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-playlists-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-playlists-selected-symbolic.svg",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-search-symbolic.svg",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-search-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-smart-playlists-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-smart-playlists-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-tracks-symbolic.svg",

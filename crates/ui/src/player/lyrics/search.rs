@@ -11,8 +11,6 @@ use crate::player::state::{current_playback_media_id, current_playback_track_id}
 use crate::shell::Shell;
 use localization::tr;
 
-use super::view::install_offset_focus_dismissal;
-
 #[derive(Clone)]
 pub(crate) struct LyricsSearchDialog {
     pub(crate) dialog: adw::Dialog,
@@ -26,13 +24,6 @@ pub(crate) struct LyricsSearchDialog {
 
 pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     super::settings::connect_lyrics_settings_controls(shell);
-    install_offset_focus_dismissal(
-        &shell.chrome.window,
-        &[
-            &shell.right_panel.lyrics_pane,
-            &shell.player_view.fullscreen_player.lyrics_pane,
-        ],
-    );
 
     let save_shell = Rc::clone(shell);
     shell

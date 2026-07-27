@@ -617,6 +617,12 @@ impl Shell {
                     self.home_route(Arc::clone(&selected.home))
                 });
             }
+            Route::Search => {
+                self.invalidate_route_projection_lane();
+                self.replace_mounted_route(route, source_id, render_started, 0, || {
+                    self.search_route(&selected)
+                });
+            }
             Route::SmartPlaylists => {
                 let settings = self
                     .settings
