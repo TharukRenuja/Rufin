@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use library::{Track, TrackId};
 use serde::Deserialize;
@@ -942,13 +942,30 @@ fn fetch_text(
     url: reqwest::Url,
     context: &str,
 ) -> Result<String, String> {
-    let response = client
-        .get(url)
-        .send()
+    let response = send_get(client, url, context)
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|error| format!("{context} failed: {error}"))?;
     read_response_text_bounded(response, LRCLIB_RESPONSE_MAX_BYTES, context)
         .map_err(|error| format!("{context} failed: {error}"))
+}
+
+fn send_get(
+    client: &reqwest::blocking::Client,
+    url: reqwest::Url,
+    context: &str,
+) -> Result<reqwest::blocking::Response, reqwest::Error> {
+    debug!(service = "lyrics", method = "GET", %url, %context, "sending remote request");
+    let started = Instant::now();
+    let response = client.get(url).send()?;
+    debug!(
+        service = "lyrics",
+        method = "GET",
+        status = response.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        %context,
+        "received remote response"
+    );
+    Ok(response)
 }
 fn lrclib_search_with_urls(
     urls: Vec<reqwest::Url>,
@@ -965,7 +982,6 @@ fn lrclib_search_with_urls(
     let mut had_success = false;
     let mut errors = Vec::new();
     for url in urls {
-        debug!(url = %url, "requesting LRCLIB lyric search");
         match lrclib_fetch_search(&client, url) {
             Ok(batch) => {
                 debug!(results = batch.len(), "received LRCLIB lyric search batch");
@@ -1001,7 +1017,6 @@ fn lrclib_search_priority_urls(
     let mut errors = Vec::new();
     let mut had_success = false;
     for url in urls {
-        debug!(url = %url, "requesting LRCLIB lyric search");
         match lrclib_fetch_search(&client, url) {
             Ok(mut results) => {
                 debug!(
@@ -1068,7 +1083,7 @@ pub(crate) fn lrclib_fetch_get(
     client: &reqwest::blocking::Client,
     url: reqwest::Url,
 ) -> Result<Option<LyricsSearchResult>, String> {
-    let response = match client.get(url).send() {
+    let response = match send_get(client, url, "Lyric lookup") {
         Ok(response) => response,
         Err(error) => return Err(format!("Lyric lookup failed: {error}")),
     };
@@ -1150,13 +1165,7 @@ pub(crate) fn lrclib_fetch_search(
     client: &reqwest::blocking::Client,
     url: reqwest::Url,
 ) -> Result<Vec<LyricsSearchResult>, String> {
-    let response = client
-        .get(url)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Lyric search failed: {error}"))?;
-    let body = read_response_text_bounded(response, LRCLIB_RESPONSE_MAX_BYTES, "Lyric search")
-        .map_err(|error| format!("Lyric search failed: {error}"))?;
+    let body = fetch_text(client, url, "Lyric search")?;
     parse_lrclib_search_body(&body)
 }
 pub(crate) fn parse_lrclib_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {

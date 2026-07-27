@@ -21,6 +21,11 @@ msgid ""
 "everywhere, including API secrets. App cache is not affected."
 msgstr ""
 
+msgid ""
+"Logs have secrets and absolute folder paths redacted, but you may still "
+"review the logs before sharing it"
+msgstr ""
+
 #, rust-format
 msgid ""
 "Saved mapping. {direct} direct, {prefix} prefix, {metadata} metadata, "
@@ -334,6 +339,9 @@ msgstr ""
 msgid "Control notifications"
 msgstr ""
 
+msgid "Could not save diagnostic log"
+msgstr ""
+
 msgid "Create"
 msgstr ""
 
@@ -353,6 +361,9 @@ msgid "Dance"
 msgstr ""
 
 msgid "Date added"
+msgstr ""
+
+msgid "Debug logging"
 msgstr ""
 
 msgid "Decrease"
@@ -380,6 +391,12 @@ msgid "Detail track columns"
 msgstr ""
 
 msgid "Detail"
+msgstr ""
+
+msgid "Diagnostic log saved"
+msgstr ""
+
+msgid "Diagnostic log"
 msgstr ""
 
 msgid "DirectSound"
@@ -578,6 +595,9 @@ msgid "If you do not have API keys, create them"
 msgstr ""
 
 msgid "Image"
+msgstr ""
+
+msgid "Include detailed Rufin diagnostics in this session"
 msgstr ""
 
 msgid "Increase"
@@ -1171,6 +1191,12 @@ msgstr ""
 msgid "Rufin is running in the tray"
 msgstr ""
 
+msgid "Save Diagnostic Log"
+msgstr ""
+
+msgid "Save Log..."
+msgstr ""
+
 msgid "Save Lyrics"
 msgstr ""
 
@@ -1434,6 +1460,9 @@ msgid "Tracks"
 msgstr ""
 
 msgid "Transition mode"
+msgstr ""
+
+msgid "Troubleshooting"
 msgstr ""
 
 msgid "Turn off only for a server you control"

@@ -7,7 +7,7 @@ use async_channel::unbounded;
 use playback::PlaybackHandles;
 use secrets::SwitchableSecretStore;
 use tracing::warn;
-use ui::runtime::{ProductHandles, ProductReceivers, RuntimeInputs};
+use ui::runtime::{DiagnosticsHandle, ProductHandles, ProductReceivers, RuntimeInputs};
 
 use crate::paths;
 use crate::playback::PlaybackOwner;
@@ -19,7 +19,7 @@ use crate::settings::{
 use crate::source::{SourceBootstrap, SourceOutputs, SourceOwner};
 use crate::waveform::WaveformOwner;
 
-pub(crate) fn runtime_inputs() -> Result<RuntimeInputs, String> {
+pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeInputs, String> {
     paths::prepare()?;
     crate::schema30_migration::install_if_needed(
         &paths::settings_file(),
@@ -34,7 +34,7 @@ pub(crate) fn runtime_inputs() -> Result<RuntimeInputs, String> {
         library::Library::open_with_repair(paths::store_file()).map_err(string_error)?;
     if let Some(repair) = repair {
         warn!(
-            preserved_store = %repair.preserved_store.display(),
+            preserved_store_path = %repair.preserved_store.display(),
             recovered_rows = repair.recovered_rows,
             skipped_rows = repair.skipped_rows,
             unreadable_families = ?repair.unreadable_families,
@@ -154,6 +154,7 @@ pub(crate) fn runtime_inputs() -> Result<RuntimeInputs, String> {
     let radio: playback::RadioHandle = playback;
 
     Ok(RuntimeInputs {
+        diagnostics,
         products: ProductHandles {
             source: source_handle,
             smart_playlists,

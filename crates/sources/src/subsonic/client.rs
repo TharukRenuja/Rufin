@@ -15,6 +15,7 @@ pub(super) const SUBSONIC_JSON_MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const SUBSONIC_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const SUBSONIC_ERROR_BODY_MAX_BYTES: usize = 64 * 1024;
 const SUBSONIC_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
+    service: "opensubsonic",
     auth_context: "Subsonic server returned",
     error_body: BodyLimit {
         max_bytes: SUBSONIC_ERROR_BODY_MAX_BYTES,

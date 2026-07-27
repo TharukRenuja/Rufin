@@ -88,6 +88,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
 
     let loaded_at = std::time::Instant::now();
     let RuntimeInputs {
+        diagnostics,
         products,
         settings: settings_handle,
         receivers,
@@ -406,6 +407,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     };
 
     let shell = Rc::new(Shell {
+        diagnostics,
         settings: settings_state,
         navigation,
         library: library_state,

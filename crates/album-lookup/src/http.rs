@@ -1,10 +1,11 @@
 use std::io::Read;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::Url;
 use reqwest::blocking::{Client, Response};
 use serde_json::Value;
+use tracing::debug;
 
 const USER_AGENT: &str = concat!(
     "Rufin/",
@@ -30,7 +31,7 @@ pub(crate) fn client() -> Result<&'static Client, String> {
 }
 
 pub(crate) fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
-    let response = client.get(url).send().map_err(|error| error.to_string())?;
+    let response = get(client, url, context)?;
     if !response.status().is_success() {
         return Err(format!(
             "{context} failed with status {}",
@@ -46,7 +47,8 @@ pub(crate) fn download(
     url: &str,
     context: &str,
 ) -> Result<Option<Vec<u8>>, String> {
-    let response = client.get(url).send().map_err(|error| error.to_string())?;
+    let url = Url::parse(url).map_err(|error| error.to_string())?;
+    let response = get(client, url, context)?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -58,6 +60,21 @@ pub(crate) fn download(
     }
     let bytes = read_response_bounded(response, IMAGE_MAX_BYTES, context)?;
     Ok((!bytes.is_empty()).then_some(bytes))
+}
+
+fn get(client: &Client, url: Url, context: &str) -> Result<Response, String> {
+    debug!(service = "album-lookup", method = "GET", %url, %context, "sending remote request");
+    let started = Instant::now();
+    let response = client.get(url).send().map_err(|error| error.to_string())?;
+    debug!(
+        service = "album-lookup",
+        method = "GET",
+        status = response.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        %context,
+        "received remote response"
+    );
+    Ok(response)
 }
 
 fn read_response_bounded(

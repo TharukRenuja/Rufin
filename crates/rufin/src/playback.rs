@@ -1074,10 +1074,44 @@ impl PlaybackOwner {
         let selected = active.selected();
         let loaded = selected.loaded;
         let source = selected.source;
+        let track_id = request.track_id.clone();
+        let source_format = loaded
+            .track(&track_id)
+            .ok()
+            .flatten()
+            .and_then(|track| track.source_format.clone());
+        debug!(
+            %source_id,
+            %track_id,
+            %run,
+            source_format = source_format.as_deref().unwrap_or("unknown"),
+            quality = ?request.quality,
+            "resolving playback stream"
+        );
         let runtime = self.runtime.clone();
         let playback = active.playback;
         runtime.spawn(async move {
             let result = prepare_stream(Some(loaded), source, request).await;
+            match &result {
+                Ok(stream) => debug!(
+                    %source_id,
+                    %track_id,
+                    %run,
+                    transport = stream
+                        .uri()
+                        .split_once(':')
+                        .map(|(scheme, _)| scheme)
+                        .unwrap_or("unknown"),
+                    "resolved playback stream"
+                ),
+                Err(error) => warn!(
+                    %source_id,
+                    %track_id,
+                    %run,
+                    %error,
+                    "could not resolve playback stream"
+                ),
+            }
             let _ = tokio::task::spawn_blocking(move || playback.resolve_stream(run, result)).await;
         });
     }

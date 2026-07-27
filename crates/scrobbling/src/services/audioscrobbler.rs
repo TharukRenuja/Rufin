@@ -1,5 +1,5 @@
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -155,26 +155,46 @@ pub(crate) fn submit(
     settings: &AudioscrobblerSettings,
     submission: &Submission,
 ) -> Result<(), DeliveryError> {
-    let params = match submission {
-        Submission::NowPlaying(track) => {
-            submission_params("track.updateNowPlaying", settings, track, None)
-        }
+    let (operation, params) = match submission {
+        Submission::NowPlaying(track) => (
+            "track.updateNowPlaying",
+            submission_params("track.updateNowPlaying", settings, track, None),
+        ),
         Submission::Scrobble {
             track,
             started_at_unix_seconds,
-        } => submission_params(
+        } => (
             "track.scrobble",
-            settings,
-            track,
-            Some(*started_at_unix_seconds),
+            submission_params(
+                "track.scrobble",
+                settings,
+                track,
+                Some(*started_at_unix_seconds),
+            ),
         ),
     };
+    debug!(
+        service = service.name(),
+        method = "POST",
+        url = service.api_url(),
+        operation,
+        "sending remote request"
+    );
+    let started = Instant::now();
     let response = client
         .post(service.api_url())
         .form(&params)
         .send()
         .map_err(|error| DeliveryError::retry(error.to_string()))?;
     let status = response.status();
+    debug!(
+        service = service.name(),
+        method = "POST",
+        operation,
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "received remote response"
+    );
     let value = response.json::<Value>().unwrap_or(Value::Null);
     if status.as_u16() == 429 || status.is_server_error() {
         return Err(DeliveryError::retry(format!(
@@ -236,17 +256,37 @@ fn submission_params(
 }
 
 fn post_form(api_url: &str, form: Vec<(String, String)>) -> Result<Value, String> {
+    let operation = form
+        .iter()
+        .find_map(|(key, value)| (key == "method").then_some(value.as_str()))
+        .unwrap_or("unknown");
     let client = Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(USER_AGENT)
         .build()
         .map_err(|error| error.to_string())?;
+    debug!(
+        service = "audioscrobbler",
+        method = "POST",
+        url = api_url,
+        operation,
+        "sending remote request"
+    );
+    let started = Instant::now();
     let response = client
         .post(api_url)
         .form(&form)
         .send()
         .map_err(|error| error.to_string())?;
     let status = response.status();
+    debug!(
+        service = "audioscrobbler",
+        method = "POST",
+        operation,
+        status = status.as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "received remote response"
+    );
     let value = response.json::<Value>().unwrap_or(Value::Null);
     if !status.is_success() && api_error_value(&value).is_none() {
         return Err(format!("Audioscrobbler auth returned HTTP {status}"));
