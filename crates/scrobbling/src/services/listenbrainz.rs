@@ -2,7 +2,7 @@ use reqwest::{blocking::Client, header::AUTHORIZATION};
 use serde_json::{Value, json};
 use tracing::debug;
 
-use crate::eligibility::{Submission, SubmissionTrack};
+use crate::retry::{DeliveryError, Submission, SubmissionTrack};
 use crate::settings::ListenBrainzSettings;
 
 const API_URL: &str = "https://api.listenbrainz.org/1/submit-listens";
@@ -11,22 +11,37 @@ pub(crate) fn submit(
     client: &Client,
     settings: &ListenBrainzSettings,
     submission: &Submission,
-) -> Result<(), String> {
-    if !settings.configured(submission.is_now_playing()) {
-        return Ok(());
-    }
+) -> Result<(), DeliveryError> {
     let response = client
         .post(API_URL)
         .header(AUTHORIZATION, authorization_header(&settings.user_token))
         .json(&payload(submission))
         .send()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| DeliveryError::retry(error.to_string()))?;
     let status = response.status();
-    if !status.is_success() {
-        return Err(format!("ListenBrainz returned HTTP {status}"));
+    if let Some(error) = delivery_error(status) {
+        return Err(error);
     }
     debug!("submitted ListenBrainz event");
     Ok(())
+}
+
+fn delivery_error(status: reqwest::StatusCode) -> Option<DeliveryError> {
+    if status.as_u16() == 429 || status.is_server_error() {
+        Some(DeliveryError::retry(format!(
+            "ListenBrainz returned HTTP {status}"
+        )))
+    } else if status.as_u16() == 401 {
+        Some(DeliveryError::credential_blocked(format!(
+            "ListenBrainz returned HTTP {status}"
+        )))
+    } else if !status.is_success() {
+        Some(DeliveryError::stop(format!(
+            "ListenBrainz returned HTTP {status}"
+        )))
+    } else {
+        None
+    }
 }
 
 fn payload(submission: &Submission) -> Value {
@@ -99,5 +114,21 @@ mod tests {
     #[test]
     fn authorization_uses_token_scheme() {
         assert_eq!(authorization_header(" user-token "), "Token user-token");
+    }
+
+    #[test]
+    fn response_status_separates_credentials_retry_and_rejection() {
+        assert!(matches!(
+            delivery_error(reqwest::StatusCode::UNAUTHORIZED),
+            Some(DeliveryError::CredentialBlocked(_))
+        ));
+        assert!(matches!(
+            delivery_error(reqwest::StatusCode::TOO_MANY_REQUESTS),
+            Some(DeliveryError::Retry(_))
+        ));
+        assert!(matches!(
+            delivery_error(reqwest::StatusCode::BAD_REQUEST),
+            Some(DeliveryError::Stop(_))
+        ));
     }
 }

@@ -1,7 +1,14 @@
-//! Defines Rufin's library items and stores them for each music source.
+//! Rufin's durable music library.
 //!
-//! Source clients provide data, `library-sync` applies changes, and the UI
-//! decides how the items are displayed.
+//! Concrete sources provide canonical facts. Library accepts those facts into
+//! its private SQLite Store and hydrates one source-scoped [`LoadedLibrary`].
+//! Rufin owns which loaded source is selected; routes and Playback never query
+//! SQLite or receive a general Store handle.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use thiserror::Error;
 
 macro_rules! opaque_id {
     ($name:ident, $prefix:literal) => {
@@ -57,28 +64,187 @@ macro_rules! opaque_id {
     };
 }
 
-mod active_query;
-pub mod collections;
-mod events;
-pub mod home;
-pub mod items;
-pub mod local_manifest;
-pub mod play_context;
-pub mod queries;
+mod activity;
+mod album_release;
+mod browse;
+mod favorites;
+mod home;
+mod items;
+mod loaded;
+mod local;
+mod local_playback;
+mod lyrics_cache;
+mod playback_state;
+mod playlists;
+mod radio;
+mod refresh;
+mod scrobbles;
 pub mod smart_playlists;
-pub mod source_mapping;
 mod store;
 
-pub use active_query::*;
-pub use collections::*;
-pub use events::*;
+pub use activity::*;
+pub use album_release::*;
+pub use browse::*;
+pub use favorites::*;
 pub use home::*;
 pub use items::*;
-pub use local_manifest::*;
-pub use queries::*;
-pub use smart_playlists::*;
-pub use source_mapping::*;
-pub use store::*;
+pub use loaded::*;
+pub use local::*;
+pub use local_playback::*;
+pub use lyrics_cache::*;
+pub use playback_state::*;
+pub use playlists::*;
+pub use radio::*;
+pub use refresh::*;
+pub use scrobbles::*;
+pub use smart_playlists::{
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
+    SmartPlaylistRecord, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleOperator,
+    SmartPlaylistRuleValue, SmartPlaylistRuleValueKind, SmartPlaylistSortField,
+    SmartPlaylistSummary,
+};
+pub use store::StoreRepairReport;
+pub use store::schema30::*;
+
+#[derive(Debug, Error)]
+pub enum LibraryError {
+    #[error(
+        "unsupported Store (application ID {application_id}, schema {user_version}); files were preserved"
+    )]
+    UnsupportedStore {
+        application_id: i64,
+        user_version: i64,
+    },
+    #[error("invalid final Store: {0}")]
+    InvalidStore(String),
+    #[error("released Store migration failed: {0}")]
+    ReleasedMigration(String),
+    #[error("Library persistence failed: {0}")]
+    Persistence(String),
+    #[error("a source candidate cannot continue after a batch write failed")]
+    CandidateWriteFailed,
+    #[error(transparent)]
+    Loaded(#[from] LoadedLibraryError),
+}
+
+pub type LibraryResult<T> = Result<T, LibraryError>;
+
+impl From<store::StoreError> for LibraryError {
+    fn from(error: store::StoreError) -> Self {
+        match error {
+            store::StoreError::UnsupportedSchema {
+                application_id,
+                user_version,
+            } => Self::UnsupportedStore {
+                application_id,
+                user_version,
+            },
+            store::StoreError::InvalidFinalSchema(message) => Self::InvalidStore(message),
+            error => Self::Persistence(error.to_string()),
+        }
+    }
+}
+
+/// Cloneable access to Library's typed operations.
+///
+/// Operations are blocking because they cross the one Store lane. Rufin calls
+/// them from its blocking boundary, never from GTK or a Tokio worker.
+#[derive(Clone)]
+pub struct Library {
+    store: store::StoreLane,
+    home_sessions: Arc<home::HomeSessions>,
+}
+
+impl Library {
+    pub fn open(path: impl AsRef<Path>) -> LibraryResult<Self> {
+        Ok(Self {
+            store: store::StoreLane::open(path.as_ref().to_path_buf())?,
+            home_sessions: Arc::new(home::HomeSessions::new()),
+        })
+    }
+
+    /// Opens a healthy Store or repairs an identified final schema-32 Store.
+    ///
+    /// Repair preserves the damaged database beside the replacement and
+    /// returns a report so Rufin can enter its ordinary source rebuild gate.
+    /// Unsupported or unidentifiable Stores are never translated.
+    pub fn open_with_repair(
+        path: impl AsRef<Path>,
+    ) -> LibraryResult<(Self, Option<StoreRepairReport>)> {
+        let path = path.as_ref();
+        match Self::open(path) {
+            Ok(library) => Ok((library, None)),
+            Err(LibraryError::InvalidStore(_)) => {
+                let report = store::repair::repair(path)?;
+                Ok((Self::open(path)?, Some(report)))
+            }
+            Err(LibraryError::UnsupportedStore {
+                application_id,
+                user_version,
+            }) if store::repair::is_final_identity(application_id, user_version) => {
+                let report = store::repair::repair(path)?;
+                Ok((Self::open(path)?, Some(report)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn load_source(&self, source_id: &SourceId) -> LibraryResult<Option<Arc<LoadedLibrary>>> {
+        let loaded = self
+            .store
+            .load_current(source_id.clone())?
+            .map(LoadedLibrary::build)
+            .transpose()
+            .map_err(LibraryError::from)?;
+        if let Some(loaded) = &loaded {
+            self.prepare_home(loaded)?;
+        }
+        Ok(loaded)
+    }
+
+    /// Removes all Library-owned data for one configured source.
+    ///
+    /// Pending external scrobbles are intentionally account-scoped delivery
+    /// work and survive source removal.
+    pub fn remove_source_data(&self, source_id: &SourceId) -> LibraryResult<()> {
+        self.store.remove_source_data(source_id.clone())?;
+        self.home_sessions.remove_source(source_id)?;
+        Ok(())
+    }
+
+    pub fn begin_source_candidate(
+        &self,
+        header: CandidateHeader,
+    ) -> LibraryResult<SourceCandidate> {
+        let source_id = header.source_id.clone();
+        let library_id = loop {
+            match self.store.begin_candidate(header.clone()) {
+                Ok(library_id) => break library_id,
+                Err(store::StoreError::CandidateCleanupPending(pending))
+                    if pending == source_id =>
+                {
+                    // Each typed request lets the Store retire one bounded
+                    // cleanup batch before this retry reaches the lane.
+                    std::thread::yield_now();
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        Ok(SourceCandidate::new(self.clone(), header, library_id))
+    }
+
+    pub(crate) fn write_candidate(
+        &self,
+        library_id: i64,
+        batch: CandidateBatch,
+    ) -> LibraryResult<()> {
+        Ok(self.store.write_candidate(library_id, batch)?)
+    }
+
+    pub(crate) fn schedule_candidate_cleanup(&self, library_id: i64) {
+        self.store.schedule_cleanup(library_id);
+    }
+}
 
 pub(crate) const fn msgid(message: &'static str) -> &'static str {
     message

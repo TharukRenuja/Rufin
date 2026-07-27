@@ -1,17 +1,29 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use library::{SourceId, Track, TrackId};
-use sources::StreamRequest;
 
 use crate::{
     BackendCommand, BackendEvent, BackendState, Batch, BatchItem, ListeningFact, ListeningOutcome,
     ListeningTrack, NextTransition, OccurrenceId, Placement, PlaybackSettings,
     PlaybackTransitionMode, PreparedNext, PreparedStream, Provenance, RepeatMode, RunEndReason,
-    RunId, Sequence, SequenceEntry, SequenceError, manual_end_is_skip,
-    qualified_play_threshold_millis,
+    RunId, Sequence, SequenceEntry, SequenceError, StreamQuality,
+    external_scrobble_threshold_millis, manual_end_is_skip, qualified_play_threshold_millis,
 };
 
 const AUTO_DJ_HISTORY_LIMIT: usize = 10;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamRequest {
+    pub track_id: TrackId,
+    pub quality: StreamQuality,
+}
+
+impl StreamRequest {
+    pub fn new(track_id: TrackId, quality: StreamQuality) -> Self {
+        Self { track_id, quality }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MaterializationId(u64);
@@ -21,6 +33,7 @@ pub struct MaterializationReservation {
     pub id: MaterializationId,
     pub source_id: SourceId,
     pub current_track_id: Option<TrackId>,
+    pub queued_track_ids: Vec<TrackId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +54,19 @@ pub enum TransportStatus {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceSessionEpoch(u64);
+
+impl SourceSessionEpoch {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceReportPhase {
     Started,
@@ -55,6 +81,7 @@ pub struct SourceReportFact {
     pub source_id: SourceId,
     pub track_id: TrackId,
     pub phase: SourceReportPhase,
+    pub started_at_unix_seconds: i64,
     pub position_millis: u64,
     pub paused: bool,
     pub muted: bool,
@@ -62,18 +89,6 @@ pub struct SourceReportFact {
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
     pub failed: bool,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct MediaKey {
-    pub source_id: SourceId,
-    pub track_id: TrackId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MediaChanged {
-    pub key: MediaKey,
-    pub occurrence: OccurrenceId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,8 +125,6 @@ pub enum SessionEffect {
         revision: u64,
         occurrence: Option<OccurrenceId>,
         progress_millis: u64,
-        repeat_mode: RepeatMode,
-        shuffle_enabled: bool,
     },
     PersistOutputState {
         volume: f64,
@@ -122,8 +135,9 @@ pub enum SessionEffect {
     },
     Listening(ListeningFact),
     Activity(ListeningOutcome),
+    ExternalScrobble(crate::CompletedScrobble),
     SourceReport(SourceReportFact),
-    MediaChanged(MediaChanged),
+    CurrentMediaChanged,
     PositionDiscontinuity(PositionDiscontinuity),
     RequestAutoDj(AutoDjRequest),
     Visualizer {
@@ -149,7 +163,6 @@ pub enum SessionCommand {
     Play,
     Pause,
     Stop,
-    Shutdown,
     Next,
     Previous,
     Seek(u64),
@@ -157,12 +170,8 @@ pub enum SessionCommand {
     SetMuted(bool),
     PersistOutputState,
     SetRepeat(RepeatMode),
-    CycleRepeat,
     SetShuffle {
         enabled: bool,
-        seed: u64,
-    },
-    ToggleShuffle {
         seed: u64,
     },
     SetAutoDj {
@@ -172,7 +181,7 @@ pub enum SessionCommand {
     UpdateSettings(PlaybackSettings),
     SetVisualizerEnabled(bool),
     RefreshTracks {
-        source_id: SourceId,
+        source_session_epoch: SourceSessionEpoch,
         tracks: Vec<Track>,
     },
     StreamInputsChanged,
@@ -205,6 +214,7 @@ impl SessionUpdate {
 #[derive(Clone, Debug)]
 struct RunContext {
     id: RunId,
+    play_id: String,
     occurrence: OccurrenceId,
     track: ListeningTrack,
     status: TransportStatus,
@@ -214,16 +224,18 @@ struct RunContext {
     local_period: Option<String>,
     last_monotonic_millis: Option<u64>,
     qualified: bool,
+    external_scrobble_emitted: bool,
     last_progress_bucket: Option<u64>,
     desired_playing: bool,
     resolved_stream: Option<PreparedStream>,
 }
 
 impl RunContext {
-    fn resolving(id: RunId, source_id: SourceId, entry: &SequenceEntry) -> Self {
+    fn resolving(id: RunId, play_id: String, source_id: SourceId, entry: &SequenceEntry) -> Self {
         let track = ListeningTrack::capture(source_id, &entry.track);
         Self {
             id,
+            play_id,
             occurrence: entry.occurrence.clone(),
             duration_millis: track.duration_millis,
             track,
@@ -233,6 +245,7 @@ impl RunContext {
             local_period: None,
             last_monotonic_millis: None,
             qualified: false,
+            external_scrobble_emitted: false,
             last_progress_bucket: None,
             desired_playing: true,
             resolved_stream: None,
@@ -274,8 +287,10 @@ struct AutoDjKey {
 }
 
 #[derive(Clone, Debug)]
-pub struct PlaybackSession {
+pub(crate) struct PlaybackSession {
     sequence: Sequence,
+    source_session_epoch: SourceSessionEpoch,
+    play_id_prefix: Arc<str>,
     current_run: Option<RunContext>,
     next_plan: Option<NextPlan>,
     next_run_number: u64,
@@ -294,6 +309,8 @@ pub struct PlaybackSession {
 impl PlaybackSession {
     pub fn new(
         sequence: Sequence,
+        source_session_epoch: SourceSessionEpoch,
+        play_id_prefix: impl Into<Arc<str>>,
         mut settings: PlaybackSettings,
         auto_dj_enabled: bool,
         auto_dj_refill_threshold: usize,
@@ -301,6 +318,8 @@ impl PlaybackSession {
         settings.sanitize();
         Self {
             sequence,
+            source_session_epoch,
+            play_id_prefix: play_id_prefix.into(),
             current_run: None,
             next_plan: None,
             next_run_number: 1,
@@ -319,6 +338,10 @@ impl PlaybackSession {
 
     pub fn sequence(&self) -> &Sequence {
         &self.sequence
+    }
+
+    pub const fn source_session_epoch(&self) -> SourceSessionEpoch {
+        self.source_session_epoch
     }
 
     pub fn status(&self) -> TransportStatus {
@@ -394,6 +417,7 @@ impl PlaybackSession {
             id,
             source_id: self.sequence.source_id().clone(),
             current_track_id: self.sequence.selected().map(|entry| entry.track.id.clone()),
+            queued_track_ids: self.sequence.unique_track_ids(),
         }
     }
 
@@ -426,6 +450,20 @@ impl PlaybackSession {
     }
 
     pub fn fail_materialization(
+        &mut self,
+        id: MaterializationId,
+        source_id: &SourceId,
+        placement: Placement,
+        message: String,
+    ) -> Option<SessionUpdate> {
+        self.cancel_materialization(id, source_id, placement)
+            .then(|| SessionUpdate {
+                effects: vec![SessionEffect::NonfatalError(message)],
+                ..SessionUpdate::default()
+            })
+    }
+
+    pub fn cancel_materialization(
         &mut self,
         id: MaterializationId,
         source_id: &SourceId,
@@ -470,7 +508,6 @@ impl PlaybackSession {
             SessionCommand::Play => Ok(self.set_playing(true)),
             SessionCommand::Pause => Ok(self.set_playing(false)),
             SessionCommand::Stop => Ok(self.stop(sample)),
-            SessionCommand::Shutdown => Ok(self.shutdown(sample)),
             SessionCommand::Next => Ok(self.next(sample)),
             SessionCommand::Previous => Ok(self.previous(sample)),
             SessionCommand::Seek(position_millis) => Ok(self.seek(position_millis)),
@@ -484,11 +521,7 @@ impl PlaybackSession {
                 ..SessionUpdate::default()
             }),
             SessionCommand::SetRepeat(repeat) => Ok(self.set_repeat(repeat)),
-            SessionCommand::CycleRepeat => Ok(self.cycle_repeat()),
             SessionCommand::SetShuffle { enabled, seed } => Ok(self.set_shuffle(enabled, seed)),
-            SessionCommand::ToggleShuffle { seed } => {
-                Ok(self.set_shuffle(!self.sequence.shuffle_enabled(), seed))
-            }
             SessionCommand::SetAutoDj {
                 enabled,
                 refill_threshold,
@@ -500,35 +533,12 @@ impl PlaybackSession {
                 )],
                 ..SessionUpdate::default()
             }),
-            SessionCommand::RefreshTracks { source_id, tracks } => {
-                Ok(self.refresh_tracks(&source_id, tracks))
-            }
+            SessionCommand::RefreshTracks {
+                source_session_epoch,
+                tracks,
+            } => Ok(self.refresh_tracks(source_session_epoch, tracks)),
             SessionCommand::StreamInputsChanged => Ok(self.stream_inputs_changed()),
         }
-    }
-
-    pub fn switch_source(&mut self, sequence: Sequence, sample: &ClockSample) -> SessionUpdate {
-        let old_source = self.sequence.source_id().clone();
-        let mut update = SessionUpdate::changed();
-        update.structure_changed = true;
-        if let Some(run) = self.current_run.as_ref() {
-            update
-                .effects
-                .push(SessionEffect::Backend(BackendCommand::Stop { run: run.id }));
-        }
-        self.finish_current(RunEndReason::SourceSwitch, sample, &mut update.effects);
-        update.effects.push(SessionEffect::FlushPersistence {
-            source_id: old_source,
-        });
-        self.sequence = sequence;
-        self.next_plan = None;
-        self.pending_replacement = None;
-        self.pending_additive.clear();
-        self.auto_dj_in_flight = None;
-        self.auto_dj_waiting_for_continuation = false;
-        self.buffering_percent = None;
-        self.last_error = None;
-        update
     }
 
     pub fn stream_resolved(&mut self, run: RunId, stream: PreparedStream) -> SessionUpdate {
@@ -780,6 +790,7 @@ impl PlaybackSession {
             .sequence
             .selected()
             .map(|entry| entry.occurrence.clone());
+        let previous_had_run = self.current_run.is_some();
         let mut update = SessionUpdate::structural();
         if replacing {
             self.pending_replacement = None;
@@ -793,14 +804,17 @@ impl PlaybackSession {
             self.finish_current(RunEndReason::Replaced, sample, &mut update.effects);
         }
         self.sequence.apply_batch(batch, placement)?;
+        let next_selected = self
+            .sequence
+            .selected()
+            .map(|entry| entry.occurrence.clone());
         if replacing {
             self.begin_selected_run(&mut update.effects);
-        } else if previous_selected
-            != self
-                .sequence
-                .selected()
-                .map(|entry| entry.occurrence.clone())
-        {
+            if !previous_had_run && previous_selected.is_some() && next_selected.is_none() {
+                update.effects.push(SessionEffect::CurrentMediaChanged);
+            }
+        } else if previous_selected != next_selected {
+            update.effects.push(SessionEffect::CurrentMediaChanged);
             self.plan_next(&mut update.effects);
         } else {
             self.replan_next_if_changed(&mut update.effects);
@@ -863,6 +877,7 @@ impl PlaybackSession {
             .sequence
             .selected()
             .is_some_and(|entry| &entry.occurrence == occurrence);
+        let removing_current_run = removing_current && self.current_run.is_some();
         if self.sequence.occurrence(occurrence).is_none() {
             return SessionUpdate::default();
         }
@@ -886,6 +901,9 @@ impl PlaybackSession {
         self.sequence.remove(occurrence);
         if removing_current {
             self.begin_selected_run(&mut update.effects);
+            if !removing_current_run && self.sequence.selected().is_none() {
+                update.effects.push(SessionEffect::CurrentMediaChanged);
+            }
         } else {
             self.replan_next_if_changed(&mut update.effects);
         }
@@ -933,6 +951,7 @@ impl PlaybackSession {
     }
 
     fn clear_upcoming(&mut self) -> SessionUpdate {
+        let clears_current = self.current_run.is_none() && self.sequence.selected().is_some();
         let changed = if self.current_run.is_some() {
             self.sequence.clear_upcoming()
         } else {
@@ -947,6 +966,9 @@ impl PlaybackSession {
         }
         self.next_plan = None;
         let mut update = SessionUpdate::structural();
+        if clears_current {
+            update.effects.push(SessionEffect::CurrentMediaChanged);
+        }
         if let Some(run) = self.current_run.as_ref() {
             update
                 .effects
@@ -1061,7 +1083,7 @@ impl PlaybackSession {
             };
         };
         self.pending_replacement = None;
-        let mut update = SessionUpdate::changed();
+        let mut update = SessionUpdate::structural();
         update
             .effects
             .push(SessionEffect::Backend(BackendCommand::Stop { run: run.id }));
@@ -1074,7 +1096,7 @@ impl PlaybackSession {
         update
     }
 
-    fn shutdown(&mut self, sample: &ClockSample) -> SessionUpdate {
+    pub(crate) fn shutdown(&mut self, sample: &ClockSample) -> SessionUpdate {
         self.pending_replacement = None;
         self.pending_additive.clear();
         self.auto_dj_in_flight = None;
@@ -1210,19 +1232,9 @@ impl PlaybackSession {
         }
         self.sequence.set_repeat_mode(repeat);
         let mut update = SessionUpdate::changed();
-        update.effects.push(self.state_effect());
         self.replan_next_if_changed(&mut update.effects);
         self.maybe_request_auto_dj(&mut update.effects);
         update
-    }
-
-    fn cycle_repeat(&mut self) -> SessionUpdate {
-        let repeat = match self.sequence.repeat_mode() {
-            RepeatMode::Off => RepeatMode::All,
-            RepeatMode::All => RepeatMode::One,
-            RepeatMode::One => RepeatMode::Off,
-        };
-        self.set_repeat(repeat)
     }
 
     fn set_shuffle(&mut self, enabled: bool, seed: u64) -> SessionUpdate {
@@ -1277,14 +1289,23 @@ impl PlaybackSession {
         update
     }
 
-    fn refresh_tracks(&mut self, source_id: &SourceId, tracks: Vec<Track>) -> SessionUpdate {
-        if self.sequence.source_id() != source_id {
+    fn refresh_tracks(
+        &mut self,
+        source_session_epoch: SourceSessionEpoch,
+        tracks: Vec<Track>,
+    ) -> SessionUpdate {
+        if self.source_session_epoch != source_session_epoch {
             return SessionUpdate::default();
         }
+        let previous_current = self.sequence.selected().map(|entry| entry.track.clone());
         if !self.sequence.refresh_tracks(tracks) {
             return SessionUpdate::default();
         }
-        SessionUpdate::structural()
+        let mut update = SessionUpdate::structural();
+        if previous_current.as_ref() != self.sequence.selected().map(|entry| &entry.track) {
+            update.effects.push(SessionEffect::CurrentMediaChanged);
+        }
+        update
     }
 
     fn stream_inputs_changed(&mut self) -> SessionUpdate {
@@ -1389,6 +1410,7 @@ impl PlaybackSession {
         if matches!(status, TransportStatus::Playing | TransportStatus::Paused)
             && !progress_reported
             && let Some(current) = self.current_run.as_ref()
+            && current.started_at_unix_seconds.is_some()
         {
             update
                 .effects
@@ -1559,19 +1581,14 @@ impl PlaybackSession {
         };
         self.current_run = Some(RunContext::resolving(
             run,
+            self.play_id(run),
             self.sequence.source_id().clone(),
             &entry,
         ));
+        effects.push(SessionEffect::CurrentMediaChanged);
         self.next_plan = None;
         self.buffering_percent = None;
         self.last_error = None;
-        effects.push(SessionEffect::MediaChanged(MediaChanged {
-            key: MediaKey {
-                source_id: self.sequence.source_id().clone(),
-                track_id: entry.track.id,
-            },
-            occurrence,
-        }));
         effects.push(self.state_effect());
         self.plan_next(effects);
     }
@@ -1585,19 +1602,14 @@ impl PlaybackSession {
         let run = self.next_run_id();
         self.current_run = Some(RunContext::resolving(
             run,
+            self.play_id(run),
             self.sequence.source_id().clone(),
             &entry,
         ));
+        effects.push(SessionEffect::CurrentMediaChanged);
         self.next_plan = None;
         self.buffering_percent = None;
         self.last_error = None;
-        effects.push(SessionEffect::MediaChanged(MediaChanged {
-            key: MediaKey {
-                source_id: self.sequence.source_id().clone(),
-                track_id: entry.track.id.clone(),
-            },
-            occurrence: entry.occurrence.clone(),
-        }));
         effects.push(self.resolve_effect(run, &entry));
         self.plan_next(effects);
         effects.push(self.state_effect());
@@ -1746,37 +1758,70 @@ impl PlaybackSession {
     }
 
     fn qualify_current(&mut self, effects: &mut Vec<SessionEffect>) {
-        let qualification = {
+        let activity = {
             let Some(current) = self.current_run.as_mut() else {
                 return;
             };
-            if current.qualified
-                || current.started_at_unix_seconds.is_none()
-                || current.audible_millis < qualified_play_threshold_millis(current.duration_millis)
+            if !current.qualified
+                && current.started_at_unix_seconds.is_some()
+                && current.audible_millis
+                    >= qualified_play_threshold_millis(current.duration_millis)
             {
-                return;
+                current.qualified = true;
+                Some((
+                    current.play_id.clone(),
+                    current.id,
+                    current.track.clone(),
+                    current.local_period.clone(),
+                    current.started_at_unix_seconds,
+                ))
+            } else {
+                None
             }
-            current.qualified = true;
-            Some((
-                current.id,
-                current.track.clone(),
-                current.local_period.clone(),
-                current.started_at_unix_seconds,
-            ))
         };
-        let Some((run, track, Some(period), Some(started_at))) = qualification else {
-            return;
+        let activity_qualified = activity.is_some();
+        if let Some((play_id, run, track, Some(period), Some(started_at))) = activity {
+            effects.push(SessionEffect::Activity(ListeningOutcome {
+                play_id,
+                run,
+                source_id: track.source_id.clone(),
+                track_id: track.track_id,
+                local_period: period,
+                qualified_plays: 1,
+                skips: 0,
+                last_played_at_unix_seconds: Some(started_at),
+            }));
+        }
+
+        let external = {
+            let Some(current) = self.current_run.as_mut() else {
+                return;
+            };
+            let qualifies = external_scrobble_threshold_millis(current.duration_millis)
+                .is_some_and(|threshold| current.audible_millis >= threshold);
+            if !current.external_scrobble_emitted
+                && current.started_at_unix_seconds.is_some()
+                && qualifies
+            {
+                current.external_scrobble_emitted = true;
+                Some((
+                    current.play_id.clone(),
+                    current.track.clone(),
+                    current.started_at_unix_seconds,
+                ))
+            } else {
+                None
+            }
         };
-        effects.push(SessionEffect::Activity(ListeningOutcome {
-            run,
-            source_id: track.source_id,
-            track_id: track.track_id,
-            local_period: period,
-            qualified_plays: 1,
-            skips: 0,
-            last_played_at_unix_seconds: Some(started_at),
-        }));
-        if let Some(current) = self.current_run.as_ref() {
+        if let Some((play_id, track, Some(started_at))) = external {
+            effects.push(SessionEffect::ExternalScrobble(crate::CompletedScrobble {
+                play_id,
+                track,
+                started_at_unix_seconds: started_at,
+            }));
+        }
+
+        if activity_qualified && let Some(current) = self.current_run.as_ref() {
             effects.push(SessionEffect::SourceReport(self.source_report(
                 current,
                 SourceReportPhase::QualifiedPlay,
@@ -1800,6 +1845,7 @@ impl PlaybackSession {
         let Some(current) = self.current_run.take() else {
             return;
         };
+        effects.push(SessionEffect::CurrentMediaChanged);
         if current.started_at_unix_seconds.is_some() {
             effects.push(SessionEffect::Listening(ListeningFact::Ended {
                 run: current.id,
@@ -1822,6 +1868,7 @@ impl PlaybackSession {
                 && let Some(period) = current.local_period.clone()
             {
                 effects.push(SessionEffect::Activity(ListeningOutcome {
+                    play_id: current.play_id,
                     run: current.id,
                     source_id: current.track.source_id.clone(),
                     track_id: current.track.track_id.clone(),
@@ -1848,6 +1895,9 @@ impl PlaybackSession {
             source_id: current.track.source_id.clone(),
             track_id: current.track.track_id.clone(),
             phase,
+            started_at_unix_seconds: current
+                .started_at_unix_seconds
+                .expect("source reports require a started Playback run"),
             position_millis: self.sequence.progress_millis(),
             paused: current.status == TransportStatus::Paused,
             muted: self.settings.muted,
@@ -1856,6 +1906,10 @@ impl PlaybackSession {
             repeat_mode: self.sequence.repeat_mode(),
             failed,
         }
+    }
+
+    fn play_id(&self, run: RunId) -> String {
+        format!("{}:{}", self.play_id_prefix, run.get())
     }
 
     fn progress_effect(&self) -> SessionEffect {
@@ -1879,8 +1933,6 @@ impl PlaybackSession {
                 .selected()
                 .map(|entry| entry.occurrence.clone()),
             progress_millis: self.sequence.progress_millis(),
-            repeat_mode: self.sequence.repeat_mode(),
-            shuffle_enabled: self.sequence.shuffle_enabled(),
         }
     }
 
@@ -1937,10 +1989,76 @@ fn decided_transition(
 
 #[cfg(test)]
 mod tests {
-    use library::AlbumId;
+    use library::{AlbumId, Track};
 
     use super::*;
     use crate::{BatchItem, Provenance};
+
+    #[test]
+    fn current_media_changes_are_separate_from_position_and_control_updates() {
+        let mut session = session(&[1, 2]);
+        let started = session
+            .handle_command(SessionCommand::Play, &sample(0))
+            .expect("start");
+        assert!(changes_current_media(&started));
+        let run = session.current_run().expect("run");
+
+        let position =
+            session.handle_backend(BackendEvent::Position { run, millis: 500 }, &sample(1));
+        assert!(!changes_current_media(&position));
+        let volume = session
+            .handle_command(SessionCommand::SetVolume(0.5), &sample(1))
+            .expect("volume");
+        assert!(!changes_current_media(&volume));
+
+        let stopped = session
+            .handle_command(SessionCommand::Stop, &sample(2))
+            .expect("stop");
+        assert!(changes_current_media(&stopped));
+        let replayed = session
+            .handle_command(SessionCommand::Play, &sample(3))
+            .expect("replay");
+        assert!(changes_current_media(&replayed));
+        let next = session
+            .handle_command(SessionCommand::Next, &sample(4))
+            .expect("next");
+        assert!(changes_current_media(&next));
+    }
+
+    #[test]
+    fn stopped_queue_and_track_replacements_signal_current_media_once() {
+        let mut empty = empty_session();
+        let addition = empty.reserve_materialization(Placement::End);
+        let added = empty
+            .apply_materialization(
+                addition.id,
+                &addition.source_id,
+                batch(&[1]),
+                Placement::End,
+                &sample(0),
+            )
+            .expect("add to empty queue")
+            .expect("accepted addition");
+        assert_eq!(current_media_change_count(&added), 1);
+        let cleared = empty
+            .handle_command(SessionCommand::ClearUpcoming, &sample(1))
+            .expect("clear stopped queue");
+        assert_eq!(current_media_change_count(&cleared), 1);
+
+        let mut session = session(&[1, 2]);
+        let mut replacement = track(1);
+        replacement.title = "Accepted replacement".to_string();
+        let refreshed = session
+            .handle_command(
+                SessionCommand::RefreshTracks {
+                    source_session_epoch: SourceSessionEpoch::new(1),
+                    tracks: vec![replacement],
+                },
+                &sample(2),
+            )
+            .expect("refresh selected Track");
+        assert_eq!(current_media_change_count(&refreshed), 1);
+    }
 
     #[test]
     fn same_track_repeat_uses_a_fresh_run_and_transition_identity() {
@@ -1993,7 +2111,14 @@ mod tests {
             )
             .expect("materialize context");
         let expected = sequence.entries()[1].occurrence.clone();
-        let mut session = PlaybackSession::new(sequence, PlaybackSettings::default(), false, 2);
+        let mut session = PlaybackSession::new(
+            sequence,
+            SourceSessionEpoch::new(1),
+            "test",
+            PlaybackSettings::default(),
+            false,
+            2,
+        );
         session
             .handle_command(SessionCommand::PlayPause, &sample(0))
             .expect("start first occurrence");
@@ -2042,7 +2167,15 @@ mod tests {
             .expect("start");
         let run = session.current_run().expect("run");
         session.stream_resolved(run, PreparedStream::new("file:///track.flac"));
-        session.handle_backend(BackendEvent::Started { run }, &sample(0));
+        let started = session.handle_backend(BackendEvent::Started { run }, &sample(0));
+        assert!(started.effects.iter().any(|effect| matches!(
+            effect,
+            SessionEffect::SourceReport(SourceReportFact {
+                phase: SourceReportPhase::Started,
+                started_at_unix_seconds: 1_700_000_000,
+                ..
+            })
+        )));
         session.handle_backend(
             BackendEvent::Position {
                 run,
@@ -2289,6 +2422,32 @@ mod tests {
     }
 
     #[test]
+    fn materialization_reservation_captures_live_exclusions_and_reports_failure() {
+        let mut session = session(&[1, 1, 2]);
+        let reservation = session.reserve_materialization(Placement::End);
+
+        assert_eq!(reservation.current_track_id, Some(TrackId::fake(1)));
+        assert_eq!(
+            reservation.queued_track_ids,
+            [TrackId::fake(1), TrackId::fake(2)]
+        );
+
+        let failed = session
+            .fail_materialization(
+                reservation.id,
+                &reservation.source_id,
+                Placement::End,
+                "no matching radio tracks were found".to_string(),
+            )
+            .expect("active reservation");
+        assert!(matches!(
+            failed.effects.as_slice(),
+            [SessionEffect::NonfatalError(message)]
+                if message == "no matching radio tracks were found"
+        ));
+    }
+
+    #[test]
     fn replacement_reservation_cancels_auto_dj_without_cancelling_later_additions() {
         let mut session = session(&[1]);
         let auto_dj = session
@@ -2368,7 +2527,10 @@ mod tests {
             .complete_auto_dj_candidates(
                 &request.source_id,
                 &request.seed_occurrence,
-                vec![track(1), track(2), track(2), track(3)],
+                [track(1), track(2), track(2), track(3)]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
                 request.requested_count,
                 42,
                 &sample(0),
@@ -2668,9 +2830,7 @@ mod tests {
             &sample(1_000),
         );
 
-        let shutdown = session
-            .handle_command(SessionCommand::Shutdown, &sample(1_000))
-            .expect("shutdown");
+        let shutdown = session.shutdown(&sample(1_000));
         assert_eq!(session.sequence().progress_millis(), 37_000);
         assert!(
             shutdown
@@ -2718,12 +2878,91 @@ mod tests {
         );
     }
 
+    #[test]
+    fn accepted_track_refresh_replaces_every_occurrence_without_changing_current_identity() {
+        let mut session = session(&[1, 1, 2]);
+        assert_eq!(
+            session.sequence().unique_track_ids(),
+            vec![TrackId::fake(1), TrackId::fake(2)]
+        );
+        session
+            .handle_command(SessionCommand::Play, &sample(0))
+            .expect("start selected Track");
+        let run = session.current_run().expect("current run");
+        session.handle_backend(BackendEvent::Started { run }, &sample(1));
+        session.handle_backend(
+            BackendEvent::Position {
+                run,
+                millis: 42_000,
+            },
+            &sample(2),
+        );
+        let before = session.view().transport.current.expect("current media");
+
+        let mut changed_track = track(1);
+        changed_track.title = "Accepted replacement".to_string();
+        changed_track.favorite = true;
+        let ignored = session
+            .handle_command(
+                SessionCommand::RefreshTracks {
+                    source_session_epoch: SourceSessionEpoch::new(2),
+                    tracks: vec![changed_track.clone()],
+                },
+                &sample(3),
+            )
+            .expect("ignore stale refresh");
+        assert!(!ignored.view_changed);
+
+        let accepted = session
+            .handle_command(
+                SessionCommand::RefreshTracks {
+                    source_session_epoch: SourceSessionEpoch::new(1),
+                    tracks: vec![changed_track.clone()],
+                },
+                &sample(4),
+            )
+            .expect("apply accepted refresh");
+        assert!(accepted.structure_changed);
+        assert_eq!(session.current_run(), Some(run));
+        assert_eq!(session.position_millis(), 42_000);
+        assert!(Track::ptr_eq(
+            &session.sequence().entries()[0].track,
+            &changed_track
+        ));
+        assert!(Track::ptr_eq(
+            &session.sequence().entries()[1].track,
+            &changed_track
+        ));
+        let after = session.view().transport.current.expect("refreshed media");
+        assert_eq!(before.id, after.id);
+        assert_eq!(after.track.title, "Accepted replacement");
+        assert!(after.track.favorite);
+    }
+
     fn session(numbers: &[u32]) -> PlaybackSession {
         let mut sequence = Sequence::new(SourceId::fake(1));
         sequence
             .apply_batch(batch(numbers), Placement::Replace { anchor_index: 0 })
             .expect("seed sequence");
-        PlaybackSession::new(sequence, PlaybackSettings::default(), false, 2)
+        PlaybackSession::new(
+            sequence,
+            SourceSessionEpoch::new(1),
+            "test",
+            PlaybackSettings::default(),
+            false,
+            2,
+        )
+    }
+
+    fn empty_session() -> PlaybackSession {
+        PlaybackSession::new(
+            Sequence::new(SourceId::fake(1)),
+            SourceSessionEpoch::new(1),
+            "test",
+            PlaybackSettings::default(),
+            false,
+            2,
+        )
     }
 
     fn batch(numbers: &[u32]) -> Batch {
@@ -2736,15 +2975,13 @@ mod tests {
     }
 
     fn track(number: u32) -> Track {
-        Track {
+        Track::new(library::TrackData {
             id: TrackId::fake(number),
-            album_id: AlbumId::fake(1),
+            album_id: Some(AlbumId::fake(1)),
             title: format!("Track {number}"),
             artist: "Artist".to_string(),
-            artist_id: None,
-            artist_credits: Vec::new(),
-            album_artist_credits: Vec::new(),
             album: "Album".to_string(),
+            album_artwork: None,
             year: 2026,
             release_date: None,
             date_added: None,
@@ -2756,17 +2993,17 @@ mod tests {
             disc_number: 1,
             track_number: number as u16,
             image_ref: None,
-            album_artwork: None,
-            genres: Vec::new(),
+            local_artwork: None,
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,
-            local_path: None,
+            source_path: None,
+            cue: None,
             source_format: None,
             comment: None,
             skip_count: None,
             bpm: None,
-            moods: Vec::new(),
-        }
+            relations: library::TrackRelations::default(),
+        })
     }
 
     fn sample(monotonic_millis: u64) -> ClockSample {
@@ -2775,5 +3012,17 @@ mod tests {
             unix_seconds: 1_700_000_000,
             local_period: "2026-07".to_string(),
         }
+    }
+
+    fn changes_current_media(update: &SessionUpdate) -> bool {
+        current_media_change_count(update) != 0
+    }
+
+    fn current_media_change_count(update: &SessionUpdate) -> usize {
+        update
+            .effects
+            .iter()
+            .filter(|effect| matches!(effect, SessionEffect::CurrentMediaChanged))
+            .count()
     }
 }

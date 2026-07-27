@@ -37,6 +37,7 @@ pub(super) fn parse_cue_sheet(cue_path: &Path, text: &str) -> Option<CueSheet> {
     };
     let mut current_file: Option<CueFile> = None;
     let mut current_track: Option<OpenTrack> = None;
+    let mut valid = true;
 
     for line in text.lines() {
         let mut fields = CueFields::new(line);
@@ -66,7 +67,7 @@ pub(super) fn parse_cue_sheet(cue_path: &Path, text: &str) -> Option<CueSheet> {
                 }
             }
             "FILE" => {
-                push_track(&mut current_file, current_track.take());
+                valid &= push_track(&mut current_file, current_track.take());
                 push_file(&mut sheet, current_file.take());
                 let Some(path) = fields.next_value() else {
                     continue;
@@ -77,18 +78,20 @@ pub(super) fn parse_cue_sheet(cue_path: &Path, text: &str) -> Option<CueSheet> {
                 });
             }
             "TRACK" => {
-                push_track(&mut current_file, current_track.take());
-                let Some(number) = fields
+                valid &= push_track(&mut current_file, current_track.take());
+                let number = fields
                     .next_word()
-                    .and_then(|value| value.parse::<u16>().ok())
-                else {
-                    continue;
-                };
+                    .and_then(|value| value.parse::<u16>().ok());
                 let track_type = fields.next_word().unwrap_or_default();
                 if !track_type.eq_ignore_ascii_case("AUDIO") {
                     current_track = None;
                     continue;
                 }
+                let Some(number) = number.filter(|_| current_file.is_some()) else {
+                    valid = false;
+                    current_track = None;
+                    continue;
+                };
                 current_track = Some(OpenTrack {
                     number,
                     title: None,
@@ -113,8 +116,11 @@ pub(super) fn parse_cue_sheet(cue_path: &Path, text: &str) -> Option<CueSheet> {
             _ => {}
         }
     }
-    push_track(&mut current_file, current_track);
+    valid &= push_track(&mut current_file, current_track);
     push_file(&mut sheet, current_file);
+    if !valid {
+        return None;
+    }
     sheet.files.retain(|file| !file.tracks.is_empty());
     (!sheet.files.is_empty()).then_some(sheet)
 }
@@ -127,15 +133,15 @@ fn push_file(sheet: &mut CueSheet, file: Option<CueFile>) {
     }
 }
 
-fn push_track(file: &mut Option<CueFile>, track: Option<OpenTrack>) {
-    let Some(file) = file else {
-        return;
-    };
+fn push_track(file: &mut Option<CueFile>, track: Option<OpenTrack>) -> bool {
     let Some(track) = track else {
-        return;
+        return true;
+    };
+    let Some(file) = file else {
+        return false;
     };
     let Some(index_start_ms) = track.index_start_ms else {
-        return;
+        return false;
     };
     file.tracks.push(CueTrack {
         number: track.number,
@@ -143,6 +149,7 @@ fn push_track(file: &mut Option<CueFile>, track: Option<OpenTrack>) {
         performer: track.performer,
         index_start_ms,
     });
+    true
 }
 
 fn resolve_cue_file_path(cue_path: &Path, value: &str) -> PathBuf {

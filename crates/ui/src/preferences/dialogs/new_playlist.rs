@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
+use ::library::PlaylistEdit;
 use adw::prelude::*;
 use localization::tr;
 
@@ -16,12 +17,15 @@ impl Shell {
         let entry = gtk::Entry::new();
         entry.set_placeholder_text(Some(&tr("Playlist name")));
         dialog.set_extra_child(Some(&entry));
-        let library = self.products.library.clone();
+        let source = self.products.source.clone();
         dialog.connect_response(None, move |_, response| {
             if response == "create" {
                 let name = entry.text().trim().to_string();
                 if !name.is_empty() {
-                    library.create_playlist(name, Vec::new());
+                    source.edit_playlist(PlaylistEdit::Create {
+                        name,
+                        track_ids: Vec::new(),
+                    });
                 }
             }
         });

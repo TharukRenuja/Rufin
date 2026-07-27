@@ -1,6 +1,6 @@
-use super::analysis::VisualizerTap;
 use super::audio::AudioGraph;
 use super::engine::{PipelineId, PreparedRun, SharedBackendState, Slot, handle_about_to_finish};
+use super::waveform::VisualizerTap;
 use super::*;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -66,6 +66,7 @@ struct PipelineSession {
     pipeline: gst::Element,
     bus: gst::Bus,
     clock: SourceClock,
+    trust_invalid_certificate: Arc<AtomicBool>,
     about_to_finish_id: Option<glib::SignalHandlerId>,
     audio_graph: Option<AudioGraph>,
     visualizer_probe: Option<gst::PadProbeId>,
@@ -98,7 +99,7 @@ impl PlayerPipeline {
             &item.stream,
         )?;
         session.configure_audio(settings)?;
-        session.pipeline.set_property("uri", item.stream.uri());
+        session.set_stream(&item.stream);
         session.set_output_volume(volume, muted);
         if let Err(error) = session.set_state(startup_state) {
             session.stop();
@@ -224,11 +225,11 @@ impl PlayerPipeline {
             .and_then(PipelineSession::audio_output_factory)
     }
 
-    pub(super) fn set_uri(&self, uri: &str) -> Result<(), String> {
+    pub(super) fn set_stream(&self, stream: &PreparedStream) -> Result<(), String> {
         let Some(session) = self.session.as_ref() else {
             return Err("GStreamer session is not active".to_string());
         };
-        session.pipeline.set_property("uri", uri);
+        session.set_stream(stream);
         Ok(())
     }
 
@@ -264,11 +265,24 @@ impl PipelineSession {
             .map_err(|error| error.to_string())?;
         configure_playbin_for_audio(&pipeline);
         pipeline.set_property("video-sink", &fakesink);
+        let trust_invalid_certificate =
+            Arc::new(AtomicBool::new(stream.trust_invalid_certificate()));
+        let certificate_policy = Arc::clone(&trust_invalid_certificate);
+        connect_server_certificate_policy(&pipeline, move || {
+            certificate_policy.load(Ordering::SeqCst)
+        });
 
         let pipeline_for_signal = pipeline.clone();
         let shared_for_signal = Arc::clone(&shared);
+        let certificate_policy_for_signal = Arc::clone(&trust_invalid_certificate);
         let about_to_finish_id = pipeline.connect("about-to-finish", false, move |_| {
-            handle_about_to_finish(&pipeline_for_signal, &shared_for_signal, slot, id);
+            handle_about_to_finish(
+                &pipeline_for_signal,
+                &shared_for_signal,
+                &certificate_policy_for_signal,
+                slot,
+                id,
+            );
             None
         });
 
@@ -277,6 +291,7 @@ impl PipelineSession {
             pipeline,
             bus,
             clock: SourceClock::from_stream(stream),
+            trust_invalid_certificate,
             about_to_finish_id: Some(about_to_finish_id),
             audio_graph: None,
             visualizer_probe: None,
@@ -297,6 +312,12 @@ impl PipelineSession {
         self.pipeline.set_property("audio-sink", graph.root());
         self.audio_graph = Some(graph);
         Ok(())
+    }
+
+    fn set_stream(&self, stream: &PreparedStream) {
+        self.trust_invalid_certificate
+            .store(stream.trust_invalid_certificate(), Ordering::SeqCst);
+        self.pipeline.set_property("uri", stream.uri());
     }
 
     pub(super) fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ::library::{ActiveLibraryQuery, Album};
+use ::library::AlbumSummary;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
@@ -56,8 +56,8 @@ pub(super) struct ArtistReleaseProjections {
 
 #[derive(Clone)]
 struct ArtistAlbumProjection {
-    source: Rc<RefCell<Arc<Vec<Album>>>>,
-    visible: Rc<RefCell<Arc<Vec<Album>>>>,
+    source: Rc<RefCell<Arc<Vec<AlbumSummary>>>>,
+    visible: Rc<RefCell<Arc<Vec<AlbumSummary>>>>,
     search: gtk::SearchEntry,
     header: gtk::Widget,
     toolbar: LibraryToolbarProjection,
@@ -89,7 +89,7 @@ enum ArtistRouteRow {
         margin_bottom: i32,
     },
     AlbumGrid {
-        albums: Arc<Vec<Album>>,
+        albums: Arc<Vec<AlbumSummary>>,
         start: usize,
         len: usize,
         columns: usize,
@@ -141,7 +141,7 @@ impl ArtistAlbumProjection {
     fn new(
         shell: &Rc<Shell>,
         title: &'static str,
-        albums: Vec<Album>,
+        albums: Vec<AlbumSummary>,
         update_gate: Rc<ArtistReleaseUpdateGate>,
     ) -> Self {
         let key = LibraryListKey::ArtistAlbums;
@@ -159,8 +159,6 @@ impl ArtistAlbumProjection {
         header.append(&toolbar.widget());
 
         let settings = shell.settings.current.borrow().library_list(key);
-        let mut albums = albums;
-        sort_albums(&mut albums, &settings);
         let albums = Arc::new(albums);
         let source = Rc::new(RefCell::new(Arc::clone(&albums)));
         let visible = Rc::new(RefCell::new(albums));
@@ -217,14 +215,6 @@ impl ArtistAlbumProjection {
         }
     }
 
-    fn replace(&self, albums: Vec<Album>) {
-        let settings = self.applied_settings.borrow().clone();
-        let mut albums = albums;
-        sort_albums(&mut albums, &settings);
-        self.source.replace(Arc::new(albums));
-        self.recompute(true);
-    }
-
     fn recompute(&self, notify: bool) {
         (self.recompute)(self.search.text().to_string(), notify);
     }
@@ -233,7 +223,12 @@ impl ArtistAlbumProjection {
         self.source.borrow().is_empty()
     }
 
-    fn visible(&self) -> Arc<Vec<Album>> {
+    fn replace_prepared(&self, albums: Vec<AlbumSummary>) {
+        self.source.replace(Arc::new(albums));
+        self.recompute(true);
+    }
+
+    fn visible(&self) -> Arc<Vec<AlbumSummary>> {
         Arc::clone(&self.visible.borrow())
     }
 
@@ -276,7 +271,7 @@ impl ArtistAlbumProjection {
         let previous = self.applied_settings.borrow().clone();
         if previous.sort_key != settings.sort_key || previous.descending != settings.descending {
             let mut source = self.source.borrow_mut();
-            let source_items: &mut Vec<Album> = Arc::make_mut(&mut *source);
+            let source_items: &mut Vec<AlbumSummary> = Arc::make_mut(&mut *source);
             sort_albums(source_items, settings);
             drop(source);
             self.recompute(true);
@@ -294,10 +289,9 @@ impl ArtistAlbumProjection {
 impl ArtistReleaseProjections {
     pub(super) fn new(
         shell: &Rc<Shell>,
-        query: ActiveLibraryQuery,
         preamble: ArtistReleaseRoutePreamble,
-        albums: Vec<Album>,
-        appears_on: Vec<Album>,
+        albums: Arc<[AlbumSummary]>,
+        appears_on: Arc<[AlbumSummary]>,
     ) -> Self {
         let update_gate = Rc::new(ArtistReleaseUpdateGate::default());
         let partitioned = partition_artist_releases(albums, appears_on);
@@ -329,7 +323,11 @@ impl ArtistReleaseProjections {
         let cell_shell = Rc::clone(shell);
         let (list, apply_grid_fields) =
             artist_route_list(rows.clone(), Rc::clone(&grid_fields), move |fields| {
-                AlbumGridCell::new(Rc::clone(&cell_shell), fields, query.clone())
+                AlbumGridCell::new(
+                    Rc::clone(&cell_shell),
+                    fields,
+                    COLLECTION_GRID_MIN_CARD_WIDTH,
+                )
             });
         list.set_margin_top(ROUTE_TOP_MARGIN);
         list.set_margin_bottom(ARTIST_ROUTE_BOTTOM_MARGIN);
@@ -474,17 +472,17 @@ impl ArtistReleaseProjections {
         self.surface.clone()
     }
 
-    pub(super) fn replace(
+    pub(super) fn replace_prepared(
         &self,
-        albums: Vec<Album>,
-        appears_on: Vec<Album>,
+        albums: Arc<[AlbumSummary]>,
+        appears_on: Arc<[AlbumSummary]>,
         favorite_present: bool,
     ) {
         let partitioned = partition_artist_releases(albums, appears_on);
         self.update_gate.batch(|| {
             self.favorite_present.set(favorite_present);
             for (section, albums) in self.sections.iter().zip(partitioned) {
-                section.replace(albums);
+                section.replace_prepared(albums);
             }
         });
     }
@@ -550,13 +548,16 @@ fn release_section_index(kind: AlbumReleaseKind) -> usize {
     }
 }
 
-fn partition_artist_releases(albums: Vec<Album>, appears_on: Vec<Album>) -> [Vec<Album>; 6] {
-    let mut sections: [Vec<Album>; ARTIST_RELEASE_SECTION_COUNT] =
+fn partition_artist_releases(
+    albums: Arc<[AlbumSummary]>,
+    appears_on: Arc<[AlbumSummary]>,
+) -> [Vec<AlbumSummary>; 6] {
+    let mut sections: [Vec<AlbumSummary>; ARTIST_RELEASE_SECTION_COUNT] =
         std::array::from_fn(|_| Vec::new());
-    for album in albums {
-        sections[release_section_index(album_release_kind(&album))].push(album);
+    for album in albums.iter().cloned() {
+        sections[release_section_index(album_release_kind(&album.album))].push(album);
     }
-    sections[5] = appears_on;
+    sections[5].extend(appears_on.iter().cloned());
     sections
 }
 
@@ -565,7 +566,11 @@ fn artist_release_column_count(width: i32) -> usize {
     (width.max(1) / slot_width.max(1)).clamp(1, COLLECTION_GRID_MAX_COLUMNS as i32) as usize
 }
 
-fn append_grid_rows(rows: &mut Vec<ArtistRouteRow>, albums: Arc<Vec<Album>>, columns: usize) {
+fn append_grid_rows(
+    rows: &mut Vec<ArtistRouteRow>,
+    albums: Arc<Vec<AlbumSummary>>,
+    columns: usize,
+) {
     let columns = columns.max(1);
     let row_count = albums.len().div_ceil(columns);
     for row in 0..row_count {
@@ -591,7 +596,7 @@ fn artist_route_list<Cell, Make>(
     make_cell: Make,
 ) -> (gtk::ListView, Rc<dyn Fn(&[LibraryField])>)
 where
-    Cell: ReusableCollectionGridCell<Album>,
+    Cell: ReusableCollectionGridCell<AlbumSummary>,
     Make: Fn(&[LibraryField]) -> Cell + 'static,
 {
     let selection = gtk::NoSelection::new(Some(model));
@@ -737,7 +742,7 @@ where
     (list, apply_fields)
 }
 
-fn clear_grid_state<Cell: ReusableCollectionGridCell<Album>>(
+fn clear_grid_state<Cell: ReusableCollectionGridCell<AlbumSummary>>(
     state: &mut ArtistRouteListCell<Cell>,
     remove: bool,
 ) {
@@ -807,32 +812,37 @@ fn virtual_search_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::library::AlbumId;
+    use ::library::{Album, AlbumArtwork, AlbumId, AlbumRelations};
 
-    fn album(index: u64) -> Album {
-        Album {
+    fn album(index: u64) -> AlbumSummary {
+        let album = Arc::new(Album {
             id: AlbumId::fake(index),
             title: format!("Album {index}"),
             artist: "Artist".to_string(),
-            artist_id: None,
-            album_artist_credits: Vec::new(),
-            artist_credits: Vec::new(),
             year: 2026,
             release_date: None,
             date_added: None,
             last_played: None,
             play_count: None,
             user_rating: None,
-            track_count: 1,
-            duration_seconds: 60,
             favorite: false,
             color_seed: index as u32,
             image_ref: None,
-            genres: Vec::new(),
+            local_artwork: None,
             release_types: Vec::new(),
             is_compilation: None,
             musicbrainz_album_id: None,
             musicbrainz_release_group_id: None,
+            relations: AlbumRelations::default(),
+        });
+        AlbumSummary {
+            artwork: AlbumArtwork {
+                album: Arc::clone(&album),
+                representative_track: None,
+            },
+            album,
+            track_count: 1,
+            duration_seconds: 60,
         }
     }
 
@@ -849,7 +859,7 @@ mod tests {
                         albums, start, len, ..
                     } => albums[start..start + len]
                         .iter()
-                        .map(|album| album.id.clone())
+                        .map(|album| album.album.id.clone())
                         .collect::<Vec<_>>(),
                     ArtistRouteRow::Static { .. } => Vec::new(),
                 })
@@ -858,7 +868,7 @@ mod tests {
                 projected,
                 albums
                     .iter()
-                    .map(|album| album.id.clone())
+                    .map(|album| album.album.id.clone())
                     .collect::<Vec<_>>()
             );
         }

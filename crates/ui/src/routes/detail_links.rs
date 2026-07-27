@@ -1,35 +1,15 @@
 use crate::preferences::source::login::source_kind_icon_name;
 use ::library::{Album, Track};
 use localization::msgid;
-use sources::SourceIdentity;
 
 use super::route::Route;
 
 pub(crate) fn track_artist_route(track: &Track) -> Option<Route> {
-    track
-        .artist_id
-        .clone()
-        .or_else(|| track.artist_credits.first().map(|artist| artist.id.clone()))
-        .or_else(|| {
-            track
-                .album_artist_credits
-                .first()
-                .map(|artist| artist.id.clone())
-        })
-        .map(Route::ArtistDetail)
+    track.primary_artist_id().cloned().map(Route::ArtistDetail)
 }
 
 pub(crate) fn album_artist_route(album: &Album) -> Option<Route> {
-    album
-        .artist_id
-        .clone()
-        .or_else(|| {
-            album
-                .album_artist_credits
-                .first()
-                .map(|artist| artist.id.clone())
-        })
-        .map(Route::ArtistDetail)
+    album.primary_artist_id().cloned().map(Route::ArtistDetail)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,12 +34,13 @@ pub(crate) struct DetailExternalLink {
 }
 
 pub(crate) fn server_entity_link(
-    server: &SourceIdentity,
+    source_kind: &str,
+    base_url: &str,
     kind: DetailEntityKind,
     entity_id: &str,
 ) -> Option<DetailExternalLink> {
-    let base_url = clean_source_base_url(&server.base_url)?;
-    match server.kind.as_str() {
+    let base_url = clean_source_base_url(base_url)?;
+    match source_kind {
         "jellyfin" => {
             let item_id = raw_source_entity_id(entity_id, "jellyfin", kind)?;
             Some(DetailExternalLink {
@@ -117,24 +98,16 @@ fn percent_encode_path_segment(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ::library::SourceId;
-    use sources::SourceIdentity;
+    use library::{ArtistCredit, ArtistId};
 
-    use super::{DetailEntityKind, server_entity_link};
-
-    fn server(kind: &str, base_url: &str) -> SourceIdentity {
-        SourceIdentity {
-            id: SourceId::new("test:server"),
-            kind: kind.to_string(),
-            name: "Test".to_string(),
-            base_url: base_url.to_string(),
-        }
-    }
+    use super::{DetailEntityKind, album_artist_route, server_entity_link, track_artist_route};
+    use crate::routes::route::Route;
 
     #[test]
     fn server_links_use_only_known_web_routes() {
         let jellyfin = server_entity_link(
-            &server("jellyfin", "https://music.example/"),
+            "jellyfin",
+            "https://music.example/",
             DetailEntityKind::Album,
             "jellyfin:album:abc123",
         )
@@ -145,7 +118,8 @@ mod tests {
         );
 
         let navidrome = server_entity_link(
-            &server("navidrome", "https://music.example/library/"),
+            "navidrome",
+            "https://music.example/library/",
             DetailEntityKind::Artist,
             "navidrome:artist:artist/one",
         )
@@ -157,11 +131,53 @@ mod tests {
 
         assert!(
             server_entity_link(
-                &server("subsonic", "https://music.example"),
+                "subsonic",
+                "https://music.example",
                 DetailEntityKind::Album,
                 "subsonic:album:album-one",
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn track_artist_links_follow_canonical_relations() {
+        let mut track = crate::test_support::track(1, "Track");
+        track.artist = "A label without a relationship".to_string();
+        assert_eq!(track_artist_route(&track), None);
+
+        track.relations.artists = vec![credit(3, "Track Artist")];
+        assert_eq!(
+            track_artist_route(&track),
+            Some(Route::ArtistDetail(ArtistId::fake(3)))
+        );
+
+        track.relations.artists.clear();
+        track.relations.album_artists = vec![credit(4, "Album Artist")];
+        assert_eq!(
+            track_artist_route(&track),
+            Some(Route::ArtistDetail(ArtistId::fake(4)))
+        );
+    }
+
+    #[test]
+    fn album_artist_links_follow_canonical_relations() {
+        let mut album = crate::test_support::album(1, "Album");
+        album.artist = "A label without a relationship".to_string();
+        assert_eq!(album_artist_route(&album), None);
+
+        album.relations.album_artists = vec![credit(5, "Album Artist")];
+        assert_eq!(
+            album_artist_route(&album),
+            Some(Route::ArtistDetail(ArtistId::fake(5)))
+        );
+    }
+
+    fn credit(id: u32, name: &str) -> ArtistCredit {
+        ArtistCredit {
+            id: ArtistId::fake(id),
+            name: name.to_string(),
+            musicbrainz_artist_id: None,
+        }
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, metadata::Orientation};
 
-use crate::{ArtworkError, ArtworkKey};
+use crate::{ArtworkError, ArtworkKey, DecodedImageIdentity};
 
 pub(crate) struct NormalizedImage {
     image: DynamicImage,
@@ -68,6 +68,10 @@ impl DecodedImage {
         &self.key
     }
 
+    pub fn identity(&self) -> DecodedImageIdentity {
+        DecodedImageIdentity(self.key.clone())
+    }
+
     pub fn cache_path(&self) -> &Path {
         self.cache_path.as_ref()
     }
@@ -86,10 +90,6 @@ impl DecodedImage {
 
     pub fn rgba(&self) -> &[u8] {
         self.pixels.rgba()
-    }
-
-    pub fn shared_rgba(&self) -> Arc<[u8]> {
-        Arc::clone(&self.pixels.rgba)
     }
 }
 

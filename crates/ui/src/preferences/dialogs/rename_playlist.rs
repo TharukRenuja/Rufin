@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use ::library::PlaylistId;
+use ::library::{PlaylistEdit, PlaylistId};
 use adw::prelude::*;
 use localization::tr;
 
@@ -22,12 +22,15 @@ impl Shell {
         let entry = gtk::Entry::new();
         entry.set_text(&current_name);
         dialog.set_extra_child(Some(&entry));
-        let library = self.products.library.clone();
+        let source = self.products.source.clone();
         dialog.connect_response(None, move |_, response| {
             if response == "rename" {
                 let name = entry.text().trim().to_string();
                 if !name.is_empty() {
-                    library.rename_playlist(playlist_id.clone(), name);
+                    source.edit_playlist(PlaylistEdit::Rename {
+                        playlist_id: playlist_id.clone(),
+                        name,
+                    });
                 }
             }
         });

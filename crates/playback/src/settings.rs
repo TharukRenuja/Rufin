@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sources::StreamQuality;
 
 pub const EQUALIZER_BAND_COUNT: usize = 10;
 pub const MIN_CROSSFADE_SECONDS: u8 = 1;
@@ -7,6 +6,22 @@ pub const MAX_CROSSFADE_SECONDS: u8 = 30;
 pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MIN_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
 pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum StreamQuality {
+    #[default]
+    Original,
+    MaxBitrateKbps(u32),
+}
+
+impl StreamQuality {
+    pub const fn max_bitrate_kbps(self) -> Option<u32> {
+        match self {
+            Self::Original => None,
+            Self::MaxBitrateKbps(kbps) => Some(kbps),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum PlaybackTransitionMode {

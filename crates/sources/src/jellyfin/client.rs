@@ -1,8 +1,12 @@
 use super::*;
 
 use crate::remote_http::{self, BodyLimit, RemoteHttpPolicy, RemoteTimeouts};
+use crate::source::RemotePlaylistSource;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::BTreeSet;
 use std::time::Duration;
+
+use super::refresh::PageState;
 
 const JELLYFIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const JELLYFIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -32,20 +36,19 @@ impl JellyfinSource {
                 &self.base_url,
                 &format!("Playlists/{raw_playlist_id}/Items"),
             )?;
-            let request = pages.request(COLLECTION_PAGE_SIZE);
             {
                 let mut query = url.query_pairs_mut();
                 query
                     .append_pair("UserId", &self.user_id)
-                    .append_pair("StartIndex", &request.offset.to_string())
-                    .append_pair("Limit", &request.limit.to_string());
+                    .append_pair("StartIndex", &pages.offset().to_string())
+                    .append_pair("Limit", &COLLECTION_PAGE_SIZE.to_string());
                 if let Some(fields) = fields {
                     query.append_pair("Fields", fields);
                 }
             }
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let count = response.items.len();
-            let Some(finished) = pages.add(count, response.total_record_count) else {
+            let Ok(finished) = pages.advance(count, response.total_record_count) else {
                 return Ok(None);
             };
             for item in response.items {
@@ -64,36 +67,18 @@ impl JellyfinSource {
         }
     }
 
-    async fn read_playlist_entries(
+    pub(super) async fn read_playlist_entries(
         &self,
         raw_playlist_id: &str,
     ) -> SourceResult<Option<Vec<PlaylistEntry>>> {
-        Ok(self
-            .read_playlist_rows(raw_playlist_id, Some(TRACK_FIELDS))
-            .await?
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|(entry_id, item)| PlaylistEntry {
-                        entry_id,
-                        track: track_from_item(item),
-                    })
-                    .collect()
-            }))
-    }
-
-    pub(super) async fn read_playlist_entry_keys(
-        &self,
-        raw_playlist_id: &str,
-    ) -> SourceResult<Option<Vec<PlaylistEntryKey>>> {
         Ok(self
             .read_playlist_rows(raw_playlist_id, None)
             .await?
             .map(|items| {
                 items
                     .into_iter()
-                    .map(|(entry_id, item)| PlaylistEntryKey {
-                        entry_id,
+                    .map(|(entry_id, item)| PlaylistEntry {
+                        occurrence_id: entry_id,
                         track_id: TrackId::new(jellyfin_id("track", &item.id)),
                     })
                     .collect()
@@ -105,290 +90,35 @@ impl JellyfinSource {
         playlist: Playlist,
     ) -> SourceResult<Option<PlaylistSnapshot>> {
         let Some(entries) = self
-            .read_playlist_entry_keys(raw_item_id(playlist.id.as_str()))
+            .read_playlist_entries(raw_item_id(playlist.id.as_str()))
             .await?
         else {
             return Ok(None);
         };
-        if usize::try_from(playlist.track_count).ok() != Some(entries.len()) {
-            return Ok(None);
-        }
         Ok(Some(PlaylistSnapshot { playlist, entries }))
     }
 }
 
-#[async_trait(?Send)]
-impl MusicSource for JellyfinSource {
-    fn identity(&self) -> &SourceIdentity {
-        &self.identity
-    }
-
-    async fn home_sections(&self) -> SourceResult<Vec<HomeSection>> {
-        let sections = [
-            self.home_section(HomeSectionKind::Explore).await?,
-            self.home_section(HomeSectionKind::MostPlayed).await?,
-            self.home_section(HomeSectionKind::NewlyAdded).await?,
-            self.home_section(HomeSectionKind::RecentlyPlayed).await?,
-            self.home_section(HomeSectionKind::RecentlyReleased).await?,
-        ]
-        .into_iter()
-        .filter(|section| !section.albums.is_empty() || !section.tracks.is_empty())
-        .collect();
-        Ok(sections)
-    }
-
-    async fn home_section(&self, kind: HomeSectionKind) -> SourceResult<HomeSection> {
-        match kind {
-            HomeSectionKind::Explore => {
-                self.home_album_section(kind, "Random,SortName", "Ascending")
-                    .await
-            }
-            HomeSectionKind::MostPlayed => {
-                self.home_track_section(kind, "PlayCount,SortName", "Descending")
-                    .await
-            }
-            HomeSectionKind::NewlyAdded => {
-                self.home_album_section(kind, "DateCreated,SortName", "Descending")
-                    .await
-            }
-            HomeSectionKind::RecentlyPlayed => {
-                self.home_track_section(kind, "DatePlayed,SortName", "Descending")
-                    .await
-            }
-            HomeSectionKind::RecentlyReleased => {
-                self.home_album_section(kind, "ProductionYear,PremiereDate,SortName", "Descending")
-                    .await
-            }
-        }
-    }
-
-    async fn albums(&self, request: PagedRequest) -> SourceResult<PagedResponse<Album>> {
-        let response = self.item_page("MusicAlbum", request).await?;
-        Ok(PagedResponse::new(
-            response.items.into_iter().map(album_from_item).collect(),
-            response.total,
-        ))
-    }
-
-    async fn album_detail(&self, album_id: &AlbumId) -> SourceResult<AlbumDetail> {
-        let raw_album_id = raw_item_id(album_id.as_str());
-        let mut album_url = endpoint(&self.base_url, &format!("Items/{raw_album_id}"))?;
-        album_url
-            .query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("Fields", ALBUM_FIELDS);
-        let album = album_from_item(self.get_json::<JellyfinItem>(album_url).await?);
-
-        let mut url = endpoint(&self.base_url, "Items")?;
-        url.query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("ParentId", raw_album_id)
-            .append_pair("Recursive", "true")
-            .append_pair("IncludeItemTypes", "Audio")
-            .append_pair("SortBy", "ParentIndexNumber,IndexNumber,SortName")
-            .append_pair("Fields", TRACK_FIELDS)
-            .append_pair("StartIndex", "0")
-            .append_pair("Limit", "500");
-        let response = self.get_json::<ItemQueryResult>(url).await?;
-        let tracks = response.items.into_iter().map(track_from_item).collect();
-
-        Ok(AlbumDetail { album, tracks })
-    }
-
-    async fn tracks(&self, request: PagedRequest) -> SourceResult<PagedResponse<Track>> {
-        let response = self.item_page("Audio", request).await?;
-        Ok(PagedResponse::new(
-            response.items.into_iter().map(track_from_item).collect(),
-            response.total,
-        ))
-    }
-
-    async fn artist_collections(&self) -> SourceResult<ArtistCollections> {
-        let artists = collect_pages(|request| self.people_page("Artists", request)).await?;
-        let album_artists =
-            collect_pages(|request| self.people_page("Artists/AlbumArtists", request)).await?;
-        Ok(ArtistCollections {
-            artists: artists.into_iter().map(artist_from_item).collect(),
-            album_artists: album_artists.into_iter().map(artist_from_item).collect(),
-        })
-    }
-
-    async fn genres(&self) -> SourceResult<Vec<Genre>> {
-        Ok(collect_pages(|request| self.music_genre_page(request))
-            .await?
-            .into_iter()
-            .map(genre_from_item)
-            .collect())
-    }
-
-    async fn genre_detail(&self, genre_id: &GenreId) -> SourceResult<GenreDetail> {
-        let raw_genre_id = raw_item_id(genre_id.as_str());
-        let mut genre_url = endpoint(&self.base_url, &format!("Items/{raw_genre_id}"))?;
-        genre_url
-            .query_pairs_mut()
-            .append_pair("UserId", &self.user_id);
-        let mut genre = genre_from_item(self.get_json::<JellyfinItem>(genre_url).await?);
-
-        let mut albums_url = endpoint(&self.base_url, "Items")?;
-        albums_url
-            .query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("Recursive", "true")
-            .append_pair("IncludeItemTypes", "MusicAlbum")
-            .append_pair("Genres", &genre.name)
-            .append_pair("Limit", "500")
-            .append_pair("Fields", ALBUM_FIELDS);
-        let albums = self
-            .get_json::<ItemQueryResult>(albums_url)
-            .await?
-            .items
-            .into_iter()
-            .map(album_from_item)
-            .collect();
-
-        let mut tracks_url = endpoint(&self.base_url, "Items")?;
-        tracks_url
-            .query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("Recursive", "true")
-            .append_pair("IncludeItemTypes", "Audio")
-            .append_pair("Genres", &genre.name)
-            .append_pair("Limit", "500")
-            .append_pair("Fields", TRACK_FIELDS);
-        let tracks = self
-            .get_json::<ItemQueryResult>(tracks_url)
-            .await?
-            .items
-            .into_iter()
-            .map(track_from_item)
-            .collect::<Vec<_>>();
-        genre.duration_seconds = tracks.iter().fold(0_u32, |total, track| {
-            total.saturating_add(track.duration_seconds)
-        });
-
-        Ok(GenreDetail {
-            genre,
-            albums,
-            tracks,
-        })
-    }
-
-    async fn track(&self, track_id: &TrackId) -> SourceResult<Track> {
-        let mut url = endpoint(
-            &self.base_url,
-            &format!("Items/{}", raw_item_id(track_id.as_str())),
-        )?;
-        url.query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("Fields", TRACK_FIELDS);
-        self.get_json::<JellyfinItem>(url)
-            .await
-            .map(track_from_item)
-    }
-}
-
-#[async_trait(?Send)]
-impl MusicFolderProvider for JellyfinSource {
-    async fn music_folders(&self) -> SourceResult<Vec<MusicFolder>> {
-        let mut url = endpoint(&self.base_url, &format!("Users/{}/Views", self.user_id))?;
-        url.query_pairs_mut()
-            .append_pair("IncludeExternalContent", "false");
-        let response = self.get_json::<ItemQueryResult>(url).await?;
-        Ok(response
-            .items
-            .into_iter()
-            .filter(|item| {
-                item.collection_type
-                    .as_deref()
-                    .is_some_and(|kind| kind.eq_ignore_ascii_case("music"))
-            })
-            .filter_map(|item| {
-                item.name.map(|name| MusicFolder {
-                    id: MusicFolderId::new(jellyfin_id("music-folder", &item.id)),
-                    name,
-                })
-            })
-            .collect())
-    }
-
-    async fn track_ids_in_music_folder(
-        &self,
-        folder_id: &MusicFolderId,
-        request: PagedRequest,
-    ) -> SourceResult<PagedResponse<TrackId>> {
-        let mut url = endpoint(&self.base_url, "Items")?;
-        url.query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("ParentId", raw_item_id(folder_id.as_str()))
-            .append_pair("Recursive", "true")
-            .append_pair("IncludeItemTypes", "Audio")
-            .append_pair("StartIndex", &request.offset.to_string())
-            .append_pair("Limit", &request.limit.to_string())
-            .append_pair("SortBy", "SortName")
-            .append_pair("SortOrder", "Ascending");
-        let response = self.get_json::<ItemQueryResult>(url).await?;
-        Ok(PagedResponse::new(
-            response
-                .items
-                .into_iter()
-                .map(|item| TrackId::new(jellyfin_id("track", &item.id)))
-                .collect(),
-            response.total_record_count.unwrap_or(0),
-        ))
-    }
-}
-
-#[async_trait(?Send)]
-impl FolderBrowser for JellyfinSource {
-    async fn folder(
+impl JellyfinSource {
+    pub(crate) async fn read_folder(
         &self,
         folder_id: Option<&FolderId>,
         music_folder_id: Option<&MusicFolderId>,
-    ) -> SourceResult<FolderDetail> {
+    ) -> SourceResult<library::FolderContents> {
         if let Some(folder_id) = folder_id {
             let raw_folder_id = raw_item_id(folder_id.as_str());
-            let mut folder_url = endpoint(&self.base_url, &format!("Items/{raw_folder_id}"))?;
-            folder_url
-                .query_pairs_mut()
-                .append_pair("UserId", &self.user_id)
-                .append_pair("Fields", FOLDER_FIELDS);
-            let current_item = self.get_json::<JellyfinItem>(folder_url).await?;
-            let folder = folder_from_item(current_item.clone());
-            let parent_id =
-                parent_folder_id(&current_item).filter(|parent_id| match music_folder_id {
-                    Some(music_folder_id) => {
-                        raw_item_id(parent_id.as_str()) != raw_item_id(music_folder_id.as_str())
-                    }
-                    None => true,
-                });
             let (folders, tracks) = self.folder_children(raw_folder_id).await?;
-            return Ok(FolderDetail {
-                folder,
-                parent_id,
-                folders,
-                tracks,
-            });
+            return Ok(folder_contents(folders, tracks));
         }
 
         if let Some(music_folder_id) = music_folder_id {
             let raw_folder_id = raw_item_id(music_folder_id.as_str());
-            let mut folder_url = endpoint(&self.base_url, &format!("Items/{raw_folder_id}"))?;
-            folder_url
-                .query_pairs_mut()
-                .append_pair("UserId", &self.user_id)
-                .append_pair("Fields", FOLDER_FIELDS);
-            let folder = folder_from_item(self.get_json::<JellyfinItem>(folder_url).await?);
             let (folders, tracks) = self.folder_children(raw_folder_id).await?;
-            return Ok(FolderDetail {
-                folder,
-                parent_id: None,
-                folders,
-                tracks,
-            });
+            return Ok(folder_contents(folders, tracks));
         }
 
         let mut folders = self
-            .music_folders()
+            .read_music_folders()
             .await?
             .into_iter()
             .map(|folder| Folder {
@@ -402,21 +132,22 @@ impl FolderBrowser for JellyfinSource {
                 .cmp(&right.name.to_lowercase())
                 .then_with(|| left.id.cmp(&right.id))
         });
-        Ok(FolderDetail {
-            folder: Folder {
-                id: FolderId::new(jellyfin_id("folder", "root")),
-                name: "Folders".to_string(),
-            },
-            parent_id: None,
-            folders,
-            tracks: Vec::new(),
-        })
+        Ok(folder_contents(folders, Vec::new()))
     }
 }
 
-#[async_trait(?Send)]
-impl RandomTrackProvider for JellyfinSource {
-    async fn random_tracks(&self, request: RandomTrackRequest) -> SourceResult<Vec<Track>> {
+fn folder_contents(folders: Vec<Folder>, tracks: Vec<Track>) -> library::FolderContents {
+    library::FolderContents {
+        folders: folders.into(),
+        tracks: tracks.into(),
+    }
+}
+
+impl JellyfinSource {
+    pub(crate) async fn random_tracks(
+        &self,
+        request: RandomTrackRequest,
+    ) -> SourceResult<Vec<Track>> {
         let mut url = endpoint(&self.base_url, "Items")?;
         let limit = request.limit.clamp(1, 500).to_string();
         let years = jellyfin_year_filter(request.min_year, request.max_year)?;
@@ -459,45 +190,29 @@ impl RandomTrackProvider for JellyfinSource {
     }
 }
 
-#[async_trait(?Send)]
-impl GeneratedTrackProvider for JellyfinSource {
-    async fn generated_tracks(&self, request: GeneratedTracksRequest) -> SourceResult<Vec<Track>> {
-        match request.strategy {
-            GeneratedTrackStrategy::SourceDefault | GeneratedTrackStrategy::SimilarFirst => {
-                if let GeneratedTrackSeed::Track(track_id) = &request.seed {
-                    let tracks = self.similar_tracks(track_id, request.limit).await?;
-                    if !tracks.is_empty() {
-                        return Ok(tracks);
-                    }
-                }
-                self.instant_mix_tracks(&request.seed, request.limit).await
-            }
-            GeneratedTrackStrategy::MixOnly => {
-                self.instant_mix_tracks(&request.seed, request.limit).await
+impl JellyfinSource {
+    pub(crate) async fn generated_tracks(
+        &self,
+        request: GeneratedTracksRequest,
+    ) -> SourceResult<Vec<Track>> {
+        if self.use_instant_mix {
+            return self.instant_mix_tracks(&request.seed, request.limit).await;
+        }
+        if let library::RadioSeed::Track(track_id) = &request.seed {
+            let tracks = self.similar_tracks(track_id, request.limit).await?;
+            if !tracks.is_empty() {
+                return Ok(tracks);
             }
         }
+        self.instant_mix_tracks(&request.seed, request.limit).await
     }
 }
 
-#[async_trait(?Send)]
-impl PlaylistReader for JellyfinSource {
-    async fn playlists(&self) -> SourceResult<Vec<Playlist>> {
-        Ok(collect_pages(|request| self.item_page("Playlist", request))
-            .await?
-            .into_iter()
-            .map(playlist_from_item)
-            .collect())
-    }
-
-    async fn playlist_snapshot(&self, playlist: &Playlist) -> SourceResult<PlaylistSnapshot> {
-        self.read_playlist_snapshot(playlist.clone())
-            .await?
-            .ok_or_else(|| {
-                SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
-            })
-    }
-
-    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> SourceResult<PlaylistDetail> {
+impl JellyfinSource {
+    pub(crate) async fn read_playlist(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> SourceResult<PlaylistSnapshot> {
         let raw_playlist_id = raw_item_id(playlist_id.as_str());
         let mut playlist_url = endpoint(&self.base_url, &format!("Items/{raw_playlist_id}"))?;
         playlist_url
@@ -512,37 +227,32 @@ impl PlaylistReader for JellyfinSource {
             .ok_or_else(|| {
                 SourceError::Other("Jellyfin returned an incomplete playlist".to_string())
             })?;
-        if usize::try_from(playlist.track_count).ok() != Some(entries.len()) {
-            return Err(SourceError::Other(
-                "Jellyfin returned an incomplete playlist".to_string(),
-            ));
-        }
-
-        let tracks = entries.iter().map(|entry| entry.track.clone()).collect();
-        Ok(PlaylistDetail {
-            playlist,
-            tracks,
-            entries,
-        })
+        Ok(PlaylistSnapshot { playlist, entries })
     }
 }
 
-#[async_trait(?Send)]
-impl StreamResolver for JellyfinSource {
-    async fn resolve_stream(&self, request: &StreamRequest) -> SourceResult<StreamDescriptor> {
+impl JellyfinSource {
+    pub(crate) async fn resolve_stream(
+        &self,
+        request: &StreamRequest,
+    ) -> SourceResult<StreamDescriptor> {
         stream_descriptor(
             &self.base_url,
             &self.user_id,
             &self.device_id,
             &self.access_token,
+            self.trust_invalid_cert,
             request,
         )
     }
 }
 
-#[async_trait(?Send)]
-impl ImageProvider for JellyfinSource {
-    async fn image_bytes(&self, image_ref: &ImageRef, size: u32) -> SourceResult<ImageBytes> {
+impl JellyfinSource {
+    pub(crate) async fn image_bytes(
+        &self,
+        image_ref: &ImageRef,
+        size: u32,
+    ) -> SourceResult<ImageBytes> {
         let image_kind = if image_ref.item_id.starts_with("jellyfin:backdrop:") {
             "Backdrop"
         } else {
@@ -563,22 +273,21 @@ impl ImageProvider for JellyfinSource {
         if let Some(tag) = image_ref.tag.as_deref().filter(|tag| !tag.is_empty()) {
             url.query_pairs_mut().append_pair("tag", tag);
         }
-        let config = JellyfinClientConfig::new(
-            self.identity.base_url.clone(),
-            false,
-            Some(self.device_id.to_string()),
-        );
-        send_bytes(self.client.get(url).header(
-            header::AUTHORIZATION,
-            auth_header(&config, Some(&self.access_token)),
-        ))
+        send_bytes(
+            self.client
+                .get(url)
+                .header(header::AUTHORIZATION, self.authorization.clone()),
+        )
         .await
     }
 }
 
-#[async_trait(?Send)]
-impl FavoriteMutator for JellyfinSource {
-    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> SourceResult<()> {
+impl JellyfinSource {
+    pub(crate) async fn set_favorite(
+        &self,
+        item_id: FavoriteItemId,
+        favorite: bool,
+    ) -> SourceResult<()> {
         let mut url = endpoint(
             &self.base_url,
             &format!("UserFavoriteItems/{}", raw_item_id(item_id.as_str())),
@@ -592,8 +301,7 @@ impl FavoriteMutator for JellyfinSource {
     }
 }
 
-#[async_trait(?Send)]
-impl PlaylistCreator for JellyfinSource {
+impl RemotePlaylistSource for JellyfinSource {
     async fn create_playlist(&self, name: &str, track_ids: &[TrackId]) -> SourceResult<PlaylistId> {
         let url = endpoint(&self.base_url, "Playlists")?;
         let body = CreatePlaylistDto {
@@ -608,10 +316,6 @@ impl PlaylistCreator for JellyfinSource {
             .await?;
         Ok(PlaylistId::new(jellyfin_id("playlist", &result.id)))
     }
-}
-
-#[async_trait(?Send)]
-impl PlaylistRenamer for JellyfinSource {
     async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> SourceResult<()> {
         let url = endpoint(
             &self.base_url,
@@ -622,10 +326,6 @@ impl PlaylistRenamer for JellyfinSource {
         };
         self.send_unit(self.client.post(url).json(&body)).await
     }
-}
-
-#[async_trait(?Send)]
-impl PlaylistDeleter for JellyfinSource {
     async fn delete_playlist(&self, playlist_id: &PlaylistId) -> SourceResult<()> {
         let url = endpoint(
             &self.base_url,
@@ -633,45 +333,39 @@ impl PlaylistDeleter for JellyfinSource {
         )?;
         self.send_unit(self.client.delete(url)).await
     }
-}
-
-#[async_trait(?Send)]
-impl PlaylistTrackAdder for JellyfinSource {
     async fn add_playlist_tracks(
         &self,
         playlist_id: &PlaylistId,
         track_ids: &[TrackId],
     ) -> SourceResult<()> {
-        let mut url = endpoint(
-            &self.base_url,
-            &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
-        )?;
-        url.query_pairs_mut()
-            .append_pair("userId", &self.user_id)
-            .append_pair("ids", &raw_track_ids(track_ids).join(","));
-        self.send_unit(self.client.post(url)).await
+        for track_ids in track_ids.chunks(50) {
+            let mut url = endpoint(
+                &self.base_url,
+                &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
+            )?;
+            url.query_pairs_mut()
+                .append_pair("userId", &self.user_id)
+                .append_pair("ids", &raw_track_ids(track_ids).join(","));
+            self.send_unit(self.client.post(url)).await?;
+        }
+        Ok(())
     }
-}
-
-#[async_trait(?Send)]
-impl PlaylistEntryRemover for JellyfinSource {
     async fn remove_playlist_entries(
         &self,
         playlist_id: &PlaylistId,
         entry_ids: &[String],
     ) -> SourceResult<()> {
-        let mut url = endpoint(
-            &self.base_url,
-            &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
-        )?;
-        url.query_pairs_mut()
-            .append_pair("entryIds", &entry_ids.join(","));
-        self.send_unit(self.client.delete(url)).await
+        for entry_ids in entry_ids.chunks(50) {
+            let mut url = endpoint(
+                &self.base_url,
+                &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
+            )?;
+            url.query_pairs_mut()
+                .append_pair("entryIds", &entry_ids.join(","));
+            self.send_unit(self.client.delete(url)).await?;
+        }
+        Ok(())
     }
-}
-
-#[async_trait(?Send)]
-impl PlaylistEntryMover for JellyfinSource {
     async fn move_playlist_entry(
         &self,
         playlist_id: &PlaylistId,
@@ -689,11 +383,17 @@ impl PlaylistEntryMover for JellyfinSource {
         )?;
         self.send_unit(self.client.post(url)).await
     }
+
+    async fn read_playlist_snapshot(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> SourceResult<PlaylistSnapshot> {
+        JellyfinSource::read_playlist(self, playlist_id).await
+    }
 }
 
-#[async_trait(?Send)]
-impl LyricsProvider for JellyfinSource {
-    async fn lyrics(
+impl JellyfinSource {
+    pub(crate) async fn lyrics(
         &self,
         track_id: &TrackId,
         search: LyricsSearch,
@@ -716,9 +416,8 @@ impl LyricsProvider for JellyfinSource {
     }
 }
 
-#[async_trait(?Send)]
-impl PlaybackReporter for JellyfinSource {
-    async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
+impl JellyfinSource {
+    pub(crate) async fn report_playback(&self, report: PlaybackReport) -> SourceResult<()> {
         let path = match report.kind {
             PlaybackReportKind::Started => "Sessions/Playing",
             PlaybackReportKind::Progress => "Sessions/Playing/Progress",
@@ -801,6 +500,7 @@ pub(super) fn stream_descriptor(
     user_id: &str,
     device_id: &str,
     access_token: &str,
+    trust_invalid_certificate: bool,
     request: &StreamRequest,
 ) -> SourceResult<StreamDescriptor> {
     let raw_track_id = raw_item_id(request.track_id.as_str());
@@ -845,10 +545,10 @@ pub(super) fn stream_descriptor(
                 .append_pair("AudioCodec", "mp3");
         }
     }
-    Ok(StreamDescriptor::with_redacted(
-        url.to_string(),
-        redacted_url.to_string(),
-    ))
+    Ok(
+        StreamDescriptor::with_redacted(url.to_string(), redacted_url.to_string())
+            .with_trust_invalid_certificate(trust_invalid_certificate),
+    )
 }
 
 pub(crate) fn normalize_base_url(raw: &str) -> SourceResult<Url> {
@@ -934,4 +634,408 @@ pub(crate) fn stable_hash(input: &str) -> u64 {
 }
 pub(super) fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
     ticks.map(|value| (value.max(0) / 10_000) as u64)
+}
+
+impl JellyfinSource {
+    pub(super) async fn item_page(
+        &self,
+        include_types: &str,
+        offset: usize,
+        limit: usize,
+    ) -> SourceResult<ItemQueryResult> {
+        self.item_page_sorted(include_types, offset, limit, "SortName", "Ascending")
+            .await
+    }
+
+    async fn item_page_sorted(
+        &self,
+        include_types: &str,
+        offset: usize,
+        limit: usize,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> SourceResult<ItemQueryResult> {
+        let fields = match include_types {
+            "MusicAlbum" => ALBUM_FIELDS,
+            "Audio" => TRACK_FIELDS,
+            "Playlist" => PLAYLIST_FIELDS,
+            _ => MIXED_ITEM_FIELDS,
+        };
+        let mut url = endpoint(&self.base_url, "Items")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Recursive", "true")
+            .append_pair("IncludeItemTypes", include_types)
+            .append_pair("StartIndex", &offset.to_string())
+            .append_pair("Limit", &limit.to_string())
+            .append_pair("Fields", fields)
+            .append_pair("SortBy", sort_by)
+            .append_pair("SortOrder", sort_order);
+
+        self.get_json::<ItemQueryResult>(url).await
+    }
+
+    pub(super) async fn home_album_section(
+        &self,
+        kind: SourceHomeSectionKind,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> SourceResult<SourceHomeSection> {
+        let page = self
+            .item_page_sorted(
+                "MusicAlbum",
+                0,
+                library::HOME_SECTION_ITEM_LIMIT,
+                sort_by,
+                sort_order,
+            )
+            .await?;
+        Ok(SourceHomeSection {
+            kind,
+            items: page
+                .items
+                .into_iter()
+                .map(|item| HomeItemId::Album(AlbumId::new(jellyfin_id("album", &item.id))))
+                .collect(),
+        })
+    }
+
+    pub(super) async fn home_track_section(
+        &self,
+        kind: SourceHomeSectionKind,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> SourceResult<SourceHomeSection> {
+        let page = self
+            .item_page_sorted(
+                "Audio",
+                0,
+                library::HOME_SECTION_ITEM_LIMIT,
+                sort_by,
+                sort_order,
+            )
+            .await?;
+        Ok(SourceHomeSection {
+            kind,
+            items: page
+                .items
+                .into_iter()
+                .map(|item| HomeItemId::Track(TrackId::new(jellyfin_id("track", &item.id))))
+                .collect(),
+        })
+    }
+
+    pub(super) async fn people_page(
+        &self,
+        path: &str,
+        offset: usize,
+        limit: usize,
+    ) -> SourceResult<ItemQueryResult> {
+        let mut url = endpoint(&self.base_url, path)?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("StartIndex", &offset.to_string())
+            .append_pair("Limit", &limit.to_string())
+            .append_pair(
+                "Fields",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+            );
+
+        self.get_json::<ItemQueryResult>(url).await
+    }
+
+    async fn similar_tracks(&self, track_id: &TrackId, limit: usize) -> SourceResult<Vec<Track>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let mut url = endpoint(&self.base_url, &format!("Items/{raw_track_id}/Similar"))?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Limit", &limit.clamp(1, 500).to_string())
+            .append_pair("Fields", TRACK_FIELDS);
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response
+            .items
+            .into_iter()
+            .filter(is_audio_item)
+            .map(track_from_item)
+            .collect())
+    }
+
+    async fn instant_mix_tracks(
+        &self,
+        seed: &library::RadioSeed,
+        limit: usize,
+    ) -> SourceResult<Vec<Track>> {
+        let mut url = self.instant_mix_url(seed)?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Limit", &limit.clamp(1, 500).to_string())
+            .append_pair("Fields", TRACK_FIELDS);
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response
+            .items
+            .into_iter()
+            .filter(is_audio_item)
+            .map(track_from_item)
+            .collect())
+    }
+
+    fn instant_mix_url(&self, seed: &library::RadioSeed) -> SourceResult<Url> {
+        match seed {
+            library::RadioSeed::Track(track_id) => endpoint(
+                &self.base_url,
+                &format!("Songs/{}/InstantMix", raw_item_id(track_id.as_str())),
+            ),
+            library::RadioSeed::Album(album_id) => endpoint(
+                &self.base_url,
+                &format!("Albums/{}/InstantMix", raw_item_id(album_id.as_str())),
+            ),
+            library::RadioSeed::Artist(artist_id) => endpoint(
+                &self.base_url,
+                &format!("Artists/{}/InstantMix", raw_item_id(artist_id.as_str())),
+            ),
+            library::RadioSeed::Playlist(playlist_id) => endpoint(
+                &self.base_url,
+                &format!("Playlists/{}/InstantMix", raw_item_id(playlist_id.as_str())),
+            ),
+            library::RadioSeed::Genre { id, name: _ } => {
+                let mut url = endpoint(&self.base_url, "MusicGenres/InstantMix")?;
+                url.query_pairs_mut()
+                    .append_pair("Id", raw_item_id(id.as_str()));
+                Ok(url)
+            }
+        }
+    }
+
+    pub(super) async fn music_genre_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> SourceResult<ItemQueryResult> {
+        let mut url = endpoint(&self.base_url, "MusicGenres")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("StartIndex", &offset.to_string())
+            .append_pair("Limit", &limit.to_string())
+            .append_pair("IncludeItemTypes", "Audio,MusicAlbum")
+            .append_pair(
+                "Fields",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags",
+            )
+            .append_pair("SortBy", "SortName");
+
+        self.get_json::<ItemQueryResult>(url).await
+    }
+
+    async fn folder_children(
+        &self,
+        raw_parent_id: &str,
+    ) -> SourceResult<(Vec<Folder>, Vec<Track>)> {
+        let mut url = endpoint(&self.base_url, "Items")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("ParentId", raw_parent_id)
+            .append_pair("Recursive", "false")
+            .append_pair("Fields", TRACK_FIELDS)
+            .append_pair("SortBy", "SortName")
+            .append_pair("SortOrder", "Ascending");
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        let mut folders = Vec::new();
+        let mut tracks = Vec::new();
+        for item in response.items {
+            if is_audio_item(&item) {
+                tracks.push(track_from_item(item));
+            } else {
+                folders.push(folder_from_item(item));
+            }
+        }
+        folders.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok((folders, tracks))
+    }
+
+    pub(super) async fn get_json<T: DeserializeOwned>(&self, url: Url) -> SourceResult<T> {
+        send_json(
+            self.client
+                .get(url)
+                .header(header::AUTHORIZATION, self.authorization.clone()),
+        )
+        .await
+    }
+
+    async fn send_json<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> SourceResult<T> {
+        send_json(request.header(header::AUTHORIZATION, self.authorization.clone())).await
+    }
+
+    async fn send_unit(&self, request: reqwest::RequestBuilder) -> SourceResult<()> {
+        send_unit(request.header(header::AUTHORIZATION, self.authorization.clone())).await
+    }
+
+    async fn server_lyrics(&self, track_id: &TrackId) -> SourceResult<Option<NativeLyrics>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
+        match self.send_json::<LyricDto>(self.client.get(local_url)).await {
+            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Server, dto))),
+            Err(SourceError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn remote_lyrics(&self, track_id: &TrackId) -> SourceResult<Option<NativeLyrics>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let remote_url = endpoint(
+            &self.base_url,
+            &format!("Audio/{raw_track_id}/RemoteSearch/Lyrics"),
+        )?;
+        let results = match self
+            .send_json::<Vec<RemoteLyricInfoDto>>(self.client.get(remote_url))
+            .await
+        {
+            Ok(results) => results,
+            Err(SourceError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
+            return Ok(None);
+        };
+        let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
+        match self.send_json::<LyricDto>(self.client.get(lyric_url)).await {
+            Ok(dto) => Ok(Some(lyrics_from_dto(NativeLyricsOrigin::Remote, dto))),
+            Err(SourceError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+pub(super) fn lyrics_from_dto(origin: NativeLyricsOrigin, dto: LyricDto) -> NativeLyrics {
+    NativeLyrics {
+        origin,
+        lines: dto
+            .lyrics
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|line| {
+                let text = line.text.unwrap_or_default();
+                (!text.trim().is_empty()).then_some(NativeLyricLine {
+                    text,
+                    start_millis: ticks_to_millis(line.start),
+                })
+            })
+            .collect(),
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct PublicSystemInfo {
+    pub(super) server_name: Option<String>,
+    pub(super) local_address: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct AuthenticateByNameRequest {
+    pub(super) username: String,
+    #[serde(rename = "Pw")]
+    pub(super) password: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct AuthenticationResult {
+    pub(super) access_token: String,
+    pub(super) server_id: Option<String>,
+    pub(super) user: JellyfinUser,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct JellyfinUser {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct CreatePlaylistDto {
+    pub(super) name: String,
+    pub(super) ids: Vec<String>,
+    pub(super) user_id: Option<String>,
+    pub(super) media_type: Option<String>,
+    pub(super) is_public: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct UpdatePlaylistDto {
+    pub(super) name: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct PlaylistCreationResult {
+    pub(super) id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct LyricDto {
+    pub(super) lyrics: Option<Vec<LyricLineDto>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct LyricLineDto {
+    pub(super) text: Option<String>,
+    pub(super) start: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct RemoteLyricInfoDto {
+    pub(super) id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct PlaybackReportDto {
+    pub(super) can_seek: bool,
+    pub(super) item_id: String,
+    pub(super) is_paused: bool,
+    pub(super) is_muted: bool,
+    pub(super) position_ticks: i64,
+    pub(super) volume_level: i32,
+    pub(super) play_method: &'static str,
+    pub(super) repeat_mode: &'static str,
+    pub(super) playback_order: &'static str,
+    pub(super) failed: bool,
+}
+
+impl PlaybackReportDto {
+    pub(super) fn from_report(report: PlaybackReport) -> Self {
+        Self {
+            can_seek: true,
+            item_id: raw_item_id(report.track_id.as_str()).to_string(),
+            is_paused: report.paused,
+            is_muted: report.muted,
+            position_ticks: i64::from(report.position_seconds) * 10_000_000,
+            volume_level: i32::from(report.volume_percent.min(100)),
+            play_method: "DirectPlay",
+            repeat_mode: if report.repeat_one {
+                "RepeatOne"
+            } else if report.repeat_all {
+                "RepeatAll"
+            } else {
+                "RepeatNone"
+            },
+            playback_order: if report.shuffle { "Shuffle" } else { "Default" },
+            failed: report.failed,
+        }
+    }
 }

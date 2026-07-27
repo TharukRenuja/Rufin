@@ -1,10 +1,9 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
-use playback::WaveformProjection;
-use sources::ServerDiscoveryStatus;
 use tracing::info;
 
 use crate::favorites::FavoriteState;
@@ -15,31 +14,33 @@ use crate::player::lyrics::state::LyricsState;
 use crate::player::queue::QueueState;
 use crate::player::right_panel::RightPanelWidgets;
 use crate::player::state::PlaybackState;
-#[cfg(unix)]
-use crate::player::{MprisAdapter, install_mpris, install_tray, present_initial_window};
 use crate::player::{
     PlayerDesktopWidgets, apply_lyrics_panel_visibility, build_bottom_player,
     build_fullscreen_player, build_right_panel, connect_fullscreen_player_controls,
     connect_player_controls, connect_queue_lyrics_overlay, connect_queue_panel_controls,
     default_audio_output_options, warm_audio_output_cache,
 };
+#[cfg(unix)]
+use crate::player::{install_tray, present_initial_window};
 use crate::preferences::PreferencesState;
-use crate::preferences::dialogs::release_notes::schedule_release_toast;
+use crate::preferences::dialogs::release_notes::schedule_release_check;
 use crate::preferences::persistence::SettingsState;
+use crate::preferences::source::SourceState;
 use crate::preferences::source::selector::{build_source_selector, update_source_selector};
-use crate::preferences::source::{LibraryLoad, SourceState};
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
 use crate::routes::route::Route;
 use crate::runtime::RuntimeInputs;
+use crate::runtime::WaveformProjection;
 use localization::{effective_language_preference, set_language_preference, tr};
+use lyrics::CurrentLyrics;
 
 use super::Shell;
 use super::actions::{ControlFeedbackState, connect_shell_actions};
 use super::chrome::{
     WindowChrome, build_content_chrome, build_main_area, window_drag_handle_with_child,
 };
-use super::cover::{ArtworkState, SourceWarmState, presentation::next_home_showcase_seed};
+use super::cover::ArtworkState;
 use super::events::install_product_event_receivers;
 use super::layout::{
     COMPACT_RAIL_WIDTH, MIN_APP_WINDOW_HEIGHT, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
@@ -90,34 +91,20 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         products,
         settings: settings_handle,
         receivers,
-        source: library,
-        playback,
+        configured_sources,
+        source_operation,
+        release_notes,
     } = inputs;
     let settings = settings_handle.load();
     info!(
-        first_run = library.first_run,
+        first_run = configured_sources.first_run,
         elapsed_ms = loaded_at.elapsed().as_millis(),
         "loaded music source presentation"
     );
-    let first_run = library.first_run;
+    let first_run = configured_sources.first_run;
     let defer_initial_route = !first_run;
-    let initial_load = library
-        .source
-        .as_ref()
-        .filter(|_| !library.cache.is_committed() && !first_run)
-        .map(|source| LibraryLoad::WaitingForFirstCommit {
-            source_id: source.id.clone(),
-        })
-        .unwrap_or(LibraryLoad::Ready);
     let language_preference = effective_language_preference(&settings.language);
     set_language_preference(&language_preference);
-    let library_query = library
-        .source
-        .as_ref()
-        .map(|source| products.library.query(source.id.clone()));
-    let (player, queue) = playback
-        .map(|projection| (Some(projection.view), projection.queue_page))
-        .unwrap_or((None, None));
     let settings_state = SettingsState {
         current: RefCell::new(settings.clone()),
         persistence: settings_handle,
@@ -126,30 +113,25 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         routes: RefCell::new(RouteStack::new(Route::Home)),
     };
     let library_state = LibraryState {
-        query: RefCell::new(library_query),
-        home_showcase_seed: Cell::new(next_home_showcase_seed()),
-        next_home_showcase_seed: Cell::new(next_home_showcase_seed()),
-        prepared_home_explore: RefCell::new(None),
-        pending_home_explore: RefCell::new(None),
+        selected: RefCell::new(None),
     };
     let source = SourceState {
-        presentation: RefCell::new(library),
-        load: RefCell::new(initial_load),
-        syncs: RefCell::new(HashMap::new()),
+        configured: RefCell::new(configured_sources),
+        operation: RefCell::new(source_operation),
         discovered_servers: RefCell::new(Vec::new()),
-        discovery_status: RefCell::new(ServerDiscoveryStatus::Idle),
+        discovery_status: RefCell::new(crate::runtime::source::DiscoveryStatus::Idle),
         discovery_running: Cell::new(false),
         discovery_started: Cell::new(false),
         add_server: RefCell::new(None),
-        reconnect_toasts_shown: RefCell::new(HashSet::new()),
-        sync_toasts: RefCell::new(HashMap::new()),
+        progress_toast: RefCell::new(None),
     };
     let startup = StartupState {
         route_revealed: Cell::new(!defer_initial_route),
+        initial_launch: Cell::new(defer_initial_route),
         reveal_deadline: RefCell::new(None),
     };
     let playback_state = PlaybackState {
-        player: RefCell::new(player),
+        player: RefCell::new(None),
         waveform: RefCell::new(WaveformProjection::default()),
         updating_controls: Cell::new(false),
         volume_persist_source: RefCell::new(None),
@@ -160,11 +142,9 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         audio_output_refresh_generation: Cell::new(0),
         audio_output_refreshed_at: Cell::new(None),
     };
-    let queue_state = QueueState::new(queue);
+    let queue_state = QueueState::new(None);
     let lyrics_state = LyricsState {
-        current: RefCell::new(None),
-        loading_media: RefCell::new(None),
-        auto_search_attempted: RefCell::new(HashSet::new()),
+        projection: RefCell::new(CurrentLyrics::Cleared),
         offset_millis: Cell::new(0),
         timing_generation: Cell::new(0),
         timing_source: RefCell::new(None),
@@ -173,7 +153,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     };
     let preferences = PreferencesState {
         dialog: RefCell::new(None),
-        release_notes: RefCell::new(Vec::new()),
+        release_notes: RefCell::new(release_notes),
     };
     let playlist_picker = PlaylistPickerState {
         active: RefCell::new(None),
@@ -184,24 +164,13 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let localization = LocalizationState {
         bindings: RefCell::new(Vec::new()),
     };
-    let desktop = DesktopState {
-        #[cfg(unix)]
-        mpris: Rc::new(MprisAdapter::new()),
-        notification_id: Cell::new(0),
-        notification_run: Cell::new(None),
-        #[cfg(unix)]
-        tray: RefCell::new(None),
-        #[cfg(unix)]
-        tray_command_source: RefCell::new(None),
-    };
+    let desktop = DesktopState::new(app, products.playback.transport.clone());
     let artwork = ArtworkState {
-        startup_prime_pending: RefCell::new(HashSet::new()),
-        bindings: RefCell::new(HashMap::new()),
+        startup_prime: Default::default(),
+        thumbnail_warm: Default::default(),
         live_bindings: RefCell::new(HashMap::new()),
         route_interaction: Rc::new(Default::default()),
-        source_warm: Rc::new(SourceWarmState::new(
-            products.artwork.allocate_prefetch_owner(),
-        )),
+        textures: RefCell::new(Default::default()),
     };
     let favorites = FavoriteState::default();
 
@@ -461,6 +430,18 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         player_view,
     });
 
+    shell.connect_artwork_scale_factor_refresh();
+    {
+        let source = Arc::clone(&shell.products.source);
+        let was_active = Cell::new(shell.chrome.window.is_active());
+        shell.chrome.window.connect_is_active_notify(move |window| {
+            let active = window.is_active();
+            let previous = was_active.replace(active);
+            if active && !previous {
+                source.check_for_source_changes();
+            }
+        });
+    }
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.install_locale_bindings();
@@ -491,8 +472,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);
     warm_audio_output_cache(&shell);
-    #[cfg(unix)]
-    install_mpris(&shell);
     shell.update_layout();
     if defer_initial_route {
         shell.render_startup_loading_view();
@@ -511,20 +490,13 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     }
     shell.request_initial_lyrics_if_needed();
     install_product_event_receivers(&shell, receivers);
-    if settings.seekbar_waveform_enabled {
-        shell.products.playback.waveform.request_current();
-    }
-
-    shell.products.source.refresh_freshness();
 
     #[cfg(unix)]
     present_initial_window(&shell);
     #[cfg(not(unix))]
     shell.chrome.window.present();
-    shell.schedule_prepared_library_warm();
-    shell.schedule_source_artwork_warm();
-    schedule_release_toast(&shell);
-    if defer_initial_route && !shell.source.load.borrow().blocks_library() {
+    schedule_release_check(&shell);
+    if defer_initial_route && !shell.source.operation.borrow().blocks_library() {
         shell.schedule_startup_route_reveal();
     }
 }

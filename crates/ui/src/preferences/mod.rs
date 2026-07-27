@@ -7,7 +7,7 @@ use crate::{
 };
 use adw::prelude::*;
 use localization::{language_option_index, language_options, msgid, tr};
-use metadata::ExternalLyricsProvider;
+use lyrics::ExternalLyricsProvider;
 use secrets::SecretStorageMode;
 use std::{
     cell::{Cell, RefCell},
@@ -25,7 +25,7 @@ use general::{layout_page, playback_page, scrobbling_page};
 use layout::{
     discord_display_from_index, discord_display_index, discord_link_from_index, discord_link_index,
     left_sidebar_mode_from_index, left_sidebar_row, right_sidebar_mode_from_index,
-    right_sidebar_row,
+    right_sidebar_row, visibility_position_subtitle,
 };
 
 #[cfg(test)]
@@ -38,8 +38,21 @@ const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
 
 pub(crate) struct PreferencesState {
-    pub(crate) dialog: RefCell<Option<adw::Dialog>>,
-    pub(crate) release_notes: RefCell<Vec<dialogs::release_notes::ReleaseNote>>,
+    pub(crate) dialog: RefCell<Option<gtk::glib::WeakRef<adw::Dialog>>>,
+    pub(crate) release_notes: RefCell<std::sync::Arc<[crate::runtime::ReleaseNote]>>,
+}
+
+impl PreferencesState {
+    pub(crate) fn active_dialog(&self) -> Option<adw::Dialog> {
+        self.dialog
+            .borrow()
+            .as_ref()
+            .and_then(gtk::glib::WeakRef::upgrade)
+    }
+
+    pub(crate) fn set_active_dialog(&self, dialog: &adw::Dialog) {
+        self.dialog.replace(Some(dialog.downgrade()));
+    }
 }
 
 fn selection_row<F>(
@@ -91,6 +104,15 @@ pub(crate) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
 pub(crate) fn present_add_server_preferences_dialog(shell: &Rc<Shell>) {
     present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true);
 }
+
+impl Shell {
+    pub(crate) fn close_preferences_dialog(&self) {
+        if let Some(dialog) = self.preferences.active_dialog() {
+            dialog.close();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PreferencesPageKind {
     General,
@@ -203,7 +225,10 @@ fn present_preferences_dialog_with_page(
     initial_page: PreferencesPageKind,
     open_add_server: bool,
 ) {
-    if let Some(dialog) = shell.preferences.dialog.borrow().as_ref().cloned() {
+    if !open_add_server {
+        shell.clear_retained_add_server_form();
+    }
+    if let Some(dialog) = shell.preferences.active_dialog() {
         rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
         present_light_dismiss_dialog(&dialog, &shell.chrome.window);
         return;
@@ -218,17 +243,8 @@ fn present_preferences_dialog_with_page(
         ))
         .build();
     dialog.add_css_class("preferences");
-    *shell.preferences.dialog.borrow_mut() = Some(dialog.clone());
+    shell.preferences.set_active_dialog(&dialog);
     rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
-
-    let shell_for_close = Rc::clone(shell);
-    let dialog_for_close = dialog.clone();
-    dialog.connect_closed(move |_| {
-        let mut active_dialog = shell_for_close.preferences.dialog.borrow_mut();
-        if active_dialog.as_ref() == Some(&dialog_for_close) {
-            *active_dialog = None;
-        }
-    });
 
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -287,10 +303,13 @@ fn rebuild_preferences_dialog(
     );
     stack.set_visible_child_name(initial_page.name());
     let page_shell = Rc::clone(shell);
-    let page_dialog = dialog.clone();
+    let page_dialog = dialog.downgrade();
     let page_slots_for_switch = Rc::clone(&page_slots);
     let navigation_controls_for_switch = navigation_controls.clone();
     stack.connect_visible_child_name_notify(move |stack| {
+        let Some(page_dialog) = page_dialog.upgrade() else {
+            return;
+        };
         let Some(name) = stack.visible_child_name() else {
             return;
         };
@@ -376,16 +395,19 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         .build();
     let language_shell = Rc::clone(shell);
     let language_options_for_row = Rc::clone(&language_options);
-    let dialog_for_language = dialog.clone();
+    let dialog_for_language = dialog.downgrade();
     language_row.connect_selected_notify(move |row| {
         let Some(option) = language_options_for_row.get(row.selected() as usize) else {
             return;
         };
         let language = option.id.clone();
         if language_shell.set_language_preference(language) {
+            let Some(dialog) = dialog_for_language.upgrade() else {
+                return;
+            };
             rebuild_preferences_dialog(
                 &language_shell,
-                &dialog_for_language,
+                &dialog,
                 PreferencesPageKind::General,
                 false,
             );
@@ -497,8 +519,8 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let prefer_server_row = adw::SwitchRow::builder()
         .title(tr("Prefer server lyrics"))
-        .active(settings.metadata.prefer_server_lyrics)
-        .sensitive(settings.metadata.external_lyrics_enabled)
+        .active(settings.lyrics.prefer_server_lyrics)
+        .sensitive(settings.lyrics.external_lyrics_enabled)
         .build();
     let prefer_server_shell = Rc::clone(shell);
     prefer_server_row.connect_active_notify(move |row| {
@@ -507,16 +529,16 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
 
     let external_metadata_row = adw::SwitchRow::builder()
         .title(tr("External metadata lookup"))
-        .active(settings.metadata.external_metadata_enabled)
+        .active(settings.external_album_lookup_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
     external_metadata_row.connect_active_notify(move |row| {
-        metadata_shell.set_external_metadata_enabled(row.is_active());
+        metadata_shell.set_external_album_lookup_enabled(row.is_active());
     });
 
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
-        .active(settings.metadata.external_lyrics_enabled)
+        .active(settings.lyrics.external_lyrics_enabled)
         .build();
 
     let provider_rows = ExternalLyricsProvider::all()
@@ -526,11 +548,11 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
                 .title(provider.title())
                 .active(
                     settings
-                        .metadata
+                        .lyrics
                         .external_lyrics_providers
                         .contains(&provider),
                 )
-                .sensitive(settings.metadata.external_lyrics_enabled)
+                .sensitive(settings.lyrics.external_lyrics_enabled)
                 .build();
             let provider_shell = Rc::clone(shell);
             row.connect_active_notify(move |row| {
@@ -725,7 +747,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let secret_storage_shell = Rc::clone(shell);
     let secret_storage_guard = Rc::new(Cell::new(false));
     let secret_storage_guard_for_row = Rc::clone(&secret_storage_guard);
-    let preferences_dialog_for_secret_storage = dialog.clone();
+    let preferences_dialog_for_secret_storage = dialog.downgrade();
     secret_storage_row.connect_selected_notify(move |row| {
         if secret_storage_guard_for_row.get() {
             return;
@@ -761,13 +783,23 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             Some(&window),
             None::<&gtk::gio::Cancellable>,
             move |response| {
-                if response.as_str() == "change" && shell.set_secret_storage_mode(mode) {
-                    preferences_dialog.close();
+                if response.as_str() != "change" {
+                    guard.set(true);
+                    row.set_selected(secret_storage_mode_index(previous_mode));
+                    guard.set(false);
                     return;
                 }
-                guard.set(true);
-                row.set_selected(secret_storage_mode_index(previous_mode));
-                guard.set(false);
+                gtk::glib::spawn_future_local(async move {
+                    if shell.set_secret_storage_mode(mode).await {
+                        if let Some(preferences_dialog) = preferences_dialog.upgrade() {
+                            preferences_dialog.close();
+                        }
+                        return;
+                    }
+                    guard.set(true);
+                    row.set_selected(secret_storage_mode_index(previous_mode));
+                    guard.set(false);
+                });
             },
         );
     });
@@ -945,35 +977,40 @@ fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(tr("Sidebar Items"))
         .build();
-    let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
+    let rows = Rc::new(RefCell::new(
+        Vec::<gtk::glib::WeakRef<adw::ActionRow>>::new(),
+    ));
     populate_sidebar_item_rows(shell, &group, &rows);
     group
 }
 fn populate_sidebar_item_rows(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
-        group.remove(&row);
+        if let Some(row) = row.upgrade() {
+            group.remove(&row);
+        }
     }
 
     let items = shell.settings.current.borrow().sidebar.route_items.clone();
-    for entry in items {
-        let row = sidebar_item_row(shell, group, rows, entry);
+    for (position, entry) in items.into_iter().enumerate() {
+        let row = sidebar_item_row(shell, group, rows, entry, position);
         group.add(&row);
-        rows.borrow_mut().push(row);
+        rows.borrow_mut().push(row.downgrade());
     }
 }
 fn sidebar_item_row(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    rows: &Rc<RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
     entry: SidebarRouteItemSettings,
+    position: usize,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(tr(sidebar_route_item_title(entry.item)))
-        .subtitle(sidebar_route_item_subtitle(&entry))
+        .subtitle(sidebar_route_item_subtitle(&entry, position))
         .build();
 
     let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
@@ -1002,7 +1039,7 @@ fn sidebar_item_row(
 
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let group = group.downgrade();
         let rows = Rc::clone(rows);
         visible.connect_active_notify(move |switch| {
             let item = entry.item;
@@ -1023,24 +1060,33 @@ fn sidebar_item_row(
                 true
             });
             shell.rebuild_sidebar_navigation();
+            let Some(group) = group.upgrade() else {
+                return;
+            };
             populate_sidebar_item_rows(&shell, &group, &rows);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let group = group.downgrade();
         let rows = Rc::clone(rows);
         up.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, -1);
+            let Some(group) = group.upgrade() else {
+                return;
+            };
             populate_sidebar_item_rows(&shell, &group, &rows);
         });
     }
     {
         let shell = Rc::clone(shell);
-        let group = group.clone();
+        let group = group.downgrade();
         let rows = Rc::clone(rows);
         down.connect_clicked(move |_| {
             move_sidebar_item(&shell, entry.item, 1);
+            let Some(group) = group.upgrade() else {
+                return;
+            };
             populate_sidebar_item_rows(&shell, &group, &rows);
         });
     }
@@ -1151,6 +1197,7 @@ fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => "Home",
         SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::History => "History",
         SidebarRouteItem::Albums => "Albums",
         SidebarRouteItem::Tracks => "Tracks",
         SidebarRouteItem::Artists => "Artists",
@@ -1171,6 +1218,7 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => msgid("Home"),
         SidebarRouteItem::Favorites => msgid("Favorites"),
+        SidebarRouteItem::History => msgid("History"),
         SidebarRouteItem::Albums => msgid("Albums"),
         SidebarRouteItem::Tracks => msgid("Tracks"),
         SidebarRouteItem::Artists => msgid("Artists"),
@@ -1182,12 +1230,8 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::SmartPlaylists => msgid("Smart Playlists"),
     }
 }
-fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings) -> String {
-    let state = if entry.visible {
-        tr("Visible")
-    } else {
-        tr("Hidden")
-    };
+fn sidebar_route_item_subtitle(entry: &SidebarRouteItemSettings, position: usize) -> String {
+    let state = visibility_position_subtitle(entry.visible, position);
     if entry.item == SidebarRouteItem::Moods {
         format!(
             "{state} · {}",

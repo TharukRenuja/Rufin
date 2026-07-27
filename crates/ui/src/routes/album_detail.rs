@@ -1,14 +1,14 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     rc::{Rc, Weak},
+    sync::Arc,
 };
 
-use ::library::{ActiveLibraryQuery, Album, AlbumId, Track, TrackId};
+use ::library::{AlbumDetail, AlbumSummary, SourceId, Track, TrackId, TrackList};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::{gio, glib};
-use playback::AlbumPlayRequest;
+use playback::{QueuePlacement, SourceSessionEpoch};
 
 use super::collection_context::{install_album_context_menu, install_track_context_menu};
 use crate::favorites::{
@@ -23,12 +23,11 @@ use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 use localization::tr;
 
 use super::cards;
-use super::columns::track_column_width;
+use super::columns::{track_column_width, track_row_index_cell};
 use super::library_fields::{
-    album_detail_meta_label, album_fact_text, compare_track, item_at, play_count_column_width,
-    replace_album_items, track_field,
+    album_detail_meta_label, album_fact_text, item_at, play_count_column_width, track_field,
 };
-use super::models::{populate_album_model, sort_albums};
+use super::models::{populate_album_model, replace_albums_in_model};
 use super::route::Route;
 use super::route_layout::{PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START};
 use super::table_sizing::fitted_column_widths;
@@ -48,14 +47,52 @@ pub(super) const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 #[derive(Clone)]
 pub(crate) struct AlbumCollectionModels {
     albums: gio::ListStore,
-    detail: gio::ListStore,
+    detail: AlbumDetailModel,
+}
+
+#[derive(Clone)]
+pub(crate) struct AlbumDetailModel {
+    albums: gio::ListStore,
+}
+
+impl AlbumDetailModel {
+    fn new() -> Self {
+        Self {
+            albums: gio::ListStore::new::<glib::BoxedAnyObject>(),
+        }
+    }
+
+    fn replace(&self, albums: Arc<[AlbumDetail]>, settings: &LibraryListSettings) {
+        let additions = sorted_album_details(&albums, settings)
+            .into_iter()
+            .map(glib::BoxedAnyObject::new)
+            .collect::<Vec<_>>();
+        self.albums.splice(0, self.albums.n_items(), &additions);
+    }
+
+    fn replace_prepared(&self, albums: Arc<[AlbumDetail]>) {
+        let additions = albums
+            .iter()
+            .cloned()
+            .map(glib::BoxedAnyObject::new)
+            .collect::<Vec<_>>();
+        self.albums.splice(0, self.albums.n_items(), &additions);
+    }
+
+    fn clear(&self) {
+        self.albums.remove_all();
+    }
+
+    fn detail(&self, position: u32) -> Option<AlbumDetail> {
+        item_at(&self.albums, position)
+    }
 }
 
 impl AlbumCollectionModels {
     pub(crate) fn new() -> Self {
         Self {
             albums: gio::ListStore::new::<glib::BoxedAnyObject>(),
-            detail: gio::ListStore::new::<glib::BoxedAnyObject>(),
+            detail: AlbumDetailModel::new(),
         }
     }
 
@@ -63,7 +100,7 @@ impl AlbumCollectionModels {
         self.albums.clone()
     }
 
-    pub(crate) fn detail(&self) -> gio::ListStore {
+    pub(crate) fn detail(&self) -> AlbumDetailModel {
         self.detail.clone()
     }
 
@@ -71,66 +108,58 @@ impl AlbumCollectionModels {
         if layout == LibraryLayout::Detail {
             self.albums.remove_all();
         } else {
-            self.detail.remove_all();
+            self.detail.clear();
         }
     }
 }
 
 pub(crate) fn populate_album_collection_model(
     models: &AlbumCollectionModels,
-    albums: &[Album],
+    albums: &[AlbumSummary],
+    details: Option<Arc<[AlbumDetail]>>,
     settings: &LibraryListSettings,
-    album_tracks: &HashMap<AlbumId, Vec<Track>>,
 ) {
     if settings.layout == LibraryLayout::Detail {
-        replace_album_items(
-            &models.detail,
-            album_detail_items_for(albums, settings, album_tracks),
-        );
+        models.detail.replace(details.unwrap_or_default(), settings);
     } else {
         populate_album_model(&models.albums, albums, settings);
     }
 }
 
-pub(crate) fn album_detail_items_for(
-    albums: &[Album],
-    settings: &LibraryListSettings,
-    album_tracks: &HashMap<AlbumId, Vec<Track>>,
-) -> Vec<AlbumDetailItem> {
-    let mut albums = albums.to_vec();
-    sort_albums(&mut albums, settings);
-    let mut rows = Vec::new();
-
-    for album in albums {
-        let mut tracks = album_tracks.get(&album.id).cloned().unwrap_or_default();
-        sort_album_detail_tracks(&mut tracks);
-        let inline_count = tracks.len().min(ALBUM_DETAIL_INLINE_TRACK_ROWS);
-        let remaining_tracks = tracks.split_off(inline_count);
-        rows.push(AlbumDetailItem::Lead {
-            album,
-            inline_tracks: tracks,
-            last_in_album: remaining_tracks.is_empty(),
-        });
-        let remaining_count = remaining_tracks.len();
-        for (offset, track) in remaining_tracks.into_iter().enumerate() {
-            rows.push(AlbumDetailItem::Track {
-                track,
-                index: inline_count + offset,
-                last_in_album: offset + 1 == remaining_count,
-            });
-        }
+pub(crate) fn populate_prepared_album_collection_model(
+    models: &AlbumCollectionModels,
+    albums: &[AlbumSummary],
+    details: Option<Arc<[AlbumDetail]>>,
+    layout: LibraryLayout,
+) {
+    if layout == LibraryLayout::Detail {
+        models.detail.replace_prepared(details.unwrap_or_default());
+    } else {
+        replace_albums_in_model(&models.albums, albums.iter().cloned());
     }
+}
 
-    rows
+pub(crate) fn sort_album_details(albums: &mut [AlbumDetail], settings: &LibraryListSettings) {
+    albums.sort_by(|left, right| {
+        super::models::compare_albums_for_settings(&left.summary, &right.summary, settings)
+    });
+}
+
+fn sorted_album_details(
+    albums: &[AlbumDetail],
+    settings: &LibraryListSettings,
+) -> Vec<AlbumDetail> {
+    let mut albums = albums.to_vec();
+    sort_album_details(&mut albums, settings);
+    albums
 }
 
 pub(crate) fn album_detail_list(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
+    model: AlbumDetailModel,
     key: LibraryListKey,
-    query: ActiveLibraryQuery,
 ) -> AlbumDetailVirtualList {
-    AlbumDetailVirtualList::new(shell, model, key, query)
+    AlbumDetailVirtualList::new(shell, model, key)
 }
 
 #[derive(Clone)]
@@ -140,14 +169,14 @@ pub(crate) struct AlbumDetailVirtualList {
 
 struct AlbumDetailVirtualListInner {
     shell: Weak<Shell>,
-    model: gio::ListStore,
+    model: AlbumDetailModel,
     key: LibraryListKey,
-    query: ActiveLibraryQuery,
+    play: Option<AlbumPlayContext>,
     widget: gtk::Box,
     top_spacer: gtk::Box,
     rows_widget: gtk::Box,
     bottom_spacer: gtk::Box,
-    rows: RefCell<Vec<AlbumDetailVirtualRow>>,
+    layout: RefCell<AlbumDetailLayout>,
     rendered: RefCell<Option<(usize, usize)>>,
     selection: AlbumDetailTrackSelection,
     width: Cell<i32>,
@@ -156,32 +185,203 @@ struct AlbumDetailVirtualListInner {
     adjustment_handlers: RefCell<Option<AlbumDetailAdjustmentHandlers>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct AlbumPlayContext {
+    source_id: SourceId,
+    source_session_epoch: SourceSessionEpoch,
+}
+
 struct AlbumDetailAdjustmentHandlers {
     adjustment: glib::WeakRef<gtk::Adjustment>,
     value_changed: glib::SignalHandlerId,
     changed: glib::SignalHandlerId,
 }
 
-#[derive(Clone)]
-struct AlbumDetailVirtualRow {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlbumDetailSpan {
+    model_position: u32,
+    first_row: usize,
+    top: i32,
+    lead_height: i32,
+    inline_count: u32,
+    continuation_count: u32,
+}
+
+impl AlbumDetailSpan {
+    fn bottom(&self) -> i32 {
+        self.top
+            .saturating_add(self.lead_height)
+            .saturating_add(
+                i32::try_from(self.continuation_count)
+                    .unwrap_or(i32::MAX)
+                    .saturating_mul(ALBUM_DETAIL_TRACK_ROW_HEIGHT),
+            )
+            .saturating_add(if self.continuation_count == 0 { 0 } else { 16 })
+    }
+
+    fn row_count(&self) -> usize {
+        1_usize.saturating_add(self.continuation_count as usize)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct AlbumDetailLayout {
+    spans: Vec<AlbumDetailSpan>,
+    row_count: usize,
+    total_height: i32,
+}
+
+#[derive(Clone, Debug)]
+struct PositionedAlbumDetailItem {
     item: AlbumDetailItem,
     top: i32,
     height: i32,
 }
 
-impl AlbumDetailVirtualRow {
+impl PositionedAlbumDetailItem {
     fn bottom(&self) -> i32 {
         self.top.saturating_add(self.height)
     }
 }
 
-impl AlbumDetailVirtualList {
-    fn new(
-        shell: &Rc<Shell>,
-        model: gio::ListStore,
+impl AlbumDetailLayout {
+    fn build(model: &AlbumDetailModel, key: LibraryListKey, width: i32) -> Self {
+        Self::from_track_counts(
+            key,
+            width,
+            (0..model.albums.n_items()).filter_map(|model_position| {
+                model.detail(model_position).map(|detail| {
+                    (
+                        model_position,
+                        album_detail_meta_label_count(&detail.summary),
+                        detail.tracks.len(),
+                    )
+                })
+            }),
+        )
+    }
+
+    fn from_track_counts(
         key: LibraryListKey,
-        query: ActiveLibraryQuery,
+        width: i32,
+        albums: impl IntoIterator<Item = (u32, usize, usize)>,
     ) -> Self {
+        let cover_size = album_detail_row_metrics_for_width(key, width).cover_size;
+        let albums = albums.into_iter();
+        let mut spans = Vec::with_capacity(albums.size_hint().0);
+        let mut first_row = 0_usize;
+        let mut top = 0_i32;
+        for (model_position, meta_label_count, track_count) in albums {
+            let inline_count = track_count.min(ALBUM_DETAIL_INLINE_TRACK_ROWS);
+            let continuation_count = track_count.saturating_sub(inline_count);
+            let meta_height = cover_size
+                + meta_label_count as i32
+                    * (ALBUM_DETAIL_META_LABEL_HEIGHT + ALBUM_DETAIL_META_SPACING)
+                + ALBUM_DETAIL_META_LABEL_HEIGHT;
+            let lead_height = meta_height
+                .max(album_detail_track_area_height(inline_count))
+                .saturating_add(12)
+                .saturating_add(if continuation_count == 0 { 16 } else { 0 });
+            let span = AlbumDetailSpan {
+                model_position,
+                first_row,
+                top,
+                lead_height,
+                inline_count: u32::try_from(inline_count).unwrap_or(u32::MAX),
+                continuation_count: u32::try_from(continuation_count).unwrap_or(u32::MAX),
+            };
+            first_row = first_row.saturating_add(span.row_count());
+            top = span.bottom();
+            spans.push(span);
+        }
+        Self {
+            spans,
+            row_count: first_row,
+            total_height: top.max(1),
+        }
+    }
+
+    fn row(&self, position: usize) -> Option<PositionedAlbumDetailItem> {
+        if position >= self.row_count {
+            return None;
+        }
+        let span_index = self
+            .spans
+            .partition_point(|span| span.first_row <= position)
+            .checked_sub(1)?;
+        let span = self.spans.get(span_index)?;
+        let offset = position.saturating_sub(span.first_row);
+        if offset == 0 {
+            return Some(PositionedAlbumDetailItem {
+                item: AlbumDetailItem::Lead {
+                    album_index: span.model_position,
+                    last_in_album: span.continuation_count == 0,
+                },
+                top: span.top,
+                height: span.lead_height,
+            });
+        }
+        let continuation = offset.saturating_sub(1);
+        if continuation >= span.continuation_count as usize {
+            return None;
+        }
+        let last_in_album = continuation + 1 == span.continuation_count as usize;
+        Some(PositionedAlbumDetailItem {
+            item: AlbumDetailItem::Track {
+                album_index: span.model_position,
+                track_index: span
+                    .inline_count
+                    .saturating_add(u32::try_from(continuation).unwrap_or(u32::MAX)),
+                last_in_album,
+            },
+            top: span.top.saturating_add(span.lead_height).saturating_add(
+                i32::try_from(continuation)
+                    .unwrap_or(i32::MAX)
+                    .saturating_mul(ALBUM_DETAIL_TRACK_ROW_HEIGHT),
+            ),
+            height: ALBUM_DETAIL_TRACK_ROW_HEIGHT.saturating_add(if last_in_album {
+                16
+            } else {
+                0
+            }),
+        })
+    }
+
+    fn row_at_height(&self, height: f64) -> Option<usize> {
+        if self.row_count == 0 {
+            return None;
+        }
+        let height = height.max(0.0).min(f64::from(self.total_height));
+        let span_index = self
+            .spans
+            .partition_point(|span| f64::from(span.bottom()) < height)
+            .min(self.spans.len().saturating_sub(1));
+        let span = self.spans.get(span_index)?;
+        let within = (height - f64::from(span.top)).max(0.0);
+        if within < f64::from(span.lead_height) || span.continuation_count == 0 {
+            return Some(span.first_row);
+        }
+        let continuation = ((within - f64::from(span.lead_height))
+            / f64::from(ALBUM_DETAIL_TRACK_ROW_HEIGHT))
+        .floor()
+        .max(0.0) as usize;
+        Some(span.first_row + 1 + continuation.min(span.continuation_count as usize - 1))
+    }
+
+    fn visible_range(&self, top: f64, bottom: f64) -> (usize, usize) {
+        let Some(start) = self.row_at_height(top) else {
+            return (0, 0);
+        };
+        let end = self
+            .row_at_height(bottom)
+            .map_or(start, |position| position.saturating_add(1))
+            .min(self.row_count);
+        (start, end.max(start))
+    }
+}
+
+impl AlbumDetailVirtualList {
+    fn new(shell: &Rc<Shell>, model: AlbumDetailModel, key: LibraryListKey) -> Self {
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
         widget.add_css_class("track-table");
         widget.add_css_class("album-detail-list");
@@ -199,16 +399,25 @@ impl AlbumDetailVirtualList {
         widget.append(&bottom_spacer);
 
         let width = route_content_width(shell).max(1);
+        let play = shell
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| AlbumPlayContext {
+                source_id: selected.source_id.clone(),
+                source_session_epoch: selected.source_session_epoch,
+            });
         let inner = Rc::new(AlbumDetailVirtualListInner {
             shell: Rc::downgrade(shell),
             model: model.clone(),
             key,
-            query,
+            play,
             widget,
             top_spacer,
             rows_widget,
             bottom_spacer,
-            rows: RefCell::new(album_detail_virtual_rows(&model, key, width)),
+            layout: RefCell::new(AlbumDetailLayout::build(&model, key, width)),
             rendered: RefCell::new(None),
             selection: AlbumDetailTrackSelection::default(),
             width: Cell::new(width),
@@ -219,11 +428,11 @@ impl AlbumDetailVirtualList {
         inner.apply_extent();
 
         let weak = Rc::downgrade(&inner);
-        let handler = model.connect_items_changed(move |_, _, _, _| {
+        let handler = model.albums.connect_items_changed(move |_, _, _, _| {
             let Some(inner) = weak.upgrade() else {
                 return;
             };
-            inner.rebuild_rows();
+            inner.rebuild_layout();
             AlbumDetailVirtualListInner::queue_render(&inner);
         });
         inner.model_handler.replace(Some(handler));
@@ -233,7 +442,12 @@ impl AlbumDetailVirtualList {
                 return false;
             };
             let track_id = track_id
-                .filter(|current| &current.source_id == inner.query.source_id())
+                .filter(|current| {
+                    inner
+                        .play
+                        .as_ref()
+                        .is_some_and(|play| play.source_id == current.source_id)
+                })
                 .map(|current| &current.track_id);
             inner.selection.select_now_playing_track(track_id);
             true
@@ -287,7 +501,7 @@ impl AlbumDetailVirtualList {
             album_detail_row_metrics_for_width(self.inner.key, previous_width).cover_size;
         let current_cover = album_detail_row_metrics_for_width(self.inner.key, width).cover_size;
         if previous_cover != current_cover {
-            self.inner.rebuild_rows();
+            self.inner.rebuild_layout();
             self.inner.render();
         } else {
             self.inner.resize_rendered_rows();
@@ -296,8 +510,8 @@ impl AlbumDetailVirtualList {
 }
 
 impl AlbumDetailVirtualListInner {
-    fn rebuild_rows(&self) {
-        self.rows.replace(album_detail_virtual_rows(
+    fn rebuild_layout(&self) {
+        self.layout.replace(AlbumDetailLayout::build(
             &self.model,
             self.key,
             self.width.get(),
@@ -308,7 +522,7 @@ impl AlbumDetailVirtualListInner {
 
     fn apply_extent(&self) {
         self.widget
-            .set_height_request(album_detail_virtual_total_height(&self.rows.borrow()));
+            .set_height_request(self.layout.borrow().total_height);
     }
 
     fn adjustment(&self) -> Option<gtk::Adjustment> {
@@ -336,14 +550,14 @@ impl AlbumDetailVirtualListInner {
         let Some(adjustment) = self.adjustment() else {
             return;
         };
-        let rows = self.rows.borrow();
-        let total_height = album_detail_virtual_total_height(&rows);
+        let layout = self.layout.borrow();
+        let total_height = layout.total_height;
         let overscan = f64::from(album_detail_virtual_overscan_height());
         let visible_top = (adjustment.value() - overscan).max(0.0);
         let visible_bottom = (adjustment.value() + adjustment.page_size() + overscan)
             .min(f64::from(total_height))
             .max(visible_top);
-        let (start, end) = album_detail_virtual_range(&rows, visible_top, visible_bottom);
+        let (start, end) = layout.visible_range(visible_top, visible_bottom);
         if self.rendered.borrow().as_ref() == Some(&(start, end)) {
             return;
         }
@@ -354,11 +568,11 @@ impl AlbumDetailVirtualListInner {
             self.rows_widget.remove(&child);
         }
 
-        let top_height = rows.get(start).map(|row| row.top).unwrap_or(0).max(0);
+        let top_height = layout.row(start).map(|row| row.top).unwrap_or(0).max(0);
         let bottom_start = end
             .checked_sub(1)
-            .and_then(|index| rows.get(index))
-            .map(AlbumDetailVirtualRow::bottom)
+            .and_then(|index| layout.row(index))
+            .map(|row| row.bottom())
             .unwrap_or(top_height);
         self.top_spacer.set_height_request(top_height);
         self.bottom_spacer
@@ -373,15 +587,26 @@ impl AlbumDetailVirtualListInner {
             .borrow()
             .library_list(self.key)
             .detail_track_fields;
-        for row in &rows[start..end] {
+        for position in start..end {
+            let Some(row) = layout.row(position) else {
+                continue;
+            };
             let widget = album_detail_item_row(
                 &shell,
+                &self.model,
                 row.item.clone(),
                 self.key,
-                &self.query,
                 &self.selection,
+                self.play.as_ref(),
             );
-            resize_album_detail_item_row(&widget, &row.item, self.key, &fields, self.width.get());
+            resize_album_detail_item_row(
+                &widget,
+                &self.model,
+                &row.item,
+                self.key,
+                &fields,
+                self.width.get(),
+            );
             self.rows_widget.append(&widget);
         }
     }
@@ -399,14 +624,24 @@ impl AlbumDetailVirtualListInner {
             .borrow()
             .library_list(self.key)
             .detail_track_fields;
-        let rows = self.rows.borrow();
+        let layout = self.layout.borrow();
         let mut child = self.rows_widget.first_child();
-        for row in &rows[start..end] {
+        for position in start..end {
+            let Some(row) = layout.row(position) else {
+                continue;
+            };
             let Some(widget) = child else {
                 break;
             };
             child = widget.next_sibling();
-            resize_album_detail_item_row(&widget, &row.item, self.key, &fields, self.width.get());
+            resize_album_detail_item_row(
+                &widget,
+                &self.model,
+                &row.item,
+                self.key,
+                &fields,
+                self.width.get(),
+            );
         }
     }
 
@@ -425,48 +660,10 @@ impl AlbumDetailVirtualListInner {
 impl Drop for AlbumDetailVirtualListInner {
     fn drop(&mut self) {
         if let Some(handler) = self.model_handler.get_mut().take() {
-            self.model.disconnect(handler);
+            self.model.albums.disconnect(handler);
         }
         self.disconnect_adjustment();
     }
-}
-
-fn album_detail_virtual_rows(
-    model: &gio::ListStore,
-    key: LibraryListKey,
-    width: i32,
-) -> Vec<AlbumDetailVirtualRow> {
-    let cover_size = album_detail_row_metrics_for_width(key, width).cover_size;
-    let mut rows = Vec::with_capacity(model.n_items() as usize);
-    let mut top = 0_i32;
-    for index in 0..model.n_items() {
-        let Some(item) = item_at::<AlbumDetailItem>(model, index) else {
-            continue;
-        };
-        let height = album_detail_item_total_height(&item, cover_size);
-        rows.push(AlbumDetailVirtualRow { item, top, height });
-        top = top.saturating_add(height);
-    }
-    rows
-}
-
-fn album_detail_virtual_total_height(rows: &[AlbumDetailVirtualRow]) -> i32 {
-    rows.last()
-        .map(AlbumDetailVirtualRow::bottom)
-        .unwrap_or(1)
-        .max(1)
-}
-
-fn album_detail_virtual_range(
-    rows: &[AlbumDetailVirtualRow],
-    visible_top: f64,
-    visible_bottom: f64,
-) -> (usize, usize) {
-    let start = rows.partition_point(|row| f64::from(row.bottom()) < visible_top);
-    let end = rows
-        .partition_point(|row| f64::from(row.top) <= visible_bottom)
-        .max(start);
-    (start, end)
 }
 
 fn album_detail_virtual_overscan_height() -> i32 {
@@ -516,51 +713,62 @@ impl AlbumDetailTrackSelection {
         self.bound_rows.borrow_mut().clear();
     }
 }
-#[derive(Clone, Debug, PartialEq)]
-#[expect(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
 pub(crate) enum AlbumDetailItem {
     Lead {
-        album: Album,
-        inline_tracks: Vec<Track>,
+        album_index: u32,
         last_in_album: bool,
     },
     Track {
-        track: Track,
-        index: usize,
+        album_index: u32,
+        track_index: u32,
         last_in_album: bool,
     },
 }
+
+impl AlbumDetailItem {
+    fn album_position(&self) -> u32 {
+        match self {
+            Self::Lead { album_index, .. } | Self::Track { album_index, .. } => *album_index,
+        }
+    }
+}
+
 pub(crate) fn album_detail_item_row(
     shell: &Rc<Shell>,
+    model: &AlbumDetailModel,
     row: AlbumDetailItem,
     key: LibraryListKey,
-    query: &ActiveLibraryQuery,
     selection: &AlbumDetailTrackSelection,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
     match row {
         AlbumDetailItem::Lead {
-            album,
-            inline_tracks,
+            album_index,
             last_in_album,
-        } => album_detail_lead_row(
-            shell,
-            &album,
-            &inline_tracks,
-            last_in_album,
-            key,
-            query,
-            selection,
-        ),
+        } => {
+            let Some(detail) = model.detail(album_index) else {
+                return gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast();
+            };
+            album_detail_lead_row(shell, &detail, last_in_album, key, selection, play)
+        }
         AlbumDetailItem::Track {
-            track,
-            index,
+            album_index,
+            track_index,
             last_in_album,
-        } => album_detail_track_row(shell, &track, index, last_in_album, key, query, selection),
+        } => {
+            let Some(detail) = model.detail(album_index) else {
+                return gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast();
+            };
+            let index = track_index as usize;
+            album_detail_track_row(shell, &detail, index, last_in_album, key, selection, play)
+        }
     }
 }
 
 fn resize_album_detail_item_row(
     widget: &gtk::Widget,
+    model: &AlbumDetailModel,
     item: &AlbumDetailItem,
     key: LibraryListKey,
     fields: &[LibraryField],
@@ -571,21 +779,24 @@ fn resize_album_detail_item_row(
     };
     let metrics = album_detail_row_metrics_for_width(key, route_width);
     row.set_spacing(metrics.spacing);
+    let Some(detail) = model.detail(item.album_position()) else {
+        return;
+    };
 
     match item {
         AlbumDetailItem::Lead {
-            album,
-            inline_tracks,
-            ..
+            last_in_album: _, ..
         } => {
+            let album = &detail.summary;
+            let inline_count = detail.tracks.len().min(ALBUM_DETAIL_INLINE_TRACK_ROWS);
             let content_height =
-                album_detail_lead_content_height(album, metrics.cover_size, inline_tracks.len());
+                album_detail_lead_content_height(album, metrics.cover_size, inline_count);
             row.set_height_request(content_height);
             let Some(meta) = row.first_child() else {
                 return;
             };
             resize_album_detail_meta(&meta, album, metrics.cover_size, metrics.meta_width);
-            if inline_tracks.is_empty() {
+            if inline_count == 0 {
                 return;
             }
 
@@ -630,7 +841,12 @@ fn resize_album_detail_item_row(
     }
 }
 
-fn resize_album_detail_meta(widget: &gtk::Widget, album: &Album, cover_size: i32, width: i32) {
+fn resize_album_detail_meta(
+    widget: &gtk::Widget,
+    album: &AlbumSummary,
+    cover_size: i32,
+    width: i32,
+) {
     let Ok(meta) = widget.clone().downcast::<gtk::Box>() else {
         return;
     };
@@ -694,17 +910,17 @@ fn resize_album_detail_track_cells(widget: &gtk::Widget, field_widths: &[(Librar
 
 pub(crate) fn album_detail_lead_row(
     shell: &Rc<Shell>,
-    album: &Album,
-    inline_tracks: &[Track],
+    detail: &AlbumDetail,
     last_in_album: bool,
     key: LibraryListKey,
-    query: &ActiveLibraryQuery,
     selection: &AlbumDetailTrackSelection,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
+    let album = &detail.summary;
+    let inline_count = detail.tracks.len().min(ALBUM_DETAIL_INLINE_TRACK_ROWS);
     let metrics = album_detail_row_metrics(shell, key);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
-    let content_height =
-        album_detail_lead_content_height(album, metrics.cover_size, inline_tracks.len());
+    let content_height = album_detail_lead_content_height(album, metrics.cover_size, inline_count);
     row.add_css_class("album-detail-row");
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
@@ -716,16 +932,16 @@ pub(crate) fn album_detail_lead_row(
 
     row.append(&album_detail_meta(
         shell,
-        album,
+        detail,
         metrics.cover_size,
         metrics.meta_width,
-        query,
+        play,
     ));
 
     let track_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
     track_area.set_hexpand(true);
     track_area.set_halign(gtk::Align::Fill);
-    if !inline_tracks.is_empty() {
+    if inline_count != 0 {
         let fields = shell
             .settings
             .current
@@ -736,16 +952,21 @@ pub(crate) fn album_detail_lead_row(
             album_detail_track_area_width(shell, key, metrics.meta_width, metrics.spacing, &fields);
         let field_widths = album_detail_track_field_widths(key, &fields, track_width);
         track_area.set_width_request(track_width);
-        track_area.set_height_request(album_detail_track_area_height(inline_tracks.len()));
+        track_area.set_height_request(album_detail_track_area_height(inline_count));
         track_area.append(&album_detail_track_header(&field_widths));
-        for (index, track) in inline_tracks.iter().enumerate() {
+        for index in 0..inline_count {
+            let Ok(Some(track)) = detail.tracks.track(index) else {
+                continue;
+            };
             track_area.append(&album_detail_track_cells(
                 shell,
-                track,
+                &track,
                 index,
                 &field_widths,
-                query,
+                detail.tracks.clone(),
+                detail.summary.album.id.clone(),
                 selection,
+                play,
             ));
         }
         row.append(&album_detail_separator(content_height));
@@ -755,13 +976,16 @@ pub(crate) fn album_detail_lead_row(
 }
 pub(crate) fn album_detail_track_row(
     shell: &Rc<Shell>,
-    track: &Track,
+    detail: &AlbumDetail,
     index: usize,
     last_in_album: bool,
     key: LibraryListKey,
-    query: &ActiveLibraryQuery,
     selection: &AlbumDetailTrackSelection,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
+    let Ok(Some(track)) = detail.tracks.track(index) else {
+        return gtk::Box::new(gtk::Orientation::Horizontal, 0).upcast();
+    };
     let metrics = album_detail_row_metrics(shell, key);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
     row.add_css_class("album-detail-row");
@@ -789,11 +1013,13 @@ pub(crate) fn album_detail_track_row(
     let field_widths = album_detail_track_field_widths(key, &fields, track_width);
     row.append(&album_detail_track_cells(
         shell,
-        track,
+        &track,
         index,
         &field_widths,
-        query,
+        detail.tracks.clone(),
+        detail.summary.album.id.clone(),
         selection,
+        play,
     ));
     row.upcast()
 }
@@ -807,42 +1033,45 @@ pub(crate) fn album_detail_separator(height: i32) -> gtk::Widget {
 }
 pub(crate) fn album_detail_meta(
     shell: &Rc<Shell>,
-    album: &Album,
+    detail: &AlbumDetail,
     cover_size: i32,
     meta_width: i32,
-    query: &ActiveLibraryQuery,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
+    let album = &detail.summary;
     let meta = gtk::Box::new(gtk::Orientation::Vertical, ALBUM_DETAIL_META_SPACING);
     meta.set_width_request(meta_width);
     meta.set_height_request(album_detail_meta_height(album, cover_size));
     meta.set_hexpand(false);
-    meta.append(&album_detail_cover_tile(shell, album, cover_size, query));
+    meta.append(&album_detail_cover_tile(shell, detail, cover_size, play));
     meta.append(&album_detail_meta_label(
-        &album.title,
+        &album.album.title,
         "track-title",
         meta_width,
     ));
-    meta.append(&album_detail_meta_label(&album.artist, "muted", meta_width));
+    meta.append(&album_detail_meta_label(
+        &album.album.artist,
+        "muted",
+        meta_width,
+    ));
     meta.append(&album_detail_meta_label(
         &album_fact_text(album),
         "muted",
         meta_width,
     ));
-    if !album.genres.is_empty() {
-        meta.append(&album_detail_meta_label(
-            &album.genres.join(", "),
-            "muted",
-            meta_width,
-        ));
+    let genres = album.album.genre_names().collect::<Vec<_>>().join(", ");
+    if !genres.is_empty() {
+        meta.append(&album_detail_meta_label(&genres, "muted", meta_width));
     }
     meta.upcast()
 }
 pub(crate) fn album_detail_cover_tile(
     shell: &Rc<Shell>,
-    album: &Album,
+    detail: &AlbumDetail,
     cover_size: i32,
-    query: &ActiveLibraryQuery,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
+    let album = &detail.summary;
     let overlay = cards::cover_overlay(cover_size);
     let cover_button = gtk::Button::new();
     cover_button.add_css_class("flat");
@@ -850,59 +1079,73 @@ pub(crate) fn album_detail_cover_tile(
     cards::constrain_cover_widget(&cover_button, cover_size);
     cards::clip_cover(&cover_button);
     cover_button.set_child(Some(&shell.cover_tile_for_candidates(
-        ArtworkBinding::album(album),
-        album.color_seed,
+        ArtworkBinding::album_artwork(&album.artwork),
+        album.album.color_seed,
         cover_size,
         GRID_COVER_SIZE,
     )));
     let shell_for_open = Rc::clone(shell);
-    let album_id = album.id.clone();
+    let album_id = album.album.id.clone();
     cover_button.connect_clicked(move |_| {
         shell_for_open.navigate(Route::AlbumDetail(album_id.clone()));
     });
     overlay.set_child(Some(&cover_button));
 
-    let controls = cards::cover_hover_controls(cover_size, "Play album", album.favorite);
-    let controller = shell.products.playback.queue.clone();
-    let play_query = query.clone();
-    let album_id = album.id.clone();
+    let controls = cards::cover_hover_controls(cover_size, "Play album", album.album.favorite);
+    let play_shell = Rc::clone(shell);
+    let play_context = play.cloned();
+    let play_tracks = detail.tracks.clone();
+    let play_album_id = album.album.id.clone();
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some((album, tracks))) = play_query.album_detail(&album_id) {
-            controller.play_album(AlbumPlayRequest {
-                album_id: album.id,
-                tracks,
-                anchor_index: 0,
-                shuffled_start: true,
-            });
-        }
+        play_album_selection(
+            &play_shell,
+            &play_tracks,
+            0,
+            QueuePlacement::Now,
+            &play_album_id,
+            true,
+            play_context.as_ref(),
+        );
     });
 
-    let controller = shell.products.playback.queue.clone();
-    let next_query = query.clone();
-    let album_id = album.id.clone();
+    let next_shell = Rc::clone(shell);
+    let next_context = play.cloned();
+    let next_tracks = detail.tracks.clone();
+    let next_album_id = album.album.id.clone();
     controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some((_, tracks))) = next_query.album_detail(&album_id) {
-            for track in tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
+        play_album_selection(
+            &next_shell,
+            &next_tracks,
+            0,
+            QueuePlacement::Next,
+            &next_album_id,
+            false,
+            next_context.as_ref(),
+        );
     });
 
-    let controller = shell.products.playback.queue.clone();
-    let last_query = query.clone();
-    let album_id = album.id.clone();
+    let last_shell = Rc::clone(shell);
+    let last_context = play.cloned();
+    let last_tracks = detail.tracks.clone();
+    let last_album_id = album.album.id.clone();
     controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some((_, tracks))) = last_query.album_detail(&album_id) {
-            controller.play_last(tracks);
-        }
+        play_album_selection(
+            &last_shell,
+            &last_tracks,
+            0,
+            QueuePlacement::Last,
+            &last_album_id,
+            false,
+            last_context.as_ref(),
+        );
     });
 
     if let Some(favorite) = controls.favorite.as_ref() {
         shell
             .favorites
-            .register_button(album_favorite_key(&album.id), favorite);
+            .register_button(album_favorite_key(&album.album.id), favorite);
         let favorite_shell = Rc::clone(shell);
-        let album_id = album.id.clone();
+        let album_id = album.album.id.clone();
         favorite.connect_clicked(move |button| {
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
@@ -915,7 +1158,7 @@ pub(crate) fn album_detail_cover_tile(
 
     controls.add_to_overlay(&overlay);
     controls.connect_hover(&overlay);
-    install_album_context_menu(&overlay, shell, album.clone());
+    install_album_context_menu(&overlay, shell, album.clone(), detail.tracks.clone());
     overlay.upcast()
 }
 pub(crate) fn album_detail_track_header(field_widths: &[(LibraryField, i32)]) -> gtk::Widget {
@@ -960,8 +1203,10 @@ pub(crate) fn album_detail_track_cells(
     track: &Track,
     index: usize,
     field_widths: &[(LibraryField, i32)],
-    query: &ActiveLibraryQuery,
+    album_tracks: TrackList,
+    album_id: ::library::AlbumId,
     selection: &AlbumDetailTrackSelection,
+    play: Option<&AlbumPlayContext>,
 ) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, ALBUM_DETAIL_TRACK_COLUMN_GAP);
     row.add_css_class("album-detail-track-row");
@@ -984,19 +1229,32 @@ pub(crate) fn album_detail_track_cells(
     }
     install_track_context_menu(&row, shell, track.clone());
 
+    let play_context = play.cloned();
+    let play_album_id = album_id;
+    let play_tracks = album_tracks;
     let controller = shell.products.playback.queue.clone();
-    let query = query.clone();
-    let track = track.clone();
     let gesture = gtk::GestureClick::new();
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
     gesture.set_button(1);
     gesture.connect_pressed(move |gesture, n_press, _, _| {
         if album_detail_play_click(n_press) {
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            let controller = controller.clone();
-            let query = query.clone();
-            let track = track.clone();
-            glib::idle_add_local_once(move || play_album_track(&query, &controller, track));
+            let request = play_context.as_ref().and_then(|play| {
+                album_play_request(
+                    play,
+                    &play_tracks,
+                    index,
+                    QueuePlacement::Now,
+                    &play_album_id,
+                    false,
+                )
+            });
+            if let Some(request) = request {
+                let controller = controller.clone();
+                glib::idle_add_local_once(move || {
+                    controller.play_loaded(request);
+                });
+            }
         }
     });
     row.add_controller(gesture);
@@ -1006,21 +1264,46 @@ fn album_detail_play_click(n_press: i32) -> bool {
     n_press >= 2 && n_press % 2 == 0
 }
 
-fn play_album_track(query: &ActiveLibraryQuery, controller: &playback::QueueHandle, track: Track) {
-    let Ok(Some((album, tracks))) = query.album_detail(&track.album_id) else {
-        controller.play_now(track);
-        return;
-    };
-    let Some(anchor_index) = tracks.iter().position(|candidate| candidate.id == track.id) else {
-        controller.play_now(track);
-        return;
-    };
-    controller.play_album(AlbumPlayRequest {
-        album_id: album.id,
-        tracks,
+fn play_album_selection(
+    shell: &Shell,
+    tracks: &TrackList,
+    anchor_index: usize,
+    placement: QueuePlacement,
+    album_id: &::library::AlbumId,
+    shuffled_start: bool,
+    play: Option<&AlbumPlayContext>,
+) {
+    if let Some(request) = play.and_then(|play| {
+        album_play_request(
+            play,
+            tracks,
+            anchor_index,
+            placement,
+            album_id,
+            shuffled_start,
+        )
+    }) {
+        shell.products.playback.queue.play_loaded(request);
+    }
+}
+
+fn album_play_request(
+    play: &AlbumPlayContext,
+    tracks: &TrackList,
+    anchor_index: usize,
+    placement: QueuePlacement,
+    album_id: &::library::AlbumId,
+    shuffled_start: bool,
+) -> Option<playback::LoadedPlayRequest> {
+    playback::LoadedPlayRequest::context(
+        play.source_id.clone(),
+        play.source_session_epoch,
+        tracks.clone(),
         anchor_index,
-        shuffled_start: false,
-    });
+        placement,
+        format!("album:{}", album_id.as_str()),
+        shuffled_start,
+    )
 }
 pub(crate) fn album_detail_track_cell(
     shell: &Rc<Shell>,
@@ -1059,6 +1342,10 @@ pub(crate) fn album_detail_track_cell(
             cover.set_halign(gtk::Align::Center);
             album_detail_fixed_cell(width, cover)
         }
+        LibraryField::RowIndex => album_detail_fixed_cell(
+            width,
+            track_row_index_cell(&(index + 1).to_string()).upcast(),
+        ),
         _ => album_detail_track_cell_box(
             field,
             width,
@@ -1138,7 +1425,11 @@ pub(crate) fn album_detail_track_label(
     if ellipsize && matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
         label.add_css_class("track-list-title");
     }
-    label.set_xalign(0.0);
+    label.set_xalign(if field == LibraryField::RowIndex {
+        0.5
+    } else {
+        0.0
+    });
     label.set_halign(gtk::Align::Fill);
     label.set_valign(gtk::Align::Center);
     label.set_wrap(false);
@@ -1277,36 +1568,20 @@ pub(crate) fn album_detail_track_text(track: &Track, index: usize, field: Librar
     }
 }
 pub(crate) fn album_detail_lead_content_height(
-    album: &Album,
+    album: &AlbumSummary,
     cover_size: i32,
     inline_count: usize,
 ) -> i32 {
     album_detail_meta_height(album, cover_size).max(album_detail_track_area_height(inline_count))
 }
-fn album_detail_item_total_height(row: &AlbumDetailItem, cover_size: i32) -> i32 {
-    match row {
-        AlbumDetailItem::Lead {
-            album,
-            inline_tracks,
-            last_in_album,
-        } => {
-            album_detail_lead_content_height(album, cover_size, inline_tracks.len())
-                + 12
-                + if *last_in_album { 16 } else { 0 }
-        }
-        AlbumDetailItem::Track { last_in_album, .. } => {
-            ALBUM_DETAIL_TRACK_ROW_HEIGHT + if *last_in_album { 16 } else { 0 }
-        }
-    }
-}
-pub(crate) fn album_detail_meta_height(album: &Album, cover_size: i32) -> i32 {
+pub(crate) fn album_detail_meta_height(album: &AlbumSummary, cover_size: i32) -> i32 {
     cover_size
         + album_detail_meta_label_count(album) as i32
             * (ALBUM_DETAIL_META_LABEL_HEIGHT + ALBUM_DETAIL_META_SPACING)
         + ALBUM_DETAIL_META_LABEL_HEIGHT
 }
-pub(crate) fn album_detail_meta_label_count(album: &Album) -> usize {
-    3 + usize::from(!album.genres.is_empty())
+pub(crate) fn album_detail_meta_label_count(album: &AlbumSummary) -> usize {
+    3 + usize::from(album.album.genre_names().next().is_some())
 }
 pub(crate) fn album_detail_track_area_height(inline_count: usize) -> i32 {
     if inline_count == 0 {
@@ -1317,10 +1592,6 @@ pub(crate) fn album_detail_track_area_height(inline_count: usize) -> i32 {
                 * ALBUM_DETAIL_TRACK_ROW_HEIGHT
     }
 }
-pub(crate) fn sort_album_detail_tracks(tracks: &mut [Track]) {
-    tracks.sort_by(|left, right| compare_track(left, right, LibraryField::TrackNumber));
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AlbumDetailRowMetrics {
     cover_size: i32,
@@ -1386,9 +1657,10 @@ mod album_detail_width_tests {
 
     use super::{
         ALBUM_DETAIL_MAX_COVER, ALBUM_DETAIL_ROW_HORIZONTAL_INSET, ALBUM_DETAIL_SEPARATOR_WIDTH,
-        AlbumDetailRowMetrics, album_detail_play_click, album_detail_row_content_width,
-        album_detail_row_metrics_for_width, album_detail_track_area_width_for,
-        album_detail_track_cells_width, album_detail_track_field_widths,
+        AlbumDetailItem, AlbumDetailLayout, AlbumDetailRowMetrics, album_detail_play_click,
+        album_detail_row_content_width, album_detail_row_metrics_for_width,
+        album_detail_track_area_width_for, album_detail_track_cells_width,
+        album_detail_track_field_widths,
     };
     use crate::routes::route_layout::{PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START};
 
@@ -1477,5 +1749,50 @@ mod album_detail_width_tests {
         assert!(album_detail_play_click(2));
         assert!(!album_detail_play_click(3));
         assert!(album_detail_play_click(4));
+    }
+
+    #[test]
+    fn album_detail_layout_retains_one_span_per_album() {
+        let layout = AlbumDetailLayout::from_track_counts(
+            LibraryListKey::Albums,
+            900,
+            [(0, 3, 50_000), (1, 3, 4)],
+        );
+
+        assert_eq!(layout.spans.len(), 2);
+        assert_eq!(layout.row_count, 49_994);
+        assert!(matches!(
+            layout.row(0).map(|row| row.item),
+            Some(AlbumDetailItem::Lead {
+                album_index: 0,
+                last_in_album: false
+            })
+        ));
+        assert!(matches!(
+            layout.row(1).map(|row| row.item),
+            Some(AlbumDetailItem::Track {
+                album_index: 0,
+                track_index: 8,
+                last_in_album: false
+            })
+        ));
+        assert!(matches!(
+            layout.row(49_992).map(|row| row.item),
+            Some(AlbumDetailItem::Track {
+                album_index: 0,
+                track_index: 49_999,
+                last_in_album: true
+            })
+        ));
+        let second_album = layout.row(49_993).expect("second Album lead");
+        assert!(matches!(
+            second_album.item,
+            AlbumDetailItem::Lead {
+                album_index: 1,
+                last_in_album: true
+            }
+        ));
+        assert_eq!(second_album.bottom(), layout.total_height);
+        assert!(layout.row(layout.row_count).is_none());
     }
 }

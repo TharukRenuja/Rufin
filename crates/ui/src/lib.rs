@@ -14,6 +14,8 @@ mod routes;
 pub mod runtime;
 pub mod settings;
 mod shell;
+#[cfg(test)]
+mod test_support;
 
 pub use application::run_application;
 

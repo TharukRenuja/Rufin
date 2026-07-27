@@ -396,6 +396,23 @@ row:focus {
     -0.35px 0 0 var(--accent-color);
 }
 
+.track-row-index-playing {
+  color: var(--accent-color);
+  opacity: 0;
+}
+
+.track-table.track-list row:selected .track-row-index-number,
+.track-table.playlist-entry-table row:selected .track-row-index-number,
+.album-detail-track-row.album-detail-track-selected .track-row-index-number {
+  opacity: 0;
+}
+
+.track-table.track-list row:selected .track-row-index-playing,
+.track-table.playlist-entry-table row:selected .track-row-index-playing,
+.album-detail-track-row.album-detail-track-selected .track-row-index-playing {
+  opacity: 1;
+}
+
 .track-table row:selected,
 .track-table row:selected:hover,
 .album-grid > child:selected,
@@ -598,6 +615,12 @@ popover.context-submenu > contents {
   box-shadow: none;
 }
 
+row.entry.password.focused,
+row.entry.password:focus-within {
+  outline: none;
+  box-shadow: none;
+}
+
 .manage-server-action-row image {
   -gtk-icon-size: 13px;
 }
@@ -680,7 +703,7 @@ button.source-selector.menu-source-button .source-selector-detail {
 .source-choice-list {
   padding: 4px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--window-fg-color) 24%, var(--card-bg-color));
+  background: var(--card-bg-color);
 }
 
 .compact-source-choice-list {
@@ -1728,12 +1751,12 @@ popover.audio-output-popover > contents {
   min-height: 80px;
 }
 
-.queue-lyrics-overlay {
-  background: transparent;
-}
-
 .queue-lyrics-surface {
   background: var(--window-bg-color);
+}
+
+.queue-lyrics-overlay {
+  background: transparent;
 }
 
 .queue-lyrics-resize-handle {

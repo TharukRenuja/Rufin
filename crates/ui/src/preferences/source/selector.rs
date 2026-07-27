@@ -1,18 +1,19 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 
-use ::library::{MusicFolder, MusicFolderId};
+use ::library::{MusicFolder, MusicFolderId, SourceId};
 use adw::prelude::*;
 use gtk::glib;
-use sources::SourcePresentationState;
-use sources::{LibrarySourceSelection, LocalLibraryFolder, SourceIdentity};
 
 use crate::preferences::{
     present_add_server_preferences_dialog, present_library_preferences_dialog,
 };
+use crate::runtime::SelectedLibrary;
+use crate::runtime::source::{ConfiguredSources, LocalFolder, SourceSummary};
 use crate::shell::Shell;
 use localization::tr;
 
@@ -47,12 +48,11 @@ pub(crate) struct SourceSelector {
 
 struct SourceSelectorContent {
     name: String,
-    selected_source: Option<LibrarySourceSelection>,
-    active_source: Option<SourceIdentity>,
-    local_source: SourceIdentity,
-    sources: Vec<SourceIdentity>,
-    local_folders: Vec<LocalLibraryFolder>,
-    music_folders: Vec<MusicFolder>,
+    selected_source_id: Option<SourceId>,
+    active_source: Option<SourceSummary>,
+    sources: Arc<[SourceSummary]>,
+    local_folders: Arc<[LocalFolder]>,
+    music_folders: Arc<[Arc<MusicFolder>]>,
     selected_music_folder_id: Option<MusicFolderId>,
 }
 
@@ -155,8 +155,9 @@ pub(crate) fn build_source_selector() -> SourceSelector {
 
 pub(crate) fn update_source_selector(shell: &Rc<Shell>) {
     let selector = &shell.navigation_view.server_selector;
-    let library = shell.source.presentation.borrow().clone();
-    let content = source_selector_content(library, shell.products.source.local_source_identity());
+    let configured = shell.source.configured.borrow();
+    let selected = shell.library.selected.borrow();
+    let content = source_selector_content(&configured, selected.as_ref());
     let accessible_label = format!("{}: {}", tr("Source"), content.name);
     let icon_name = source_icon_name(&content);
     let subtitle = source_summary_detail(&content);
@@ -195,66 +196,47 @@ pub(crate) fn update_source_selector(shell: &Rc<Shell>) {
 }
 
 fn source_selector_content(
-    library: SourcePresentationState,
-    local_source: SourceIdentity,
+    configured: &ConfiguredSources,
+    selected: Option<&SelectedLibrary>,
 ) -> SourceSelectorContent {
-    let selected_source = library.selected_source.clone();
-    let active_source = selected_source
-        .as_ref()
-        .and_then(|selection| selected_source_server(selection, &library, &local_source))
-        .or_else(|| library.source.clone());
+    let selected_source_id = configured.selected_source_id.clone();
+    let active_source = selected_source_id.as_ref().and_then(|selected| {
+        configured
+            .sources
+            .iter()
+            .find(|source| &source.id == selected)
+            .cloned()
+    });
     let Some(server) = active_source else {
         return SourceSelectorContent {
             name: tr("No source"),
-            selected_source,
+            selected_source_id,
             active_source: None,
-            local_source,
-            sources: library.sources,
-            local_folders: library.local_folders,
-            music_folders: Vec::new(),
+            sources: Arc::clone(&configured.sources),
+            local_folders: Arc::clone(&configured.local_folders),
+            music_folders: Arc::from([]),
             selected_music_folder_id: None,
         };
     };
 
-    let music_folders = if library
-        .source
-        .as_ref()
-        .is_some_and(|loaded| loaded.id == server.id)
-    {
-        library.music_folders
-    } else {
-        Vec::new()
-    };
+    let music_folders = selected
+        .filter(|selected| selected.source_id == server.id)
+        .and_then(|selected| selected.loaded.music_folders().ok())
+        .unwrap_or_else(|| Arc::from([]));
     let selected_music_folder_id = if music_folders.is_empty() {
         None
     } else {
-        library.selected_music_folder_id
+        selected.and_then(|selected| selected.music_folder_id.clone())
     };
     let name = configured_source_display_name(&server);
     SourceSelectorContent {
         name,
-        selected_source,
+        selected_source_id,
         active_source: Some(server),
-        local_source,
-        sources: library.sources,
-        local_folders: library.local_folders,
+        sources: Arc::clone(&configured.sources),
+        local_folders: Arc::clone(&configured.local_folders),
         music_folders,
         selected_music_folder_id,
-    }
-}
-
-fn selected_source_server(
-    selected_source: &LibrarySourceSelection,
-    library: &SourcePresentationState,
-    local_source: &SourceIdentity,
-) -> Option<SourceIdentity> {
-    match selected_source {
-        LibrarySourceSelection::Local => Some(local_source.clone()),
-        LibrarySourceSelection::Source(source_id) => library
-            .sources
-            .iter()
-            .find(|server| &server.id == source_id)
-            .cloned(),
     }
 }
 
@@ -370,7 +352,7 @@ fn schedule_server_selection_popdown(
 }
 
 fn source_icon_name(content: &SourceSelectorContent) -> &'static str {
-    match &content.selected_source {
+    match &content.selected_source_id {
         Some(_) => content
             .active_source
             .as_ref()
@@ -394,70 +376,54 @@ fn source_selection_popover(shell: &Rc<Shell>, content: &SourceSelectorContent) 
         row.set_sensitive(false);
         wrapper.append(&row);
     } else {
-        for server in &content.sources {
-            let active = matches!(
-                &content.selected_source,
-                Some(LibrarySourceSelection::Source(source_id)) if *source_id == server.id
-            );
+        for index in source_order(&content.sources, content.selected_source_id.as_ref()) {
+            let server = &content.sources[index];
+            let active = content.selected_source_id.as_ref() == Some(&server.id);
             let title = configured_source_display_name(server);
-            let row = source_option_row(Some(server), &title, "", active);
+            let detail = is_local_source(server)
+                .then(|| local_source_popup_detail(&content.local_folders))
+                .unwrap_or_default();
+            let row = source_option_row(Some(server), &title, &detail, active);
             if !active {
-                let row_popover = popover.clone();
+                let row_popover = popover.downgrade();
                 let source = shell.products.source.clone();
                 let source_id = server.id.clone();
                 row.connect_clicked(move |_| {
-                    popdown_server_selection_stack(&row_popover);
-                    source.select_source(LibrarySourceSelection::Source(source_id.clone()));
+                    if let Some(popover) = row_popover.upgrade() {
+                        popdown_server_selection_stack(&popover);
+                    }
+                    source.select_source(source_id.clone());
                 });
             }
             wrapper.append(&row);
         }
     }
 
-    if !content.local_folders.is_empty() {
-        let local_active = matches!(content.selected_source, Some(LibrarySourceSelection::Local));
-        let local_source = &content.local_source;
-        let local = source_option_row(
-            Some(local_source),
-            &configured_source_display_name(local_source),
-            &local_source_popup_detail(&content.local_folders),
-            local_active,
-        );
-        if !local_active {
-            let row_popover = popover.clone();
-            let source = shell.products.source.clone();
-            local.connect_clicked(move |_| {
-                popdown_server_selection_stack(&row_popover);
-                source.select_source(LibrarySourceSelection::Local);
-            });
-        }
-        wrapper.append(&local);
-    }
-
     let manage = server_action_row("document-edit-symbolic", &tr("Manage"), "", false);
-    let row_popover = popover.clone();
+    let row_popover = popover.downgrade();
     let manage_shell = Rc::clone(shell);
     manage.connect_clicked(move |_| {
-        popdown_server_selection_stack(&row_popover);
+        if let Some(popover) = row_popover.upgrade() {
+            popdown_server_selection_stack(&popover);
+        }
         present_library_preferences_dialog(&manage_shell);
     });
     wrapper.append(&manage);
 
     let add_library = server_action_row("list-add-symbolic", &tr("Add music library"), "", false);
     add_library.add_css_class("server-add-option");
-    let row_popover = popover.clone();
+    let row_popover = popover.downgrade();
     let add_library_shell = Rc::clone(shell);
     add_library.connect_clicked(move |_| {
-        popdown_server_selection_stack(&row_popover);
+        if let Some(popover) = row_popover.upgrade() {
+            popdown_server_selection_stack(&popover);
+        }
         present_add_server_preferences_dialog(&add_library_shell);
     });
     wrapper.append(&add_library);
 
     if let Some(server) = &content.active_source
-        && matches!(
-            content.selected_source,
-            Some(LibrarySourceSelection::Source(_))
-        )
+        && !content.music_folders.is_empty()
     {
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
         separator.add_css_class("server-library-separator");
@@ -470,10 +436,26 @@ fn source_selection_popover(shell: &Rc<Shell>, content: &SourceSelectorContent) 
     popover
 }
 
+fn source_order(sources: &[SourceSummary], selected: Option<&SourceId>) -> Vec<usize> {
+    let mut order = Vec::with_capacity(sources.len());
+    if let Some(selected) = selected
+        && let Some(index) = sources.iter().position(|source| &source.id == selected)
+    {
+        order.push(index);
+    }
+    order.extend(
+        sources
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source)| (Some(&source.id) != selected).then_some(index)),
+    );
+    order
+}
+
 fn source_summary_detail(content: &SourceSelectorContent) -> String {
-    match &content.selected_source {
-        Some(LibrarySourceSelection::Local) => local_source_detail(&content.local_folders),
-        Some(LibrarySourceSelection::Source(_)) => content
+    match &content.active_source {
+        Some(source) if is_local_source(source) => local_source_detail(&content.local_folders),
+        Some(_) => content
             .selected_music_folder_id
             .as_ref()
             .and_then(|selected| {
@@ -488,7 +470,7 @@ fn source_summary_detail(content: &SourceSelectorContent) -> String {
     }
 }
 
-fn local_source_detail(folders: &[LocalLibraryFolder]) -> String {
+fn local_source_detail(folders: &[LocalFolder]) -> String {
     match folders.len() {
         0 => tr("No local folders configured"),
         1 => folders[0].path.clone(),
@@ -496,7 +478,7 @@ fn local_source_detail(folders: &[LocalLibraryFolder]) -> String {
     }
 }
 
-fn local_source_popup_detail(folders: &[LocalLibraryFolder]) -> String {
+fn local_source_popup_detail(folders: &[LocalFolder]) -> String {
     folder_count_text(folders.len() as u64)
 }
 
@@ -504,7 +486,7 @@ fn append_source_music_folder_rows(
     shell: &Rc<Shell>,
     popover: &gtk::Popover,
     wrapper: &gtk::Box,
-    server: &SourceIdentity,
+    server: &SourceSummary,
     content: &SourceSelectorContent,
 ) {
     let all_active = content.selected_music_folder_id.is_none();
@@ -515,30 +497,34 @@ fn append_source_music_folder_rows(
         all_active,
     );
     if !all_active {
-        let row_popover = popover.clone();
+        let row_popover = popover.downgrade();
         let source = shell.products.source.clone();
         let source_id = server.id.clone();
         all.connect_clicked(move |_| {
-            popdown_server_selection_stack(&row_popover);
-            source.set_selected_music_folder(source_id.clone(), None);
+            if let Some(popover) = row_popover.upgrade() {
+                popdown_server_selection_stack(&popover);
+            }
+            source.set_music_folder(source_id.clone(), None);
         });
     }
     wrapper.append(&all);
 
-    for folder in &content.music_folders {
+    for folder in content.music_folders.iter() {
         let active = content
             .selected_music_folder_id
             .as_ref()
             .is_some_and(|selected| *selected == folder.id);
         let row = server_action_row("folder-music-symbolic", &folder.name, "", active);
         if !active {
-            let row_popover = popover.clone();
+            let row_popover = popover.downgrade();
             let source = shell.products.source.clone();
             let source_id = server.id.clone();
             let folder_id = folder.id.clone();
             row.connect_clicked(move |_| {
-                popdown_server_selection_stack(&row_popover);
-                source.set_selected_music_folder(source_id.clone(), Some(folder_id.clone()));
+                if let Some(popover) = row_popover.upgrade() {
+                    popdown_server_selection_stack(&popover);
+                }
+                source.set_music_folder(source_id.clone(), Some(folder_id.clone()));
             });
         }
         wrapper.append(&row);
@@ -557,7 +543,7 @@ fn popdown_server_selection_stack(popover: &gtk::Popover) {
 }
 
 fn source_option_row(
-    server: Option<&SourceIdentity>,
+    server: Option<&SourceSummary>,
     title: &str,
     detail: &str,
     active: bool,
@@ -583,6 +569,10 @@ fn source_option_row(
     }
     row.set_child(Some(&row_content));
     row
+}
+
+fn is_local_source(source: &SourceSummary) -> bool {
+    source.kind == "local"
 }
 
 fn server_action_row(icon_name: &str, title: &str, detail: &str, active: bool) -> gtk::Button {
@@ -655,4 +645,25 @@ fn configure_normal_selector_label(label: &gtk::Label) {
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_request(1);
     label.set_max_width_chars(NORMAL_SELECTOR_LABEL_WIDTH_CHARS);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(id: &str) -> SourceSummary {
+        SourceSummary {
+            id: SourceId::new(id),
+            kind: "test".to_string(),
+            name: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn selected_source_is_first_without_reordering_the_others() {
+        let sources = vec![source("first"), source("second"), source("selected")];
+        let selected = sources[2].id.clone();
+        assert_eq!(source_order(&sources, Some(&selected)), [2, 0, 1]);
+        assert_eq!(source_order(&sources, None), [0, 1, 2]);
+    }
 }

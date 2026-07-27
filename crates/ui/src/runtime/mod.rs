@@ -2,26 +2,36 @@
 //!
 //! `rufin` constructs these handles; the crates behind them implement the behavior.
 
-pub mod artwork;
 mod events;
 mod inputs;
-pub mod library;
-pub mod lyrics;
+mod release_update;
+mod scrobbling;
+pub mod smart_playlists;
 pub mod source;
+mod waveform;
 
 pub use ::playback::PlaybackHandles;
-pub use artwork::{ArtworkHandle, ArtworkPort};
 pub use events::ProductReceivers;
-pub use inputs::RuntimeInputs;
-pub use library::{LibraryHandle, LibraryPort};
-pub use lyrics::{LyricsHandle, LyricsPort};
+pub use inputs::{
+    FavoriteFailure, HomePublication, RuntimeInputs, SelectedLibrary, SelectedLibraryUpdate,
+    SourceEvent,
+};
+pub use release_update::{ReleaseNote, ReleaseUpdate, ReleaseUpdateHandle, ReleaseUpdatePort};
+pub use scrobbling::{
+    LastFmPreferences, LibreFmPreferences, ListenBrainzPreferences, ScrobblingConnection,
+    ScrobblingConnectionEvent, ScrobblingHandle, ScrobblingPort, ScrobblingPreferences,
+};
+pub use smart_playlists::{SmartPlaylistHandle, SmartPlaylistPort};
 pub use source::{SourceHandle, SourcePort};
+pub use waveform::WaveformProjection;
 
 #[derive(Clone)]
 pub struct ProductHandles {
     pub source: SourceHandle,
-    pub library: LibraryHandle,
+    pub smart_playlists: SmartPlaylistHandle,
     pub playback: PlaybackHandles,
-    pub artwork: ArtworkHandle,
-    pub lyrics: LyricsHandle,
+    pub artwork: artwork::Artwork,
+    pub lyrics: lyrics::LyricsHandle,
+    pub release_updates: ReleaseUpdateHandle,
+    pub scrobbling: ScrobblingHandle,
 }

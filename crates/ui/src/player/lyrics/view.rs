@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
-use metadata::{LyricLine, Lyrics};
+use lyrics::{LyricsDocument, LyricsLine};
 
 const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
 const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
@@ -50,7 +50,7 @@ impl LyricsPane {
         root.add_css_class("lyrics-panel");
         root.set_vexpand(true);
         root.set_margin_start(8);
-        root.set_margin_end(8);
+        root.set_margin_end(0);
         root.set_margin_bottom(8);
 
         let clear_auto_search_button = gtk::Button::from_icon_name("window-close-symbolic");
@@ -98,6 +98,7 @@ impl LyricsPane {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         body.set_vexpand(true);
+        body.set_margin_end(8);
         body.add_css_class("lyrics-lines");
         scroller.set_child(Some(&body));
         root.set_child(Some(&scroller));
@@ -185,6 +186,11 @@ impl LyricsPane {
         self.offset_entry.add_controller(focus);
     }
 
+    pub fn connect_offset_changed(&self, changed: impl Fn(String) + 'static) {
+        self.offset_entry
+            .connect_changed(move |entry| changed(entry.text().to_string()));
+    }
+
     pub fn set_offset_action(
         &self,
         label: &str,
@@ -210,7 +216,7 @@ impl LyricsPane {
 
     pub fn set_content(
         &self,
-        lyrics: Option<&Lyrics>,
+        lyrics: Option<&LyricsDocument>,
         loading: bool,
         empty_status: String,
         seek: Rc<dyn Fn(u64)>,
@@ -290,13 +296,13 @@ impl LyricsPane {
         }
     }
 
-    pub fn update_highlight(&self, lyrics: Option<&Lyrics>, position_millis: i128) {
+    pub fn update_highlight(&self, lyrics: Option<&LyricsDocument>, position_millis: i128) {
         self.update_highlight_with_scroll_duration(lyrics, position_millis, None);
     }
 
     fn update_highlight_with_scroll_duration(
         &self,
-        lyrics: Option<&Lyrics>,
+        lyrics: Option<&LyricsDocument>,
         position_millis: i128,
         scroll_duration: Option<u64>,
     ) {
@@ -343,7 +349,7 @@ impl LyricsPane {
         }
     }
 
-    pub fn refocus_highlight(&self, lyrics: Option<&Lyrics>, position_millis: i128) {
+    pub fn refocus_highlight(&self, lyrics: Option<&LyricsDocument>, position_millis: i128) {
         self.active_index.set(None);
         self.follow_pause_until.set(None);
         self.cancel_scroll_animation();
@@ -507,7 +513,7 @@ fn scroll_row_into_view_when_ready(
 }
 
 pub(crate) fn active_lyrics_line_index(
-    lines: &[LyricLine],
+    lines: &[LyricsLine],
     position_millis: i128,
 ) -> Option<usize> {
     lines
@@ -525,12 +531,12 @@ pub(crate) fn active_lyrics_line_index(
         .and_then(|(index, _, _)| index)
 }
 
-pub(crate) fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
+pub(crate) fn should_highlight_all_lyrics_lines(lines: &[LyricsLine]) -> bool {
     !lines.is_empty() && lines.iter().all(|line| line.start_millis.is_none())
 }
 
 pub(crate) fn next_lyrics_line_start_after(
-    lines: &[LyricLine],
+    lines: &[LyricsLine],
     position_millis: i128,
 ) -> Option<u64> {
     lines
@@ -565,7 +571,7 @@ pub(crate) fn lyrics_follow_scroll_target(
 }
 
 pub(crate) fn lyrics_scroll_animation_millis(
-    lines: &[LyricLine],
+    lines: &[LyricsLine],
     active_index: usize,
     position_millis: i128,
 ) -> u64 {
@@ -590,7 +596,7 @@ pub(crate) fn lyrics_scroll_animation_millis(
         .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
 }
 
-fn lyric_line_has_text(line: &LyricLine) -> bool {
+fn lyric_line_has_text(line: &LyricsLine) -> bool {
     !line.text.trim().is_empty()
 }
 
@@ -609,7 +615,7 @@ mod tests {
         lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
         should_highlight_all_lyrics_lines,
     };
-    use metadata::LyricLine;
+    use lyrics::LyricsLine as LyricLine;
     use std::time::{Duration, Instant};
 
     #[test]

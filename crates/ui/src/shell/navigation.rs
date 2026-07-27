@@ -26,6 +26,7 @@ const PRIMARY_MENU_POPOVER_ANCHOR_Y: i32 = 148;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
 const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
+const NAV_ROUTE_HISTORY_CLASS: &str = "nav-route-history";
 const NAV_ROUTE_ALBUMS_CLASS: &str = "nav-route-albums";
 const NAV_ROUTE_TRACKS_CLASS: &str = "nav-route-tracks";
 const NAV_ROUTE_ARTISTS_CLASS: &str = "nav-route-artists";
@@ -35,7 +36,7 @@ const NAV_ROUTE_MOODS_CLASS: &str = "nav-route-moods";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
-const NAV_ROUTE_ICONS: [(&str, &str, &str); 11] = [
+const NAV_ROUTE_ICONS: [(&str, &str, &str); 12] = [
     (
         NAV_ROUTE_HOME_CLASS,
         "rufin-route-home-symbolic",
@@ -45,6 +46,11 @@ const NAV_ROUTE_ICONS: [(&str, &str, &str); 11] = [
         NAV_ROUTE_FAVORITES_CLASS,
         "rufin-route-favorites-symbolic",
         "rufin-route-favorites-selected-symbolic",
+    ),
+    (
+        NAV_ROUTE_HISTORY_CLASS,
+        "rufin-route-history-symbolic",
+        "rufin-route-history-selected-symbolic",
     ),
     (
         NAV_ROUTE_ALBUMS_CLASS,
@@ -453,9 +459,11 @@ fn primary_menu_labeled_action_row(
     content.append(&text);
     row.set_child(Some(&content));
 
-    let row_popover = popover.clone();
+    let row_popover = popover.downgrade();
     row.connect_clicked(move |button| {
-        row_popover.popdown();
+        if let Some(popover) = row_popover.upgrade() {
+            popover.popdown();
+        }
         let _ = button.activate_action(action_name, None);
     });
     (row, text, icon)
@@ -556,6 +564,11 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             icon_name: "rufin-route-favorites-symbolic",
             label: msgid("Favorites"),
             route: Route::Favorites,
+        },
+        SidebarRouteItem::History => NavItem {
+            icon_name: "rufin-route-history-symbolic",
+            label: msgid("History"),
+            route: Route::History,
         },
         SidebarRouteItem::Albums => NavItem {
             icon_name: "rufin-route-albums-symbolic",
@@ -711,6 +724,7 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
     match route {
         Route::Home => Some(NAV_ROUTE_HOME_CLASS),
         Route::Favorites => Some(NAV_ROUTE_FAVORITES_CLASS),
+        Route::History => Some(NAV_ROUTE_HISTORY_CLASS),
         Route::Albums | Route::AlbumDetail(_) => Some(NAV_ROUTE_ALBUMS_CLASS),
         Route::Tracks => Some(NAV_ROUTE_TRACKS_CLASS),
         Route::Artists

@@ -25,7 +25,7 @@ impl Shell {
             return;
         }
 
-        let Some(next_position_millis) = self.lyrics.current.borrow().as_ref().and_then(|lyrics| {
+        let Some(next_position_millis) = self.visible_lyrics().as_ref().and_then(|lyrics| {
             next_lyrics_line_start_after(
                 &lyrics.lines,
                 self.lyrics_position_millis(position_millis),
