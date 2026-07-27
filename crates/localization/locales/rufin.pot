@@ -1194,9 +1194,6 @@ msgstr ""
 msgid "Save Diagnostic Log"
 msgstr ""
 
-msgid "Save Log..."
-msgstr ""
-
 msgid "Save Lyrics"
 msgstr ""
 
