@@ -4,6 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, TcpStream, 
 use std::time::{Duration, Instant};
 
 use crate::{SourceError, SourceResult};
+use if_addrs::IfAddr;
 use serde::Deserialize;
 use tracing::instrument;
 
@@ -23,7 +24,6 @@ pub struct DiscoveredJellyfinServer {
     pub id: Option<String>,
     pub name: String,
     pub address: String,
-    pub endpoint_address: Option<String>,
 }
 
 #[instrument(skip_all, fields(timeout_ms = timeout.as_millis()))]
@@ -89,11 +89,55 @@ pub fn discover_jellyfin_servers(timeout: Duration) -> SourceResult<Vec<Discover
 }
 
 fn discovery_targets() -> Vec<SocketAddrV4> {
-    vec![
+    let interfaces = match if_addrs::get_if_addrs() {
+        Ok(interfaces) => interfaces
+            .into_iter()
+            .filter_map(|interface| {
+                let is_up = interface.is_oper_up();
+                let is_point_to_point = interface.is_p2p();
+                let IfAddr::V4(address) = interface.addr else {
+                    return None;
+                };
+                Some(DiscoveryIpv4Interface {
+                    address: address.ip,
+                    broadcast: address.broadcast,
+                    is_up,
+                    is_point_to_point,
+                })
+            })
+            .collect(),
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "could not enumerate interface broadcasts for Jellyfin discovery"
+            );
+            Vec::new()
+        }
+    };
+    discovery_targets_for(interfaces)
+}
+
+fn discovery_targets_for(
+    interfaces: impl IntoIterator<Item = DiscoveryIpv4Interface>,
+) -> Vec<SocketAddrV4> {
+    let mut targets = vec![
         SocketAddrV4::new(Ipv4Addr::BROADCAST, JELLYFIN_DISCOVERY_PORT),
         SocketAddrV4::new(Ipv4Addr::new(127, 255, 255, 255), JELLYFIN_DISCOVERY_PORT),
         SocketAddrV4::new(Ipv4Addr::LOCALHOST, JELLYFIN_DISCOVERY_PORT),
-    ]
+    ];
+    for interface in interfaces {
+        if !interface.is_up || interface.address.is_loopback() || interface.is_point_to_point {
+            continue;
+        }
+        let Some(broadcast) = interface.broadcast else {
+            continue;
+        };
+        let target = SocketAddrV4::new(broadcast, JELLYFIN_DISCOVERY_PORT);
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    targets
 }
 
 fn map_io_error(context: &str, error: io::Error) -> SourceError {
@@ -105,13 +149,7 @@ fn discovered_server_from_packet(packet: &[u8]) -> Option<DiscoveredJellyfinServ
     let address = response
         .address
         .as_deref()
-        .and_then(normalize_discovered_address)
-        .or_else(|| {
-            response
-                .endpoint_address
-                .as_deref()
-                .and_then(normalize_discovered_address)
-        })?;
+        .and_then(normalize_discovered_address)?;
     Some(DiscoveredJellyfinServer {
         id: response.id.filter(|id| !id.trim().is_empty()),
         name: response
@@ -119,7 +157,6 @@ fn discovered_server_from_packet(packet: &[u8]) -> Option<DiscoveredJellyfinServ
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Jellyfin".to_string()),
         address,
-        endpoint_address: response.endpoint_address,
     })
 }
 
@@ -170,7 +207,7 @@ fn probe_localhost_server(target: LocalhostProbeTarget) -> Option<DiscoveredJell
         .read_to_end(&mut response)
         .ok()?;
     let body = http_response_body(&response)?;
-    discovered_server_from_public_info(target.base_url.as_str(), target.socket.to_string(), &body)
+    discovered_server_from_public_info(target.base_url.as_str(), &body)
 }
 
 fn http_response_body(response: &[u8]) -> Option<Vec<u8>> {
@@ -215,7 +252,6 @@ fn decode_chunked_body(mut body: &[u8]) -> Option<Vec<u8>> {
 
 fn discovered_server_from_public_info(
     base_url: &str,
-    endpoint_address: String,
     body: &[u8],
 ) -> Option<DiscoveredJellyfinServer> {
     let response: JellyfinPublicSystemInfo = serde_json::from_slice(body).ok()?;
@@ -230,7 +266,6 @@ fn discovered_server_from_public_info(
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Jellyfin".to_string()),
         address: normalize_discovered_address(base_url)?,
-        endpoint_address: Some(endpoint_address),
     })
 }
 
@@ -246,11 +281,34 @@ fn push_discovered_server(
 ) {
     if servers
         .iter()
-        .any(|existing| existing.address == server.address)
+        .any(|existing| same_discovered_endpoint(&existing.address, &server.address))
     {
         return;
     }
     servers.push(server);
+}
+
+fn same_discovered_endpoint(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let (Ok(left), Ok(right)) = (normalize_base_url(left), normalize_base_url(right)) else {
+        return false;
+    };
+    is_loopback_endpoint(&left)
+        && is_loopback_endpoint(&right)
+        && left.scheme() == right.scheme()
+        && left.port_or_known_default() == right.port_or_known_default()
+        && left.path() == right.path()
+}
+
+fn is_loopback_endpoint(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -260,13 +318,20 @@ struct LocalhostProbeTarget {
     base_url: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DiscoveryIpv4Interface {
+    address: Ipv4Addr,
+    broadcast: Option<Ipv4Addr>,
+    is_up: bool,
+    is_point_to_point: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct JellyfinDiscoveryResponse {
     address: Option<String>,
     id: Option<String>,
     name: Option<String>,
-    endpoint_address: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -285,10 +350,10 @@ mod tests {
     #[test]
     fn discovery_response_maps_server_address() {
         let packet = serde_json::json!({
-            "Address": "http://music.local:8096/",
+            "Address": "http://192.0.2.20:8096/",
             "Id": "server-one",
             "Name": "Music Box",
-            "EndpointAddress": "192.0.2.10:8096"
+            "EndpointAddress": "127.0.0.1:8096"
         })
         .to_string();
 
@@ -296,26 +361,22 @@ mod tests {
 
         assert_eq!(server.id.as_deref(), Some("server-one"));
         assert_eq!(server.name, "Music Box");
-        assert_eq!(server.address, "http://music.local:8096");
-        assert_eq!(server.endpoint_address.as_deref(), Some("192.0.2.10:8096"));
+        assert_eq!(server.address, "http://192.0.2.20:8096");
     }
 
     #[test]
-    fn discovery_fall_address() {
+    fn discovery_response_requires_an_advertised_address() {
         let packet = serde_json::json!({
             "Id": "server-one",
             "EndpointAddress": "192.0.2.10:8096"
         })
         .to_string();
 
-        let server = discovered_server_from_packet(packet.as_bytes()).expect("discovered server");
-
-        assert_eq!(server.name, "Jellyfin");
-        assert_eq!(server.address, "http://192.0.2.10:8096");
+        assert!(discovered_server_from_packet(packet.as_bytes()).is_none());
     }
 
     #[test]
-    fn discovery_keep_server() {
+    fn discovery_keeps_distinct_urls_and_one_loopback() {
         let mut servers = Vec::new();
         push_discovered_server(
             &mut servers,
@@ -323,7 +384,6 @@ mod tests {
                 id: Some("server-one".to_string()),
                 name: "Music Box".to_string(),
                 address: "http://music.local:8096".to_string(),
-                endpoint_address: None,
             },
         );
         push_discovered_server(
@@ -332,22 +392,37 @@ mod tests {
                 id: Some("server-one".to_string()),
                 name: "Music Box".to_string(),
                 address: "http://192.0.2.10:8096".to_string(),
-                endpoint_address: None,
             },
         );
         push_discovered_server(
             &mut servers,
             DiscoveredJellyfinServer {
-                id: None,
+                id: Some("server-one".to_string()),
                 name: "Music Box".to_string(),
-                address: "http://music.local:8096".to_string(),
-                endpoint_address: None,
+                address: "http://127.0.0.1:8096".to_string(),
+            },
+        );
+        push_discovered_server(
+            &mut servers,
+            DiscoveredJellyfinServer {
+                id: Some("server-one".to_string()),
+                name: "Music Box".to_string(),
+                address: "http://localhost:8096".to_string(),
+            },
+        );
+        push_discovered_server(
+            &mut servers,
+            DiscoveredJellyfinServer {
+                id: Some("server-one".to_string()),
+                name: "Music Box".to_string(),
+                address: "http://[::1]:8096".to_string(),
             },
         );
 
-        assert_eq!(servers.len(), 2);
+        assert_eq!(servers.len(), 3);
         assert_eq!(servers[0].address, "http://music.local:8096");
         assert_eq!(servers[1].address, "http://192.0.2.10:8096");
+        assert_eq!(servers[2].address, "http://127.0.0.1:8096");
     }
 
     #[test]
@@ -361,6 +436,43 @@ mod tests {
     }
 
     #[test]
+    fn discovery_targets_active_interface_broadcasts() {
+        let targets = discovery_targets_for([
+            DiscoveryIpv4Interface {
+                address: Ipv4Addr::new(192, 168, 1, 103),
+                broadcast: Some(Ipv4Addr::new(192, 168, 1, 255)),
+                is_up: true,
+                is_point_to_point: false,
+            },
+            DiscoveryIpv4Interface {
+                address: Ipv4Addr::new(10, 2, 0, 2),
+                broadcast: Some(Ipv4Addr::new(10, 2, 0, 2)),
+                is_up: true,
+                is_point_to_point: true,
+            },
+            DiscoveryIpv4Interface {
+                address: Ipv4Addr::new(198, 51, 100, 20),
+                broadcast: Some(Ipv4Addr::new(198, 51, 100, 255)),
+                is_up: false,
+                is_point_to_point: false,
+            },
+        ]);
+
+        assert!(targets.contains(&SocketAddrV4::new(
+            Ipv4Addr::new(192, 168, 1, 255),
+            JELLYFIN_DISCOVERY_PORT
+        )));
+        assert!(!targets.contains(&SocketAddrV4::new(
+            Ipv4Addr::new(10, 2, 0, 2),
+            JELLYFIN_DISCOVERY_PORT
+        )));
+        assert!(!targets.contains(&SocketAddrV4::new(
+            Ipv4Addr::new(198, 51, 100, 255),
+            JELLYFIN_DISCOVERY_PORT
+        )));
+    }
+
+    #[test]
     fn localhost_public_info_maps_server() {
         let body = serde_json::json!({
             "Id": "server-one",
@@ -369,17 +481,12 @@ mod tests {
         })
         .to_string();
 
-        let server = discovered_server_from_public_info(
-            "http://localhost:8096",
-            "127.0.0.1:8096".to_string(),
-            body.as_bytes(),
-        )
-        .expect("localhost server");
+        let server = discovered_server_from_public_info("http://localhost:8096", body.as_bytes())
+            .expect("localhost server");
 
         assert_eq!(server.id.as_deref(), Some("server-one"));
         assert_eq!(server.name, "Local Jellyfin");
         assert_eq!(server.address, "http://localhost:8096");
-        assert_eq!(server.endpoint_address.as_deref(), Some("127.0.0.1:8096"));
     }
 
     #[test]
@@ -387,12 +494,8 @@ mod tests {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nf\r\n{\"ServerName\":\"\r\n10\r\nLocal Jellyfin\"}\r\n0\r\n\r\n";
 
         let body = http_response_body(response).expect("response body");
-        let server = discovered_server_from_public_info(
-            "http://localhost:8096",
-            "127.0.0.1:8096".to_string(),
-            &body,
-        )
-        .expect("localhost server");
+        let server = discovered_server_from_public_info("http://localhost:8096", &body)
+            .expect("localhost server");
 
         assert_eq!(server.name, "Local Jellyfin");
     }

@@ -1,11 +1,11 @@
 use super::{
     LibraryField, LibraryLayout, LibraryListKey, MAX_RESTORED_WINDOW_HEIGHT,
-    MAX_RESTORED_WINDOW_WIDTH, Settings, available_detail_track_fields, available_sort_fields,
-    sanitized_window_size,
+    MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarRouteItem, available_detail_track_fields,
+    available_sort_fields, sanitized_window_size,
 };
 
 #[test]
-fn private_mode_blocks_outbound_ui_activity() {
+fn private_mode_blocks_external_ui_activity() {
     let settings = Settings {
         private_mode: true,
         notifications_enabled: true,
@@ -15,7 +15,51 @@ fn private_mode_blocks_outbound_ui_activity() {
 
     assert!(settings.allows_notifications());
     assert!(!settings.allows_external_site_links());
-    assert!(!settings.allows_release_update_check());
+    assert!(!settings.allows_external_album_lookup());
+}
+
+#[test]
+fn playback_modes_are_one_app_wide_settings_value() {
+    let settings = Settings {
+        auto_dj_enabled: true,
+        shuffle_enabled: true,
+        repeat_mode: playback::RepeatMode::All,
+        ..Settings::default()
+    };
+    let value = serde_json::to_value(&settings).expect("serialize playback modes");
+
+    assert_eq!(value["auto_dj_enabled"], true);
+    assert_eq!(value["shuffle_enabled"], true);
+    assert_eq!(value["repeat_mode"], "All");
+
+    let restored = serde_json::from_value::<Settings>(value).expect("restore playback modes");
+    assert!(restored.auto_dj_enabled);
+    assert!(restored.shuffle_enabled);
+    assert_eq!(restored.repeat_mode, playback::RepeatMode::All);
+}
+
+#[test]
+fn split_lyrics_and_album_lookup_settings_keep_the_released_flat_keys() {
+    let value = serde_json::to_value(Settings::default()).expect("serialize settings");
+
+    assert_eq!(value["external_metadata_enabled"], true);
+    assert!(value.get("external_album_lookup_enabled").is_none());
+    assert!(value.get("lyrics").is_none());
+    assert!(value.get("metadata").is_none());
+
+    let mut disabled = value.clone();
+    disabled["external_metadata_enabled"] = false.into();
+    let disabled =
+        serde_json::from_value::<Settings>(disabled).expect("deserialize released setting");
+    assert!(!disabled.external_album_lookup_enabled);
+
+    let mut missing = value;
+    missing
+        .as_object_mut()
+        .expect("settings object")
+        .remove("external_metadata_enabled");
+    let missing = serde_json::from_value::<Settings>(missing).expect("deserialize sparse settings");
+    assert!(missing.external_album_lookup_enabled);
 }
 
 #[test]
@@ -66,6 +110,7 @@ fn default_artist_tracks_use_normal_track_rows() {
     assert_eq!(
         tracks.row_fields,
         vec![
+            LibraryField::RowIndex,
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
@@ -78,6 +123,7 @@ fn default_artist_tracks_use_normal_track_rows() {
         assert_eq!(
             settings.row_fields,
             vec![
+                LibraryField::RowIndex,
                 LibraryField::TitleMerged,
                 LibraryField::Album,
                 LibraryField::Year,
@@ -86,6 +132,64 @@ fn default_artist_tracks_use_normal_track_rows() {
             "{key:?}"
         );
     }
+}
+
+#[test]
+fn history_is_an_enabled_ordered_track_route_by_default() {
+    let mut settings = Settings::default();
+    let history = settings.library_list(LibraryListKey::History);
+    assert_eq!(history.layout, LibraryLayout::Row);
+    assert_eq!(history.sort_key, LibraryField::RowIndex);
+    assert_eq!(history.row_fields.first(), Some(&LibraryField::RowIndex));
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::History && entry.visible)
+    );
+    let history_position = settings
+        .sidebar
+        .route_items
+        .iter()
+        .position(|entry| entry.item == SidebarRouteItem::History)
+        .expect("History is present");
+    assert_eq!(
+        settings.sidebar.route_items[history_position - 1].item,
+        SidebarRouteItem::Moods
+    );
+    assert_eq!(
+        settings.sidebar.route_items[history_position + 1].item,
+        SidebarRouteItem::Folders
+    );
+
+    settings
+        .sidebar
+        .route_items
+        .retain(|entry| entry.item != SidebarRouteItem::History);
+    settings.sanitize();
+    let history_position = settings
+        .sidebar
+        .route_items
+        .iter()
+        .position(|entry| entry.item == SidebarRouteItem::History)
+        .expect("sanitize restores History");
+    assert_eq!(
+        settings
+            .sidebar
+            .route_items
+            .get(history_position)
+            .map(|entry| entry.visible),
+        Some(true)
+    );
+    assert_eq!(
+        settings.sidebar.route_items[history_position - 1].item,
+        SidebarRouteItem::Moods
+    );
+    assert_eq!(
+        settings.sidebar.route_items[history_position + 1].item,
+        SidebarRouteItem::Folders
+    );
 }
 
 #[test]
@@ -110,11 +214,38 @@ fn playlist_track_sorting_stays_within_playlist_playback_ordering() {
 }
 
 #[test]
-fn detail_track_defaults_remain_text_columns() {
+fn track_row_defaults_start_with_the_index() {
+    for key in [
+        LibraryListKey::Tracks,
+        LibraryListKey::FavoriteTracks,
+        LibraryListKey::History,
+        LibraryListKey::AlbumDetailTracks,
+        LibraryListKey::ArtistTracks,
+        LibraryListKey::GenreTracks,
+        LibraryListKey::MoodTracks,
+        LibraryListKey::PlaylistTracks,
+        LibraryListKey::SmartPlaylistTracks,
+    ] {
+        assert_eq!(
+            super::LibraryListSettings::for_key(key).row_fields.first(),
+            Some(&LibraryField::RowIndex),
+            "{key:?}"
+        );
+    }
+
     assert_eq!(
         available_detail_track_fields(),
         &[
+            LibraryField::RowIndex,
             LibraryField::TrackNumber,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ]
+    );
+    assert_eq!(
+        super::LibraryListSettings::for_key(LibraryListKey::Albums).detail_track_fields,
+        [
+            LibraryField::RowIndex,
             LibraryField::Title,
             LibraryField::Duration,
         ]
@@ -175,7 +306,14 @@ fn library_list_settings_migrate_persisted_layout_versions() {
         layout_version: 4,
     };
     albums.sanitize(LibraryListKey::Albums);
-    assert_eq!(albums.detail_track_fields, available_detail_track_fields());
+    assert_eq!(
+        albums.detail_track_fields,
+        [
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ]
+    );
 
     let mut favorite_tracks = super::LibraryListSettings {
         layout: LibraryLayout::Row,
@@ -195,10 +333,51 @@ fn library_list_settings_migrate_persisted_layout_versions() {
     assert_eq!(
         favorite_tracks.row_fields,
         vec![
+            LibraryField::RowIndex,
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
             LibraryField::PlayCount,
         ]
+    );
+
+    let mut tracks = super::LibraryListSettings {
+        layout: LibraryLayout::Row,
+        row_fields: vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::Favorite,
+        ],
+        grid_fields: Vec::new(),
+        detail_track_fields: vec![
+            LibraryField::TrackNumber,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ],
+        sort_key: LibraryField::Title,
+        descending: false,
+        layout_version: 7,
+    };
+    tracks.sanitize(LibraryListKey::Tracks);
+    assert_eq!(tracks.row_fields.first(), Some(&LibraryField::RowIndex));
+    assert_eq!(
+        tracks.detail_track_fields,
+        [
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ]
+    );
+
+    let mut custom_tracks = super::LibraryListSettings {
+        row_fields: vec![LibraryField::Image, LibraryField::TitleMerged],
+        layout_version: 7,
+        ..super::LibraryListSettings::for_key(LibraryListKey::Tracks)
+    };
+    custom_tracks.sanitize(LibraryListKey::Tracks);
+    assert_eq!(
+        custom_tracks.row_fields,
+        [LibraryField::Image, LibraryField::TitleMerged]
     );
 }

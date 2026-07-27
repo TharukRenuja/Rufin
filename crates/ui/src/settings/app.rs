@@ -1,14 +1,13 @@
 use std::rc::Rc;
 
+use desktop_integration::Settings as RichPresenceSettings;
 use library::HomeBlockKind;
 use localization::{default_language_preference, sanitize_language_preference};
-use metadata::Settings as MetadataSettings;
+use lyrics::Settings as LyricsSettings;
 use playback::{
     DEFAULT_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD,
-    PlaybackSettings,
+    PlaybackSettings, RepeatMode,
 };
-use rich_presence::Settings as RichPresenceSettings;
-use scrobbling::Settings as ScrobblingSettings;
 use secrets::SecretStorageMode;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +37,9 @@ pub struct Settings {
     #[serde(default = "legacy_secret_storage_mode")]
     pub secret_storage_mode: SecretStorageMode,
     #[serde(flatten)]
-    pub metadata: MetadataSettings,
+    pub lyrics: LyricsSettings,
+    #[serde(default = "default_true", rename = "external_metadata_enabled")]
+    pub external_album_lookup_enabled: bool,
     #[serde(default)]
     pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default)]
@@ -58,9 +59,11 @@ pub struct Settings {
     #[serde(default)]
     pub lastfm_api_key: String,
     #[serde(default)]
-    pub scrobbling: ScrobblingSettings,
-    #[serde(default)]
     pub auto_dj_enabled: bool,
+    #[serde(default)]
+    pub shuffle_enabled: bool,
+    #[serde(default)]
+    pub repeat_mode: RepeatMode,
     #[serde(default = "default_auto_dj_refill_threshold")]
     pub auto_dj_refill_threshold: u8,
     #[serde(default)]
@@ -92,7 +95,8 @@ impl Default for Settings {
             release_notifications_enabled: true,
             release_notification_seen_version: None,
             secret_storage_mode: SecretStorageMode::default(),
-            metadata: MetadataSettings::default(),
+            lyrics: LyricsSettings::default(),
+            external_album_lookup_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_playlist_covers: false,
             seekbar_waveform_enabled: true,
@@ -102,8 +106,9 @@ impl Default for Settings {
             type_to_search_enabled: true,
             rich_presence: RichPresenceSettings::default(),
             lastfm_api_key: String::new(),
-            scrobbling: ScrobblingSettings::default(),
             auto_dj_enabled: false,
+            shuffle_enabled: false,
+            repeat_mode: RepeatMode::Off,
             auto_dj_refill_threshold: DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
             playback: PlaybackSettings::default(),
             home_blocks: default_home_blocks(),
@@ -125,18 +130,17 @@ impl Settings {
         self.external_site_links.enabled && !self.private_mode
     }
 
-    pub fn allows_release_update_check(&self) -> bool {
-        self.release_notifications_enabled && !self.private_mode
+    pub fn allows_external_album_lookup(&self) -> bool {
+        self.external_album_lookup_enabled && !self.private_mode
     }
 
     pub fn sanitize(&mut self) {
         self.rich_presence.sanitize();
         self.playback.sanitize();
-        self.metadata.sanitize();
+        self.lyrics.sanitize();
         self.auto_dj_refill_threshold = self
             .auto_dj_refill_threshold
             .clamp(MIN_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD);
-        self.scrobbling.sanitize();
         self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
         self.language = sanitize_language_preference(&self.language);
         self.release_notification_seen_version = self
@@ -174,10 +178,7 @@ impl Settings {
 
 pub trait SettingsPort {
     fn load(&self) -> Settings;
-    fn load_with_scrobbling_secrets(&self) -> Settings;
     fn save(&self, settings: &Settings) -> Result<Settings, String>;
-    fn save_with_secret_deletes(&self, settings: &Settings) -> Result<Settings, String>;
-    fn set_secret_backend(&self, mode: SecretStorageMode) -> Result<Settings, String>;
 }
 
 pub type SettingsHandle = Rc<dyn SettingsPort>;

@@ -6,26 +6,22 @@ use adw::prelude::*;
 use gtk::glib;
 use tracing::warn;
 
-use crate::preferences::source::LibraryLoad;
-use crate::preferences::source::source_sync_progress_text;
-use crate::routes::route::Route;
-use localization::tr;
+use crate::preferences::source::source_operation_text;
 
 use super::Shell;
 
 pub(super) struct StartupState {
     pub(super) route_revealed: Cell<bool>,
+    pub(super) initial_launch: Cell<bool>,
     pub(super) reveal_deadline: RefCell<Option<glib::SourceId>>,
 }
 
 const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 
-fn library_preparing_status() -> String {
-    tr("Preparing library...")
-}
-
 impl Shell {
     pub(crate) fn enter_startup_loading(self: &Rc<Self>) {
+        self.startup.initial_launch.set(false);
+        self.startup.route_revealed.set(false);
         self.cancel_startup_route_reveal();
         self.clear_mounted_routes();
         self.update_layout();
@@ -66,20 +62,8 @@ impl Shell {
     }
 
     fn library_loading_status(&self) -> Option<String> {
-        let load = self.source.load.borrow();
-        match &*load {
-            LibraryLoad::Switching { .. } => Some(tr("Switching library...")),
-            LibraryLoad::Connecting { stage, .. } => Some(stage.clone()),
-            LibraryLoad::Failed { message, .. } => Some(message.clone()),
-            LibraryLoad::WaitingForFirstCommit { source_id } => self
-                .source
-                .syncs
-                .borrow()
-                .get(source_id)
-                .map(source_sync_progress_text)
-                .or_else(|| Some(library_preparing_status())),
-            LibraryLoad::Ready => None,
-        }
+        let operation = self.source.operation.borrow();
+        library_loading_status(&operation, self.startup.initial_launch.get())
     }
     pub(crate) fn schedule_startup_route_reveal(self: &Rc<Self>) {
         if self.startup.route_revealed.get() || self.source.login_screen_active() {
@@ -91,8 +75,9 @@ impl Shell {
         }
 
         self.update_layout();
-        self.prepare_startup_route_content();
         self.begin_startup_cover_prime();
+        self.prepare_startup_route_content();
+        self.start_source_thumbnail_warm();
         let shell = Rc::clone(self);
         let deadline = glib::timeout_add_local_once(
             Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS),
@@ -141,9 +126,10 @@ impl Shell {
     }
 
     fn commit_startup_route_reveal(self: &Rc<Self>) {
+        self.startup.initial_launch.set(false);
         self.startup.route_revealed.set(true);
         self.cancel_startup_route_reveal();
-        self.schedule_source_artwork_warm();
+        self.products.source.selected_library_revealed();
     }
 
     pub(crate) fn cancel_startup_route_reveal(&self) {
@@ -160,9 +146,6 @@ impl Shell {
             return;
         }
 
-        if matches!(self.navigation.routes.borrow().current(), Route::Home) {
-            self.prepare_cached_home_projection();
-        }
         self.render_current_route_content();
         self.render_queue_panel();
         self.render_lyrics_panel();
@@ -184,8 +167,41 @@ impl Shell {
         self.route_viewport.route_host.queue_resize();
         self.right_panel.right_panel_slot.queue_resize();
     }
-    pub(crate) fn schedule_first_run_app_reveal(self: &Rc<Self>) {
-        *self.source.load.borrow_mut() = LibraryLoad::Ready;
-        self.schedule_startup_route_reveal();
+}
+
+fn library_loading_status(
+    operation: &crate::runtime::source::SourceOperation,
+    initial_launch: bool,
+) -> Option<String> {
+    if initial_launch {
+        return Some(localization::tr("Preparing library..."));
+    }
+    source_operation_text(operation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
+
+    #[test]
+    fn launch_is_preparing_while_an_explicit_change_is_switching() {
+        let saved = library::SourceId::new("saved");
+        let operation = SourceOperation::Switching {
+            target: saved.clone(),
+            progress: SourceProgress {
+                stage: SourceProgressStage::Connecting,
+                completed: 0,
+                total: None,
+            },
+        };
+        assert_eq!(
+            library_loading_status(&operation, true).as_deref(),
+            Some("Preparing library...")
+        );
+        assert_eq!(
+            library_loading_status(&operation, false).as_deref(),
+            Some("Switching library...")
+        );
     }
 }

@@ -1,10 +1,16 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod controller;
+mod album_release;
+mod app;
+mod paths;
+mod playback;
+mod radio;
+mod release_update;
+mod schema30_migration;
+mod scrobbling;
 mod settings;
-mod source_setup;
-
-pub(crate) use settings::StoredSettings;
+mod source;
+mod waveform;
 
 use std::process::ExitCode;
 use tracing::info;
@@ -14,7 +20,7 @@ fn main() -> ExitCode {
     init_tracing();
     info!("starting Rufin native shell");
 
-    ui::run_application(controller::runtime_inputs)
+    ui::run_application(app::runtime_inputs)
 }
 
 fn init_tracing() {

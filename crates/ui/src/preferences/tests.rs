@@ -1,6 +1,32 @@
-use super::{layout::reorder_home_blocks, reorder_sidebar_item_settings};
+use super::{
+    layout::{reorder_home_blocks, visibility_position_subtitle},
+    reorder_sidebar_item_settings, sidebar_route_item_subtitle,
+};
 use crate::{SidebarRouteItem, SidebarRouteItemSettings};
 use library::HomeBlockKind;
+use localization::tr;
+
+#[test]
+fn reorder_list_subtitles_show_visibility_before_position() {
+    assert_eq!(
+        visibility_position_subtitle(true, 0),
+        format!("{} · {} 1", tr("Visible"), tr("Position"))
+    );
+    assert_eq!(
+        visibility_position_subtitle(false, 3),
+        format!("{} · {} 4", tr("Hidden"), tr("Position"))
+    );
+
+    let hidden_sidebar_item = SidebarRouteItemSettings {
+        item: SidebarRouteItem::Albums,
+        visible: false,
+    };
+    assert_eq!(
+        sidebar_route_item_subtitle(&hidden_sidebar_item, 2),
+        format!("{} · {} 3", tr("Hidden"), tr("Position"))
+    );
+}
+
 #[test]
 fn reorder_sidebar_target() {
     let mut items = sidebar_settings(&[

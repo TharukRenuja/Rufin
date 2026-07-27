@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use ::library::{Album, Artist, Playlist, SmartPlaylist, Track};
+use ::library::{AlbumSummary, ArtistSummary, PlaylistSummary, SmartPlaylistSummary, Track};
 use adw::prelude::*;
 use gtk::{gio, glib};
 
@@ -13,7 +13,7 @@ use super::library_fields::{
 
 pub(crate) fn populate_album_model(
     model: &gio::ListStore,
-    albums: &[Album],
+    albums: &[AlbumSummary],
     settings: &LibraryListSettings,
 ) {
     let mut values = albums.to_vec();
@@ -23,7 +23,7 @@ pub(crate) fn populate_album_model(
 
 pub(crate) fn populate_artist_model(
     model: &gio::ListStore,
-    artists: &[Artist],
+    artists: &[ArtistSummary],
     settings: &LibraryListSettings,
 ) {
     let mut values = artists.to_vec();
@@ -33,7 +33,7 @@ pub(crate) fn populate_artist_model(
 
 pub(crate) fn populate_playlist_model(
     model: &gio::ListStore,
-    playlists: &[Playlist],
+    playlists: &[PlaylistSummary],
     settings: &LibraryListSettings,
 ) {
     let mut values = playlists.to_vec();
@@ -43,7 +43,7 @@ pub(crate) fn populate_playlist_model(
 
 pub(crate) fn populate_smart_playlist_model(
     model: &gio::ListStore,
-    playlists: &[SmartPlaylist],
+    playlists: &[SmartPlaylistSummary],
     settings: &LibraryListSettings,
 ) {
     let mut values = playlists.to_vec();
@@ -55,21 +55,27 @@ pub(crate) fn populate_smart_playlist_model(
     model.splice(0, model.n_items(), &additions);
 }
 
-pub(crate) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
-    albums.sort_by(|left, right| {
-        let missing = album_field_missing(left, settings.sort_key)
-            .cmp(&album_field_missing(right, settings.sort_key));
-        if missing != Ordering::Equal {
-            return missing;
-        }
-        apply_desc(
-            compare_album(left, right, settings.sort_key),
-            settings.descending,
-        )
-    });
+pub(crate) fn sort_albums(albums: &mut [AlbumSummary], settings: &LibraryListSettings) {
+    albums.sort_by(|left, right| compare_albums_for_settings(left, right, settings));
 }
 
-pub(crate) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
+pub(crate) fn compare_albums_for_settings(
+    left: &AlbumSummary,
+    right: &AlbumSummary,
+    settings: &LibraryListSettings,
+) -> Ordering {
+    let missing = album_field_missing(left, settings.sort_key)
+        .cmp(&album_field_missing(right, settings.sort_key));
+    if missing != Ordering::Equal {
+        return missing;
+    }
+    apply_desc(
+        compare_album(left, right, settings.sort_key),
+        settings.descending,
+    )
+}
+
+pub(crate) fn sort_artists(artists: &mut [ArtistSummary], settings: &LibraryListSettings) {
     artists.sort_by(|left, right| {
         let missing = artist_field_missing(left, settings.sort_key)
             .cmp(&artist_field_missing(right, settings.sort_key));
@@ -85,7 +91,7 @@ pub(crate) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSetting
 
 pub(crate) fn replace_albums_in_model(
     model: &gio::ListStore,
-    albums: impl IntoIterator<Item = Album>,
+    albums: impl IntoIterator<Item = AlbumSummary>,
 ) {
     let additions = albums
         .into_iter()
@@ -96,7 +102,7 @@ pub(crate) fn replace_albums_in_model(
 
 pub(crate) fn replace_artists_in_model(
     model: &gio::ListStore,
-    artists: impl IntoIterator<Item = Artist>,
+    artists: impl IntoIterator<Item = ArtistSummary>,
 ) {
     let additions = artists
         .into_iter()
@@ -107,7 +113,7 @@ pub(crate) fn replace_artists_in_model(
 
 pub(crate) fn replace_playlists_in_model(
     model: &gio::ListStore,
-    playlists: impl IntoIterator<Item = Playlist>,
+    playlists: impl IntoIterator<Item = PlaylistSummary>,
 ) {
     let additions = playlists
         .into_iter()

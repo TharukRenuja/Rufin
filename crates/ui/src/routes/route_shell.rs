@@ -54,7 +54,7 @@ pub(crate) struct LibraryPageShellOptions {
 #[derive(Clone)]
 pub(crate) struct LibraryPageShell {
     widget: gtk::Widget,
-    stack: gtk::Stack,
+    contents: gtk::Stack,
     toolbar: LibraryToolbarProjection,
 }
 
@@ -63,17 +63,17 @@ impl LibraryPageShell {
         self.widget.clone()
     }
 
-    pub(crate) fn set_empty(&self, empty: bool) {
-        self.stack
-            .set_visible_child_name(if empty { "empty" } else { "content" });
-    }
-
     pub(crate) fn apply_library_list_settings(
         &self,
         key: LibraryListKey,
         settings: &LibraryListSettings,
     ) {
         self.toolbar.apply(key, settings);
+    }
+
+    pub(crate) fn set_empty(&self, empty: bool) {
+        self.contents
+            .set_visible_child_name(if empty { "empty" } else { "content" });
     }
 }
 
@@ -151,7 +151,7 @@ impl Shell {
 
         LibraryPageShell {
             widget: wrapper.upcast(),
-            stack,
+            contents: stack,
             toolbar,
         }
     }
@@ -193,7 +193,7 @@ impl Shell {
     fn route_search_accepts_focus(&self) -> bool {
         !self.source.login_screen_active()
             && !self.fullscreen_player_visible()
-            && self.preferences.dialog.borrow().is_none()
+            && self.preferences.active_dialog().is_none()
             && self.source.add_server.borrow().is_none()
             && self.lyrics.search_dialog.borrow().is_none()
     }
@@ -271,7 +271,6 @@ impl Shell {
                 let create = gtk::Button::new();
                 set_library_command_button_content(&create, false, ADD_ICON, "New Playlist");
                 bind_widget_tooltip(&create, "New Playlist");
-                create.set_sensitive(self.products.library.playlist_creation_supported());
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
                 controls.append(&create);
@@ -470,7 +469,7 @@ impl Shell {
             let shell = Rc::clone(self);
             let fields_group = fields_group.clone();
             let rows = Rc::clone(&rows);
-            let layout_buttons = Rc::clone(&layout_buttons);
+            let layout_buttons = Rc::downgrade(&layout_buttons);
             let layout = *layout;
             button.connect_toggled(move |button| {
                 if !button.is_active()
@@ -481,7 +480,9 @@ impl Shell {
                 shell.update_library_list_settings(key, |settings| {
                     settings.layout = layout;
                 });
-                sync_layout_buttons(&layout_buttons, layout);
+                if let Some(layout_buttons) = layout_buttons.upgrade() {
+                    sync_layout_buttons(&layout_buttons, layout);
+                }
                 populate_library_field_rows(&shell, key, &fields_group, &rows);
             });
         }

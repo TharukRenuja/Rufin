@@ -75,8 +75,11 @@ pub struct BatchItem {
 }
 
 impl BatchItem {
-    pub fn new(track: Track, provenance: Provenance) -> Self {
-        Self { track, provenance }
+    pub fn new(track: impl Into<Track>, provenance: Provenance) -> Self {
+        Self {
+            track: track.into(),
+            provenance,
+        }
     }
 }
 
@@ -260,6 +263,17 @@ impl Sequence {
 
     pub fn progress_millis(&self) -> u64 {
         self.progress_millis
+    }
+
+    pub fn unique_track_ids(&self) -> Vec<TrackId> {
+        let mut seen = HashSet::new();
+        self.entries
+            .iter()
+            .filter_map(|entry| {
+                seen.insert(entry.track.id.clone())
+                    .then(|| entry.track.id.clone())
+            })
+            .collect()
     }
 
     pub fn set_progress_millis(&mut self, progress_millis: u64) {
@@ -1120,10 +1134,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(traversal.first(), Some(&inserted[anchor]));
         assert_eq!(traversal.len(), LEN);
-        assert_eq!(
-            sequence.page(crate::QueuePageQuery::at(0)).rows.len(),
-            crate::MAX_QUEUE_PAGE_SIZE
-        );
+        assert_eq!(sequence.current_page().rows.len(), LEN);
 
         sequence.set_repeat_mode(RepeatMode::All);
         let selected = sequence
@@ -1242,15 +1253,13 @@ mod tests {
     }
 
     fn track(number: u32) -> Track {
-        Track {
+        Track::new(library::TrackData {
             id: TrackId::fake(number),
-            album_id: AlbumId::fake(1),
+            album_id: Some(AlbumId::fake(1)),
             title: format!("Track {number}"),
             artist: "Artist".to_string(),
-            artist_id: None,
-            artist_credits: Vec::new(),
-            album_artist_credits: Vec::new(),
             album: "Album".to_string(),
+            album_artwork: None,
             year: 2026,
             release_date: None,
             date_added: None,
@@ -1262,16 +1271,16 @@ mod tests {
             disc_number: 1,
             track_number: number as u16,
             image_ref: None,
-            album_artwork: None,
-            genres: Vec::new(),
+            local_artwork: None,
             musicbrainz_recording_id: None,
             musicbrainz_release_track_id: None,
-            local_path: None,
+            source_path: None,
+            cue: None,
             source_format: None,
             comment: None,
             skip_count: None,
             bpm: None,
-            moods: Vec::new(),
-        }
+            relations: library::TrackRelations::default(),
+        })
     }
 }

@@ -2,18 +2,12 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::runtime::source::SourceHandle;
-use adw::prelude::*;
-use sources::jellyfin::JELLYFIN_SOURCE_ID;
-use sources::local::LOCAL_SOURCE_ID;
-use sources::subsonic::SubsonicFlavor;
-use sources::{
-    CredentialHostInput, CredentialHostPreset, EditableSource, JellyfinSettingsInput,
-    JellyfinSetupInput, LocalFolderHostInput, SourceSettingsInput, SourceSetupInput,
+use crate::runtime::source::{
+    ConfiguredSources, CredentialInput, CredentialPreset, DiscoveryStatus, EditableSource,
+    OpenSubsonicKind, SourceHandle, SourceOperation, SourceSettingsChange, SourceSetup,
+    SourceSummary,
 };
-
-use localization::{msgid, tr, tr_with};
-use sources::ServerDiscoveryStatus;
+use adw::prelude::*;
 
 use super::{
     field_layout::{
@@ -21,16 +15,20 @@ use super::{
     },
     folder_selected_text,
     local_access::{confirm_forget_source, credential_source_settings_group},
-    source_sync_progress_text,
+    source_operation_text,
 };
 use crate::layout::large_popup_content_width;
+use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::actions::text_button;
 use crate::shell::{Shell, chrome::window_close_controls};
-
-use super::LibraryLoad;
+use localization::{msgid, tr, tr_with};
 
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
+const SETUP_FORM_PAGE: &str = "form";
+const SETUP_PROGRESS_PAGE: &str = "progress";
 const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.";
+const JELLYFIN_SOURCE_KIND: &str = "jellyfin";
+const LOCAL_SOURCE_KIND: &str = "local";
 
 type SetupFlowFactory = fn(&Rc<Shell>, &'static SourcePresentation) -> Rc<dyn SourceSetupFlow>;
 type SettingsGroupFactory =
@@ -46,7 +44,7 @@ struct SourcePresentation {
 }
 
 static JELLYFIN: SourcePresentation = SourcePresentation {
-    kind: JELLYFIN_SOURCE_ID,
+    kind: JELLYFIN_SOURCE_KIND,
     title: msgid("Jellyfin"),
     icon_name: "io.github.screwys.Rufin.source.jellyfin",
     setup_flow: jellyfin_setup_flow,
@@ -67,7 +65,7 @@ static SUBSONIC: SourcePresentation = SourcePresentation {
     settings_group: Some(subsonic_settings_group),
 };
 static LOCAL: SourcePresentation = SourcePresentation {
-    kind: LOCAL_SOURCE_ID,
+    kind: LOCAL_SOURCE_KIND,
     title: msgid("Local"),
     icon_name: "rufin-route-folders-symbolic",
     setup_flow: local_setup_flow,
@@ -90,6 +88,14 @@ fn source_presentation(kind: &str) -> Option<&'static SourcePresentation> {
         .find(|presentation| presentation.kind == kind)
 }
 
+fn selected_source(configured: &ConfiguredSources) -> Option<&SourceSummary> {
+    let selected = configured.selected_source_id.as_ref()?;
+    configured
+        .sources
+        .iter()
+        .find(|source| &source.id == selected)
+}
+
 pub(crate) fn source_kind_title(kind: &str) -> Option<&'static str> {
     source_presentation(kind).map(|presentation| presentation.title)
 }
@@ -102,7 +108,7 @@ pub(crate) fn source_settings_group(
     shell: &Rc<Shell>,
     saved: &EditableSource,
 ) -> Option<Result<gtk::Widget, String>> {
-    let presentation = source_presentation(&saved.kind)?;
+    let presentation = source_presentation(&saved.source.kind)?;
     presentation
         .settings_group
         .map(|factory| factory(shell, saved, presentation))
@@ -113,17 +119,56 @@ pub(crate) trait SourceSetupFlow {
 }
 
 #[derive(Clone)]
-pub(crate) struct AddServerDialogHandle {
-    content: gtk::Box,
-    on_connect_started: Option<Rc<dyn Fn()>>,
-    flow: Rc<RefCell<Rc<dyn SourceSetupFlow>>>,
+pub(crate) struct SourceSetupViewHandle {
+    context: SetupViewContext,
 }
 
 #[derive(Clone)]
 pub(crate) struct SetupViewContext {
     content: gtk::Box,
+    surface: gtk::Stack,
+    form: gtk::Box,
+    progress_status: gtk::Label,
     flow: Rc<RefCell<Rc<dyn SourceSetupFlow>>>,
-    on_connect_started: Option<Rc<dyn Fn()>>,
+    actions: Rc<RefCell<Option<SetupActions>>>,
+    discovery: Rc<RefCell<Option<DiscoveredServersView>>>,
+    retry_focus: Rc<RefCell<Option<gtk::Widget>>>,
+    preferences_dialog: Option<adw::Dialog>,
+}
+
+#[derive(Clone)]
+struct SetupActions {
+    status: gtk::Label,
+    connect: gtk::Button,
+    ready: Rc<dyn Fn() -> bool>,
+}
+
+#[derive(Clone)]
+struct DiscoveredServersView {
+    group: adw::PreferencesGroup,
+    rows: Rc<RefCell<Vec<gtk::Widget>>>,
+    host: CredentialHost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SetupSurfaceState<'a> {
+    Form,
+    Progress,
+    Failed(&'a str),
+}
+
+impl SetupViewContext {
+    fn is_first_run(&self) -> bool {
+        self.preferences_dialog.is_none()
+    }
+
+    fn is_mounted(&self) -> bool {
+        if self.is_first_run() {
+            self.content.parent().is_some()
+        } else {
+            self.content.root().is_some()
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,14 +183,14 @@ struct CredentialHostDraft {
 struct CredentialSetupFlow {
     presentation: &'static SourcePresentation,
     draft: Rc<RefCell<CredentialHostDraft>>,
-    submit: Rc<dyn Fn(&SourceHandle, CredentialHostInput)>,
+    submit: Rc<dyn Fn(&SourceHandle, CredentialInput)>,
 }
 
 struct JellyfinSetupFlow {
     presentation: &'static SourcePresentation,
     draft: Rc<RefCell<CredentialHostDraft>>,
     use_instant_mix: Rc<Cell<bool>>,
-    submit: Rc<dyn Fn(&SourceHandle, CredentialHostInput, bool)>,
+    submit: Rc<dyn Fn(&SourceHandle, CredentialInput, bool)>,
 }
 
 struct LocalSetupFlow {
@@ -154,6 +199,7 @@ struct LocalSetupFlow {
     submit: Rc<dyn Fn(&SourceHandle, Vec<PathBuf>)>,
 }
 
+#[derive(Clone)]
 struct CredentialHost {
     widget: gtk::Box,
     name: adw::EntryRow,
@@ -164,9 +210,9 @@ struct CredentialHost {
 }
 
 impl CredentialHost {
-    fn input(&self) -> CredentialHostInput {
-        CredentialHostInput {
-            server_name: trimmed_optional_text(&self.name),
+    fn input(&self) -> CredentialInput {
+        CredentialInput {
+            source_name: trimmed_optional_text(&self.name),
             server_url: self.url.text().to_string(),
             username: self.username.text().to_string(),
             password: self.password.text().to_string(),
@@ -185,66 +231,173 @@ impl Shell {
         _navigation: &adw::NavigationView,
         preferences_dialog: &adw::Dialog,
     ) -> adw::NavigationPage {
-        let preferences_dialog_for_connect = preferences_dialog.clone();
-        let connect_callback: Rc<dyn Fn()> = Rc::new(move || {
-            preferences_dialog_for_connect.close();
-        });
-        let context = self.setup_view_context(Some(connect_callback));
-        render_setup_flow(self, &context);
-        *self.source.add_server.borrow_mut() = Some(AddServerDialogHandle {
-            content: context.content.clone(),
-            on_connect_started: context.on_connect_started.clone(),
-            flow: Rc::clone(&context.flow),
+        // Keep the form mounted while the operation runs. A failed connection
+        // returns to the same values so the user can correct them and retry.
+        let context = self.setup_view_context(Some(preferences_dialog.clone()));
+        mount_setup_flow(self, &context);
+        *self.source.add_server.borrow_mut() = Some(SourceSetupViewHandle {
+            context: context.clone(),
         });
         adw::NavigationPage::new(&context.content, &tr("Add server"))
     }
 
     pub(crate) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        if matches!(&*self.source.load.borrow(), LibraryLoad::Connecting { .. }) {
-            return self.connection_progress_view();
+        let retained = self
+            .source
+            .add_server
+            .borrow()
+            .as_ref()
+            .filter(|handle| handle.context.is_first_run())
+            .map(|handle| handle.context.clone());
+        if let Some(context) = retained {
+            update_setup_surface(self, &context);
+            return context.content.upcast();
         }
         let context = self.setup_view_context(None);
-        render_setup_flow(self, &context);
+        mount_setup_flow(self, &context);
+        *self.source.add_server.borrow_mut() = Some(SourceSetupViewHandle {
+            context: context.clone(),
+        });
         context.content.upcast()
     }
 
-    pub(crate) fn refresh_add_server_dialog(self: &Rc<Self>) {
+    pub(crate) fn first_run_setup_mounted(&self) -> bool {
+        self.source
+            .add_server
+            .borrow()
+            .as_ref()
+            .is_some_and(|handle| handle.context.is_first_run() && handle.context.is_mounted())
+    }
+
+    pub(crate) fn take_first_run_setup_view(&self) -> Option<gtk::Widget> {
+        let context = {
+            let mut handle = self.source.add_server.borrow_mut();
+            if !handle
+                .as_ref()
+                .is_some_and(|handle| handle.context.is_first_run())
+            {
+                return None;
+            }
+            let Some(handle) = handle.take() else {
+                return None;
+            };
+            handle.context
+        };
+        Some(context.content.upcast())
+    }
+
+    pub(crate) fn update_add_server_dialog(self: &Rc<Self>) {
         let Some(handle) = self.source.add_server.borrow().clone() else {
             return;
         };
-        if handle.content.root().is_none() {
-            self.source.add_server.borrow_mut().take();
+        if !handle.context.is_mounted() {
+            if handle.context.preferences_dialog.is_none()
+                || !self.source.operation.borrow().add_form_active()
+            {
+                self.source.add_server.borrow_mut().take();
+            }
             return;
         }
-        render_setup_flow(
-            self,
-            &SetupViewContext {
-                content: handle.content,
-                flow: handle.flow,
-                on_connect_started: handle.on_connect_started,
-            },
-        );
+        update_setup_surface(self, &handle.context);
+    }
+
+    pub(crate) fn update_add_server_discovery(self: &Rc<Self>) {
+        let Some(handle) = self.source.add_server.borrow().clone() else {
+            return;
+        };
+        if !handle.context.is_mounted() {
+            if handle.context.preferences_dialog.is_none()
+                || !self.source.operation.borrow().add_form_active()
+            {
+                self.source.add_server.borrow_mut().take();
+            }
+            return;
+        }
+        if let Some(discovery) = handle.context.discovery.borrow().as_ref() {
+            refresh_discovered_servers_view(self, discovery);
+        }
+    }
+
+    pub(crate) fn complete_add_server_dialog(&self) {
+        let preferences_dialog = {
+            let mut handle = self.source.add_server.borrow_mut();
+            if !handle
+                .as_ref()
+                .is_some_and(|handle| !handle.context.is_first_run())
+            {
+                return;
+            }
+            handle
+                .take()
+                .and_then(|handle| handle.context.preferences_dialog)
+        };
+        if let Some(dialog) = preferences_dialog {
+            dialog.close();
+        }
+    }
+
+    pub(crate) fn clear_retained_add_server_form(&self) {
+        self.source.add_server.borrow_mut().take();
+    }
+
+    pub(crate) fn restore_add_server_dialog_after_failure(self: &Rc<Self>) -> bool {
+        let Some(context) = self
+            .source
+            .add_server
+            .borrow()
+            .as_ref()
+            .map(|handle| handle.context.clone())
+            .filter(|context| !context.is_first_run())
+        else {
+            return false;
+        };
+        let Some(dialog) = context.preferences_dialog.clone() else {
+            return false;
+        };
+        self.preferences.set_active_dialog(&dialog);
+        present_light_dismiss_dialog(&dialog, &self.chrome.window);
+        update_setup_surface(self, &context);
+        true
     }
 
     fn setup_view_context(
         self: &Rc<Self>,
-        on_connect_started: Option<Rc<dyn Fn()>>,
+        preferences_dialog: Option<adw::Dialog>,
     ) -> SetupViewContext {
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let surface = gtk::Stack::new();
+        surface.set_hexpand(true);
+        surface.set_vexpand(true);
+        surface.set_hhomogeneous(false);
+        surface.set_vhomogeneous(false);
+        let form = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        form.set_hexpand(true);
+        form.set_vexpand(true);
+        surface.add_named(&form, Some(SETUP_FORM_PAGE));
+        let (progress, progress_status) = self.connection_progress_view();
+        surface.add_named(&progress, Some(SETUP_PROGRESS_PAGE));
+        content.append(&surface);
         let flow = self.default_source_setup_flow();
         SetupViewContext {
-            content: gtk::Box::new(gtk::Orientation::Vertical, 0),
+            content,
+            surface,
+            form,
+            progress_status,
             flow: Rc::new(RefCell::new(flow)),
-            on_connect_started,
+            actions: Rc::new(RefCell::new(None)),
+            discovery: Rc::new(RefCell::new(None)),
+            retry_focus: Rc::new(RefCell::new(None)),
+            preferences_dialog,
         }
     }
 
     fn default_source_setup_flow(self: &Rc<Self>) -> Rc<dyn SourceSetupFlow> {
-        let source_setup_active = self.source.load.borrow().source_setup_active();
+        let source_setup_active = self.source.operation.borrow().add_form_active();
         let registration = {
-            let library = self.source.presentation.borrow();
-            (library.first_run || source_setup_active)
-                .then_some(())
-                .and_then(|()| library.source.as_ref())
+            let configured = self.source.configured.borrow();
+            (configured.first_run || source_setup_active)
+                .then(|| selected_source(&configured))
+                .flatten()
                 .and_then(|source| source_presentation(&source.kind))
                 .unwrap_or_else(default_source_presentation)
         };
@@ -255,11 +408,11 @@ impl Shell {
         &self,
         registration: &'static SourcePresentation,
     ) -> Option<EditableSource> {
-        let library = self.source.presentation.borrow();
-        if !library.first_run && !self.source.load.borrow().source_setup_active() {
+        let configured = self.source.configured.borrow();
+        if !configured.first_run && !self.source.operation.borrow().add_form_active() {
             return None;
         }
-        let source = library.source.as_ref()?;
+        let source = selected_source(&configured)?;
         let resolved = source_presentation(&source.kind)?;
         same_registration(resolved, registration)
             .then(|| self.products.source.configured_source(&source.id).ok())
@@ -268,36 +421,40 @@ impl Shell {
     }
 
     pub(crate) fn show_reconnect_notice_if_needed(&self) {
-        let library = self.source.presentation.borrow();
-        if !library.first_run {
+        let SourceOperation::Failed {
+            source_id: Some(source_id),
+            add_form: true,
+            ..
+        } = &*self.source.operation.borrow()
+        else {
             return;
-        }
-        let Some(source) = library.source.as_ref() else {
+        };
+        let configured = self.source.configured.borrow();
+        let Some(source) = configured
+            .sources
+            .iter()
+            .find(|source| &source.id == source_id)
+        else {
             return;
         };
         if source_presentation(&source.kind).is_none() {
             return;
         }
-        let mut shown = self.source.reconnect_toasts_shown.borrow_mut();
-        if shown.insert(source.id.clone()) {
-            self.chrome
-                .quick_toast_overlay
-                .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
+        self.chrome
+            .quick_toast_overlay
+            .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
+    }
+
+    fn begin_source_add_loading(self: &Rc<Self>) {
+        let first_run = self.source.configured.borrow().first_run;
+        self.cancel_startup_route_reveal();
+        if !first_run {
+            self.close_preferences_dialog();
+            self.enter_startup_loading();
         }
     }
 
-    fn begin_first_run_connection(self: &Rc<Self>, status: &str) {
-        let first_run = self.source.presentation.borrow().first_run;
-        *self.source.load.borrow_mut() = LibraryLoad::Connecting {
-            stage: status.to_string(),
-            first_run,
-        };
-        self.cancel_startup_route_reveal();
-        self.update_layout();
-        self.render_current_route();
-    }
-
-    fn connection_progress_view(self: &Rc<Self>) -> gtk::Widget {
+    fn connection_progress_view(self: &Rc<Self>) -> (gtk::Widget, gtk::Label) {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_vexpand(true);
@@ -338,27 +495,12 @@ impl Shell {
 
         clamp.set_child(Some(&content));
         scroller.set_child(Some(&clamp));
-        scroller.upcast()
+        (scroller.upcast(), status)
     }
 
     fn source_connection_progress_text(&self) -> String {
-        let source_id = self
-            .source
-            .presentation
-            .borrow()
-            .source
-            .as_ref()
-            .map(|source| source.id.clone());
-        if let Some(change) = source_id
-            .as_ref()
-            .and_then(|source_id| self.source.syncs.borrow().get(source_id).cloned())
-        {
-            return source_sync_progress_text(&change);
-        }
-        match &*self.source.load.borrow() {
-            LibraryLoad::Connecting { stage, .. } => stage.clone(),
-            _ => tr("Preparing library..."),
-        }
+        source_operation_text(&self.source.operation.borrow())
+            .unwrap_or_else(|| tr("Preparing library..."))
     }
 
     fn start_server_discovery_once(&self) {
@@ -366,7 +508,7 @@ impl Shell {
             return;
         }
         self.source.discovery_running.set(true);
-        *self.source.discovery_status.borrow_mut() = ServerDiscoveryStatus::Searching;
+        *self.source.discovery_status.borrow_mut() = DiscoveryStatus::Searching;
         self.products.source.discover_servers();
     }
 
@@ -376,9 +518,9 @@ impl Shell {
         }
         self.source.discovery_running.set(true);
         *self.source.discovered_servers.borrow_mut() = Vec::new();
-        *self.source.discovery_status.borrow_mut() = ServerDiscoveryStatus::Searching;
+        *self.source.discovery_status.borrow_mut() = DiscoveryStatus::Searching;
         self.products.source.discover_servers();
-        self.render_current_route();
+        self.update_add_server_discovery();
     }
 }
 
@@ -390,7 +532,7 @@ fn local_setup_flow(
         presentation,
         folders: Rc::new(RefCell::new(Vec::new())),
         submit: Rc::new(|source, roots| {
-            source.configure_source(SourceSetupInput::Local(LocalFolderHostInput { roots }));
+            source.configure_source(SourceSetup::Local { roots });
         }),
     })
 }
@@ -412,10 +554,10 @@ fn jellyfin_setup_flow(
                 .unwrap_or(false),
         )),
         submit: Rc::new(move |source, credentials, use_instant_mix| {
-            source.configure_source(SourceSetupInput::Jellyfin(JellyfinSetupInput {
+            source.configure_source(SourceSetup::Jellyfin {
                 credentials,
                 use_instant_mix,
-            }));
+            });
         }),
     })
 }
@@ -423,7 +565,7 @@ fn jellyfin_setup_flow(
 fn subsonic_setup_flow_for(
     shell: &Rc<Shell>,
     presentation: &'static SourcePresentation,
-    flavor: SubsonicFlavor,
+    kind: OpenSubsonicKind,
 ) -> Rc<dyn SourceSetupFlow> {
     let preset = shell
         .reconnect_saved_source(presentation)
@@ -433,8 +575,8 @@ fn subsonic_setup_flow_for(
         presentation,
         draft: Rc::new(RefCell::new(credential_draft(preset))),
         submit: Rc::new(move |source, input| {
-            source.configure_source(SourceSetupInput::Subsonic {
-                flavor,
+            source.configure_source(SourceSetup::OpenSubsonic {
+                kind,
                 credentials: input,
             });
         }),
@@ -445,14 +587,14 @@ fn navidrome_setup_flow(
     shell: &Rc<Shell>,
     presentation: &'static SourcePresentation,
 ) -> Rc<dyn SourceSetupFlow> {
-    subsonic_setup_flow_for(shell, presentation, SubsonicFlavor::Navidrome)
+    subsonic_setup_flow_for(shell, presentation, OpenSubsonicKind::Navidrome)
 }
 
 fn subsonic_setup_flow(
     shell: &Rc<Shell>,
     presentation: &'static SourcePresentation,
 ) -> Rc<dyn SourceSetupFlow> {
-    subsonic_setup_flow_for(shell, presentation, SubsonicFlavor::Subsonic)
+    subsonic_setup_flow_for(shell, presentation, OpenSubsonicKind::OpenSubsonic)
 }
 
 fn jellyfin_settings_group(
@@ -466,17 +608,18 @@ fn jellyfin_settings_group(
         .active(saved.jellyfin_use_instant_mix.unwrap_or(false))
         .build();
     let instant_mix_for_submit = instant_mix.clone();
+    let source_id = saved.source.id.clone();
     Ok(credential_source_settings_group(
         shell,
-        saved.source_id.clone(),
         saved.credentials.clone(),
         presentation.title,
         Some(instant_mix),
         move |source, credentials| {
-            source.update_source(SourceSettingsInput::Jellyfin(JellyfinSettingsInput {
+            source.update_source(SourceSettingsChange::Jellyfin {
+                source_id: source_id.clone(),
                 credentials,
                 use_instant_mix: instant_mix_for_submit.is_active(),
-            }));
+            });
         },
     ))
 }
@@ -485,17 +628,18 @@ fn subsonic_settings_group_for(
     shell: &Rc<Shell>,
     saved: &EditableSource,
     presentation: &'static SourcePresentation,
-    flavor: SubsonicFlavor,
+    kind: OpenSubsonicKind,
 ) -> Result<gtk::Widget, String> {
+    let source_id = saved.source.id.clone();
     Ok(credential_source_settings_group(
         shell,
-        saved.source_id.clone(),
         saved.credentials.clone(),
         presentation.title,
         None,
         move |source, input| {
-            source.update_source(SourceSettingsInput::Subsonic {
-                flavor,
+            source.update_source(SourceSettingsChange::OpenSubsonic {
+                source_id: source_id.clone(),
+                kind,
                 credentials: input,
             });
         },
@@ -507,7 +651,7 @@ fn navidrome_settings_group(
     saved: &EditableSource,
     presentation: &'static SourcePresentation,
 ) -> Result<gtk::Widget, String> {
-    subsonic_settings_group_for(shell, saved, presentation, SubsonicFlavor::Navidrome)
+    subsonic_settings_group_for(shell, saved, presentation, OpenSubsonicKind::Navidrome)
 }
 
 fn subsonic_settings_group(
@@ -515,24 +659,19 @@ fn subsonic_settings_group(
     saved: &EditableSource,
     presentation: &'static SourcePresentation,
 ) -> Result<gtk::Widget, String> {
-    subsonic_settings_group_for(shell, saved, presentation, SubsonicFlavor::Subsonic)
+    subsonic_settings_group_for(shell, saved, presentation, OpenSubsonicKind::OpenSubsonic)
 }
 
 impl SourceSetupFlow for CredentialSetupFlow {
     fn view(&self, shell: &Rc<Shell>, context: &SetupViewContext) -> gtk::Widget {
         let (scroller, content) = setup_scaffold(shell, context, self.presentation);
-        let host = credential_host(&self.draft, context.on_connect_started.is_some());
+        let host = credential_host(&self.draft, !context.is_first_run());
         content.append(&host.widget);
         let submit = Rc::clone(&self.submit);
         append_credential_connect(shell, context, &content, host, move |source, input| {
             submit(source, input);
         });
-        finish_setup_scaffold(
-            shell,
-            scroller,
-            content,
-            context.on_connect_started.is_none(),
-        )
+        finish_setup_scaffold(shell, scroller, content, context.is_first_run())
     }
 }
 
@@ -540,7 +679,7 @@ impl SourceSetupFlow for JellyfinSetupFlow {
     fn view(&self, shell: &Rc<Shell>, context: &SetupViewContext) -> gtk::Widget {
         shell.start_server_discovery_once();
         let (scroller, content) = setup_scaffold(shell, context, self.presentation);
-        let host = credential_host(&self.draft, context.on_connect_started.is_some());
+        let host = credential_host(&self.draft, !context.is_first_run());
         content.append(&host.widget);
 
         let instant_mix = adw::SwitchRow::builder()
@@ -554,7 +693,9 @@ impl SourceSetupFlow for JellyfinSetupFlow {
         let use_instant_mix = Rc::clone(&self.use_instant_mix);
         instant_mix.connect_active_notify(move |row| use_instant_mix.set(row.is_active()));
 
-        content.append(&discovered_servers_group(shell, &host));
+        let discovery = discovered_servers_view(&host);
+        content.append(&discovery.group);
+        *context.discovery.borrow_mut() = Some(discovery);
         let use_instant_mix = Rc::clone(&self.use_instant_mix);
         let submit = Rc::clone(&self.submit);
         append_credential_connect(
@@ -566,12 +707,7 @@ impl SourceSetupFlow for JellyfinSetupFlow {
                 submit(source, credentials, use_instant_mix.get());
             },
         );
-        finish_setup_scaffold(
-            shell,
-            scroller,
-            content,
-            context.on_connect_started.is_none(),
-        )
+        finish_setup_scaffold(shell, scroller, content, context.is_first_run())
     }
 }
 
@@ -611,43 +747,57 @@ impl SourceSetupFlow for LocalSetupFlow {
             login: login.clone(),
         };
         refresh_local_folder_selection_rows(&selection);
+        let folders_for_ready = Rc::clone(&self.folders);
+        *context.actions.borrow_mut() = Some(SetupActions {
+            status: status.clone(),
+            connect: login.clone(),
+            ready: Rc::new(move || !folders_for_ready.borrow().is_empty()),
+        });
         connect_add_local_folder_button(&shell.chrome.window, &add, Rc::clone(&self.folders), {
-            let selection = selection.clone();
-            move || refresh_local_folder_selection_rows(&selection)
+            let group = selection.group.downgrade();
+            let summary = selection.summary.downgrade();
+            let rows = Rc::clone(&selection.rows);
+            let folders = Rc::clone(&selection.folders);
+            let login = selection.login.downgrade();
+            move || {
+                let (Some(group), Some(summary), Some(login)) =
+                    (group.upgrade(), summary.upgrade(), login.upgrade())
+                else {
+                    return;
+                };
+                refresh_local_folder_selection_rows(&LocalFolderSelectionRows {
+                    group,
+                    summary,
+                    rows: Rc::clone(&rows),
+                    folders: Rc::clone(&folders),
+                    login,
+                });
+            }
         });
 
         let source = shell.products.source.clone();
         let folders = Rc::clone(&self.folders);
-        let shell_for_login = Rc::clone(shell);
+        let shell_for_login = Rc::downgrade(shell);
         let status_for_login = status.clone();
-        let login_for_click = login.clone();
-        let on_connect_started = context.on_connect_started.clone();
         let submit = Rc::clone(&self.submit);
-        login.connect_clicked(move |_| {
+        login.connect_clicked(move |login| {
             let roots = folders.borrow().clone();
             if roots.is_empty() {
                 status_for_login.set_text(&tr("Choose at least one local music folder"));
                 status_for_login.set_visible(true);
                 return;
             }
+            let Some(shell) = shell_for_login.upgrade() else {
+                return;
+            };
             let message = tr("Caching local library...");
-            begin_connect_attempt(
-                &status_for_login,
-                &login_for_click,
-                on_connect_started.as_ref(),
-                &message,
-            );
-            shell_for_login.begin_first_run_connection(&message);
+            begin_connect_attempt(&status_for_login, login, &message);
+            shell.begin_source_add_loading();
             submit(&source, roots);
         });
         source_enter_controller(&login);
 
-        finish_setup_scaffold(
-            shell,
-            scroller,
-            content,
-            context.on_connect_started.is_none(),
-        )
+        finish_setup_scaffold(shell, scroller, content, context.is_first_run())
     }
 }
 
@@ -656,7 +806,7 @@ fn setup_scaffold(
     context: &SetupViewContext,
     registration: &'static SourcePresentation,
 ) -> (gtk::ScrolledWindow, gtk::Box) {
-    let compact = context.on_connect_started.is_some();
+    let compact = !context.is_first_run();
     let scroller = gtk::ScrolledWindow::new();
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
@@ -677,12 +827,7 @@ fn setup_scaffold(
     if let Some(saved_sources) = saved_source_recovery_group(shell, compact) {
         content.append(&saved_sources);
     }
-    content.append(&source_choice_selector(
-        shell,
-        context,
-        registration,
-        compact,
-    ));
+    content.append(&source_choice_selector(shell, registration, compact));
     clamp.set_child(Some(&content));
     scroller.set_child(Some(&clamp));
     (scroller, content)
@@ -693,13 +838,11 @@ fn saved_source_recovery_group(shell: &Rc<Shell>, compact: bool) -> Option<adw::
         return None;
     }
     let sources = {
-        let library = shell.source.presentation.borrow();
-        let selected_registration = library
-            .source
-            .as_ref()
-            .and_then(|source| source_presentation(&source.kind));
-        if library.first_run && selected_registration.is_none() {
-            library.sources.clone()
+        let configured = shell.source.configured.borrow();
+        let selected_registration =
+            selected_source(&configured).and_then(|source| source_presentation(&source.kind));
+        if configured.first_run && selected_registration.is_none() {
+            configured.sources.to_vec()
         } else {
             Vec::new()
         }
@@ -737,7 +880,7 @@ fn saved_source_recovery_group(shell: &Rc<Shell>, compact: bool) -> Option<adw::
         forget.set_valign(gtk::Align::Center);
         forget.add_css_class("flat");
         forget.add_css_class("destructive-action");
-        let forget_shell = Rc::clone(shell);
+        let forget_shell = Rc::downgrade(shell);
         let forgotten_source_id = source.id.clone();
         let forgotten_source_name = if title.is_empty() {
             fallback_title.clone()
@@ -745,8 +888,11 @@ fn saved_source_recovery_group(shell: &Rc<Shell>, compact: bool) -> Option<adw::
             title.to_string()
         };
         forget.connect_clicked(move |_| {
+            let Some(shell) = forget_shell.upgrade() else {
+                return;
+            };
             confirm_forget_source(
-                &forget_shell,
+                &shell,
                 forgotten_source_id.clone(),
                 &forgotten_source_name,
                 Rc::new(|| {}),
@@ -757,7 +903,7 @@ fn saved_source_recovery_group(shell: &Rc<Shell>, compact: bool) -> Option<adw::
             let source_id = source.id;
             let source = shell.products.source.clone();
             row.connect_activated(move |_| {
-                source.select_source(sources::LibrarySourceSelection::Source(source_id.clone()));
+                source.select_source(source_id.clone());
             });
         }
         group.add(&row);
@@ -779,9 +925,11 @@ fn finish_setup_scaffold(
             .title(tr("Private mode"))
             .active(shell.settings.current.borrow().private_mode)
             .build();
-        let private_shell = Rc::clone(shell);
+        let private_shell = Rc::downgrade(shell);
         private_mode.connect_active_notify(move |row| {
-            private_shell.set_private_mode(row.is_active());
+            if let Some(shell) = private_shell.upgrade() {
+                shell.set_private_mode(row.is_active());
+            }
         });
         privacy_group.add(&private_mode);
         content.append(&privacy_group);
@@ -796,7 +944,6 @@ fn finish_setup_scaffold(
 
 fn source_choice_selector(
     shell: &Rc<Shell>,
-    context: &SetupViewContext,
     selected: &'static SourcePresentation,
     compact: bool,
 ) -> gtk::Box {
@@ -828,12 +975,23 @@ fn source_choice_selector(
         child.append(&label);
         button.set_child(Some(&child));
         if !same_registration(presentation, selected) {
-            let shell = Rc::clone(shell);
-            let context = context.clone();
+            let shell = Rc::downgrade(shell);
             let presentation = *presentation;
             button.connect_clicked(move |_| {
+                let Some(shell) = shell.upgrade() else {
+                    return;
+                };
+                let Some(context) = shell
+                    .source
+                    .add_server
+                    .borrow()
+                    .as_ref()
+                    .map(|handle| handle.context.clone())
+                else {
+                    return;
+                };
                 *context.flow.borrow_mut() = (presentation.setup_flow)(&shell, presentation);
-                render_setup_flow(&shell, &context);
+                mount_setup_flow(&shell, &context);
             });
         }
         wrapper.append(&button);
@@ -856,17 +1014,91 @@ fn same_registration(
     std::ptr::eq(left, right)
 }
 
-fn render_setup_flow(shell: &Rc<Shell>, context: &SetupViewContext) {
-    if matches!(&*shell.source.load.borrow(), LibraryLoad::Connecting { .. }) {
-        replace_add_server_content(&context.content, shell.connection_progress_view());
-        return;
-    }
+fn mount_setup_flow(shell: &Rc<Shell>, context: &SetupViewContext) {
+    context.actions.borrow_mut().take();
+    context.discovery.borrow_mut().take();
+    context.retry_focus.borrow_mut().take();
     let flow = context.flow.borrow().clone();
     let view = flow.view(shell, context);
-    replace_add_server_content(&context.content, view);
+    replace_add_server_content(&context.form, view);
+    if let Some(discovery) = context.discovery.borrow().as_ref() {
+        refresh_discovered_servers_view(shell, discovery);
+    }
+    update_setup_surface(shell, context);
 }
 
-fn credential_draft(preset: Option<CredentialHostPreset>) -> CredentialHostDraft {
+fn update_setup_surface(shell: &Rc<Shell>, context: &SetupViewContext) {
+    let operation = shell.source.operation.borrow();
+    match setup_surface_state(&operation) {
+        SetupSurfaceState::Progress => {
+            remember_setup_focus(context);
+            context
+                .progress_status
+                .set_text(&shell.source_connection_progress_text());
+            if let Some(actions) = context.actions.borrow().as_ref() {
+                actions.connect.set_sensitive(false);
+            }
+            context.surface.set_visible_child_name(SETUP_PROGRESS_PAGE);
+        }
+        SetupSurfaceState::Failed(message) => {
+            if let Some(actions) = context.actions.borrow().as_ref() {
+                actions.status.set_text(message);
+                actions.status.add_css_class("error-text");
+                actions.status.set_visible(true);
+                actions.connect.set_sensitive((actions.ready)());
+            }
+            context.surface.set_visible_child_name(SETUP_FORM_PAGE);
+            restore_setup_focus(context);
+        }
+        SetupSurfaceState::Form => {
+            if let Some(actions) = context.actions.borrow().as_ref() {
+                actions.status.remove_css_class("error-text");
+                actions.status.set_text("");
+                actions.status.set_visible(false);
+                actions.connect.set_sensitive((actions.ready)());
+            }
+            context.surface.set_visible_child_name(SETUP_FORM_PAGE);
+            restore_setup_focus(context);
+        }
+    }
+}
+
+fn remember_setup_focus(context: &SetupViewContext) {
+    if context.retry_focus.borrow().is_some() {
+        return;
+    }
+    let focus = context
+        .content
+        .root()
+        .and_then(|root| root.focus())
+        .filter(|focus| focus.is_ancestor(&context.form));
+    *context.retry_focus.borrow_mut() = focus;
+}
+
+fn restore_setup_focus(context: &SetupViewContext) {
+    if let Some(focus) = context.retry_focus.borrow_mut().take() {
+        focus.grab_focus();
+    }
+}
+
+fn setup_surface_state(operation: &SourceOperation) -> SetupSurfaceState<'_> {
+    match operation {
+        SourceOperation::Adding { .. } => SetupSurfaceState::Progress,
+        SourceOperation::Failed {
+            message,
+            add_form: true,
+            ..
+        } => SetupSurfaceState::Failed(message),
+        SourceOperation::Idle
+        | SourceOperation::Switching { .. }
+        | SourceOperation::Refreshing { .. }
+        | SourceOperation::Failed {
+            add_form: false, ..
+        } => SetupSurfaceState::Form,
+    }
+}
+
+fn credential_draft(preset: Option<CredentialPreset>) -> CredentialHostDraft {
     preset.map_or_else(
         || CredentialHostDraft {
             name: String::new(),
@@ -876,7 +1108,7 @@ fn credential_draft(preset: Option<CredentialHostPreset>) -> CredentialHostDraft
             cert_verify: true,
         },
         |preset| CredentialHostDraft {
-            name: preset.server_name,
+            name: preset.source_name,
             url: preset.server_url,
             username: preset.username,
             password: String::new(),
@@ -969,7 +1201,7 @@ fn append_credential_connect(
     context: &SetupViewContext,
     content: &gtk::Box,
     host: CredentialHost,
-    submit: impl Fn(&SourceHandle, CredentialHostInput) + 'static,
+    submit: impl Fn(&SourceHandle, CredentialInput) + 'static,
 ) {
     let status = setup_status_label(shell);
     let login = text_button("network-server-symbolic", "Connect");
@@ -979,59 +1211,72 @@ fn append_credential_connect(
     connect_entry_row_activation(&host.url, &login);
     connect_entry_row_activation(&host.username, &login);
     connect_password_entry_row_activation(&host.password, &login);
-    let refresh = Rc::new({
-        let host = host_widgets(&host);
-        let login = login.clone();
-        move || login.set_sensitive(host.ready())
-    }) as Rc<dyn Fn()>;
-    host.url.connect_text_notify({
-        let refresh = Rc::clone(&refresh);
-        move |_| refresh()
-    });
-    host.username.connect_text_notify({
-        let refresh = Rc::clone(&refresh);
-        move |_| refresh()
-    });
-    host.password.connect_text_notify({
-        let refresh = Rc::clone(&refresh);
-        move |_| refresh()
+    {
+        let login = login.downgrade();
+        let username = host.username.downgrade();
+        let password = host.password.downgrade();
+        host.url.connect_text_notify(move |url| {
+            let (Some(login), Some(username), Some(password)) =
+                (login.upgrade(), username.upgrade(), password.upgrade())
+            else {
+                return;
+            };
+            login.set_sensitive(remote_login_ready(url, &username, &password));
+        });
+    }
+    {
+        let login = login.downgrade();
+        let url = host.url.downgrade();
+        let password = host.password.downgrade();
+        host.username.connect_text_notify(move |username| {
+            let (Some(login), Some(url), Some(password)) =
+                (login.upgrade(), url.upgrade(), password.upgrade())
+            else {
+                return;
+            };
+            login.set_sensitive(remote_login_ready(&url, username, &password));
+        });
+    }
+    {
+        let login = login.downgrade();
+        let url = host.url.downgrade();
+        let username = host.username.downgrade();
+        host.password.connect_text_notify(move |password| {
+            let (Some(login), Some(url), Some(username)) =
+                (login.upgrade(), url.upgrade(), username.upgrade())
+            else {
+                return;
+            };
+            login.set_sensitive(remote_login_ready(&url, &username, password));
+        });
+    }
+    let host_for_ready = host.clone();
+    *context.actions.borrow_mut() = Some(SetupActions {
+        status: status.clone(),
+        connect: login.clone(),
+        ready: Rc::new(move || host_for_ready.ready()),
     });
 
     let source = shell.products.source.clone();
-    let shell_for_login = Rc::clone(shell);
+    let shell_for_login = Rc::downgrade(shell);
     let status_for_login = status.clone();
-    let login_for_click = login.clone();
-    let host_for_click = host_widgets(&host);
-    let on_connect_started = context.on_connect_started.clone();
-    login.connect_clicked(move |_| {
+    let host_for_click = host.clone();
+    login.connect_clicked(move |login| {
         if !host_for_click.ready() {
             status_for_login.set_text(&tr("Enter a server address, username, and password"));
             status_for_login.set_visible(true);
             return;
         }
+        let Some(shell) = shell_for_login.upgrade() else {
+            return;
+        };
         let message = tr("Connecting to music server...");
-        begin_connect_attempt(
-            &status_for_login,
-            &login_for_click,
-            on_connect_started.as_ref(),
-            &message,
-        );
-        shell_for_login.begin_first_run_connection(&message);
+        begin_connect_attempt(&status_for_login, login, &message);
+        shell.begin_source_add_loading();
         submit(&source, host_for_click.input());
     });
     content.append(&setup_actions(&login));
     content.append(&status);
-}
-
-fn host_widgets(host: &CredentialHost) -> CredentialHost {
-    CredentialHost {
-        widget: host.widget.clone(),
-        name: host.name.clone(),
-        url: host.url.clone(),
-        username: host.username.clone(),
-        password: host.password.clone(),
-        cert_verify: host.cert_verify.clone(),
-    }
 }
 
 fn setup_actions(login: &gtk::Button) -> gtk::Box {
@@ -1046,7 +1291,12 @@ fn setup_status_label(shell: &Rc<Shell>) -> gtk::Label {
     status.add_css_class("muted");
     status.set_wrap(true);
     status.set_xalign(0.0);
-    if let LibraryLoad::Failed { message, .. } = &*shell.source.load.borrow() {
+    if let SourceOperation::Failed {
+        message,
+        add_form: true,
+        ..
+    } = &*shell.source.operation.borrow()
+    {
         status.set_text(message);
         status.add_css_class("error-text");
         status.set_visible(true);
@@ -1056,29 +1306,33 @@ fn setup_status_label(shell: &Rc<Shell>) -> gtk::Label {
     status
 }
 
-fn begin_connect_attempt(
-    status: &gtk::Label,
-    login: &gtk::Button,
-    on_connect_started: Option<&Rc<dyn Fn()>>,
-    message: &str,
-) {
+fn begin_connect_attempt(status: &gtk::Label, login: &gtk::Button, message: &str) {
     status.remove_css_class("error-text");
     status.set_text(message);
     status.set_visible(true);
     login.set_sensitive(false);
-    if let Some(on_connect_started) = on_connect_started {
-        on_connect_started();
+}
+
+fn discovered_servers_view(host: &CredentialHost) -> DiscoveredServersView {
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Found Servers"))
+        .build();
+    DiscoveredServersView {
+        group,
+        rows: Rc::new(RefCell::new(Vec::new())),
+        host: host.clone(),
     }
 }
 
-fn discovered_servers_group(shell: &Rc<Shell>, host: &CredentialHost) -> adw::PreferencesGroup {
+fn refresh_discovered_servers_view(shell: &Rc<Shell>, view: &DiscoveredServersView) {
     let status = shell.source.discovery_status.borrow().clone();
     let running = shell.source.discovery_running.get();
     let servers = shell.source.discovered_servers.borrow().clone();
-    let group = adw::PreferencesGroup::builder()
-        .title(tr("Found Servers"))
-        .description(discovery_status_label(&status))
-        .build();
+    view.group
+        .set_description(Some(&discovery_status_label(&status)));
+    for row in view.rows.borrow_mut().drain(..) {
+        view.group.remove(&row);
+    }
     if servers.is_empty() {
         let row = adw::ActionRow::builder()
             .title(if running {
@@ -1093,24 +1347,26 @@ fn discovered_servers_group(shell: &Rc<Shell>, host: &CredentialHost) -> adw::Pr
             spinner.start();
             row.add_suffix(&spinner);
         }
-        group.add(&row);
+        view.group.add(&row);
+        view.rows.borrow_mut().push(row.upcast());
     } else {
         for server in servers {
             let row = adw::ActionRow::builder()
                 .title(server.name.clone())
-                .subtitle(format!("{} - {}", server.kind, server.address))
+                .subtitle(server.address.clone())
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name(
                 "io.github.screwys.Rufin.source.jellyfin",
             ));
             row.set_activatable(true);
-            let name = host.name.clone();
-            let url = host.url.clone();
+            let name = view.host.name.clone();
+            let url = view.host.url.clone();
             row.connect_activated(move |_| {
                 name.set_text(&server.name);
                 url.set_text(&server.address);
             });
-            group.add(&row);
+            view.group.add(&row);
+            view.rows.borrow_mut().push(row.upcast());
         }
     }
     let search = adw::ButtonRow::builder()
@@ -1122,23 +1378,25 @@ fn discovered_servers_group(shell: &Rc<Shell>, host: &CredentialHost) -> adw::Pr
         .start_icon_name("view-refresh-symbolic")
         .build();
     search.set_sensitive(!running);
-    let shell = Rc::clone(shell);
-    search.connect_activated(move |_| shell.refresh_server_discovery());
-    group.add(&search);
-    group
+    let shell = Rc::downgrade(shell);
+    search.connect_activated(move |_| {
+        if let Some(shell) = shell.upgrade() {
+            shell.refresh_server_discovery();
+        }
+    });
+    view.group.add(&search);
+    view.rows.borrow_mut().push(search.upcast());
 }
 
-fn discovery_status_label(status: &ServerDiscoveryStatus) -> String {
+fn discovery_status_label(status: &DiscoveryStatus) -> String {
     match status {
-        ServerDiscoveryStatus::Idle => tr("Searching will start automatically"),
-        ServerDiscoveryStatus::Searching => {
-            tr("Searching for Jellyfin servers on the local network...")
-        }
-        ServerDiscoveryStatus::Empty => {
+        DiscoveryStatus::Idle => tr("Searching will start automatically"),
+        DiscoveryStatus::Searching => tr("Searching for Jellyfin servers on the local network..."),
+        DiscoveryStatus::Empty => {
             tr("No Jellyfin servers found. Enter the address manually or search again")
         }
-        ServerDiscoveryStatus::Found(_) => String::new(),
-        ServerDiscoveryStatus::Failed(error) => {
+        DiscoveryStatus::Found(_) => String::new(),
+        DiscoveryStatus::Failed(error) => {
             tr_with("Server discovery failed: {error}", &[("error", error)])
         }
     }
@@ -1174,14 +1432,31 @@ fn refresh_local_folder_selection_rows(selection: &LocalFolderSelectionRows) {
         remove.add_css_class("flat");
         remove.add_css_class("destructive-action");
         row.add_suffix(&remove);
-        let selection_for_remove = selection.clone();
+        let group = selection.group.downgrade();
+        let summary = selection.summary.downgrade();
+        let rows = Rc::downgrade(&selection.rows);
+        let folders = Rc::clone(&selection.folders);
+        let login = selection.login.downgrade();
         let folder = folder.clone();
         remove.connect_clicked(move |_| {
-            selection_for_remove
-                .folders
+            folders
                 .borrow_mut()
                 .retain(|candidate| candidate != &folder);
-            refresh_local_folder_selection_rows(&selection_for_remove);
+            let (Some(group), Some(summary), Some(rows), Some(login)) = (
+                group.upgrade(),
+                summary.upgrade(),
+                rows.upgrade(),
+                login.upgrade(),
+            ) else {
+                return;
+            };
+            refresh_local_folder_selection_rows(&LocalFolderSelectionRows {
+                group,
+                summary,
+                rows,
+                folders: Rc::clone(&folders),
+                login,
+            });
         });
         selection.group.add(&row);
         selection.rows.borrow_mut().push(row);
@@ -1191,10 +1466,14 @@ fn refresh_local_folder_selection_rows(selection: &LocalFolderSelectionRows) {
 fn source_enter_controller(login: &gtk::Button) {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let login_for_key = login.clone();
+    let login_for_key = login.downgrade();
     controller.connect_key_pressed(move |_, key, _, _| {
         let enter = key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter;
-        if enter && activate_connect_if_ready(&login_for_key) {
+        if enter
+            && login_for_key
+                .upgrade()
+                .is_some_and(|login| activate_connect_if_ready(&login))
+        {
             gtk::glib::Propagation::Stop
         } else {
             gtk::glib::Propagation::Proceed
@@ -1204,16 +1483,20 @@ fn source_enter_controller(login: &gtk::Button) {
 }
 
 fn connect_entry_row_activation(entry: &adw::EntryRow, login: &gtk::Button) {
-    let login = login.clone();
+    let login = login.downgrade();
     entry.connect_entry_activated(move |_| {
-        activate_connect_if_ready(&login);
+        if let Some(login) = login.upgrade() {
+            activate_connect_if_ready(&login);
+        }
     });
 }
 
 fn connect_password_entry_row_activation(entry: &adw::PasswordEntryRow, login: &gtk::Button) {
-    let login = login.clone();
+    let login = login.downgrade();
     entry.connect_entry_activated(move |_| {
-        activate_connect_if_ready(&login);
+        if let Some(login) = login.upgrade() {
+            activate_connect_if_ready(&login);
+        }
     });
 }
 
@@ -1291,12 +1574,13 @@ pub(super) fn connect_folder_button(
     target: Rc<RefCell<Option<PathBuf>>>,
     on_changed: impl Fn(PathBuf) + 'static,
 ) {
-    let window = window.clone();
-    let row = row.clone();
+    let window = window.downgrade();
+    let row = row.downgrade();
     let on_changed: Rc<dyn Fn(PathBuf)> = Rc::new(on_changed);
     button.connect_clicked(move |_| {
-        let window = window.clone();
-        let row = row.clone();
+        let (Some(window), Some(row)) = (window.upgrade(), row.upgrade()) else {
+            return;
+        };
         let target = Rc::clone(&target);
         let on_changed = Rc::clone(&on_changed);
         gtk::glib::spawn_future_local(async move {
@@ -1326,10 +1610,12 @@ fn connect_add_local_folder_button(
     folders: Rc<RefCell<Vec<PathBuf>>>,
     on_changed: impl Fn() + 'static,
 ) {
-    let window = window.clone();
+    let window = window.downgrade();
     let on_changed: Rc<dyn Fn()> = Rc::new(on_changed);
     button.connect_clicked(move |_| {
-        let window = window.clone();
+        let Some(window) = window.upgrade() else {
+            return;
+        };
         let folders = Rc::clone(&folders);
         let on_changed = Rc::clone(&on_changed);
         gtk::glib::spawn_future_local(async move {
@@ -1373,4 +1659,42 @@ fn connect_view_with_close_controls(view: gtk::Widget) -> gtk::Widget {
     overlay.add_overlay(&controls);
     overlay.set_measure_overlay(&controls, false);
     overlay.upcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use library::SourceId;
+
+    use super::{SetupSurfaceState, setup_surface_state};
+    use crate::runtime::source::{SourceOperation, SourceProgress, SourceProgressStage};
+
+    fn progress() -> SourceProgress {
+        SourceProgress {
+            stage: SourceProgressStage::Connecting,
+            completed: 0,
+            total: None,
+        }
+    }
+
+    #[test]
+    fn add_server_progress_failure_and_retry_use_the_expected_surface() {
+        assert_eq!(
+            setup_surface_state(&SourceOperation::Adding {
+                progress: progress(),
+            }),
+            SetupSurfaceState::Progress
+        );
+        assert_eq!(
+            setup_surface_state(&SourceOperation::Failed {
+                source_id: Some(SourceId::fake(1)),
+                message: "Connection failed".to_string(),
+                add_form: true,
+            }),
+            SetupSurfaceState::Failed("Connection failed")
+        );
+        assert_eq!(
+            setup_surface_state(&SourceOperation::Idle),
+            SetupSurfaceState::Form
+        );
+    }
 }

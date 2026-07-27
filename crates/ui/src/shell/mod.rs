@@ -32,9 +32,6 @@ mod route_position;
 mod startup;
 mod window_state;
 
-#[cfg(test)]
-pub(crate) mod shell_tests;
-
 use route::RouteViewport;
 
 pub(crate) struct Shell {

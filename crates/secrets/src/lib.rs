@@ -85,7 +85,7 @@ impl SecretKey {
         }
     }
 
-    fn provider_token(source_namespace: &str) -> Self {
+    pub fn provider_token(source_namespace: &str) -> Self {
         Self {
             config_key: format!("provider-token:{source_namespace}"),
             namespace: "provider".to_string(),

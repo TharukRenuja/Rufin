@@ -7,7 +7,7 @@ use crate::routes::route::Route;
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::glib;
-use playback::{PlaybackView, RepeatMode, TransportStatus};
+use playback::{CurrentMediaId, PlaybackView, RepeatMode, TransportStatus};
 use tracing::info;
 
 use crate::favorites::{favorite_icon_button, set_favorite_button_active};
@@ -73,7 +73,6 @@ const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = 636;
 const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
 const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = BOTTOM_PLAYER_SHOW_LYRICS_WIDTH;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
-const SEEK_PREVIEW_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
 const VOLUME_PERSIST_DELAY: Duration = Duration::from_millis(250);
 
@@ -125,7 +124,7 @@ pub(crate) struct PlayerControls {
     progress_stack: gtk::Stack,
     progress: gtk::Scale,
     waveform: WaveformSeekBar,
-    waveform_key: RefCell<Option<String>>,
+    waveform_key: RefCell<Option<CurrentMediaId>>,
     waveform_peak_count: Cell<usize>,
     duration: gtk::Label,
     actions: gtk::Box,
@@ -457,6 +456,49 @@ impl Shell {
     }
 
     pub(crate) fn update_bottom_player(self: &Rc<Self>) {
+        self.update_bottom_player_view(true);
+    }
+
+    pub(crate) fn update_bottom_player_transport(self: &Rc<Self>) {
+        self.update_bottom_player_view(false);
+    }
+
+    pub(crate) fn update_bottom_player_position(&self) {
+        let (position_seconds, duration_seconds) = self
+            .playback
+            .player
+            .borrow()
+            .as_ref()
+            .map(|player| {
+                (
+                    (player.transport.position_millis / 1_000).min(u64::from(u32::MAX)) as u32,
+                    (player.transport.duration_millis / 1_000).min(u64::from(u32::MAX)) as u32,
+                )
+            })
+            .unwrap_or_default();
+        let controls = &self.player_view.player_controls;
+        let displayed_seconds = self
+            .playback
+            .seek_preview_seconds
+            .get()
+            .unwrap_or(position_seconds);
+        self.playback.updating_controls.set(true);
+        controls
+            .elapsed
+            .set_text(&format_duration(displayed_seconds));
+        controls
+            .progress
+            .set_value(f64::from(displayed_seconds.min(duration_seconds)));
+        let position_fraction = if duration_seconds == 0 {
+            0.0
+        } else {
+            f64::from(displayed_seconds.min(duration_seconds)) / f64::from(duration_seconds)
+        };
+        controls.waveform.set_position_fraction(position_fraction);
+        self.playback.updating_controls.set(false);
+    }
+
+    fn update_bottom_player_view(self: &Rc<Self>, update_identity: bool) {
         let player = self.playback.player.borrow().clone();
         let current = player
             .as_ref()
@@ -487,21 +529,47 @@ impl Shell {
         let controls = &self.player_view.player_controls;
         self.playback.updating_controls.set(true);
 
-        let cover_seed = current
-            .map(|entry| entry.track.duration_seconds)
-            .unwrap_or(42);
-        controls.cover.set_seed(cover_seed);
-        if let (Some(entry), Some(source_id)) = (current, source_id.as_ref()) {
-            self.bind_playback_artwork_tile(
-                &controls.cover,
-                source_id,
-                ArtworkBinding::track(&entry.track),
-                cover_seed,
-                BOTTOM_PLAYER_COVER_SIZE,
-                THUMB_COVER_SIZE,
-            );
-        } else {
-            self.clear_artwork_tile(&controls.cover);
+        if update_identity {
+            let cover_seed = current
+                .map(|entry| entry.track.duration_seconds)
+                .unwrap_or(42);
+            controls.cover.set_seed(cover_seed);
+            if let (Some(entry), Some(source_id)) = (current, source_id.as_ref()) {
+                self.bind_playback_artwork_tile(
+                    &controls.cover,
+                    source_id,
+                    ArtworkBinding::track(&entry.track),
+                    cover_seed,
+                    BOTTOM_PLAYER_COVER_SIZE,
+                    THUMB_COVER_SIZE,
+                );
+            } else {
+                self.clear_artwork_tile(&controls.cover);
+            }
+
+            let title = current
+                .map(|entry| entry.track.title.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| localization::tr("Nothing playing"));
+            let artist = current
+                .map(|entry| entry.track.artist.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| localization::tr("Queue a track to begin"));
+            let album = current
+                .map(|entry| entry.track.album.as_str())
+                .unwrap_or("");
+            set_player_link_text(&controls.title, &title);
+            set_player_link_text(&controls.artist, &artist);
+            set_player_link_text(&controls.album, album);
+            controls.title.set_sensitive(current.is_some());
+            controls.menu_button.set_sensitive(current.is_some());
+            controls
+                .artist
+                .set_sensitive(current.is_some_and(|entry| !entry.track.artist.is_empty()));
+            controls
+                .album
+                .set_sensitive(current.is_some_and(|entry| !entry.track.album.is_empty()));
+            controls.favorite_button.set_sensitive(current.is_some());
         }
 
         controls.play_icon_playing.set(matches!(
@@ -512,29 +580,6 @@ impl Shell {
         controls
             .play_button
             .set_tooltip_text(Some(&playback_state_label(state)));
-
-        let title = current
-            .map(|entry| entry.track.title.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| localization::tr("Nothing playing"));
-        let artist = current
-            .map(|entry| entry.track.artist.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| localization::tr("Queue a track to begin"));
-        let album = current
-            .map(|entry| entry.track.album.as_str())
-            .unwrap_or("");
-        set_player_link_text(&controls.title, &title);
-        set_player_link_text(&controls.artist, &artist);
-        set_player_link_text(&controls.album, album);
-        controls.title.set_sensitive(current.is_some());
-        controls.menu_button.set_sensitive(current.is_some());
-        controls
-            .artist
-            .set_sensitive(current.is_some_and(|entry| !entry.track.artist.is_empty()));
-        controls
-            .album
-            .set_sensitive(current.is_some_and(|entry| !entry.track.album.is_empty()));
 
         let shuffle_enabled = player
             .as_ref()
@@ -553,7 +598,6 @@ impl Shell {
             } else {
                 tr("Auto DJ")
             }));
-        controls.favorite_button.set_sensitive(current.is_some());
         controls
             .repeat_button
             .set_tooltip_text(Some(&repeat_label(repeat_mode)));
@@ -576,8 +620,17 @@ impl Shell {
         controls.waveform.set_position_fraction(position_fraction);
         let waveform_enabled = self.settings.current.borrow().seekbar_waveform_enabled;
         let waveform = self.playback.waveform.borrow();
-        let waveform_key = waveform_enabled.then(|| waveform.key.clone()).flatten();
-        let waveform_peaks = waveform_enabled
+        let current_media_id = current.map(|media| &media.id);
+        let waveform_matches = waveform_enabled
+            && waveform.media_id.as_ref() == current_media_id
+            && waveform
+                .peaks
+                .as_ref()
+                .is_some_and(|peaks| !peaks.is_empty());
+        let waveform_key = waveform_matches
+            .then(|| waveform.media_id.clone())
+            .flatten();
+        let waveform_peaks = waveform_matches
             .then(|| waveform.peaks.as_deref().map(Vec::as_slice))
             .flatten();
         let waveform_peak_count = waveform_peaks.map_or(0, <[_]>::len);
@@ -587,7 +640,7 @@ impl Shell {
             *controls.waveform_key.borrow_mut() = waveform_key;
             controls.waveform_peak_count.set(waveform_peak_count);
         }
-        if waveform_enabled {
+        if waveform_matches {
             controls
                 .progress_stack
                 .set_visible_child(controls.waveform.widget());
@@ -621,10 +674,12 @@ impl Shell {
         let Some(target_seconds) = self.playback.seek_preview_seconds.get() else {
             return;
         };
-        if track_changed
-            || player.transport.current.is_none()
-            || seek_preview_matches_position(target_seconds, player.transport.position_millis)
-        {
+        if should_clear_seek_preview(
+            target_seconds,
+            player.transport.position_millis,
+            track_changed,
+            player.transport.current.is_some(),
+        ) {
             self.clear_player_seek_preview();
         }
     }
@@ -639,6 +694,15 @@ fn seek_preview_matches_position(target_seconds: u32, position_millis: u64) -> b
     let lower = target_millis.saturating_sub(SEEK_PREVIEW_TOLERANCE_MILLIS);
     let upper = target_millis.saturating_add(SEEK_PREVIEW_TOLERANCE_MILLIS);
     (lower..=upper).contains(&position_millis)
+}
+
+fn should_clear_seek_preview(
+    target_seconds: u32,
+    position_millis: u64,
+    track_changed: bool,
+    has_current: bool,
+) -> bool {
+    track_changed || !has_current || seek_preview_matches_position(target_seconds, position_millis)
 }
 
 pub(crate) fn build_bottom_player() -> PlayerControls {
@@ -1305,7 +1369,7 @@ fn queue_player_seek_preview_commit(shell: &Rc<Shell>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local_once(SEEK_PREVIEW_COMMIT_DELAY, move || {
         if shell.playback.seek_generation.get() == generation {
-            commit_player_seek_preview(&shell, generation);
+            commit_player_seek_preview(&shell);
         }
     });
 }
@@ -1313,22 +1377,14 @@ fn queue_player_seek_preview_commit(shell: &Rc<Shell>) {
 fn commit_player_seek_preview_now(shell: &Rc<Shell>) {
     let generation = shell.playback.seek_generation.get().saturating_add(1);
     shell.playback.seek_generation.set(generation);
-    commit_player_seek_preview(shell, generation);
+    commit_player_seek_preview(shell);
 }
 
-fn commit_player_seek_preview(shell: &Rc<Shell>, generation: u64) {
+fn commit_player_seek_preview(shell: &Rc<Shell>) {
     let Some(seconds) = shell.playback.seek_preview_seconds.get() else {
         return;
     };
-    shell.playback.seek_preview_seconds.set(None);
     shell.products.playback.transport.seek_seconds(seconds);
-
-    let shell = Rc::clone(shell);
-    glib::timeout_add_local_once(SEEK_PREVIEW_SETTLE_WINDOW, move || {
-        if shell.playback.seek_generation.get() == generation {
-            shell.clear_player_seek_preview();
-        }
-    });
 }
 
 pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
@@ -1478,7 +1534,9 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         else {
             return;
         };
-        title_shell.navigate(Route::AlbumDetail(entry.track.album_id.clone()));
+        if let Some(album_id) = entry.track.album_id.clone() {
+            title_shell.navigate(Route::AlbumDetail(album_id));
+        }
     });
 
     let artist_shell = Rc::clone(shell);
@@ -1492,7 +1550,7 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         else {
             return;
         };
-        if let Some(artist_id) = entry.track.artist_id.clone() {
+        if let Some(artist_id) = entry.track.primary_artist_id().cloned() {
             artist_shell.navigate(Route::ArtistDetail(artist_id));
         }
     });
@@ -1508,7 +1566,9 @@ pub(crate) fn connect_player_controls(shell: &Rc<Shell>) {
         else {
             return;
         };
-        album_shell.navigate(Route::AlbumDetail(entry.track.album_id.clone()));
+        if let Some(album_id) = entry.track.album_id.clone() {
+            album_shell.navigate(Route::AlbumDetail(album_id));
+        }
     });
 
     let mute_shell = Rc::clone(shell);
@@ -1906,5 +1966,13 @@ mod tests {
             super::volume_icon_state(true, 1.0),
             super::VolumeIcon::Muted
         );
+    }
+
+    #[test]
+    fn seek_preview_waits_for_backend_acknowledgement() {
+        assert!(!super::should_clear_seek_preview(19, 5_000, false, true));
+        assert!(super::should_clear_seek_preview(19, 19_000, false, true));
+        assert!(super::should_clear_seek_preview(19, 5_000, true, true));
+        assert!(super::should_clear_seek_preview(19, 5_000, false, false));
     }
 }

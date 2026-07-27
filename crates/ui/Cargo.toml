@@ -15,25 +15,20 @@ adw = { workspace = true, features = ["v1_8", "gtk_v4_20"] }
 async-channel.workspace = true
 artwork.workspace = true
 directories.workspace = true
+desktop-integration.workspace = true
 gtk = { workspace = true, features = ["v4_20"] }
 library.workspace = true
-library-sync.workspace = true
 localization.workspace = true
-metadata.workspace = true
+lyrics.workspace = true
 playback.workspace = true
-rich-presence.workspace = true
-reqwest = { workspace = true, features = ["blocking", "json"] }
-scrobbling.workspace = true
 secrets.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-sources.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
-[target.'cfg(unix)'.dependencies]
-ksni = { workspace = true, features = ["blocking"] }
-mpris-server.workspace = true
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

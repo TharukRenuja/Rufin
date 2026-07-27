@@ -32,7 +32,7 @@ pub(crate) struct RightPanelWidgets {
     pub(crate) queue_search: gtk::SearchEntry,
     pub(crate) queue_clear_button: gtk::Button,
     pub(crate) queue_lyrics_overlay: gtk::Overlay,
-    pub(crate) lyrics_surface: gtk::ScrolledWindow,
+    pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
     pub(crate) lyrics_pane: LyricsPane,
 }
@@ -43,7 +43,7 @@ pub(crate) struct RightPanelParts {
     pub(crate) queue_search: gtk::SearchEntry,
     pub(crate) queue_clear_button: gtk::Button,
     pub(crate) queue_lyrics_overlay: gtk::Overlay,
-    pub(crate) lyrics_surface: gtk::ScrolledWindow,
+    pub(crate) lyrics_surface: gtk::Box,
     pub(crate) lyrics_resize_handle: gtk::Box,
     pub(crate) lyrics_pane: LyricsPane,
 }
@@ -78,8 +78,9 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     queue_panel.set_vexpand(true);
     queue_panel.set_margin_top(8);
     queue_panel.set_margin_start(8);
-    queue_panel.set_margin_end(8);
+    queue_panel.set_margin_end(0);
     queue_panel.set_margin_bottom(0);
+    queue_panel.set_overflow(gtk::Overflow::Hidden);
 
     let queue_region = gtk::Box::new(gtk::Orientation::Vertical, 0);
     queue_region.set_vexpand(true);
@@ -97,20 +98,14 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     let resize_label = tr("Hold and drag to resize");
     lyrics_resize_handle.update_property(&[gtk::accessible::Property::Label(&resize_label)]);
 
-    let lyrics_surface_content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    lyrics_surface_content.add_css_class("queue-lyrics-surface");
-    lyrics_surface_content.append(&lyrics_resize_handle);
-    lyrics_surface_content.append(lyrics_pane.widget());
-
-    let lyrics_surface = gtk::ScrolledWindow::new();
-    lyrics_surface.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    lyrics_surface.set_propagate_natural_height(false);
-    lyrics_surface.set_min_content_height(0);
+    let lyrics_surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    lyrics_surface.add_css_class("queue-lyrics-surface");
     lyrics_surface.set_overflow(gtk::Overflow::Hidden);
     lyrics_surface.set_hexpand(true);
     lyrics_surface.set_halign(gtk::Align::Fill);
     lyrics_surface.set_valign(gtk::Align::End);
-    lyrics_surface.set_child(Some(&lyrics_surface_content));
+    lyrics_surface.append(&lyrics_resize_handle);
+    lyrics_surface.append(lyrics_pane.widget());
 
     let queue_lyrics_overlay = gtk::Overlay::new();
     queue_lyrics_overlay.add_css_class("queue-lyrics-overlay");
@@ -294,6 +289,17 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
         .right_panel
         .lyrics_surface
         .set_height_request(queue_lyrics_initial_height(available_height, saved_height));
+    let dragging = Rc::new(std::cell::Cell::new(false));
+    let resize_shell = Rc::clone(shell);
+    let resize_dragging = Rc::clone(&dragging);
+    shell
+        .right_panel
+        .lyrics_surface
+        .connect_height_request_notify(move |_| {
+            if !resize_dragging.get() {
+                resize_shell.schedule_queue_panel_render();
+            }
+        });
 
     let start_height = Rc::new(std::cell::Cell::new(None));
     let drag = gtk::GestureDrag::new();
@@ -301,7 +307,9 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
     drag.set_propagation_phase(gtk::PropagationPhase::Capture);
     let drag_shell = Rc::clone(shell);
     let drag_start_height = Rc::clone(&start_height);
+    let drag_active = Rc::clone(&dragging);
     drag.connect_drag_begin(move |gesture, _, start_y| {
+        drag_active.set(false);
         drag_start_height.set(None);
         let overlay = &drag_shell.right_panel.queue_lyrics_overlay;
         let surface = &drag_shell.right_panel.lyrics_surface;
@@ -319,6 +327,7 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
         }
 
         gesture.set_state(gtk::EventSequenceState::Claimed);
+        drag_active.set(true);
         handle.grab_focus();
         drag_start_height.set(Some(surface_height));
     });
@@ -337,11 +346,14 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
     });
     let drag_shell = Rc::clone(shell);
     let drag_start_height = Rc::clone(&start_height);
+    let drag_active = Rc::clone(&dragging);
     drag.connect_drag_end(move |_, _, _| {
+        drag_active.set(false);
         if drag_start_height.take().is_none() {
             return;
         }
         drag_shell.save_queue_lyrics_height(drag_shell.right_panel.lyrics_surface.height_request());
+        drag_shell.schedule_queue_panel_render();
     });
     shell.right_panel.queue_lyrics_overlay.add_controller(drag);
 

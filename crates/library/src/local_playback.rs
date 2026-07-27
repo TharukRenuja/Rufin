@@ -1,0 +1,445 @@
+//! Accepted local files used for playback and lyrics sidecars.
+//!
+//! Filesystem scanning stays in Sources. Library accepts one bounded access
+//! scan, builds exact match indexes once, and answers playback without Store
+//! reads or source reconstruction.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::{
+    Library, LibraryError, LibraryResult, LoadedLibrary, LocalFile, LocalFileKind, LocalReadState,
+    SourceId, Track, TrackId,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalAccessFile {
+    pub path: String,
+    pub root: String,
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub mtime_ns: i64,
+    pub device_id: Option<u64>,
+    pub inode: Option<u64>,
+    pub parser_version: u32,
+    pub title: String,
+    pub album: String,
+    pub artist: String,
+    pub disc_number: u16,
+    pub track_number: u16,
+    pub duration_seconds: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalAccessMapping {
+    pub root_path: PathBuf,
+    pub server_prefix: Option<String>,
+    pub local_prefix: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalAccessStatus {
+    pub sample_source_path: Option<String>,
+    pub sample_local_path: Option<String>,
+    pub direct_match_count: usize,
+    pub prefix_match_count: usize,
+    pub metadata_match_count: usize,
+    pub unmatched_count: usize,
+    pub total_track_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlayableFile {
+    File {
+        path: PathBuf,
+    },
+    Cue {
+        path: PathBuf,
+        start_millis: u64,
+        end_millis: u64,
+    },
+}
+
+impl PlayableFile {
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            Self::File { path } | Self::Cue { path, .. } => path,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SidecarAudioFile {
+    pub path: PathBuf,
+    pub cue_track: bool,
+}
+
+#[derive(Debug, Hash, Eq, PartialEq)]
+pub(crate) struct LocalMatchKey {
+    title: String,
+    album: String,
+    artist: String,
+    disc_number: u16,
+    track_number: u16,
+}
+
+impl Library {
+    pub fn replace_local_access(
+        &self,
+        loaded: &Arc<LoadedLibrary>,
+        mapping: LocalAccessMapping,
+        mut files: Vec<LocalAccessFile>,
+    ) -> LibraryResult<LocalAccessStatus> {
+        if loaded.source_id().as_str().is_empty() {
+            return Err(LibraryError::Persistence(
+                "Local access requires a source".to_string(),
+            ));
+        }
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        self.store
+            .replace_local_access(loaded.source_id().clone(), files.clone())?;
+        loaded.replace_local_access(Some(mapping), files)?;
+        loaded.local_access_status().map_err(Into::into)
+    }
+
+    pub fn configure_local_access(
+        &self,
+        loaded: &Arc<LoadedLibrary>,
+        mapping: LocalAccessMapping,
+    ) -> LibraryResult<LocalAccessStatus> {
+        loaded.configure_local_access(Some(mapping))?;
+        loaded.local_access_status().map_err(Into::into)
+    }
+
+    pub fn clear_local_access(
+        &self,
+        loaded: &Arc<LoadedLibrary>,
+    ) -> LibraryResult<LocalAccessStatus> {
+        self.store.clear_local_access(loaded.source_id().clone())?;
+        loaded.replace_local_access(None, Vec::new())?;
+        loaded.local_access_status().map_err(Into::into)
+    }
+
+    pub fn discard_local_access(&self, source_id: SourceId) -> LibraryResult<()> {
+        self.store.clear_local_access(source_id)?;
+        Ok(())
+    }
+}
+
+impl LoadedLibrary {
+    pub(crate) fn replace_local_access(
+        &self,
+        mapping: Option<LocalAccessMapping>,
+        files: Vec<LocalAccessFile>,
+    ) -> crate::LoadedLibraryResult<()> {
+        let mut state = self.write_state()?;
+        let (local_access_paths, local_access_index) = index_local_access(&files, mapping.as_ref());
+        state.local_access_mapping = mapping;
+        state.local_access = files;
+        state.local_access_paths = local_access_paths;
+        state.local_access_index = local_access_index;
+        Ok(())
+    }
+
+    pub(crate) fn configure_local_access(
+        &self,
+        mapping: Option<LocalAccessMapping>,
+    ) -> crate::LoadedLibraryResult<()> {
+        let mut state = self.write_state()?;
+        let (local_access_paths, local_access_index) =
+            index_local_access(&state.local_access, mapping.as_ref());
+        state.local_access_mapping = mapping;
+        state.local_access_paths = local_access_paths;
+        state.local_access_index = local_access_index;
+        Ok(())
+    }
+
+    pub fn local_access_status(&self) -> crate::LoadedLibraryResult<LocalAccessStatus> {
+        let state = self.read_state()?;
+        let mut status = LocalAccessStatus {
+            total_track_count: state.tracks.len(),
+            ..LocalAccessStatus::default()
+        };
+        for track in state.tracks.values() {
+            let Some((file, kind)) = local_access_file_for(
+                track,
+                state.local_access_mapping.as_ref(),
+                &state.local_access,
+                &state.local_access_paths,
+                &state.local_access_index,
+            ) else {
+                status.unmatched_count += 1;
+                if status.sample_source_path.is_none() {
+                    status.sample_source_path.clone_from(&track.source_path);
+                }
+                continue;
+            };
+            match kind {
+                LocalAccessMatch::Direct => status.direct_match_count += 1,
+                LocalAccessMatch::Prefix => status.prefix_match_count += 1,
+                LocalAccessMatch::Metadata => status.metadata_match_count += 1,
+            }
+            if status.sample_source_path.is_none() {
+                status.sample_source_path.clone_from(&track.source_path);
+                status.sample_local_path = Some(file.path().to_string_lossy().into_owned());
+            }
+        }
+        Ok(status)
+    }
+
+    pub fn local_access_files(&self) -> crate::LoadedLibraryResult<Vec<LocalAccessFile>> {
+        Ok(self.read_state()?.local_access.clone())
+    }
+
+    pub fn playable_file(
+        &self,
+        track_id: &TrackId,
+    ) -> crate::LoadedLibraryResult<Option<PlayableFile>> {
+        let state = self.read_state()?;
+        let Some(track) = state.tracks.get(track_id) else {
+            return Ok(None);
+        };
+        Ok(playable_file_for(
+            track,
+            &state.local_files,
+            state.local_access_mapping.as_ref(),
+            &state.local_access,
+            &state.local_access_index,
+        ))
+    }
+
+    pub fn sidecar_audio_file(
+        &self,
+        track_id: &TrackId,
+    ) -> crate::LoadedLibraryResult<Option<SidecarAudioFile>> {
+        let state = self.read_state()?;
+        let Some(track) = state.tracks.get(track_id) else {
+            return Ok(None);
+        };
+        Ok(playable_file_for(
+            track,
+            &state.local_files,
+            state.local_access_mapping.as_ref(),
+            &state.local_access,
+            &state.local_access_index,
+        )
+        .map(|file| SidecarAudioFile {
+            path: file.path().to_path_buf(),
+            cue_track: matches!(file, PlayableFile::Cue { .. }),
+        }))
+    }
+}
+
+pub(crate) fn index_local_access(
+    files: &[LocalAccessFile],
+    mapping: Option<&LocalAccessMapping>,
+) -> (HashSet<String>, HashMap<LocalMatchKey, Vec<usize>>) {
+    let Some(mapping) = mapping else {
+        return (HashSet::new(), HashMap::new());
+    };
+    let configured_root = mapping.root_path.to_string_lossy();
+    let mut paths = HashSet::new();
+    let mut index = HashMap::<LocalMatchKey, Vec<usize>>::new();
+    for (position, file) in files.iter().enumerate() {
+        if file.root != configured_root {
+            continue;
+        }
+        paths.insert(file.path.clone());
+        index
+            .entry(local_match_key(
+                &file.title,
+                &file.album,
+                &file.artist,
+                file.disc_number,
+                file.track_number,
+            ))
+            .or_default()
+            .push(position);
+    }
+    (paths, index)
+}
+
+fn playable_file_for(
+    track: &Track,
+    local_files: &HashMap<String, LocalFile>,
+    mapping: Option<&LocalAccessMapping>,
+    files: &[LocalAccessFile],
+    index: &HashMap<LocalMatchKey, Vec<usize>>,
+) -> Option<PlayableFile> {
+    if let Some(path) = track.source_path.as_ref().filter(|path| {
+        local_files.get(*path).is_some_and(|file| {
+            file.kind == LocalFileKind::Audio
+                && matches!(
+                    file.read_state,
+                    LocalReadState::Parsed | LocalReadState::MetadataFallback
+                )
+        })
+    }) {
+        return Some(match &track.cue {
+            Some(cue) if cue.end_millis > cue.start_millis => PlayableFile::Cue {
+                path: path.into(),
+                start_millis: cue.start_millis,
+                end_millis: cue.end_millis,
+            },
+            _ => PlayableFile::File { path: path.into() },
+        });
+    }
+
+    let mapping = mapping?;
+    let projected = track.source_path.as_deref().and_then(|source_path| {
+        project_local_access_path(source_path, mapping).or_else(|| {
+            Path::new(source_path)
+                .is_absolute()
+                .then(|| PathBuf::from(source_path))
+        })
+    });
+    if let Some(path) = projected.as_ref().filter(|path| path.is_file()) {
+        return Some(PlayableFile::File { path: path.clone() });
+    }
+    if let Some(file) = unique_metadata_file(track, files, index) {
+        return Some(PlayableFile::File {
+            path: file.path.clone().into(),
+        });
+    }
+    projected.map(|path| PlayableFile::File { path })
+}
+
+#[derive(Clone, Copy)]
+enum LocalAccessMatch {
+    Direct,
+    Prefix,
+    Metadata,
+}
+
+fn local_access_file_for(
+    track: &Track,
+    mapping: Option<&LocalAccessMapping>,
+    files: &[LocalAccessFile],
+    paths: &HashSet<String>,
+    index: &HashMap<LocalMatchKey, Vec<usize>>,
+) -> Option<(PlayableFile, LocalAccessMatch)> {
+    let mapping = mapping?;
+    if let Some(source_path) = track.source_path.as_deref() {
+        if paths.contains(source_path) {
+            return Some((
+                PlayableFile::File {
+                    path: source_path.into(),
+                },
+                LocalAccessMatch::Direct,
+            ));
+        }
+        if let Some(path) = project_local_access_path(source_path, mapping)
+            && paths.contains(path.to_string_lossy().as_ref())
+        {
+            return Some((PlayableFile::File { path }, LocalAccessMatch::Prefix));
+        }
+    }
+
+    unique_metadata_file(track, files, index).map(|file| {
+        (
+            PlayableFile::File {
+                path: file.path.clone().into(),
+            },
+            LocalAccessMatch::Metadata,
+        )
+    })
+}
+
+fn unique_metadata_file<'a>(
+    track: &Track,
+    files: &'a [LocalAccessFile],
+    index: &HashMap<LocalMatchKey, Vec<usize>>,
+) -> Option<&'a LocalAccessFile> {
+    let candidates = index.get(&local_match_key(
+        &track.title,
+        &track.album,
+        &track.artist,
+        track.disc_number,
+        track.track_number,
+    ))?;
+    let mut matches = candidates.iter().filter_map(|position| {
+        let candidate = files.get(*position)?;
+        durations_close(track.duration_seconds, candidate.duration_seconds).then_some(candidate)
+    });
+    let candidate = matches.next()?;
+    matches.next().is_none().then_some(candidate)
+}
+
+/// Projects one source path through the configured remote-to-local mapping.
+///
+/// The caller decides whether the projected file currently exists. An
+/// absolute source path is itself a valid direct candidate when no server
+/// prefix was configured.
+pub fn project_local_access_path(
+    source_path: &str,
+    mapping: &LocalAccessMapping,
+) -> Option<PathBuf> {
+    let target = mapping
+        .local_prefix
+        .as_deref()
+        .filter(|prefix| !prefix.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mapping.root_path.clone());
+    if let Some(prefix) = mapping
+        .server_prefix
+        .as_deref()
+        .map(str::trim)
+        .filter(|prefix| !prefix.is_empty())
+    {
+        if let Some(suffix) = source_path.strip_prefix(prefix)
+            && (suffix.is_empty() || suffix.starts_with(['/', '\\']))
+        {
+            return Some(path_from_server_suffix(
+                &target,
+                suffix.trim_start_matches(['/', '\\']),
+            ));
+        }
+        return None;
+    }
+    let source = Path::new(source_path);
+    if source.is_absolute() {
+        Some(source.to_path_buf())
+    } else {
+        Some(target.join(source))
+    }
+}
+
+fn path_from_server_suffix(target: &Path, suffix: &str) -> PathBuf {
+    suffix
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .fold(target.to_path_buf(), |path, part| path.join(part))
+}
+
+fn local_match_key(
+    title: &str,
+    album: &str,
+    artist: &str,
+    disc_number: u16,
+    track_number: u16,
+) -> LocalMatchKey {
+    LocalMatchKey {
+        title: normalize_match_text(title),
+        album: normalize_match_text(album),
+        artist: normalize_match_text(artist),
+        disc_number,
+        track_number,
+    }
+}
+
+fn normalize_match_text(value: &str) -> String {
+    let mut normalized = String::new();
+    for character in value.chars() {
+        if character.is_alphanumeric() {
+            normalized.extend(character.to_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn durations_close(left: u32, right: u32) -> bool {
+    left == 0 || right == 0 || left.abs_diff(right) <= 3
+}

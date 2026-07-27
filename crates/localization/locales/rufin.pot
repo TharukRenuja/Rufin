@@ -47,11 +47,6 @@ msgid ""
 msgstr ""
 
 msgid ""
-"This playlist uses nested rule groups. Rule editing is unavailable in this "
-"editor."
-msgstr ""
-
-msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
@@ -96,6 +91,9 @@ msgid "API keys"
 msgstr ""
 
 msgid "About Rufin"
+msgstr ""
+
+msgid "Accepted plays will appear here."
 msgstr ""
 
 msgid "Add Rule"
@@ -167,13 +165,7 @@ msgstr ""
 msgid "All tracks"
 msgstr ""
 
-msgid "All"
-msgstr ""
-
 msgid "Any genre"
-msgstr ""
-
-msgid "Any"
 msgstr ""
 
 msgid "App window"
@@ -236,12 +228,6 @@ msgstr ""
 msgid "Cached entries will appear here after sync finishes"
 msgstr ""
 
-msgid "Cached library cleared."
-msgstr ""
-
-msgid "Cached library ready"
-msgstr ""
-
 msgid "Cached"
 msgstr ""
 
@@ -258,10 +244,6 @@ msgid "Change Secret Storage"
 msgstr ""
 
 msgid "Change"
-msgstr ""
-
-#, rust-format
-msgid "Checking {provider} server..."
 msgstr ""
 
 msgid "Choose a configured source or add another."
@@ -289,12 +271,6 @@ msgid "Choose"
 msgstr ""
 
 msgid "Classical"
-msgstr ""
-
-msgid "Clear Cache"
-msgstr ""
-
-msgid "Clear Cached Library"
 msgstr ""
 
 msgid "Clear Mapping"
@@ -347,9 +323,6 @@ msgid "Connected as {username}"
 msgstr ""
 
 msgid "Connected"
-msgstr ""
-
-msgid "Connected. Loading cached library..."
 msgstr ""
 
 msgid "Connecting to music server..."
@@ -577,9 +550,6 @@ msgstr ""
 msgid "Grid"
 msgstr ""
 
-msgid "Hidden server section"
-msgstr ""
-
 msgid "Hidden"
 msgstr ""
 
@@ -587,6 +557,9 @@ msgid "Hide lyrics"
 msgstr ""
 
 msgid "Hide sidebar"
+msgstr ""
+
+msgid "History"
 msgstr ""
 
 msgid "Hold and drag to resize"
@@ -724,9 +697,6 @@ msgstr ""
 msgid "Mapped Local Path"
 msgstr ""
 
-msgid "Match"
-msgstr ""
-
 msgid "Maximum year"
 msgstr ""
 
@@ -830,12 +800,6 @@ msgid "No Servers Found"
 msgstr ""
 
 msgid "No cached server path yet"
-msgstr ""
-
-msgid "No cached tracks yet. Sync the server to preview matches."
-msgstr ""
-
-msgid "No changes to save."
 msgstr ""
 
 msgid "No folder contents found."
@@ -1111,6 +1075,9 @@ msgstr ""
 msgid "Refresh section"
 msgstr ""
 
+msgid "Refresh"
+msgstr ""
+
 msgid "Release date"
 msgstr ""
 
@@ -1211,9 +1178,6 @@ msgid "Save Mapping"
 msgstr ""
 
 msgid "Save Server Settings"
-msgstr ""
-
-msgid "Save to apply this mapping after the next sync."
 msgstr ""
 
 msgid "Save to rescan this local library."
@@ -1412,9 +1376,6 @@ msgstr ""
 msgid "Sort"
 msgstr ""
 
-msgid "Source settings saved."
-msgstr ""
-
 msgid "Source to use for cover images and song/artist links"
 msgstr ""
 
@@ -1443,9 +1404,6 @@ msgid "Techno"
 msgstr ""
 
 msgid "Text"
-msgstr ""
-
-msgid "This removes cached library metadata for"
 msgstr ""
 
 msgid "This removes the folder from the Local source."

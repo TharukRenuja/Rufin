@@ -51,6 +51,11 @@ impl FavoriteState {
         self.controls.static_controls.borrow_mut().clear();
         self.controls.dynamic_controls.borrow_mut().clear();
     }
+
+    pub(crate) fn clear_all(&self) {
+        self.clear_controls();
+        self.pending_intents.borrow_mut().clear();
+    }
 }
 
 pub(crate) fn album_favorite_key(album_id: &AlbumId) -> FavoriteControlKey {
@@ -202,10 +207,10 @@ impl Shell {
             return pending;
         }
         self.library
-            .query
+            .selected
             .borrow()
-            .clone()
-            .and_then(|query| query.track(track_id).ok().flatten())
+            .as_ref()
+            .and_then(|selected| selected.loaded.track(track_id).ok().flatten())
             .map_or(playback_fallback, |track| track.favorite)
     }
 
@@ -225,7 +230,6 @@ impl Shell {
         self.update_visible_favorite_buttons(item_id, favorite);
         if matches!(item_id, FavoriteItemId::Track(_)) {
             self.sync_bottom_player_favorite();
-            self.schedule_queue_panel_render();
         }
     }
 
@@ -244,21 +248,9 @@ impl Shell {
             set_favorite_button_active(button, favorite);
         }
         self.update_visible_favorite_buttons(&item_id, favorite);
-        match item_id {
-            FavoriteItemId::Album(album_id) => {
-                self.products.library.set_album_favorite(album_id, favorite)
-            }
-            FavoriteItemId::Track(track_id) => {
-                self.products.library.set_track_favorite(track_id, favorite)
-            }
-            FavoriteItemId::Artist(artist_id) => self
-                .products
-                .library
-                .set_artist_favorite(artist_id, favorite),
-        }
+        self.products.source.set_favorite(item_id.clone(), favorite);
         if track_favorite_changed {
             self.sync_bottom_player_favorite();
-            self.schedule_queue_panel_render();
         }
         let title = if favorite {
             tr("Added to favorites")
@@ -279,7 +271,6 @@ impl Shell {
         self.update_visible_favorite_buttons(&item_id, favorite);
         if matches!(item_id, FavoriteItemId::Track(_)) {
             self.sync_bottom_player_favorite();
-            self.schedule_queue_panel_render();
         }
         true
     }

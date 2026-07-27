@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use library::{
-    Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId, ImageRef,
-    Playlist, PlaylistId, Track, TrackId,
+    Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre,
+    GenreCredit, GenreId, ImageRef, Playlist, PlaylistId, Track, TrackData, TrackId,
+    TrackRelations,
 };
 use serde::Deserialize;
 
 use super::{jellyfin_id, stable_hash};
 
 pub(super) const ALBUM_FIELDS: &str = "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount";
-pub(super) const TRACK_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags";
+pub(super) const TRACK_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags";
 pub(super) const PLAYLIST_FIELDS: &str = "RunTimeTicks,ImageTags,ChildCount";
-pub(super) const FOLDER_FIELDS: &str = "ParentId";
 pub(super) const MIXED_ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBackdropImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -35,7 +35,7 @@ pub(super) struct JellyfinItem {
     album_artist: Option<String>,
     album_artists: Option<Vec<NameIdPair>>,
     artists: Option<Vec<String>>,
-    genres: Option<Vec<String>>,
+    genre_items: Option<Vec<NameIdPair>>,
     artist_items: Option<Vec<NameIdPair>>,
     provider_ids: Option<HashMap<String, String>>,
     album: Option<String>,
@@ -43,15 +43,10 @@ pub(super) struct JellyfinItem {
     album_primary_image_tag: Option<String>,
     path: Option<String>,
     container: Option<String>,
-    parent_id: Option<String>,
     production_year: Option<i32>,
     date_created: Option<String>,
     premiere_date: Option<String>,
     run_time_ticks: Option<i64>,
-    child_count: Option<i32>,
-    album_count: Option<i32>,
-    song_count: Option<i32>,
-    item_counts: Option<JellyfinItemCounts>,
     index_number: Option<i32>,
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
@@ -60,13 +55,6 @@ pub(super) struct JellyfinItem {
     parent_backdrop_item_id: Option<String>,
     parent_backdrop_image_tags: Option<Vec<String>>,
     pub(super) playlist_item_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct JellyfinItemCounts {
-    album_count: Option<i32>,
-    song_count: Option<i32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -96,7 +84,7 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
     } else {
         album_artist_credits
     };
-    let artist_id = album_artist_credits.first().map(|artist| artist.id.clone());
+    let genres = genre_credits_from_pairs(item.genre_items.as_deref());
     let artist = item
         .album_artist
         .clone()
@@ -112,9 +100,6 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         id: AlbumId::new(jellyfin_id("album", &item.id)),
         title: item.name.unwrap_or_else(|| "Untitled Album".to_string()),
         artist,
-        artist_id,
-        album_artist_credits,
-        artist_credits,
         year: u16_from_option(item.production_year),
         release_date: normalized_date(item.premiere_date),
         date_added: normalized_date(item.date_created),
@@ -125,16 +110,19 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         ),
         play_count: play_count(&item.user_data),
         user_rating: user_rating(&item.user_data),
-        track_count: u16_from_option(item.child_count),
-        duration_seconds: duration_seconds(item.run_time_ticks),
         favorite: favorite(&item.user_data),
         color_seed: color_seed(&item_id),
         image_ref,
-        genres: item.genres.unwrap_or_default(),
+        local_artwork: None,
         release_types: Vec::new(),
         is_compilation: None,
         musicbrainz_album_id: source_id(&item.provider_ids, "MusicBrainzAlbum"),
         musicbrainz_release_group_id: source_id(&item.provider_ids, "MusicBrainzReleaseGroup"),
+        relations: AlbumRelations {
+            album_artists: album_artist_credits,
+            artists: artist_credits,
+            genres,
+        },
     }
 }
 
@@ -155,7 +143,7 @@ fn musicbrainz_album_artist_credit(
     vec![ArtistCredit {
         id: ArtistId::new(jellyfin_id("artist", &format!("musicbrainz:{artist_id}"))),
         name: name.to_string(),
-        musicbrainz_artist_id: None,
+        musicbrainz_artist_id: Some(artist_id.to_string()),
     }]
 }
 
@@ -165,19 +153,21 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         .or_else(|| backdrop_image_ref(&item));
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
-    let artist_id = artist_credits
-        .first()
-        .or_else(|| album_artist_credits.first())
-        .map(|artist| artist.id.clone());
+    let album_artist_credits = if album_artist_credits.is_empty() {
+        musicbrainz_album_artist_credit(item.album_artist.as_deref(), &item.provider_ids)
+    } else {
+        album_artist_credits
+    };
+    let genres = genre_credits_from_pairs(item.genre_items.as_deref());
     let album_id = item
         .album_id
         .as_deref()
-        .or(item.parent_id.as_deref())
-        .unwrap_or(&item.id);
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| AlbumId::new(jellyfin_id("album", id)));
     let source_format = source_format_from_item(item.container.as_deref(), item.path.as_deref());
-    Track {
+    Track::new(TrackData {
         id: TrackId::new(jellyfin_id("track", &item.id)),
-        album_id: AlbumId::new(jellyfin_id("album", album_id)),
+        album_id,
         title: item.name.unwrap_or_else(|| "Untitled Track".to_string()),
         artist: item
             .artists
@@ -188,10 +178,8 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
                 item.album_artist
                     .unwrap_or_else(|| "Unknown Artist".to_string())
             }),
-        artist_id,
-        artist_credits,
-        album_artist_credits,
         album: item.album.unwrap_or_else(|| "Unknown Album".to_string()),
+        album_artwork: None,
         year: u16_from_option(item.production_year),
         release_date: normalized_date(item.premiere_date),
         date_added: normalized_date(item.date_created),
@@ -207,18 +195,24 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         disc_number: u16_from_option(item.parent_index_number),
         track_number: u16_from_option(item.index_number),
         image_ref,
-        album_artwork: None,
-        genres: item.genres.unwrap_or_default(),
+        local_artwork: None,
         musicbrainz_recording_id: source_id(&item.provider_ids, "MusicBrainzTrack")
             .or_else(|| source_id(&item.provider_ids, "MusicBrainzRecording")),
         musicbrainz_release_track_id: source_id(&item.provider_ids, "MusicBrainzReleaseTrack"),
-        local_path: item.path,
+        source_path: item.path,
+        cue: None,
         source_format,
         comment: item.overview.filter(|value| !value.trim().is_empty()),
         skip_count: None,
         bpm: None,
-        moods: Vec::new(),
-    }
+        relations: TrackRelations {
+            artists: artist_credits,
+            album_artists: album_artist_credits,
+            genres,
+            moods: Vec::new(),
+            music_folders: Vec::new(),
+        },
+    })
 }
 
 fn source_format_from_item(container: Option<&str>, path: Option<&str>) -> Option<String> {
@@ -245,13 +239,6 @@ pub(super) fn folder_from_item(item: JellyfinItem) -> Folder {
     }
 }
 
-pub(super) fn parent_folder_id(item: &JellyfinItem) -> Option<FolderId> {
-    item.parent_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-        .map(|id| FolderId::new(jellyfin_id("folder", id)))
-}
-
 pub(super) fn is_audio_item(item: &JellyfinItem) -> bool {
     item.item_type
         .as_deref()
@@ -262,20 +249,6 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
     Artist {
         id: ArtistId::new(jellyfin_id("artist", &item.id)),
         name: item.name.unwrap_or_else(|| "Unknown Artist".to_string()),
-        album_count: u32_from_option(
-            item.album_count
-                .or_else(|| {
-                    item.item_counts
-                        .as_ref()
-                        .and_then(|counts| counts.album_count)
-                })
-                .or(item.child_count),
-        ),
-        track_count: u32_from_option(item.song_count.or_else(|| {
-            item.item_counts
-                .as_ref()
-                .and_then(|counts| counts.song_count)
-        })),
         favorite: favorite(&item.user_data),
         last_played: normalized_timestamp(
             item.user_data
@@ -286,7 +259,7 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
         user_rating: user_rating(&item.user_data),
         musicbrainz_artist_id: source_id(&item.provider_ids, "MusicBrainzArtist"),
         image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
-        representative_albums: Vec::new(),
+        local_artwork: None,
     }
 }
 
@@ -294,23 +267,7 @@ pub(super) fn genre_from_item(item: JellyfinItem) -> Genre {
     Genre {
         id: GenreId::new(jellyfin_id("genre", &item.id)),
         name: item.name.unwrap_or_else(|| "Unknown Genre".to_string()),
-        album_count: u32_from_option(
-            item.album_count
-                .or_else(|| {
-                    item.item_counts
-                        .as_ref()
-                        .and_then(|counts| counts.album_count)
-                })
-                .or(item.child_count),
-        ),
-        track_count: u32_from_option(item.song_count.or_else(|| {
-            item.item_counts
-                .as_ref()
-                .and_then(|counts| counts.song_count)
-        })),
-        duration_seconds: 0,
         image_ref: primary_image_ref("genre", &item.id, &item.image_tags),
-        representative_albums: Vec::new(),
     }
 }
 
@@ -318,12 +275,7 @@ pub(super) fn playlist_from_item(item: JellyfinItem) -> Playlist {
     Playlist {
         id: PlaylistId::new(jellyfin_id("playlist", &item.id)),
         name: item.name.unwrap_or_else(|| "Untitled Playlist".to_string()),
-        owner: None,
-        track_count: u32_from_option(item.child_count),
-        duration_seconds: duration_seconds(item.run_time_ticks),
-        top_genres: Vec::new(),
         image_ref: primary_image_ref("playlist", &item.id, &item.image_tags),
-        representative_albums: Vec::new(),
     }
 }
 
@@ -341,6 +293,23 @@ fn artist_credits_from_pairs(pairs: Option<&[NameIdPair]>) -> Vec<ArtistCredit> 
                 .unwrap_or("Unknown Artist")
                 .to_string(),
             musicbrainz_artist_id: None,
+        })
+        .collect()
+}
+
+fn genre_credits_from_pairs(pairs: Option<&[NameIdPair]>) -> Vec<GenreCredit> {
+    pairs
+        .unwrap_or_default()
+        .iter()
+        .filter(|pair| !pair.id.trim().is_empty())
+        .map(|pair| GenreCredit {
+            id: GenreId::new(jellyfin_id("genre", &pair.id)),
+            name: pair
+                .name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or("Unknown Genre")
+                .to_string(),
         })
         .collect()
 }
@@ -383,10 +352,6 @@ fn duration_seconds(ticks: Option<i64>) -> u32 {
 
 fn u16_from_option(value: Option<i32>) -> u16 {
     value.unwrap_or_default().clamp(0, i32::from(u16::MAX)) as u16
-}
-
-fn u32_from_option(value: Option<i32>) -> u32 {
-    value.unwrap_or_default().max(0) as u32
 }
 
 fn favorite(user_data: &Option<UserData>) -> bool {

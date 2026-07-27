@@ -3,8 +3,6 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::gio;
-use sources::SourceLocalAccessPresentation;
-use sources::{LibrarySourceSelection, SourceIdentity};
 
 use localization::tr;
 
@@ -16,6 +14,7 @@ use super::{
         configured_source_kind_display_name,
     },
 };
+use crate::runtime::source::{SourceLocalAccessSummary, SourceSummary};
 use crate::shell::Shell;
 use localization::{album_count_text, track_count_text};
 
@@ -33,6 +32,10 @@ pub(super) fn library_page(
     let page = library_sources_page(shell, dialog, &navigation, navigation_controls);
     let root = adw::NavigationPage::new(&page, &tr("Library"));
     navigation.push(&root);
+    let shell_for_pop = Rc::clone(shell);
+    navigation.connect_popped(move |_, _| {
+        shell_for_pop.clear_retained_add_server_form();
+    });
     if open_add_server {
         let page = shell.add_server_navigation_page(&navigation, dialog);
         navigation.push(&page);
@@ -52,7 +55,13 @@ fn library_sources_page(
         .icon_name("rufin-route-tracks-symbolic")
         .build();
 
-    let library = shell.source.presentation.borrow().clone();
+    let configured = shell.source.configured.borrow().clone();
+    let remote_sources = configured
+        .sources
+        .iter()
+        .filter(|source| source.kind != "local")
+        .cloned()
+        .collect::<Vec<_>>();
 
     let servers_group = adw::PreferencesGroup::builder()
         .title(tr("Servers"))
@@ -61,7 +70,7 @@ fn library_sources_page(
         ))
         .build();
 
-    if library.sources.is_empty() {
+    if remote_sources.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No remote sources configured"))
             .subtitle(tr(
@@ -70,26 +79,31 @@ fn library_sources_page(
             .build();
         servers_group.add(&row);
     } else {
-        for server in &library.sources {
-            let selected = matches!(
-                &library.selected_source,
-                Some(LibrarySourceSelection::Source(source_id))
-                    if source_id.as_str() == server.id.as_str()
-            );
-            let summary = library
-                .source_local_access
+        for server in &remote_sources {
+            let selected = configured.selected_source_id.as_ref() == Some(&server.id);
+            let summary = configured
+                .local_access
                 .iter()
                 .find(|summary| summary.source_id == server.id);
-            let account = shell
+            let credentials = shell
                 .products
                 .source
                 .configured_source(&server.id)
                 .ok()
                 .flatten()
-                .map(|saved| saved.credentials.username);
+                .map(|saved| saved.credentials);
             let row = adw::ActionRow::builder()
                 .title(configured_source_display_name(server))
-                .subtitle(source_summary_subtitle(server, summary, account.as_deref()))
+                .subtitle(source_summary_subtitle(
+                    server,
+                    summary,
+                    credentials
+                        .as_ref()
+                        .map(|credentials| credentials.server_url.as_str()),
+                    credentials
+                        .as_ref()
+                        .map(|credentials| credentials.username.as_str()),
+                ))
                 .subtitle_lines(4)
                 .build();
             let icon = gtk::Image::from_icon_name(configured_source_icon_name(server));
@@ -105,9 +119,12 @@ fn library_sources_page(
             let settings_shell = Rc::clone(shell);
             let navigation = navigation.clone();
             let navigation_controls = navigation_controls.clone();
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             let server = server.clone();
             row.connect_activated(move |_| {
+                let Some(dialog) = dialog.upgrade() else {
+                    return;
+                };
                 let navigation_controls_for_close = navigation_controls.clone();
                 let on_close: Rc<dyn Fn()> = Rc::new(move || {
                     navigation_controls_for_close.set_nested_page_visible(false);
@@ -130,8 +147,11 @@ fn library_sources_page(
     let add_shell = Rc::clone(shell);
     let navigation = navigation.clone();
     let navigation_controls = navigation_controls.clone();
-    let add_server_dialog = dialog.clone();
+    let add_server_dialog = dialog.downgrade();
     add_server.connect_activated(move |_| {
+        let Some(add_server_dialog) = add_server_dialog.upgrade() else {
+            return;
+        };
         let page = add_shell.add_server_navigation_page(&navigation, &add_server_dialog);
         navigation.push(&page);
         navigation_controls.set_nested_page_visible(true);
@@ -145,14 +165,14 @@ fn library_sources_page(
             "These folders are combined into the Local source and shown through folder browsing.",
         ))
         .build();
-    if library.local_folders.is_empty() {
+    if configured.local_folders.is_empty() {
         let row = adw::ActionRow::builder()
             .title(tr("No local folders configured"))
             .subtitle(tr("Add folders to use the Local source."))
             .build();
         local_group.add(&row);
     } else {
-        for folder in &library.local_folders {
+        for folder in configured.local_folders.iter() {
             let row = adw::ActionRow::builder()
                 .title(local_folder_title(&folder.path))
                 .subtitle(folder.path.clone())
@@ -167,9 +187,12 @@ fn library_sources_page(
             row.set_activatable(false);
             let remove_shell = Rc::clone(shell);
             let path = folder.path.clone();
-            let row_for_remove = row.clone();
+            let row_for_remove = row.downgrade();
             remove.connect_clicked(move |_| {
-                confirm_remove_local_folder(&remove_shell, path.clone(), row_for_remove.clone());
+                let Some(row) = row_for_remove.upgrade() else {
+                    return;
+                };
+                confirm_remove_local_folder(&remove_shell, path.clone(), row);
             });
             local_group.add(&row);
         }
@@ -179,10 +202,12 @@ fn library_sources_page(
     let action_buttons = action_button_box();
     let add_local = row_action_button("Add a music folder", "folder-new-symbolic");
     let add_shell = Rc::clone(shell);
-    let add_dialog = dialog.clone();
+    let add_dialog = dialog.downgrade();
     add_local.connect_clicked(move |_| {
+        let Some(dialog) = add_dialog.upgrade() else {
+            return;
+        };
         let shell = Rc::clone(&add_shell);
-        let dialog = add_dialog.clone();
         gtk::glib::spawn_future_local(async move {
             let chooser = gtk::FileDialog::builder()
                 .title(tr("Select Music Folder"))
@@ -196,18 +221,27 @@ fn library_sources_page(
             let Some(path) = folder.path() else {
                 return;
             };
-            shell.products.source.add_local_library_folder(path);
+            shell.products.source.add_local_folder(path);
             dialog.close();
         });
     });
     action_buttons.append(&add_local);
     let resync_local = row_action_button("Resync Library", "view-refresh-symbolic");
-    resync_local.set_sensitive(!library.local_folders.is_empty());
+    let local_source_id = configured
+        .sources
+        .iter()
+        .find(|source| source.kind == "local")
+        .map(|source| source.id.clone());
+    resync_local.set_sensitive(!configured.local_folders.is_empty() && local_source_id.is_some());
     let source = shell.products.source.clone();
-    let resync_dialog = dialog.clone();
+    let resync_dialog = dialog.downgrade();
     resync_local.connect_clicked(move |_| {
-        source.resync_local_library();
-        resync_dialog.close();
+        if let Some(source_id) = local_source_id.clone() {
+            source.refresh_source(source_id);
+        }
+        if let Some(dialog) = resync_dialog.upgrade() {
+            dialog.close();
+        }
     });
     action_buttons.append(&resync_local);
     local_actions.set_child(Some(&action_buttons));
@@ -274,7 +308,7 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
         None::<&gio::Cancellable>,
         move |response| {
             if response.as_str() == "remove" {
-                source.remove_local_library_folder(path.clone());
+                source.remove_local_folder(path.clone());
                 row.set_visible(false);
             }
         },
@@ -282,15 +316,15 @@ fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::Action
 }
 
 fn source_summary_subtitle(
-    server: &SourceIdentity,
-    summary: Option<&SourceLocalAccessPresentation>,
+    server: &SourceSummary,
+    summary: Option<&SourceLocalAccessSummary>,
+    address: Option<&str>,
     username: Option<&str>,
 ) -> String {
-    let address = if server.base_url.trim().is_empty() {
-        String::new()
-    } else {
-        server.base_url.clone()
-    };
+    let address = address
+        .filter(|address| !address.trim().is_empty())
+        .unwrap_or_default()
+        .to_string();
     let folder = summary
         .and_then(|summary| summary.selected_music_folder_name.as_deref())
         .map(ToOwned::to_owned)
@@ -319,16 +353,16 @@ fn metadata_line(parts: impl IntoIterator<Item = String>) -> String {
         .join(" - ")
 }
 
-fn source_cache_line(summary: &SourceLocalAccessPresentation) -> String {
+fn source_cache_line(summary: &SourceLocalAccessSummary) -> String {
     format!(
         "{}: {}, {}",
         tr("Cached"),
-        album_count_text(summary.cached_album_count as u64),
-        track_count_text(summary.cached_track_count as u64)
+        album_count_text(summary.album_count as u64),
+        track_count_text(summary.track_count as u64)
     )
 }
 
-fn local_mapping_status(summary: Option<&SourceLocalAccessPresentation>) -> String {
+fn local_mapping_status(summary: Option<&SourceLocalAccessSummary>) -> String {
     let Some(summary) = summary else {
         return tr("No local playback mapping");
     };

@@ -69,6 +69,8 @@
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-genres-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-home-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-home-selected-symbolic.svg",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-history-symbolic.svg",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-history-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-moods-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-moods-selected-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/actions/rufin-route-playlists-symbolic.svg",

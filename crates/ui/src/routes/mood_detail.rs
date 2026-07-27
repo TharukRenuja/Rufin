@@ -1,32 +1,42 @@
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
-use ::library::{ActiveLibraryQuery, play_context::PlayContextDescriptor};
+use ::library::{LoadedLibrary, MoodDetail, MoodSummary, MusicFolderId};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
-use crate::LibraryListKey;
 use crate::format_duration_units;
 use crate::localization::localized_label;
 use crate::shell::Shell;
-use crate::shell::actions::PLAY_ICON;
 use crate::shell::cover::presentation::stable_seed;
-use crate::shell::route::MountedRoute;
+use crate::shell::route::{LatestMountedRouteRead, MountedRoute, SelectedRouteIdentity};
+use crate::{LibraryListKey, LibraryListSettings};
 use localization::track_count_text;
-use playback::{ContextPlayRequest, QueuePlacement};
 
-use super::collection_routes::{MountedRefreshLoader, MountedRouteRefresh};
-use super::detail_showcase::{
-    append_loaded_context_batch_queue_actions, detail_action_row, detail_primary_action_button,
-};
+use super::detail_showcase::detail_action_row;
 use super::grouped_detail::GroupedDetailData;
-use super::play_context::selected_music_folder_id;
+use super::route::Route;
+use super::track_model::{
+    PreparedTrackProjection, TrackProjectionRequest, prepare_track_projection,
+};
+
+#[derive(Clone)]
+struct MoodDetailReadRequest {
+    identity: SelectedRouteIdentity,
+    tracks: TrackProjectionRequest,
+}
+
+struct PreparedMoodDetail {
+    summary: MoodSummary,
+    tracks: PreparedTrackProjection,
+}
 
 impl Shell {
-    pub(crate) fn mood_detail_view_from_loaded(
+    pub(crate) fn mood_detail_view(
         self: &Rc<Self>,
-        library_query: ActiveLibraryQuery,
         mood_id: ::library::MoodId,
-        detail: Option<::library::CachedMoodDetail>,
+        detail: Option<MoodDetail>,
+        loaded: Arc<LoadedLibrary>,
+        music_folder_id: Option<MusicFolderId>,
     ) -> MountedRoute {
         let Some(detail) = detail else {
             return MountedRoute::static_widget(self.placeholder_view(
@@ -34,114 +44,128 @@ impl Shell {
                 "Files need Mood/BPM tags written on them. Not supported for Jellyfin",
             ));
         };
-        let seed = stable_seed(detail.mood.id.as_str());
-        let mut summary_items = vec![(
-            "rufin-route-tracks-symbolic",
-            track_count_text(detail.mood.track_count.into()),
-        )];
-        if detail.mood.duration_seconds > 0 {
-            summary_items.push((
-                "appointment-soon-symbolic",
-                format_duration_units(detail.mood.duration_seconds),
-            ));
-        }
-        let mood = detail.mood;
-        let artwork = ArtworkBinding::mood_slots(&mood);
-        let kind_row = self.mood_detail_kind_row();
+        let mood = detail.summary;
+        let tracks = detail.tracks;
+        let seed = stable_seed(mood.mood.id.as_str());
+        let summary_items = mood_summary_items(&mood);
+        let artwork = ArtworkBinding::mood_slots(&mood.mood, &mood.representative_albums);
         let actions = detail_action_row();
         actions.set_halign(gtk::Align::Start);
-        let source_descriptor = PlayContextDescriptor::Mood {
-            mood_id: mood_id.clone(),
-            music_folder_id: selected_music_folder_id(self),
-        };
+        let context_id = format!("mood:{}", mood_id.as_str());
         let grouped = self.grouped_detail_view(GroupedDetailData {
             key: LibraryListKey::MoodTracks,
-            kind_row: Some(kind_row.upcast()),
-            title: mood.name.clone(),
+            kind_row: Some(self.mood_detail_kind_row().upcast()),
+            title: mood.mood.name.clone(),
             artwork,
             seed,
             summary_items,
             actions: Some(actions.clone().upcast()),
-            tracks: detail.tracks,
+            tracks,
             table_context: "mood-detail",
-            source_descriptor: Some(source_descriptor.clone()),
+            playback_context: context_id.clone(),
         });
-        self.install_mood_detail_actions(&actions, &grouped, source_descriptor);
-        let mounted_track_count = Rc::new(Cell::new(u64::from(mood.track_count)));
-        let track_count_for_locale = Rc::clone(&mounted_track_count);
-        grouped.bind_summary_text_with(0, move || track_count_text(track_count_for_locale.get()));
-        let route_stack = gtk::Stack::new();
-        route_stack.set_hexpand(true);
-        route_stack.set_vexpand(true);
-        route_stack.add_named(&grouped.widget(), Some("detail"));
-        route_stack.add_named(
-            &self.placeholder_view(
-                "Mood",
-                "Files need Mood/BPM tags written on them. Not supported for Jellyfin",
-            ),
+        self.install_grouped_detail_actions(&actions, grouped.tracks(), context_id);
+        let track_count = Rc::new(Cell::new(mood.track_count));
+        let localized_track_count = Rc::clone(&track_count);
+        grouped.bind_summary_text_with(0, move || {
+            track_count_text(u64::from(localized_track_count.get()))
+        });
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.add_named(&grouped.widget(), Some("content"));
+        stack.add_named(
+            &self.placeholder_view("Mood", "The selected cached mood was not found."),
             Some("missing"),
         );
-        route_stack.set_visible_child_name("detail");
-
-        let shell = Rc::clone(self);
-        let apply_stack = route_stack.clone();
-        let delta_grouped = grouped.clone();
-        let delta_track_count = Rc::clone(&mounted_track_count);
-        let apply_loaded: Rc<dyn Fn(Result<Option<::library::CachedMoodDetail>, String>)> =
-            Rc::new(move |result| {
-                let detail = match result {
-                    Ok(Some(detail)) => detail,
-                    Ok(None) => {
-                        apply_stack.set_visible_child_name("missing");
+        stack.set_visible_child_name("content");
+        let identity = self.mounted_route_read_identity(
+            Route::MoodDetail(mood_id.clone()),
+            &loaded,
+            music_folder_id.clone(),
+        );
+        let apply = {
+            let shell = Rc::clone(self);
+            let grouped = grouped.clone();
+            let stack = stack.clone();
+            let track_count = Rc::clone(&track_count);
+            Rc::new(
+                move |request: MoodDetailReadRequest,
+                      result: Result<Option<PreparedMoodDetail>, String>| {
+                    if !shell.mounted_route_read_is_current(&request.identity) {
                         return;
                     }
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to refresh Mood detail projection");
+                    let next = match result {
+                        Ok(next) => next,
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to refresh the mounted Mood route");
+                            return;
+                        }
+                    };
+                    let Some(next) = next else {
+                        stack.set_visible_child_name("missing");
+                        return;
+                    };
+                    let artwork = ArtworkBinding::mood_slots(
+                        &next.summary.mood,
+                        &next.summary.representative_albums,
+                    );
+                    if !grouped.replace_prepared(
+                        &shell,
+                        &next.summary.mood.name,
+                        &artwork,
+                        stable_seed(next.summary.mood.id.as_str()),
+                        &mood_summary_items(&next.summary),
+                        next.tracks,
+                    ) {
                         return;
                     }
-                };
-                let mut summary_items = vec![(
-                    "rufin-route-tracks-symbolic",
-                    track_count_text(detail.mood.track_count.into()),
-                )];
-                if detail.mood.duration_seconds > 0 {
-                    summary_items.push((
-                        "appointment-soon-symbolic",
-                        format_duration_units(detail.mood.duration_seconds),
-                    ));
-                }
-                let seed = stable_seed(detail.mood.id.as_str());
-                let artwork = ArtworkBinding::mood_slots(&detail.mood);
-                delta_track_count.set(u64::from(detail.mood.track_count));
-                delta_grouped.replace(
-                    &shell,
-                    &detail.mood.name,
-                    &summary_items,
-                    &artwork,
-                    seed,
-                    detail.tracks,
-                );
-                apply_stack.set_visible_child_name("detail");
-            });
-        let load_query = library_query.clone();
-        let load_mood_id = mood_id.clone();
-        let load: MountedRefreshLoader<Result<Option<::library::CachedMoodDetail>, String>> =
-            Arc::new(move || load_query.mood_detail(&load_mood_id));
-        let refresh =
-            MountedRouteRefresh::new(Rc::downgrade(&apply_loaded), load, "mounted Mood detail");
-        let affected_by = Rc::new(|delta: &::library::LibraryDelta| {
-            delta.reset.is_some() || !delta.tracks.is_empty()
-        });
-        let apply_delta = {
-            let apply_loaded = Rc::clone(&apply_loaded);
-            let refresh = Rc::clone(&refresh);
-            Rc::new(move |_: &::library::LibraryDelta| {
-                let _ = &apply_loaded;
-                refresh.request();
+                    track_count.set(next.summary.track_count);
+                    stack.set_visible_child_name("content");
+                },
+            )
+        };
+        let load = {
+            let loaded = Arc::clone(&loaded);
+            let mood_id = mood_id.clone();
+            let music_folder_id = music_folder_id.clone();
+            Arc::new(move |request: &MoodDetailReadRequest| {
+                load_mood_detail(
+                    &loaded,
+                    &mood_id,
+                    music_folder_id.as_ref(),
+                    &request.tracks.settings,
+                )
+                .and_then(|detail| {
+                    detail
+                        .map(|MoodDetail { summary, tracks }| {
+                            prepare_track_projection(tracks, request.tracks.clone())
+                                .map(|tracks| PreparedMoodDetail { summary, tracks })
+                                .map_err(|error| error.to_string())
+                        })
+                        .transpose()
+                })
             })
         };
+        let read = LatestMountedRouteRead::new_with_request(apply, load, "mounted Mood route");
+        {
+            let read = Rc::downgrade(&read);
+            let identity = identity.clone();
+            grouped.tracks().connect_search_request(move |tracks| {
+                let Some(read) = read.upgrade() else {
+                    return;
+                };
+                read.request_with_if_running(MoodDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks,
+                });
+            });
+        }
         let resume = {
             let shell = Rc::clone(self);
+            let grouped = grouped.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
             Rc::new(move || {
                 let settings = shell
                     .settings
@@ -149,9 +173,43 @@ impl Shell {
                     .borrow()
                     .library_list(LibraryListKey::MoodTracks);
                 grouped.apply_library_list_settings(LibraryListKey::MoodTracks, &settings);
+                read.request_with_if_running(MoodDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks: grouped.tracks().projection_request(),
+                });
             })
         };
-        MountedRoute::new(route_stack.upcast(), affected_by, apply_delta, resume)
+        let update = {
+            let mood_id = mood_id.clone();
+            let grouped = grouped.clone();
+            let read = Rc::clone(&read);
+            let identity = identity.clone();
+            let music_folder_id = music_folder_id.clone();
+            Rc::new(move |update: &crate::runtime::SelectedLibraryUpdate| {
+                let replacements = update.change.tracks.as_slice();
+                if !update.change.moods.contains(&mood_id) {
+                    if replacements.is_empty() {
+                        return;
+                    }
+                    if grouped
+                        .tracks()
+                        .apply_track_replacement(replacements, |track| {
+                            track.relations.moods.iter().any(|mood| mood.id == mood_id)
+                                && music_folder_id.as_ref().is_none_or(|folder_id| {
+                                    track.relations.music_folders.contains(folder_id)
+                                })
+                        })
+                    {
+                        return;
+                    }
+                }
+                read.request_with(MoodDetailReadRequest {
+                    identity: identity.clone(),
+                    tracks: grouped.tracks().projection_request(),
+                });
+            })
+        };
+        MountedRoute::new(stack.upcast(), resume).with_library_update(update)
     }
 
     fn mood_detail_kind_row(self: &Rc<Self>) -> gtk::Box {
@@ -169,32 +227,36 @@ impl Shell {
         row.append(&kind);
         row
     }
+}
 
-    fn install_mood_detail_actions(
-        self: &Rc<Self>,
-        actions: &gtk::Box,
-        grouped: &super::grouped_detail::GroupedDetailView,
-        descriptor: PlayContextDescriptor,
-    ) {
-        let play = detail_primary_action_button(PLAY_ICON, "Play");
-        let controller = self.products.playback.queue.clone();
-        let play_grouped = grouped.clone();
-        let play_descriptor = descriptor.clone();
-        play.connect_clicked(move |_| {
-            controller.play_context(ContextPlayRequest::loaded(
-                play_descriptor.clone(),
-                QueuePlacement::Now,
-                play_grouped.source_tracks(),
-            ));
-        });
-        actions.append(&play);
-
-        let batch_grouped = grouped.clone();
-        append_loaded_context_batch_queue_actions(
-            actions,
-            &self.products.playback.queue,
-            descriptor,
-            Rc::new(move || batch_grouped.source_tracks()),
-        );
+pub(crate) fn load_mood_detail(
+    loaded: &Arc<LoadedLibrary>,
+    mood_id: &::library::MoodId,
+    music_folder_id: Option<&MusicFolderId>,
+    settings: &LibraryListSettings,
+) -> Result<Option<MoodDetail>, String> {
+    let mut detail = loaded
+        .mood_detail(mood_id, music_folder_id)
+        .map_err(|error| error.to_string())?;
+    if let Some(detail) = detail.as_mut() {
+        detail.tracks = detail
+            .tracks
+            .sorted(settings.sort_key.track_sort(), settings.descending)
+            .map_err(|error| error.to_string())?;
     }
+    Ok(detail)
+}
+
+fn mood_summary_items(mood: &MoodSummary) -> Vec<(&'static str, String)> {
+    let mut items = vec![(
+        "rufin-route-tracks-symbolic",
+        track_count_text(mood.track_count.into()),
+    )];
+    if mood.duration_seconds > 0 {
+        items.push((
+            "appointment-soon-symbolic",
+            format_duration_units(mood.duration_seconds),
+        ));
+    }
+    items
 }

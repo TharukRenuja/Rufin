@@ -6,7 +6,7 @@ use super::sidebar::{
     default_grid_fields, default_row_fields, default_sort_key, ensure_usable_row_field,
     sanitize_optional_fields, sanitize_required_fields,
 };
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 8;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 450;
@@ -266,9 +266,10 @@ pub enum SidebarRouteItem {
     Folders,
     Playlists,
     SmartPlaylists,
+    History,
 }
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 11] {
+    pub fn all() -> [Self; 12] {
         [
             Self::Home,
             Self::Favorites,
@@ -278,6 +279,7 @@ impl SidebarRouteItem {
             Self::AlbumArtists,
             Self::Genres,
             Self::Moods,
+            Self::History,
             Self::Folders,
             Self::Playlists,
             Self::SmartPlaylists,
@@ -404,6 +406,7 @@ pub enum LibraryListKey {
     AlbumArtists,
     Tracks,
     FavoriteTracks,
+    History,
     Genres,
     Moods,
     Playlists,
@@ -417,13 +420,14 @@ pub enum LibraryListKey {
     SmartPlaylistTracks,
 }
 impl LibraryListKey {
-    pub fn all() -> [Self; 16] {
+    pub fn all() -> [Self; 17] {
         [
             Self::Albums,
             Self::Artists,
             Self::AlbumArtists,
             Self::Tracks,
             Self::FavoriteTracks,
+            Self::History,
             Self::Genres,
             Self::Moods,
             Self::Playlists,
@@ -445,6 +449,7 @@ impl LibraryListKey {
             Self::AlbumArtists => msgid("Album artists"),
             Self::Tracks => msgid("Tracks"),
             Self::FavoriteTracks => msgid("Favorites"),
+            Self::History => msgid("History"),
             Self::Genres => msgid("Genres"),
             Self::Moods => msgid("Moods"),
             Self::Playlists => msgid("Playlists"),
@@ -471,6 +476,7 @@ impl LibraryListKey {
             Self::Albums => LibraryLayout::Grid,
             Self::Tracks
             | Self::FavoriteTracks
+            | Self::History
             | Self::AlbumDetailTracks
             | Self::ArtistTracks
             | Self::GenreTracks
@@ -691,6 +697,7 @@ impl LibraryListSettings {
                 | LibraryListKey::AlbumArtists
                 | LibraryListKey::Tracks
                 | LibraryListKey::FavoriteTracks
+                | LibraryListKey::History
                 | LibraryListKey::Genres
                 | LibraryListKey::Moods
                 | LibraryListKey::Playlists
@@ -730,6 +737,7 @@ impl LibraryListSettings {
                 LibraryListKey::Artists
                 | LibraryListKey::AlbumArtists
                 | LibraryListKey::Tracks
+                | LibraryListKey::History
                 | LibraryListKey::Genres
                 | LibraryListKey::Moods
                 | LibraryListKey::Playlists
@@ -740,6 +748,36 @@ impl LibraryListSettings {
                 | LibraryListKey::MoodTracks
                 | LibraryListKey::PlaylistTracks
                 | LibraryListKey::SmartPlaylistTracks => {}
+            }
+        }
+
+        if self.layout_version < 8 {
+            let defaults = default_row_fields(key);
+            let standard_track_default = matches!(
+                key,
+                LibraryListKey::Tracks
+                    | LibraryListKey::FavoriteTracks
+                    | LibraryListKey::ArtistTracks
+            ) && self.row_fields == defaults[1..];
+            let album_detail_default = key == LibraryListKey::AlbumDetailTracks
+                && self.row_fields
+                    == [
+                        LibraryField::TrackNumber,
+                        LibraryField::Title,
+                        LibraryField::Duration,
+                    ];
+            if standard_track_default || album_detail_default {
+                self.row_fields = defaults;
+            }
+
+            if self.detail_track_fields
+                == [
+                    LibraryField::TrackNumber,
+                    LibraryField::Title,
+                    LibraryField::Duration,
+                ]
+            {
+                self.detail_track_fields = default_detail_track_fields();
             }
         }
     }
@@ -804,6 +842,7 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
         ],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
@@ -860,6 +899,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
         }
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
+        | LibraryListKey::History
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks

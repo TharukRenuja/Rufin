@@ -11,6 +11,7 @@ pub(crate) struct FolderPathItem {
 pub(crate) enum Route {
     Home,
     Favorites,
+    History,
     Albums,
     AlbumDetail(AlbumId),
     Tracks,

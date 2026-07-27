@@ -9,7 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use library::SourceId;
 
 use crate::selection::Candidate;
-use crate::{ArtworkKey, ArtworkRequest};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const CACHE_LAYOUT: &str = "v1";
@@ -137,17 +136,6 @@ impl FilesystemCache {
         };
         cache.initialize_usage()?;
         Ok(cache)
-    }
-
-    pub(crate) fn artwork_key(&self, source_id: &SourceId, request: &ArtworkRequest) -> ArtworkKey {
-        ArtworkKey::new(format!(
-            "{}\0{}\0{}\0{}\0{}",
-            source_id,
-            request.binding.stable_identity(),
-            request.fetch_size,
-            request.render_size,
-            request.external.allow_cached
-        ))
     }
 
     pub(crate) fn ready_entry(
@@ -525,10 +513,10 @@ mod tests {
         let first = SourceId::new("source-one");
         let second = SourceId::new("source-two");
         let native = Candidate::Native(library::ImageRef::new("native-cover", None));
-        let external = Candidate::AlbumText {
-            artist: "Artist".to_string(),
-            album: "Album".to_string(),
-        };
+        let external = Candidate::Album(
+            album_lookup::AlbumCover::new("Artist", "Album", None, None)
+                .expect("album cover candidate"),
+        );
         cache
             .write_ready(&first, &native, 96, b"first")
             .expect("first source ready");

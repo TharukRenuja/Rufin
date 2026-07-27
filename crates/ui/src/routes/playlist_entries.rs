@@ -1,27 +1,23 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::{Rc, Weak},
+    rc::Rc,
 };
 
-use ::library::{
-    Playlist, PlaylistEntry, PlaylistId, SourceId, Track, TrackId,
-    play_context::{
-        PlayContext, PlayContextDescriptor, PlayContextOrder, PlaylistSort, context_id,
-    },
-};
+use ::library::{PlaylistEdit, PlaylistEntryItem, PlaylistEntryList, PlaylistId, SourceId, Track};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
-use gtk::{gio, glib};
-use playback::PlaylistEntryPlayRequest;
-use sources::SourcePlaylistOperation;
+use gtk::glib;
 
 use super::collection_context::install_dynamic_playlist_entry_context_menu;
+use super::playlist_entry_model::{
+    PlaylistEntryModel, PlaylistEntryProjectionRequest, PlaylistEntryRow, PreparedPlaylistEntries,
+};
 use crate::favorites::{
     favorite_button_is_active, favorite_icon_button, set_favorite_button_active, track_favorite_key,
 };
 use crate::interactions::{add_dynamic_link_hover, add_label_click};
-use crate::localization::{bind_widget_tooltip, localized_column};
+use crate::localization::{bind_search_placeholder, bind_widget_tooltip, localized_column};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
@@ -33,15 +29,22 @@ use crate::{LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings};
 
 use super::collections::{
     CollectionTableProjection, LibraryCollectionProjection, LibraryPresentationProjection,
-    dynamic_collection_table, track_grid_field_route,
+    dynamic_collection_table, library_route_inset, track_grid_field_route,
 };
-use super::columns::{track_column_fit_width, track_column_width};
+use super::columns::{
+    ROW_INDEX_COLUMN_TITLE, set_track_row_index_text, track_column_fit_width, track_column_width,
+    track_row_index_cell,
+};
 use super::detail_links::track_artist_route;
 use super::grid_cells::{
     CollectionGridCardCell, CollectionGridProjection, ReusableCollectionGridCell, collection_grid,
 };
-use super::library_fields::{item_at, item_at_from_item, play_count_column_width, track_field};
+use super::library_fields::{
+    COLLECTION_GRID_MIN_CARD_WIDTH, item_at_from_item, play_count_column_width, track_field,
+};
 use super::route::Route;
+use super::route_layout::PRIMARY_ROUTE_HORIZONTAL_INSET;
+use super::route_shell::LibraryToolbarProjection;
 use super::table_links::list_item_storage_key;
 use super::table_sizing::route_column_view_initial_width_with_inset;
 
@@ -52,142 +55,69 @@ const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
 const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
 const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
 const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
-pub(crate) type PlaylistEntrySelectionHandle = Rc<RefCell<Option<Rc<dyn Fn(&str)>>>>;
-
-pub(crate) fn playlist_operation_supported(
-    shell: &Shell,
-    playlist: &Playlist,
-    operation: SourcePlaylistOperation,
-) -> bool {
-    playlist.owner.is_some_and(|owner| {
-        shell
-            .products
-            .library
-            .playlist_operation_supported(owner, operation)
-    })
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaylistEntryContextMenuAction {
     pub(crate) playlist_id: PlaylistId,
-    pub(crate) entry_id: String,
+    pub(crate) occurrence_id: String,
     pub(crate) title: String,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct PlaylistEntryContextMenuState {
     pub(crate) track: Track,
-    pub(crate) entry_id: String,
+    pub(crate) occurrence_id: String,
     pub(crate) remove_action: Option<PlaylistEntryContextMenuAction>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PlaylistEntrySort {
-    Order,
-    Title,
-    Artist,
-    Album,
 }
 
 #[derive(Clone)]
 pub(crate) struct PlaylistEntryTableSelection {
-    entries: Weak<RefCell<Vec<PlaylistEntry>>>,
-    model: glib::WeakRef<gio::ListStore>,
+    model: glib::WeakRef<PlaylistEntryModel>,
     selection: glib::WeakRef<gtk::SingleSelection>,
-    index: Rc<RefCell<PlaylistEntrySelectionIndex>>,
     current: Rc<RefCell<Option<PlaylistEntryCurrentSelection>>>,
     selected_entry_id: Rc<RefCell<Option<String>>>,
 }
 
 #[derive(Clone, Debug)]
 struct PlaylistEntryCurrentSelection {
-    track_id: TrackId,
+    track_id: ::library::TrackId,
     source_rank: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-struct PlaylistEntrySelectionItem {
-    entry_id: String,
-    track_id: TrackId,
-}
-
-#[derive(Default)]
-struct PlaylistEntrySelectionIndex {
-    position_by_entry_id: HashMap<String, u32>,
-    first_entry_by_track: HashMap<TrackId, String>,
-    entry_by_source_rank: HashMap<usize, PlaylistEntrySelectionItem>,
-}
-
-impl PlaylistEntrySelectionIndex {
-    fn rebuild(&mut self, entries: &[PlaylistEntry], model: &gio::ListStore) {
-        self.position_by_entry_id.clear();
-        self.first_entry_by_track.clear();
-        self.entry_by_source_rank.clear();
-        for position in 0..model.n_items() {
-            let Some(row) = item_at::<PlaylistEntryTableRow>(model, position) else {
-                continue;
-            };
-            let Some(entry) = entries.get(row.original_index) else {
-                continue;
-            };
-            self.position_by_entry_id
-                .insert(entry.entry_id.clone(), position);
-            self.first_entry_by_track
-                .entry(entry.track.id.clone())
-                .or_insert_with(|| entry.entry_id.clone());
-            self.entry_by_source_rank.insert(
-                position as usize,
-                PlaylistEntrySelectionItem {
-                    entry_id: entry.entry_id.clone(),
-                    track_id: entry.track.id.clone(),
-                },
-            );
-        }
-    }
-
-    fn entry_id_for_current(&self, current: &PlaylistEntryCurrentSelection) -> Option<&str> {
-        if let Some(source_rank) = current.source_rank
-            && let Some(item) = self.entry_by_source_rank.get(&source_rank)
-            && item.track_id == current.track_id
-        {
-            return Some(&item.entry_id);
-        }
-        self.first_entry_by_track
-            .get(&current.track_id)
-            .map(String::as_str)
-    }
+    source_order: bool,
 }
 
 fn playlist_entry_current_selection(
     current: Option<&RouteCurrentTrack>,
     source_id: Option<&SourceId>,
     expected_context_id: &str,
+    source_context_id: &str,
 ) -> Option<PlaylistEntryCurrentSelection> {
     current
         .zip(source_id)
         .filter(|(current, source_id)| &current.source_id == *source_id)
-        .map(|(current, _)| PlaylistEntryCurrentSelection {
-            track_id: current.track_id.clone(),
-            source_rank: current
-                .context
-                .as_ref()
-                .filter(|context| context.context_id == expected_context_id)
-                .map(|context| context.source_rank),
+        .map(|(current, _)| {
+            let context = current.context.as_ref();
+            let source_order =
+                context.is_some_and(|context| context.context_id == source_context_id);
+            let source_rank = context
+                .filter(|context| context.context_id == expected_context_id || source_order)
+                .map(|context| context.source_rank);
+            PlaylistEntryCurrentSelection {
+                track_id: current.track_id.clone(),
+                source_rank,
+                source_order,
+            }
         })
 }
 
 impl PlaylistEntryTableSelection {
     fn new(
-        entries: Rc<RefCell<Vec<PlaylistEntry>>>,
-        model: &gio::ListStore,
+        model: &PlaylistEntryModel,
         selection: &gtk::SingleSelection,
         selected_entry_id: Rc<RefCell<Option<String>>>,
     ) -> Self {
         Self {
-            entries: Rc::downgrade(&entries),
             model: model.downgrade(),
             selection: selection.downgrade(),
-            index: Rc::new(RefCell::new(PlaylistEntrySelectionIndex::default())),
             current: Rc::new(RefCell::new(None)),
             selected_entry_id,
         }
@@ -208,15 +138,27 @@ impl PlaylistEntryTableSelection {
         current: Option<&RouteCurrentTrack>,
         source_id: Option<&SourceId>,
         expected_context_id: &str,
+        source_context_id: &str,
     ) {
-        let current = playlist_entry_current_selection(current, source_id, expected_context_id);
+        let current = playlist_entry_current_selection(
+            current,
+            source_id,
+            expected_context_id,
+            source_context_id,
+        );
+        let current_for_lookup = current.clone();
         *self.current.borrow_mut() = current;
-        let entry_id = self.current.borrow().as_ref().and_then(|current| {
-            self.index
-                .borrow()
-                .entry_id_for_current(current)
-                .map(str::to_string)
-        });
+        let entry_id = self
+            .model
+            .upgrade()
+            .zip(current_for_lookup)
+            .and_then(|(model, current)| {
+                model.occurrence_for_current(
+                    &current.track_id,
+                    current.source_rank,
+                    current.source_order,
+                )
+            });
         if let Some(entry_id) = entry_id {
             self.select_entry_id(&entry_id);
         } else {
@@ -225,126 +167,61 @@ impl PlaylistEntryTableSelection {
     }
 
     pub(crate) fn is_bound(&self) -> bool {
-        self.entries.upgrade().is_some()
-            && self.model.upgrade().is_some()
-            && self.selection.upgrade().is_some()
+        self.model.upgrade().is_some() && self.selection.upgrade().is_some()
     }
 
     fn sync(&self) {
-        let Some(selection) = self.selection.upgrade() else {
+        let Some((selection, model)) = self.selection.upgrade().zip(self.model.upgrade()) else {
             return;
         };
-        sync_playlist_entry_selection(&selection, &self.index.borrow(), &self.selected_entry_id);
+        sync_playlist_entry_selection(&selection, &model, &self.selected_entry_id);
     }
 }
 
-impl PlaylistEntrySort {
-    fn for_field(field: LibraryField) -> Self {
-        match field {
-            LibraryField::Title => Self::Title,
-            LibraryField::Artist => Self::Artist,
-            LibraryField::Album => Self::Album,
-            _ => Self::Order,
-        }
-    }
-}
-fn source_query(query: &str) -> Option<String> {
-    let query = query.trim();
-    (!query.is_empty()).then(|| query.to_string())
-}
-fn playlist_entry_sort_descriptor(sort: PlaylistEntrySort) -> PlaylistSort {
-    match sort {
-        PlaylistEntrySort::Order => PlaylistSort::Position,
-        PlaylistEntrySort::Title => PlaylistSort::Title,
-        PlaylistEntrySort::Artist => PlaylistSort::Artist,
-        PlaylistEntrySort::Album => PlaylistSort::Album,
-    }
-}
-
-fn playlist_entry_context_id(playlist_id: &PlaylistId, state: &PlaylistEntryListState) -> String {
-    context_id(&PlayContext {
-        descriptor: PlayContextDescriptor::Playlist {
-            playlist_id: playlist_id.clone(),
-        },
-        order: PlayContextOrder::Playlist {
-            query: source_query(&state.query),
-            sort: playlist_entry_sort_descriptor(state.sort),
-            descending: state.descending,
-        },
-    })
-}
-#[derive(Clone, Debug)]
-pub(crate) struct PlaylistEntryListState {
-    pub(crate) query: String,
-    pub(crate) sort: PlaylistEntrySort,
-    pub(crate) descending: bool,
-}
-impl PlaylistEntryListState {
-    pub(crate) fn for_settings(settings: &LibraryListSettings) -> Self {
-        Self {
-            query: String::new(),
-            sort: PlaylistEntrySort::for_field(settings.sort_key),
-            descending: settings.descending,
-        }
-    }
-
-    pub(crate) fn apply_settings(&mut self, settings: &LibraryListSettings) {
-        self.sort = PlaylistEntrySort::for_field(settings.sort_key);
-        self.descending = settings.descending;
-    }
-}
-#[derive(Clone)]
-pub(crate) struct PlaylistEntryTableRow {
-    pub(crate) original_index: usize,
-    pub(crate) display_index: usize,
-}
 fn playlist_entry_selection_position(
-    index: &PlaylistEntrySelectionIndex,
+    model: &PlaylistEntryModel,
     selected_entry_id: &RefCell<Option<String>>,
 ) -> u32 {
     let selected_entry_id = selected_entry_id.borrow();
     let Some(entry_id) = selected_entry_id.as_ref() else {
         return gtk::INVALID_LIST_POSITION;
     };
-    index
-        .position_by_entry_id
-        .get(entry_id)
-        .copied()
+    model
+        .visible_position(entry_id)
         .unwrap_or(gtk::INVALID_LIST_POSITION)
 }
 
 fn sync_playlist_entry_selection(
     selection: &gtk::SingleSelection,
-    index: &PlaylistEntrySelectionIndex,
+    model: &PlaylistEntryModel,
     selected_entry_id: &RefCell<Option<String>>,
 ) {
-    let selected = playlist_entry_selection_position(index, selected_entry_id);
+    let selected = playlist_entry_selection_position(model, selected_entry_id);
     if selection.selected() != selected {
         selection.set_selected(selected);
     }
 }
 
 fn connect_playlist_entry_model_selection_sync(
-    model: &gio::ListStore,
+    model: &PlaylistEntryModel,
     selection: &gtk::SingleSelection,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
-    index: Rc<RefCell<PlaylistEntrySelectionIndex>>,
     current: Rc<RefCell<Option<PlaylistEntryCurrentSelection>>>,
     selected_entry_id: Rc<RefCell<Option<String>>>,
 ) {
     let selection = selection.downgrade();
+    let weak_model = model.downgrade();
     model.connect_items_changed(move |model, _, _, _| {
-        index.borrow_mut().rebuild(&entries.borrow(), model);
         if let Some(current) = current.borrow().as_ref() {
-            *selected_entry_id.borrow_mut() = index
-                .borrow()
-                .entry_id_for_current(current)
-                .map(str::to_string);
+            *selected_entry_id.borrow_mut() = model.occurrence_for_current(
+                &current.track_id,
+                current.source_rank,
+                current.source_order,
+            );
         }
-        let Some(selection) = selection.upgrade() else {
+        let Some((selection, model)) = selection.upgrade().zip(weak_model.upgrade()) else {
             return;
         };
-        sync_playlist_entry_selection(&selection, &index.borrow(), &selected_entry_id);
+        sync_playlist_entry_selection(&selection, &model, &selected_entry_id);
     });
 }
 
@@ -366,94 +243,214 @@ thread_local! {
     static PLAYLIST_ENTRY_IMAGE_CELLS: RefCell<HashMap<usize, ArtworkTile>> = RefCell::new(HashMap::new());
 }
 
+#[derive(Clone)]
+pub(crate) struct PlaylistEntriesView {
+    widget: gtk::Widget,
+    collection: LibraryCollectionProjection,
+    toolbar: LibraryToolbarProjection,
+    model: PlaylistEntryModel,
+    search: gtk::SearchEntry,
+    stack: gtk::Stack,
+    toolbar_widget: gtk::Widget,
+}
+
+impl PlaylistEntriesView {
+    pub(crate) fn widget(&self) -> gtk::Widget {
+        self.widget.clone()
+    }
+
+    pub(crate) fn source_play_request(
+        &self,
+        placement: playback::QueuePlacement,
+        shuffled_start: bool,
+    ) -> Option<playback::LoadedPlayRequest> {
+        self.model.source_play_request(placement, shuffled_start)
+    }
+
+    pub(crate) fn projection_request(&self) -> PlaylistEntryProjectionRequest {
+        self.model.projection_request()
+    }
+
+    pub(crate) fn connect_search_request(
+        &self,
+        callback: impl Fn(PlaylistEntryProjectionRequest) + 'static,
+    ) {
+        let model = self.model.clone();
+        self.search.connect_search_changed(move |_| {
+            callback(model.projection_request());
+        });
+    }
+
+    pub(crate) fn replace_prepared(&self, entries: PreparedPlaylistEntries) -> bool {
+        let empty = entries.entries_is_empty();
+        if !self.model.replace_prepared(entries) {
+            return false;
+        }
+        self.toolbar_widget.set_visible(!empty);
+        self.stack
+            .set_visible_child_name(if empty { "empty" } else { "content" });
+        true
+    }
+
+    pub(crate) fn apply_library_list_settings(
+        &self,
+        key: LibraryListKey,
+        settings: &LibraryListSettings,
+    ) {
+        if key != LibraryListKey::PlaylistTracks {
+            return;
+        }
+        self.model.apply_settings(settings);
+        self.collection.apply_settings(settings);
+        self.toolbar.apply(key, settings);
+    }
+}
+
+impl Shell {
+    pub(crate) fn playlist_entries_view(
+        self: &Rc<Self>,
+        playlist_id: PlaylistId,
+        initial_entries: PlaylistEntryList,
+        initial_positions: Vec<u32>,
+    ) -> PlaylistEntriesView {
+        let settings = self
+            .settings
+            .current
+            .borrow()
+            .library_list(LibraryListKey::PlaylistTracks);
+        let selected = self
+            .library
+            .selected
+            .borrow()
+            .as_ref()
+            .map(|selected| (selected.source_id.clone(), selected.source_session_epoch))
+            .expect("a playlist route requires one selected source");
+        let model = PlaylistEntryModel::new_prepared(
+            selected.0,
+            selected.1,
+            playlist_id.clone(),
+            initial_entries,
+            initial_positions,
+            &settings,
+        );
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
+
+        let search = gtk::SearchEntry::new();
+        bind_search_placeholder(&search, "Search");
+        search.set_hexpand(true);
+        search.set_width_request(1);
+        self.set_route_search(Some(search.clone()));
+        let toolbar =
+            self.library_toolbar_projection(LibraryListKey::PlaylistTracks, search.clone());
+        let toolbar_widget = library_route_inset(toolbar.widget());
+        toolbar_widget.set_visible(!model.source_is_empty());
+        wrapper.append(&toolbar_widget);
+
+        let collection = playlist_entries_collection_projection(
+            self,
+            model.clone(),
+            playlist_id,
+            PRIMARY_ROUTE_HORIZONTAL_INSET,
+        );
+        self.refresh_current_route_now_playing_selections();
+
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            search.connect_search_changed(move |entry| {
+                model.set_query(&entry.text());
+                shell.refresh_current_route_now_playing_selections();
+            });
+        }
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.add_named(
+            &library_route_inset(
+                self.placeholder_view("Tracks", "No cached tracks are linked here yet."),
+            ),
+            Some("empty"),
+        );
+        stack.add_named(&collection.scrolling_widget(), Some("content"));
+        stack.set_visible_child_name(if model.source_is_empty() {
+            "empty"
+        } else {
+            "content"
+        });
+        wrapper.append(&stack);
+
+        PlaylistEntriesView {
+            widget: wrapper.upcast(),
+            collection,
+            toolbar,
+            model,
+            search,
+            stack,
+            toolbar_widget,
+        }
+    }
+}
+
 pub(crate) fn playlist_entries_collection_projection(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
-    state: Rc<RefCell<PlaylistEntryListState>>,
+    model: PlaylistEntryModel,
     playlist_id: PlaylistId,
     content_inset: i32,
-    selection_handle: Option<PlaylistEntrySelectionHandle>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
-) -> (LibraryCollectionProjection, gio::ListStore) {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+) -> LibraryCollectionProjection {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let selected_entry_id = Rc::new(RefCell::new(None::<String>));
-    let playlist_selection = PlaylistEntryTableSelection::new(
-        Rc::clone(&entries),
-        &model,
-        &selection,
-        Rc::clone(&selected_entry_id),
-    );
-    let select_entry_id: Rc<dyn Fn(&str)> = Rc::new({
-        let playlist_selection = playlist_selection.clone();
-        move |entry_id| {
-            playlist_selection.select_entry_id(entry_id);
-        }
-    });
-    if let Some(selection_handle) = selection_handle.as_ref() {
-        *selection_handle.borrow_mut() = Some(Rc::clone(&select_entry_id));
-    }
+    let playlist_selection =
+        PlaylistEntryTableSelection::new(&model, &selection, Rc::clone(&selected_entry_id));
     let source_id = shell
         .library
-        .query
+        .selected
         .borrow()
         .as_ref()
-        .map(|query| query.source_id().clone());
-    let selection_playlist_id = playlist_id.clone();
-    let selection_state = Rc::clone(&state);
+        .map(|selected| Some(selected.source_id.clone()))
+        .expect("a playlist route requires one selected source");
     let current_playlist_selection = playlist_selection.clone();
+    let selection_source_id = source_id.clone();
+    let selection_model = model.clone();
     shell.register_current_route_track_selection(Rc::new(move |current| {
         if !current_playlist_selection.is_bound() {
             return false;
         }
-        let expected_context_id =
-            playlist_entry_context_id(&selection_playlist_id, &selection_state.borrow());
+        let expected_context_id = selection_model.visible_context_id();
+        let source_context_id = selection_model.source_context_id();
         current_playlist_selection.select_now_playing_track(
             current,
-            source_id.as_ref(),
+            selection_source_id.as_ref(),
             &expected_context_id,
+            &source_context_id,
         );
         true
     }));
     let play_entry = {
-        let controller = shell.products.playback.queue.clone();
-        let playlist_id = playlist_id.clone();
-        let entries = Rc::clone(&entries);
-        let state = Rc::clone(&state);
-        Rc::new(move |position: u32, row: PlaylistEntryTableRow| {
-            let entries = entries.borrow();
-            let Some(entry) = entries.get(row.original_index) else {
-                return;
-            };
-            let state = state.borrow();
-            controller.play_playlist_entry(PlaylistEntryPlayRequest {
-                playlist_id: playlist_id.clone(),
-                entry: entry.clone(),
-                source_index: position as usize,
-                query: source_query(&state.query),
-                sort: playlist_entry_sort_descriptor(state.sort),
-                descending: state.descending,
-                shuffled_start: false,
-            });
-        }) as Rc<dyn Fn(u32, PlaylistEntryTableRow)>
+        let queue = shell.products.playback.queue.clone();
+        let model = model.clone();
+        Rc::new(move |position: u32, _: PlaylistEntryRow| {
+            if let Some(request) = model.visible_play_request(position as usize) {
+                queue.play_loaded(request);
+            }
+        }) as Rc<dyn Fn(u32, PlaylistEntryRow)>
     };
 
     {
-        let index = Rc::clone(&playlist_selection.index);
+        let model = model.clone();
         let selected_entry_id = Rc::clone(&selected_entry_id);
         selection.connect_selection_changed(move |selection, _, _| {
-            sync_playlist_entry_selection(selection, &index.borrow(), &selected_entry_id);
+            sync_playlist_entry_selection(selection, &model, &selected_entry_id);
         });
     }
     connect_playlist_entry_model_selection_sync(
         &model,
         &selection,
-        Rc::clone(&entries),
-        Rc::clone(&playlist_selection.index),
         Rc::clone(&playlist_selection.current),
         Rc::clone(&selected_entry_id),
     );
@@ -465,9 +462,7 @@ pub(crate) fn playlist_entries_collection_projection(
         .library_list(LibraryListKey::PlaylistTracks);
     let build_shell = Rc::clone(shell);
     let build_model = model.clone();
-    let build_entries = Rc::clone(&entries);
     let build_playlist_id = playlist_id;
-    let build_select_entry_id = Rc::clone(&select_entry_id);
     let build_selection = selection;
     let build_play_entry = Rc::clone(&play_entry);
     let collection = LibraryCollectionProjection::new(
@@ -477,43 +472,32 @@ pub(crate) fn playlist_entries_collection_projection(
                 LibraryPresentationProjection::Row(playlist_entry_table_projection(
                     &build_shell,
                     build_model.clone(),
-                    Rc::clone(&build_entries),
                     build_playlist_id.clone(),
-                    Rc::clone(&build_select_entry_id),
                     build_selection.clone(),
                     Rc::clone(&build_play_entry),
                     content_inset,
-                    can_remove_entries,
-                    can_reorder_entries,
                 ))
             }
             LibraryLayout::Grid | LibraryLayout::Detail => {
                 LibraryPresentationProjection::Grid(playlist_entry_grid_projection(
                     &build_shell,
                     build_model.clone(),
-                    Rc::clone(&build_entries),
                     build_playlist_id.clone(),
-                    Rc::clone(&build_select_entry_id),
                     Rc::clone(&build_play_entry),
-                    can_remove_entries,
                 ))
             }
         }),
     );
-    (collection, model)
+    collection
 }
 
 fn playlist_entry_table_projection(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    model: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
     selection: gtk::SingleSelection,
-    play_entry: Rc<dyn Fn(u32, PlaylistEntryTableRow)>,
+    play_entry: Rc<dyn Fn(u32, PlaylistEntryRow)>,
     content_inset: i32,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> CollectionTableProjection {
     let fields = shell
         .settings
@@ -521,25 +505,13 @@ fn playlist_entry_table_projection(
         .borrow()
         .library_list(LibraryListKey::PlaylistTracks)
         .row_fields;
-    let fixed_columns = if can_reorder_entries {
-        vec![(
-            playlist_entry_reorder_column(
-                shell,
-                Rc::clone(&entries),
-                playlist_id.clone(),
-                Rc::clone(&select_entry_id),
-                can_remove_entries,
-                can_reorder_entries,
-            ),
-            PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH,
-        )]
-    } else {
-        Vec::new()
-    };
+    let fixed_columns = vec![(
+        playlist_entry_reorder_column(shell, model.clone(), playlist_id.clone()),
+        PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH,
+    )];
     let column_shell = Rc::clone(shell);
-    let column_entries = Rc::clone(&entries);
+    let column_model = model.clone();
     let column_playlist_id = playlist_id;
-    let column_select_entry_id = Rc::clone(&select_entry_id);
     let activate = move |position, row| play_entry(position, row);
     let table = dynamic_collection_table(
         model,
@@ -549,11 +521,8 @@ fn playlist_entry_table_projection(
             playlist_entry_column_for_field(
                 &column_shell,
                 field,
-                Rc::clone(&column_entries),
+                column_model.clone(),
                 column_playlist_id.clone(),
-                Rc::clone(&column_select_entry_id),
-                can_remove_entries,
-                can_reorder_entries,
             )
         },
         |field| track_column_fit_width(LibraryListKey::PlaylistTracks, field),
@@ -570,12 +539,9 @@ fn playlist_entry_table_projection(
 
 fn playlist_entry_grid_projection(
     shell: &Rc<Shell>,
-    model: gio::ListStore,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    model: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    play_entry: Rc<dyn Fn(u32, PlaylistEntryTableRow)>,
-    can_remove_entries: bool,
+    play_entry: Rc<dyn Fn(u32, PlaylistEntryRow)>,
 ) -> CollectionGridProjection {
     let fields = shell
         .settings
@@ -584,9 +550,8 @@ fn playlist_entry_grid_projection(
         .library_list(LibraryListKey::PlaylistTracks)
         .grid_fields;
     let cell_shell = Rc::clone(shell);
-    let cell_entries = Rc::clone(&entries);
+    let cell_model = model.clone();
     let cell_playlist_id = playlist_id;
-    let cell_select_entry_id = Rc::clone(&select_entry_id);
     collection_grid(
         model,
         &fields,
@@ -594,10 +559,8 @@ fn playlist_entry_grid_projection(
             PlaylistEntryGridCell::new(
                 Rc::clone(&cell_shell),
                 fields,
-                Rc::clone(&cell_entries),
+                cell_model.clone(),
                 cell_playlist_id.clone(),
-                Rc::clone(&cell_select_entry_id),
-                can_remove_entries,
             )
         },
         move |position, row| play_entry(position, row),
@@ -607,72 +570,24 @@ fn playlist_entry_grid_projection(
 fn playlist_entry_column_for_field(
     shell: &Rc<Shell>,
     field: LibraryField,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    model: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     match field {
-        LibraryField::RowIndex => playlist_entry_number_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
-        LibraryField::Image => playlist_entry_image_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
-        LibraryField::TitleMerged => playlist_entry_title_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
-        LibraryField::Favorite => playlist_entry_favorite_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
-        LibraryField::Album => playlist_entry_album_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
-        LibraryField::PlayCount => playlist_entry_play_count_column(
-            shell,
-            entries,
-            playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
-        ),
+        LibraryField::RowIndex => playlist_entry_number_column(shell, model, playlist_id),
+        LibraryField::Image => playlist_entry_image_column(shell, model, playlist_id),
+        LibraryField::TitleMerged => playlist_entry_title_column(shell, model, playlist_id),
+        LibraryField::Favorite => playlist_entry_favorite_column(shell, model, playlist_id),
+        LibraryField::Album => playlist_entry_album_column(shell, model, playlist_id),
+        LibraryField::PlayCount => playlist_entry_play_count_column(shell, model, playlist_id),
         LibraryField::Artist => playlist_entry_text_column(
             shell,
             field.title(),
             track_column_width(LibraryListKey::PlaylistTracks, field),
-            entries,
+            model,
             playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
             |entry| track_field(&entry.track, LibraryField::Artist),
-            Some(Rc::new(|entry: &PlaylistEntry| {
+            Some(Rc::new(|entry: &PlaylistEntryItem| {
                 track_artist_route(&entry.track)
             })),
         ),
@@ -680,16 +595,13 @@ fn playlist_entry_column_for_field(
             shell,
             field.title(),
             track_column_width(LibraryListKey::PlaylistTracks, field),
-            entries,
+            model,
             playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
             |entry| track_field(&entry.track, LibraryField::AlbumArtist),
-            Some(Rc::new(|entry: &PlaylistEntry| {
+            Some(Rc::new(|entry: &PlaylistEntryItem| {
                 entry
                     .track
-                    .album_artist_credits
+                    .album_artist_credits()
                     .first()
                     .map(|artist| Route::ArtistDetail(artist.id.clone()))
             })),
@@ -698,11 +610,8 @@ fn playlist_entry_column_for_field(
             shell,
             field.title(),
             track_column_width(LibraryListKey::PlaylistTracks, field),
-            entries,
+            model,
             playlist_id,
-            select_entry_id,
-            can_remove_entries,
-            can_reorder_entries,
             move |entry| track_field(&entry.track, field),
             None,
         ),
@@ -712,9 +621,8 @@ fn playlist_entry_column_for_field(
 struct PlaylistEntryGridCell {
     body: CollectionGridCardCell,
     shell: Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    model: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    can_remove_entries: bool,
     cover: ArtworkTile,
     state: PlaylistEntryCellState,
 }
@@ -723,10 +631,8 @@ impl PlaylistEntryGridCell {
     fn new(
         shell: Rc<Shell>,
         fields: &[LibraryField],
-        entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+        model: PlaylistEntryModel,
         playlist_id: PlaylistId,
-        _select_entry_id: Rc<dyn Fn(&str)>,
-        can_remove_entries: bool,
     ) -> Self {
         let cover = ArtworkTile::new_elastic_square(0);
         let body = CollectionGridCardCell::new(&shell, fields, cover.widget());
@@ -735,30 +641,28 @@ impl PlaylistEntryGridCell {
         Self {
             body,
             shell,
-            entries,
+            model,
             playlist_id,
-            can_remove_entries,
             cover,
             state,
         }
     }
 }
 
-impl ReusableCollectionGridCell<PlaylistEntryTableRow> for PlaylistEntryGridCell {
+impl ReusableCollectionGridCell<PlaylistEntryRow> for PlaylistEntryGridCell {
     fn widget(&self) -> gtk::Widget {
         self.body.widget()
     }
 
-    fn bind(&self, _: u32, row: PlaylistEntryTableRow) {
-        let entries = self.entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+    fn bind(&self, _: u32, row: PlaylistEntryRow) {
+        let Some(entry) = self.model.entry_for_row(&row) else {
             return;
         };
         self.shell.bind_artwork_tile(
             &self.cover,
             ArtworkBinding::track(&entry.track),
             stable_seed(entry.track.id.as_str()),
-            GRID_COVER_SIZE as i32,
+            COLLECTION_GRID_MIN_CARD_WIDTH,
             GRID_COVER_SIZE,
         );
         self.body.bind(&entry.track.title, |field| {
@@ -767,13 +671,7 @@ impl ReusableCollectionGridCell<PlaylistEntryTableRow> for PlaylistEntryGridCell
                 track_grid_field_route(&entry.track, field),
             )
         });
-        bind_playlist_entry_cell_state(
-            &self.state,
-            row,
-            entry,
-            &self.playlist_id,
-            self.can_remove_entries,
-        );
+        bind_playlist_entry_cell_state(&self.state, row, &entry, &self.playlist_id);
     }
 
     fn clear(&self) {
@@ -787,8 +685,10 @@ impl ReusableCollectionGridCell<PlaylistEntryTableRow> for PlaylistEntryGridCell
         let Some(original_index) = self.state.row.get() else {
             return;
         };
-        let entries = self.entries.borrow();
-        let Some(entry) = entries.get(original_index) else {
+        let Some(entry) = self.model.entry_for_row(&PlaylistEntryRow {
+            source_index: original_index,
+            display_index: 0,
+        }) else {
             return;
         };
         self.body.bind(&entry.track.title, |field| {
@@ -798,56 +698,6 @@ impl ReusableCollectionGridCell<PlaylistEntryTableRow> for PlaylistEntryGridCell
             )
         });
     }
-}
-pub(crate) fn rebuild_playlist_entries_model(
-    model: &gio::ListStore,
-    entries: &[PlaylistEntry],
-    state: &PlaylistEntryListState,
-) {
-    let rows = playlist_entries_for_state(entries, state)
-        .into_iter()
-        .enumerate()
-        .map(|(display_index, original_index)| {
-            glib::BoxedAnyObject::new(PlaylistEntryTableRow {
-                original_index,
-                display_index,
-            })
-        })
-        .collect::<Vec<_>>();
-    model.splice(0, model.n_items(), &rows);
-}
-pub(crate) fn playlist_entries_for_state(
-    entries: &[PlaylistEntry],
-    state: &PlaylistEntryListState,
-) -> Vec<usize> {
-    let query = state.query.trim().to_lowercase();
-    let mut rows = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| query.is_empty() || playlist_entry_matches_query(entry, &query))
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-
-    rows.sort_by(|left, right| {
-        let ordering = compare_playlist_entry(entries, *left, *right, state.sort);
-        if state.descending {
-            ordering.reverse()
-        } else {
-            ordering
-        }
-    });
-    rows
-}
-pub(crate) fn playlist_entry_matches_query(entry: &PlaylistEntry, query: &str) -> bool {
-    entry.track.title.to_lowercase().contains(query)
-        || entry.track.artist.to_lowercase().contains(query)
-        || entry.track.album.to_lowercase().contains(query)
-}
-fn playlist_entry_for_row<'a>(
-    entries: &'a [PlaylistEntry],
-    row: &PlaylistEntryTableRow,
-) -> Option<&'a PlaylistEntry> {
-    entries.get(row.original_index)
 }
 
 fn playlist_entry_cell_state() -> PlaylistEntryCellState {
@@ -875,18 +725,17 @@ fn remove_playlist_entry_cell_state(item: &gtk::ListItem) {
 }
 fn bind_playlist_entry_cell_state(
     state: &PlaylistEntryCellState,
-    row: PlaylistEntryTableRow,
-    entry: &PlaylistEntry,
+    row: PlaylistEntryRow,
+    entry: &PlaylistEntryItem,
     playlist_id: &PlaylistId,
-    can_remove_entries: bool,
 ) {
-    state.row.set(Some(row.original_index));
+    state.row.set(Some(row.source_index));
     *state.menu.borrow_mut() = Some(PlaylistEntryContextMenuState {
         track: entry.track.clone(),
-        entry_id: entry.entry_id.clone(),
-        remove_action: can_remove_entries.then(|| PlaylistEntryContextMenuAction {
+        occurrence_id: entry.occurrence_id.clone(),
+        remove_action: Some(PlaylistEntryContextMenuAction {
             playlist_id: playlist_id.clone(),
-            entry_id: entry.entry_id.clone(),
+            occurrence_id: entry.occurrence_id.clone(),
             title: entry.track.title.clone(),
         }),
     });
@@ -915,19 +764,14 @@ fn setup_playlist_entry_link_label(
 fn setup_playlist_entry_cell_actions(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
     state: &PlaylistEntryCellState,
-    _select_entry_id: Rc<dyn Fn(&str)>,
-    can_reorder_entries: bool,
 ) {
     install_dynamic_playlist_entry_context_menu(target, shell, Rc::clone(&state.menu));
 
-    if !can_reorder_entries {
-        return;
-    }
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-    let library = shell.products.library.clone();
+    let source = shell.products.source.clone();
     let target = target.as_ref().clone();
     let target_for_drop = target.downgrade();
     let row_state = Rc::clone(&state.row);
@@ -942,29 +786,27 @@ fn setup_playlist_entry_cell_actions(
             return false;
         };
         let after = y > f64::from(target.height()) / 2.0;
-        let Some(new_index) =
-            playlist_drop_index(&entries.borrow(), &entry_id, target_index, after)
-        else {
+        let Some(new_index) = entries.drop_index(&entry_id, target_index, after) else {
             return false;
         };
-        library.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
+        source.edit_playlist(PlaylistEdit::MoveEntry {
+            playlist_id: playlist_id.clone(),
+            occurrence_id: entry_id,
+            new_index,
+        });
         true
     });
     target.add_controller(drop_target);
 }
 fn playlist_entry_reorder_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
-    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -974,11 +816,9 @@ fn playlist_entry_reorder_column(
         setup_playlist_entry_cell_actions(
             &drag,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&setup_select_entry_id),
-            can_reorder_entries,
         );
         item.set_child(Some(&drag));
         store_playlist_entry_cell_state(item, state);
@@ -987,17 +827,16 @@ fn playlist_entry_reorder_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
@@ -1018,69 +857,58 @@ fn playlist_entry_reorder_column(
 }
 fn playlist_entry_number_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
-    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let state = playlist_entry_cell_state();
-        let label = gtk::Label::new(None);
-        label.add_css_class("muted");
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
+        let cell = track_row_index_cell("");
         setup_playlist_entry_cell_actions(
-            &label,
+            &cell,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&setup_select_entry_id),
-            can_reorder_entries,
         );
-        item.set_child(Some(&label));
+        item.set_child(Some(&cell));
         store_playlist_entry_cell_state(item, state);
     });
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
-        let Some(label) = item
+        let Some(cell) = item
             .child()
-            .and_then(|child| child.downcast::<gtk::Label>().ok())
+            .and_then(|child| child.downcast::<gtk::Overlay>().ok())
         else {
             return;
         };
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        label.set_text(&(row.display_index + 1).to_string());
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        set_track_row_index_text(&cell, &(row.display_index + 1).to_string());
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            if let Some(label) = item
+            if let Some(cell) = item
                 .child()
-                .and_then(|child| child.downcast::<gtk::Label>().ok())
+                .and_then(|child| child.downcast::<gtk::Overlay>().ok())
             {
-                label.set_text("");
+                set_track_row_index_text(&cell, "");
             }
             if let Some(state) = playlist_entry_cell_state_for_item(item) {
                 clear_playlist_entry_cell_state(&state);
@@ -1093,22 +921,19 @@ fn playlist_entry_number_column(
         }
     });
 
-    let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
+    let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
     column.set_fixed_width(PLAYLIST_ENTRY_NUMBER_WIDTH);
     column.set_resizable(false);
     column
 }
 fn playlist_entry_image_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -1120,11 +945,9 @@ fn playlist_entry_image_column(
         setup_playlist_entry_cell_actions(
             &widget,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&select_entry_id),
-            can_reorder_entries,
         );
         item.set_child(Some(&widget));
         store_playlist_entry_cell_state(item, state);
@@ -1138,11 +961,10 @@ fn playlist_entry_image_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
         let key = list_item_storage_key(item);
@@ -1161,7 +983,7 @@ fn playlist_entry_image_column(
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     let clear_shell = Rc::clone(shell);
     factory.connect_unbind(move |_, item| {
@@ -1194,15 +1016,12 @@ fn playlist_entry_image_column(
 }
 fn playlist_entry_favorite_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -1213,11 +1032,9 @@ fn playlist_entry_favorite_column(
         setup_playlist_entry_cell_actions(
             &button,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&select_entry_id),
-            can_reorder_entries,
         );
         let favorite_state = Rc::clone(&state.menu);
         setup_shell.favorites.register_dynamic_button(
@@ -1240,7 +1057,7 @@ fn playlist_entry_favorite_column(
                 return;
             };
             favorite_shell.set_favorite_with_feedback(
-                ::library::FavoriteItemId::Track(track.id),
+                ::library::FavoriteItemId::Track(track.id.clone()),
                 !favorite_button_is_active(button),
                 Some(button),
             );
@@ -1252,11 +1069,10 @@ fn playlist_entry_favorite_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
         let Some(button) = item
@@ -1269,7 +1085,7 @@ fn playlist_entry_favorite_column(
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>()
@@ -1293,11 +1109,8 @@ fn playlist_entry_favorite_column(
 }
 fn playlist_entry_album_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     playlist_entry_text_column(
         shell,
@@ -1305,22 +1118,16 @@ fn playlist_entry_album_column(
         PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
         entries,
         playlist_id,
-        select_entry_id,
-        can_remove_entries,
-        can_reorder_entries,
         |entry| entry.track.album.clone(),
-        Some(Rc::new(|entry: &PlaylistEntry| {
-            Some(Route::AlbumDetail(entry.track.album_id.clone()))
+        Some(Rc::new(|entry: &PlaylistEntryItem| {
+            entry.track.album_id.clone().map(Route::AlbumDetail)
         })),
     )
 }
 fn playlist_entry_play_count_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     playlist_entry_text_column(
         shell,
@@ -1328,9 +1135,6 @@ fn playlist_entry_play_count_column(
         play_count_column_width(),
         entries,
         playlist_id,
-        select_entry_id,
-        can_remove_entries,
-        can_reorder_entries,
         |entry| playlist_entry_play_count_text(entry.track.play_count),
         None,
     )
@@ -1339,24 +1143,20 @@ fn playlist_entry_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
     value: F,
-    route: Option<Rc<dyn Fn(&PlaylistEntry) -> Option<Route>>>,
+    route: Option<Rc<dyn Fn(&PlaylistEntryItem) -> Option<Route>>>,
 ) -> gtk::ColumnViewColumn
 where
-    F: Fn(&PlaylistEntry) -> String + 'static,
+    F: Fn(&PlaylistEntryItem) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
     let has_link = route.is_some();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
-    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1385,11 +1185,9 @@ where
         setup_playlist_entry_cell_actions(
             &root,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&setup_select_entry_id),
-            can_reorder_entries,
         );
         item.set_child(Some(&root));
         store_playlist_entry_cell_state(item, state);
@@ -1398,11 +1196,10 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
         let Some(label) = item
@@ -1416,11 +1213,11 @@ where
         let Some(state) = playlist_entry_cell_state_for_item(item) else {
             return;
         };
-        label.set_text(&(value)(entry));
+        label.set_text(&(value)(&entry));
         if let Some(route) = route.as_ref() {
-            *state.link_route.borrow_mut() = route(entry);
+            *state.link_route.borrow_mut() = route(&entry);
         }
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
@@ -1450,17 +1247,13 @@ where
 }
 fn playlist_entry_title_column(
     shell: &Rc<Shell>,
-    entries: Rc<RefCell<Vec<PlaylistEntry>>>,
+    entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
-    select_entry_id: Rc<dyn Fn(&str)>,
-    can_remove_entries: bool,
-    can_reorder_entries: bool,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
-    let setup_entries = Rc::clone(&entries);
+    let setup_entries = entries.clone();
     let setup_playlist_id = playlist_id.clone();
-    let setup_select_entry_id = Rc::clone(&select_entry_id);
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -1481,11 +1274,9 @@ fn playlist_entry_title_column(
         setup_playlist_entry_cell_actions(
             &cell,
             &setup_shell,
-            Rc::clone(&setup_entries),
+            setup_entries.clone(),
             setup_playlist_id.clone(),
             &state,
-            Rc::clone(&setup_select_entry_id),
-            can_reorder_entries,
         );
         item.set_child(Some(&cell));
         store_playlist_entry_cell_state(item, state);
@@ -1507,11 +1298,10 @@ fn playlist_entry_title_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+        let Some(row) = item_at_from_item::<PlaylistEntryRow>(item) else {
             return;
         };
-        let entries = entries.borrow();
-        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+        let Some(entry) = entries.entry_for_row(&row) else {
             return;
         };
         let key = list_item_storage_key(item);
@@ -1532,7 +1322,7 @@ fn playlist_entry_title_column(
             return;
         };
         *state.link_route.borrow_mut() = track_artist_route(&entry.track);
-        bind_playlist_entry_cell_state(&state, row, entry, &playlist_id, can_remove_entries);
+        bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
     factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
@@ -1577,34 +1367,11 @@ fn playlist_entry_drag_handle(state: &PlaylistEntryCellState) -> gtk::Image {
         let entry_id = menu_state
             .borrow()
             .as_ref()
-            .map(|state| state.entry_id.clone())?;
+            .map(|state| state.occurrence_id.clone())?;
         Some(gtk::gdk::ContentProvider::for_value(&entry_id.to_value()))
     });
     drag.add_controller(drag_source);
     drag
-}
-pub(crate) fn compare_playlist_entry(
-    entries: &[PlaylistEntry],
-    left: usize,
-    right: usize,
-    sort: PlaylistEntrySort,
-) -> std::cmp::Ordering {
-    let Some(left_entry) = entries.get(left) else {
-        return std::cmp::Ordering::Equal;
-    };
-    let Some(right_entry) = entries.get(right) else {
-        return std::cmp::Ordering::Equal;
-    };
-    match sort {
-        PlaylistEntrySort::Order => left.cmp(&right),
-        PlaylistEntrySort::Title => cmp_text(&left_entry.track.title, &right_entry.track.title),
-        PlaylistEntrySort::Artist => cmp_text(&left_entry.track.artist, &right_entry.track.artist),
-        PlaylistEntrySort::Album => cmp_text(&left_entry.track.album, &right_entry.track.album),
-    }
-    .then_with(|| left.cmp(&right))
-}
-pub(crate) fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
-    left.to_lowercase().cmp(&right.to_lowercase())
 }
 pub(crate) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
     let title = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
@@ -1614,25 +1381,6 @@ pub(crate) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gt
     title.append(&cover);
     title.append(&labels);
     title.upcast()
-}
-pub(crate) fn playlist_drop_index(
-    entries: &[PlaylistEntry],
-    dragged_entry_id: &str,
-    target_index: usize,
-    after: bool,
-) -> Option<usize> {
-    let source_index = entries
-        .iter()
-        .position(|entry| entry.entry_id == dragged_entry_id)?;
-    let mut new_index = if after {
-        target_index.saturating_add(1)
-    } else {
-        target_index
-    };
-    if source_index < new_index {
-        new_index = new_index.saturating_sub(1);
-    }
-    (source_index != new_index).then_some(new_index)
 }
 pub(crate) fn playlist_entry_text_label(
     text: &str,
@@ -1657,7 +1405,7 @@ pub(crate) fn playlist_entry_play_count_text(value: Option<u32>) -> String {
 pub(crate) fn confirm_remove_playlist_entry(
     shell: &Rc<Shell>,
     playlist_id: PlaylistId,
-    entry_id: String,
+    occurrence_id: String,
     title: String,
 ) {
     let dialog = adw::AlertDialog::builder()
@@ -1667,63 +1415,14 @@ pub(crate) fn confirm_remove_playlist_entry(
     dialog.add_response("cancel", &tr("Cancel"));
     dialog.add_response("remove", &tr("Remove"));
     dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
-    let library = shell.products.library.clone();
+    let source = shell.products.source.clone();
     dialog.connect_response(None, move |_, response| {
         if response == "remove" {
-            library.remove_playlist_entry(playlist_id.clone(), entry_id.clone());
+            source.edit_playlist(PlaylistEdit::RemoveEntries {
+                playlist_id: playlist_id.clone(),
+                occurrence_ids: vec![occurrence_id.clone()],
+            });
         }
     });
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shell::route::RouteCurrentTrackContext;
-
-    #[test]
-    fn duplicate_playlist_track_uses_matching_context_rank() {
-        let source_id = SourceId::fake(1);
-        let track_id = TrackId::fake(1);
-        let mut index = PlaylistEntrySelectionIndex::default();
-        index
-            .first_entry_by_track
-            .insert(track_id.clone(), "first".into());
-        index.entry_by_source_rank.insert(
-            0,
-            PlaylistEntrySelectionItem {
-                entry_id: "first".into(),
-                track_id: track_id.clone(),
-            },
-        );
-        index.entry_by_source_rank.insert(
-            1,
-            PlaylistEntrySelectionItem {
-                entry_id: "second".into(),
-                track_id: track_id.clone(),
-            },
-        );
-        let current = RouteCurrentTrack {
-            source_id: source_id.clone(),
-            track_id,
-            occurrence: playback::OccurrenceId::new("second-occurrence"),
-            context: Some(RouteCurrentTrackContext {
-                context_id: "matching-context".into(),
-                source_rank: 1,
-            }),
-        };
-        let exact =
-            playlist_entry_current_selection(Some(&current), Some(&source_id), "matching-context")
-                .expect("current playlist occurrence");
-
-        assert_eq!(index.entry_id_for_current(&exact), Some("second"));
-        assert!(
-            playlist_entry_current_selection(
-                Some(&current),
-                Some(&SourceId::fake(2)),
-                "matching-context",
-            )
-            .is_none()
-        );
-    }
 }

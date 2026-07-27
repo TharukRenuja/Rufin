@@ -1,13 +1,13 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use ::library::{Album, Artist, Playlist, SmartPlaylist, Track};
+use ::library::{AlbumSummary, ArtistSummary, PlaylistSummary, SmartPlaylistSummary, Track};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 use gtk::glib;
 
 use super::collection_context::{
-    context_album, context_artist, install_dynamic_album_context_menu,
-    install_dynamic_track_context_menu, present_album_context_menu, present_artist_context_menu,
+    install_dynamic_album_context_menu, install_dynamic_track_context_menu,
+    present_album_context_menu, present_artist_context_menu,
 };
 use crate::favorites::{
     album_favorite_key, artist_favorite_key, favorite_button_is_active, favorite_icon_button,
@@ -29,6 +29,8 @@ use super::library_fields::{
 use super::route::Route;
 use super::table_links::track_link_column;
 
+pub(crate) const ROW_INDEX_COLUMN_TITLE: &str = "\u{2003}\u{a0}#";
+
 pub(crate) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
@@ -39,7 +41,7 @@ pub(crate) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colum
             album_merged_column(shell, "Title", column_width(LibraryField::TitleMerged))
         }
         LibraryField::Title => {
-            album_text_column(shell, "Title", 220, true, |album| album.title.clone())
+            album_text_column(shell, "Title", 220, true, |album| album.album.title.clone())
         }
         LibraryField::Favorite => album_favorite_column(shell),
         _ => album_text_column(
@@ -56,7 +58,9 @@ pub(crate) fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colu
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => artist_image_column(shell),
         LibraryField::TitleMerged | LibraryField::Title => {
-            artist_text_column(shell, "Title", 220, true, |artist| artist.name.clone())
+            artist_text_column(shell, "Title", 220, true, |artist| {
+                artist.artist.name.clone()
+            })
         }
         LibraryField::Favorite => artist_favorite_column(shell),
         _ => artist_text_column(
@@ -73,7 +77,7 @@ pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Co
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => {
             let settings_shell = Rc::clone(shell);
-            artwork_column::<Playlist, _, _>(
+            artwork_column::<PlaylistSummary, _, _>(
                 shell,
                 "Image",
                 column_width(LibraryField::Image),
@@ -83,17 +87,25 @@ pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Co
                         .current
                         .borrow()
                         .prefer_server_playlist_covers;
-                    ArtworkBinding::playlist(playlist, prefer_server_cover)
+                    ArtworkBinding::playlist(
+                        &playlist.playlist,
+                        &playlist.representative_albums,
+                        prefer_server_cover,
+                    )
                 },
-                |playlist| stable_seed(playlist.id.as_str()),
+                |playlist| stable_seed(playlist.playlist.id.as_str()),
             )
         }
         LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<Playlist, _>("Title", 220, |playlist| playlist.name.clone())
+            expanding_text_column::<PlaylistSummary, _>("Title", 220, |playlist| {
+                playlist.playlist.name.clone()
+            })
         }
-        _ => text_column::<Playlist, _>(field.title(), column_width(field), move |playlist| {
-            playlist_field(playlist, field)
-        }),
+        _ => {
+            text_column::<PlaylistSummary, _>(field.title(), column_width(field), move |playlist| {
+                playlist_field(playlist, field)
+            })
+        }
     }
 }
 pub(crate) fn smart_playlist_column(
@@ -102,21 +114,28 @@ pub(crate) fn smart_playlist_column(
 ) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => artwork_column::<SmartPlaylist, _, _>(
+        LibraryField::Image => artwork_column::<SmartPlaylistSummary, _, _>(
             shell,
             "Image",
             column_width(LibraryField::Image),
-            ArtworkBinding::smart_playlist,
-            |playlist| stable_seed(playlist.id.as_str()),
+            |playlist| {
+                ArtworkBinding::smart_playlist(
+                    &playlist.smart_playlist,
+                    &playlist.representative_albums,
+                )
+            },
+            |playlist| stable_seed(playlist.smart_playlist.id.as_str()),
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<SmartPlaylist, _>("Title", 220, |playlist| {
-                smart_playlist_display_name(playlist)
+            expanding_text_column::<SmartPlaylistSummary, _>("Title", 220, |playlist| {
+                smart_playlist_display_name(&playlist.smart_playlist)
             })
         }
-        _ => text_column::<SmartPlaylist, _>(field.title(), column_width(field), move |playlist| {
-            smart_playlist_field(playlist, field)
-        }),
+        _ => text_column::<SmartPlaylistSummary, _>(
+            field.title(),
+            column_width(field),
+            move |playlist| smart_playlist_field(playlist, field),
+        ),
     }
 }
 pub(crate) fn track_column_for_key(
@@ -126,7 +145,7 @@ pub(crate) fn track_column_for_key(
 ) -> gtk::ColumnViewColumn {
     let width = track_column_width(key, field);
     match field {
-        LibraryField::RowIndex => row_index_column_with_width(width),
+        LibraryField::RowIndex => track_row_index_column_with_width(width),
         LibraryField::Image => track_image_column(shell, "Image", width),
         LibraryField::TitleMerged => track_merged_column(
             shell,
@@ -156,7 +175,7 @@ pub(crate) fn track_column_for_key(
         LibraryField::Album => track_link_column(shell, "Album", width, |track| {
             (
                 track.album.clone(),
-                Some(Route::AlbumDetail(track.album_id.clone())),
+                track.album_id.clone().map(Route::AlbumDetail),
             )
         }),
         LibraryField::Duration => track_text_column(shell, "◷", width, false, 0.0, |track| {
@@ -207,7 +226,7 @@ pub(crate) fn column_fit_width(field: LibraryField, width: i32) -> i32 {
 }
 fn track_album_artist_route(track: &Track) -> Option<Route> {
     track
-        .album_artist_credits
+        .album_artist_credits()
         .first()
         .map(|artist| Route::ArtistDetail(artist.id.clone()))
 }
@@ -302,7 +321,7 @@ pub(crate) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
             label.add_css_class("muted");
-            label.set_xalign(0.0);
+            label.set_xalign(0.5);
             label.set_halign(gtk::Align::Fill);
             label.set_hexpand(true);
             label.set_wrap(false);
@@ -323,9 +342,68 @@ pub(crate) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
         };
         label.set_text(&(item.position() + 1).to_string());
     });
-    let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
+    let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
     column.set_fixed_width(width);
     column
+}
+
+fn track_row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            item.set_child(Some(&track_row_index_cell("")));
+        }
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(cell) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Overlay>().ok())
+        else {
+            return;
+        };
+        set_track_row_index_text(&cell, &(item.position() + 1).to_string());
+    });
+    let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
+    column.set_fixed_width(width);
+    column
+}
+
+pub(crate) fn track_row_index_cell(text: &str) -> gtk::Overlay {
+    let cell = gtk::Overlay::new();
+    cell.add_css_class("track-row-index-cell");
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
+
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("muted");
+    label.add_css_class("track-row-index-number");
+    label.set_xalign(0.5);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(true);
+    label.set_single_line_mode(true);
+    cell.set_child(Some(&label));
+
+    let playing = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    playing.add_css_class("track-row-index-playing");
+    playing.set_pixel_size(14);
+    playing.set_halign(gtk::Align::Center);
+    playing.set_valign(gtk::Align::Center);
+    playing.set_margin_start(2);
+    cell.add_overlay(&playing);
+    cell
+}
+
+pub(crate) fn set_track_row_index_text(cell: &gtk::Overlay, text: &str) {
+    let Some(label) = cell
+        .child()
+        .and_then(|child| child.downcast::<gtk::Label>().ok())
+    else {
+        return;
+    };
+    label.set_text(text);
 }
 
 #[derive(Clone)]
@@ -336,13 +414,13 @@ struct LibraryArtworkCell {
 #[derive(Clone)]
 pub(crate) struct LibraryAlbumImageCell {
     pub(crate) cover: ArtworkTile,
-    pub(crate) current_album: Rc<RefCell<Option<Album>>>,
+    pub(crate) current_album: Rc<RefCell<Option<AlbumSummary>>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct LibraryAlbumTextCell {
     pub(crate) label: gtk::Label,
-    pub(crate) current_album: Rc<RefCell<Option<Album>>>,
+    pub(crate) current_album: Rc<RefCell<Option<AlbumSummary>>>,
 }
 
 #[derive(Clone)]
@@ -351,7 +429,7 @@ pub(crate) struct LibraryAlbumMergedCell {
     pub(crate) title: gtk::Label,
     pub(crate) subtitle: gtk::Label,
     pub(crate) subtitle_route: Rc<RefCell<Option<Route>>>,
-    pub(crate) current_album: Rc<RefCell<Option<Album>>>,
+    pub(crate) current_album: Rc<RefCell<Option<AlbumSummary>>>,
 }
 
 thread_local! {
@@ -394,7 +472,7 @@ pub(crate) fn album_image_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
         let cover = ArtworkTile::new(48, 0);
         let widget = cover.widget();
         install_dynamic_album_context_menu(&widget, &setup_shell, Rc::clone(&current_album));
@@ -416,7 +494,7 @@ pub(crate) fn album_image_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(album) = item_at_from_item::<Album>(item) else {
+        let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
         let Some(cell) = album_image_cell(item) else {
@@ -424,8 +502,8 @@ pub(crate) fn album_image_column(
         };
         bind_shell.bind_artwork_tile(
             &cell.cover,
-            ArtworkBinding::album(&album),
-            album.color_seed,
+            ArtworkBinding::album(&album.album),
+            album.album.color_seed,
             48,
             THUMB_COVER_SIZE,
         );
@@ -464,7 +542,7 @@ pub(crate) fn album_text_column<F>(
     value: F,
 ) -> gtk::ColumnViewColumn
 where
-    F: Fn(&Album) -> String + 'static,
+    F: Fn(&AlbumSummary) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -475,7 +553,7 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
@@ -501,7 +579,7 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(album) = item_at_from_item::<Album>(item) else {
+        let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
         let Some(cell) = album_text_cell(item) else {
@@ -549,7 +627,7 @@ pub(crate) fn album_merged_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let current_album = Rc::new(RefCell::new(None::<AlbumSummary>));
         let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
@@ -609,7 +687,7 @@ pub(crate) fn album_merged_column(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(album) = item_at_from_item::<Album>(item) else {
+        let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
         let Some(cell) = album_merged_cell(item) else {
@@ -617,16 +695,17 @@ pub(crate) fn album_merged_column(
         };
         bind_shell.bind_artwork_tile(
             &cell.cover,
-            ArtworkBinding::album(&album),
-            album.color_seed,
+            ArtworkBinding::album(&album.album),
+            album.album.color_seed,
             48,
             THUMB_COVER_SIZE,
         );
-        cell.title.set_text(&album.title);
-        cell.subtitle.set_text(&album.artist);
-        let route = album_artist_route(&album);
+        cell.title.set_text(&album.album.title);
+        cell.subtitle.set_text(&album.album.artist);
+        let route = album_artist_route(&album.album);
         *cell.subtitle_route.borrow_mut() = route;
-        cell.subtitle.set_visible(!album.artist.trim().is_empty());
+        cell.subtitle
+            .set_visible(!album.album.artist.trim().is_empty());
         *cell.current_album.borrow_mut() = Some(album);
     });
 
@@ -673,7 +752,7 @@ fn install_album_list_item_context_menu(
             let Some(album) = item.upgrade().and_then(|item| item_at_from_item(&item)) else {
                 return;
             };
-            present_album_context_menu(target, &shell, context_album(&shell, &album), position);
+            present_album_context_menu(target, &shell, album, position);
         }),
     );
 }
@@ -691,7 +770,7 @@ fn install_artist_list_item_context_menu(
             let Some(artist) = item.upgrade().and_then(|item| item_at_from_item(&item)) else {
                 return;
             };
-            present_artist_context_menu(target, &shell, context_artist(&shell, &artist), position);
+            present_artist_context_menu(target, &shell, artist, position);
         }),
     );
 }
@@ -792,7 +871,7 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
+        let Some(artist) = item_at_from_item::<ArtistSummary>(item) else {
             return;
         };
         let Some(cell) = artwork_cell(item) else {
@@ -800,8 +879,8 @@ pub(crate) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         };
         bind_shell.bind_artwork_tile(
             &cell.cover,
-            ArtworkBinding::artist(&artist),
-            stable_seed(artist.id.as_str()),
+            ArtworkBinding::artist(&artist.artist, &artist.representative_albums),
+            stable_seed(artist.artist.id.as_str()),
             48,
             THUMB_COVER_SIZE,
         );
@@ -834,7 +913,7 @@ pub(crate) fn artist_text_column<F>(
     value: F,
 ) -> gtk::ColumnViewColumn
 where
-    F: Fn(&Artist) -> String + 'static,
+    F: Fn(&ArtistSummary) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -860,7 +939,7 @@ where
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
+        let Some(artist) = item_at_from_item::<ArtistSummary>(item) else {
             return;
         };
         let Some(label) = item
@@ -1284,8 +1363,8 @@ pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
             Rc::new(move || {
                 favorite_item
                     .upgrade()
-                    .and_then(|item| item_at_from_item::<Album>(&item))
-                    .map(|album| album_favorite_key(&album.id))
+                    .and_then(|item| item_at_from_item::<AlbumSummary>(&item))
+                    .map(|album| album_favorite_key(&album.album.id))
             }),
             &button,
         );
@@ -1295,13 +1374,13 @@ pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
         button.connect_clicked(move |button| {
             let Some(album) = click_item
                 .upgrade()
-                .and_then(|item| item_at_from_item::<Album>(&item))
+                .and_then(|item| item_at_from_item::<AlbumSummary>(&item))
             else {
                 return;
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                library::FavoriteItemId::Album(album.id),
+                library::FavoriteItemId::Album(album.album.id.clone()),
                 favorite,
                 Some(button),
             );
@@ -1313,7 +1392,7 @@ pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(album) = item_at_from_item::<Album>(item) else {
+        let Some(album) = item_at_from_item::<AlbumSummary>(item) else {
             return;
         };
         let Some(button) = item
@@ -1322,7 +1401,7 @@ pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
         else {
             return;
         };
-        set_favorite_button_active(&button, album.favorite);
+        set_favorite_button_active(&button, album.album.favorite);
     });
 
     factory.connect_unbind(|_, item| {
@@ -1354,8 +1433,8 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
             Rc::new(move || {
                 favorite_item
                     .upgrade()
-                    .and_then(|item| item_at_from_item::<Artist>(&item))
-                    .map(|artist| artist_favorite_key(&artist.id))
+                    .and_then(|item| item_at_from_item::<ArtistSummary>(&item))
+                    .map(|artist| artist_favorite_key(&artist.artist.id))
             }),
             &button,
         );
@@ -1365,13 +1444,13 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
         button.connect_clicked(move |button| {
             let Some(artist) = click_item
                 .upgrade()
-                .and_then(|item| item_at_from_item::<Artist>(&item))
+                .and_then(|item| item_at_from_item::<ArtistSummary>(&item))
             else {
                 return;
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                library::FavoriteItemId::Artist(artist.id),
+                library::FavoriteItemId::Artist(artist.artist.id.clone()),
                 favorite,
                 Some(button),
             );
@@ -1383,7 +1462,7 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
+        let Some(artist) = item_at_from_item::<ArtistSummary>(item) else {
             return;
         };
         let Some(button) = item
@@ -1392,7 +1471,7 @@ pub(crate) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn
         else {
             return;
         };
-        set_favorite_button_active(&button, artist.favorite);
+        set_favorite_button_active(&button, artist.artist.favorite);
     });
 
     factory.connect_unbind(|_, item| {
@@ -1440,7 +1519,7 @@ pub(crate) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn 
             };
             let favorite = !favorite_button_is_active(button);
             favorite_shell.set_favorite_with_feedback(
-                library::FavoriteItemId::Track(track.id),
+                library::FavoriteItemId::Track(track.id.clone()),
                 favorite,
                 Some(button),
             );

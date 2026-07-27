@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc};
 use adw::prelude::*;
 use artwork::ArtworkBinding;
 
-use super::{ArtworkTile, GRID_COVER_SIZE};
+use super::{ArtworkTile, GRID_COVER_SIZE, cover_fetch_size_for_display};
 use crate::shell::Shell;
 
 #[derive(Clone)]
@@ -13,6 +13,7 @@ pub(crate) struct CoverGroupProjection {
     grid: gtk::Grid,
     quadrants: Rc<Vec<ArtworkTile>>,
     size: Rc<Cell<i32>>,
+    render_size: i32,
     fetch_size: u32,
 }
 
@@ -22,7 +23,6 @@ impl CoverGroupProjection {
     }
 
     pub(crate) fn replace(&self, shell: &Rc<Shell>, artwork: &[ArtworkBinding], seed: u32) {
-        let size = self.size.get();
         if artwork.len() <= 1 {
             for tile in self.quadrants.iter() {
                 shell.clear_artwork_tile(tile);
@@ -31,7 +31,7 @@ impl CoverGroupProjection {
                 &self.single,
                 artwork.first().cloned().unwrap_or_else(ArtworkBinding::new),
                 seed,
-                size,
+                self.render_size,
                 self.fetch_size,
             );
             self.root.set_visible_child_name("single");
@@ -39,7 +39,7 @@ impl CoverGroupProjection {
         }
 
         shell.clear_artwork_tile(&self.single);
-        let cell_size = (size / 2).max(1);
+        let cell_size = (self.render_size / 2).max(1);
         for (index, tile) in self.quadrants.iter().enumerate() {
             shell.bind_artwork_tile(
                 tile,
@@ -73,8 +73,10 @@ impl Shell {
         artwork: &[ArtworkBinding],
         seed: u32,
         size: i32,
-        fetch_size: u32,
+        render_size: i32,
     ) -> CoverGroupProjection {
+        let render_size = render_size.max(1);
+        let fetch_size = cover_fetch_size_for_display(render_size);
         let root = gtk::Stack::new();
         root.set_size_request(size, size);
         root.set_hexpand(false);
@@ -114,6 +116,7 @@ impl Shell {
             grid,
             quadrants,
             size: Rc::new(Cell::new(size)),
+            render_size,
             fetch_size,
         };
         projection.replace(self, artwork, seed);

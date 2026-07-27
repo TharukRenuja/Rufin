@@ -2,8 +2,9 @@ use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
 use gtk::glib;
-use playback::{MediaKey, PlaybackView, WaveformProjection};
+use playback::{CurrentMediaId, PlaybackView};
 
+use crate::runtime::WaveformProjection;
 pub(crate) struct PlaybackState {
     pub(crate) player: RefCell<Option<PlaybackView>>,
     pub(crate) waveform: RefCell<WaveformProjection>,
@@ -29,14 +30,14 @@ pub(crate) fn current_playback_track(player: &Option<PlaybackView>) -> Option<::
 pub(crate) fn current_playback_track_id(
     player: &Option<PlaybackView>,
 ) -> Option<::library::TrackId> {
-    current_playback_media_key(player).map(|key| key.track_id)
+    current_playback_track(player).map(|track| track.id.clone())
 }
 
-pub(crate) fn current_playback_media_key(player: &Option<PlaybackView>) -> Option<MediaKey> {
-    let player = player.as_ref()?;
-    let current = player.transport.current.as_ref()?;
-    Some(MediaKey {
-        source_id: player.transport.source_id.clone(),
-        track_id: current.track.id.clone(),
-    })
+pub(crate) fn current_playback_media_id(player: &Option<PlaybackView>) -> Option<CurrentMediaId> {
+    player
+        .as_ref()?
+        .transport
+        .current
+        .as_ref()
+        .map(|current| current.id.clone())
 }

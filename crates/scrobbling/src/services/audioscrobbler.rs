@@ -1,10 +1,11 @@
+use std::thread;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
 use serde_json::Value;
 use tracing::debug;
 
-use crate::eligibility::{Submission, SubmissionTrack};
+use crate::retry::{DeliveryError, Submission, SubmissionTrack};
 use crate::settings::{AudioscrobblerSettings, LIBREFM_API_KEY, LIBREFM_API_SECRET};
 
 const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -41,55 +42,69 @@ pub struct AudioscrobblerSession {
     pub session_key: String,
 }
 
-pub fn request_lastfm_auth_token(api_key: &str, api_secret: &str) -> Result<String, String> {
-    let api_key = api_key.trim();
-    let api_secret = api_secret.trim();
-    if api_key.is_empty() || api_secret.is_empty() {
-        return Err("Enter a Last.fm API key and shared secret first.".to_string());
+pub struct AudioscrobblerAuthorization {
+    service: Service,
+    api_key: String,
+    api_secret: String,
+    token: String,
+    url: String,
+}
+
+impl AudioscrobblerAuthorization {
+    pub fn lastfm(api_key: &str, api_secret: &str) -> Result<Self, String> {
+        let api_key = api_key.trim();
+        let api_secret = api_secret.trim();
+        if api_key.is_empty() || api_secret.is_empty() {
+            return Err("Enter a Last.fm API key and shared secret first.".to_string());
+        }
+        let token = request_auth_token(Service::LastFm, api_key, api_secret)?;
+        Ok(Self {
+            service: Service::LastFm,
+            api_key: api_key.to_string(),
+            api_secret: api_secret.to_string(),
+            url: auth_url(Service::LastFm, api_key, &token),
+            token,
+        })
     }
-    request_auth_token(Service::LastFm, api_key, api_secret)
+
+    pub fn librefm() -> Result<Self, String> {
+        let token = request_auth_token(Service::LibreFm, LIBREFM_API_KEY, LIBREFM_API_SECRET)?;
+        Ok(Self {
+            service: Service::LibreFm,
+            api_key: LIBREFM_API_KEY.to_string(),
+            api_secret: LIBREFM_API_SECRET.to_string(),
+            url: auth_url(Service::LibreFm, LIBREFM_API_KEY, &token),
+            token,
+        })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn wait_for_session(self) -> Result<Option<AudioscrobblerSession>, String> {
+        for _ in 0..30 {
+            thread::sleep(Duration::from_secs(2));
+            if let Some(session) =
+                request_session(self.service, &self.api_key, &self.api_secret, &self.token)?
+            {
+                return Ok(Some(session));
+            }
+        }
+        Ok(None)
+    }
 }
 
-pub fn request_librefm_auth_token() -> Result<String, String> {
-    request_auth_token(Service::LibreFm, LIBREFM_API_KEY, LIBREFM_API_SECRET)
-}
-
-pub fn lastfm_auth_url(api_key: &str, token: &str) -> String {
+fn auth_url(service: Service, api_key: &str, token: &str) -> String {
     format!(
-        "{LASTFM_AUTH_URL}?api_key={}&token={}",
+        "{}?api_key={}&token={}",
+        match service {
+            Service::LastFm => LASTFM_AUTH_URL,
+            Service::LibreFm => LIBREFM_AUTH_URL,
+        },
         api_key.trim(),
         token.trim()
     )
-}
-
-pub fn librefm_auth_url(token: &str) -> String {
-    format!(
-        "{LIBREFM_AUTH_URL}?api_key={}&token={}",
-        LIBREFM_API_KEY,
-        token.trim()
-    )
-}
-
-pub fn request_lastfm_session(
-    api_key: &str,
-    api_secret: &str,
-    token: &str,
-) -> Result<Option<AudioscrobblerSession>, String> {
-    let api_key = api_key.trim();
-    let api_secret = api_secret.trim();
-    let token = token.trim();
-    if api_key.is_empty() || api_secret.is_empty() || token.is_empty() {
-        return Err("Last.fm authorization is missing required fields.".to_string());
-    }
-    request_session(Service::LastFm, api_key, api_secret, token)
-}
-
-pub fn request_librefm_session(token: &str) -> Result<Option<AudioscrobblerSession>, String> {
-    let token = token.trim();
-    if token.is_empty() {
-        return Err("Libre.fm authorization is missing a token.".to_string());
-    }
-    request_session(Service::LibreFm, LIBREFM_API_KEY, LIBREFM_API_SECRET, token)
 }
 
 fn request_auth_token(service: Service, api_key: &str, api_secret: &str) -> Result<String, String> {
@@ -139,10 +154,7 @@ pub(crate) fn submit(
     service: Service,
     settings: &AudioscrobblerSettings,
     submission: &Submission,
-) -> Result<(), String> {
-    if !settings.configured(submission.is_now_playing()) {
-        return Ok(());
-    }
+) -> Result<(), DeliveryError> {
     let params = match submission {
         Submission::NowPlaying(track) => {
             submission_params("track.updateNowPlaying", settings, track, None)
@@ -161,15 +173,37 @@ pub(crate) fn submit(
         .post(service.api_url())
         .form(&params)
         .send()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| DeliveryError::retry(error.to_string()))?;
     let status = response.status();
     let value = response.json::<Value>().unwrap_or(Value::Null);
-    if !status.is_success() {
-        return Err(format!("{} returned HTTP {status}", service.name()));
+    if status.as_u16() == 429 || status.is_server_error() {
+        return Err(DeliveryError::retry(format!(
+            "{} returned HTTP {status}",
+            service.name()
+        )));
     }
-    api_error(&value, service.name())?;
+    if let Some((code, message)) = api_error_value(&value) {
+        return Err(delivery_error(service, code, &message));
+    }
+    if !status.is_success() {
+        return Err(DeliveryError::stop(format!(
+            "{} returned HTTP {status}",
+            service.name()
+        )));
+    }
     debug!(service = service.name(), "submitted scrobbling event");
     Ok(())
+}
+
+fn delivery_error(service: Service, code: i64, message: &str) -> DeliveryError {
+    let error = format!("{} API error {code}: {message}", service.name());
+    if matches!(code, 11 | 16 | 29) {
+        DeliveryError::retry(error)
+    } else if matches!(code, 4 | 9 | 10 | 13) {
+        DeliveryError::credential_blocked(error)
+    } else {
+        DeliveryError::stop(error)
+    }
 }
 
 fn submission_params(
@@ -335,12 +369,28 @@ mod tests {
     #[test]
     fn auth_urls_preserve_existing_endpoints() {
         assert_eq!(
-            lastfm_auth_url("api-key", "auth-token"),
+            auth_url(Service::LastFm, "api-key", "auth-token"),
             "https://www.last.fm/api/auth/?api_key=api-key&token=auth-token"
         );
         assert_eq!(
-            librefm_auth_url("auth-token"),
+            auth_url(Service::LibreFm, LIBREFM_API_KEY, "auth-token"),
             "https://libre.fm/api/auth/?api_key=rufin&token=auth-token"
         );
+    }
+
+    #[test]
+    fn submission_errors_keep_credentials_separate_from_retry_and_rejection() {
+        assert!(matches!(
+            delivery_error(Service::LastFm, 9, "Invalid session key"),
+            DeliveryError::CredentialBlocked(_)
+        ));
+        assert!(matches!(
+            delivery_error(Service::LastFm, 11, "Service offline"),
+            DeliveryError::Retry(_)
+        ));
+        assert!(matches!(
+            delivery_error(Service::LastFm, 6, "Invalid parameters"),
+            DeliveryError::Stop(_)
+        ));
     }
 }

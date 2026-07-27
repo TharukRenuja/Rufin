@@ -1,22 +1,24 @@
 pub(crate) fn populate_home_block_rows(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
-    rows: &Rc<std::cell::RefCell<Vec<adw::ActionRow>>>,
+    rows: &Rc<std::cell::RefCell<Vec<gtk::glib::WeakRef<adw::ActionRow>>>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
-        group.remove(&row);
+        if let Some(row) = row.upgrade() {
+            group.remove(&row);
+        }
     }
 
     let visible_blocks = shell.settings.current.borrow().home_blocks.clone();
     let ordered_blocks = home_block_row_order(&visible_blocks);
-    for block in ordered_blocks {
+    for (position, block) in ordered_blocks.into_iter().enumerate() {
         let active = visible_blocks.contains(&block);
         let visible_index = visible_blocks
             .iter()
             .position(|candidate| *candidate == block);
         let row = adw::ActionRow::builder()
             .title(tr(block.title()))
-            .subtitle(home_block_subtitle(block, active, visible_index))
+            .subtitle(visibility_position_subtitle(active, position))
             .build();
 
         let drag = gtk::Image::from_icon_name("rufin-list-drag-handle-symbolic");
@@ -30,7 +32,7 @@ pub(crate) fn populate_home_block_rows(
         up.set_valign(gtk::Align::Center);
         up.set_sensitive(visible_index.is_some_and(|index| index > 0));
         let shell_for_up = Rc::clone(shell);
-        let group_for_up = group.clone();
+        let group_for_up = group.downgrade();
         let rows_for_up = Rc::clone(rows);
         up.connect_clicked(move |_| {
             let mut blocks = shell_for_up.settings.current.borrow().home_blocks.clone();
@@ -39,7 +41,10 @@ pub(crate) fn populate_home_block_rows(
             {
                 blocks.swap(index - 1, index);
                 shell_for_up.set_home_blocks(blocks);
-                populate_home_block_rows(&shell_for_up, &group_for_up, &rows_for_up);
+                let Some(group) = group_for_up.upgrade() else {
+                    return;
+                };
+                populate_home_block_rows(&shell_for_up, &group, &rows_for_up);
             }
         });
         row.add_suffix(&up);
@@ -50,7 +55,7 @@ pub(crate) fn populate_home_block_rows(
         down.set_valign(gtk::Align::Center);
         down.set_sensitive(visible_index.is_some_and(|index| index + 1 < visible_blocks.len()));
         let shell_for_down = Rc::clone(shell);
-        let group_for_down = group.clone();
+        let group_for_down = group.downgrade();
         let rows_for_down = Rc::clone(rows);
         down.connect_clicked(move |_| {
             let mut blocks = shell_for_down.settings.current.borrow().home_blocks.clone();
@@ -59,7 +64,10 @@ pub(crate) fn populate_home_block_rows(
             {
                 blocks.swap(index, index + 1);
                 shell_for_down.set_home_blocks(blocks);
-                populate_home_block_rows(&shell_for_down, &group_for_down, &rows_for_down);
+                let Some(group) = group_for_down.upgrade() else {
+                    return;
+                };
+                populate_home_block_rows(&shell_for_down, &group, &rows_for_down);
             }
         });
         row.add_suffix(&down);
@@ -70,7 +78,7 @@ pub(crate) fn populate_home_block_rows(
             .sensitive(!active || visible_blocks.len() > 1)
             .build();
         let shell_for_toggle = Rc::clone(shell);
-        let group_for_toggle = group.clone();
+        let group_for_toggle = group.downgrade();
         let rows_for_toggle = Rc::clone(rows);
         toggle.connect_active_notify(move |toggle| {
             let mut blocks = shell_for_toggle
@@ -91,7 +99,10 @@ pub(crate) fn populate_home_block_rows(
                 blocks.retain(|candidate| *candidate != block);
             }
             shell_for_toggle.set_home_blocks(blocks);
-            populate_home_block_rows(&shell_for_toggle, &group_for_toggle, &rows_for_toggle);
+            let Some(group) = group_for_toggle.upgrade() else {
+                return;
+            };
+            populate_home_block_rows(&shell_for_toggle, &group, &rows_for_toggle);
         });
         row.add_suffix(&toggle);
         row.set_activatable_widget(Some(&toggle));
@@ -139,7 +150,7 @@ pub(crate) fn populate_home_block_rows(
         row.add_controller(drop_target);
 
         group.add(&row);
-        rows.borrow_mut().push(row);
+        rows.borrow_mut().push(row.downgrade());
     }
 }
 pub(crate) fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> {
@@ -175,19 +186,9 @@ pub(crate) fn insert_home_block_in_order(
         .unwrap_or(blocks.len());
     blocks.insert(insert_at, block);
 }
-pub(crate) fn home_block_subtitle(
-    block: HomeBlockKind,
-    active: bool,
-    visible_index: Option<usize>,
-) -> String {
-    if let Some(index) = visible_index {
-        return format!("{} {}", tr("Position"), index + 1);
-    }
-    match block.section_kind() {
-        Some(_) => tr("Hidden server section"),
-        None if active => tr("Visible"),
-        None => tr("Hidden"),
-    }
+pub(crate) fn visibility_position_subtitle(visible: bool, position: usize) -> String {
+    let visibility = if visible { tr("Visible") } else { tr("Hidden") };
+    format!("{visibility} · {} {}", tr("Position"), position + 1)
 }
 pub(crate) fn reorder_home_blocks(
     blocks: &mut Vec<HomeBlockKind>,
@@ -329,5 +330,5 @@ use crate::shell::Shell;
 use crate::{LeftSidebarMode, RightSidebarMode};
 use ::library::HomeBlockKind;
 use adw::prelude::*;
+use desktop_integration::{DisplayType, LinkType};
 use localization::tr;
-use rich_presence::{DisplayType, LinkType};

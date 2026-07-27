@@ -69,7 +69,7 @@ impl AlbumReleaseKind {
 
 #[cfg(test)]
 mod tests {
-    use ::library::{Album, AlbumId};
+    use ::library::Album;
 
     use super::{AlbumReleaseKind, album_release_kind_label};
 
@@ -108,29 +108,6 @@ mod tests {
     }
 
     fn test_album() -> Album {
-        Album {
-            id: AlbumId::fake(1),
-            title: "Title".to_string(),
-            artist: "Artist".to_string(),
-            artist_id: None,
-            album_artist_credits: Vec::new(),
-            artist_credits: Vec::new(),
-            year: 2026,
-            release_date: None,
-            date_added: None,
-            last_played: None,
-            play_count: None,
-            user_rating: None,
-            track_count: 1,
-            duration_seconds: 60,
-            favorite: false,
-            color_seed: 1,
-            image_ref: None,
-            genres: Vec::new(),
-            release_types: Vec::new(),
-            is_compilation: None,
-            musicbrainz_album_id: None,
-            musicbrainz_release_group_id: None,
-        }
+        crate::test_support::album(1, "Title")
     }
 }
