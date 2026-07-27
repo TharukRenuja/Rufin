@@ -165,7 +165,7 @@ jobs:
             esac
 
             case "$path" in
-              Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
+              .github/workflows/checks.yml|Cargo.lock|Cargo.toml|crates/*/Cargo.toml|flake.lock|flake.nix|scripts/rust-cache-command)
                 rust_cache_required=true
                 ;;
             esac
@@ -351,9 +351,11 @@ jobs:
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             bash -c 'nextest_jobs="${NEXTEST_JOBS:-4}"; if [[ ! "$nextest_jobs" =~ ^[1-9][0-9]*$ ]]; then echo "NEXTEST_JOBS must be a positive integer." >&2; exit 1; fi; if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --locked --test-threads "$nextest_jobs"; else echo "cargo-nextest is unavailable; falling back to cargo test." >&2; cargo test --workspace --locked --lib --bins --tests --benches --examples; fi'
 
-      - name: Warm Rust test cache
+      - name: Warm Rust build cache
         if: github.event_name == 'push'
         run: |
+          bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
+            cargo check --workspace --all-targets --locked
           bash scripts/retry-nix nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command \
             cargo test --workspace --locked --no-run --lib --bins --tests --benches --examples
 
