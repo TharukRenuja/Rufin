@@ -23,7 +23,7 @@ msgstr ""
 
 msgid ""
 "Logs have secrets and absolute folder paths redacted, but you may still "
-"review the logs before sharing it"
+"review the logs before sharing them"
 msgstr ""
 
 #, rust-format
