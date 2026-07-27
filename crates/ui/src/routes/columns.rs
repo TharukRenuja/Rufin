@@ -41,16 +41,12 @@ pub(crate) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colum
             album_merged_column(shell, "Title", column_width(LibraryField::TitleMerged))
         }
         LibraryField::Title => {
-            album_text_column(shell, "Title", 220, true, |album| album.album.title.clone())
+            album_text_column(shell, "Title", 220, |album| album.album.title.clone())
         }
         LibraryField::Favorite => album_favorite_column(shell),
-        _ => album_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |album| album_field(album, field),
-        ),
+        _ => album_text_column(shell, field.title(), column_width(field), move |album| {
+            album_field(album, field)
+        }),
     }
 }
 pub(crate) fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
@@ -58,18 +54,12 @@ pub(crate) fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colu
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => artist_image_column(shell),
         LibraryField::TitleMerged | LibraryField::Title => {
-            artist_text_column(shell, "Title", 220, true, |artist| {
-                artist.artist.name.clone()
-            })
+            artist_text_column(shell, "Title", 220, |artist| artist.artist.name.clone())
         }
         LibraryField::Favorite => artist_favorite_column(shell),
-        _ => artist_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |artist| artist_field(artist, field),
-        ),
+        _ => artist_text_column(shell, field.title(), column_width(field), move |artist| {
+            artist_field(artist, field)
+        }),
     }
 }
 pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
@@ -97,7 +87,7 @@ pub(crate) fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Co
             )
         }
         LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<PlaylistSummary, _>("Title", 220, |playlist| {
+            text_column::<PlaylistSummary, _>("Title", 220, |playlist| {
                 playlist.playlist.name.clone()
             })
         }
@@ -127,7 +117,7 @@ pub(crate) fn smart_playlist_column(
             |playlist| stable_seed(playlist.smart_playlist.id.as_str()),
         ),
         LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<SmartPlaylistSummary, _>("Title", 220, |playlist| {
+            text_column::<SmartPlaylistSummary, _>("Title", 220, |playlist| {
                 smart_playlist_display_name(&playlist.smart_playlist)
             })
         }
@@ -157,9 +147,9 @@ pub(crate) fn track_column_for_key(
                 seed: |track: &Track| stable_seed(track.id.as_str()),
             },
         ),
-        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
-            track.title.clone()
-        }),
+        LibraryField::Title => {
+            track_text_column(shell, "Title", width, 0.0, |track| track.title.clone())
+        }
         LibraryField::Favorite => track_favorite_column(shell),
         LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
             (track.artist.clone(), track_artist_route(track))
@@ -178,10 +168,10 @@ pub(crate) fn track_column_for_key(
                 track.album_id.clone().map(Route::AlbumDetail),
             )
         }),
-        LibraryField::Duration => track_text_column(shell, "◷", width, false, 0.0, |track| {
+        LibraryField::Duration => track_text_column(shell, "◷", width, 0.0, |track| {
             track_field(track, LibraryField::Duration)
         }),
-        _ => track_text_column(shell, field.title(), width, false, 0.0, move |track| {
+        _ => track_text_column(shell, field.title(), width, 0.0, move |track| {
             track_field(track, field)
         }),
     }
@@ -250,29 +240,6 @@ where
     T: Clone + 'static,
     F: Fn(&T) -> String + 'static,
 {
-    text_column_with_expand(title, width, false, value)
-}
-pub(crate) fn expanding_text_column<T, F>(
-    title: &str,
-    width: i32,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> String + 'static,
-{
-    text_column_with_expand(title, width, true, value)
-}
-pub(crate) fn text_column_with_expand<T, F>(
-    title: &str,
-    width: i32,
-    expand: bool,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> String + 'static,
-{
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
     factory.connect_setup(|_, item| {
@@ -308,8 +275,6 @@ where
     });
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
     column
 }
 pub(crate) fn row_index_column() -> gtk::ColumnViewColumn {
@@ -538,7 +503,6 @@ pub(crate) fn album_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
-    expand: bool,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -609,8 +573,6 @@ where
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
     column
 }
 
@@ -734,8 +696,6 @@ pub(crate) fn album_merged_column(
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(true);
     column
 }
 
@@ -909,7 +869,6 @@ pub(crate) fn artist_text_column<F>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
-    expand: bool,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -963,8 +922,6 @@ where
     });
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
     column
 }
 #[derive(Clone)]
@@ -1114,7 +1071,6 @@ pub(crate) fn track_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
-    expand: bool,
     xalign: f32,
     value: F,
 ) -> gtk::ColumnViewColumn
@@ -1189,8 +1145,6 @@ where
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
     column
 }
 
@@ -1345,8 +1299,6 @@ where
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(true);
     column
 }
 pub(crate) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {

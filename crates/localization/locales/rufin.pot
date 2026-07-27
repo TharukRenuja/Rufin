@@ -1185,10 +1185,10 @@ msgstr ""
 msgid "Requires OpenSubsonic songLyrics v2"
 msgstr ""
 
-msgid "Reset display"
+msgid "Reset equalizer"
 msgstr ""
 
-msgid "Reset equalizer"
+msgid "Reset to defaults"
 msgstr ""
 
 msgid "Reset"

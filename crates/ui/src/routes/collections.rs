@@ -13,7 +13,7 @@ use gtk::{gio, glib};
 
 use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::shell::Shell;
-use crate::{LibraryField, LibraryLayout, LibraryListKey};
+use crate::{LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey};
 use localization::tr;
 use playback::{LoadedPlayRequest, QueuePlacement};
 use tracing::warn;
@@ -40,8 +40,8 @@ use super::route_layout::{
     HOME_ALBUM_MIN_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
 };
 use super::table_sizing::{
-    ColumnViewWidthFit, column_view_initial_width, install_column_view_width_fit,
-    route_column_view_initial_width,
+    ColumnViewWidthFit, column_view_initial_width, connect_column_width_save,
+    install_column_view_width_fit, route_column_view_initial_width,
 };
 use super::track_model::TrackCollectionModel;
 use crate::runtime::SelectedLibrary;
@@ -164,6 +164,7 @@ pub(crate) struct CollectionTableProjection {
     table: gtk::ColumnView,
     fixed_columns: Rc<Vec<(gtk::ColumnViewColumn, i32)>>,
     column_for_field: Rc<dyn Fn(LibraryField) -> (gtk::ColumnViewColumn, i32)>,
+    width_for_field: Rc<dyn Fn(LibraryField) -> i32>,
     fields: Rc<RefCell<Vec<LibraryField>>>,
     width_fit: ColumnViewWidthFit,
 }
@@ -175,6 +176,8 @@ impl CollectionTableProjection {
 
     pub(crate) fn apply_fields(&self, fields: &[LibraryField]) {
         if self.fields.borrow().as_slice() == fields {
+            self.width_fit
+                .set_preferred_widths(&self.preferred_widths(fields));
             return;
         }
         while let Some(column) = self
@@ -196,6 +199,14 @@ impl CollectionTableProjection {
         }
         *self.fields.borrow_mut() = fields.to_vec();
         self.width_fit.replace(active);
+    }
+
+    fn preferred_widths(&self, fields: &[LibraryField]) -> Vec<i32> {
+        self.fixed_columns
+            .iter()
+            .map(|(_, width)| *width)
+            .chain(fields.iter().map(|field| (self.width_for_field)(*field)))
+            .collect()
     }
 
     pub(crate) fn fit_scroller_allocation(&self, scroller: &gtk::ScrolledWindow, width: i32) {
@@ -834,6 +845,8 @@ pub(crate) fn album_table(
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
     dynamic_collection_table(
+        shell,
+        key,
         model,
         &fields,
         Vec::new(),
@@ -856,6 +869,8 @@ pub(crate) fn artist_table(
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
     dynamic_collection_table(
+        shell,
+        key,
         model,
         &fields,
         Vec::new(),
@@ -882,6 +897,8 @@ pub(crate) fn playlist_table(
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
     dynamic_collection_table(
+        shell,
+        LibraryListKey::Playlists,
         model,
         &fields,
         Vec::new(),
@@ -909,6 +926,8 @@ pub(crate) fn smart_playlist_table(
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
     dynamic_collection_table(
+        shell,
+        LibraryListKey::SmartPlaylists,
         model,
         &fields,
         vec![(reorder_column, SMART_PLAYLIST_REORDER_WIDTH)],
@@ -944,6 +963,8 @@ pub(super) fn collection_column_width(field: LibraryField) -> i32 {
 }
 
 pub(super) fn dynamic_collection_table<T, M>(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
     model: M,
     fields: &[LibraryField],
     fixed_columns: Vec<(gtk::ColumnViewColumn, i32)>,
@@ -958,9 +979,28 @@ where
     T: Clone + 'static,
     M: IsA<gio::ListModel> + Clone + 'static,
 {
+    let default_width_for_field = Rc::new(width_for_field) as Rc<dyn Fn(LibraryField) -> i32>;
+    let width_shell = Rc::downgrade(shell);
+    let saved_width_for_field = Rc::clone(&default_width_for_field);
+    let width_for_field = Rc::new(move |field| {
+        let default = saved_width_for_field(field);
+        width_shell
+            .upgrade()
+            .and_then(|shell| {
+                shell
+                    .settings
+                    .current
+                    .borrow()
+                    .library_list(key)
+                    .row_column_width(field)
+            })
+            .unwrap_or(default)
+    }) as Rc<dyn Fn(LibraryField) -> i32>;
+    let column_width_for_field = Rc::clone(&width_for_field);
     let column_for_field = Rc::new(move |field| {
         let column = column_for_field(field);
-        let width = width_for_field(field);
+        column.set_resizable(field != LibraryField::RowIndex);
+        let width = column_width_for_field(field);
         (column, width)
     }) as Rc<dyn Fn(LibraryField) -> (gtk::ColumnViewColumn, i32)>;
     let mut active = fixed_columns.clone();
@@ -973,13 +1013,48 @@ where
         activate,
         selection,
     );
+    let fields = Rc::new(RefCell::new(fields.to_vec()));
+    install_library_column_width_persistence(
+        shell,
+        key,
+        &table,
+        &width_fit,
+        Rc::clone(&fields),
+        fixed_columns.len(),
+    );
     CollectionTableProjection {
         table,
         fixed_columns: Rc::new(fixed_columns),
         column_for_field,
-        fields: Rc::new(RefCell::new(fields.to_vec())),
+        width_for_field,
+        fields,
         width_fit,
     }
+}
+
+fn install_library_column_width_persistence(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    table: &gtk::ColumnView,
+    width_fit: &ColumnViewWidthFit,
+    fields: Rc<RefCell<Vec<LibraryField>>>,
+    fixed_column_count: usize,
+) {
+    let shell = Rc::downgrade(shell);
+    connect_column_width_save(table, width_fit, move |widths| {
+        let Some(shell) = shell.upgrade() else {
+            return;
+        };
+        let widths = fields
+            .borrow()
+            .iter()
+            .copied()
+            .zip(widths.into_iter().skip(fixed_column_count))
+            .filter(|(field, _)| *field != LibraryField::RowIndex)
+            .map(|(field, width)| LibraryColumnWidth { field, width })
+            .collect();
+        shell.save_library_column_widths(key, widths);
+    });
 }
 
 fn collection_table_with_width<T, M>(
@@ -1099,6 +1174,8 @@ pub(crate) fn track_table(
     });
     let column_shell = Rc::clone(shell);
     let table = dynamic_collection_table(
+        shell,
+        key,
         model,
         &fields,
         Vec::new(),

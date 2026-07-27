@@ -31,11 +31,22 @@ use super::collection_context::present_track_context_menu;
 use super::collections::library_route_inset;
 use super::library_fields::sort_tracks;
 use super::models::track_matches_query;
-use super::route_layout::{ROUTE_TOP_MARGIN, route_scroller_widget};
+use super::route_layout::{
+    PRIMARY_ROUTE_HORIZONTAL_INSET, ROUTE_TOP_MARGIN, route_scroller_widget,
+};
+use super::table_sizing::{
+    ColumnViewWidthFit, connect_column_width_save, install_column_view_width_fit,
+};
 
 const FOLDER_TREE_WIDTH: i32 = 260;
 const FOLDER_TREE_MIN_WIDTH: i32 = 132;
+const FOLDER_TREE_MAX_WIDTH: i32 = 480;
+const FOLDER_TABLE_MIN_WIDTH: i32 = 240;
 const FOLDER_TREE_HIDE_WIDTH: i32 = 550;
+const FOLDER_SPLIT_SEPARATOR_WIDTH: i32 = 17;
+const FOLDER_NAME_COLUMN_WIDTH: i32 = 220;
+const FOLDER_DETAIL_COLUMN_WIDTH: i32 = 200;
+const FOLDER_DURATION_COLUMN_WIDTH: i32 = 80;
 const FOLDER_ROW_ARTWORK_SIZE: i32 = 28;
 
 #[derive(Clone)]
@@ -136,9 +147,13 @@ impl FolderRouteProjection {
         shell.set_route_search(Some(search.clone()));
 
         let route_width = route_content_width(shell);
+        let saved_tree_width = shell.settings.current.borrow().folder_view.tree_width;
+        let preferred_tree_width = Rc::new(Cell::new(
+            saved_tree_width.unwrap_or_else(|| folder_tree_width(route_width)),
+        ));
         let tree_visible = folder_tree_visible(route_width);
         let tree_width = if tree_visible {
-            folder_tree_width(route_width)
+            folder_tree_position(route_width, preferred_tree_width.get())
         } else {
             0
         };
@@ -149,26 +164,39 @@ impl FolderRouteProjection {
             context_id: folder_context_id(&path),
         });
         let table_model = FolderTableModel::new(play);
-        let table = folder_table(shell, &table_model);
+        let table_initial_width = route_width
+            .saturating_sub(tree_width)
+            .saturating_sub(if tree_visible {
+                FOLDER_SPLIT_SEPARATOR_WIDTH
+            } else {
+                0
+            })
+            .saturating_sub(PRIMARY_ROUTE_HORIZONTAL_INSET)
+            .max(1);
+        let (table, table_width_fit) = folder_table(shell, &table_model, table_initial_width);
 
         let table_scroller = gtk::ScrolledWindow::new();
         configure_fill_width_clip(&table_scroller, gtk::PolicyType::Automatic);
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);
         table_scroller.set_child(Some(&library_route_inset(table.clone().upcast())));
-        let table_view = route_scroller_widget(table_scroller);
+        let table_view = route_scroller_widget(table_scroller.clone());
+        let resize_table_scroller = table_scroller.clone();
+        let table_view = width_allocation_owner(&table_view, move |width| {
+            table_width_fit.fit_scroller_allocation(&resize_table_scroller, width);
+        })
+        .upcast::<gtk::Widget>();
 
         let tree = gtk::ListBox::new();
         tree.add_css_class("folder-tree");
         tree.set_selection_mode(gtk::SelectionMode::None);
-        tree.set_size_request(tree_width, -1);
+        tree.set_width_request(1);
         tree.set_hexpand(true);
 
         let tree_scroller = gtk::ScrolledWindow::new();
         tree_scroller.add_css_class("folders-tree-pane");
         tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        tree_scroller.set_min_content_width(tree_width);
-        tree_scroller.set_size_request(tree_width, -1);
+        tree_scroller.set_min_content_width(FOLDER_TREE_MIN_WIDTH);
         tree_scroller.set_hexpand(false);
         tree_scroller.set_vexpand(true);
         tree_scroller.set_visible(tree_visible);
@@ -186,20 +214,49 @@ impl FolderRouteProjection {
         paned.set_end_child(Some(&table_view));
         paned.set_resize_end_child(true);
         paned.set_shrink_end_child(true);
+        let applying_tree_width = Rc::new(Cell::new(false));
+        let tree_width_changed = Rc::new(Cell::new(false));
+        let position_tree_scroller = tree_scroller.clone();
+        let position_preferred = Rc::clone(&preferred_tree_width);
+        let position_applying = Rc::clone(&applying_tree_width);
+        let position_changed = Rc::clone(&tree_width_changed);
+        paned.connect_position_notify(move |paned| {
+            if position_applying.get() || !position_tree_scroller.is_visible() {
+                return;
+            }
+            let position = paned.position();
+            if position >= FOLDER_TREE_MIN_WIDTH && position_preferred.replace(position) != position
+            {
+                position_changed.set(true);
+            }
+        });
+        connect_folder_tree_width_save(
+            shell,
+            &paned,
+            Rc::clone(&preferred_tree_width),
+            tree_width_changed,
+        );
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         content.set_hexpand(true);
         content.set_vexpand(true);
         content.append(&library_route_inset(search.clone().upcast()));
         let resize_tree_scroller = tree_scroller.clone();
-        let resize_tree = tree.clone();
         let resize_paned = paned.clone();
+        let resize_preferred = Rc::clone(&preferred_tree_width);
+        let resize_applying = Rc::clone(&applying_tree_width);
         let allocated_width = Cell::new(route_width);
         let paned_owner = width_allocation_owner(&paned, move |width| {
             if width <= 1 || allocated_width.replace(width) == width {
                 return;
             }
-            apply_folder_width(&resize_paned, &resize_tree_scroller, &resize_tree, width);
+            apply_folder_width(
+                &resize_paned,
+                &resize_tree_scroller,
+                width,
+                resize_preferred.get(),
+                &resize_applying,
+            );
         });
         content.append(&paned_owner);
 
@@ -347,20 +404,51 @@ impl FolderRouteProjection {
 fn apply_folder_width(
     paned: &gtk::Paned,
     tree_scroller: &gtk::ScrolledWindow,
-    tree: &gtk::ListBox,
     width: i32,
+    preferred_tree_width: i32,
+    applying: &Cell<bool>,
 ) {
     let tree_visible = folder_tree_visible(width);
     let tree_width = if tree_visible {
-        folder_tree_width(width)
+        folder_tree_position(width, preferred_tree_width)
     } else {
         0
     };
+    applying.set(true);
     tree_scroller.set_visible(tree_visible);
-    tree_scroller.set_min_content_width(tree_width);
-    tree_scroller.set_size_request(tree_width, -1);
-    tree.set_size_request(tree_width, -1);
     paned.set_position(tree_width);
+    applying.set(false);
+}
+
+fn connect_folder_tree_width_save(
+    shell: &Rc<Shell>,
+    paned: &gtk::Paned,
+    preferred_width: Rc<Cell<i32>>,
+    changed: Rc<Cell<bool>>,
+) {
+    let events = gtk::EventControllerLegacy::new();
+    events.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let shell = Rc::downgrade(shell);
+    events.connect_event(move |_, event| {
+        if matches!(
+            event.event_type(),
+            gtk::gdk::EventType::ButtonRelease | gtk::gdk::EventType::KeyRelease
+        ) {
+            let shell = shell.clone();
+            let preferred_width = Rc::clone(&preferred_width);
+            let changed = Rc::clone(&changed);
+            glib::idle_add_local_once(move || {
+                if !changed.replace(false) {
+                    return;
+                }
+                if let Some(shell) = shell.upgrade() {
+                    shell.save_folder_tree_width(preferred_width.get());
+                }
+            });
+        }
+        glib::Propagation::Proceed
+    });
+    paned.add_controller(events);
 }
 
 fn folder_breadcrumbs(shell: &Rc<Shell>, path: &[FolderPathItem]) -> gtk::Box {
@@ -546,7 +634,11 @@ fn populate_folder_table(
     model.replace(rows, visible_tracks);
 }
 
-fn folder_table(shell: &Rc<Shell>, model: &FolderTableModel) -> gtk::ColumnView {
+fn folder_table(
+    shell: &Rc<Shell>,
+    model: &FolderTableModel,
+    initial_width: i32,
+) -> (gtk::ColumnView, ColumnViewWidthFit) {
     let selection = gtk::SingleSelection::new(Some(model.rows.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
@@ -560,15 +652,42 @@ fn folder_table(shell: &Rc<Shell>, model: &FolderTableModel) -> gtk::ColumnView 
     table.set_halign(gtk::Align::Fill);
     table.set_vexpand(true);
 
-    let name = folder_name_column(shell);
-    name.set_expand(true);
-    table.append_column(&name);
-
-    let detail = folder_detail_column(shell);
-    detail.set_expand(true);
-    table.append_column(&detail);
-
-    table.append_column(&folder_duration_column(shell));
+    let folder_view = shell.settings.current.borrow().folder_view.clone();
+    let columns = vec![
+        (
+            folder_name_column(shell),
+            folder_view
+                .name_column_width
+                .unwrap_or(FOLDER_NAME_COLUMN_WIDTH),
+        ),
+        (
+            folder_detail_column(shell),
+            folder_view
+                .detail_column_width
+                .unwrap_or(FOLDER_DETAIL_COLUMN_WIDTH),
+        ),
+        (
+            folder_duration_column(shell),
+            folder_view
+                .duration_column_width
+                .unwrap_or(FOLDER_DURATION_COLUMN_WIDTH),
+        ),
+    ];
+    for (column, width) in &columns {
+        column.set_fixed_width(*width);
+        column.set_resizable(true);
+        table.append_column(column);
+    }
+    let width_fit = install_column_view_width_fit(&table, columns, initial_width);
+    let save_shell = Rc::downgrade(shell);
+    connect_column_width_save(&table, &width_fit, move |widths| {
+        let [name, detail, duration] = widths.as_slice() else {
+            return;
+        };
+        if let Some(shell) = save_shell.upgrade() {
+            shell.save_folder_column_widths([*name, *detail, *duration]);
+        }
+    });
 
     let row_factory = gtk::SignalListItemFactory::new();
     row_factory.connect_bind(|_, item| {
@@ -623,7 +742,7 @@ fn folder_table(shell: &Rc<Shell>, model: &FolderTableModel) -> gtk::ColumnView 
         glib::Propagation::Stop
     });
     table.add_controller(menu_key);
-    table
+    (table, width_fit)
 }
 
 fn folder_name_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
@@ -878,6 +997,14 @@ fn folder_tree_width(route_width: i32) -> i32 {
     }
 }
 
+fn folder_tree_position(route_width: i32, preferred_width: i32) -> i32 {
+    let maximum = route_width
+        .saturating_sub(FOLDER_SPLIT_SEPARATOR_WIDTH)
+        .saturating_sub(FOLDER_TABLE_MIN_WIDTH)
+        .clamp(FOLDER_TREE_MIN_WIDTH, FOLDER_TREE_MAX_WIDTH);
+    preferred_width.clamp(FOLDER_TREE_MIN_WIDTH, maximum)
+}
+
 fn folder_tree_visible(route_width: i32) -> bool {
     route_width >= FOLDER_TREE_HIDE_WIDTH
 }
@@ -915,6 +1042,20 @@ mod tests {
         assert!(!super::folder_tree_visible(450));
         assert!(!super::folder_tree_visible(549));
         assert!(super::folder_tree_visible(550));
+    }
+
+    #[test]
+    fn folder_tree_position_keeps_the_saved_width_inside_real_bounds() {
+        assert_eq!(super::folder_tree_position(900, 200), 200);
+        assert_eq!(
+            super::folder_tree_position(900, 40),
+            super::FOLDER_TREE_MIN_WIDTH
+        );
+        assert_eq!(super::folder_tree_position(550, 480), 293);
+        assert_eq!(
+            super::folder_tree_position(1_500, 900),
+            super::FOLDER_TREE_MAX_WIDTH
+        );
     }
 }
 

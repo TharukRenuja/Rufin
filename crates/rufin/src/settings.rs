@@ -952,6 +952,7 @@ mod tests {
                         detail_track_fields: Vec::new(),
                         sort_key: LibraryField::Title,
                         descending: false,
+                        row_column_widths: Vec::new(),
                         layout_version: 2,
                     },
                 }],

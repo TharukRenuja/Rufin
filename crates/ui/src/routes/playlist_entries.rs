@@ -514,6 +514,8 @@ fn playlist_entry_table_projection(
     let column_playlist_id = playlist_id;
     let activate = move |position, row| play_entry(position, row);
     let table = dynamic_collection_table(
+        shell,
+        LibraryListKey::PlaylistTracks,
         model,
         &fields,
         fixed_columns,
@@ -923,7 +925,6 @@ fn playlist_entry_number_column(
 
     let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
     column.set_fixed_width(PLAYLIST_ENTRY_NUMBER_WIDTH);
-    column.set_resizable(false);
     column
 }
 fn playlist_entry_image_column(
@@ -1011,7 +1012,6 @@ fn playlist_entry_image_column(
     });
     let column = localized_column("Image", &factory);
     column.set_fixed_width(PLAYLIST_ENTRY_COVER_WIDTH);
-    column.set_resizable(false);
     column
 }
 fn playlist_entry_favorite_column(
@@ -1104,7 +1104,6 @@ fn playlist_entry_favorite_column(
         LibraryListKey::PlaylistTracks,
         LibraryField::Favorite,
     ));
-    column.set_resizable(false);
     column
 }
 fn playlist_entry_album_column(
@@ -1242,7 +1241,6 @@ where
 
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(false);
     column
 }
 fn playlist_entry_title_column(
@@ -1350,7 +1348,6 @@ fn playlist_entry_title_column(
     });
     let column = localized_column("Title", &factory);
     column.set_fixed_width(PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH);
-    column.set_resizable(false);
     column
 }
 fn playlist_entry_drag_handle(state: &PlaylistEntryCellState) -> gtk::Image {

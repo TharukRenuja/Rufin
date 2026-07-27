@@ -533,10 +533,6 @@ pub(crate) fn library_field_config_row(
 }
 pub(crate) fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    content.set_margin_top(6);
-    content.set_margin_bottom(6);
-    content.set_margin_start(10);
-    content.set_margin_end(10);
     content.append(&gtk::Image::from_icon_name(layout_icon(layout)));
     content.append(&gtk::Label::new(Some(&tr(layout_title(layout)))));
     content.upcast()

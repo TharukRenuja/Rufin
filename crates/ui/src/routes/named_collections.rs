@@ -296,6 +296,8 @@ fn named_collection_table(
     let activate_shell = Rc::clone(shell);
     let column_shell = Rc::clone(shell);
     dynamic_collection_table(
+        shell,
+        kind.key(),
         model,
         &fields,
         Vec::new(),
@@ -322,9 +324,9 @@ fn named_collection_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colum
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Title | LibraryField::TitleMerged => {
-            named_collection_text_column(shell, "Title", 180, true, |item| item.name().to_string())
+            named_collection_text_column(shell, "Title", 180, |item| item.name().to_string())
         }
-        _ => named_collection_text_column(shell, field.title(), column_width(field), false, {
+        _ => named_collection_text_column(shell, field.title(), column_width(field), {
             move |item| item.field(field)
         }),
     }
@@ -334,7 +336,6 @@ fn named_collection_text_column<F>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
-    expand: bool,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -363,8 +364,6 @@ where
     factory.connect_unbind(clear_list_item_child);
     let column = localized_column(title, &factory);
     column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
     column
 }
 

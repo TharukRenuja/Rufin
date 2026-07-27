@@ -162,12 +162,12 @@ toastoverlay toast label {
 }
 
 .preference-selection-button {
-  min-height: 24px;
-  padding: 1px 8px;
+  min-height: 26px;
+  padding: 2px 10px;
 }
 
 .preference-selection-button label {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .wide-sidebar-slot,
@@ -2066,10 +2066,6 @@ scale.fullscreen-player-equalizer-scale trough {
 .folders-split > separator {
   margin: 0 8px;
   background: color-mix(in srgb, var(--border-color) 78%, transparent);
-}
-
-.folders-tree-pane {
-  border-right: 1px solid color-mix(in srgb, var(--border-color) 78%, transparent);
 }
 
 .folder-tree,

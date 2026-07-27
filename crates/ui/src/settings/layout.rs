@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use localization::msgid;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -30,6 +32,39 @@ pub const MAX_LEFT_SIDEBAR_WIDTH: i32 = 400;
 pub const DEFAULT_RIGHT_SIDEBAR_WIDTH: i32 = 300;
 pub const MIN_RIGHT_SIDEBAR_WIDTH: i32 = 250;
 pub const MAX_RIGHT_SIDEBAR_WIDTH: i32 = 500;
+pub const MIN_TABLE_COLUMN_WIDTH: i32 = 24;
+pub const MAX_TABLE_COLUMN_WIDTH: i32 = 4_096;
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FolderViewSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_column_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_column_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_column_width: Option<i32>,
+}
+impl FolderViewSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn sanitize(&mut self) {
+        for width in [
+            &mut self.name_column_width,
+            &mut self.detail_column_width,
+            &mut self.duration_column_width,
+        ] {
+            if let Some(value) = width {
+                *value = (*value).clamp(MIN_TABLE_COLUMN_WIDTH, MAX_TABLE_COLUMN_WIDTH);
+            }
+        }
+        if let Some(width) = &mut self.tree_width {
+            *width = (*width).clamp(1, MAX_TABLE_COLUMN_WIDTH);
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub enum LeftSidebarMode {
     #[default]
@@ -578,8 +613,15 @@ pub struct LibraryListSettings {
     pub detail_track_fields: Vec<LibraryField>,
     pub sort_key: LibraryField,
     pub descending: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_column_widths: Vec<LibraryColumnWidth>,
     #[serde(default)]
     pub layout_version: u8,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibraryColumnWidth {
+    pub field: LibraryField,
+    pub width: i32,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LibraryListSettingsEntry {
@@ -595,6 +637,7 @@ impl LibraryListSettings {
             detail_track_fields: default_detail_track_fields(),
             sort_key: default_sort_key(key),
             descending: false,
+            row_column_widths: Vec::new(),
             layout_version: LIBRARY_LIST_LAYOUT_VERSION,
         }
     }
@@ -620,7 +663,26 @@ impl LibraryListSettings {
         if !available_sort_fields(key).contains(&self.sort_key) {
             self.sort_key = default_sort_key(key);
         }
+        let mut seen = HashSet::new();
+        self.row_column_widths.retain_mut(|entry| {
+            let valid = entry.field != LibraryField::RowIndex
+                && available_row_fields(key).contains(&entry.field)
+                && seen.insert(entry.field);
+            if valid {
+                entry.width = entry
+                    .width
+                    .clamp(MIN_TABLE_COLUMN_WIDTH, MAX_TABLE_COLUMN_WIDTH);
+            }
+            valid
+        });
         self.layout_version = LIBRARY_LIST_LAYOUT_VERSION;
+    }
+
+    pub fn row_column_width(&self, field: LibraryField) -> Option<i32> {
+        self.row_column_widths
+            .iter()
+            .find(|entry| entry.field == field)
+            .map(|entry| entry.width)
     }
 
     fn migrate_defaults(&mut self, key: LibraryListKey) {
