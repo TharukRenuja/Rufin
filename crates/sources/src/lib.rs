@@ -19,9 +19,10 @@ pub use config::{
     SourceSettingsInput, SourceSetupInput,
 };
 pub use operations::{
-    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricLine, NativeLyrics,
-    NativeLyricsOrigin, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
-    StreamDescriptor, StreamQuality, StreamRequest,
+    GeneratedTracksRequest, ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole,
+    NativeLyricCue, NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument,
+    NativeLyricsOrigin, NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter,
+    RandomTrackRequest, StreamDescriptor, StreamQuality, StreamRequest,
 };
 pub use source::*;
 

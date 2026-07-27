@@ -1,9 +1,11 @@
 use crate::config::{decode_provider_payload, require_payload_version};
 use crate::{
     ConnectedSource, CredentialHostInput, CredentialSettingsInput, GeneratedTracksRequest,
-    ImageBytes, LyricsSearch, NativeLyricLine, NativeLyrics, NativeLyricsOrigin, PlaybackReport,
-    PlaybackReportKind, PlayedFilter, RandomTrackRequest, SourceConfiguration, SourceEditResult,
-    SourceError, SourceResult, StreamDescriptor, StreamRequest,
+    ImageBytes, LyricsSearch, NativeLyricAgent, NativeLyricAgentRole, NativeLyricCue,
+    NativeLyricCueLine, NativeLyricLine, NativeLyrics, NativeLyricsDocument, NativeLyricsOrigin,
+    NativeLyricsRole, PlaybackReport, PlaybackReportKind, PlayedFilter, RandomTrackRequest,
+    SourceConfiguration, SourceEditResult, SourceError, SourceResult, StreamDescriptor,
+    StreamRequest,
 };
 use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, FavoriteItemId, Folder,

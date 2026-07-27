@@ -25,6 +25,7 @@ pub(crate) struct LyricsSearchDialog {
 }
 
 pub(crate) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
+    super::settings::connect_lyrics_settings_controls(shell);
     install_offset_focus_dismissal(
         &shell.chrome.window,
         &[

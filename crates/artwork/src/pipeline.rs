@@ -1254,6 +1254,7 @@ fn finish(shared: &Shared, work: Work, resolution: Resolution) {
     for completion in background_completions {
         let _ = completion.send(background_result);
     }
+    drop(resolution);
     send_completions(completions);
     shared.wake.notify_all();
 }

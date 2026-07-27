@@ -22,8 +22,8 @@ msgid ""
 msgstr ""
 
 msgid ""
-"Logs have secrets and absolute folder paths redacted, but you may still "
-"review the logs before sharing them"
+"Logs have secrets and absolute folder paths redacted, but you may still want "
+"to review the logs before sharing them"
 msgstr ""
 
 #, rust-format
@@ -528,6 +528,9 @@ msgstr ""
 msgid "Full"
 msgstr ""
 
+msgid "Furigana"
+msgstr ""
+
 msgid "Gapless"
 msgstr ""
 
@@ -615,6 +618,9 @@ msgstr ""
 msgid "Jellyfin"
 msgstr ""
 
+msgid "Karaoke mode"
+msgstr ""
+
 msgid "Keep album transitions gapless when possible"
 msgstr ""
 
@@ -622,6 +628,9 @@ msgid "Keyboard Shortcuts"
 msgstr ""
 
 msgid "LRCLIB"
+msgstr ""
+
+msgid "Language and readings"
 msgstr ""
 
 msgid "Language"
@@ -705,6 +714,9 @@ msgstr ""
 msgid "Lyrics offset (ms)"
 msgstr ""
 
+msgid "Lyrics settings"
+msgstr ""
+
 msgid "Lyrics"
 msgstr ""
 
@@ -754,6 +766,12 @@ msgid "Most played"
 msgstr ""
 
 msgid "Move down"
+msgstr ""
+
+msgid "Move provider down"
+msgstr ""
+
+msgid "Move provider up"
 msgstr ""
 
 msgid "Move up"
@@ -1035,6 +1053,9 @@ msgstr ""
 msgid "Prefer server playlist covers"
 msgstr ""
 
+msgid "Prefer translations"
+msgstr ""
+
 msgid "Preferences"
 msgstr ""
 
@@ -1060,6 +1081,9 @@ msgid "Private mode is on"
 msgstr ""
 
 msgid "Private mode"
+msgstr ""
+
+msgid "Pronunciation"
 msgstr ""
 
 msgid "PulseAudio"
@@ -1158,6 +1182,9 @@ msgstr ""
 msgid "ReplayGain"
 msgstr ""
 
+msgid "Requires OpenSubsonic songLyrics v2"
+msgstr ""
+
 msgid "Reset display"
 msgstr ""
 
@@ -1183,6 +1210,9 @@ msgid "Rich presence"
 msgstr ""
 
 msgid "Rock"
+msgstr ""
+
+msgid "Romanization"
 msgstr ""
 
 msgid "Rows"
@@ -1405,6 +1435,9 @@ msgstr ""
 msgid "Source"
 msgstr ""
 
+msgid "Sources"
+msgstr ""
+
 msgid "Start minimized"
 msgstr ""
 
@@ -1457,6 +1490,9 @@ msgid "Tracks"
 msgstr ""
 
 msgid "Transition mode"
+msgstr ""
+
+msgid "Translation language"
 msgstr ""
 
 msgid "Troubleshooting"

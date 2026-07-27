@@ -84,6 +84,109 @@ fn settings_input(
     }
 }
 
+#[test]
+fn structured_lyrics_keep_independent_roles_and_karaoke_cues() {
+    let body = serde_json::from_value::<StructuredLyricsBody>(serde_json::json!({
+        "lyricsList": {
+            "structuredLyrics": [
+                {
+                    "lang": "kor",
+                    "synced": true,
+                    "kind": "main",
+                    "line": [{"value": "눈을", "start": 1000}],
+                    "agents": [{"id": "lead", "role": "main", "name": "Lead"}],
+                    "cueLine": [{
+                        "index": 0,
+                        "start": 1000,
+                        "end": 2000,
+                        "value": "눈을",
+                        "agentId": "lead",
+                        "cue": [
+                            {"value": "눈", "start": 1000, "end": 1400, "byteStart": 0, "byteEnd": 2},
+                            {"value": "을", "start": 1400, "end": 2000, "byteStart": 3, "byteEnd": 5}
+                        ]
+                    }]
+                },
+                {
+                    "lang": "eng",
+                    "synced": false,
+                    "kind": "translation",
+                    "line": [{"value": "eyes"}]
+                },
+                {
+                    "lang": "ko-Latn",
+                    "synced": false,
+                    "kind": "pronunciation",
+                    "line": [{"value": "nuneul"}]
+                }
+            ]
+        }
+    }))
+    .expect("structured lyrics response");
+
+    let lyrics = native_lyrics_from_structured(body.lyrics_list.structured_lyrics);
+
+    assert_eq!(lyrics.documents.len(), 3);
+    assert_eq!(lyrics.documents[0].role, NativeLyricsRole::Original);
+    assert_eq!(lyrics.documents[1].role, NativeLyricsRole::Translation);
+    assert_eq!(lyrics.documents[1].language.as_deref(), Some("eng"));
+    assert_eq!(lyrics.documents[2].role, NativeLyricsRole::Pronunciation);
+    assert_eq!(
+        lyrics.documents[0].lines[0].cue_lines[0].cues[1].byte_end_exclusive,
+        6
+    );
+    assert_eq!(
+        lyrics.documents[0].agents[0].role,
+        NativeLyricAgentRole::Main
+    );
+}
+
+#[tokio::test]
+async fn lyrics_requests_enhanced_v2_only_when_the_server_advertises_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getOpenSubsonicExtensions.view"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "openSubsonicExtensions": [{"name": "songLyrics", "versions": [1, 2]}]
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getLyricsBySongId.view"))
+        .and(query_param("id", "song-one"))
+        .and(query_param("enhanced", "true"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                "lyricsList": {
+                    "structuredLyrics": [{
+                        "lang": "eng",
+                        "synced": false,
+                        "kind": "translation",
+                        "line": [{"value": "Translated"}]
+                    }]
+                }
+            }))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server);
+
+    let lyrics = source
+        .lyrics(
+            &TrackId::new("subsonic:track:song-one"),
+            LyricsSearch::ServerOnly,
+        )
+        .await
+        .expect("enhanced lyrics")
+        .expect("lyrics");
+
+    assert_eq!(lyrics.documents[0].role, NativeLyricsRole::Translation);
+}
+
 fn envelope(body: serde_json::Value) -> serde_json::Value {
     let mut response = serde_json::json!({
         "status": "ok",

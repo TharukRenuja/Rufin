@@ -1,5 +1,6 @@
 mod app;
 mod layout;
+mod persistence;
 mod sidebar;
 
 pub use app::{Settings, SettingsHandle, SettingsPort, default_home_blocks};
@@ -13,6 +14,7 @@ pub use layout::{
     SidebarRouteItemSettings, SidebarSettings, ThemePreference, available_grid_fields,
     available_row_fields, default_library_list_settings,
 };
+pub(crate) use persistence::SettingsState;
 pub use sidebar::{
     ExternalSiteLinkSettings, available_detail_track_fields, available_sort_fields,
     sanitized_window_size,

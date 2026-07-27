@@ -24,7 +24,6 @@ use crate::player::{
 use crate::player::{install_tray, present_initial_window};
 use crate::preferences::PreferencesState;
 use crate::preferences::dialogs::release_notes::schedule_release_check;
-use crate::preferences::persistence::SettingsState;
 use crate::preferences::source::SourceState;
 use crate::preferences::source::selector::{build_source_selector, update_source_selector};
 use crate::routes::LibraryState;
@@ -32,6 +31,7 @@ use crate::routes::playlist_picker::PlaylistPickerState;
 use crate::routes::route::Route;
 use crate::runtime::RuntimeInputs;
 use crate::runtime::WaveformProjection;
+use crate::settings::SettingsState;
 use localization::{effective_language_preference, set_language_preference, tr};
 use lyrics::CurrentLyrics;
 
@@ -151,6 +151,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         timing_source: RefCell::new(None),
         panel_visible: Cell::new(settings.lyrics_panel_visible),
         search_dialog: RefCell::new(None),
+        settings_dialog: RefCell::new(None),
     };
     let preferences = PreferencesState {
         dialog: RefCell::new(None),

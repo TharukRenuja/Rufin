@@ -342,6 +342,27 @@ impl SubsonicSource {
         track_id: &TrackId,
         _search: LyricsSearch,
     ) -> SourceResult<Option<NativeLyrics>> {
+        let extensions: OpenSubsonicExtensionsBody = self
+            .get_json("getOpenSubsonicExtensions", &[])
+            .await
+            .unwrap_or_default();
+        let song_lyrics_version = extensions
+            .open_subsonic_extensions
+            .iter()
+            .find(|extension| extension.name == "songLyrics")
+            .and_then(|extension| extension.versions.iter().max())
+            .copied()
+            .unwrap_or_default();
+        if song_lyrics_version >= 1 {
+            let mut extra = vec![("id", raw_item_id(track_id.as_str()).to_string())];
+            if song_lyrics_version >= 2 {
+                extra.push(("enhanced", "true".to_string()));
+            }
+            let body: StructuredLyricsBody = self.get_json("getLyricsBySongId", &extra).await?;
+            let lyrics = native_lyrics_from_structured(body.lyrics_list.structured_lyrics);
+            return Ok((!lyrics.documents.is_empty()).then_some(lyrics));
+        }
+
         let track = self.read_track(track_id).await?;
         let body: LyricsBody = self
             .get_json(
@@ -360,16 +381,119 @@ impl SubsonicSource {
         };
         Ok(Some(NativeLyrics {
             origin: NativeLyricsOrigin::Server,
-            lines: value
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .map(|line| NativeLyricLine {
-                    text: line.trim().to_string(),
-                    start_millis: None,
-                })
-                .collect(),
+            documents: vec![NativeLyricsDocument {
+                role: NativeLyricsRole::Original,
+                language: None,
+                offset_millis: 0,
+                lines: value
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| NativeLyricLine {
+                        text: line.trim().to_string(),
+                        start_millis: None,
+                        end_millis: None,
+                        cue_lines: Vec::new(),
+                    })
+                    .collect(),
+                agents: Vec::new(),
+            }],
         }))
     }
+}
+
+pub(super) fn native_lyrics_from_structured(entries: Vec<StructuredLyricsDto>) -> NativeLyrics {
+    let documents = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let role = match entry.kind.as_deref().unwrap_or("main") {
+                "main" => NativeLyricsRole::Original,
+                "translation" => NativeLyricsRole::Translation,
+                "pronunciation" => NativeLyricsRole::Pronunciation,
+                _ => return None,
+            };
+            let agents = entry
+                .agents
+                .into_iter()
+                .filter_map(|agent| {
+                    let role = match agent.role.as_str() {
+                        "main" => NativeLyricAgentRole::Main,
+                        "voice" => NativeLyricAgentRole::Voice,
+                        "bg" => NativeLyricAgentRole::Background,
+                        "group" => NativeLyricAgentRole::Group,
+                        _ => return None,
+                    };
+                    Some(NativeLyricAgent {
+                        id: agent.id,
+                        role,
+                        name: agent.name,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut cue_lines_by_index = vec![Vec::new(); entry.line.len()];
+            for cue_line in entry.cue_line {
+                let Some(lines) = cue_lines_by_index.get_mut(cue_line.index) else {
+                    continue;
+                };
+                let cues = cue_line
+                    .cue
+                    .into_iter()
+                    .filter_map(|cue| {
+                        let byte_end_exclusive = cue.byte_end.checked_add(1)?;
+                        (cue.byte_start <= cue.byte_end
+                            && byte_end_exclusive <= cue_line.value.len()
+                            && cue_line.value.is_char_boundary(cue.byte_start)
+                            && cue_line.value.is_char_boundary(byte_end_exclusive))
+                        .then_some(NativeLyricCue {
+                            text: cue.value,
+                            start_millis: cue.start,
+                            end_millis: cue.end,
+                            byte_start: cue.byte_start,
+                            byte_end_exclusive,
+                        })
+                    })
+                    .collect();
+                lines.push(NativeLyricCueLine {
+                    text: cue_line.value,
+                    start_millis: cue_line.start,
+                    end_millis: cue_line.end,
+                    agent_id: cue_line.agent_id,
+                    cues,
+                });
+            }
+            let lines = entry
+                .line
+                .into_iter()
+                .zip(cue_lines_by_index)
+                .filter_map(|(line, cue_lines)| {
+                    (!line.value.trim().is_empty()).then_some(NativeLyricLine {
+                        text: line.value,
+                        start_millis: line.start,
+                        end_millis: cue_lines.iter().filter_map(|line| line.end_millis).max(),
+                        cue_lines,
+                    })
+                })
+                .collect::<Vec<_>>();
+            (!lines.is_empty()).then_some(NativeLyricsDocument {
+                role,
+                language: normalize_native_language(entry.lang),
+                offset_millis: entry.offset.unwrap_or_default(),
+                lines,
+                agents,
+            })
+        })
+        .collect();
+    NativeLyrics {
+        origin: NativeLyricsOrigin::Server,
+        documents,
+    }
+}
+
+fn normalize_native_language(language: String) -> Option<String> {
+    let language = language.trim();
+    (!language.is_empty()
+        && !language.eq_ignore_ascii_case("und")
+        && !language.eq_ignore_ascii_case("xxx"))
+    .then(|| language.to_string())
 }
 
 impl SubsonicSource {
@@ -929,6 +1053,78 @@ pub(super) struct SongsList {
 pub(super) struct LyricsBody {
     #[serde(default)]
     pub(super) lyrics: Option<SubsonicLyrics>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct OpenSubsonicExtensionsBody {
+    #[serde(default, rename = "openSubsonicExtensions")]
+    pub(super) open_subsonic_extensions: Vec<OpenSubsonicExtensionDto>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct OpenSubsonicExtensionDto {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) versions: Vec<u32>,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct StructuredLyricsBody {
+    #[serde(default, rename = "lyricsList")]
+    pub(super) lyrics_list: StructuredLyricsListDto,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(super) struct StructuredLyricsListDto {
+    #[serde(default, rename = "structuredLyrics")]
+    pub(super) structured_lyrics: Vec<StructuredLyricsDto>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct StructuredLyricsDto {
+    pub(super) lang: String,
+    #[serde(default)]
+    pub(super) line: Vec<StructuredLyricLineDto>,
+    #[serde(default)]
+    pub(super) offset: Option<i64>,
+    #[serde(default)]
+    pub(super) kind: Option<String>,
+    #[serde(default)]
+    pub(super) agents: Vec<StructuredLyricAgentDto>,
+    #[serde(default, rename = "cueLine")]
+    pub(super) cue_line: Vec<StructuredLyricCueLineDto>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct StructuredLyricLineDto {
+    pub(super) value: String,
+    #[serde(default)]
+    pub(super) start: Option<u64>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct StructuredLyricAgentDto {
+    pub(super) id: String,
+    pub(super) role: String,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct StructuredLyricCueLineDto {
+    pub(super) index: usize,
+    pub(super) value: String,
+    #[serde(default)]
+    pub(super) start: Option<u64>,
+    #[serde(default)]
+    pub(super) end: Option<u64>,
+    #[serde(default, rename = "agentId")]
+    pub(super) agent_id: Option<String>,
+    #[serde(default)]
+    pub(super) cue: Vec<StructuredLyricCueDto>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct StructuredLyricCueDto {
+    pub(super) value: String,
+    pub(super) start: u64,
+    #[serde(default)]
+    pub(super) end: Option<u64>,
+    #[serde(rename = "byteStart")]
+    pub(super) byte_start: usize,
+    #[serde(rename = "byteEnd")]
+    pub(super) byte_end: usize,
 }
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct SubsonicLyrics {

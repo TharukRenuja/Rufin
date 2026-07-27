@@ -10,8 +10,9 @@ use serde::Deserialize;
 use tracing::debug;
 
 use crate::{
-    ExternalLyricsProvider, LyricsDocument as Lyrics, LyricsLine as LyricLine, LyricsOrigin,
-    LyricsSearchResult,
+    ExternalLyricsProvider, LyricsAgent, LyricsAgentRole, LyricsBundle as Lyrics, LyricsCue,
+    LyricsCueLine, LyricsDocument, LyricsLine as LyricLine, LyricsOrigin, LyricsRole,
+    LyricsSearchResult, normalize_language_tag,
 };
 
 const EXTERNAL_LYRICS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -23,6 +24,8 @@ pub(crate) struct LyricsPlan {
     native_search: sources::LyricsSearch,
     external_providers: Vec<ExternalLyricsProvider>,
     allow_external_fallback: bool,
+    prefer_translations: bool,
+    preferred_translation_language: String,
 }
 
 impl LyricsPlan {
@@ -36,6 +39,14 @@ impl LyricsPlan {
 
     pub(crate) const fn allows_external_fallback(&self) -> bool {
         self.allow_external_fallback
+    }
+
+    pub(crate) const fn prefers_translations(&self) -> bool {
+        self.prefer_translations
+    }
+
+    pub(crate) fn preferred_translation_language(&self) -> &str {
+        &self.preferred_translation_language
     }
 }
 
@@ -79,6 +90,8 @@ impl crate::Settings {
                 .then(|| self.external_lyrics_providers.clone())
                 .unwrap_or_default(),
             allow_external_fallback: external_network,
+            prefer_translations: self.prefer_translations,
+            preferred_translation_language: self.preferred_translation_language.clone(),
         }
     }
 
@@ -102,10 +115,10 @@ impl crate::Settings {
         &self,
         private_mode: bool,
         track_id: &TrackId,
-        lyrics: Option<&Lyrics>,
+        origin: Option<LyricsOrigin>,
     ) -> bool {
-        lyrics.is_some_and(|lyrics| {
-            matches!(lyrics.origin, LyricsOrigin::External(_))
+        origin.is_some_and(|origin| {
+            matches!(origin, LyricsOrigin::External(_))
                 && self.external_lyrics_network_allowed(private_mode)
                 && !self.auto_lyrics_suppressed(track_id)
         })
@@ -115,15 +128,95 @@ impl crate::Settings {
 pub(crate) fn lyrics_from_native(native: sources::NativeLyrics) -> Lyrics {
     Lyrics {
         origin: LyricsOrigin::Native,
-        lines: native
-            .lines
+        documents: native
+            .documents
             .into_iter()
-            .map(|line| LyricLine {
-                text: line.text,
-                start_millis: line.start_millis,
+            .map(|document| {
+                let offset_millis = document.offset_millis;
+                LyricsDocument {
+                    role: match document.role {
+                        sources::NativeLyricsRole::Original => LyricsRole::Original,
+                        sources::NativeLyricsRole::Translation => LyricsRole::Translation,
+                        sources::NativeLyricsRole::Pronunciation => LyricsRole::Pronunciation,
+                    },
+                    language: document
+                        .language
+                        .as_deref()
+                        .and_then(normalize_language_tag),
+                    offset_millis: 0,
+                    lines: document
+                        .lines
+                        .into_iter()
+                        .map(|line| LyricLine {
+                            text: line.text,
+                            start_millis: shifted_lyrics_time(line.start_millis, offset_millis),
+                            end_millis: shifted_lyrics_time(line.end_millis, offset_millis),
+                            cue_lines: line
+                                .cue_lines
+                                .into_iter()
+                                .map(|cue_line| LyricsCueLine {
+                                    text: cue_line.text,
+                                    start_millis: shifted_lyrics_time(
+                                        cue_line.start_millis,
+                                        offset_millis,
+                                    ),
+                                    end_millis: shifted_lyrics_time(
+                                        cue_line.end_millis,
+                                        offset_millis,
+                                    ),
+                                    agent_id: cue_line.agent_id,
+                                    cues: cue_line
+                                        .cues
+                                        .into_iter()
+                                        .map(|cue| LyricsCue {
+                                            text: cue.text,
+                                            start_millis: shifted_lyrics_time(
+                                                Some(cue.start_millis),
+                                                offset_millis,
+                                            )
+                                            .unwrap_or_default(),
+                                            end_millis: shifted_lyrics_time(
+                                                cue.end_millis,
+                                                offset_millis,
+                                            ),
+                                            byte_start: cue.byte_start,
+                                            byte_end_exclusive: cue.byte_end_exclusive,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    agents: document
+                        .agents
+                        .into_iter()
+                        .map(|agent| LyricsAgent {
+                            id: agent.id,
+                            role: match agent.role {
+                                sources::NativeLyricAgentRole::Main => LyricsAgentRole::Main,
+                                sources::NativeLyricAgentRole::Voice => LyricsAgentRole::Voice,
+                                sources::NativeLyricAgentRole::Background => {
+                                    LyricsAgentRole::Background
+                                }
+                                sources::NativeLyricAgentRole::Group => LyricsAgentRole::Group,
+                            },
+                            name: agent.name,
+                        })
+                        .collect(),
+                }
             })
             .collect(),
     }
+}
+
+fn shifted_lyrics_time(time: Option<u64>, offset_millis: i64) -> Option<u64> {
+    time.map(|time| {
+        if offset_millis >= 0 {
+            time.saturating_sub(offset_millis.unsigned_abs())
+        } else {
+            time.saturating_add(offset_millis.unsigned_abs())
+        }
+    })
 }
 
 pub(crate) fn cached_lyrics_allowed(lyrics: &Lyrics, plan: &LyricsPlan, cue_track: bool) -> bool {
@@ -137,21 +230,32 @@ pub(crate) fn cached_lyrics_allowed(lyrics: &Lyrics, plan: &LyricsPlan, cue_trac
 fn lyrics_from_text_content(provider: ExternalLyricsProvider, content: &str) -> Lyrics {
     Lyrics {
         origin: LyricsOrigin::External(provider),
-        lines: content
-            .lines()
-            .filter_map(lyric_line_from_text)
-            .filter(|line| provider_line_has_content(provider, line))
-            .collect(),
+        documents: vec![LyricsDocument {
+            role: LyricsRole::Original,
+            language: None,
+            offset_millis: 0,
+            lines: content
+                .lines()
+                .filter_map(lyric_line_from_text)
+                .filter(|line| provider_line_has_content(provider, line))
+                .collect(),
+            agents: Vec::new(),
+        }],
     }
 }
 
 pub(crate) fn lyrics_with_displayable_content(mut lyrics: Lyrics) -> Option<Lyrics> {
     if let LyricsOrigin::External(provider) = lyrics.origin {
-        lyrics
-            .lines
-            .retain(|line| provider_line_has_content(provider, line));
+        for document in &mut lyrics.documents {
+            document
+                .lines
+                .retain(|line| provider_line_has_content(provider, line));
+        }
     }
-    (!lyrics.lines.is_empty()).then_some(lyrics)
+    lyrics
+        .documents
+        .retain(|document| !document.lines.is_empty());
+    (!lyrics.documents.is_empty()).then_some(lyrics)
 }
 
 fn provider_line_has_content(provider: ExternalLyricsProvider, line: &LyricLine) -> bool {
@@ -181,6 +285,8 @@ fn lyric_line_from_text(line: &str) -> Option<LyricLine> {
         return Some(LyricLine {
             text: text.to_string(),
             start_millis: Some(start_millis),
+            end_millis: None,
+            cue_lines: Vec::new(),
         });
     }
     if trimmed.starts_with('[') && trimmed.contains(']') {
@@ -189,6 +295,8 @@ fn lyric_line_from_text(line: &str) -> Option<LyricLine> {
     Some(LyricLine {
         text: trimmed.to_string(),
         start_millis: None,
+        end_millis: None,
+        cue_lines: Vec::new(),
     })
 }
 
@@ -296,6 +404,8 @@ struct NeteaseAlbum {
 #[derive(Debug, Deserialize)]
 struct NeteaseLyricsResponse {
     lrc: Option<NeteaseLyricsBody>,
+    #[serde(default)]
+    tlyric: Option<NeteaseLyricsBody>,
 }
 #[derive(Debug, Deserialize)]
 struct NeteaseLyricsBody {
@@ -531,6 +641,8 @@ pub fn search_lyrics(
 pub(crate) fn external_best_lyrics(
     track: &Track,
     providers: &[ExternalLyricsProvider],
+    prefer_translations: bool,
+    preferred_translation_language: &str,
     cancelled: &AtomicBool,
 ) -> Result<Option<Lyrics>, String> {
     if cancelled.load(Ordering::Acquire) {
@@ -585,12 +697,25 @@ pub(crate) fn external_best_lyrics(
         return Ok(None);
     }
     order_external_results(&mut results, &lookup, providers);
+    let selection = crate::Settings {
+        prefer_translations,
+        preferred_translation_language: preferred_translation_language.to_string(),
+        ..crate::Settings::default()
+    };
+    let mut fallback = None;
     for result in results {
         if cancelled.load(Ordering::Acquire) {
             return Ok(None);
         }
         match lyrics_from_search_result(&result) {
-            Ok(Some(lyrics)) => return Ok(Some(lyrics)),
+            Ok(Some(lyrics))
+                if !prefer_translations || lyrics.has_preferred_translation(&selection) =>
+            {
+                return Ok(Some(lyrics));
+            }
+            Ok(Some(lyrics)) => {
+                fallback.get_or_insert(lyrics);
+            }
             Ok(None) => {}
             Err(error) => errors.push(format!("{}: {error}", result.provider.title())),
         }
@@ -598,7 +723,7 @@ pub(crate) fn external_best_lyrics(
     if !had_success && !errors.is_empty() {
         Err(errors.join("; "))
     } else {
-        Ok(None)
+        Ok(fallback)
     }
 }
 fn external_best_lyrics_for_provider(
@@ -787,6 +912,46 @@ pub(crate) fn parse_netease_search_body(body: &str) -> Result<Vec<LyricsSearchRe
         .collect())
 }
 fn netease_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
+    Ok(netease_fetch_lyrics_response(id)?
+        .lrc
+        .and_then(|body| body.lyric)
+        .filter(|lyrics| !lyrics.trim().is_empty()))
+}
+fn netease_fetch_lyrics_bundle(id: &str) -> Result<Option<Lyrics>, String> {
+    Ok(lyrics_from_netease_response(netease_fetch_lyrics_response(
+        id,
+    )?))
+}
+fn lyrics_from_netease_response(response: NeteaseLyricsResponse) -> Option<Lyrics> {
+    let mut documents = Vec::new();
+    for (role, language, body) in [
+        (LyricsRole::Original, None, response.lrc),
+        (LyricsRole::Translation, Some("zh"), response.tlyric),
+    ] {
+        let Some(content) = body
+            .and_then(|body| body.lyric)
+            .filter(|lyrics| !lyrics.trim().is_empty())
+        else {
+            continue;
+        };
+        documents.push(LyricsDocument {
+            role,
+            language: language.map(str::to_string),
+            offset_millis: 0,
+            lines: content
+                .lines()
+                .filter_map(lyric_line_from_text)
+                .filter(|line| provider_line_has_content(ExternalLyricsProvider::Netease, line))
+                .collect(),
+            agents: Vec::new(),
+        });
+    }
+    lyrics_with_displayable_content(Lyrics {
+        origin: LyricsOrigin::External(ExternalLyricsProvider::Netease),
+        documents,
+    })
+}
+fn netease_fetch_lyrics_response(id: &str) -> Result<NeteaseLyricsResponse, String> {
     let mut url = reqwest::Url::parse("https://music.163.com/api/song/lyric")
         .map_err(|error| error.to_string())?;
     {
@@ -800,10 +965,7 @@ fn netease_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
     let body = fetch_text(&client, url, "NetEase lyric lookup")?;
     let response = serde_json::from_str::<NeteaseLyricsResponse>(&body)
         .map_err(|error| format!("NetEase lyric lookup returned invalid data: {error}"))?;
-    Ok(response
-        .lrc
-        .and_then(|body| body.lyric)
-        .filter(|lyrics| !lyrics.trim().is_empty()))
+    Ok(response)
 }
 fn genius_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
     let query = [artist_name.trim(), track_name.trim()]
@@ -1039,6 +1201,10 @@ fn lrclib_search_priority_urls(
     }
 }
 pub fn lyrics_from_search_result(result: &LyricsSearchResult) -> Result<Option<Lyrics>, String> {
+    if result.provider == ExternalLyricsProvider::Netease && lyrics_result_content(result).is_none()
+    {
+        return netease_fetch_lyrics_bundle(&result.id);
+    }
     let content = match lyrics_result_content(result) {
         Some(content) => Some(content.to_string()),
         None => external_fetch_lyrics(result)?,
@@ -1412,7 +1578,7 @@ pub fn save_lyrics_search_result(
     Ok(Some((path, lyrics)))
 }
 pub fn save_current_lyrics(
-    lyrics: &Lyrics,
+    lyrics: &LyricsDocument,
     offset_millis: i64,
     output_path: PathBuf,
 ) -> Result<PathBuf, String> {
@@ -1474,7 +1640,13 @@ fn lyrics_from_sidecar_file(path: &Path) -> Option<Lyrics> {
         .collect::<Vec<_>>();
     (!lines.is_empty()).then(|| Lyrics {
         origin: LyricsOrigin::Local,
-        lines,
+        documents: vec![LyricsDocument {
+            role: LyricsRole::Original,
+            language: None,
+            offset_millis: 0,
+            lines,
+            agents: Vec::new(),
+        }],
     })
 }
 fn local_sidecar_candidates(
@@ -1631,9 +1803,12 @@ mod tests {
         let track_id = track().id.clone();
         let external = Lyrics {
             origin: LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
-            lines: vec![LyricLine {
-                text: "cached".to_string(),
-                start_millis: None,
+            documents: vec![LyricsDocument {
+                role: LyricsRole::Original,
+                language: None,
+                offset_millis: 0,
+                lines: vec![test_line("cached", None)],
+                agents: Vec::new(),
             }],
         };
         let plan = settings.configured_lyrics_plan(false, &track_id);
@@ -1687,11 +1862,8 @@ mod tests {
         };
         let lyrics = local_sidecar_lyrics(&input).expect("lyrics");
         assert_eq!(
-            lyrics.lines,
-            vec![LyricLine {
-                text: "right".to_string(),
-                start_millis: Some(2_500),
-            }]
+            lyrics.documents[0].lines,
+            vec![test_line("right", Some(2_500))]
         );
 
         let oversized = directory.path().join("large.flac");
@@ -1716,15 +1888,50 @@ mod tests {
             "[00:00.00] 作曲 : Composer\n[00:05.00]纯音乐，请欣赏\n[00:10.005]actual line",
         );
         assert_eq!(
-            lyrics.lines,
-            vec![LyricLine {
-                text: "actual line".to_string(),
-                start_millis: Some(10_005),
-            }]
+            lyrics.documents[0].lines,
+            vec![test_line("actual line", Some(10_005))]
         );
         assert_eq!(
             parse_lrc_timestamp("[12:34.5]line"),
             Some((754_500, "line"))
+        );
+    }
+
+    #[test]
+    fn netease_translation_is_an_independent_selectable_document() {
+        let response = serde_json::from_str::<NeteaseLyricsResponse>(
+            r#"{
+                "lrc":{"lyric":"[00:01.00]Original"},
+                "tlyric":{"lyric":"[00:01.00]中文翻译"}
+            }"#,
+        )
+        .expect("NetEase response");
+        let lyrics = lyrics_from_netease_response(response).expect("lyrics bundle");
+
+        assert_eq!(lyrics.documents.len(), 2);
+        assert_eq!(lyrics.documents[0].role, LyricsRole::Original);
+        assert_eq!(lyrics.documents[1].role, LyricsRole::Translation);
+        assert_eq!(lyrics.documents[1].language.as_deref(), Some("zh"));
+        let english = crate::Settings {
+            prefer_translations: true,
+            preferred_translation_language: "en".to_string(),
+            ..crate::Settings::default()
+        };
+        assert_eq!(
+            lyrics
+                .selected_document(&english)
+                .map(|document| document.lines[0].text.as_str()),
+            Some("Original")
+        );
+        let chinese = crate::Settings {
+            preferred_translation_language: "zh".to_string(),
+            ..english
+        };
+        assert_eq!(
+            lyrics
+                .selected_document(&chinese)
+                .map(|document| document.lines[0].text.as_str()),
+            Some("中文翻译")
         );
     }
 
@@ -1817,7 +2024,7 @@ mod tests {
             .expect("lyrics");
         assert_eq!(path, output);
         assert_eq!(fs::read_to_string(path).expect("saved"), "[00:01.00]line");
-        assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
+        assert_eq!(lyrics.documents[0].lines[0].start_millis, Some(1_000));
 
         let placeholder = LyricsSearchResult {
             provider: ExternalLyricsProvider::Netease,
@@ -1835,18 +2042,12 @@ mod tests {
     fn current_lyrics_save_the_visible_timing() {
         let directory = tempdir().expect("tempdir");
         let output = directory.path().join("current.lrc");
-        let lyrics = Lyrics {
-            origin: LyricsOrigin::External(ExternalLyricsProvider::Lrclib),
-            lines: vec![
-                LyricLine {
-                    text: "first".to_string(),
-                    start_millis: Some(1_000),
-                },
-                LyricLine {
-                    text: "note".to_string(),
-                    start_millis: None,
-                },
-            ],
+        let lyrics = LyricsDocument {
+            role: LyricsRole::Original,
+            language: None,
+            offset_millis: 0,
+            lines: vec![test_line("first", Some(1_000)), test_line("note", None)],
+            agents: Vec::new(),
         };
 
         let path = save_current_lyrics(&lyrics, 250, output.clone()).expect("save current");
@@ -1856,5 +2057,14 @@ mod tests {
             fs::read_to_string(path).expect("saved current"),
             "[00:00.750]first\nnote"
         );
+    }
+
+    fn test_line(text: &str, start_millis: Option<u64>) -> LyricLine {
+        LyricLine {
+            text: text.to_string(),
+            start_millis,
+            end_millis: None,
+            cue_lines: Vec::new(),
+        }
     }
 }

@@ -22,12 +22,22 @@ const LYRICS_SEARCH_DEBOUNCE_MILLIS: u64 = 600;
 
 impl Shell {
     pub(crate) fn render_lyrics_panel(self: &Rc<Self>) {
+        self.render_lyrics_contents();
+        self.update_lyrics_highlight();
+    }
+
+    pub(crate) fn render_lyrics_presentation(self: &Rc<Self>) {
+        self.render_lyrics_contents();
+        self.refocus_current_lyrics_highlight();
+    }
+
+    fn render_lyrics_contents(self: &Rc<Self>) {
         self.request_auto_lyrics_if_needed();
         self.render_lyrics_pane(&self.right_panel.lyrics_pane);
         self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
-        self.update_lyrics_highlight();
     }
-    pub(crate) fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
+
+    fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.settings.current.borrow();
         let current_media = current_playback_media_id(&self.playback.player.borrow());
         let current_track_id = current_playback_track_id(&self.playback.player.borrow());
@@ -40,15 +50,18 @@ impl Shell {
             (tr("No track playing"), false)
         };
         let lyrics = self.visible_lyrics();
+        let pronunciation = self.visible_lyrics_pronunciation();
+        let lyrics_origin = self.visible_lyrics_origin();
         let loading = self.current_lyrics_loading();
         let clear_auto_search_enabled = current_track_id.as_ref().is_some_and(|track_id| {
-            settings.lyrics.can_suppress_auto_lyrics(
-                settings.private_mode,
-                track_id,
-                lyrics.as_deref(),
-            )
+            settings
+                .lyrics
+                .can_suppress_auto_lyrics(settings.private_mode, track_id, lyrics_origin)
         });
         let lyrics_available = lyrics.is_some();
+        let show_furigana = settings.lyrics.show_furigana;
+        let show_romanization = settings.lyrics.show_romanization;
+        let word_by_word_highlighting = settings.lyrics.word_by_word_highlighting;
         drop(settings);
         pane.set_save_action(&tr("Save Lyrics"), lyrics_available);
         pane.set_search_action(&search_label, search_enabled);
@@ -68,7 +81,16 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
-        pane.set_content(lyrics.as_deref(), loading, empty_status, seek);
+        pane.set_content(
+            lyrics.as_deref(),
+            pronunciation.as_deref(),
+            show_furigana,
+            show_romanization,
+            word_by_word_highlighting,
+            loading,
+            empty_status,
+            seek,
+        );
     }
 
     pub(crate) fn present_current_lyrics_save_dialog(self: &Rc<Self>) {
