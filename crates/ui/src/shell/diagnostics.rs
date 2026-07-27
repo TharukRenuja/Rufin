@@ -69,7 +69,7 @@ pub(super) fn present_diagnostics(shell: &Rc<Shell>) {
     content.append(&scroller);
 
     let save = gtk::Button::builder()
-        .label(tr("Save Log..."))
+        .label(tr("Save"))
         .halign(gtk::Align::End)
         .build();
     save.add_css_class("suggested-action");
