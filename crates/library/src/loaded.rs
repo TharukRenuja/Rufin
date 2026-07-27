@@ -6,7 +6,7 @@
 //! accepted mutations replace only affected handles; selection and
 //! source-session lifetime remain Rufin's responsibility.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Deref, Index};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -415,6 +415,26 @@ pub struct LoadedLibraryCounts {
     pub tracks: usize,
 }
 
+fn search_fields_match<const N: usize>(fields: [&str; N], terms: &[String]) -> bool {
+    let fields = fields.map(str::to_lowercase);
+    terms
+        .iter()
+        .all(|term| fields.iter().any(|field| field.contains(term)))
+}
+
+fn retain_search_result<T>(
+    results: &mut BTreeMap<(String, String), T>,
+    title: &str,
+    id: &str,
+    item: T,
+    limit: usize,
+) {
+    results.insert((title.to_lowercase(), id.to_string()), item);
+    if results.len() > limit {
+        results.pop_last();
+    }
+}
+
 impl LoadedLibrary {
     pub(crate) fn build(mut input: LoadedLibraryInput) -> LoadedLibraryResult<Arc<Self>> {
         let source_id = input
@@ -755,6 +775,78 @@ impl LoadedLibrary {
             .artists
             .get(id)
             .map(|artist| Arc::clone(&artist.artist)))
+    }
+
+    pub fn search(
+        &self,
+        request: &crate::SearchRequest,
+    ) -> LoadedLibraryResult<crate::SearchResults> {
+        let terms = request
+            .query()
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|term| !term.is_empty())
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>();
+        if terms.is_empty() {
+            return Ok(crate::SearchResults::default());
+        }
+        let limit = request.limit();
+        let (artists, albums, tracks) = {
+            let state = self.read()?;
+            let mut artists = BTreeMap::new();
+            for artist in state.artists.values() {
+                if search_fields_match([artist.name.as_str()], &terms) {
+                    retain_search_result(
+                        &mut artists,
+                        &artist.name,
+                        artist.id.as_str(),
+                        artist.artist.as_ref().clone(),
+                        limit,
+                    );
+                }
+            }
+            let mut albums = BTreeMap::new();
+            for album in state.albums.values() {
+                if search_fields_match([album.title.as_str(), album.artist.as_str()], &terms) {
+                    retain_search_result(
+                        &mut albums,
+                        &album.title,
+                        album.id.as_str(),
+                        album.album.as_ref().clone(),
+                        limit,
+                    );
+                }
+            }
+            let mut tracks = BTreeMap::new();
+            for track in state.tracks.values() {
+                if search_fields_match(
+                    [
+                        track.title.as_str(),
+                        track.artist.as_str(),
+                        track.album.as_str(),
+                    ],
+                    &terms,
+                ) {
+                    retain_search_result(
+                        &mut tracks,
+                        &track.title,
+                        track.id.as_str(),
+                        track.clone(),
+                        limit,
+                    );
+                }
+            }
+            (
+                artists.into_values().collect(),
+                albums.into_values().collect(),
+                tracks.into_values().collect(),
+            )
+        };
+        Ok(crate::SearchResults {
+            artists,
+            albums,
+            tracks,
+        })
     }
 
     pub fn genre(&self, id: &GenreId) -> LoadedLibraryResult<Option<Arc<Genre>>> {

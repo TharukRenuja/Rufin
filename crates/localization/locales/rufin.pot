@@ -1441,6 +1441,9 @@ msgstr ""
 msgid "Start minimized"
 msgstr ""
 
+msgid "Start typing to do a global search in your configured source"
+msgstr ""
+
 msgid "Status display"
 msgstr ""
 

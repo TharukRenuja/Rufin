@@ -25,6 +25,51 @@ const SUBSONIC_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 impl SubsonicSource {
+    pub(crate) async fn search(
+        &self,
+        request: &library::SearchRequest,
+    ) -> SourceResult<library::SearchResults> {
+        if request.query().trim().is_empty() {
+            return Ok(library::SearchResults::default());
+        }
+        let count = request.limit().to_string();
+        let body: SearchBody = self
+            .get_json(
+                "search3",
+                &[
+                    ("query", request.query().to_string()),
+                    ("artistCount", count.clone()),
+                    ("artistOffset", "0".to_string()),
+                    ("albumCount", count.clone()),
+                    ("albumOffset", "0".to_string()),
+                    ("songCount", count),
+                    ("songOffset", "0".to_string()),
+                ],
+            )
+            .await?;
+        let results = body.search_result.unwrap_or_default();
+        Ok(library::SearchResults {
+            artists: results
+                .artist
+                .unwrap_or_default()
+                .into_iter()
+                .map(|artist| artist_from_dto(self, artist))
+                .collect(),
+            albums: results
+                .album
+                .unwrap_or_default()
+                .into_iter()
+                .map(|album| album_from_dto(self, album))
+                .collect(),
+            tracks: results
+                .song
+                .unwrap_or_default()
+                .into_iter()
+                .map(|song| track_from_dto(self, song))
+                .collect(),
+        })
+    }
+
     pub(crate) async fn read_track(&self, track_id: &TrackId) -> SourceResult<Track> {
         let body: SongBody = self
             .get_json(
@@ -956,6 +1001,10 @@ pub(super) struct SearchBody {
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(super) struct SearchResult {
+    #[serde(default)]
+    pub(super) artist: Option<Vec<SubsonicArtist>>,
+    #[serde(default)]
+    pub(super) album: Option<Vec<SubsonicAlbum>>,
     #[serde(default)]
     pub(super) song: Option<Vec<SubsonicSong>>,
 }

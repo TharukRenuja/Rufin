@@ -9,7 +9,7 @@ use library::{
     MoodCredit, MoodId, MusicFolder, MusicFolderId, NativeRadioResult, NewScrobble,
     PendingScrobbleId, Playlist, PlaylistAcceptance, PlaylistEdit, PlaylistEntry, PlaylistId,
     PlaylistSnapshot, RadioComposition, RadioSeed, RandomComposition, RandomPlayedFilter,
-    ScrobbleService, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistRule,
+    ScrobbleService, SearchRequest, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
     SmartPlaylistSortField, SourceArtwork, SourceHomeSection, SourceHomeSectionKind, SourceId,
     SourceLibraryUpdate, Track, TrackData, TrackRelations, TrackSort,
@@ -29,6 +29,116 @@ fn created_playlist_id(change: Option<AcceptedLibraryChange>) -> PlaylistId {
         .playlists;
     assert_eq!(ids.len(), 1);
     ids.into_iter().next().expect("created Playlist ID")
+}
+
+#[test]
+fn accepted_library_search_matches_substrings_across_item_fields() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let library = Library::open(directory.path().join("library.db")).expect("open Library");
+    let source_id = SourceId::new("local:server:search");
+    let mut searchable_track = track();
+    searchable_track.title = "Orchard Walk".to_string();
+    searchable_track.artist = "Apple Trees".to_string();
+    searchable_track.album = "Green Fields".to_string();
+    let album = album_for_track(&searchable_track, 0);
+    let artist = artist_for_track(&searchable_track);
+
+    let mut candidate = library
+        .begin_source_candidate(CandidateHeader {
+            source_id,
+            input_version: 1,
+            input_digest: digest(100),
+        })
+        .expect("begin search candidate");
+    candidate
+        .write(CandidateBatch::Albums(vec![album]))
+        .expect("write searchable Album");
+    candidate
+        .write(CandidateBatch::Artists(vec![artist]))
+        .expect("write searchable Artist");
+    candidate
+        .write(CandidateBatch::Tracks(vec![searchable_track]))
+        .expect("write searchable Track");
+    let accepted = candidate
+        .finish(
+            CandidateFinish {
+                freshness: None,
+                home: HomeFacts::RufinDefined,
+                accepted_at: 1,
+            },
+            None,
+        )
+        .and_then(|prepared| prepared.accept())
+        .expect("accept search candidate");
+
+    let apple = accepted
+        .loaded
+        .search(&SearchRequest::new("pple"))
+        .expect("search accepted library");
+    assert_eq!(apple.artists[0].name, "Apple Trees");
+    assert_eq!(apple.albums[0].title, "Green Fields");
+    assert_eq!(apple.tracks[0].title, "Orchard Walk");
+
+    let combined = accepted
+        .loaded
+        .search(&SearchRequest::new("green orch"))
+        .expect("search across Track fields");
+    assert_eq!(combined.tracks.len(), 1);
+    assert!(combined.artists.is_empty());
+    assert!(combined.albums.is_empty());
+
+    let mut updated_track = track();
+    updated_track.title = "River Walk".to_string();
+    updated_track.artist = "Pear Trees".to_string();
+    updated_track.album = "Blue Fields".to_string();
+    let updated_album = album_for_track(&updated_track, 0);
+    let updated_artist = artist_for_track(&updated_track);
+    library
+        .accept_source_update(
+            &accepted.loaded,
+            SourceLibraryUpdate {
+                albums: vec![updated_album],
+                tracks: vec![updated_track],
+                artists: vec![updated_artist],
+                ..SourceLibraryUpdate::default()
+            },
+        )
+        .expect("accept searchable item replacements")
+        .expect("searchable item replacements changed");
+
+    assert!(
+        accepted
+            .loaded
+            .search(&SearchRequest::new("apple"))
+            .expect("search removed terms")
+            .is_empty()
+    );
+    let pear = accepted
+        .loaded
+        .search(&SearchRequest::new("pear"))
+        .expect("search replacement terms");
+    assert_eq!(pear.artists.len(), 1);
+    assert_eq!(pear.albums.len(), 1);
+    assert_eq!(pear.tracks.len(), 1);
+
+    library
+        .accept_source_update(
+            &accepted.loaded,
+            SourceLibraryUpdate {
+                removed_tracks: vec![library::TrackId::new("local:track:one")],
+                ..SourceLibraryUpdate::default()
+            },
+        )
+        .expect("remove searchable Track")
+        .expect("searchable Track removal changed");
+    assert!(
+        accepted
+            .loaded
+            .search(&SearchRequest::new("river"))
+            .expect("search removed Track")
+            .tracks
+            .is_empty()
+    );
 }
 
 #[test]
@@ -4889,6 +4999,20 @@ fn album_for_track(track: &Track, projection_count: u32) -> Album {
             artists: track.relations.artists.clone(),
             genres: track.relations.genres.clone(),
         },
+    }
+}
+
+fn artist_for_track(track: &Track) -> Artist {
+    Artist {
+        id: track.relations.artists[0].id.clone(),
+        name: track.artist.clone(),
+        favorite: false,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        musicbrainz_artist_id: None,
+        image_ref: None,
+        local_artwork: None,
     }
 }
 

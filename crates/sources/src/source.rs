@@ -8,8 +8,8 @@ use library::{
     AlbumId, ArtistId, CandidateBatch, FavoriteAcceptance, FavoriteItemId, FolderContents,
     FolderId, GenreId, HomeFacts, HomeSectionKind, ImageRef, LocalArtworkRef,
     LocalComponentBaseline, LocalComponentReplacement, MusicFolderId, PlaylistAcceptance,
-    PlaylistEdit, PlaylistId, PlaylistSnapshot, ProviderFreshness, SourceHomeSection,
-    SourceHomeSectionKind, SourceId, TrackId,
+    PlaylistEdit, PlaylistId, PlaylistSnapshot, ProviderFreshness, SearchRequest, SearchResults,
+    SourceHomeSection, SourceHomeSectionKind, SourceId, TrackId,
 };
 
 use crate::{
@@ -587,6 +587,23 @@ impl Source {
                 .map(NativeSourceResult::Available),
             Implementation::OpenSubsonic(source) => source
                 .read_folder(folder_id, music_folder_id)
+                .await
+                .map(NativeSourceResult::Available),
+        }
+    }
+
+    pub async fn search(
+        &self,
+        request: &SearchRequest,
+    ) -> SourceResult<NativeSourceResult<SearchResults>> {
+        match &self.implementation {
+            Implementation::Local(_) => Ok(NativeSourceResult::Unavailable),
+            Implementation::Jellyfin(source) => source
+                .search(request)
+                .await
+                .map(NativeSourceResult::Available),
+            Implementation::OpenSubsonic(source) => source
+                .search(request)
                 .await
                 .map(NativeSourceResult::Available),
         }

@@ -79,6 +79,7 @@ mod playlists;
 mod radio;
 mod refresh;
 mod scrobbles;
+mod search;
 pub mod smart_playlists;
 mod store;
 
@@ -97,6 +98,7 @@ pub use playlists::*;
 pub use radio::*;
 pub use refresh::*;
 pub use scrobbles::*;
+pub use search::*;
 pub use smart_playlists::{
     SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
     SmartPlaylistRecord, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleOperator,

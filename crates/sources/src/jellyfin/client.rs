@@ -24,6 +24,63 @@ const JELLYFIN_HTTP: RemoteHttpPolicy = RemoteHttpPolicy {
 };
 
 impl JellyfinSource {
+    pub(crate) async fn search(
+        &self,
+        request: &library::SearchRequest,
+    ) -> SourceResult<library::SearchResults> {
+        if request.query().trim().is_empty() {
+            return Ok(library::SearchResults::default());
+        }
+        let (artists, albums, tracks) = tokio::try_join!(
+            self.search_people(request.query(), request.limit()),
+            self.search_items("MusicAlbum", ALBUM_FIELDS, request.query(), request.limit()),
+            self.search_items("Audio", TRACK_FIELDS, request.query(), request.limit()),
+        )?;
+        Ok(library::SearchResults {
+            artists: artists.items.into_iter().map(artist_from_item).collect(),
+            albums: albums.items.into_iter().map(album_from_item).collect(),
+            tracks: tracks
+                .items
+                .into_iter()
+                .filter(is_audio_item)
+                .map(track_from_item)
+                .collect(),
+        })
+    }
+
+    async fn search_items(
+        &self,
+        item_types: &str,
+        fields: &str,
+        query: &str,
+        limit: usize,
+    ) -> SourceResult<ItemQueryResult> {
+        let mut url = endpoint(&self.base_url, "Items")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Recursive", "true")
+            .append_pair("IncludeItemTypes", item_types)
+            .append_pair("SearchTerm", query)
+            .append_pair("StartIndex", "0")
+            .append_pair("Limit", &limit.clamp(1, 100).to_string())
+            .append_pair("Fields", fields);
+        self.get_json::<ItemQueryResult>(url).await
+    }
+
+    async fn search_people(&self, query: &str, limit: usize) -> SourceResult<ItemQueryResult> {
+        let mut url = endpoint(&self.base_url, "Artists")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("SearchTerm", query)
+            .append_pair("StartIndex", "0")
+            .append_pair("Limit", &limit.clamp(1, 100).to_string())
+            .append_pair(
+                "Fields",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
+            );
+        self.get_json::<ItemQueryResult>(url).await
+    }
+
     async fn read_playlist_rows(
         &self,
         raw_playlist_id: &str,

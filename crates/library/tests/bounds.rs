@@ -5,8 +5,8 @@ use library::{
     Album, AlbumId, AlbumRelations, Artist, ArtistCredit, ArtistId, CandidateBatch,
     CandidateFinish, CandidateHeader, Genre, GenreCredit, GenreId, HOME_SECTION_ITEM_LIMIT,
     HomeFacts, Library, MoodCredit, MoodId, MusicFolder, MusicFolderId, Playlist, PlaylistEntry,
-    PlaylistId, PlaylistSnapshot, SmartPlaylistBuiltin, SmartPlaylistId, SourceId, Track,
-    TrackData, TrackRelations, TrackSort,
+    PlaylistId, PlaylistSnapshot, SearchRequest, SmartPlaylistBuiltin, SmartPlaylistId, SourceId,
+    Track, TrackData, TrackRelations, TrackSort,
 };
 
 const BATCH_SIZE: usize = 500;
@@ -82,6 +82,12 @@ fn assert_large_library(track_count: usize) {
 
     assert_eq!(loaded.counts().expect("read counts").tracks, track_count);
     assert_eq!(loaded.counts().expect("read counts").albums, album_count);
+    let search = loaded
+        .search(&SearchRequest::with_limit("0000", 20))
+        .expect("search loaded library");
+    assert!(search.artists.len() <= 20);
+    assert!(search.albums.len() <= 20);
+    assert_eq!(search.tracks.len(), 20);
     assert!(
         home.sections
             .iter()

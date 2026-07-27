@@ -1140,6 +1140,7 @@ fn reorder_sidebar_item_settings(
 fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Search => "Search",
         SidebarRouteItem::Favorites => "Favorites",
         SidebarRouteItem::History => "History",
         SidebarRouteItem::Albums => "Albums",
@@ -1161,6 +1162,7 @@ fn sidebar_drag_route(id: &str) -> Option<SidebarRouteItem> {
 fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
     match item {
         SidebarRouteItem::Home => msgid("Home"),
+        SidebarRouteItem::Search => msgid("Search"),
         SidebarRouteItem::Favorites => msgid("Favorites"),
         SidebarRouteItem::History => msgid("History"),
         SidebarRouteItem::Albums => msgid("Albums"),

@@ -133,6 +133,68 @@ fn query(items: serde_json::Value) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn search_uses_jellyfin_native_artist_album_and_track_queries() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Artists"))
+        .and(query_param("SearchTerm", "apple"))
+        .and(query_param("Limit", "9"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": "artist-one",
+                "Name": "Apple Trees",
+                "Type": "MusicArtist"
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "MusicAlbum"))
+        .and(query_param("SearchTerm", "apple"))
+        .and(query_param("Limit", "9"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": "album-one",
+                "Name": "Green Fields",
+                "Type": "MusicAlbum",
+                "AlbumArtist": "Apple Trees"
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "Audio"))
+        .and(query_param("SearchTerm", "apple"))
+        .and(query_param("Limit", "9"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": "track-one",
+                "Name": "Orchard Walk",
+                "Type": "Audio",
+                "Album": "Green Fields",
+                "Artists": ["Apple Trees"]
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    let results = source
+        .search(&library::SearchRequest::with_limit("apple", 9))
+        .await
+        .expect("search Jellyfin");
+
+    assert_eq!(results.artists[0].id.as_str(), "jellyfin:artist:artist-one");
+    assert_eq!(results.albums[0].id.as_str(), "jellyfin:album:album-one");
+    assert_eq!(results.tracks[0].id.as_str(), "jellyfin:track:track-one");
+}
+
+#[tokio::test]
 async fn home_refresh_reads_exactly_one_requested_jellyfin_section() {
     let server = MockServer::start().await;
     let cases = [

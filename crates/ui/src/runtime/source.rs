@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_channel::Receiver;
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MusicFolderId, PlaylistEdit,
-    PlaylistTrackAdd, SourceId,
+    PlaylistTrackAdd, SearchRequest as LibrarySearchRequest, SearchResults, SourceId,
 };
 use secrets::SecretStorageMode;
 
@@ -207,6 +207,13 @@ pub struct FolderRequest {
     pub music_folder_id: Option<MusicFolderId>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub search: LibrarySearchRequest,
+}
+
 pub trait SourcePort: Send + Sync {
     fn configured_source(&self, source_id: &SourceId) -> Result<Option<EditableSource>, String>;
     fn discover_servers(&self);
@@ -228,6 +235,7 @@ pub trait SourcePort: Send + Sync {
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
     fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>>;
+    fn search(&self, request: SearchRequest) -> Receiver<Result<SearchResults, String>>;
 }
 
 pub type SourceHandle = Arc<dyn SourcePort>;

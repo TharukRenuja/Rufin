@@ -291,6 +291,7 @@ impl<'de> Deserialize<'de> for LayoutSettings {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum SidebarRouteItem {
     Home,
+    Search,
     Favorites,
     Albums,
     Tracks,
@@ -304,9 +305,10 @@ pub enum SidebarRouteItem {
     History,
 }
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 12] {
+    pub fn all() -> [Self; 13] {
         [
             Self::Home,
+            Self::Search,
             Self::Favorites,
             Self::Albums,
             Self::Tracks,
@@ -322,7 +324,7 @@ impl SidebarRouteItem {
     }
 
     fn default_visible(self) -> bool {
-        !matches!(self, Self::Moods)
+        !matches!(self, Self::Search | Self::Moods)
     }
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
