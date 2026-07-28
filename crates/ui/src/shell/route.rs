@@ -80,6 +80,25 @@ pub(crate) type RouteCurrentTrackSelection = Rc<dyn Fn(Option<&RouteCurrentTrack
 pub(crate) type MountedRouteResume = Rc<dyn Fn()>;
 pub(crate) type MountedLibraryUpdate = Rc<dyn Fn(&SelectedLibraryUpdate)>;
 pub(crate) type MountedHomeSectionApplier = Rc<dyn Fn(HomeSectionKind, Arc<HomeSnapshot>)>;
+pub(crate) type MountedRouteItemNavigation = Rc<dyn Fn(gtk::DirectionType) -> glib::Propagation>;
+
+pub(crate) fn item_navigation_entry_position(
+    current: u32,
+    item_count: u32,
+    direction: gtk::DirectionType,
+) -> Option<u32> {
+    if item_count == 0 {
+        return None;
+    }
+    if current != gtk::INVALID_LIST_POSITION {
+        return Some(current.min(item_count - 1));
+    }
+    match direction {
+        gtk::DirectionType::Up | gtk::DirectionType::Left => Some(item_count - 1),
+        gtk::DirectionType::Down | gtk::DirectionType::Right => Some(0),
+        _ => None,
+    }
+}
 
 /// Runs at most one mounted-route read at a time and retains only the newest
 /// request while the route still owns this value.
@@ -390,6 +409,7 @@ impl RouteViewport {
 pub(crate) struct MountedRoute {
     widget: gtk::Widget,
     resume: MountedRouteResume,
+    item_navigation: Option<MountedRouteItemNavigation>,
     library_update: Option<MountedLibraryUpdate>,
     apply_home_section: Option<MountedHomeSectionApplier>,
 }
@@ -399,6 +419,7 @@ impl MountedRoute {
         Self {
             widget,
             resume,
+            item_navigation: None,
             library_update: None,
             apply_home_section: None,
         }
@@ -416,6 +437,14 @@ impl MountedRoute {
         self
     }
 
+    pub(crate) fn with_item_navigation(
+        mut self,
+        item_navigation: MountedRouteItemNavigation,
+    ) -> Self {
+        self.item_navigation = Some(item_navigation);
+        self
+    }
+
     pub(crate) fn with_library_update(mut self, apply: MountedLibraryUpdate) -> Self {
         self.library_update = Some(apply);
         self
@@ -427,6 +456,14 @@ impl MountedRoute {
 
     pub(crate) fn resume(&self) {
         (self.resume)();
+    }
+
+    fn navigate_items(&self, direction: gtk::DirectionType) -> glib::Propagation {
+        if let Some(navigate) = &self.item_navigation {
+            navigate(direction)
+        } else {
+            glib::Propagation::Stop
+        }
     }
 
     fn apply_library_update(&self, update: &SelectedLibraryUpdate) {
@@ -496,6 +533,17 @@ impl RouteStack {
 }
 
 impl Shell {
+    pub(crate) fn navigate_current_route_items(
+        &self,
+        direction: gtk::DirectionType,
+    ) -> glib::Propagation {
+        if let Some(entry) = self.route_viewport.mounted_route.borrow().as_ref() {
+            entry.view.navigate_items(direction)
+        } else {
+            glib::Propagation::Stop
+        }
+    }
+
     pub(crate) fn release_first_run_setup(&self) {
         let Some(view) = self.take_first_run_setup_view() else {
             return;
@@ -537,6 +585,7 @@ impl Shell {
         let route = self.navigation.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate back");
+            gtk::prelude::RootExt::set_focus(&self.chrome.window, None::<&gtk::Widget>);
             self.render_current_route();
         }
     }
@@ -545,6 +594,7 @@ impl Shell {
         let route = self.navigation.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate forward");
+            gtk::prelude::RootExt::set_focus(&self.chrome.window, None::<&gtk::Widget>);
             self.render_current_route();
         }
     }

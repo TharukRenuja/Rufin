@@ -380,7 +380,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(route_stack.upcast(), resume).with_library_update(update)
+        MountedRoute::new(route_stack.upcast(), resume)
+            .with_item_navigation(tracks.item_navigation())
+            .with_library_update(update)
     }
 
     pub(crate) fn playlist_detail_route(
@@ -685,7 +687,9 @@ impl Shell {
                 });
             })
         };
-        MountedRoute::new(route_stack.upcast(), resume).with_library_update(update)
+        MountedRoute::new(route_stack.upcast(), resume)
+            .with_item_navigation(entries.item_navigation())
+            .with_library_update(update)
     }
 }
 

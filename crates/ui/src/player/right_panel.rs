@@ -16,7 +16,6 @@ use super::lyrics::LyricsPane;
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 const QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT: i32 = 10;
-const QUEUE_LYRICS_KEY_STEP: i32 = 50;
 const QUEUE_HEADER_TOP_MARGIN: i32 = 10;
 const QUEUE_HEADER_BUTTON_SIZE: i32 = 34;
 const QUEUE_HEADER_BUTTON_SPACING: i32 = 6;
@@ -92,7 +91,7 @@ pub(crate) fn build_right_panel() -> RightPanelParts {
     lyrics_resize_handle.add_css_class("queue-lyrics-resize-handle");
     lyrics_resize_handle.set_height_request(QUEUE_LYRICS_RESIZE_HANDLE_HEIGHT);
     lyrics_resize_handle.set_hexpand(true);
-    lyrics_resize_handle.set_focusable(true);
+    lyrics_resize_handle.set_focusable(false);
     lyrics_resize_handle.set_cursor_from_name(Some("row-resize"));
     lyrics_resize_handle.set_accessible_role(gtk::AccessibleRole::Separator);
     let resize_label = tr("Hold and drag to resize");
@@ -328,7 +327,6 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
 
         gesture.set_state(gtk::EventSequenceState::Claimed);
         drag_active.set(true);
-        handle.grab_focus();
         drag_start_height.set(Some(surface_height));
     });
     let drag_shell = Rc::clone(shell);
@@ -356,32 +354,6 @@ pub(crate) fn connect_queue_lyrics_overlay(shell: &Rc<Shell>) {
         drag_shell.schedule_queue_panel_render();
     });
     shell.right_panel.queue_lyrics_overlay.add_controller(drag);
-
-    let key = gtk::EventControllerKey::new();
-    let key_shell = Rc::clone(shell);
-    key.connect_key_pressed(move |_, key, _, _| {
-        let delta = match key {
-            gtk::gdk::Key::Up => QUEUE_LYRICS_KEY_STEP,
-            gtk::gdk::Key::Down => -QUEUE_LYRICS_KEY_STEP,
-            _ => return gtk::glib::Propagation::Proceed,
-        };
-        let available_height = key_shell.right_panel.queue_lyrics_overlay.height();
-        let height = queue_lyrics_clamped_height(
-            available_height,
-            key_shell
-                .right_panel
-                .lyrics_surface
-                .height()
-                .saturating_add(delta),
-        );
-        key_shell
-            .right_panel
-            .lyrics_surface
-            .set_height_request(height);
-        key_shell.save_queue_lyrics_height(height);
-        gtk::glib::Propagation::Stop
-    });
-    shell.right_panel.lyrics_resize_handle.add_controller(key);
 }
 
 pub(crate) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {

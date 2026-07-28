@@ -22,8 +22,6 @@ pub(crate) const WINDOW_CHROME_MARGIN_END: i32 = 8;
 pub(crate) const MIN_RESTORED_WINDOW_HEIGHT: i32 = MIN_APP_WINDOW_HEIGHT;
 const LEFT_SIDEBAR_COLLAPSE_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH - 40;
 const LEFT_SIDEBAR_EXPAND_DETENT: i32 = crate::MIN_LEFT_SIDEBAR_WIDTH;
-const SIDEBAR_KEY_STEP: i32 = 10;
-const SIDEBAR_KEY_PAGE_STEP: i32 = 50;
 type ShellAllocationCallback = Rc<dyn Fn(i32, i32)>;
 
 mod shell_allocation_owner_imp {
@@ -323,27 +321,6 @@ fn resolve_layout_with_drag_previews(
     resolve_layout(&settings, window_width)
 }
 
-fn right_sidebar_width_after_key(current_width: i32, scroll: gtk::ScrollType) -> Option<i32> {
-    let requested = match scroll {
-        gtk::ScrollType::StepBackward | gtk::ScrollType::StepUp | gtk::ScrollType::StepLeft => {
-            current_width.saturating_add(SIDEBAR_KEY_STEP)
-        }
-        gtk::ScrollType::StepForward | gtk::ScrollType::StepDown | gtk::ScrollType::StepRight => {
-            current_width.saturating_sub(SIDEBAR_KEY_STEP)
-        }
-        gtk::ScrollType::PageBackward | gtk::ScrollType::PageUp | gtk::ScrollType::PageLeft => {
-            current_width.saturating_add(SIDEBAR_KEY_PAGE_STEP)
-        }
-        gtk::ScrollType::PageForward | gtk::ScrollType::PageDown | gtk::ScrollType::PageRight => {
-            current_width.saturating_sub(SIDEBAR_KEY_PAGE_STEP)
-        }
-        gtk::ScrollType::Start => MAX_RIGHT_SIDEBAR_WIDTH,
-        gtk::ScrollType::End => MIN_RIGHT_SIDEBAR_WIDTH,
-        _ => return None,
-    };
-    Some(requested.clamp(MIN_RIGHT_SIDEBAR_WIDTH, MAX_RIGHT_SIDEBAR_WIDTH))
-}
-
 fn right_sidebar_width_after_drag_update(
     settings: &LayoutSettings,
     window_width: i32,
@@ -599,11 +576,6 @@ impl Shell {
         }
     }
 
-    fn current_left_sidebar_width(&self) -> i32 {
-        resolve_layout(&self.settings.current.borrow().layout, self.layout_width())
-            .left_sidebar_width
-    }
-
     fn current_right_sidebar_width(&self) -> i32 {
         let split = &self.right_panel.right_split;
         let allocated_width = split
@@ -698,7 +670,6 @@ fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
 
         drag_active.set(true);
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        handle.grab_focus();
         let width = resolve_layout(
             &drag_shell.settings.current.borrow().layout,
             drag_shell.layout_width(),
@@ -779,34 +750,6 @@ fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
         .parent()
         .expect("left resize handle must be mounted in its stable overlay")
         .add_controller(drag);
-
-    let key = gtk::EventControllerKey::new();
-    let key_shell = Rc::clone(shell);
-    key.connect_key_pressed(move |_, key, _, _| {
-        let mode = key_shell.left_sidebar_mode();
-        match (key, mode) {
-            (gtk::gdk::Key::Left, ResolvedLeftSidebarMode::Full) => {
-                let width = key_shell.current_left_sidebar_width();
-                if width <= crate::MIN_LEFT_SIDEBAR_WIDTH {
-                    key_shell.set_active_left_sidebar_mode(LeftSidebarMode::Compact);
-                } else {
-                    key_shell.save_preferred_left_sidebar_width(width - SIDEBAR_KEY_STEP);
-                    key_shell.update_layout();
-                }
-            }
-            (gtk::gdk::Key::Right, ResolvedLeftSidebarMode::Compact) => {
-                key_shell.set_active_left_sidebar_mode(LeftSidebarMode::Full);
-            }
-            (gtk::gdk::Key::Right, ResolvedLeftSidebarMode::Full) => {
-                let width = key_shell.current_left_sidebar_width();
-                key_shell.save_preferred_left_sidebar_width(width + SIDEBAR_KEY_STEP);
-                key_shell.update_layout();
-            }
-            _ => return glib::Propagation::Proceed,
-        }
-        glib::Propagation::Stop
-    });
-    shell.navigation_view.left_resize_handle.add_controller(key);
 }
 
 fn left_sidebar_drag_changed(
@@ -831,22 +774,6 @@ fn connect_right_sidebar_resize(shell: &Rc<Shell>) {
                 &position_shell.right_panel.right_resize_handle,
                 split.position(),
             );
-        });
-
-    let key_shell = Rc::clone(shell);
-    shell
-        .right_panel
-        .right_split
-        .connect_move_handle(move |_, scroll| {
-            if key_shell.right_sidebar_visible()
-                && let Some(width) =
-                    right_sidebar_width_after_key(key_shell.current_right_sidebar_width(), scroll)
-            {
-                key_shell.layout_state.right_drag_width.set(None);
-                key_shell.save_preferred_right_sidebar_width(width);
-                key_shell.update_layout();
-            }
-            true
         });
 
     let drag = gtk::GestureDrag::new();
@@ -1299,38 +1226,6 @@ mod tests {
         assert_eq!(resolved.left_sidebar_width, COMPACT_RAIL_WIDTH);
         assert_eq!(resolved.right_sidebar_width, 492);
         assert_eq!(resolved.main_width, MIN_USEFUL_MAIN_WIDTH);
-    }
-
-    #[test]
-    fn right_sidebar_keyboard_actions_share_the_drag_width_limits() {
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::StepLeft),
-            Some(310)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::StepRight),
-            Some(290)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(480, gtk::ScrollType::PageLeft),
-            Some(MAX_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(270, gtk::ScrollType::PageRight),
-            Some(MIN_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::Start),
-            Some(MAX_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::End),
-            Some(MIN_RIGHT_SIDEBAR_WIDTH)
-        );
-        assert_eq!(
-            right_sidebar_width_after_key(300, gtk::ScrollType::Jump),
-            None
-        );
     }
 
     #[test]

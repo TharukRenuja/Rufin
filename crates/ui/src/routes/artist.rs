@@ -652,6 +652,7 @@ impl Shell {
             .library_toolbar_projection(LibraryListKey::ArtistTracks, track_projection.search());
         track_section.append(&library_route_inset(track_toolbar.widget()));
         self.set_route_search(Some(track_projection.search()));
+        let item_navigation = track_projection.item_navigation();
         track_section.append(&track_projection.scrolling_widget());
         let track_stack = gtk::Stack::new();
         track_stack.set_hexpand(true);
@@ -816,7 +817,9 @@ impl Shell {
                 });
             })
         };
-        MountedRoute::new(route_stack.upcast(), resume).with_library_update(update)
+        MountedRoute::new(route_stack.upcast(), resume)
+            .with_item_navigation(item_navigation)
+            .with_library_update(update)
     }
 
     fn artist_detail_header(

@@ -13,6 +13,7 @@ use gtk::{gio, glib};
 
 use crate::layout::{configure_fill_width_clip, width_allocation_owner};
 use crate::shell::Shell;
+use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use crate::{LibraryColumnWidth, LibraryField, LibraryLayout, LibraryListKey};
 use localization::tr;
 use playback::{LoadedPlayRequest, QueuePlacement};
@@ -20,8 +21,8 @@ use tracing::warn;
 
 use super::album_detail::{AlbumCollectionModels, AlbumDetailVirtualList, album_detail_list};
 use super::columns::{
-    album_column, artist_column, column_fit_width, playlist_column, smart_playlist_column,
-    track_column_fit_width, track_column_for_key,
+    TrackRowPlayingIndicator, album_column, artist_column, column_fit_width, playlist_column,
+    smart_playlist_column, track_column_fit_width, track_column_for_key,
 };
 use super::detail_links::track_artist_route;
 use super::grid_cells::{
@@ -39,6 +40,7 @@ use super::route::Route;
 use super::route_layout::{
     HOME_ALBUM_MIN_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
 };
+use super::route_shell::restore_single_click_activation_on_primary_press;
 use super::table_sizing::{
     ColumnViewWidthFit, column_view_initial_width, connect_column_width_save,
     install_column_view_width_fit, route_column_view_initial_width,
@@ -146,22 +148,23 @@ impl PlaybackTarget {
     }
 }
 
-struct TrackTableSelectionInner {
-    selection: glib::WeakRef<gtk::SingleSelection>,
+struct TrackTablePlayingStateInner {
     model: glib::WeakRef<TrackCollectionModel>,
     model_handler: RefCell<Option<glib::SignalHandlerId>>,
-    selected_track_id: RefCell<Option<TrackId>>,
-    selected_position: Cell<u32>,
+    track_id: RefCell<Option<TrackId>>,
+    position: Cell<u32>,
+    indicator: TrackRowPlayingIndicator,
 }
 
 #[derive(Clone)]
-pub(crate) struct TrackTableSelection {
-    inner: Rc<TrackTableSelectionInner>,
+pub(crate) struct TrackTablePlayingState {
+    inner: Rc<TrackTablePlayingStateInner>,
 }
 
 #[derive(Clone)]
 pub(crate) struct CollectionTableProjection {
     table: gtk::ColumnView,
+    navigation: MountedRouteItemNavigation,
     fixed_columns: Rc<Vec<(gtk::ColumnViewColumn, i32)>>,
     column_for_field: Rc<dyn Fn(LibraryField) -> (gtk::ColumnViewColumn, i32)>,
     width_for_field: Rc<dyn Fn(LibraryField) -> i32>,
@@ -201,6 +204,10 @@ impl CollectionTableProjection {
         self.width_fit.replace(active);
     }
 
+    fn navigate(&self, direction: gtk::DirectionType) -> glib::Propagation {
+        (self.navigation)(direction)
+    }
+
     fn preferred_widths(&self, fields: &[LibraryField]) -> Vec<i32> {
         self.fixed_columns
             .iter()
@@ -235,6 +242,14 @@ impl LibraryPresentationProjection {
             Self::Row(table) => table.apply_fields(&settings.row_fields),
             Self::Grid(grid) => grid.apply_fields(&settings.grid_fields),
             Self::AlbumDetail(_) => {}
+        }
+    }
+
+    fn navigate(&self, direction: gtk::DirectionType) -> glib::Propagation {
+        match self {
+            Self::Row(table) => table.navigate(direction),
+            Self::Grid(grid) => grid.navigate(direction),
+            Self::AlbumDetail(_) => glib::Propagation::Stop,
         }
     }
 
@@ -312,6 +327,11 @@ impl LibraryCollectionProjection {
             unreachable!("scrolling_scroller installs the scrolled collection host");
         };
         width_owner.clone()
+    }
+
+    pub(crate) fn item_navigation(&self) -> MountedRouteItemNavigation {
+        let presentation = Rc::clone(&self.presentation);
+        Rc::new(move |direction| presentation.borrow().navigate(direction))
     }
 
     pub(crate) fn mount_in_scroller(
@@ -398,75 +418,48 @@ fn collection_presentation_needs_rebuild(
             && current.layout == LibraryLayout::Detail)
 }
 
-impl TrackTableSelection {
-    pub(crate) fn new(selection: &gtk::SingleSelection, model: &TrackCollectionModel) -> Self {
-        selection.set_selected(gtk::INVALID_LIST_POSITION);
-        let inner = Rc::new(TrackTableSelectionInner {
-            selection: selection.downgrade(),
+impl TrackTablePlayingState {
+    pub(crate) fn new(model: &TrackCollectionModel, indicator: TrackRowPlayingIndicator) -> Self {
+        let inner = Rc::new(TrackTablePlayingStateInner {
             model: model.downgrade(),
             model_handler: RefCell::new(None),
-            selected_track_id: RefCell::new(None),
-            selected_position: Cell::new(gtk::INVALID_LIST_POSITION),
+            track_id: RefCell::new(None),
+            position: Cell::new(gtk::INVALID_LIST_POSITION),
+            indicator,
         });
         let weak_inner = Rc::downgrade(&inner);
         let handler = model.connect_items_changed(move |model, _, _, _| {
             let Some(inner) = weak_inner.upgrade() else {
                 return;
             };
-            let Some(selection) = inner.selection.upgrade() else {
-                return;
-            };
-            let selected_track_id = inner.selected_track_id.borrow();
-            let position = selected_track_id
+            let track_id = inner.track_id.borrow();
+            let position = track_id
                 .as_ref()
                 .and_then(|track_id| {
                     model
-                        .selection_position_after_point_change(
-                            track_id,
-                            inner.selected_position.get(),
-                        )
+                        .selection_position_after_point_change(track_id, inner.position.get())
                         .or_else(|| model.position(track_id))
                 })
                 .unwrap_or(gtk::INVALID_LIST_POSITION);
-            inner.selected_position.set(position);
-            if selection.selected() != position {
-                selection.set_selected(position);
-            }
+            inner.position.set(position);
+            inner.indicator.set_position(position);
         });
         inner.model_handler.replace(Some(handler));
         Self { inner }
     }
 
-    pub(crate) fn install_guard(&self) {
-        let Some(selection) = self.inner.selection.upgrade() else {
-            return;
-        };
-        let weak_inner = Rc::downgrade(&self.inner);
-        selection.connect_selection_changed(move |selection, _, _| {
-            let Some(inner) = weak_inner.upgrade() else {
-                return;
-            };
-            let selected = inner.selected_position.get();
-            if selection.selected() != selected {
-                selection.set_selected(selected);
-            }
-        });
-    }
-
-    pub(crate) fn select(&self, position: u32) {
-        self.inner.selected_position.set(position);
-        if let Some(selection) = self.inner.selection.upgrade() {
-            selection.set_selected(position);
-        }
+    fn set_position(&self, position: u32) {
+        self.inner.position.set(position);
+        self.inner.indicator.set_position(position);
     }
 
     fn clear_now_playing(&self) {
-        self.inner.selected_track_id.borrow_mut().take();
-        self.select(gtk::INVALID_LIST_POSITION);
+        self.inner.track_id.borrow_mut().take();
+        self.set_position(gtk::INVALID_LIST_POSITION);
     }
 
-    fn select_track_id(&self, track_id: &TrackId, position: Option<u32>) {
-        *self.inner.selected_track_id.borrow_mut() = Some(track_id.clone());
+    fn set_track_id(&self, track_id: &TrackId, position: Option<u32>) {
+        *self.inner.track_id.borrow_mut() = Some(track_id.clone());
         let position = position
             .or_else(|| {
                 self.inner
@@ -475,27 +468,23 @@ impl TrackTableSelection {
                     .and_then(|model| model.position(track_id))
             })
             .unwrap_or(gtk::INVALID_LIST_POSITION);
-        self.select(position);
+        self.set_position(position);
     }
 
-    pub(crate) fn select_now_playing_track(
-        &self,
-        track_id: Option<&TrackId>,
-        position: Option<u32>,
-    ) {
+    pub(crate) fn set_now_playing_track(&self, track_id: Option<&TrackId>, position: Option<u32>) {
         if let Some(track_id) = track_id {
-            self.select_track_id(track_id, position);
+            self.set_track_id(track_id, position);
         } else {
             self.clear_now_playing();
         }
     }
 
     pub(crate) fn is_bound(&self) -> bool {
-        self.inner.model.upgrade().is_some() && self.inner.selection.upgrade().is_some()
+        self.inner.model.upgrade().is_some()
     }
 }
 
-impl Drop for TrackTableSelectionInner {
+impl Drop for TrackTablePlayingStateInner {
     fn drop(&mut self) {
         let Some(model) = self.model.upgrade() else {
             return;
@@ -972,7 +961,7 @@ pub(super) fn dynamic_collection_table<T, M>(
     width_for_field: impl Fn(LibraryField) -> i32 + 'static,
     single_click_activate: bool,
     activate: Option<Box<dyn Fn(u32, T)>>,
-    selection: Option<gtk::SelectionModel>,
+    selection: Option<gtk::SingleSelection>,
     initial_width: i32,
 ) -> CollectionTableProjection
 where
@@ -1005,7 +994,7 @@ where
     }) as Rc<dyn Fn(LibraryField) -> (gtk::ColumnViewColumn, i32)>;
     let mut active = fixed_columns.clone();
     active.extend(fields.iter().map(|field| column_for_field(*field)));
-    let (table, width_fit) = collection_table_with_width(
+    let (table, width_fit, navigation) = collection_table_with_width(
         model,
         active,
         initial_width,
@@ -1024,6 +1013,7 @@ where
     );
     CollectionTableProjection {
         table,
+        navigation,
         fixed_columns: Rc::new(fixed_columns),
         column_for_field,
         width_for_field,
@@ -1063,18 +1053,30 @@ fn collection_table_with_width<T, M>(
     initial_width: i32,
     single_click_activate: bool,
     activate: Option<Box<dyn Fn(u32, T)>>,
-    selection: Option<gtk::SelectionModel>,
-) -> (gtk::ColumnView, ColumnViewWidthFit)
+    selection: Option<gtk::SingleSelection>,
+) -> (
+    gtk::ColumnView,
+    ColumnViewWidthFit,
+    MountedRouteItemNavigation,
+)
 where
     T: Clone + 'static,
     M: IsA<gio::ListModel> + Clone + 'static,
 {
-    let selection =
-        selection.unwrap_or_else(|| gtk::NoSelection::new(Some(model.clone())).upcast());
-    let table = gtk::ColumnView::new(Some(selection));
+    let selection = selection.unwrap_or_else(|| {
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        selection.set_autoselect(false);
+        selection.set_can_unselect(true);
+        selection
+    });
+    let table = gtk::ColumnView::new(Some(selection.clone()));
     table.add_css_class("track-table");
     if single_click_activate {
         table.set_single_click_activate(true);
+        let pointer_table = table.clone();
+        restore_single_click_activation_on_primary_press(&table, move || {
+            pointer_table.set_single_click_activate(true);
+        });
     }
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
@@ -1083,14 +1085,43 @@ where
         table.append_column(column);
     }
     let width_fit = install_column_view_width_fit(&table, columns, initial_width);
-    if let Some(activate) = activate {
-        table.connect_activate(move |_, position| {
-            if let Some(value) = item_at::<T>(&model, position) {
-                activate(position, value);
-            }
-        });
-    }
-    (table, width_fit)
+    table.connect_activate(move |_, position| {
+        if let Some(activate) = activate.as_ref()
+            && let Some(value) = item_at::<T>(&model, position)
+        {
+            activate(position, value);
+        }
+    });
+    let navigation_table = table.clone();
+    let navigation_selection = selection;
+    let navigation = Rc::new(move |direction| {
+        if !matches!(direction, gtk::DirectionType::Up | gtk::DirectionType::Down) {
+            return glib::Propagation::Stop;
+        }
+        if single_click_activate {
+            navigation_table.set_single_click_activate(false);
+        }
+        if navigation_table
+            .state_flags()
+            .contains(gtk::StateFlags::FOCUS_WITHIN)
+        {
+            return glib::Propagation::Proceed;
+        }
+        let Some(model) = navigation_table.model() else {
+            return glib::Propagation::Stop;
+        };
+        if let Some(position) = item_navigation_entry_position(
+            navigation_selection.selected(),
+            model.n_items(),
+            direction,
+        ) {
+            navigation_selection.set_selected(position);
+            navigation_table.scroll_to(position, None, gtk::ListScrollFlags::FOCUS, None);
+            navigation_table.grab_focus();
+        }
+        glib::Propagation::Stop
+    }) as MountedRouteItemNavigation;
+    (table, width_fit, navigation)
 }
 
 pub(crate) fn smart_playlist_reorder_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
@@ -1121,7 +1152,9 @@ pub(crate) fn track_table(
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
-    let track_selection = TrackTableSelection::new(&selection, &model);
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
+    let playing_indicator = TrackRowPlayingIndicator::new();
+    let playing_state = TrackTablePlayingState::new(&model, playing_indicator.clone());
     let source_id = shell
         .library
         .selected
@@ -1130,9 +1163,9 @@ pub(crate) fn track_table(
         .map(|selected| selected.source_id.clone());
     let selection_context_base = options.context_id.clone();
     let selection_model = model.clone();
-    let current_track_selection = track_selection.clone();
+    let current_playing_state = playing_state.clone();
     shell.register_current_route_track_selection(Rc::new(move |current| {
-        if !current_track_selection.is_bound() {
+        if !current_playing_state.is_bound() {
             return false;
         }
         let current = current.filter(|current| source_id.as_ref() == Some(&current.source_id));
@@ -1145,8 +1178,8 @@ pub(crate) fn track_table(
                 .map(|context| context.source_rank);
             selection_model.position_for_current(&current.track_id, source_rank)
         });
-        current_track_selection
-            .select_now_playing_track(current.map(|current| &current.track_id), position);
+        current_playing_state
+            .set_now_playing_track(current.map(|current| &current.track_id), position);
         true
     }));
     let fields = if options.detail {
@@ -1173,21 +1206,21 @@ pub(crate) fn track_table(
         }
     });
     let column_shell = Rc::clone(shell);
+    let column_playing_indicator = playing_indicator;
     let table = dynamic_collection_table(
         shell,
         key,
         model,
         &fields,
         Vec::new(),
-        move |field| track_column_for_key(&column_shell, key, field),
+        move |field| track_column_for_key(&column_shell, key, field, &column_playing_indicator),
         move |field| track_column_fit_width(key, field),
         false,
         Some(activate),
-        Some(selection.upcast()),
+        Some(selection),
         column_view_initial_width(shell, options.content_inset),
     );
     table.table.add_css_class("track-list");
-    track_selection.install_guard();
     table
 }
 pub(crate) fn set_library_table_content_height(

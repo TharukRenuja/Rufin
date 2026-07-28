@@ -145,6 +145,7 @@ pub(super) fn build_content_chrome(
 
 fn configure_right_split(right_split: &gtk::Paned) {
     right_split.add_css_class("right-pane-split");
+    right_split.set_focusable(false);
     // Rufin owns the four-pixel input target. A non-wide GtkPaned adds a
     // hidden six-pixel pointer gutter on both sides of its separator, which
     // would leave a second resize owner underneath the shell gesture.

@@ -644,7 +644,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(update)
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
 }
 

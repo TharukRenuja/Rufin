@@ -189,10 +189,6 @@ toastoverlay toast label {
   background: transparent;
 }
 
-.sidebar-resize-handle:focus-visible {
-  box-shadow: inset 1px 0 color-mix(in srgb, var(--window-fg-color) 36%, transparent);
-}
-
 .right-pane-split > separator,
 .right-pane-split > separator.wide {
   min-width: 1px;
@@ -386,8 +382,6 @@ row:focus {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
-.track-table.track-list row:selected .track-list-title,
-.track-table.playlist-entry-table row:selected .playlist-entry-title,
 .album-detail-track-row.album-detail-track-selected .track-list-title {
   color: var(--accent-color);
   text-shadow:
@@ -400,25 +394,14 @@ row:focus {
   opacity: 0;
 }
 
-.track-table.track-list row:selected .track-row-index-number,
-.track-table.playlist-entry-table row:selected .track-row-index-number,
+.track-row-index-cell.track-row-playing .track-row-index-number,
 .album-detail-track-row.album-detail-track-selected .track-row-index-number {
   opacity: 0;
 }
 
-.track-table.track-list row:selected .track-row-index-playing,
-.track-table.playlist-entry-table row:selected .track-row-index-playing,
+.track-row-index-cell.track-row-playing .track-row-index-playing,
 .album-detail-track-row.album-detail-track-selected .track-row-index-playing {
   opacity: 1;
-}
-
-.track-table row:selected,
-.track-table row:selected:hover,
-.album-grid > child:selected,
-.album-grid > child:selected:hover,
-.album-grid > flowboxchild:selected,
-.album-grid > flowboxchild:selected:hover {
-  background: transparent;
 }
 
 .album-grid > child,

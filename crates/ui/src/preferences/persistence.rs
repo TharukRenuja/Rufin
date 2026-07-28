@@ -255,17 +255,6 @@ impl Shell {
         self.chrome.window.queue_resize();
     }
 
-    pub(crate) fn save_preferred_left_sidebar_width(&self, width: i32) {
-        self.update_app_settings("left sidebar width", |settings| {
-            let width = width.clamp(crate::MIN_LEFT_SIDEBAR_WIDTH, crate::MAX_LEFT_SIDEBAR_WIDTH);
-            if settings.layout.preferred_left_sidebar_width == width {
-                return false;
-            }
-            settings.layout.preferred_left_sidebar_width = width;
-            true
-        });
-    }
-
     pub(crate) fn save_left_sidebar_drag(self: &Rc<Self>, mode: LeftSidebarMode, width: i32) {
         let active_profile =
             resolve_layout(&self.settings.current.borrow().layout, self.layout_width()).profile;

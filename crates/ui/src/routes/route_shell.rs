@@ -17,6 +17,7 @@ use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
 use crate::shell::actions::{ADD_ICON, MORE_ICON, sort_order_icon};
 use crate::shell::layout::WINDOW_CHROME_MARGIN_END;
+use crate::shell::route::{MountedRoute, MountedRouteItemNavigation, MountedRouteResume};
 use crate::{
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, available_sort_fields,
 };
@@ -61,6 +62,14 @@ pub(crate) struct LibraryPageShell {
 impl LibraryPageShell {
     pub(crate) fn widget(&self) -> gtk::Widget {
         self.widget.clone()
+    }
+
+    pub(crate) fn mounted_route(
+        &self,
+        resume: MountedRouteResume,
+        item_navigation: MountedRouteItemNavigation,
+    ) -> MountedRoute {
+        MountedRoute::new(self.widget(), resume).with_item_navigation(item_navigation)
     }
 
     pub(crate) fn apply_library_list_settings(
@@ -171,7 +180,7 @@ impl Shell {
     }
 
     pub(crate) fn focus_current_route_search(&self) {
-        if !self.route_search_accepts_focus() {
+        if !self.route_keyboard_available() {
             return;
         }
         let search = self.route_viewport.route_search.borrow().as_ref().cloned();
@@ -190,19 +199,43 @@ impl Shell {
         }
     }
 
-    fn route_search_accepts_focus(&self) -> bool {
+    fn route_keyboard_available(&self) -> bool {
         !self.source.login_screen_active()
             && !self.fullscreen_player_visible()
-            && self.preferences.active_dialog().is_none()
-            && self.source.add_server.borrow().is_none()
-            && self.lyrics.search_dialog.borrow().is_none()
+            && !self.transient_route_input_active()
     }
 
-    pub(crate) fn connect_type_to_search(self: &Rc<Self>) {
+    fn playback_keyboard_available(&self) -> bool {
+        !self.source.login_screen_active() && !self.transient_route_input_active()
+    }
+
+    fn transient_route_input_active(&self) -> bool {
+        self.preferences.active_dialog().is_some()
+            || self.source.add_server.borrow().is_some()
+            || self.lyrics.search_dialog.borrow().is_some()
+    }
+
+    pub(crate) fn connect_route_keyboard(self: &Rc<Self>) {
         let key = gtk::EventControllerKey::new();
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let shell = Rc::clone(self);
         key.connect_key_pressed(move |_, key, _, state| {
+            let current_focus = GtkWindowExt::focus(&shell.chrome.window);
+            if key_has_no_shortcut_modifiers(state) {
+                if key == gtk::gdk::Key::space
+                    && shell.playback_keyboard_available()
+                    && !focus_blocks_play_pause(current_focus.as_ref())
+                {
+                    shell.products.playback.transport.play_pause();
+                    return glib::Propagation::Stop;
+                }
+                if shell.route_keyboard_available()
+                    && !focus_blocks_page_navigation(current_focus.as_ref())
+                    && let Some(direction) = page_navigation_direction(key)
+                {
+                    return shell.navigate_current_route_items(direction);
+                }
+            }
             let Some(search) = shell.route_viewport.route_search.borrow().as_ref().cloned() else {
                 return glib::Propagation::Proceed;
             };
@@ -213,7 +246,7 @@ impl Shell {
                 .as_ref()
                 .cloned();
             if !shell.settings.current.borrow().type_to_search_enabled
-                || !shell.route_search_accepts_focus()
+                || !shell.route_keyboard_available()
                 || key_should_bypass_type_to_search(state)
                 || focus_blocks_type_to_search(
                     GtkWindowExt::focus(&shell.chrome.window).as_ref(),
@@ -536,6 +569,17 @@ fn library_sort_title(key: LibraryListKey, field: LibraryField) -> &'static str 
     }
 }
 
+pub(super) fn restore_single_click_activation_on_primary_press(
+    target: &impl IsA<gtk::Widget>,
+    restore: impl Fn() + 'static,
+) {
+    let pointer = gtk::GestureClick::new();
+    pointer.set_button(gtk::gdk::BUTTON_PRIMARY);
+    pointer.set_propagation_phase(gtk::PropagationPhase::Capture);
+    pointer.connect_pressed(move |_, _, _, _| restore());
+    target.add_controller(pointer);
+}
+
 fn key_should_bypass_type_to_search(state: gtk::gdk::ModifierType) -> bool {
     state.intersects(
         gtk::gdk::ModifierType::ALT_MASK
@@ -546,15 +590,58 @@ fn key_should_bypass_type_to_search(state: gtk::gdk::ModifierType) -> bool {
     )
 }
 
+fn key_has_no_shortcut_modifiers(state: gtk::gdk::ModifierType) -> bool {
+    !state.intersects(
+        gtk::gdk::ModifierType::SHIFT_MASK
+            | gtk::gdk::ModifierType::ALT_MASK
+            | gtk::gdk::ModifierType::CONTROL_MASK
+            | gtk::gdk::ModifierType::SUPER_MASK
+            | gtk::gdk::ModifierType::HYPER_MASK
+            | gtk::gdk::ModifierType::META_MASK,
+    )
+}
+
+fn page_navigation_direction(key: gtk::gdk::Key) -> Option<gtk::DirectionType> {
+    match key {
+        gtk::gdk::Key::Up => Some(gtk::DirectionType::Up),
+        gtk::gdk::Key::Down => Some(gtk::DirectionType::Down),
+        gtk::gdk::Key::Left => Some(gtk::DirectionType::Left),
+        gtk::gdk::Key::Right => Some(gtk::DirectionType::Right),
+        _ => None,
+    }
+}
+
+fn focus_blocks_play_pause(focus: Option<&gtk::Widget>) -> bool {
+    focus.is_some_and(|focus| focus_is_text_input(focus) || focus_is_in_dialog(focus))
+}
+
+fn focus_blocks_page_navigation(focus: Option<&gtk::Widget>) -> bool {
+    focus.is_some_and(|focus| {
+        focus_is_in_dialog(focus)
+            || focus_is_text_input(focus)
+            || focus.is::<gtk::Range>()
+            || focus.ancestor(gtk::Range::static_type()).is_some()
+            || focus.is::<gtk::DropDown>()
+            || focus.ancestor(gtk::DropDown::static_type()).is_some()
+    })
+}
+
+fn focus_is_in_dialog(focus: &gtk::Widget) -> bool {
+    focus.is::<adw::Dialog>() || focus.ancestor(adw::Dialog::static_type()).is_some()
+}
+
+fn focus_is_text_input(focus: &gtk::Widget) -> bool {
+    focus.is::<gtk::Editable>()
+        || focus.is::<gtk::TextView>()
+        || focus.ancestor(gtk::Editable::static_type()).is_some()
+        || focus.ancestor(gtk::TextView::static_type()).is_some()
+}
+
 fn focus_blocks_type_to_search(focus: Option<&gtk::Widget>, search: &gtk::SearchEntry) -> bool {
     let Some(focus) = focus else {
         return false;
     };
-    focus.is_ancestor(search)
-        || focus.is::<gtk::Editable>()
-        || focus.is::<gtk::TextView>()
-        || focus.ancestor(gtk::Editable::static_type()).is_some()
-        || focus.ancestor(gtk::TextView::static_type()).is_some()
+    focus.is_ancestor(search) || focus_is_text_input(focus) || focus_is_in_dialog(focus)
 }
 
 fn library_toolbar_compact_for_width(width: i32) -> bool {

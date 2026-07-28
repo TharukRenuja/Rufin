@@ -807,6 +807,9 @@ msgstr ""
 msgid "Navidrome"
 msgstr ""
 
+msgid "Navigate page items"
+msgstr ""
+
 msgid "NetEase"
 msgstr ""
 
@@ -1391,6 +1394,9 @@ msgid "Shuffle"
 msgstr ""
 
 msgid "Sidebar Items"
+msgstr ""
+
+msgid "Sidebar route by position"
 msgstr ""
 
 msgid "SimpMusic"
