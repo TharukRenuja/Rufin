@@ -11,9 +11,10 @@ use crate::process::{
 use crate::{Result, parse_check_flag};
 
 const CARGO_REGISTRY_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-const IPADIC_ARCHIVE: &str = "mecab-ipadic-2.7.0-20250920.tar.gz";
-const IPADIC_SHA256: &str = "a7ba9f645ffe7094e56ae1c4a81d100df8fbb1e28bbe1792622e9728e162db3d";
-const IPADIC_URL: &str = "https://lindera.dev/mecab-ipadic-2.7.0-20250920.tar.gz";
+pub(crate) const IPADIC_ARCHIVE: &str = "mecab-ipadic-2.7.0-20250920.tar.gz";
+pub(crate) const IPADIC_SHA256: &str =
+    "a7ba9f645ffe7094e56ae1c4a81d100df8fbb1e28bbe1792622e9728e162db3d";
+pub(crate) const IPADIC_URL: &str = "https://lindera.dev/mecab-ipadic-2.7.0-20250920.tar.gz";
 
 pub(crate) fn run(mut args: Vec<String>) -> Result<()> {
     if args.is_empty() {

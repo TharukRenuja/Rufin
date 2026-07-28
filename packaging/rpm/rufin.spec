@@ -7,6 +7,7 @@ License:        GPL-3.0-or-later AND Apache-2.0 AND BSD-3-Clause AND CC0-1.0 AND
 URL:            https://github.com/screwys/Rufin
 Source0:        Rufin-%{version}.tar.xz
 Source1:        Rufin-%{version}-vendor.tar.xz
+Source2:        mecab-ipadic-2.7.0-20250920.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
@@ -39,10 +40,13 @@ Navidrome, and local music libraries.
 %prep
 %autosetup -n Rufin-%{version} -a1
 %cargo_prep -v vendor
+install -Dpm0644 %{SOURCE2} \
+  lindera-dictionaries/3.0.7/mecab-ipadic-2.7.0-20250920.tar.gz
 
 %build
 # aws-lc-sys omits CFLAGS from one compiler probe, so pair Fedora's hardened
 # linker flags with the PIE compile flag that probe still needs.
+LINDERA_DICTIONARIES_PATH="$PWD/lindera-dictionaries" \
 LDFLAGS="%{build_ldflags} -fPIE" \
   %{__cargo} build %{__cargo_common_opts} --profile rpm --package rufin
 CARGO_HOME=.cargo RUSTC_BOOTSTRAP=1 cargo tree \
