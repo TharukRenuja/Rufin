@@ -180,19 +180,11 @@ For development build:
 just debug
 ```
 
-# Project scope
+# Scope
 
-## Not in scope
+- **Integrations** Rufin will not integrate any sources that are hostile against 3rd pary clients, which include most live music listening services. That is a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days or weeks to deploy. I also don't want enable anti-user services like this. On the other hand, I am very eager to integrate any feature that would improve the user experience; this can range from some server API support to self-hosted scrobbling/sync servers, as Rufin aims to be your own client truly. If you go visit past issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
 
-- **Integration with sources that are hostile to third party clients:** Not in scope due to technical and philosophical reasons. These easily make up the majority of known music apps. Support for these would allow a larger user base, but it would be a never ending battle with their API that they constantly break intentionally. This is not maintainable for an app in official repositories as even an immediate hotfix could take days to deploy. I also don't want enable anti-user services like this. 
-
-- **Changing the operational performance significantly:** Rufin is meant to be a fast and visual client. Visual here refers to overall aesthethic; pages are meant to have covers here and there. The app keeps these covers in memory, up to a limit, to do less work of decoding again. Therefore it takes advantage of memory at all times. So far, it usually remains at 370~ MiB on a library with few thousand tracks, and it should not meaningfully go so much beyond on larger libraries. This is inline with other native clients with similar features, and significantly less than Electron-based clients that can easily use 1-1.5 GB. Therefore it can be `lightweight` in the sense that it tries to offer what these heavier apps do natively, though it is not lightweight like plenty of QT-based clients that can run with <100~ MiB memory usage. 
-
-## In scope
-
-- **Almost anything that doesn't collide with points mentioned above:** This can be further polishment and feature request. If you go to closed issues, you will see that all feature requests have a follow-up PR so far, and I intend this to continue as long as it is feasible.
-
-- **Integration with other self hosted services**: Rufin aims to be your own client truly. In future, there are plans for integration with other self-hosted scrobbling servers, or other controller servers to sync Rufin between different devices, directly under your own control.
+- **No performance regressions** Rufin is meant to be a fast, fully-featured and visual client. Visual here refers to overall aesthethic; and fully-featured means full or close to full-feature parity with leading music clients (which are usually Electron). So far, it usually remains less than 350 MiB (without romanization/furigana lyrics enabled) on a library with few thousand tracks, and it should not meaningfully go so much beyond on larger libraries.  This is similar to other GTK music clients, and significantly less than Electron-based clients that can easily use 1-1.5 GB. Therefore it is `lightweight` in the sense that it tries to offer what these heavier apps do natively, but it is not meant to be `lightweight` in the sense that it only focuses on playing music, like plenty of QT-based clients with <100~ MiB memory usage do.
 
 - **More packaging alternatives**: Since this is a native client, we want to offer distribution specific packaging formats. As long as there is an active tester, these can be maintained officially from this repository.
   
