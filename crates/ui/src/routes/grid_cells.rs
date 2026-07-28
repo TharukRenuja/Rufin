@@ -14,6 +14,7 @@ use crate::interactions::install_context_menu_openers;
 use crate::shell::Shell;
 use crate::shell::cover::presentation::stable_seed;
 use crate::shell::cover::{ArtworkTile, GRID_COVER_SIZE, THUMB_COVER_SIZE};
+use crate::shell::route::{MountedRouteItemNavigation, item_navigation_entry_position};
 use ::library::{
     AlbumSummary, ArtistSummary, GenreSummary, PlaylistSummary, SmartPlaylistId,
     SmartPlaylistSummary, Track,
@@ -41,6 +42,7 @@ use super::library_fields::{
 };
 use super::route::Route;
 use super::route_layout::{HOME_ALBUM_GAP, HOME_ALBUM_MIN_SIZE};
+use super::route_shell::restore_single_click_activation_on_primary_press;
 
 pub(super) trait ReusableCollectionGridCell<T>: 'static {
     fn widget(&self) -> gtk::Widget;
@@ -54,6 +56,7 @@ pub(super) const COLLECTION_GRID_MAX_COLUMNS: u32 = 12;
 #[derive(Clone)]
 pub(crate) struct CollectionGridProjection {
     surface: gtk::Widget,
+    navigation: MountedRouteItemNavigation,
     fields: Rc<RefCell<Vec<LibraryField>>>,
     apply_fields: Rc<dyn Fn(&[LibraryField])>,
     cache_bound: CollectionGridCacheBound,
@@ -167,6 +170,10 @@ impl CollectionGridProjection {
 
     pub(crate) fn fit_allocation(&self, width: i32) {
         self.cache_bound.fit_allocation(width);
+    }
+
+    pub(crate) fn navigate(&self, direction: gtk::DirectionType) -> glib::Propagation {
+        (self.navigation)(direction)
     }
 }
 
@@ -319,7 +326,10 @@ where
     Activate: Fn(u32, T) + 'static,
     M: IsA<gio::ListModel> + Clone + 'static,
 {
-    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    selection.set_autoselect(false);
+    selection.set_can_unselect(true);
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
     let factory = gtk::SignalListItemFactory::new();
     let cells = Rc::new(RefCell::new(HashMap::<usize, Cell>::new()));
     let fields = Rc::new(RefCell::new(fields.to_vec()));
@@ -330,10 +340,8 @@ where
             return;
         };
         let cell = make_cell(&setup_fields.borrow());
-        item.set_child(Some(&cards::collection_grid_card_inset(
-            &cell.widget(),
-            minimum_card_width,
-        )));
+        let child = cards::collection_grid_card_inset(&cell.widget(), minimum_card_width);
+        item.set_child(Some(&child));
         let mut cells = setup_cells.borrow_mut();
         cells.insert(item.as_ptr() as usize, cell);
     });
@@ -369,7 +377,7 @@ where
         item.set_child(None::<&gtk::Widget>);
     });
 
-    let grid = gtk::GridView::new(Some(selection), Some(factory));
+    let grid = gtk::GridView::new(Some(selection.clone()), Some(factory));
     grid.add_css_class("album-grid");
     grid.set_min_columns(min_columns.max(1));
     // GtkGridView keeps up to 30 rows times max-columns alive. Start with the
@@ -377,6 +385,10 @@ where
     // minimum-width cards that can actually fit before the first allocation.
     grid.set_max_columns(min_columns.max(1));
     grid.set_single_click_activate(true);
+    let pointer_grid = grid.clone();
+    restore_single_click_activation_on_primary_press(&grid, move || {
+        pointer_grid.set_single_click_activate(true);
+    });
     grid.set_hexpand(true);
     grid.set_vexpand(true);
     grid.connect_activate(move |_, position| {
@@ -384,6 +396,30 @@ where
             activate(position, value);
         }
     });
+    let navigation_grid = grid.clone();
+    let navigation_selection = selection;
+    let navigation = Rc::new(move |direction| {
+        navigation_grid.set_single_click_activate(false);
+        if navigation_grid
+            .state_flags()
+            .contains(gtk::StateFlags::FOCUS_WITHIN)
+        {
+            return glib::Propagation::Proceed;
+        }
+        let Some(model) = navigation_grid.model() else {
+            return glib::Propagation::Stop;
+        };
+        if let Some(position) = item_navigation_entry_position(
+            navigation_selection.selected(),
+            model.n_items(),
+            direction,
+        ) {
+            navigation_selection.set_selected(position);
+            navigation_grid.scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
+            navigation_grid.grab_focus();
+        }
+        glib::Propagation::Stop
+    }) as MountedRouteItemNavigation;
     let grid_weak = grid.downgrade();
     let cache_bound = CollectionGridCacheBound {
         grid: grid_weak.clone(),
@@ -393,6 +429,7 @@ where
     let apply_cells = Rc::clone(&cells);
     CollectionGridProjection {
         surface: grid.upcast(),
+        navigation,
         fields,
         apply_fields: Rc::new(move |fields| {
             for cell in apply_cells.borrow().values() {

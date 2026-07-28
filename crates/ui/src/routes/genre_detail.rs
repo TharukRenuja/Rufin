@@ -221,7 +221,9 @@ impl Shell {
                 });
             })
         };
-        MountedRoute::new(stack.upcast(), resume).with_library_update(update)
+        MountedRoute::new(stack.upcast(), resume)
+            .with_item_navigation(grouped.item_navigation())
+            .with_library_update(update)
     }
 
     fn genre_detail_kind_row(self: &Rc<Self>, genre: Rc<RefCell<Arc<Genre>>>) -> gtk::Box {

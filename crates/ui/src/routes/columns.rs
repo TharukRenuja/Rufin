@@ -132,10 +132,11 @@ pub(crate) fn track_column_for_key(
     shell: &Rc<Shell>,
     key: LibraryListKey,
     field: LibraryField,
+    playing: &TrackRowPlayingIndicator,
 ) -> gtk::ColumnViewColumn {
     let width = track_column_width(key, field);
     match field {
-        LibraryField::RowIndex => track_row_index_column_with_width(width),
+        LibraryField::RowIndex => track_row_index_column_with_width(width, playing.clone()),
         LibraryField::Image => track_image_column(shell, "Image", width),
         LibraryField::TitleMerged => track_merged_column(
             shell,
@@ -312,14 +313,18 @@ pub(crate) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
     column
 }
 
-fn track_row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
+fn track_row_index_column_with_width(
+    width: i32,
+    playing: TrackRowPlayingIndicator,
+) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             item.set_child(Some(&track_row_index_cell("")));
         }
     });
-    factory.connect_bind(|_, item| {
+    let bind_playing = playing.clone();
+    factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -330,10 +335,83 @@ fn track_row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
             return;
         };
         set_track_row_index_text(&cell, &(item.position() + 1).to_string());
+        bind_playing.bind(&cell, item.position());
+    });
+    factory.connect_unbind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(cell) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Overlay>().ok())
+        else {
+            return;
+        };
+        playing.unbind(&cell);
+        set_track_row_index_text(&cell, "");
     });
     let column = gtk::ColumnViewColumn::new(Some(ROW_INDEX_COLUMN_TITLE), Some(factory));
     column.set_fixed_width(width);
     column
+}
+
+#[derive(Clone)]
+pub(crate) struct TrackRowPlayingIndicator {
+    inner: Rc<TrackRowPlayingIndicatorInner>,
+}
+
+struct TrackRowPlayingIndicatorInner {
+    position: std::cell::Cell<u32>,
+    cells: RefCell<HashMap<usize, (glib::WeakRef<gtk::Overlay>, u32)>>,
+}
+
+impl TrackRowPlayingIndicator {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Rc::new(TrackRowPlayingIndicatorInner {
+                position: std::cell::Cell::new(gtk::INVALID_LIST_POSITION),
+                cells: RefCell::new(HashMap::new()),
+            }),
+        }
+    }
+
+    pub(crate) fn bind(&self, cell: &gtk::Overlay, position: u32) {
+        apply_track_row_playing(cell, position == self.inner.position.get());
+        self.inner
+            .cells
+            .borrow_mut()
+            .insert(cell.as_ptr() as usize, (cell.downgrade(), position));
+    }
+
+    pub(crate) fn unbind(&self, cell: &gtk::Overlay) {
+        cell.remove_css_class("track-row-playing");
+        self.inner
+            .cells
+            .borrow_mut()
+            .remove(&(cell.as_ptr() as usize));
+    }
+
+    pub(crate) fn set_position(&self, position: u32) {
+        self.inner.position.set(position);
+        self.inner
+            .cells
+            .borrow_mut()
+            .retain(|_, (cell, bound_position)| {
+                let Some(cell) = cell.upgrade() else {
+                    return false;
+                };
+                apply_track_row_playing(&cell, *bound_position == position);
+                true
+            });
+    }
+}
+
+fn apply_track_row_playing(cell: &gtk::Overlay, playing: bool) {
+    if playing {
+        cell.add_css_class("track-row-playing");
+    } else {
+        cell.remove_css_class("track-row-playing");
+    }
 }
 
 pub(crate) fn track_row_index_cell(text: &str) -> gtk::Overlay {

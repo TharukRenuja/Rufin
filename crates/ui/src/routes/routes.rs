@@ -110,6 +110,10 @@ impl TrackListProjection {
         self.collection.scrolling_widget()
     }
 
+    pub(crate) fn item_navigation(&self) -> crate::shell::route::MountedRouteItemNavigation {
+        self.collection.item_navigation()
+    }
+
     pub(crate) fn mount_in_scroller(&self, scroller: &gtk::ScrolledWindow) -> gtk::Widget {
         self.collection.mount_in_scroller(scroller, 0, 0)
     }
@@ -393,7 +397,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(update)
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
 
     pub(crate) fn library_tracks_route(
@@ -712,7 +718,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(update)
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
 
     pub(crate) fn library_playlists_route(
@@ -853,7 +861,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(update)
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
 
     pub(crate) fn library_smart_playlists_route(
@@ -963,7 +973,9 @@ impl Shell {
                 }
             })
         };
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(update)
+        page_shell
+            .mounted_route(resume, content.item_navigation())
+            .with_library_update(update)
     }
 
     pub(crate) fn scrolling_track_projection(
@@ -1125,8 +1137,9 @@ impl Shell {
         let update_shell = page_shell.clone();
         let read = Rc::clone(&read);
         let identity = identity.clone();
-        MountedRoute::new(page_shell.widget(), resume).with_library_update(Rc::new(
-            move |library_update| {
+        page_shell
+            .mounted_route(resume, projection.item_navigation())
+            .with_library_update(Rc::new(move |library_update| {
                 if reload_on_activity && library_update.change.history_changed {
                     read.request_with(TrackRouteReadRequest {
                         identity: identity.clone(),
@@ -1148,8 +1161,7 @@ impl Shell {
                     identity: identity.clone(),
                     tracks: update_projection.projection_request(),
                 });
-            },
-        ))
+            }))
     }
 }
 

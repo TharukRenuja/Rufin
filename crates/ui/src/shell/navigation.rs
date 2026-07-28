@@ -508,6 +508,24 @@ fn nav_items(shell: &Shell) -> Vec<NavItem> {
         .collect()
 }
 
+pub(crate) fn sidebar_route_at_position(shell: &Shell, position: usize) -> Option<Route> {
+    sidebar_route_at_position_in(
+        &shell.settings.current.borrow().sidebar.route_items,
+        position,
+    )
+}
+
+fn sidebar_route_at_position_in(
+    route_items: &[crate::SidebarRouteItemSettings],
+    position: usize,
+) -> Option<Route> {
+    let item = route_items
+        .iter()
+        .filter(|entry| entry.visible)
+        .nth(position.checked_sub(1)?)?;
+    Some(nav_item(item.item).route)
+}
+
 fn nav_item(item: SidebarRouteItem) -> NavItem {
     match item {
         SidebarRouteItem::Home => NavItem {
@@ -727,6 +745,35 @@ pub(super) fn install_mouse_history_buttons(shell: &Rc<Shell>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_position_uses_visible_configured_route_order() {
+        let route_items = vec![
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Playlists,
+                visible: false,
+            },
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Albums,
+                visible: true,
+            },
+            crate::SidebarRouteItemSettings {
+                item: SidebarRouteItem::Home,
+                visible: true,
+            },
+        ];
+
+        assert_eq!(
+            sidebar_route_at_position_in(&route_items, 1),
+            Some(Route::Albums)
+        );
+        assert_eq!(
+            sidebar_route_at_position_in(&route_items, 2),
+            Some(Route::Home)
+        );
+        assert_eq!(sidebar_route_at_position_in(&route_items, 0), None);
+        assert_eq!(sidebar_route_at_position_in(&route_items, 3), None);
+    }
     use library::{PlaylistId, SmartPlaylistId};
     use std::path::PathBuf;
 

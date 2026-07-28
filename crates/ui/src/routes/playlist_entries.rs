@@ -32,8 +32,8 @@ use super::collections::{
     dynamic_collection_table, library_route_inset, track_grid_field_route,
 };
 use super::columns::{
-    ROW_INDEX_COLUMN_TITLE, set_track_row_index_text, track_column_fit_width, track_column_width,
-    track_row_index_cell,
+    ROW_INDEX_COLUMN_TITLE, TrackRowPlayingIndicator, set_track_row_index_text,
+    track_column_fit_width, track_column_width, track_row_index_cell,
 };
 use super::detail_links::track_artist_route;
 use super::grid_cells::{
@@ -71,11 +71,10 @@ pub(crate) struct PlaylistEntryContextMenuState {
 }
 
 #[derive(Clone)]
-pub(crate) struct PlaylistEntryTableSelection {
+pub(crate) struct PlaylistEntryTablePlayingState {
     model: glib::WeakRef<PlaylistEntryModel>,
-    selection: glib::WeakRef<gtk::SingleSelection>,
     current: Rc<RefCell<Option<PlaylistEntryCurrentSelection>>>,
-    selected_entry_id: Rc<RefCell<Option<String>>>,
+    indicator: TrackRowPlayingIndicator,
 }
 
 #[derive(Clone, Debug)]
@@ -109,31 +108,25 @@ fn playlist_entry_current_selection(
         })
 }
 
-impl PlaylistEntryTableSelection {
-    fn new(
-        model: &PlaylistEntryModel,
-        selection: &gtk::SingleSelection,
-        selected_entry_id: Rc<RefCell<Option<String>>>,
-    ) -> Self {
+impl PlaylistEntryTablePlayingState {
+    fn new(model: &PlaylistEntryModel, indicator: TrackRowPlayingIndicator) -> Self {
+        let current = Rc::new(RefCell::new(None));
+        let model_current = Rc::clone(&current);
+        let model_indicator = indicator.clone();
+        model.connect_items_changed(move |model, _, _, _| {
+            model_indicator.set_position(playlist_entry_playing_position(
+                model,
+                model_current.borrow().as_ref(),
+            ));
+        });
         Self {
             model: model.downgrade(),
-            selection: selection.downgrade(),
-            current: Rc::new(RefCell::new(None)),
-            selected_entry_id,
+            current,
+            indicator,
         }
     }
 
-    fn select_entry_id(&self, entry_id: &str) {
-        *self.selected_entry_id.borrow_mut() = Some(entry_id.to_string());
-        self.sync();
-    }
-
-    fn clear(&self) {
-        self.selected_entry_id.borrow_mut().take();
-        self.sync();
-    }
-
-    pub(crate) fn select_now_playing_track(
+    pub(crate) fn set_now_playing_track(
         &self,
         current: Option<&RouteCurrentTrack>,
         source_id: Option<&SourceId>,
@@ -146,83 +139,39 @@ impl PlaylistEntryTableSelection {
             expected_context_id,
             source_context_id,
         );
-        let current_for_lookup = current.clone();
         *self.current.borrow_mut() = current;
-        let entry_id = self
-            .model
-            .upgrade()
-            .zip(current_for_lookup)
-            .and_then(|(model, current)| {
-                model.occurrence_for_current(
-                    &current.track_id,
-                    current.source_rank,
-                    current.source_order,
-                )
-            });
-        if let Some(entry_id) = entry_id {
-            self.select_entry_id(&entry_id);
-        } else {
-            self.clear();
-        }
+        self.sync();
     }
 
     pub(crate) fn is_bound(&self) -> bool {
-        self.model.upgrade().is_some() && self.selection.upgrade().is_some()
+        self.model.upgrade().is_some()
     }
 
     fn sync(&self) {
-        let Some((selection, model)) = self.selection.upgrade().zip(self.model.upgrade()) else {
+        let Some(model) = self.model.upgrade() else {
             return;
         };
-        sync_playlist_entry_selection(&selection, &model, &self.selected_entry_id);
+        self.indicator.set_position(playlist_entry_playing_position(
+            &model,
+            self.current.borrow().as_ref(),
+        ));
     }
 }
 
-fn playlist_entry_selection_position(
+fn playlist_entry_playing_position(
     model: &PlaylistEntryModel,
-    selected_entry_id: &RefCell<Option<String>>,
+    current: Option<&PlaylistEntryCurrentSelection>,
 ) -> u32 {
-    let selected_entry_id = selected_entry_id.borrow();
-    let Some(entry_id) = selected_entry_id.as_ref() else {
-        return gtk::INVALID_LIST_POSITION;
-    };
-    model
-        .visible_position(entry_id)
-        .unwrap_or(gtk::INVALID_LIST_POSITION)
-}
-
-fn sync_playlist_entry_selection(
-    selection: &gtk::SingleSelection,
-    model: &PlaylistEntryModel,
-    selected_entry_id: &RefCell<Option<String>>,
-) {
-    let selected = playlist_entry_selection_position(model, selected_entry_id);
-    if selection.selected() != selected {
-        selection.set_selected(selected);
-    }
-}
-
-fn connect_playlist_entry_model_selection_sync(
-    model: &PlaylistEntryModel,
-    selection: &gtk::SingleSelection,
-    current: Rc<RefCell<Option<PlaylistEntryCurrentSelection>>>,
-    selected_entry_id: Rc<RefCell<Option<String>>>,
-) {
-    let selection = selection.downgrade();
-    let weak_model = model.downgrade();
-    model.connect_items_changed(move |model, _, _, _| {
-        if let Some(current) = current.borrow().as_ref() {
-            *selected_entry_id.borrow_mut() = model.occurrence_for_current(
+    current
+        .and_then(|current| {
+            model.occurrence_for_current(
                 &current.track_id,
                 current.source_rank,
                 current.source_order,
-            );
-        }
-        let Some((selection, model)) = selection.upgrade().zip(weak_model.upgrade()) else {
-            return;
-        };
-        sync_playlist_entry_selection(&selection, &model, &selected_entry_id);
-    });
+            )
+        })
+        .and_then(|entry_id| model.visible_position(&entry_id))
+        .unwrap_or(gtk::INVALID_LIST_POSITION)
 }
 
 #[derive(Clone)]
@@ -257,6 +206,10 @@ pub(crate) struct PlaylistEntriesView {
 impl PlaylistEntriesView {
     pub(crate) fn widget(&self) -> gtk::Widget {
         self.widget.clone()
+    }
+
+    pub(crate) fn item_navigation(&self) -> crate::shell::route::MountedRouteItemNavigation {
+        self.collection.item_navigation()
     }
 
     pub(crate) fn source_play_request(
@@ -404,9 +357,8 @@ pub(crate) fn playlist_entries_collection_projection(
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
-    let selected_entry_id = Rc::new(RefCell::new(None::<String>));
-    let playlist_selection =
-        PlaylistEntryTableSelection::new(&model, &selection, Rc::clone(&selected_entry_id));
+    let playing_indicator = TrackRowPlayingIndicator::new();
+    let playlist_playing = PlaylistEntryTablePlayingState::new(&model, playing_indicator.clone());
     let source_id = shell
         .library
         .selected
@@ -414,16 +366,16 @@ pub(crate) fn playlist_entries_collection_projection(
         .as_ref()
         .map(|selected| Some(selected.source_id.clone()))
         .expect("a playlist route requires one selected source");
-    let current_playlist_selection = playlist_selection.clone();
+    let current_playlist_playing = playlist_playing.clone();
     let selection_source_id = source_id.clone();
     let selection_model = model.clone();
     shell.register_current_route_track_selection(Rc::new(move |current| {
-        if !current_playlist_selection.is_bound() {
+        if !current_playlist_playing.is_bound() {
             return false;
         }
         let expected_context_id = selection_model.visible_context_id();
         let source_context_id = selection_model.source_context_id();
-        current_playlist_selection.select_now_playing_track(
+        current_playlist_playing.set_now_playing_track(
             current,
             selection_source_id.as_ref(),
             &expected_context_id,
@@ -441,20 +393,6 @@ pub(crate) fn playlist_entries_collection_projection(
         }) as Rc<dyn Fn(u32, PlaylistEntryRow)>
     };
 
-    {
-        let model = model.clone();
-        let selected_entry_id = Rc::clone(&selected_entry_id);
-        selection.connect_selection_changed(move |selection, _, _| {
-            sync_playlist_entry_selection(selection, &model, &selected_entry_id);
-        });
-    }
-    connect_playlist_entry_model_selection_sync(
-        &model,
-        &selection,
-        Rc::clone(&playlist_selection.current),
-        Rc::clone(&selected_entry_id),
-    );
-
     let settings = shell
         .settings
         .current
@@ -463,8 +401,9 @@ pub(crate) fn playlist_entries_collection_projection(
     let build_shell = Rc::clone(shell);
     let build_model = model.clone();
     let build_playlist_id = playlist_id;
-    let build_selection = selection;
+    let build_selection = selection.clone();
     let build_play_entry = Rc::clone(&play_entry);
+    let build_playing_indicator = playing_indicator;
     let collection = LibraryCollectionProjection::new(
         settings,
         Rc::new(move |layout| match layout {
@@ -475,6 +414,7 @@ pub(crate) fn playlist_entries_collection_projection(
                     build_playlist_id.clone(),
                     build_selection.clone(),
                     Rc::clone(&build_play_entry),
+                    build_playing_indicator.clone(),
                     content_inset,
                 ))
             }
@@ -497,6 +437,7 @@ fn playlist_entry_table_projection(
     playlist_id: PlaylistId,
     selection: gtk::SingleSelection,
     play_entry: Rc<dyn Fn(u32, PlaylistEntryRow)>,
+    playing_indicator: TrackRowPlayingIndicator,
     content_inset: i32,
 ) -> CollectionTableProjection {
     let fields = shell
@@ -512,6 +453,7 @@ fn playlist_entry_table_projection(
     let column_shell = Rc::clone(shell);
     let column_model = model.clone();
     let column_playlist_id = playlist_id;
+    let column_playing_indicator = playing_indicator;
     let activate = move |position, row| play_entry(position, row);
     let table = dynamic_collection_table(
         shell,
@@ -525,12 +467,13 @@ fn playlist_entry_table_projection(
                 field,
                 column_model.clone(),
                 column_playlist_id.clone(),
+                column_playing_indicator.clone(),
             )
         },
         |field| track_column_fit_width(LibraryListKey::PlaylistTracks, field),
         false,
         Some(Box::new(activate)),
-        Some(selection.upcast()),
+        Some(selection),
         route_column_view_initial_width_with_inset(shell, content_inset),
     );
     let widget = table.widget();
@@ -574,9 +517,12 @@ fn playlist_entry_column_for_field(
     field: LibraryField,
     model: PlaylistEntryModel,
     playlist_id: PlaylistId,
+    playing_indicator: TrackRowPlayingIndicator,
 ) -> gtk::ColumnViewColumn {
     match field {
-        LibraryField::RowIndex => playlist_entry_number_column(shell, model, playlist_id),
+        LibraryField::RowIndex => {
+            playlist_entry_number_column(shell, model, playlist_id, playing_indicator)
+        }
         LibraryField::Image => playlist_entry_image_column(shell, model, playlist_id),
         LibraryField::TitleMerged => playlist_entry_title_column(shell, model, playlist_id),
         LibraryField::Favorite => playlist_entry_favorite_column(shell, model, playlist_id),
@@ -861,6 +807,7 @@ fn playlist_entry_number_column(
     shell: &Rc<Shell>,
     entries: PlaylistEntryModel,
     playlist_id: PlaylistId,
+    playing_indicator: TrackRowPlayingIndicator,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let setup_shell = Rc::clone(shell);
@@ -882,6 +829,7 @@ fn playlist_entry_number_column(
         item.set_child(Some(&cell));
         store_playlist_entry_cell_state(item, state);
     });
+    let bind_playing_indicator = playing_indicator.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -902,14 +850,16 @@ fn playlist_entry_number_column(
             return;
         };
         set_track_row_index_text(&cell, &(row.display_index + 1).to_string());
+        bind_playing_indicator.bind(&cell, item.position());
         bind_playlist_entry_cell_state(&state, row, &entry, &playlist_id);
     });
-    factory.connect_unbind(|_, item| {
+    factory.connect_unbind(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             if let Some(cell) = item
                 .child()
                 .and_then(|child| child.downcast::<gtk::Overlay>().ok())
             {
+                playing_indicator.unbind(&cell);
                 set_track_row_index_text(&cell, "");
             }
             if let Some(state) = playlist_entry_cell_state_for_item(item) {

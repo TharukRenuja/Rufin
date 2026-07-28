@@ -69,6 +69,10 @@ impl GroupedDetailView {
         &self.tracks
     }
 
+    pub(crate) fn item_navigation(&self) -> crate::shell::route::MountedRouteItemNavigation {
+        self.tracks.item_navigation()
+    }
+
     pub(crate) fn replace_prepared(
         &self,
         shell: &Rc<Shell>,

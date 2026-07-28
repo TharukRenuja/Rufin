@@ -112,6 +112,29 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         let transport = shell.products.playback.transport.clone();
         move || transport.play_pause()
     });
+    let navigate_sidebar =
+        gio::SimpleAction::new("navigate-sidebar", Some(glib::VariantTy::UINT32));
+    let navigate_shell = Rc::clone(shell);
+    navigate_sidebar.connect_activate(move |_, parameter| {
+        let Some(position) = parameter.and_then(|position| position.get::<u32>()) else {
+            return;
+        };
+        if let Some(route) =
+            navigation::sidebar_route_at_position(&navigate_shell, position as usize)
+        {
+            navigate_shell.navigate(route);
+        }
+    });
+    shell.chrome.window.add_action(&navigate_sidebar);
+    for position in 1..=9 {
+        let target = (position as u32).to_variant();
+        let action_name = gio::Action::print_detailed_name("win.navigate-sidebar", Some(&target));
+        let accelerator = format!("<Control>{position}");
+        shell
+            .chrome
+            .application
+            .set_accels_for_action(&action_name, &[&accelerator]);
+    }
     add_window_action(shell, "previous-track", &["<Control>b"], {
         let transport = shell.products.playback.transport.clone();
         move || transport.previous()
@@ -362,6 +385,14 @@ fn show_shortcuts_dialog(shell: &Shell) {
         "Forward <Alt>Right",
     ));
     section.add(adw::ShortcutsItem::new(&tr("Menu"), "F10"));
+    section.add(adw::ShortcutsItem::new(
+        &tr("Sidebar route by position"),
+        "<Control>1...9",
+    ));
+    section.add(adw::ShortcutsItem::new(
+        &tr("Navigate page items"),
+        "Up Down Left Right",
+    ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Search"),
         "win.focus-search",
@@ -389,9 +420,9 @@ fn show_shortcuts_dialog(shell: &Shell) {
     dialog.add(section);
 
     let section = adw::ShortcutsSection::new(Some(&tr("Playback")));
-    section.add(adw::ShortcutsItem::from_action(
+    section.add(adw::ShortcutsItem::new(
         &tr("Play/Pause"),
-        "win.play-pause",
+        "space <Control>space",
     ));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Previous"),

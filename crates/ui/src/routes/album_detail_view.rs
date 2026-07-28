@@ -251,7 +251,9 @@ impl Shell {
         );
         table.append(&track_toolbar.widget());
         self.set_route_search(Some(track_projection.search()));
-        table.append(&track_projection.mount_in_scroller(&table_scroller));
+        let item_navigation = track_projection.item_navigation();
+        let track_content = track_projection.mount_in_scroller(&table_scroller);
+        table.append(&track_content);
         content.append(&table);
         wrapper.append(&detail_route_scroller(
             self,
@@ -441,7 +443,9 @@ impl Shell {
                 });
             })
         };
-        MountedRoute::new(route_stack.upcast(), resume).with_library_update(update)
+        MountedRoute::new(route_stack.upcast(), resume)
+            .with_item_navigation(item_navigation)
+            .with_library_update(update)
     }
 
     fn append_album_genre_buttons(

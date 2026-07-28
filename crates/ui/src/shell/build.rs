@@ -76,7 +76,7 @@ fn sidebar_resize_handle() -> gtk::Box {
     handle.set_halign(gtk::Align::Start);
     handle.set_valign(gtk::Align::Fill);
     handle.set_vexpand(true);
-    handle.set_focusable(true);
+    handle.set_focusable(false);
     handle.set_cursor_from_name(Some("col-resize"));
     let label = tr("Hold and drag to resize");
     handle.update_property(&[gtk::accessible::Property::Label(&label)]);
@@ -463,7 +463,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     install_tray(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_overlay(&shell);
-    shell.connect_type_to_search();
+    shell.connect_route_keyboard();
     connect_transient_entry_focus_dismissal(&shell);
     connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
