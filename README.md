@@ -22,16 +22,16 @@
 - Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
 - Optimized for quick startup and navigation, smooth full library browsing
 - Automatic metadata, artwork and lyrics caching
-- Synchronized lyrics, built-in lyrics searcher that prioritizies synchronized lyrics
+- Synchronized lyrics, built-in lyrics finder, adjustable offset, Furigana/Romanization overlay, and karaoke support
 - Local library support with multiple folders and CUE support with separate playable tracks
 - Moods tab, with ability to create smart playlists based on moods/BPM metadata for Navidrome, Subsonic and local libraries
-- Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
+- Built-in Last.fm, Libre.fm, and ListenBrainz integration that can store offline scrobbles and retry when network is available
 - Discord Rich Presence support
 - Gapless playback, crossfade, ReplayGain, equalizer presets and fullscreen player with visualizer
 - Ability to change audio devices with a simple button
 - Fully usable in all window sizes, adjustable sidebar sizes that also support saving 2 different presets based on window sizes
 - A different layout for smaller window sizes up to 450 x 400
-- Expanding keyboard shortcuts catalog
+- Rich keyboard shortcut catalog, with navigation covered as well
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
 - System tray integration
