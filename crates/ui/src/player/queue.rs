@@ -13,21 +13,14 @@ use playback::{OccurrenceId, QueuePage, QueuePageQuery, SequenceEntry};
 use playback::{QueueHandle, QueueReorderRequest, RadioPlayRequest};
 
 use crate::favorites::{
-    FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON, favorite_button_is_active, favorite_icon_button,
-    set_favorite_button_active,
+    FAVORITE_ADD_ICON, favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
 };
 use crate::interactions::add_dynamic_link_hover;
 use crate::interactions::install_context_menu_openers;
-use crate::interactions::{
-    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, RADIO_ICON,
-    context_menu_action, context_menu_box, context_menu_submenu_action, radio_context_submenu,
-};
+use crate::interactions::{ContextMenuSurface, radio_context_submenu};
 use crate::layout::width_allocation_owner;
-use crate::routes::playlist_picker::{
-    PlaylistTrackSource, context_menu_can_add_to_playlist, context_menu_picker_button,
-};
+use crate::routes::playlist_picker::{PlaylistTrackSource, install_context_menu_picker_action};
 use crate::shell::Shell;
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use crate::shell::cover::{ArtworkTile, THUMB_COVER_SIZE};
 use localization::{msgid, tr};
 
@@ -1629,74 +1622,41 @@ fn show_queue_row_context_menu(
     entry: &SequenceEntry,
     pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
-    let main_menu = context_menu_box();
     let track = entry.track.clone();
-    main_menu.append(&context_menu_action(
-        "Remove from Queue",
-        "queue.remove",
-        REMOVE_ICON,
-    ));
-    main_menu.append(&context_menu_action("Play", "queue.play-now", PLAY_ICON));
-    main_menu.append(&context_menu_action(
-        "Play Next",
-        "queue.play-next",
-        PLAY_NEXT_ICON,
-    ));
-
-    main_menu.append(&context_menu_action(
-        "Play Later",
-        "queue.play-last",
-        PLAY_LATER_ICON,
-    ));
-    main_menu.append(&context_menu_submenu_action(
-        msgid("Track radio"),
-        "queue.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("queue"),
-    ));
-    if context_menu_can_add_to_playlist(shell) {
-        if let Some(selected) = shell.library.selected.borrow().as_ref() {
-            main_menu.append(&context_menu_picker_button(
-                "Add to Playlist",
-                ADD_TO_PLAYLIST_ICON,
-                shell,
-                PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()),
-            ));
-        }
+    let surface = ContextMenuSurface::new(row, "queue", None);
+    surface.append_action(msgid("Remove from Queue"), "remove");
+    surface.append_action(msgid("Play"), "play-now");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Track radio"), &radio_context_submenu("queue"));
+    let playlist_source = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .map(|selected| PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()));
+    if playlist_source.is_some() {
+        surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
 
     if entry.track.favorite {
-        main_menu.append(&context_menu_action(
-            "Remove from Favorites",
-            "queue.favorite",
-            FAVORITE_REMOVE_ICON,
-        ));
+        surface.append_action(msgid("Remove from Favorites"), "favorite");
     } else {
-        main_menu.append(&context_menu_action(
-            "Add to Favorites",
-            "queue.favorite",
-            FAVORITE_ADD_ICON,
-        ));
+        surface.append_action(msgid("Add to Favorites"), "favorite");
     }
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
-        main_menu.append(&context_menu_action(
-            "Go to Artist",
-            "queue.go-artist",
-            ARTIST_ICON,
-        ));
+        surface.append_action(msgid("Go to Artist"), "go-artist");
     }
     let album_route = entry.track.album_id.clone().map(Route::AlbumDetail);
     if album_route.is_some() {
-        main_menu.append(&context_menu_action(
-            "Go to Album",
-            "queue.go-album",
-            ALBUM_ICON,
-        ));
+        surface.append_action(msgid("Go to Album"), "go-album");
     }
 
-    let surface = ContextMenuSurface::new(row, "queue", "queue-context-menu", None, &main_menu);
     surface.popover().set_pointing_to(pointing_to.as_ref());
+    if let Some(playlist_source) = playlist_source {
+        install_context_menu_picker_action(&surface, shell, playlist_source);
+    }
 
     let controller = shell.products.playback.queue.clone();
     let radio = shell.products.playback.radio.clone();

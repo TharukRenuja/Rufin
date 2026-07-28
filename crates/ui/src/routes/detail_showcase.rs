@@ -8,7 +8,6 @@ use adw::prelude::*;
 use artwork::ArtworkBinding;
 use tracing::warn;
 
-use crate::interactions::RADIO_ICON;
 use crate::interactions::add_widget_click;
 use crate::layout::width_allocation_owner;
 use crate::localization::bind_label_text_with;
@@ -25,6 +24,7 @@ use super::route_layout::{detail_showcase_cover_only, detail_showcase_cover_size
 use super::routes::TrackListProjection;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
+const RADIO_ICON: &str = "rufin-audio-radio-symbolic";
 
 pub(crate) struct MediaDetailShowcase {
     pub(crate) route_class: &'static str,

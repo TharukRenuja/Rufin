@@ -2,7 +2,7 @@ use std::{rc::Rc, sync::Arc};
 
 use ::library::{MusicFolder, MusicFolderId, SourceId};
 use adw::prelude::*;
-use gtk::{gio, glib};
+use gtk::gio;
 use localization::tr;
 
 use crate::preferences::{
@@ -14,8 +14,8 @@ use crate::shell::Shell;
 
 use super::{configured_source_display_name, folder_count_text};
 
-const SELECT_SOURCE_ACTION: &str = "select-source";
-const SELECT_MUSIC_FOLDER_ACTION: &str = "select-music-folder";
+const SOURCE_CHOICE_ACTION_PREFIX: &str = "source-choice-";
+const MUSIC_FOLDER_CHOICE_ACTION_PREFIX: &str = "music-folder-choice-";
 const MANAGE_LIBRARIES_ACTION: &str = "manage-music-libraries";
 const ADD_LIBRARY_ACTION: &str = "add-music-library";
 const MANAGE_LIBRARIES_DETAILED_ACTION: &str = "win.manage-music-libraries";
@@ -31,71 +31,6 @@ struct SourceMenuContent {
 }
 
 pub(crate) fn install_source_menu_actions(shell: &Rc<Shell>) {
-    let select_source = gio::SimpleAction::new_stateful(
-        SELECT_SOURCE_ACTION,
-        Some(glib::VariantTy::STRING),
-        &"".to_variant(),
-    );
-    let select_source_shell = Rc::clone(shell);
-    select_source.connect_activate(move |_, target| {
-        let Some(source_id) = target.and_then(glib::Variant::str) else {
-            return;
-        };
-        if select_source_shell
-            .source
-            .configured
-            .borrow()
-            .selected_source_id
-            .as_ref()
-            .is_some_and(|selected| selected.as_str() == source_id)
-        {
-            return;
-        }
-        select_source_shell
-            .products
-            .source
-            .select_source(SourceId::new(source_id));
-    });
-    shell.chrome.window.add_action(&select_source);
-
-    let select_music_folder = gio::SimpleAction::new_stateful(
-        SELECT_MUSIC_FOLDER_ACTION,
-        Some(glib::VariantTy::STRING),
-        &"".to_variant(),
-    );
-    let select_music_folder_shell = Rc::clone(shell);
-    select_music_folder.connect_activate(move |_, target| {
-        let Some(folder_id) = target.and_then(glib::Variant::str) else {
-            return;
-        };
-        let Some(source_id) = select_music_folder_shell
-            .source
-            .configured
-            .borrow()
-            .selected_source_id
-            .clone()
-        else {
-            return;
-        };
-        let selected_folder_id = select_music_folder_shell
-            .library
-            .selected
-            .borrow()
-            .as_ref()
-            .and_then(|selected| selected.music_folder_id.as_ref())
-            .map(MusicFolderId::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if selected_folder_id == folder_id {
-            return;
-        }
-        select_music_folder_shell.products.source.set_music_folder(
-            source_id,
-            (!folder_id.is_empty()).then(|| MusicFolderId::new(folder_id)),
-        );
-    });
-    shell.chrome.window.add_action(&select_music_folder);
-
     let manage_libraries = gio::SimpleAction::new(MANAGE_LIBRARIES_ACTION, None);
     let manage_libraries_shell = Rc::clone(shell);
     manage_libraries.connect_activate(move |_, _| {
@@ -115,7 +50,7 @@ pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, gio::Menu) {
     let configured = shell.source.configured.borrow();
     let selected = shell.library.selected.borrow();
     let content = source_menu_content(&configured, selected.as_ref());
-    update_selection_action_states(shell, &content);
+    replace_selection_actions(shell, &content);
 
     let menu = gio::Menu::new();
     let sources = gio::Menu::new();
@@ -125,20 +60,27 @@ pub(crate) fn source_submenu(shell: &Rc<Shell>) -> (String, gio::Menu) {
         for index in source_order(&content.sources, content.selected_source_id.as_ref()) {
             let source = &content.sources[index];
             let label = source_menu_label(source, &content.local_folders);
-            append_targeted_item(&sources, &label, "win.select-source", source.id.as_str());
+            sources.append(
+                Some(&label),
+                Some(&format!("win.{SOURCE_CHOICE_ACTION_PREFIX}{index}")),
+            );
         }
     }
     menu.append_section(Some(&tr("Select Source")), &sources);
 
     if !content.music_folders.is_empty() {
         let folders = gio::Menu::new();
-        append_targeted_item(&folders, &tr("All Music"), "win.select-music-folder", "");
-        for folder in content.music_folders.iter() {
-            append_targeted_item(
-                &folders,
-                &folder.name,
-                "win.select-music-folder",
-                folder.id.as_str(),
+        folders.append(
+            Some(&tr("All Music")),
+            Some(&format!("win.{MUSIC_FOLDER_CHOICE_ACTION_PREFIX}0")),
+        );
+        for (index, folder) in content.music_folders.iter().enumerate() {
+            folders.append(
+                Some(&folder.name),
+                Some(&format!(
+                    "win.{MUSIC_FOLDER_CHOICE_ACTION_PREFIX}{}",
+                    index + 1
+                )),
             );
         }
         menu.append_section(Some(&tr("Server Library")), &folders);
@@ -198,35 +140,83 @@ fn source_menu_content(
     }
 }
 
-fn update_selection_action_states(shell: &Shell, content: &SourceMenuContent) {
-    let source_id = content
-        .selected_source_id
-        .as_ref()
-        .map(SourceId::as_str)
-        .unwrap_or_default();
-    set_action_state(shell, SELECT_SOURCE_ACTION, source_id);
-    let folder_id = content
-        .selected_music_folder_id
-        .as_ref()
-        .map(MusicFolderId::as_str)
-        .unwrap_or_default();
-    set_action_state(shell, SELECT_MUSIC_FOLDER_ACTION, folder_id);
+fn replace_selection_actions(shell: &Rc<Shell>, content: &SourceMenuContent) {
+    for name in shell.chrome.window.list_actions() {
+        if name.starts_with(SOURCE_CHOICE_ACTION_PREFIX)
+            || name.starts_with(MUSIC_FOLDER_CHOICE_ACTION_PREFIX)
+        {
+            shell.chrome.window.remove_action(&name);
+        }
+    }
+
+    for (index, source) in content.sources.iter().enumerate() {
+        let action = choice_action(
+            &format!("{SOURCE_CHOICE_ACTION_PREFIX}{index}"),
+            content.selected_source_id.as_ref() == Some(&source.id),
+            {
+                let shell = Rc::clone(shell);
+                let source_id = source.id.clone();
+                move || {
+                    if shell.source.configured.borrow().selected_source_id.as_ref()
+                        != Some(&source_id)
+                    {
+                        shell.products.source.select_source(source_id.clone());
+                    }
+                }
+            },
+        );
+        shell.chrome.window.add_action(&action);
+    }
+
+    if content.music_folders.is_empty() {
+        return;
+    }
+    let all_music = choice_action(
+        &format!("{MUSIC_FOLDER_CHOICE_ACTION_PREFIX}0"),
+        content.selected_music_folder_id.is_none(),
+        {
+            let shell = Rc::clone(shell);
+            move || select_music_folder(&shell, None)
+        },
+    );
+    shell.chrome.window.add_action(&all_music);
+    for (index, folder) in content.music_folders.iter().enumerate() {
+        let folder_id = folder.id.clone();
+        let action = choice_action(
+            &format!("{MUSIC_FOLDER_CHOICE_ACTION_PREFIX}{}", index + 1),
+            content.selected_music_folder_id.as_ref() == Some(&folder_id),
+            {
+                let shell = Rc::clone(shell);
+                move || select_music_folder(&shell, Some(folder_id.clone()))
+            },
+        );
+        shell.chrome.window.add_action(&action);
+    }
 }
 
-fn set_action_state(shell: &Shell, name: &str, state: &str) {
-    let Some(action) = shell.chrome.window.lookup_action(name) else {
-        return;
-    };
-    let Ok(action) = action.downcast::<gio::SimpleAction>() else {
-        return;
-    };
-    action.set_state(&state.to_variant());
+fn choice_action(name: &str, active: bool, select: impl Fn() + 'static) -> gio::SimpleAction {
+    let action = gio::SimpleAction::new_stateful(name, None, &active.to_variant());
+    action.connect_activate(move |action, _| {
+        action.set_state(&true.to_variant());
+        select();
+    });
+    action
 }
 
-fn append_targeted_item(menu: &gio::Menu, label: &str, action: &str, target: &str) {
-    let item = gio::MenuItem::new(Some(label), None);
-    item.set_action_and_target_value(Some(action), Some(&target.to_variant()));
-    menu.append_item(&item);
+fn select_music_folder(shell: &Shell, folder_id: Option<MusicFolderId>) {
+    let Some(source_id) = shell.source.configured.borrow().selected_source_id.clone() else {
+        return;
+    };
+    let selected_folder_id = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .and_then(|selected| selected.music_folder_id.clone());
+    if selected_folder_id.as_ref() == folder_id.as_ref() {
+        return;
+    }
+    shell.products.source.set_music_folder(source_id, folder_id);
 }
 
 fn source_menu_label(source: &SourceSummary, local_folders: &[LocalFolder]) -> String {
@@ -259,6 +249,8 @@ fn source_order(sources: &[SourceSummary], selected: Option<&SourceId>) -> Vec<u
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     fn source(id: &str) -> SourceSummary {
@@ -275,5 +267,26 @@ mod tests {
         let selected = sources[2].id.clone();
         assert_eq!(source_order(&sources, Some(&selected)), [2, 0, 1]);
         assert_eq!(source_order(&sources, None), [0, 1, 2]);
+    }
+
+    #[test]
+    fn selection_choices_stay_checked_when_activated() {
+        let selected = Rc::new(Cell::new(false));
+        let selected_for_action = Rc::clone(&selected);
+        let action = choice_action("choice", false, move || selected_for_action.set(true));
+
+        assert!(action.parameter_type().is_none());
+        assert_eq!(
+            action.state().and_then(|state| state.get::<bool>()),
+            Some(false)
+        );
+
+        action.activate(None);
+
+        assert!(selected.get());
+        assert_eq!(
+            action.state().and_then(|state| state.get::<bool>()),
+            Some(true)
+        );
     }
 }

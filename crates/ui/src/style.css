@@ -316,7 +316,6 @@ row:focus {
 .album-detail-genre-pill:focus,
 .artist-count-button:focus,
 .detail-external-link-button:focus,
-.context-menu-button:focus,
 .queue-link:focus,
 .queue-favorite-button:focus,
 .favorite-toggle:focus {
@@ -524,34 +523,6 @@ menubutton:disabled > button {
 button.suggested-action:disabled {
   opacity: 0.58;
   box-shadow: none;
-}
-
-.context-menu-icon {
-  min-width: 18px;
-  min-height: 18px;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.context-submenu-arrow {
-  color: color-mix(in srgb, var(--window-fg-color) 72%, transparent);
-}
-
-popover.context-menu-opening button.context-menu-button:hover,
-popover.context-menu-opening button.context-menu-button:focus {
-  background-color: transparent;
-  background-image: none;
-  box-shadow: none;
-}
-
-popover.track-context-menu > contents,
-popover.album-context-menu > contents,
-popover.artist-context-menu > contents,
-popover.genre-context-menu > contents,
-popover.playlist-context-menu > contents,
-popover.queue-context-menu > contents,
-popover.context-submenu > contents {
-  padding: 2px;
 }
 
 .context-playlist-row {
