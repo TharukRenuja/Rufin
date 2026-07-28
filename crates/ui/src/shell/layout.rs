@@ -36,6 +36,7 @@ mod shell_allocation_owner_imp {
     #[derive(Default)]
     pub struct ShellAllocationOwner {
         pub(super) before_allocate: RefCell<Option<AllocationCallback>>,
+        pub(super) after_allocate: RefCell<Option<AllocationCallback>>,
     }
 
     #[glib::object_subclass]
@@ -48,6 +49,7 @@ mod shell_allocation_owner_imp {
     impl ObjectImpl for ShellAllocationOwner {
         fn dispose(&self) {
             self.before_allocate.take();
+            self.after_allocate.take();
             while let Some(child) = self.obj().first_child() {
                 child.unparent();
             }
@@ -77,6 +79,11 @@ mod shell_allocation_owner_imp {
 
             if let Some(child) = self.obj().first_child() {
                 child.allocate(width, height, baseline, None);
+            }
+
+            let after_allocate = self.after_allocate.borrow().clone();
+            if let Some(after_allocate) = after_allocate {
+                after_allocate(width, height);
             }
         }
 
@@ -112,6 +119,14 @@ impl ShellAllocationOwner {
         self.imp()
             .before_allocate
             .replace(Some(Rc::new(before_allocate) as ShellAllocationCallback));
+    }
+
+    fn set_after_allocate(&self, after_allocate: impl Fn(i32, i32) + 'static) {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+
+        self.imp()
+            .after_allocate
+            .replace(Some(Rc::new(after_allocate) as ShellAllocationCallback));
     }
 }
 
@@ -391,10 +406,6 @@ impl Shell {
     }
 
     fn apply_layout_allocation(self: &Rc<Self>, width: i32, _height: i32) {
-        // Startup visibility belongs to this allocation owner. Commit a ready
-        // route before choosing and allocating the Stack child so the reveal
-        // never depends on a second allocation request from inside this one.
-        self.try_reveal_startup_route_for_allocation(width);
         let settings = self.settings.current.borrow().layout.clone();
         let left_drag_preview = self.layout_state.left_drag_preview.get();
         let right_drag_width = self.layout_state.right_drag_width.get();
@@ -409,12 +420,11 @@ impl Shell {
 
     fn apply_resolved_layout_for_allocation(self: &Rc<Self>, resolved: ResolvedLayout) {
         let login_active = self.source.login_screen_active();
-        let startup_loading_active =
-            startup_loading_screen_active(login_active, self.startup.route_revealed.get());
+        let presentation = root_presentation(login_active, self.startup.route_revealed.get());
         let previous_left = self.left_sidebar_mode();
         let previous_right_visible = self.right_sidebar_visible();
 
-        let app_active = !login_active && !startup_loading_active;
+        let app_active = presentation.app_active;
         let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
         let hidden_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Hidden;
         let overlay_sidebar_width = if hidden_sidebar {
@@ -431,18 +441,17 @@ impl Shell {
             self.refresh_fullscreen_player_layout();
         }
 
-        let root_page = if login_active {
-            "login"
-        } else if startup_loading_active {
-            "startup-loading"
-        } else {
-            "app"
-        };
         let root_changed =
-            self.chrome.root_stack.visible_child_name().as_deref() != Some(root_page);
+            self.chrome.root_stack.visible_child_name().as_deref() != Some(presentation.root_page);
         if root_changed {
-            self.chrome.root_stack.set_visible_child_name(root_page);
+            self.chrome
+                .root_stack
+                .set_visible_child_name(presentation.root_page);
         }
+        set_widget_visible(
+            &self.chrome.startup_loading_host,
+            presentation.startup_loading,
+        );
         if self
             .chrome
             .app_content_stack
@@ -638,6 +647,21 @@ pub(crate) fn startup_loading_screen_active(
     startup_route_revealed: bool,
 ) -> bool {
     !login_active && !startup_route_revealed
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RootPresentation {
+    root_page: &'static str,
+    app_active: bool,
+    startup_loading: bool,
+}
+
+fn root_presentation(login_active: bool, startup_route_revealed: bool) -> RootPresentation {
+    RootPresentation {
+        root_page: if login_active { "login" } else { "app" },
+        app_active: !login_active,
+        startup_loading: startup_loading_screen_active(login_active, startup_route_revealed),
+    }
 }
 
 fn connect_left_sidebar_resize(shell: &Rc<Shell>) {
@@ -941,10 +965,16 @@ fn right_sidebar_handle_hit(start: f64, width: i32, x: f64) -> bool {
 
 fn connect_layout_allocation_owner(shell: &Rc<Shell>) {
     let owner = shell.layout_state.owner.clone();
-    let shell = Rc::downgrade(shell);
+    let before_shell = Rc::downgrade(shell);
     owner.set_before_allocate(move |width, height| {
-        if let Some(shell) = shell.upgrade() {
+        if let Some(shell) = before_shell.upgrade() {
             shell.apply_layout_allocation(width, height);
+        }
+    });
+    let after_shell = Rc::downgrade(shell);
+    owner.set_after_allocate(move |width, _| {
+        if let Some(shell) = after_shell.upgrade() {
+            shell.finish_startup_route_allocation(width);
         }
     });
 }
@@ -960,6 +990,34 @@ mod tests {
     use crate::{LayoutSettings, LeftSidebarMode, RightSidebarMode};
 
     use super::*;
+
+    #[test]
+    fn preparing_library_keeps_the_app_allocated_under_the_overlay() {
+        assert_eq!(
+            root_presentation(false, false),
+            RootPresentation {
+                root_page: "app",
+                app_active: true,
+                startup_loading: true,
+            }
+        );
+        assert_eq!(
+            root_presentation(false, true),
+            RootPresentation {
+                root_page: "app",
+                app_active: true,
+                startup_loading: false,
+            }
+        );
+        assert_eq!(
+            root_presentation(true, false),
+            RootPresentation {
+                root_page: "login",
+                app_active: false,
+                startup_loading: false,
+            }
+        );
+    }
 
     #[test]
     fn layout_shrinks_then_hides_right_sidebar_without_changing_preference() {

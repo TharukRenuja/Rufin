@@ -31,10 +31,62 @@ pub(crate) struct MediaDetailShowcase {
     pub(crate) seed: u32,
     pub(crate) initial_width: i32,
     pub(crate) cover: DetailCoverProjection,
-    pub(crate) external_links: Option<gtk::Widget>,
-    pub(crate) external_links_class: Option<&'static str>,
+    pub(crate) external_links: DetailExternalLinksProjection,
     pub(crate) text_stack: gtk::Widget,
     pub(crate) actions: gtk::Widget,
+}
+
+#[derive(Clone)]
+pub(crate) struct DetailExternalLinksProjection {
+    root: gtk::Box,
+    cover_only: Rc<Cell<bool>>,
+}
+
+impl DetailExternalLinksProjection {
+    pub(crate) fn new(class: Option<&'static str>, links: Option<gtk::Widget>) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        if let Some(class) = class {
+            root.add_css_class(class);
+        }
+        root.set_halign(gtk::Align::Center);
+        let projection = Self {
+            root,
+            cover_only: Rc::new(Cell::new(false)),
+        };
+        projection.replace(links);
+        projection
+    }
+
+    fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+
+    pub(crate) fn replace(&self, links: Option<gtk::Widget>) {
+        while let Some(child) = self.root.first_child() {
+            self.root.remove(&child);
+        }
+        if let Some(links) = links {
+            links.set_halign(gtk::Align::Center);
+            self.root.append(&links);
+        }
+        self.apply_visibility();
+    }
+
+    fn set_cover_only(&self, cover_only: bool) {
+        self.cover_only.set(cover_only);
+        self.apply_visibility();
+    }
+
+    fn apply_visibility(&self) {
+        let has_links = self.root.first_child().is_some();
+        let cover_only = self.cover_only.get();
+        let visible = detail_external_links_visible(has_links, cover_only);
+        self.root.set_visible(visible);
+    }
+}
+
+fn detail_external_links_visible(has_links: bool, cover_only: bool) -> bool {
+    has_links && !cover_only
 }
 
 pub(crate) struct CollectionDetailShowcase {
@@ -71,19 +123,7 @@ pub(crate) fn media_detail_showcase(shell: &Rc<Shell>, config: MediaDetailShowca
     let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
     cover_column.set_halign(gtk::Align::Start);
     cover_column.append(&config.cover.button());
-
-    let link_stack = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    if let Some(class) = config.external_links_class {
-        link_stack.add_css_class(class);
-    }
-    link_stack.set_halign(gtk::Align::Center);
-    if let Some(external_links) = config.external_links {
-        external_links.set_halign(gtk::Align::Center);
-        link_stack.append(&external_links);
-    }
-    if link_stack.first_child().is_some() {
-        cover_column.append(&link_stack);
-    }
+    cover_column.append(&config.external_links.widget());
     body.append(&cover_column);
 
     let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -102,7 +142,7 @@ pub(crate) fn media_detail_showcase(shell: &Rc<Shell>, config: MediaDetailShowca
         header: header.clone(),
         cover_column,
         cover: config.cover,
-        link_stack,
+        external_links: config.external_links,
         metadata,
     };
     presentation.apply_viewport_width(config.initial_width);
@@ -122,7 +162,7 @@ struct MediaShowcasePresentation {
     header: gtk::Box,
     cover_column: gtk::Box,
     cover: DetailCoverProjection,
-    link_stack: gtk::Box,
+    external_links: DetailExternalLinksProjection,
     metadata: gtk::Box,
 }
 
@@ -133,7 +173,7 @@ impl MediaShowcasePresentation {
         }
         let cover_only = detail_showcase_cover_only(width);
         update_tiny_detail_showcase(&self.header, width);
-        self.link_stack.set_visible(!cover_only);
+        self.external_links.set_cover_only(cover_only);
         self.metadata.set_visible(!cover_only);
     }
 
@@ -601,7 +641,7 @@ pub(crate) fn fit_detail_text(label: &gtk::Label, text: &str) {
 pub(crate) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<gtk::Widget> {
     let settings = shell.settings.current.borrow();
     let link_settings = &settings.external_site_links;
-    if !settings.allows_external_site_links() {
+    if !settings.shows_external_site_links() {
         return None;
     }
 
@@ -643,7 +683,7 @@ pub(crate) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<g
 pub(crate) fn artist_external_links(shell: &Rc<Shell>, artist: &Artist) -> Option<gtk::Widget> {
     let settings = shell.settings.current.borrow();
     let link_settings = &settings.external_site_links;
-    if !settings.allows_external_site_links() {
+    if !settings.shows_external_site_links() {
         return None;
     }
 
@@ -806,8 +846,8 @@ fn percent_encode_path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        detail_cover_render_size, full_artwork_size, lastfm_album_url, lastfm_artist_url,
-        musicbrainz_album_url,
+        detail_cover_render_size, detail_external_links_visible, full_artwork_size,
+        lastfm_album_url, lastfm_artist_url, musicbrainz_album_url,
     };
     use crate::routes::route_layout::detail_showcase_cover_size;
 
@@ -817,6 +857,14 @@ mod tests {
         for width in 1..=1_200 {
             assert!(detail_showcase_cover_size(width) <= render_size);
         }
+    }
+
+    #[test]
+    fn detail_external_links_need_content_and_metadata_space() {
+        assert!(!detail_external_links_visible(false, false));
+        assert!(!detail_external_links_visible(false, true));
+        assert!(!detail_external_links_visible(true, true));
+        assert!(detail_external_links_visible(true, false));
     }
 
     #[test]

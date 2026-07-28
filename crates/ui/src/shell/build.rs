@@ -129,6 +129,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let startup = StartupState {
         route_revealed: Cell::new(!defer_initial_route),
         initial_launch: Cell::new(defer_initial_route),
+        route_allocated: Cell::new(false),
         reveal_deadline: RefCell::new(None),
     };
     let playback_state = PlaybackState {
@@ -221,6 +222,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     startup_loading_host.add_css_class("startup-loading-root");
     startup_loading_host.set_hexpand(true);
     startup_loading_host.set_vexpand(true);
+    startup_loading_host.set_visible(false);
 
     let upper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     upper.set_hexpand(true);
@@ -328,8 +330,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         window_drag_handle_with_child("bottom-player-drag-handle", &player_controls.root);
     app_root.append(&bottom_player_handle);
 
-    root_stack.add_named(&login_host, Some("login"));
-    root_stack.add_named(&startup_loading_host, Some("startup-loading"));
     let app_root_overlay = gtk::Overlay::new();
     app_root_overlay.set_hexpand(true);
     app_root_overlay.set_vexpand(true);
@@ -341,7 +341,10 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     control_feedback_label.set_visible(false);
     app_root_overlay.add_overlay(&control_feedback_label);
     app_root_overlay.set_measure_overlay(&control_feedback_label, false);
+    app_root_overlay.add_overlay(&startup_loading_host);
+    app_root_overlay.set_measure_overlay(&startup_loading_host, false);
 
+    root_stack.add_named(&login_host, Some("login"));
     root_stack.add_named(&app_root_overlay, Some("app"));
     let layout_state = ShellLayoutState::new(&root_stack);
     let quick_toast_overlay = adw::ToastOverlay::new();
@@ -360,7 +363,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         control_feedback_label,
         root_stack,
         app_root_overlay,
-        app_root,
         app_content_stack,
         login_host,
         startup_loading_host,

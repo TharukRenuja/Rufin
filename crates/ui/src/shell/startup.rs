@@ -13,6 +13,7 @@ use super::Shell;
 pub(super) struct StartupState {
     pub(super) route_revealed: Cell<bool>,
     pub(super) initial_launch: Cell<bool>,
+    pub(super) route_allocated: Cell<bool>,
     pub(super) reveal_deadline: RefCell<Option<glib::SourceId>>,
 }
 
@@ -22,16 +23,19 @@ impl Shell {
     pub(crate) fn enter_startup_loading(self: &Rc<Self>) {
         self.startup.initial_launch.set(false);
         self.startup.route_revealed.set(false);
+        self.startup.route_allocated.set(false);
         self.cancel_startup_route_reveal();
+        self.cancel_source_thumbnail_warm();
         self.clear_mounted_routes();
-        self.update_layout();
         self.render_startup_loading_view();
+        self.update_layout();
     }
 
     pub(crate) fn render_startup_loading_view(&self) {
         self.chrome
             .root_stack
-            .set_visible_child(&self.chrome.startup_loading_host);
+            .set_visible_child(&self.chrome.app_root_overlay);
+        self.chrome.startup_loading_host.set_visible(true);
         while let Some(child) = self.chrome.startup_loading_host.first_child() {
             self.chrome.startup_loading_host.remove(&child);
         }
@@ -74,10 +78,10 @@ impl Shell {
             return;
         }
 
+        self.startup.route_allocated.set(false);
         self.update_layout();
         self.begin_startup_cover_prime();
         self.prepare_startup_route_content();
-        self.start_source_thumbnail_warm();
         let shell = Rc::clone(self);
         let deadline = glib::timeout_add_local_once(
             Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS),
@@ -110,7 +114,20 @@ impl Shell {
         self.reveal_startup_route();
     }
 
-    pub(in crate::shell) fn try_reveal_startup_route_for_allocation(self: &Rc<Self>, width: i32) {
+    pub(in crate::shell) fn finish_startup_route_allocation(self: &Rc<Self>, width: i32) {
+        if self.startup.reveal_deadline.borrow().is_none()
+            || self.startup.route_revealed.get()
+            || self.source.login_screen_active()
+            || !self.has_active_mounted_route()
+            || width <= 1
+        {
+            return;
+        }
+        if self.position_startup_queue_for_reveal() {
+            self.layout_state.owner.queue_allocate();
+            return;
+        }
+        self.startup.route_allocated.set(true);
         if self.startup_route_ready_for_width(width) {
             self.commit_startup_route_reveal();
         }
@@ -121,6 +138,7 @@ impl Shell {
             && !self.startup.route_revealed.get()
             && !self.source.login_screen_active()
             && self.has_active_mounted_route()
+            && self.startup.route_allocated.get()
             && width > 1
             && self.startup_cover_prime_pending_count() == 0
     }
@@ -129,7 +147,9 @@ impl Shell {
         self.startup.initial_launch.set(false);
         self.startup.route_revealed.set(true);
         self.cancel_startup_route_reveal();
+        self.chrome.startup_loading_host.set_visible(false);
         self.products.source.selected_library_revealed();
+        self.start_source_thumbnail_warm();
     }
 
     pub(crate) fn cancel_startup_route_reveal(&self) {
@@ -162,10 +182,6 @@ impl Shell {
         self.commit_startup_route_reveal();
 
         self.update_layout();
-        self.chrome.window.queue_resize();
-        self.chrome.app_root.queue_resize();
-        self.route_viewport.route_host.queue_resize();
-        self.right_panel.right_panel_slot.queue_resize();
     }
 }
 

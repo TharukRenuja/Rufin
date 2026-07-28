@@ -570,7 +570,6 @@ impl Shell {
             return;
         };
         let generation = self.artwork.thumbnail_warm.generation.get();
-        let startup_prime = self.reserve_startup_cover_prime();
         let shell = Rc::downgrade(self);
         let loaded = Arc::clone(&selected.loaded);
         let music_folder_id = selected.music_folder_id.clone();
@@ -625,7 +624,7 @@ impl Shell {
                         .products
                         .artwork
                         .prepare(selected.artwork.clone(), request);
-                    match shell.products.artwork.request_prepared(prepared) {
+                    match shell.products.artwork.warm_prepared(prepared) {
                         Ok(artwork::ArtworkLoad::Ready(image)) => {
                             shell.texture_for_decoded(&selected.source_id, image);
                         }
@@ -649,12 +648,11 @@ impl Shell {
                     shell.texture_for_decoded(&selected.source_id, image);
                 }
             }
-            drop(startup_prime);
         });
         self.artwork.thumbnail_warm.task.replace(Some(task));
     }
 
-    fn cancel_source_thumbnail_warm(&self) {
+    pub(in crate::shell) fn cancel_source_thumbnail_warm(&self) {
         let state = &self.artwork.thumbnail_warm;
         state
             .generation

@@ -26,10 +26,10 @@ use playback::{QueuePlacement, RadioPlayRequest};
 use super::collections::{library_route_inset, set_library_table_content_height};
 use super::detail_links::album_artist_route;
 use super::detail_showcase::{
-    DetailSummaryProjection, MediaDetailShowcase, album_external_links,
-    append_loaded_batch_queue_actions, detail_action_row, detail_cover_projection,
-    detail_genre_pill_button, detail_primary_action_button, detail_radio_button, fit_detail_text,
-    fitted_detail_title_label, media_detail_showcase,
+    DetailExternalLinksProjection, DetailSummaryProjection, MediaDetailShowcase,
+    album_external_links, append_loaded_batch_queue_actions, detail_action_row,
+    detail_cover_projection, detail_genre_pill_button, detail_primary_action_button,
+    detail_radio_button, fit_detail_text, fitted_detail_title_label, media_detail_showcase,
 };
 use super::release_kind::album_release_kind_label;
 use super::route::Route;
@@ -73,13 +73,9 @@ impl Shell {
         let tracks = detail.tracks.clone();
         let current_album = Rc::new(RefCell::new(Arc::clone(&album)));
         let context_id = format!("album:{}", album_id.as_str());
-        let applied_external_link_policy = {
-            let settings = self.settings.current.borrow();
-            Rc::new(RefCell::new((
-                settings.private_mode,
-                settings.external_site_links.clone(),
-            )))
-        };
+        let applied_external_link_settings = Rc::new(RefCell::new(
+            self.settings.current.borrow().external_site_links.clone(),
+        ));
 
         let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
@@ -226,10 +222,10 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        let external_links = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        if let Some(links) = album_external_links(self, &album) {
-            external_links.append(&links);
-        }
+        let external_links = DetailExternalLinksProjection::new(
+            Some("album-detail-link-stack"),
+            album_external_links(self, &album),
+        );
         let showcase = media_detail_showcase(
             self,
             MediaDetailShowcase {
@@ -237,8 +233,7 @@ impl Shell {
                 seed: album.color_seed,
                 initial_width: inner_content_width,
                 cover: cover.clone(),
-                external_links: Some(external_links.clone().upcast()),
-                external_links_class: Some("album-detail-link-stack"),
+                external_links: external_links.clone(),
                 text_stack: text_stack.upcast(),
                 actions: actions.upcast(),
             },
@@ -337,12 +332,7 @@ impl Shell {
                     }
                     shell.append_album_genre_buttons(&genres, &album.relations.genres);
                     set_favorite_button_active(&favorite, album.favorite);
-                    while let Some(child) = external_links.first_child() {
-                        external_links.remove(&child);
-                    }
-                    if let Some(links) = album_external_links(&shell, &album) {
-                        external_links.append(&links);
-                    }
+                    external_links.replace(album_external_links(&shell, &album));
                     current_album.replace(album);
                     route_stack.set_visible_child_name("content");
                 },
@@ -391,23 +381,16 @@ impl Shell {
             let shell = Rc::clone(self);
             let album = Rc::clone(&current_album);
             let external_links = external_links.clone();
-            let applied_external_link_policy = Rc::clone(&applied_external_link_policy);
+            let applied_external_link_settings = Rc::clone(&applied_external_link_settings);
             let track_projection = track_projection.clone();
             let read = Rc::clone(&read);
             let identity = identity.clone();
             Rc::new(move || {
-                let external_link_policy = {
-                    let settings = shell.settings.current.borrow();
-                    (settings.private_mode, settings.external_site_links.clone())
-                };
-                if *applied_external_link_policy.borrow() != external_link_policy {
-                    while let Some(child) = external_links.first_child() {
-                        external_links.remove(&child);
-                    }
-                    if let Some(links) = album_external_links(&shell, &album.borrow()) {
-                        external_links.append(&links);
-                    }
-                    applied_external_link_policy.replace(external_link_policy);
+                let external_link_settings =
+                    shell.settings.current.borrow().external_site_links.clone();
+                if *applied_external_link_settings.borrow() != external_link_settings {
+                    external_links.replace(album_external_links(&shell, &album.borrow()));
+                    applied_external_link_settings.replace(external_link_settings);
                 }
                 let settings = shell
                     .settings

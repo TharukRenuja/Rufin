@@ -129,8 +129,8 @@ impl Settings {
         self.notifications_enabled
     }
 
-    pub fn allows_external_site_links(&self) -> bool {
-        self.external_site_links.enabled && !self.private_mode
+    pub fn shows_external_site_links(&self) -> bool {
+        self.external_site_links.enabled
     }
 
     pub fn allows_external_album_lookup(&self) -> bool {
