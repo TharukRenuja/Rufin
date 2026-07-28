@@ -63,7 +63,13 @@ pub(crate) fn download(
 }
 
 fn get(client: &Client, url: Url, context: &str) -> Result<Response, String> {
-    debug!(service = "album-lookup", method = "GET", %url, %context, "sending remote request");
+    debug!(
+        service = "album-lookup",
+        method = "GET",
+        public_url = %url,
+        %context,
+        "sending remote request"
+    );
     let started = Instant::now();
     let response = client.get(url).send().map_err(|error| error.to_string())?;
     debug!(
