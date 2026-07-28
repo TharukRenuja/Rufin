@@ -17,11 +17,32 @@ pub(crate) struct LyricsState {
     pub(crate) timing_generation: Cell<u64>,
     pub(crate) timing_source: RefCell<Option<glib::SourceId>>,
     pub(crate) panel_visible: Cell<bool>,
+    pub(crate) right_pane_dirty: Cell<bool>,
+    pub(crate) fullscreen_pane_dirty: Cell<bool>,
     pub(crate) search_dialog: RefCell<Option<LyricsSearchDialog>>,
     pub(crate) settings_dialog: RefCell<Option<LyricsSettingsDialog>>,
 }
 
 impl Shell {
+    pub(crate) fn right_lyrics_surface_visible(&self) -> bool {
+        self.right_sidebar_visible() && self.lyrics.panel_visible.get()
+    }
+
+    pub(crate) fn fullscreen_lyrics_surface_visible(&self) -> bool {
+        self.fullscreen_player_visible()
+            && self
+                .player_view
+                .fullscreen_player
+                .stack
+                .visible_child_name()
+                .as_deref()
+                == Some("lyrics")
+    }
+
+    pub(crate) fn lyrics_surface_visible(&self) -> bool {
+        self.right_lyrics_surface_visible() || self.fullscreen_lyrics_surface_visible()
+    }
+
     pub(crate) fn visible_lyrics(&self) -> Option<Arc<LyricsDocument>> {
         let current_media = current_playback_media_id(&self.playback.player.borrow());
         match &*self.lyrics.projection.borrow() {
@@ -142,11 +163,16 @@ impl Shell {
     pub(crate) fn refocus_current_lyrics_highlight(&self) {
         let lyrics = self.visible_lyrics();
         let position_millis = self.lyrics_position_millis(self.current_position_millis());
-        for pane in [
-            &self.right_panel.lyrics_pane,
-            &self.player_view.fullscreen_player.lyrics_pane,
-        ] {
-            pane.refocus_highlight(lyrics.as_deref(), position_millis);
+        if self.right_lyrics_surface_visible() {
+            self.right_panel
+                .lyrics_pane
+                .refocus_highlight(lyrics.as_deref(), position_millis);
+        }
+        if self.fullscreen_lyrics_surface_visible() {
+            self.player_view
+                .fullscreen_player
+                .lyrics_pane
+                .refocus_highlight(lyrics.as_deref(), position_millis);
         }
     }
 
@@ -161,7 +187,7 @@ impl Shell {
         if self.visible_lyrics().is_some() || self.current_lyrics_loading() {
             return;
         }
-        if !self.lyrics.panel_visible.get() && !self.fullscreen_player_visible() {
+        if !self.lyrics_surface_visible() {
             return;
         }
         self.products.lyrics.load(media_id);
@@ -198,15 +224,22 @@ impl Shell {
     }
 
     pub(crate) fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
+        if !self.lyrics_surface_visible() {
+            return;
+        }
         let lyrics = self.visible_lyrics();
         let lyrics_position_millis = self.lyrics_position_millis(position_millis);
-        self.right_panel
-            .lyrics_pane
-            .update_highlight(lyrics.as_deref(), lyrics_position_millis);
-        self.player_view
-            .fullscreen_player
-            .lyrics_pane
-            .update_highlight(lyrics.as_deref(), lyrics_position_millis);
+        if self.right_lyrics_surface_visible() {
+            self.right_panel
+                .lyrics_pane
+                .update_highlight(lyrics.as_deref(), lyrics_position_millis);
+        }
+        if self.fullscreen_lyrics_surface_visible() {
+            self.player_view
+                .fullscreen_player
+                .lyrics_pane
+                .update_highlight(lyrics.as_deref(), lyrics_position_millis);
+        }
         self.schedule_next_lyrics_highlight(position_millis);
     }
 

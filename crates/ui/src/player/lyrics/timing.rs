@@ -15,6 +15,9 @@ impl Shell {
         }
     }
     pub(crate) fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
+        if !self.lyrics_surface_visible() {
+            return;
+        }
         let playing = self
             .playback
             .player
