@@ -157,9 +157,11 @@ impl JellyfinSource {
                     .is_some_and(|kind| kind.eq_ignore_ascii_case("music"))
             })
             .filter_map(|item| {
+                let image_ref = primary_image_ref("music-folder", &item.id, &item.image_tags);
                 item.name.map(|name| MusicFolder {
                     id: MusicFolderId::new(jellyfin_id("music-folder", &item.id)),
                     name,
+                    image_ref,
                 })
             })
             .collect())

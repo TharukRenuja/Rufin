@@ -163,6 +163,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let playlist_picker = PlaylistPickerState {
         active: RefCell::new(None),
     };
+    let downloads = crate::downloads::DownloadsState::default();
     let control_feedback = ControlFeedbackState {
         generation: Rc::new(Cell::new(0)),
     };
@@ -343,6 +344,41 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     control_feedback_label.set_visible(false);
     app_root_overlay.add_overlay(&control_feedback_label);
     app_root_overlay.set_measure_overlay(&control_feedback_label, false);
+    let operation_feedback = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    operation_feedback.add_css_class("operation-feedback");
+    operation_feedback.set_halign(gtk::Align::Center);
+    operation_feedback.set_valign(gtk::Align::End);
+    operation_feedback.set_margin_bottom(96);
+    operation_feedback.set_visible(false);
+    operation_feedback.set_focusable(true);
+    let operation_feedback_artwork = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    operation_feedback_artwork.set_size_request(48, 48);
+    operation_feedback.append(&operation_feedback_artwork);
+    let operation_feedback_text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    operation_feedback_text.set_valign(gtk::Align::Center);
+    operation_feedback_text.set_hexpand(true);
+    let operation_feedback_title = gtk::Label::new(None);
+    operation_feedback_title.add_css_class("heading");
+    operation_feedback_title.set_xalign(0.0);
+    operation_feedback_title.set_max_width_chars(34);
+    operation_feedback_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    operation_feedback_title.set_single_line_mode(true);
+    let operation_feedback_subtitle = gtk::Label::new(None);
+    operation_feedback_subtitle.add_css_class("dim-label");
+    operation_feedback_subtitle.set_xalign(0.0);
+    operation_feedback_subtitle.set_max_width_chars(34);
+    operation_feedback_subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    operation_feedback_subtitle.set_single_line_mode(true);
+    operation_feedback_text.append(&operation_feedback_title);
+    operation_feedback_text.append(&operation_feedback_subtitle);
+    operation_feedback.append(&operation_feedback_text);
+    let operation_feedback_close = gtk::Button::from_icon_name("window-close-symbolic");
+    operation_feedback_close.add_css_class("flat");
+    operation_feedback_close.set_valign(gtk::Align::Center);
+    operation_feedback_close.set_tooltip_text(Some(&tr("Close")));
+    operation_feedback.append(&operation_feedback_close);
+    app_root_overlay.add_overlay(&operation_feedback);
+    app_root_overlay.set_measure_overlay(&operation_feedback, false);
     app_root_overlay.add_overlay(&startup_loading_host);
     app_root_overlay.set_measure_overlay(&startup_loading_host, false);
 
@@ -363,6 +399,11 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         toast_overlay,
         quick_toast_overlay,
         control_feedback_label,
+        operation_feedback,
+        operation_feedback_artwork,
+        operation_feedback_title,
+        operation_feedback_subtitle,
+        operation_feedback_close,
         root_stack,
         app_root_overlay,
         app_content_stack,
@@ -419,6 +460,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         lyrics: lyrics_state,
         preferences,
         playlist_picker,
+        downloads,
         control_feedback,
         localization,
         desktop,
@@ -433,6 +475,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         player_view,
     });
 
+    shell.connect_operation_feedback();
     shell.connect_artwork_scale_factor_refresh();
     {
         let source = Arc::clone(&shell.products.source);

@@ -4,6 +4,7 @@
 //! pages. Library, playback, and source behavior stays in their own crates.
 
 mod application;
+mod downloads;
 mod favorites;
 mod interactions;
 mod layout;
@@ -21,13 +22,13 @@ pub use application::run_application;
 
 pub use settings::{
     DEFAULT_LEFT_SIDEBAR_WIDTH, DEFAULT_RIGHT_SIDEBAR_WIDTH, DEFAULT_WINDOW_HEIGHT,
-    DEFAULT_WINDOW_WIDTH, ExternalSiteLinkSettings, FolderViewSettings, LayoutProfile,
-    LayoutSettings, LeftSidebarMode, LibraryColumnWidth, LibraryField, LibraryLayout,
-    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, MAX_LEFT_SIDEBAR_WIDTH,
-    MAX_NARROW_LAYOUT_THRESHOLD, MAX_RIGHT_SIDEBAR_WIDTH, MAX_TABLE_COLUMN_WIDTH,
-    MIN_LEFT_SIDEBAR_WIDTH, MIN_NARROW_LAYOUT_THRESHOLD, MIN_RIGHT_SIDEBAR_WIDTH,
-    MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, Settings, SettingsHandle, SettingsPort,
-    SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
+    DEFAULT_WINDOW_WIDTH, DownloadRule, DownloadRules, ExternalSiteLinkSettings,
+    FolderViewSettings, LayoutProfile, LayoutSettings, LeftSidebarMode, LibraryColumnWidth,
+    LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, LibraryListSettingsEntry,
+    MAX_LEFT_SIDEBAR_WIDTH, MAX_NARROW_LAYOUT_THRESHOLD, MAX_RIGHT_SIDEBAR_WIDTH,
+    MAX_TABLE_COLUMN_WIDTH, MIN_LEFT_SIDEBAR_WIDTH, MIN_NARROW_LAYOUT_THRESHOLD,
+    MIN_RIGHT_SIDEBAR_WIDTH, MIN_TABLE_COLUMN_WIDTH, RightSidebarMode, Settings, SettingsHandle,
+    SettingsPort, SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, ThemePreference,
     available_detail_track_fields, available_grid_fields, available_row_fields,
     available_sort_fields, sanitized_window_size,
 };

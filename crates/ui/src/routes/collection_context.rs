@@ -6,6 +6,7 @@ use ::library::{
     RadioSeed, SmartPlaylistSummary, Track, TrackList,
 };
 use adw::prelude::*;
+use downloads::DownloadSubject;
 use gtk::glib;
 use playback::{QueuePlacement, RadioPlayRequest};
 
@@ -195,12 +196,13 @@ fn present_track_context_menu_inner(
     surface.append_action(msgid("Play Next"), "play-next");
     surface.append_action(msgid("Play Later"), "play-last");
     surface.append_submenu(msgid("Track radio"), &radio_context_submenu("track"));
-    let playlist_source = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .map(|selected| PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()));
+    let playlist_source = shell.library.selected.borrow().as_ref().map(|selected| {
+        PlaylistTrackSource::ready(
+            selected,
+            DownloadSubject::Track(track.id.clone()),
+            vec![track.id.clone()].into(),
+        )
+    });
     if playlist_source.is_some() {
         surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
@@ -519,6 +521,7 @@ fn install_loaded_actions(
     target: PlaybackTarget,
     shuffled_start: bool,
 ) {
+    install_download_action(surface, shell, &target);
     for (action, placement) in [
         ("play", QueuePlacement::Now),
         ("play-next", QueuePlacement::Next),
@@ -530,6 +533,63 @@ fn install_loaded_actions(
         surface.add_action(action, move || {
             if let Some(request) = target.play_request(&shell, placement, shuffled_start) {
                 queue.play_loaded(request);
+            }
+        });
+    }
+}
+
+fn install_download_action(
+    surface: &ContextMenuSurface,
+    shell: &Rc<Shell>,
+    target: &PlaybackTarget,
+) {
+    let Some(selected) = shell.library.selected.borrow().as_ref().cloned() else {
+        return;
+    };
+    let remote = shell
+        .source
+        .configured
+        .borrow()
+        .sources
+        .iter()
+        .any(|source| source.id == selected.source_id && source.kind != "local");
+    if !remote {
+        return;
+    }
+    let remove = match target {
+        PlaybackTarget::Track(track_id) => selected.loaded.is_downloaded(track_id).unwrap_or(false),
+        PlaybackTarget::Album(_)
+        | PlaybackTarget::Artist(_)
+        | PlaybackTarget::Genre(_)
+        | PlaybackTarget::Mood(_)
+        | PlaybackTarget::Playlist(_)
+        | PlaybackTarget::SmartPlaylist(_)
+        | PlaybackTarget::Prepared { .. } => false,
+    };
+    surface.append_action(
+        if remove {
+            msgid("Remove Download")
+        } else {
+            msgid("Download")
+        },
+        "download",
+    );
+    if remove {
+        let PlaybackTarget::Track(track_id) = target else {
+            unreachable!("only a track can remove one download");
+        };
+        let source = shell.products.source.clone();
+        let request = selected.remove_download_request(track_id.clone());
+        surface.add_action("download", move || {
+            source.remove_download(request.clone());
+        });
+    } else {
+        let source = shell.products.source.clone();
+        let shell = Rc::clone(shell);
+        let target = target.clone();
+        surface.add_action("download", move || {
+            if let Some(request) = target.download_request(&shell) {
+                source.download(request);
             }
         });
     }

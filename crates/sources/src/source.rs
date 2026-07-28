@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use async_channel::Sender;
 use library::{
@@ -17,6 +18,7 @@ use crate::{
     RandomTrackRequest, SourceConfiguration, SourceError, SourceResult, SourceSettingsInput,
     SourceSetupInput, StreamDescriptor, StreamRequest,
 };
+use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceReadStage {
@@ -403,6 +405,7 @@ impl<'a> BatchEmitter<'a> {
 pub struct Source {
     source_id: SourceId,
     implementation: Implementation,
+    download_client: tokio::sync::OnceCell<reqwest::Client>,
 }
 
 enum Implementation {
@@ -416,6 +419,7 @@ impl Source {
         Self {
             source_id,
             implementation,
+            download_client: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -692,6 +696,68 @@ impl Source {
         }
     }
 
+    pub async fn download(
+        &self,
+        request: &StreamRequest,
+        destination: &std::path::Path,
+    ) -> SourceResult<NativeSourceResult<()>> {
+        let NativeSourceResult::Available(stream) = self.stream(request).await? else {
+            return Ok(NativeSourceResult::Unavailable);
+        };
+        let client = self
+            .download_client
+            .get_or_try_init(|| async {
+                reqwest::Client::builder()
+                    .danger_accept_invalid_certs(stream.trust_invalid_certificate())
+                    .connect_timeout(Duration::from_secs(15))
+                    .build()
+                    .map_err(download_request_error)
+            })
+            .await?;
+        let mut response = client
+            .get(stream.uri())
+            .send()
+            .await
+            .map_err(download_request_error)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(match status.as_u16() {
+                401 | 403 => SourceError::Auth("the download was not authorized".to_string()),
+                404 => SourceError::NotFound,
+                status => SourceError::Server {
+                    status,
+                    message: "the download request failed".to_string(),
+                },
+            });
+        }
+        let mut file = tokio::fs::File::create(destination)
+            .await
+            .map_err(|error| SourceError::Other(format!("could not create download: {error}")))?;
+        let mut bytes_written = 0usize;
+        while let Some(chunk) = tokio::time::timeout(Duration::from_secs(60), response.chunk())
+            .await
+            .map_err(|_| SourceError::Network("the download stalled".to_string()))?
+            .map_err(download_request_error)?
+        {
+            file.write_all(&chunk).await.map_err(|error| {
+                SourceError::Other(format!("could not write download: {error}"))
+            })?;
+            bytes_written = bytes_written.saturating_add(chunk.len());
+        }
+        if bytes_written == 0 {
+            return Err(SourceError::Other(
+                "the download response was empty".to_string(),
+            ));
+        }
+        file.flush()
+            .await
+            .map_err(|error| SourceError::Other(format!("could not finish download: {error}")))?;
+        file.sync_all()
+            .await
+            .map_err(|error| SourceError::Other(format!("could not save download: {error}")))?;
+        Ok(NativeSourceResult::Available(()))
+    }
+
     pub async fn image(&self, request: SourceImageRequest) -> SourceResult<ImageBytes> {
         match (&self.implementation, request) {
             (Implementation::Local(source), SourceImageRequest::Local(reference)) => {
@@ -861,6 +927,22 @@ impl Source {
     }
 }
 
+fn download_request_error(error: reqwest::Error) -> SourceError {
+    if error.is_timeout() {
+        SourceError::Network("the download timed out".to_string())
+    } else if error.is_connect() {
+        SourceError::Network("could not connect for the download".to_string())
+    } else if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("certificate")
+    {
+        SourceError::Tls("the download certificate was rejected".to_string())
+    } else {
+        SourceError::Network("the download was interrupted".to_string())
+    }
+}
+
 pub(crate) fn configured_source_name(configured: Option<String>, provider: String) -> String {
     if let Some(name) = configured.filter(|name| !name.trim().is_empty()) {
         name.trim().to_string()
@@ -947,6 +1029,8 @@ async fn edit_remote_playlist(
 #[cfg(test)]
 mod input_identity_tests {
     use super::*;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn selected_item_changes_coalesce_without_losing_a_full_refresh() {
@@ -1033,6 +1117,41 @@ mod input_identity_tests {
             .input_identity()
             .expect("valid source input identity")
             .digest
+    }
+
+    #[tokio::test]
+    async fn download_writes_the_original_authenticated_stream() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/one/stream"))
+            .and(query_param("Static", "true"))
+            .and(query_param("api_key", "secret-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"original audio"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = Source::open(
+            jellyfin(&server.uri(), "account", false, false, "Music"),
+            Some("secret-token".to_string()),
+            Some("device-one".to_string()),
+        )
+        .expect("open source");
+        let directory = tempfile::tempdir().expect("temporary download");
+        let destination = directory.path().join("track.part");
+
+        let result = source
+            .download(
+                &StreamRequest::original(TrackId::new("jellyfin:track:one")),
+                &destination,
+            )
+            .await
+            .expect("download stream");
+
+        assert_eq!(result, NativeSourceResult::Available(()));
+        assert_eq!(
+            std::fs::read(destination).expect("read download"),
+            b"original audio"
+        );
     }
 
     #[test]

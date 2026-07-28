@@ -696,6 +696,118 @@ impl LoadedLibrary {
         list.sorted(sort, descending)
     }
 
+    pub fn favorite_download_track_list(
+        self: &Arc<Self>,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<TrackList> {
+        let state = self.read_state()?;
+        let mut seen = HashSet::new();
+        let mut slots = state
+            .tracks
+            .live_slots()
+            .filter(|slot| {
+                state
+                    .tracks
+                    .get_slot(*slot)
+                    .is_some_and(|track| track.favorite && track_in_scope(track, music_folder_id))
+            })
+            .collect::<Vec<_>>();
+        seen.extend(slots.iter().copied());
+        slots.extend(
+            state
+                .albums
+                .values()
+                .filter(|album| album.favorite)
+                .flat_map(|album| album_track_slots(&state, &album.id))
+                .filter(|slot| {
+                    seen.insert(*slot)
+                        && state
+                            .tracks
+                            .get_slot(*slot)
+                            .is_some_and(|track| track_in_scope(track, music_folder_id))
+                }),
+        );
+        slots.extend(
+            state
+                .artists
+                .values()
+                .filter(|artist| artist.favorite)
+                .flat_map(|artist| artist_track_slots(&state, &artist.id))
+                .filter(|slot| {
+                    seen.insert(*slot)
+                        && state
+                            .tracks
+                            .get_slot(*slot)
+                            .is_some_and(|track| track_in_scope(track, music_folder_id))
+                }),
+        );
+        Ok(TrackList::new(Arc::clone(self), slots.into(), None))
+    }
+
+    pub fn all_playlist_track_list(
+        self: &Arc<Self>,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<TrackList> {
+        let state = self.read_state()?;
+        let mut seen = HashSet::new();
+        let slots = state
+            .playlists
+            .values()
+            .flat_map(|playlist| playlist.entries.iter())
+            .filter_map(|entry| state.tracks.slot(&entry.track_id))
+            .filter(|slot| {
+                seen.insert(*slot)
+                    && state
+                        .tracks
+                        .get_slot(*slot)
+                        .is_some_and(|track| track_in_scope(track, music_folder_id))
+            })
+            .collect::<Vec<_>>();
+        Ok(TrackList::new(Arc::clone(self), slots.into(), None))
+    }
+
+    pub fn latest_album_track_list(
+        self: &Arc<Self>,
+        music_folder_id: Option<&MusicFolderId>,
+        album_limit: usize,
+    ) -> LoadedLibraryResult<TrackList> {
+        let state = self.read_state()?;
+        let mut albums = state
+            .albums
+            .values()
+            .filter(|album| {
+                album_track_slots(&state, &album.id).iter().any(|slot| {
+                    state
+                        .tracks
+                        .get_slot(*slot)
+                        .is_some_and(|track| track_in_scope(track, music_folder_id))
+                })
+            })
+            .collect::<Vec<_>>();
+        albums.sort_by(|left, right| {
+            right
+                .date_added
+                .cmp(&left.date_added)
+                .then_with(|| right.release_date.cmp(&left.release_date))
+                .then_with(|| right.year.cmp(&left.year))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let mut seen = HashSet::new();
+        let slots = albums
+            .into_iter()
+            .take(album_limit)
+            .flat_map(|album| album_track_slots(&state, &album.id))
+            .filter(|slot| {
+                seen.insert(*slot)
+                    && state
+                        .tracks
+                        .get_slot(*slot)
+                        .is_some_and(|track| track_in_scope(track, music_folder_id))
+            })
+            .collect::<Vec<_>>();
+        Ok(TrackList::new(Arc::clone(self), slots.into(), None))
+    }
+
     pub fn history_track_list(
         self: &Arc<Self>,
         music_folder_id: Option<&MusicFolderId>,
@@ -808,6 +920,70 @@ impl LoadedLibrary {
                 music_folder_id: music_folder_id.cloned(),
             },
         }
+    }
+
+    pub fn is_album_downloaded(
+        &self,
+        album_id: &AlbumId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        Ok(track_slots_downloaded(
+            &state,
+            album_track_slots(&state, album_id),
+            music_folder_id,
+        ))
+    }
+
+    pub fn is_artist_downloaded(
+        &self,
+        artist_id: &ArtistId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        Ok(track_slots_downloaded(
+            &state,
+            artist_track_slots(&state, artist_id),
+            music_folder_id,
+        ))
+    }
+
+    pub fn is_genre_downloaded(
+        &self,
+        genre_id: &GenreId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        Ok(track_slots_downloaded(
+            &state,
+            genre_track_slots(&state, genre_id),
+            music_folder_id,
+        ))
+    }
+
+    pub fn is_mood_downloaded(
+        &self,
+        mood_id: &MoodId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        Ok(track_slots_downloaded(
+            &state,
+            mood_track_slots(&state, mood_id),
+            music_folder_id,
+        ))
+    }
+
+    pub fn is_playlist_downloaded(&self, playlist_id: &PlaylistId) -> LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        let slots = state
+            .playlists
+            .get(playlist_id)
+            .into_iter()
+            .flat_map(|playlist| playlist.entries.iter())
+            .filter_map(|entry| state.tracks.slot(&entry.track_id))
+            .collect::<Vec<_>>();
+        Ok(track_slots_downloaded(&state, slots, None))
     }
 
     fn album_tracks(
@@ -1323,6 +1499,27 @@ fn mood_track_slots(state: &LoadedState, mood_id: &MoodId) -> Vec<TrackSlot> {
         state,
         TrackSort::Album,
     )
+}
+
+pub(crate) fn track_slots_downloaded(
+    state: &LoadedState,
+    slots: impl IntoIterator<Item = TrackSlot>,
+    music_folder_id: Option<&MusicFolderId>,
+) -> bool {
+    let mut found = false;
+    for slot in slots {
+        let Some(track) = state.tracks.get_slot(slot) else {
+            continue;
+        };
+        if !track_in_scope(track, music_folder_id) {
+            continue;
+        }
+        found = true;
+        if !state.downloaded_files.contains_key(&track.id) {
+            return false;
+        }
+    }
+    found
 }
 
 fn mood_relationship_track_slots(state: &LoadedState, mood_id: &MoodId) -> Vec<TrackSlot> {

@@ -48,12 +48,27 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     )?);
 
     let (source_events, source_receiver) = unbounded();
+    let (download_events, download_receiver) = unbounded();
     let (discovery_events, discovery_receiver) = unbounded();
     let (waveform_events, waveform_receiver) = unbounded();
     let (lyrics_events, lyrics_receiver) = unbounded();
     let (release_update_events, release_update_receiver) = unbounded();
     let artwork =
         artwork::Artwork::new(paths::artwork_dir(), runtime.clone()).map_err(string_error)?;
+    let downloads =
+        downloads::Downloads::new(paths::downloads_dir(), runtime.clone(), download_events);
+    let download_source_events = source_events.clone();
+    runtime.spawn(async move {
+        while let Ok(event) = download_receiver.recv().await {
+            if download_source_events
+                .send(ui::runtime::SourceEvent::Downloads(event))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
     let discord = Arc::new(desktop_integration::Discord::new());
     let release_updates =
         ReleaseUpdateOwner::new(settings.clone(), runtime.clone(), release_update_events);
@@ -66,6 +81,7 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
     } = SourceOwner::open_dormant(
         artwork.clone(),
         library.clone(),
+        downloads,
         settings.clone(),
         Arc::clone(&secrets),
         Arc::clone(&scrobbler),
@@ -143,6 +159,9 @@ pub(crate) fn runtime_inputs(diagnostics: DiagnosticsHandle) -> Result<RuntimeIn
         if previous.ui.allows_external_album_lookup() != current.ui.allows_external_album_lookup() {
             settings_source
                 .album_release_settings_changed(current.ui.allows_external_album_lookup());
+        }
+        if previous.ui.downloads != current.ui.downloads {
+            settings_source.download_settings_changed();
         }
     });
 

@@ -111,6 +111,7 @@ fn apply_source_event(shell: &Rc<Shell>, event: SourceEvent) {
         } => apply_home_replacement(shell, source_id, source_session_epoch, home),
         SourceEvent::LibraryUpdate(update) => apply_selected_library_update(shell, update),
         SourceEvent::FavoriteFailure(failure) => apply_favorite_failure(shell, failure),
+        SourceEvent::Downloads(event) => shell.apply_download_event(event),
         SourceEvent::Notice(message) => shell.show_notice_toast(&message),
         SourceEvent::ReleaseSelected { acknowledged } => {
             release_selected_source(shell);

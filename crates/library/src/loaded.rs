@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Deref, Index};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use thiserror::Error;
@@ -389,6 +390,7 @@ pub(crate) struct LoadedState {
     pub(crate) local_access: Vec<LocalAccessFile>,
     pub(crate) local_access_paths: HashSet<String>,
     pub(crate) local_access_index: HashMap<LocalMatchKey, Vec<usize>>,
+    pub(crate) downloaded_files: HashMap<TrackId, PathBuf>,
     pub(crate) home_facts: HomeFacts,
     pub(crate) activity: HashMap<TrackId, TrackActivity>,
     pub(crate) recent_plays: Vec<RecentPlay>,
@@ -509,6 +511,7 @@ impl LoadedLibrary {
             local_access: input.local_access,
             local_access_paths,
             local_access_index,
+            downloaded_files: HashMap::new(),
             home_facts,
             activity,
             recent_plays: input.recent_plays,

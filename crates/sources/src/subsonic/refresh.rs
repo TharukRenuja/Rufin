@@ -240,6 +240,7 @@ impl SubsonicSource {
             .map(|folder| MusicFolder {
                 id: MusicFolderId::new(self.id("music-folder", &folder.id.0)),
                 name: folder.name,
+                image_ref: None,
             })
             .collect())
     }

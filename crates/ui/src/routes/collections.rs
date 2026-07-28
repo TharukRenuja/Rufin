@@ -47,6 +47,7 @@ use super::table_sizing::{
 };
 use super::track_model::TrackCollectionModel;
 use crate::runtime::SelectedLibrary;
+use downloads::DownloadSubject;
 
 pub(super) const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
 pub(super) const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
@@ -103,11 +104,45 @@ impl PlaybackTarget {
     pub(crate) fn playlist_tracks(&self, shell: &Shell) -> Option<PlaylistTrackSource> {
         let selected = shell.library.selected.borrow().as_ref().cloned()?;
         match self.selection(&selected) {
-            Ok(tracks) => Some(PlaylistTrackSource::loaded(&selected, tracks)),
+            Ok(tracks) => Some(PlaylistTrackSource::loaded(
+                &selected,
+                self.download_subject(),
+                tracks,
+            )),
             Err(error) => {
                 warn!(target = ?self, %error, "failed to identify collection tracks");
                 None
             }
+        }
+    }
+
+    pub(crate) fn download_request(
+        &self,
+        shell: &Shell,
+    ) -> Option<crate::runtime::source::DownloadRequest> {
+        let selected = shell.library.selected.borrow().as_ref().cloned()?;
+        match self.selection(&selected) {
+            Ok(tracks) => Some(selected.download_request(self.download_subject(), tracks)),
+            Err(error) => {
+                warn!(target = ?self, %error, "failed to identify download tracks");
+                None
+            }
+        }
+    }
+
+    fn download_subject(&self) -> DownloadSubject {
+        match self {
+            Self::Track(id) => DownloadSubject::Track(id.clone()),
+            Self::Album(id) => DownloadSubject::Album(id.clone()),
+            Self::Artist(id) => DownloadSubject::Artist(id.clone()),
+            Self::Genre(id) => DownloadSubject::Genre(id.clone()),
+            Self::Mood(id) => DownloadSubject::Mood(id.clone()),
+            Self::Playlist(id) => DownloadSubject::Playlist(id.clone()),
+            Self::SmartPlaylist(id) => DownloadSubject::SmartPlaylist(id.clone()),
+            Self::Prepared { context_id, .. } => DownloadSubject::Prepared {
+                context_id: context_id.clone(),
+                title: None,
+            },
         }
     }
 

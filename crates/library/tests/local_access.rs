@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use library::{
@@ -191,6 +192,65 @@ fn server_prefix_matches_a_path_component_not_a_text_prefix() {
 
     assert_eq!(status.prefix_match_count, 0);
     assert_eq!(status.unmatched_count, 1);
+}
+
+#[test]
+fn an_exact_download_wins_without_replacing_local_access() {
+    let directory = tempfile::tempdir().expect("temporary Store directory");
+    let local = tempfile::tempdir().expect("local access root");
+    let library =
+        Library::open(directory.path().join("library.db")).expect("open temporary Library");
+    let track_id = TrackId::new("track:downloaded");
+    let loaded = accept_tracks(
+        &library,
+        SourceId::new("opensubsonic:server:download"),
+        vec![track(
+            "downloaded",
+            "Downloaded",
+            "Album",
+            "Artist",
+            Some("/server/music/Downloaded.flac".to_string()),
+        )],
+    );
+    let mapped = local.path().join("Downloaded.flac");
+    let downloaded = directory.path().join("downloaded.audio");
+    std::fs::write(&mapped, b"mapped").expect("mapped audio");
+    std::fs::write(&downloaded, b"downloaded").expect("downloaded audio");
+    library
+        .configure_local_access(
+            &loaded,
+            LocalAccessMapping {
+                root_path: local.path().to_path_buf(),
+                server_prefix: Some("/server/music".to_string()),
+                local_prefix: None,
+            },
+        )
+        .expect("configure mapping");
+
+    let removed = loaded
+        .replace_downloaded_files(HashMap::from([(track_id.clone(), downloaded.clone())]))
+        .expect("attach download");
+    assert!(removed.is_empty());
+
+    assert!(loaded.is_downloaded(&track_id).expect("download state"));
+    assert_eq!(
+        loaded
+            .playable_file(&track_id)
+            .expect("downloaded playback"),
+        Some(PlayableFile::File {
+            path: downloaded.clone()
+        })
+    );
+    assert_eq!(
+        loaded
+            .remove_downloaded_file(&track_id)
+            .expect("remove download"),
+        Some(downloaded)
+    );
+    assert_eq!(
+        loaded.playable_file(&track_id).expect("mapped playback"),
+        Some(PlayableFile::File { path: mapped })
+    );
 }
 
 fn accept_tracks(

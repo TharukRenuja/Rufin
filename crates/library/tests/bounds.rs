@@ -54,6 +54,7 @@ fn assert_large_library(track_count: usize) {
         .write(CandidateBatch::MusicFolders(vec![MusicFolder {
             id: folder_id.clone(),
             name: "All music".to_string(),
+            image_ref: None,
         }]))
         .expect("write music folder");
     write_batches(&mut candidate, track_count, |range| {
@@ -121,6 +122,27 @@ fn assert_large_library(track_count: usize) {
                 .expect("project favorite Tracks")
                 .len(),
             track_count.div_ceil(17)
+        );
+        assert_eq!(
+            loaded
+                .favorite_download_track_list(None)
+                .expect("project favorite downloads")
+                .len(),
+            track_count.div_ceil(17)
+        );
+        assert_eq!(
+            loaded
+                .all_playlist_track_list(None)
+                .expect("project playlist downloads")
+                .len(),
+            (PLAYLIST_COUNT * PLAYLIST_TRACK_LIMIT).min(track_count)
+        );
+        assert_eq!(
+            loaded
+                .latest_album_track_list(None, 5)
+                .expect("project latest Album downloads")
+                .len(),
+            50
         );
         assert_eq!(
             loaded.albums(None).expect("project Albums").len(),

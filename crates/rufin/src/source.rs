@@ -19,6 +19,7 @@ use library::{
     HomeSectionKind, HomeSnapshot, Library, LoadedLibrary, MusicFolderId, PlaylistAcceptance,
     PlaylistEdit, PlaylistTrackAdd, PreparedSourceCandidate, RecordedActivity,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId, SourceHomeSection, SourceId,
+    Track, TrackSort,
 };
 use playback::{PlaybackProjection, SourceSessionEpoch};
 use scrobbling::Scrobbler;
@@ -34,10 +35,10 @@ use tokio::task::JoinHandle;
 use tracing::warn;
 use ui::runtime::source::{
     ConfiguredSources, CredentialInput, CredentialPreset, DiscoveredServer, DiscoveryStatus,
-    DiscoveryUpdate, EditableSource, FolderRequest, LocalAccessStatus, LocalFolder,
-    OpenSubsonicKind, SearchRequest, SourceLocalAccess, SourceLocalAccessSummary, SourceOperation,
-    SourcePort, SourceProgress, SourceProgressStage, SourceSettingsChange, SourceSetup,
-    SourceSummary,
+    DiscoveryUpdate, DownloadRequest, EditableSource, FolderRequest, LocalAccessStatus,
+    LocalFolder, OpenSubsonicKind, RemoveDownloadRequest, SearchRequest, SourceLocalAccess,
+    SourceLocalAccessSummary, SourceOperation, SourcePort, SourceProgress, SourceProgressStage,
+    SourceSettingsChange, SourceSetup, SourceSummary,
 };
 use ui::runtime::{
     FavoriteFailure, HomePublication, SelectedLibrary, SelectedLibraryUpdate, SourceEvent,
@@ -51,6 +52,7 @@ use crate::settings::{
     fresh_secret_scope_id, load_provider_secret, load_scrobbling_settings, platform_secret_store,
     save_provider_secret,
 };
+use downloads::Downloads;
 
 const SOURCE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -160,6 +162,7 @@ pub(crate) struct SourceAcceptanceSender {
 struct Shared {
     artwork: Artwork,
     library: Library,
+    downloads: Downloads,
     settings: SettingsFile,
     secrets: Arc<SwitchableSecretStore>,
     scrobbler: Arc<Scrobbler>,
@@ -175,6 +178,25 @@ enum Message {
     Request(WorkRequest),
     SelectedLibraryRevealed,
     AlbumReleaseSettingChanged(bool),
+    DownloadSettingsChanged,
+    Download(DownloadRequest),
+    RemoveDownload(RemoveDownloadRequest),
+    RemoveDownloadRule {
+        source_id: SourceId,
+        rule: downloads::DownloadRule,
+        delete_downloads: bool,
+    },
+    CancelDownload {
+        source_id: SourceId,
+        job_id: String,
+    },
+    MoveDownload {
+        source_id: SourceId,
+        job_id: String,
+        target_job_id: String,
+        after: bool,
+    },
+    ClearDownloads(SourceId),
     AlbumReleaseFinished(u64),
     Activity {
         qualifier: SourceQualifier,
@@ -239,6 +261,7 @@ enum PointOperation {
 
 enum NextHome {
     Keep,
+    ActivityKeep,
     Favorite(FavoriteItemId),
     AcceptedPlay(library::TrackId),
     SourceFacts,
@@ -408,6 +431,7 @@ impl SourceOwner {
     pub(crate) fn open_dormant(
         artwork: Artwork,
         library: Library,
+        downloads: Downloads,
         settings: SettingsFile,
         secrets: Arc<SwitchableSecretStore>,
         scrobbler: Arc<Scrobbler>,
@@ -426,6 +450,7 @@ impl SourceOwner {
         let shared = Arc::new(Shared {
             artwork,
             library,
+            downloads,
             settings,
             secrets,
             scrobbler,
@@ -496,6 +521,10 @@ impl SourceOwner {
         self.send(Message::AlbumReleaseSettingChanged(enabled));
     }
 
+    pub(crate) fn download_settings_changed(&self) {
+        self.send(Message::DownloadSettingsChanged);
+    }
+
     fn send_selected(&self, operation: impl FnOnce(&SelectedSourceRuntime) -> PointOperation) {
         let Some(selected) = self.selected() else {
             return;
@@ -521,7 +550,7 @@ impl SourceAcceptanceSender {
         update: RecordedActivity,
         played_track: Option<library::TrackId>,
     ) {
-        let next_home = played_track.map_or(NextHome::Keep, NextHome::AcceptedPlay);
+        let next_home = played_track.map_or(NextHome::ActivityKeep, NextHome::AcceptedPlay);
         if self
             .messages
             .try_send(Message::Activity {
@@ -571,6 +600,41 @@ impl Actor {
                         self.cancel_album_release_lookup(false);
                     }
                 }
+                Message::DownloadSettingsChanged => {
+                    if let Some(selected) = self.shared.selected() {
+                        let directory = self
+                            .shared
+                            .settings
+                            .load()
+                            .ui
+                            .download_directory(selected.source_id());
+                        self.shared
+                            .downloads
+                            .set_directory(selected.source_id().clone(), directory);
+                        self.reconcile_downloads(&selected).await;
+                    }
+                }
+                Message::Download(request) => self.download(request).await,
+                Message::RemoveDownload(request) => self.remove_download(request),
+                Message::RemoveDownloadRule {
+                    source_id,
+                    rule,
+                    delete_downloads,
+                } => self.remove_download_rule(source_id, rule, delete_downloads),
+                Message::CancelDownload { source_id, job_id } => {
+                    self.shared.downloads.cancel(source_id, job_id);
+                }
+                Message::MoveDownload {
+                    source_id,
+                    job_id,
+                    target_job_id,
+                    after,
+                } => {
+                    self.shared
+                        .downloads
+                        .move_job(source_id, job_id, target_job_id, after);
+                }
+                Message::ClearDownloads(source_id) => self.clear_downloads(source_id),
                 Message::AlbumReleaseFinished(token) => {
                     if self
                         .active_album_release
@@ -1125,6 +1189,7 @@ impl Actor {
         let Some(selected) = self.shared.selected() else {
             return;
         };
+        self.reconcile_downloads(&selected).await;
         let qualifier = selected.qualifier();
         if self
             .observer
@@ -1188,6 +1253,129 @@ impl Actor {
         });
         if catch_up {
             self.queue_freshness_check();
+        }
+    }
+
+    async fn download(&self, request: DownloadRequest) {
+        let Some(selected) = self.shared.selected().filter(|selected| {
+            selected.source_id() == &request.source_id
+                && selected.source_session_epoch == request.source_session_epoch
+        }) else {
+            return;
+        };
+        let download_settings = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_settings(selected.source_id());
+        let DownloadRequest {
+            subject, tracks, ..
+        } = request;
+        let tracks = match blocking(move || {
+            tracks
+                .prepare()
+                .and_then(|tracks| tracks.materialize_owned())
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(tracks) => tracks,
+            Err(error) => {
+                self.shared.send_notice(error).await;
+                return;
+            }
+        };
+        self.shared.downloads.download(
+            selected.source.clone(),
+            Arc::clone(&selected.loaded),
+            download_settings.directory,
+            subject,
+            download_settings.quality,
+            tracks,
+        );
+    }
+
+    fn remove_download(&self, request: RemoveDownloadRequest) {
+        let Some(selected) = self.shared.selected().filter(|selected| {
+            selected.source_id() == &request.source_id
+                && selected.source_session_epoch == request.source_session_epoch
+        }) else {
+            return;
+        };
+        self.shared.downloads.remove(
+            selected.source_id().clone(),
+            selected.loaded,
+            vec![request.track_id],
+            true,
+        );
+    }
+
+    fn clear_downloads(&self, source_id: SourceId) {
+        let loaded = self
+            .shared
+            .selected()
+            .filter(|selected| selected.source_id() == &source_id)
+            .map(|selected| selected.loaded);
+        self.shared.downloads.clear(source_id, loaded, true);
+    }
+
+    fn remove_download_rule(
+        &self,
+        source_id: SourceId,
+        rule: downloads::DownloadRule,
+        delete_downloads: bool,
+    ) {
+        let loaded = self
+            .shared
+            .selected()
+            .filter(|selected| selected.source_id() == &source_id)
+            .map(|selected| selected.loaded);
+        self.shared
+            .downloads
+            .remove_rule(source_id, loaded, rule, delete_downloads);
+    }
+
+    async fn reconcile_downloads(&self, selected: &SelectedSourceRuntime) {
+        let settings = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_settings(selected.source_id());
+        let rules = settings.rules;
+        if rules.is_empty() {
+            return;
+        }
+        let loaded = Arc::clone(&selected.loaded);
+        let folder = selected.music_folder_id.clone();
+        let queued = match blocking(move || {
+            rules
+                .active()
+                .map(|rule| {
+                    download_rule_tracks(&loaded, folder.as_ref(), rule)
+                        .map(|tracks| (rule, tracks))
+                })
+                .collect::<library::LoadedLibraryResult<Vec<_>>>()
+                .map_err(string_error)
+        })
+        .await
+        {
+            Ok(queued) => queued,
+            Err(error) => {
+                warn!(%error, source_id = %selected.source_id(), "could not prepare automatic downloads");
+                return;
+            }
+        };
+        for (rule, tracks) in queued {
+            self.shared.downloads.download(
+                selected.source.clone(),
+                Arc::clone(&selected.loaded),
+                settings.directory.clone(),
+                downloads::DownloadSubject::Rule(rule),
+                settings.quality,
+                tracks,
+            );
         }
     }
 
@@ -1992,6 +2180,23 @@ impl Actor {
             )
             .await?;
         }
+        let downloads = self.shared.downloads.clone();
+        let loaded_for_downloads = Arc::clone(&commit.loaded);
+        let source_for_downloads = source.clone();
+        let download_directory = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_directory(&configuration.source_id);
+        blocking(move || {
+            downloads.attach(
+                source_for_downloads,
+                &loaded_for_downloads,
+                download_directory,
+            )
+        })
+        .await?;
         let library = self.shared.library.clone();
         let loaded = Arc::clone(&commit.loaded);
         let home_folder = folder.clone();
@@ -2041,6 +2246,7 @@ impl Actor {
                 self.start_album_release_lookup();
             }
         }
+        self.reconcile_downloads(&selected).await;
         Ok(selected)
     }
 
@@ -2330,6 +2536,27 @@ impl Actor {
         if !self.shared.matches_selected(&selected.qualifier()) {
             return;
         }
+        let download_rules = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_rules(selected.source_id());
+        let reconcile_downloads = should_reconcile_downloads(&change, &next_home, download_rules);
+        let removed_downloads = change
+            .tracks
+            .iter()
+            .filter(|replacement| replacement.track.is_none())
+            .map(|replacement| replacement.id.clone())
+            .collect::<Vec<_>>();
+        if !removed_downloads.is_empty() {
+            self.shared.downloads.remove(
+                selected.source_id().clone(),
+                Arc::clone(&selected.loaded),
+                removed_downloads,
+                false,
+            );
+        }
         let source_facts = matches!(&next_home, NextHome::SourceFacts);
         if source_facts {
             self.cancel_album_release_lookup(false);
@@ -2361,7 +2588,7 @@ impl Actor {
             }
         }
         let home = match next_home {
-            NextHome::Keep => None,
+            NextHome::Keep | NextHome::ActivityKeep => None,
             NextHome::Favorite(favorite) => {
                 let library = self.shared.library.clone();
                 let loaded = Arc::clone(&selected.loaded);
@@ -2434,6 +2661,9 @@ impl Actor {
                 home,
             }))
             .await;
+        if reconcile_downloads {
+            self.reconcile_downloads(selected).await;
+        }
         if source_facts {
             self.start_album_release_lookup();
         }
@@ -2819,6 +3049,7 @@ impl Actor {
         }
         selected.music_folder_id = folder_id;
         self.shared.publish_library_replacement(&selected).await;
+        self.reconcile_downloads(&selected).await;
     }
 
     async fn stage_credential(
@@ -2947,6 +3178,14 @@ impl Actor {
     }
 
     async fn remove_replaced_source_data(&self, source_id: SourceId) {
+        let loaded = self
+            .shared
+            .selected()
+            .filter(|selected| selected.source_id() == &source_id)
+            .map(|selected| selected.loaded);
+        self.shared
+            .downloads
+            .clear(source_id.clone(), loaded, false);
         let library = self.shared.library.clone();
         let source_for_store = source_id.clone();
         if let Err(error) = blocking(move || {
@@ -2986,6 +3225,23 @@ impl Actor {
             })
             .await?;
         }
+        let downloads = self.shared.downloads.clone();
+        let loaded_for_downloads = Arc::clone(&loaded);
+        let source_for_downloads = source.clone();
+        let download_directory = self
+            .shared
+            .settings
+            .load()
+            .ui
+            .download_directory(&configuration.source_id);
+        blocking(move || {
+            downloads.attach(
+                source_for_downloads,
+                &loaded_for_downloads,
+                download_directory,
+            )
+        })
+        .await?;
         let library = self.shared.library.clone();
         let loaded_for_home = Arc::clone(&loaded);
         let folder_for_home = music_folder_id.clone();
@@ -3027,6 +3283,45 @@ fn work_accepts_activity(purpose: &WorkPurpose, qualifier: &SourceQualifier) -> 
         WorkPurpose::Update { selected, .. } => *selected,
         WorkPurpose::Add | WorkPurpose::Select { .. } | WorkPurpose::Selected { .. } => false,
     }
+}
+
+fn download_rule_tracks(
+    loaded: &Arc<LoadedLibrary>,
+    music_folder_id: Option<&MusicFolderId>,
+    rule: downloads::DownloadRule,
+) -> library::LoadedLibraryResult<Vec<Track>> {
+    match rule {
+        downloads::DownloadRule::EntireLibrary => loaded
+            .track_list(music_folder_id, TrackSort::Title, false)?
+            .materialize_owned(),
+        downloads::DownloadRule::Favorites => loaded
+            .favorite_download_track_list(music_folder_id)?
+            .materialize_owned(),
+        downloads::DownloadRule::AllPlaylists => loaded
+            .all_playlist_track_list(music_folder_id)?
+            .materialize_owned(),
+        downloads::DownloadRule::LatestFiveAlbums => loaded
+            .latest_album_track_list(music_folder_id, 5)?
+            .materialize_owned(),
+    }
+}
+
+fn should_reconcile_downloads(
+    change: &AcceptedLibraryChange,
+    next_home: &NextHome,
+    rules: ui::DownloadRules,
+) -> bool {
+    !matches!(
+        next_home,
+        NextHome::AcceptedPlay(_) | NextHome::ActivityKeep
+    ) && ((rules.entire_library && !change.tracks.is_empty())
+        || (rules.favorites
+            && (!change.tracks.is_empty()
+                || !change.albums.is_empty()
+                || !change.artists.is_empty()
+                || change.favorite.is_some()))
+        || (rules.all_playlists && (!change.tracks.is_empty() || !change.playlists.is_empty()))
+        || (rules.latest_five_albums && (!change.tracks.is_empty() || !change.albums.is_empty())))
 }
 
 impl Shared {
@@ -3858,6 +4153,50 @@ impl SourcePort for SourceOwner {
 
     fn edit_playlist(&self, edit: PlaylistEdit) {
         self.send_selected(|_| PointOperation::Playlist(edit));
+    }
+
+    fn download(&self, request: DownloadRequest) {
+        self.send(Message::Download(request));
+    }
+
+    fn remove_download(&self, request: RemoveDownloadRequest) {
+        self.send(Message::RemoveDownload(request));
+    }
+
+    fn remove_download_rule(
+        &self,
+        source_id: SourceId,
+        rule: downloads::DownloadRule,
+        delete_downloads: bool,
+    ) {
+        self.send(Message::RemoveDownloadRule {
+            source_id,
+            rule,
+            delete_downloads,
+        });
+    }
+
+    fn cancel_download(&self, source_id: SourceId, job_id: String) {
+        self.send(Message::CancelDownload { source_id, job_id });
+    }
+
+    fn move_download(
+        &self,
+        source_id: SourceId,
+        job_id: String,
+        target_job_id: String,
+        after: bool,
+    ) {
+        self.send(Message::MoveDownload {
+            source_id,
+            job_id,
+            target_job_id,
+            after,
+        });
+    }
+
+    fn clear_downloads(&self, source_id: SourceId) {
+        self.send(Message::ClearDownloads(source_id));
     }
 
     fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>> {

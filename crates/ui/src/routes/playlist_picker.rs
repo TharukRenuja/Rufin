@@ -8,10 +8,12 @@ use ::library::{
 };
 use adw::prelude::*;
 use artwork::ArtworkBinding;
+use downloads::DownloadSubject;
 use gtk::{gio, glib};
 use playback::SourceSessionEpoch;
 use tracing::warn;
 
+use crate::downloads::{OperationFeedback, OperationFeedbackKind};
 use crate::format_duration_units;
 use crate::interactions::{ContextMenuSurface, close_context_surface, context_menu_scroll_page};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
@@ -19,8 +21,8 @@ use crate::runtime::SelectedLibrary;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
+use localization::tr;
 use localization::track_count_text;
-use localization::{tr, tr_with};
 
 const CONTEXT_PLAYLIST_ROW_COVER_SIZE: i32 = 48;
 const ADD_TO_PLAYLIST_DIALOG_WIDTH: i32 = 700;
@@ -84,6 +86,7 @@ impl PlaylistSourceIdentity {
 #[derive(Clone)]
 pub(crate) struct PlaylistTrackSource {
     source: PlaylistSourceIdentity,
+    subject: DownloadSubject,
     tracks: PlaylistTracks,
 }
 
@@ -94,16 +97,26 @@ enum PlaylistTracks {
 }
 
 impl PlaylistTrackSource {
-    pub(crate) fn ready(selected: &SelectedLibrary, track_ids: Arc<[TrackId]>) -> Self {
+    pub(crate) fn ready(
+        selected: &SelectedLibrary,
+        subject: DownloadSubject,
+        track_ids: Arc<[TrackId]>,
+    ) -> Self {
         Self {
             source: PlaylistSourceIdentity::selected(selected),
+            subject,
             tracks: PlaylistTracks::Ready(track_ids),
         }
     }
 
-    pub(crate) fn loaded(selected: &SelectedLibrary, tracks: TrackSelection) -> Self {
+    pub(crate) fn loaded(
+        selected: &SelectedLibrary,
+        subject: DownloadSubject,
+        tracks: TrackSelection,
+    ) -> Self {
         Self {
             source: PlaylistSourceIdentity::selected(selected),
+            subject,
             tracks: PlaylistTracks::Loaded(tracks),
         }
     }
@@ -112,9 +125,10 @@ impl PlaylistTrackSource {
 fn present_context_playlist_picker_dialog(
     shell: &Rc<Shell>,
     source: PlaylistSourceIdentity,
+    subject: DownloadSubject,
     track_ids: Arc<[TrackId]>,
 ) {
-    let content = context_playlist_picker(shell, source, track_ids);
+    let content = context_playlist_picker(shell, source, subject, track_ids);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Add to Playlist"), "")));
@@ -136,6 +150,7 @@ fn present_context_playlist_picker_dialog(
 fn context_playlist_picker(
     shell: &Rc<Shell>,
     source_identity: PlaylistSourceIdentity,
+    subject: DownloadSubject,
     track_ids: Arc<[TrackId]>,
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -238,9 +253,9 @@ fn context_playlist_picker(
 
     let rows_for_add = Rc::clone(&rows);
     let source = shell.products.source.clone();
-    let toast_overlay = shell.chrome.quick_toast_overlay.clone();
     let shell_for_add = Rc::downgrade(shell);
     let source_identity_for_add = source_identity.clone();
+    let feedback_subject = subject.clone();
     add_button.connect_clicked(move |button| {
         let Some(shell) = shell_for_add.upgrade() else {
             return;
@@ -250,7 +265,8 @@ fn context_playlist_picker(
             return;
         }
         let mut added_tracks = 0;
-        let mut changed_playlists = 0;
+        let mut changed_playlist_count = 0;
+        let mut changed_playlist_entries = Vec::new();
         if track_ids.is_empty() {
             close_context_surface(button);
             return;
@@ -267,12 +283,24 @@ fn context_playlist_picker(
             });
             if scheduled > 0 {
                 added_tracks += scheduled;
-                changed_playlists += 1;
+                changed_playlist_count += 1;
+                changed_playlist_entries.push((
+                    row.playlist.playlist.id.clone(),
+                    row.playlist.playlist.name.clone(),
+                ));
             }
         }
-        let toast = adw::Toast::new(&playlist_add_toast(added_tracks, changed_playlists));
-        toast.set_timeout(2);
-        toast_overlay.add_toast(toast);
+        if added_tracks > 0 {
+            let destination = match changed_playlist_entries.as_slice() {
+                [(_, name)] => name.clone(),
+                _ => format!("{changed_playlist_count} {}", tr("Playlists")),
+            };
+            shell.show_operation_feedback(&OperationFeedback {
+                subject: feedback_subject.clone(),
+                item_count: added_tracks,
+                kind: OperationFeedbackKind::PlaylistAdded { destination },
+            });
+        }
         close_context_surface(button);
     });
 
@@ -434,35 +462,6 @@ fn playlist_picker_meta(icon_name: &str, text: &str) -> gtk::Box {
     item.append(&label);
     item
 }
-fn playlist_add_toast(added_tracks: usize, playlist_count: usize) -> String {
-    if added_tracks == 0 {
-        return tr("No songs added");
-    }
-    let track_count = added_tracks.to_string();
-    let playlist_count_text = playlist_count.to_string();
-    let args = [
-        ("track_count", track_count.as_str()),
-        ("playlist_count", playlist_count_text.as_str()),
-    ];
-    match (added_tracks == 1, playlist_count == 1) {
-        (true, true) => tr_with(
-            "{track_count} song added to {playlist_count} playlist",
-            &args,
-        ),
-        (true, false) => tr_with(
-            "{track_count} song added to {playlist_count} playlists",
-            &args,
-        ),
-        (false, true) => tr_with(
-            "{track_count} songs added to {playlist_count} playlist",
-            &args,
-        ),
-        (false, false) => tr_with(
-            "{track_count} songs added to {playlist_count} playlists",
-            &args,
-        ),
-    }
-}
 fn update_playlist_picker_add_button(
     rows: &Rc<RefCell<Vec<PlaylistPickerRow>>>,
     button: &gtk::Button,
@@ -476,11 +475,15 @@ pub(crate) fn install_context_menu_picker_action(
 ) {
     let shell = Rc::clone(shell);
     surface.add_action("add-to-playlist", move || {
-        let PlaylistTrackSource { source, tracks } = track_source.clone();
+        let PlaylistTrackSource {
+            source,
+            subject,
+            tracks,
+        } = track_source.clone();
         match tracks {
             PlaylistTracks::Ready(track_ids) => {
                 if source.is_current(&shell) && !track_ids.is_empty() {
-                    present_context_playlist_picker_dialog(&shell, source, track_ids);
+                    present_context_playlist_picker_dialog(&shell, source, subject, track_ids);
                 }
             }
             PlaylistTracks::Loaded(tracks) => {
@@ -493,7 +496,9 @@ pub(crate) fn install_context_menu_picker_action(
                         .await;
                     match result {
                         Ok(Ok(track_ids)) if source.is_current(&shell) && !track_ids.is_empty() => {
-                            present_context_playlist_picker_dialog(&shell, source, track_ids);
+                            present_context_playlist_picker_dialog(
+                                &shell, source, subject, track_ids,
+                            );
                         }
                         Ok(Ok(_)) => {}
                         Ok(Err(error)) => {
@@ -522,15 +527,4 @@ fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<PlaylistSummary> {
         .playlists()
         .map(|playlists| playlists.to_vec())
         .unwrap_or_default()
-}
-#[cfg(test)]
-mod tests {
-    use super::playlist_add_toast;
-
-    #[test]
-    fn playlist_add_toast_summarizes_added_tracks_and_playlists() {
-        assert_eq!(playlist_add_toast(24, 3), "24 songs added to 3 playlists");
-        assert_eq!(playlist_add_toast(1, 1), "1 song added to 1 playlist");
-        assert_eq!(playlist_add_toast(0, 0), "No songs added");
-    }
 }

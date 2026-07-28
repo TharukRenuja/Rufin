@@ -3,6 +3,7 @@ pub(crate) mod chrome;
 mod diagnostics;
 pub(crate) mod layout;
 pub(crate) mod navigation;
+use crate::downloads::DownloadsState;
 use crate::favorites::FavoriteState;
 use crate::player::PlayerDesktopWidgets;
 use crate::player::desktop::DesktopState;
@@ -47,6 +48,7 @@ pub(crate) struct Shell {
     pub(crate) lyrics: LyricsState,
     pub(crate) preferences: PreferencesState,
     pub(crate) playlist_picker: PlaylistPickerState,
+    pub(crate) downloads: DownloadsState,
     pub(crate) control_feedback: ControlFeedbackState,
     localization: LocalizationState,
     pub(crate) desktop: DesktopState,

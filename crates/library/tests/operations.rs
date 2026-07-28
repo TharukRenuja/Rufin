@@ -3444,6 +3444,10 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
         .write(CandidateBatch::MusicFolders(vec![MusicFolder {
             id: new_folder_id.clone(),
             name: "Other music".to_string(),
+            image_ref: Some(ImageRef::new(
+                "jellyfin:music-folder:other",
+                Some("other-cover".to_string()),
+            )),
         }]))
         .expect("write second music folder");
     candidate
@@ -3644,6 +3648,18 @@ fn source_item_replacement_survives_removal_and_reattaches_dormant_consumers() {
             .expect("read new music folder Tracks")
             .len(),
         1
+    );
+    let folders = loaded.music_folders().expect("read music folders");
+    let new_folder = folders
+        .iter()
+        .find(|folder| folder.id == new_folder_id)
+        .expect("new music folder");
+    assert_eq!(
+        new_folder
+            .image_ref
+            .as_ref()
+            .map(|image| (image.item_id.as_str(), image.tag.as_deref())),
+        Some(("jellyfin:music-folder:other", Some("other-cover")))
     );
     let scoped_albums = loaded
         .albums(Some(&new_folder_id))
@@ -4956,6 +4972,7 @@ fn digest_fixture(track: &Track, projection_count: u32, reverse: bool) -> Vec<Ca
         CandidateBatch::MusicFolders(vec![MusicFolder {
             id: MusicFolderId::new("folder:one"),
             name: "Music".to_string(),
+            image_ref: None,
         }]),
         CandidateBatch::Playlists(vec![PlaylistSnapshot {
             playlist: Playlist {

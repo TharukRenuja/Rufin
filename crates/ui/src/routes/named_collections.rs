@@ -6,9 +6,11 @@ use artwork::ArtworkBinding;
 use gtk::{gio, glib};
 use playback::QueuePlacement;
 
-use super::collection_context::install_genre_context_menu;
+use super::collection_context::{install_genre_context_menu, present_genre_context_menu};
 use crate::format_duration_units;
+use crate::interactions::install_context_menu_openers;
 use crate::localization::localized_column;
+use crate::runtime::SelectedLibrary;
 use crate::shell::Shell;
 use crate::shell::cover::THUMB_COVER_SIZE;
 use crate::shell::cover::presentation::stable_seed;
@@ -186,6 +188,19 @@ impl NamedCollectionItem {
             install_genre_context_menu(widget, shell, genre.clone());
         }
     }
+
+    fn is_downloaded(&self, selected: &SelectedLibrary) -> bool {
+        match self {
+            Self::Genre(genre) => selected
+                .loaded
+                .is_genre_downloaded(&genre.genre.id, selected.music_folder_id.as_ref())
+                .unwrap_or(false),
+            Self::Mood(mood) => selected
+                .loaded
+                .is_mood_downloaded(&mood.mood.id, selected.music_folder_id.as_ref())
+                .unwrap_or(false),
+        }
+    }
 }
 
 pub(crate) fn sort_named_collection_items(
@@ -324,12 +339,122 @@ fn named_collection_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::Colum
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Title | LibraryField::TitleMerged => {
-            named_collection_text_column(shell, "Title", 180, |item| item.name().to_string())
+            named_collection_title_column(shell, "Title", 180)
         }
         _ => named_collection_text_column(shell, field.title(), column_width(field), {
             move |item| item.field(field)
         }),
     }
+}
+
+fn named_collection_title_column(
+    shell: &Rc<Shell>,
+    title: &str,
+    width: i32,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let setup_shell = Rc::clone(shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        row.set_hexpand(true);
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Start);
+        label.set_hexpand(false);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        row.append(&label);
+        let weak_item = item.downgrade();
+        let downloaded = setup_shell.download_badge(true, move |selected| {
+            weak_item
+                .upgrade()
+                .and_then(|item| item_at_from_item::<NamedCollectionItem>(&item))
+                .is_some_and(|item| item.is_downloaded(selected))
+        });
+        row.append(&downloaded);
+
+        let menu_item = item.downgrade();
+        let menu_shell = Rc::clone(&setup_shell);
+        install_context_menu_openers(
+            &row,
+            Rc::new(move |target, position| {
+                let Some(NamedCollectionItem::Genre(genre)) = menu_item
+                    .upgrade()
+                    .and_then(|item| item_at_from_item::<NamedCollectionItem>(&item))
+                else {
+                    return;
+                };
+                present_genre_context_menu(target, &menu_shell, genre, position);
+            }),
+        );
+        item.set_child(Some(&row));
+    });
+
+    let bind_shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(collection) = item_at_from_item::<NamedCollectionItem>(item) else {
+            return;
+        };
+        let Some(row) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+        else {
+            return;
+        };
+        let Some(label) = row
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        else {
+            return;
+        };
+        let Some(downloaded) = row
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::Image>().ok())
+        else {
+            return;
+        };
+        label.set_text(collection.name());
+        downloaded.set_visible(
+            bind_shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| collection.is_downloaded(selected)),
+        );
+    });
+    factory.connect_unbind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item
+            .child()
+            .and_then(|child| child.downcast::<gtk::Box>().ok())
+        else {
+            return;
+        };
+        if let Some(label) = row
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Label>().ok())
+        {
+            label.set_text("");
+        }
+        if let Some(downloaded) = row
+            .last_child()
+            .and_then(|child| child.downcast::<gtk::Image>().ok())
+        {
+            downloaded.set_visible(false);
+        }
+    });
+    let column = localized_column(title, &factory);
+    column.set_fixed_width(width);
+    column
 }
 
 fn named_collection_text_column<F>(
@@ -425,6 +550,13 @@ impl NamedCollectionGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_item = Rc::clone(&current_item);
+        body.set_download_badge(shell.download_badge(true, move |selected| {
+            downloaded_item
+                .borrow()
+                .as_ref()
+                .is_some_and(|item| item.is_downloaded(selected))
+        }));
         install_dynamic_genre_context_menu(&body.card, &shell, Rc::clone(&current_genre));
 
         Self {
@@ -451,6 +583,14 @@ impl ReusableCollectionGridCell<NamedCollectionItem> for NamedCollectionGridCell
             )));
         self.body
             .bind(item.name(), |field| (item.field(field), None));
+        self.body.set_downloaded(
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| item.is_downloaded(selected)),
+        );
         *self.current_genre.borrow_mut() = match &item {
             NamedCollectionItem::Genre(genre) => Some(genre.clone()),
             NamedCollectionItem::Mood(_) => None,

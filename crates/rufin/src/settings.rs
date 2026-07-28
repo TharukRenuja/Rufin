@@ -143,6 +143,12 @@ impl StoredSettings {
         self.migrate_home_blocks();
         self.migrate_legacy_track_table();
         self.ui.sanitize();
+        self.ui.downloads.retain(|download| {
+            self.sources
+                .configured
+                .iter()
+                .any(|source| source.configuration.source_id == download.source_id)
+        });
     }
 
     pub(crate) fn scrobbling_runtime_settings(&self) -> ScrobblingSettings {
@@ -1232,5 +1238,47 @@ mod tests {
             serialized.get("home_blocks"),
             Some(&serde_json::json!(["Showcase", "RecentlyPlayed"]))
         );
+    }
+
+    #[test]
+    fn download_rules_follow_their_configured_source() {
+        let source_id = SourceId::new("jellyfin:configured");
+        let removed_id = SourceId::new("jellyfin:removed");
+        let mut stored = StoredSettings {
+            sources: SourceSettings {
+                selected_source_id: Some(source_id.clone()),
+                configured: vec![ConfiguredSource {
+                    configuration: SourceConfiguration {
+                        source_id: source_id.clone(),
+                        kind: "jellyfin".to_string(),
+                        name: "Server".to_string(),
+                        provider_payload: "{}".to_string(),
+                    },
+                    credential_ref: None,
+                    music_folder_id: None,
+                    local_access: None,
+                }],
+            },
+            ..StoredSettings::default()
+        };
+        stored.ui.set_download_rules(
+            source_id.clone(),
+            ::ui::DownloadRules {
+                entire_library: true,
+                ..::ui::DownloadRules::default()
+            },
+        );
+        stored.ui.set_download_rules(
+            removed_id.clone(),
+            ::ui::DownloadRules {
+                favorites: true,
+                ..::ui::DownloadRules::default()
+            },
+        );
+
+        stored.migrate_defaults();
+
+        assert!(stored.ui.download_rules(&source_id).entire_library);
+        assert!(stored.ui.download_rules(&removed_id).is_empty());
     }
 }
