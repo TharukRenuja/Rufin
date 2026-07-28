@@ -13,7 +13,7 @@ use playback::SourceSessionEpoch;
 use tracing::warn;
 
 use crate::format_duration_units;
-use crate::interactions::{close_context_surface, context_menu_button, context_menu_scroll_page};
+use crate::interactions::{ContextMenuSurface, close_context_surface, context_menu_scroll_page};
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::runtime::SelectedLibrary;
 use crate::shell::Shell;
@@ -469,16 +469,13 @@ fn update_playlist_picker_add_button(
 ) {
     button.set_sensitive(rows.borrow().iter().any(|row| row.check.is_active()));
 }
-pub(crate) fn context_menu_picker_button(
-    label: &str,
-    icon_name: &str,
+pub(crate) fn install_context_menu_picker_action(
+    surface: &ContextMenuSurface,
     shell: &Rc<Shell>,
     track_source: PlaylistTrackSource,
-) -> gtk::Button {
-    let button = context_menu_button(&tr(label), icon_name);
+) {
     let shell = Rc::clone(shell);
-    button.connect_clicked(move |button| {
-        close_context_surface(button);
+    surface.add_action("add-to-playlist", move || {
         let PlaylistTrackSource { source, tracks } = track_source.clone();
         match tracks {
             PlaylistTracks::Ready(track_ids) => {
@@ -510,7 +507,6 @@ pub(crate) fn context_menu_picker_button(
             }
         }
     });
-    button
 }
 
 pub(crate) fn context_menu_can_add_to_playlist(shell: &Rc<Shell>) -> bool {

@@ -9,16 +9,12 @@ use adw::prelude::*;
 use gtk::glib;
 use playback::{QueuePlacement, RadioPlayRequest};
 
-use crate::favorites::{FAVORITE_ADD_ICON, FAVORITE_REMOVE_ICON};
 use crate::interactions::{
-    ADD_TO_PLAYLIST_ICON, ALBUM_ICON, ARTIST_ICON, ContextMenuSurface, RADIO_ICON,
-    context_menu_action, context_menu_box, context_menu_submenu_action,
-    install_context_menu_openers, radio_context_submenu,
+    ContextMenuSurface, install_context_menu_openers, radio_context_submenu,
 };
 use crate::player::state::current_playback_track;
 use crate::preferences::dialogs::popup::present_light_dismiss_dialog;
 use crate::shell::Shell;
-use crate::shell::actions::{PLAY_ICON, PLAY_LATER_ICON, PLAY_NEXT_ICON, REMOVE_ICON};
 use localization::{msgid, tr};
 
 use super::collections::PlaybackTarget;
@@ -27,7 +23,7 @@ use super::playlist_entries::{
     PlaylistEntryContextMenuAction, PlaylistEntryContextMenuState, confirm_remove_playlist_entry,
 };
 use super::playlist_picker::{
-    PlaylistTrackSource, context_menu_can_add_to_playlist, context_menu_picker_button,
+    PlaylistTrackSource, context_menu_can_add_to_playlist, install_context_menu_picker_action,
 };
 use super::route::Route;
 
@@ -194,76 +190,47 @@ fn present_track_context_menu_inner(
     popover_position: Option<gtk::PositionType>,
 ) {
     let playback_target = PlaybackTarget::Track(track.id.clone());
-    let menu = context_menu_box();
-    menu.append(&context_menu_action("Play", "track.play", PLAY_ICON));
-    menu.append(&context_menu_action(
-        "Play Next",
-        "track.play-next",
-        PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Play Later",
-        "track.play-last",
-        PLAY_LATER_ICON,
-    ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Track radio"),
-        "track.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("track"),
-    ));
-    if context_menu_can_add_to_playlist(shell) {
-        if let Some(selected) = shell.library.selected.borrow().as_ref() {
-            menu.append(&context_menu_picker_button(
-                "Add to Playlist",
-                ADD_TO_PLAYLIST_ICON,
-                shell,
-                PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()),
-            ));
-        }
+    let surface = ContextMenuSurface::new(target, "track", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Track radio"), &radio_context_submenu("track"));
+    let playlist_source = shell
+        .library
+        .selected
+        .borrow()
+        .as_ref()
+        .map(|selected| PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()));
+    if playlist_source.is_some() {
+        surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
-    menu.append(&context_menu_action(
+    surface.append_action(
         if track.favorite {
-            "Remove from Favorites"
+            msgid("Remove from Favorites")
         } else {
-            "Add to Favorites"
+            msgid("Add to Favorites")
         },
-        "track.favorite",
-        if track.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+        "favorite",
+    );
     let artist_route = track_artist_route(&track);
     if artist_route.is_some() {
-        menu.append(&context_menu_action(
-            "Go to Artist",
-            "track.go-artist",
-            ARTIST_ICON,
-        ));
+        surface.append_action(msgid("Go to Artist"), "go-artist");
     }
     if track.album_id.is_some() {
-        menu.append(&context_menu_action(
-            "Go to Album",
-            "track.go-album",
-            ALBUM_ICON,
-        ));
+        surface.append_action(msgid("Go to Album"), "go-album");
     }
     if remove_action.is_some() {
-        menu.append(&context_menu_action(
-            "Remove from playlist",
-            "track.remove-from-playlist",
-            REMOVE_ICON,
-        ));
+        surface.append_action(msgid("Remove from playlist"), "remove-from-playlist");
     }
 
-    let surface = ContextMenuSurface::new(target, "track", "track-context-menu", position, &menu);
     if let Some(popover_position) = popover_position {
         surface.popover().set_position(popover_position);
     }
     install_loaded_actions(&surface, shell, playback_target, false);
     install_radio_actions(&surface, shell, RadioSeed::Track(track.id.clone()));
+    if let Some(playlist_source) = playlist_source {
+        install_context_menu_picker_action(&surface, shell, playlist_source);
+    }
 
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
@@ -330,64 +297,36 @@ fn present_album_context_menu_inner(
     playback_target: PlaybackTarget,
     position: Option<(f64, f64)>,
 ) {
-    let menu = context_menu_box();
-    menu.append(&context_menu_action("Play", "album.play", PLAY_ICON));
-    menu.append(&context_menu_action(
-        "Play Next",
-        "album.play-next",
-        PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Play Later",
-        "album.play-last",
-        PLAY_LATER_ICON,
-    ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Album radio"),
-        "album.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("album"),
-    ));
-    if context_menu_can_add_to_playlist(shell) {
-        if let Some(track_source) = playback_target.playlist_tracks(shell) {
-            menu.append(&context_menu_picker_button(
-                "Add to Playlist",
-                ADD_TO_PLAYLIST_ICON,
-                shell,
-                track_source,
-            ));
-        }
+    let surface = ContextMenuSurface::new(target, "album", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Album radio"), &radio_context_submenu("album"));
+    let playlist_source = context_menu_can_add_to_playlist(shell)
+        .then(|| playback_target.playlist_tracks(shell))
+        .flatten();
+    if playlist_source.is_some() {
+        surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
-    menu.append(&context_menu_action(
+    surface.append_action(
         if album.album.favorite {
-            "Remove from Favorites"
+            msgid("Remove from Favorites")
         } else {
-            "Add to Favorites"
+            msgid("Add to Favorites")
         },
-        "album.favorite",
-        if album.album.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
+        "favorite",
+    );
     let artist_route = album_artist_route(&album.album);
     if artist_route.is_some() {
-        menu.append(&context_menu_action(
-            "Go to Artist",
-            "album.go-artist",
-            ARTIST_ICON,
-        ));
+        surface.append_action(msgid("Go to Artist"), "go-artist");
     }
-    menu.append(&context_menu_action(
-        "Go to Album",
-        "album.go-album",
-        ALBUM_ICON,
-    ));
+    surface.append_action(msgid("Go to Album"), "go-album");
 
-    let surface = ContextMenuSurface::new(target, "album", "album-context-menu", position, &menu);
     install_loaded_actions(&surface, shell, playback_target, true);
     install_radio_actions(&surface, shell, RadioSeed::Album(album.album.id.clone()));
+    if let Some(playlist_source) = playlist_source {
+        install_context_menu_picker_action(&surface, shell, playlist_source);
+    }
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
         let album_id = album.album.id.clone();
@@ -429,56 +368,32 @@ pub(crate) fn present_artist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Artist(artist.artist.id.clone());
-    let menu = context_menu_box();
-    menu.append(&context_menu_action("Play", "artist.play", PLAY_ICON));
-    menu.append(&context_menu_action(
-        "Play Next",
-        "artist.play-next",
-        PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Play Later",
-        "artist.play-last",
-        PLAY_LATER_ICON,
-    ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Artist radio"),
-        "artist.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("artist"),
-    ));
-    if context_menu_can_add_to_playlist(shell) {
-        if let Some(track_source) = playback_target.playlist_tracks(shell) {
-            menu.append(&context_menu_picker_button(
-                "Add to Playlist",
-                ADD_TO_PLAYLIST_ICON,
-                shell,
-                track_source,
-            ));
-        }
+    let surface = ContextMenuSurface::new(target, "artist", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Artist radio"), &radio_context_submenu("artist"));
+    let playlist_source = context_menu_can_add_to_playlist(shell)
+        .then(|| playback_target.playlist_tracks(shell))
+        .flatten();
+    if playlist_source.is_some() {
+        surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
-    menu.append(&context_menu_action(
+    surface.append_action(
         if artist.artist.favorite {
-            "Remove from Favorites"
+            msgid("Remove from Favorites")
         } else {
-            "Add to Favorites"
+            msgid("Add to Favorites")
         },
-        "artist.favorite",
-        if artist.artist.favorite {
-            FAVORITE_REMOVE_ICON
-        } else {
-            FAVORITE_ADD_ICON
-        },
-    ));
-    menu.append(&context_menu_action(
-        "Go to Artist",
-        "artist.go-artist",
-        ARTIST_ICON,
-    ));
+        "favorite",
+    );
+    surface.append_action(msgid("Go to Artist"), "go-artist");
 
-    let surface = ContextMenuSurface::new(target, "artist", "artist-context-menu", position, &menu);
     install_loaded_actions(&surface, shell, playback_target, true);
     install_radio_actions(&surface, shell, RadioSeed::Artist(artist.artist.id.clone()));
+    if let Some(playlist_source) = playlist_source {
+        install_context_menu_picker_action(&surface, shell, playlist_source);
+    }
     surface.add_action("favorite", {
         let shell = Rc::clone(shell);
         let artist_id = artist.artist.id.clone();
@@ -506,35 +421,17 @@ pub(crate) fn present_genre_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Genre(genre.genre.id.clone());
-    let menu = context_menu_box();
-    menu.append(&context_menu_action("Play", "genre.play", PLAY_ICON));
-    menu.append(&context_menu_action(
-        "Play Next",
-        "genre.play-next",
-        PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Play Later",
-        "genre.play-last",
-        PLAY_LATER_ICON,
-    ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Genre radio"),
-        "genre.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("genre"),
-    ));
-    if context_menu_can_add_to_playlist(shell) {
-        if let Some(track_source) = playback_target.playlist_tracks(shell) {
-            menu.append(&context_menu_picker_button(
-                "Add to Playlist",
-                ADD_TO_PLAYLIST_ICON,
-                shell,
-                track_source,
-            ));
-        }
+    let surface = ContextMenuSurface::new(target, "genre", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Genre radio"), &radio_context_submenu("genre"));
+    let playlist_source = context_menu_can_add_to_playlist(shell)
+        .then(|| playback_target.playlist_tracks(shell))
+        .flatten();
+    if playlist_source.is_some() {
+        surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }
-    let surface = ContextMenuSurface::new(target, "genre", "genre-context-menu", position, &menu);
     install_loaded_actions(&surface, shell, playback_target, true);
     install_radio_actions(
         &surface,
@@ -544,6 +441,9 @@ pub(crate) fn present_genre_context_menu(
             name: genre.genre.name.clone(),
         },
     );
+    if let Some(playlist_source) = playlist_source {
+        install_context_menu_picker_action(&surface, shell, playlist_source);
+    }
     surface.popup();
 }
 
@@ -554,32 +454,12 @@ pub(crate) fn present_playlist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::Playlist(playlist.playlist.id.clone());
-    let menu = context_menu_box();
-    menu.append(&context_menu_action("Play", "playlist.play", PLAY_ICON));
-    menu.append(&context_menu_action(
-        "Play Next",
-        "playlist.play-next",
-        PLAY_NEXT_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Play Later",
-        "playlist.play-last",
-        PLAY_LATER_ICON,
-    ));
-    menu.append(&context_menu_submenu_action(
-        msgid("Playlist radio"),
-        "playlist.play-radio",
-        RADIO_ICON,
-        &radio_context_submenu("playlist"),
-    ));
-    menu.append(&context_menu_action(
-        "Delete",
-        "playlist.delete",
-        REMOVE_ICON,
-    ));
-
-    let surface =
-        ContextMenuSurface::new(target, "playlist", "playlist-context-menu", position, &menu);
+    let surface = ContextMenuSurface::new(target, "playlist", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Play Next"), "play-next");
+    surface.append_action(msgid("Play Later"), "play-last");
+    surface.append_submenu(msgid("Playlist radio"), &radio_context_submenu("playlist"));
+    surface.append_action(msgid("Delete"), "delete");
     install_loaded_actions(&surface, shell, playback_target, true);
     install_radio_actions(
         &surface,
@@ -621,24 +501,9 @@ pub(crate) fn present_smart_playlist_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let playback_target = PlaybackTarget::SmartPlaylist(playlist.smart_playlist.id.clone());
-    let menu = context_menu_box();
-    menu.append(&context_menu_action(
-        "Play",
-        "smart-playlist.play",
-        PLAY_ICON,
-    ));
-    menu.append(&context_menu_action(
-        "Delete",
-        "smart-playlist.delete",
-        REMOVE_ICON,
-    ));
-    let surface = ContextMenuSurface::new(
-        target,
-        "smart-playlist",
-        "playlist-context-menu",
-        position,
-        &menu,
-    );
+    let surface = ContextMenuSurface::new(target, "smart-playlist", position);
+    surface.append_action(msgid("Play"), "play");
+    surface.append_action(msgid("Delete"), "delete");
     install_loaded_actions(&surface, shell, playback_target, true);
     surface.add_action("delete", {
         let smart_playlists = shell.products.smart_playlists.clone();

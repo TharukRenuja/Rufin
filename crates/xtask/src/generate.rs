@@ -269,8 +269,6 @@ fn write_i18n_template(root: &Path, sources: &Path, entries: &Path, output: &Pat
             "--keyword=row_button:2",
             "--keyword=cover_hover_controls:2",
             "--keyword=relocalize_icon_button:2",
-            "--keyword=context_menu_action:1",
-            "--keyword=context_menu_picker_button:1",
             "--keyword=table_header_label:1",
             "--keyword=button_row:1",
             "--keyword=dialog_button:1",
