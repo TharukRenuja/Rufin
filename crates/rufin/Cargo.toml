@@ -23,6 +23,7 @@ async-channel.workspace = true
 artwork.workspace = true
 directories.workspace = true
 desktop-integration.workspace = true
+downloads.workspace = true
 getrandom.workspace = true
 glib.workspace = true
 md5.workspace = true

@@ -50,7 +50,7 @@ pub(super) struct JellyfinItem {
     index_number: Option<i32>,
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
-    image_tags: Option<HashMap<String, String>>,
+    pub(super) image_tags: Option<HashMap<String, String>>,
     backdrop_image_tags: Option<Vec<String>>,
     parent_backdrop_item_id: Option<String>,
     parent_backdrop_image_tags: Option<Vec<String>>,
@@ -395,7 +395,7 @@ fn normalized_timestamp(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn primary_image_ref(
+pub(super) fn primary_image_ref(
     kind: &str,
     item_id: &str,
     image_tags: &Option<HashMap<String, String>>,

@@ -128,6 +128,57 @@ impl Library {
 }
 
 impl LoadedLibrary {
+    pub fn replace_downloaded_files(
+        &self,
+        mut files: HashMap<TrackId, PathBuf>,
+    ) -> crate::LoadedLibraryResult<Vec<TrackId>> {
+        let mut state = self.write_state()?;
+        let removed = files
+            .keys()
+            .filter(|track_id| state.tracks.get(*track_id).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        files.retain(|track_id, _| state.tracks.get(track_id).is_some());
+        state.downloaded_files = files;
+        Ok(removed)
+    }
+
+    pub fn set_downloaded_file(
+        &self,
+        track_id: TrackId,
+        path: PathBuf,
+    ) -> crate::LoadedLibraryResult<()> {
+        let mut state = self.write_state()?;
+        if state.tracks.get(&track_id).is_none() {
+            return Err(crate::LoadedLibraryError::MissingItem {
+                kind: "Track",
+                id: track_id.to_string(),
+            });
+        }
+        state.downloaded_files.insert(track_id, path);
+        Ok(())
+    }
+
+    pub fn remove_downloaded_file(
+        &self,
+        track_id: &TrackId,
+    ) -> crate::LoadedLibraryResult<Option<PathBuf>> {
+        Ok(self.write_state()?.downloaded_files.remove(track_id))
+    }
+
+    pub fn is_downloaded(&self, track_id: &TrackId) -> crate::LoadedLibraryResult<bool> {
+        Ok(self.read_state()?.downloaded_files.contains_key(track_id))
+    }
+
+    pub fn downloaded_track_ids(&self) -> crate::LoadedLibraryResult<HashSet<TrackId>> {
+        Ok(self
+            .read_state()?
+            .downloaded_files
+            .keys()
+            .cloned()
+            .collect())
+    }
+
     pub(crate) fn replace_local_access(
         &self,
         mapping: Option<LocalAccessMapping>,
@@ -200,6 +251,9 @@ impl LoadedLibrary {
         let Some(track) = state.tracks.get(track_id) else {
             return Ok(None);
         };
+        if let Some(path) = state.downloaded_files.get(track_id) {
+            return Ok(Some(PlayableFile::File { path: path.clone() }));
+        }
         Ok(playable_file_for(
             track,
             &state.local_files,

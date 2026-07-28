@@ -10,7 +10,7 @@ pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
     ALBUM_FIELDS, ItemQueryResult, JellyfinItem, MIXED_ITEM_FIELDS, PLAYLIST_FIELDS, TRACK_FIELDS,
     album_from_item, artist_from_item, folder_from_item, genre_from_item, is_audio_item,
-    playlist_from_item, track_from_item,
+    playlist_from_item, primary_image_ref, track_from_item,
 };
 use library::{
     AlbumId, FavoriteItemId, Folder, FolderId, HomeItemId, ImageRef, MusicFolder, MusicFolderId,

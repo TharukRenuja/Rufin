@@ -36,6 +36,7 @@ Rufin's crates try to follow a product ownership model. The goal is to separate 
 | `album-lookup` | external album release and cover lookups |
 | `artwork` | artwork selection, loading, and caching |
 | `desktop-integration` | MPRIS, notifications, the tray, and Discord RPC |
+| `downloads` | server track downloads and download management |
 | `library` | music items, listening activity, and the database |
 | `localization` | translation tooling and locales |
 | `lyrics` | lyrics fetching, selection, and state |

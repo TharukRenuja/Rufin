@@ -10,6 +10,7 @@ const SETTINGS_FILE: &str = "settings.json";
 const SECRETS_FILE: &str = "secrets.json";
 const ARTWORK_DIRECTORY: &str = "covers";
 const PLAYBACK_DIRECTORY: &str = "playback";
+const DOWNLOADS_DIRECTORY: &str = "downloads";
 
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("io.github", "screwys", "Rufin")
@@ -24,6 +25,12 @@ pub(crate) fn config_dir() -> PathBuf {
 pub(crate) fn cache_dir() -> PathBuf {
     project_dirs()
         .map(|dirs| dirs.cache_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub(crate) fn data_dir() -> PathBuf {
+    project_dirs()
+        .map(|dirs| dirs.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -57,11 +64,16 @@ pub(crate) fn playback_dir() -> PathBuf {
     cache_dir().join(PLAYBACK_DIRECTORY)
 }
 
+pub(crate) fn downloads_dir() -> PathBuf {
+    data_dir().join(DOWNLOADS_DIRECTORY)
+}
+
 pub(crate) fn prepare() -> Result<(), String> {
     for path in [
         store_file().parent().map(Path::to_path_buf),
         Some(artwork_dir()),
         Some(playback_dir()),
+        Some(downloads_dir()),
         settings_file().parent().map(Path::to_path_buf),
     ]
     .into_iter()

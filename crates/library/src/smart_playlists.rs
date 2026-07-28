@@ -13,7 +13,10 @@ use std::sync::Arc;
 use crate::{
     AcceptedLibraryChange, AlbumArtwork, MusicFolderId, SmartPlaylistId, Track, TrackActivity,
     TrackId, TrackSort,
-    browse::{COLLECTION_ARTWORK_LIMIT, TrackList, album_artwork, compare_tracks, track_in_scope},
+    browse::{
+        COLLECTION_ARTWORK_LIMIT, TrackList, album_artwork, compare_tracks, track_in_scope,
+        track_slots_downloaded,
+    },
     loaded::{LoadedItems, LoadedState, TrackSlot},
     msgid,
 };
@@ -1370,6 +1373,21 @@ impl crate::LoadedLibrary {
                 evaluate_playlist(Arc::clone(playlist), &state, music_folder_id).track_slots
             });
         Ok(TrackList::new(Arc::clone(self), slots.into(), None))
+    }
+
+    pub fn is_smart_playlist_downloaded(
+        &self,
+        id: &SmartPlaylistId,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> crate::LoadedLibraryResult<bool> {
+        let state = self.read_state()?;
+        let slots = state
+            .smart_playlists
+            .get(id)
+            .map_or_else(Vec::new, |playlist| {
+                evaluate_playlist(Arc::clone(playlist), &state, music_folder_id).track_slots
+            });
+        Ok(track_slots_downloaded(&state, slots, music_folder_id))
     }
 
     pub(crate) fn replace_smart_playlist(

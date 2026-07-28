@@ -7,6 +7,9 @@ use playback::{LoadedPlayRequest, PlaybackProjection, QueuePlacement, SourceSess
 use std::sync::Arc;
 
 use super::source::{ConfiguredSources, SourceOperation};
+use downloads::DownloadSubject;
+
+use super::source::{DownloadRequest, RemoveDownloadRequest};
 use super::{DiagnosticsHandle, ProductHandles, ProductReceivers};
 
 #[derive(Clone)]
@@ -48,6 +51,27 @@ impl SelectedLibrary {
             placement,
         )
     }
+
+    pub fn download_request(
+        &self,
+        subject: DownloadSubject,
+        tracks: TrackSelection,
+    ) -> DownloadRequest {
+        DownloadRequest {
+            source_id: self.source_id.clone(),
+            source_session_epoch: self.source_session_epoch,
+            subject,
+            tracks,
+        }
+    }
+
+    pub fn remove_download_request(&self, track_id: library::TrackId) -> RemoveDownloadRequest {
+        RemoveDownloadRequest {
+            source_id: self.source_id.clone(),
+            source_session_epoch: self.source_session_epoch,
+            track_id,
+        }
+    }
 }
 
 /// Ordered selected-source lifecycle publication.
@@ -81,6 +105,7 @@ pub enum SourceEvent {
     },
     LibraryUpdate(SelectedLibraryUpdate),
     FavoriteFailure(FavoriteFailure),
+    Downloads(downloads::DownloadEvent),
     Notice(String),
     ReleaseSelected {
         acknowledged: async_channel::Sender<()>,

@@ -1,5 +1,5 @@
 [package]
-name = "ui"
+name = "downloads"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -11,25 +11,18 @@ readme.workspace = true
 publish.workspace = true
 
 [dependencies]
-adw = { workspace = true, features = ["v1_8", "gtk_v4_20"] }
 async-channel.workspace = true
-artwork.workspace = true
-directories.workspace = true
-desktop-integration.workspace = true
-downloads.workspace = true
-gtk = { workspace = true, features = ["v4_20"] }
+blake3.workspace = true
 library.workspace = true
-localization.workspace = true
-lyrics.workspace = true
-playback.workspace = true
-secrets.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sources.workspace = true
+tokio = { workspace = true, features = ["fs", "rt", "time"] }
 tracing.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

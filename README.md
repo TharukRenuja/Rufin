@@ -19,6 +19,8 @@
 
 - Fast, native and modern GTK/libadwaita client
 - Built for Jellyfin, Subsonic, Navidrome servers and local folders
+- Supports downloads and offline usage, with automatic download rules and a download queue
+- Smart session handling; downloaded songs are played locally, others are played remotely, that lets you seamlessly browse the source as usual
 - Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
 - Optimized for quick startup and navigation, smooth full library browsing
 - Automatic metadata, artwork and lyrics caching

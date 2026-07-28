@@ -183,7 +183,7 @@ impl ArtworkBinding {
         candidates.finish()
     }
 
-    pub(crate) fn source_artwork(artwork: &SourceArtwork) -> Self {
+    pub fn source_artwork(artwork: &SourceArtwork) -> Self {
         let mut candidates = CandidateBuilder::default();
         match artwork {
             SourceArtwork::Native(image_ref) => candidates.push_native(Some(image_ref)),

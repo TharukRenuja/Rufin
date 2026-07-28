@@ -1,7 +1,9 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use desktop_integration::Settings as RichPresenceSettings;
-use library::HomeBlockKind;
+use downloads::{DownloadQuality, DownloadRule};
+use library::{HomeBlockKind, SourceId};
 use localization::{default_language_preference, sanitize_language_preference};
 use lyrics::Settings as LyricsSettings;
 use playback::{
@@ -44,6 +46,8 @@ pub struct Settings {
     pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default)]
     pub prefer_server_playlist_covers: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<SourceDownloadSettings>,
     #[serde(default)]
     pub seekbar_waveform_enabled: bool,
     #[serde(default)]
@@ -101,6 +105,7 @@ impl Default for Settings {
             external_album_lookup_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_playlist_covers: false,
+            downloads: Vec::new(),
             seekbar_waveform_enabled: true,
             tray_enabled: false,
             exit_to_tray: false,
@@ -169,6 +174,7 @@ impl Settings {
         sanitize_home_blocks(&mut self.home_blocks);
         migrate_library_lists(&mut self.library_lists);
         self.folder_view.sanitize();
+        sanitize_downloads(&mut self.downloads);
     }
 
     pub fn library_list(&self, key: LibraryListKey) -> LibraryListSettings {
@@ -177,6 +183,128 @@ impl Settings {
             .find(|entry| entry.key == key)
             .map(|entry| entry.settings.clone())
             .unwrap_or_else(|| LibraryListSettings::for_key(key))
+    }
+
+    pub fn download_rules(&self, source_id: &SourceId) -> DownloadRules {
+        self.download_settings(source_id).rules
+    }
+
+    pub fn download_quality(&self, source_id: &SourceId) -> DownloadQuality {
+        self.download_settings(source_id).quality
+    }
+
+    pub fn download_directory(&self, source_id: &SourceId) -> Option<PathBuf> {
+        self.download_settings(source_id).directory
+    }
+
+    pub fn download_settings(&self, source_id: &SourceId) -> SourceDownloadSettings {
+        self.downloads
+            .iter()
+            .find(|entry| &entry.source_id == source_id)
+            .cloned()
+            .unwrap_or_else(|| SourceDownloadSettings {
+                source_id: source_id.clone(),
+                rules: DownloadRules::default(),
+                quality: DownloadQuality::Original,
+                directory: None,
+            })
+    }
+
+    pub fn set_download_rules(&mut self, source_id: SourceId, rules: DownloadRules) -> bool {
+        self.update_download_settings(source_id, |settings| settings.rules = rules)
+    }
+
+    pub fn set_download_quality(&mut self, source_id: SourceId, quality: DownloadQuality) -> bool {
+        self.update_download_settings(source_id, |settings| settings.quality = quality)
+    }
+
+    pub fn set_download_directory(
+        &mut self,
+        source_id: SourceId,
+        directory: Option<PathBuf>,
+    ) -> bool {
+        self.update_download_settings(source_id, |settings| settings.directory = directory)
+    }
+
+    fn update_download_settings(
+        &mut self,
+        source_id: SourceId,
+        update: impl FnOnce(&mut SourceDownloadSettings),
+    ) -> bool {
+        let previous = self.download_settings(&source_id);
+        let mut next = previous.clone();
+        update(&mut next);
+        if previous == next {
+            return false;
+        }
+        self.downloads.retain(|entry| entry.source_id != source_id);
+        if !next.is_default() {
+            self.downloads.push(next);
+            self.downloads
+                .sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DownloadRules {
+    #[serde(default)]
+    pub entire_library: bool,
+    #[serde(default)]
+    pub favorites: bool,
+    #[serde(default)]
+    pub all_playlists: bool,
+    #[serde(default)]
+    pub latest_five_albums: bool,
+}
+
+impl DownloadRules {
+    pub fn is_empty(self) -> bool {
+        !self.entire_library && !self.favorites && !self.all_playlists && !self.latest_five_albums
+    }
+
+    pub fn contains(self, rule: DownloadRule) -> bool {
+        match rule {
+            DownloadRule::EntireLibrary => self.entire_library,
+            DownloadRule::Favorites => self.favorites,
+            DownloadRule::AllPlaylists => self.all_playlists,
+            DownloadRule::LatestFiveAlbums => self.latest_five_albums,
+        }
+    }
+
+    pub fn set(&mut self, rule: DownloadRule, active: bool) {
+        match rule {
+            DownloadRule::EntireLibrary => self.entire_library = active,
+            DownloadRule::Favorites => self.favorites = active,
+            DownloadRule::AllPlaylists => self.all_playlists = active,
+            DownloadRule::LatestFiveAlbums => self.latest_five_albums = active,
+        }
+    }
+
+    pub fn active(self) -> impl Iterator<Item = DownloadRule> {
+        DownloadRule::ALL
+            .into_iter()
+            .filter(move |rule| self.contains(*rule))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SourceDownloadSettings {
+    pub source_id: SourceId,
+    #[serde(flatten)]
+    pub rules: DownloadRules,
+    #[serde(default)]
+    pub quality: DownloadQuality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory: Option<PathBuf>,
+}
+
+impl SourceDownloadSettings {
+    fn is_default(&self) -> bool {
+        self.rules.is_empty()
+            && self.quality == DownloadQuality::Original
+            && self.directory.is_none()
     }
 }
 
@@ -252,4 +380,19 @@ fn migrate_library_lists(lists: &mut Vec<LibraryListSettingsEntry>) {
     for entry in lists {
         entry.settings.sanitize(entry.key);
     }
+}
+
+fn sanitize_downloads(downloads: &mut Vec<SourceDownloadSettings>) {
+    for entry in downloads.iter_mut() {
+        if entry
+            .directory
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            entry.directory = None;
+        }
+    }
+    downloads.retain(|entry| !entry.is_default());
+    downloads.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+    downloads.dedup_by(|left, right| left.source_id == right.source_id);
 }

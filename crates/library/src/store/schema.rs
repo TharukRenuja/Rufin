@@ -9,9 +9,10 @@ use rusqlite::{Connection, OptionalExtension};
 use super::{StoreError, StoreResult};
 
 pub(crate) const APPLICATION_ID: i64 = 1_381_320_270;
-pub(crate) const SCHEMA_VERSION: i64 = 32;
+pub(crate) const SCHEMA_VERSION: i64 = 33;
+const PREVIOUS_SCHEMA_VERSION: i64 = 32;
 
-const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 32.
+const CREATE_SCHEMA: &str = r###"-- Rufin Store schema 33.
 --
 -- Product routes hydrate LoadedLibrary and do not query these tables for
 -- sorting or filtering.
@@ -21,7 +22,7 @@ PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
 
 PRAGMA application_id = 1381320270; -- "RUFN"
-PRAGMA user_version = 32;
+PRAGMA user_version = 33;
 
 -- One row is one complete or in-progress source-library candidate. The newest
 -- accepted library_id is current; there is no mutable head row.
@@ -335,7 +336,10 @@ CREATE TABLE music_folders (
         REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
     folder_id TEXT NOT NULL CHECK (folder_id <> ''),
     name TEXT NOT NULL CHECK (name <> ''),
-    PRIMARY KEY (library_id, folder_id)
+    image_item_id TEXT CHECK (image_item_id IS NULL OR image_item_id <> ''),
+    image_tag TEXT CHECK (image_tag IS NULL OR image_tag <> ''),
+    PRIMARY KEY (library_id, folder_id),
+    CHECK (image_tag IS NULL OR image_item_id IS NOT NULL)
 ) STRICT;
 
 -- A playlist header exists even when it has no entries.
@@ -703,6 +707,33 @@ CREATE TABLE album_release_info (
 COMMIT;
 "###;
 
+const MIGRATE_SCHEMA_32: &str = r###"
+BEGIN IMMEDIATE;
+
+ALTER TABLE music_folders RENAME TO schema_32_music_folders;
+
+CREATE TABLE music_folders (
+    library_id INTEGER NOT NULL
+        REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
+    folder_id TEXT NOT NULL CHECK (folder_id <> ''),
+    name TEXT NOT NULL CHECK (name <> ''),
+    image_item_id TEXT CHECK (image_item_id IS NULL OR image_item_id <> ''),
+    image_tag TEXT CHECK (image_tag IS NULL OR image_tag <> ''),
+    PRIMARY KEY (library_id, folder_id),
+    CHECK (image_tag IS NULL OR image_item_id IS NOT NULL)
+) STRICT;
+
+INSERT INTO music_folders(library_id, folder_id, name)
+SELECT library_id, folder_id, name
+FROM schema_32_music_folders;
+
+DROP TABLE schema_32_music_folders;
+
+PRAGMA user_version = 33;
+
+COMMIT;
+"###;
+
 pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
     connection.pragma_update(None, "foreign_keys", true)?;
     let application_id = pragma_i64(connection, "application_id")?;
@@ -718,6 +749,9 @@ pub(crate) fn initialize(connection: &Connection) -> StoreResult<()> {
 
     match (application_id, user_version, has_schema) {
         (0, 0, false) => connection.execute_batch(CREATE_SCHEMA)?,
+        (APPLICATION_ID, PREVIOUS_SCHEMA_VERSION, true) => {
+            connection.execute_batch(MIGRATE_SCHEMA_32)?
+        }
         (APPLICATION_ID, SCHEMA_VERSION, true) => {}
         (application_id, user_version, _) => {
             return Err(StoreError::UnsupportedSchema {
@@ -801,4 +835,69 @@ fn schema_inventory(connection: &Connection) -> StoreResult<Vec<SchemaObject>> {
 
 fn pragma_i64(connection: &Connection, name: &str) -> rusqlite::Result<i64> {
     connection.pragma_query_value(None, name, |row| row.get(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_32_music_folders_are_preserved_when_cover_columns_are_added() {
+        let connection = Connection::open_in_memory().expect("open Store");
+        initialize(&connection).expect("initialize current Store");
+        connection
+            .execute(
+                "INSERT INTO source_libraries(
+                    source_id, input_version, input_digest, accepted_at
+                 ) VALUES (?1, 1, ?2, 1)",
+                rusqlite::params!["source:test", vec![1_u8; 32]],
+            )
+            .expect("write source library");
+        connection
+            .execute(
+                "INSERT INTO music_folders(library_id, folder_id, name)
+                 VALUES (1, 'folder:test', 'Music')",
+                [],
+            )
+            .expect("write music folder");
+        connection
+            .execute_batch(
+                "ALTER TABLE music_folders RENAME TO schema_33_music_folders;
+                 CREATE TABLE music_folders (
+                     library_id INTEGER NOT NULL
+                         REFERENCES source_libraries(library_id) ON DELETE NO ACTION,
+                     folder_id TEXT NOT NULL CHECK (folder_id <> ''),
+                     name TEXT NOT NULL CHECK (name <> ''),
+                     PRIMARY KEY (library_id, folder_id)
+                 ) STRICT;
+                 INSERT INTO music_folders(library_id, folder_id, name)
+                 SELECT library_id, folder_id, name
+                 FROM schema_33_music_folders;
+                 DROP TABLE schema_33_music_folders;
+                 PRAGMA user_version = 32;",
+            )
+            .expect("prepare schema 32 Store");
+
+        initialize(&connection).expect("migrate schema 32 Store");
+
+        let folder = connection
+            .query_row(
+                "SELECT folder_id, name, image_item_id, image_tag
+                 FROM music_folders",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .expect("read migrated music folder");
+        assert_eq!(
+            folder,
+            ("folder:test".to_string(), "Music".to_string(), None, None)
+        );
+    }
 }

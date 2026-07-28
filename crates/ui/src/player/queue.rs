@@ -1629,12 +1629,13 @@ fn show_queue_row_context_menu(
     surface.append_action(msgid("Play Next"), "play-next");
     surface.append_action(msgid("Play Later"), "play-last");
     surface.append_submenu(msgid("Track radio"), &radio_context_submenu("queue"));
-    let playlist_source = shell
-        .library
-        .selected
-        .borrow()
-        .as_ref()
-        .map(|selected| PlaylistTrackSource::ready(selected, vec![track.id.clone()].into()));
+    let playlist_source = shell.library.selected.borrow().as_ref().map(|selected| {
+        PlaylistTrackSource::ready(
+            selected,
+            downloads::DownloadSubject::Track(track.id.clone()),
+            vec![track.id.clone()].into(),
+        )
+    });
     if playlist_source.is_some() {
         surface.append_action(msgid("Add to Playlist"), "add-to-playlist");
     }

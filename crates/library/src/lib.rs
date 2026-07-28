@@ -165,7 +165,7 @@ impl Library {
         })
     }
 
-    /// Opens a healthy Store or repairs an identified final schema-32 Store.
+    /// Opens a healthy Store or repairs an identified current Store.
     ///
     /// Repair preserves the damaged database beside the replacement and
     /// returns a report so Rufin can enter its ordinary source rebuild gate.

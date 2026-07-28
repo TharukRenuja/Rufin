@@ -378,6 +378,8 @@ pub struct Mood {
 pub struct MusicFolder {
     pub id: MusicFolderId,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

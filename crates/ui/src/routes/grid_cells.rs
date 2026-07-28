@@ -562,6 +562,13 @@ impl TrackGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_track = Rc::clone(&current_track);
+        body.set_download_badge(shell.download_badge(false, move |selected| {
+            downloaded_track
+                .borrow()
+                .as_ref()
+                .is_some_and(|track| selected.loaded.is_downloaded(&track.id).unwrap_or(false))
+        }));
         install_dynamic_track_context_menu(&body.card, &shell, Rc::clone(&current_track));
 
         Self {
@@ -596,6 +603,14 @@ impl ReusableCollectionGridCell<Track> for TrackGridCell {
                 track_grid_field_route(&track, field),
             )
         });
+        self.body.set_downloaded(
+            self.shell
+                .library
+                .selected
+                .borrow()
+                .as_ref()
+                .is_some_and(|selected| selected.loaded.is_downloaded(&track.id).unwrap_or(false)),
+        );
         set_favorite_button_active(&self.favorite, track.favorite);
         *self.current_track.borrow_mut() = Some(track);
         self.current_position.set(position);
@@ -736,6 +751,15 @@ impl AlbumGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_album = Rc::clone(&current_album);
+        body.set_download_badge(shell.download_badge(true, move |selected| {
+            downloaded_album.borrow().as_ref().is_some_and(|album| {
+                selected
+                    .loaded
+                    .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
+                    .unwrap_or(false)
+            })
+        }));
         install_dynamic_album_context_menu(&body.card, &shell, Rc::clone(&current_album));
 
         Self {
@@ -773,6 +797,15 @@ impl ReusableCollectionGridCell<AlbumSummary> for AlbumGridCell {
             };
             (value, route)
         });
+        self.body
+            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
+                |selected| {
+                    selected
+                        .loaded
+                        .is_album_downloaded(&album.album.id, selected.music_folder_id.as_ref())
+                        .unwrap_or(false)
+                },
+            ));
         set_favorite_button_active(&self.favorite, album.album.favorite);
         *self.current_album.borrow_mut() = Some(album);
     }
@@ -916,6 +949,15 @@ impl ArtistGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_artist = Rc::clone(&current_artist);
+        body.set_download_badge(shell.download_badge(true, move |selected| {
+            downloaded_artist.borrow().as_ref().is_some_and(|artist| {
+                selected
+                    .loaded
+                    .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
+                    .unwrap_or(false)
+            })
+        }));
         install_dynamic_artist_context_menu(&body.card, &shell, Rc::clone(&current_artist));
 
         Self {
@@ -944,6 +986,15 @@ impl ReusableCollectionGridCell<ArtistSummary> for ArtistGridCell {
         self.body.bind(&artist.artist.name, |field| {
             (artist_field(&artist, field), None)
         });
+        self.body
+            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
+                |selected| {
+                    selected
+                        .loaded
+                        .is_artist_downloaded(&artist.artist.id, selected.music_folder_id.as_ref())
+                        .unwrap_or(false)
+                },
+            ));
         set_favorite_button_active(&self.favorite, artist.artist.favorite);
         *self.current_artist.borrow_mut() = Some(artist);
     }
@@ -1053,6 +1104,18 @@ impl PlaylistGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_playlist = Rc::clone(&current_playlist);
+        body.set_download_badge(shell.download_badge(true, move |selected| {
+            downloaded_playlist
+                .borrow()
+                .as_ref()
+                .is_some_and(|playlist| {
+                    selected
+                        .loaded
+                        .is_playlist_downloaded(&playlist.playlist.id)
+                        .unwrap_or(false)
+                })
+        }));
         install_dynamic_playlist_context_menu(&body.card, &shell, Rc::clone(&current_playlist));
 
         Self {
@@ -1088,6 +1151,15 @@ impl ReusableCollectionGridCell<PlaylistSummary> for PlaylistGridCell {
         self.body.bind(&playlist.playlist.name, |field| {
             (playlist_field(&playlist, field), None)
         });
+        self.body
+            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
+                |selected| {
+                    selected
+                        .loaded
+                        .is_playlist_downloaded(&playlist.playlist.id)
+                        .unwrap_or(false)
+                },
+            ));
         *self.current_playlist.borrow_mut() = Some(playlist);
     }
 
@@ -1199,6 +1271,21 @@ impl SmartPlaylistGridCell {
 
         let cover = cards::square_cover_frame(&overlay);
         let body = CollectionGridCardCell::new(&shell, fields, cover.upcast());
+        let downloaded_playlist = Rc::clone(&current_playlist);
+        body.set_download_badge(shell.download_badge(true, move |selected| {
+            downloaded_playlist
+                .borrow()
+                .as_ref()
+                .is_some_and(|playlist| {
+                    selected
+                        .loaded
+                        .is_smart_playlist_downloaded(
+                            &playlist.smart_playlist.id,
+                            selected.music_folder_id.as_ref(),
+                        )
+                        .unwrap_or(false)
+                })
+        }));
         let widget = smart_playlist_grid_overlay(&body.card, Rc::clone(&current_playlist));
         install_dynamic_smart_playlist_drop_target(&widget, &shell, Rc::clone(&current_playlist));
         install_dynamic_smart_playlist_context_menu(&widget, &shell, Rc::clone(&current_playlist));
@@ -1233,6 +1320,18 @@ impl ReusableCollectionGridCell<SmartPlaylistSummary> for SmartPlaylistGridCell 
             &smart_playlist_display_name(&playlist.smart_playlist),
             |field| (smart_playlist_field(&playlist, field), None),
         );
+        self.body
+            .set_downloaded(self.shell.library.selected.borrow().as_ref().is_some_and(
+                |selected| {
+                    selected
+                        .loaded
+                        .is_smart_playlist_downloaded(
+                            &playlist.smart_playlist.id,
+                            selected.music_folder_id.as_ref(),
+                        )
+                        .unwrap_or(false)
+                },
+            ));
         *self.current_playlist.borrow_mut() = Some(playlist);
     }
 
@@ -1402,6 +1501,8 @@ fn install_dynamic_smart_playlist_drop_target(
 pub(super) struct CollectionGridCardCell {
     pub(super) card: gtk::Box,
     title: gtk::Label,
+    title_row: gtk::Box,
+    downloaded: RefCell<Option<gtk::Image>>,
     fields: RefCell<Vec<CollectionGridFieldCell>>,
 }
 
@@ -1410,7 +1511,12 @@ impl CollectionGridCardCell {
         let card = collection_grid_card();
         card.append(&cover);
         let (title_widget, title) = grid_title_with_label("", "track-title");
-        card.append(&title_widget);
+        title.set_halign(gtk::Align::Start);
+        title.set_hexpand(false);
+        let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        title_row.set_hexpand(true);
+        title_row.append(&title_widget);
+        card.append(&title_row);
         let field_cells = fields
             .iter()
             .copied()
@@ -1422,9 +1528,24 @@ impl CollectionGridCardCell {
         let cell = Self {
             card,
             title,
+            title_row,
+            downloaded: RefCell::new(None),
             fields: RefCell::new(field_cells),
         };
         cell
+    }
+
+    pub(super) fn set_download_badge(&self, badge: gtk::Image) {
+        if let Some(previous) = self.downloaded.replace(Some(badge.clone())) {
+            self.title_row.remove(&previous);
+        }
+        self.title_row.append(&badge);
+    }
+
+    pub(super) fn set_downloaded(&self, downloaded: bool) {
+        if let Some(badge) = self.downloaded.borrow().as_ref() {
+            badge.set_visible(downloaded);
+        }
     }
 
     pub(super) fn widget(&self) -> gtk::Widget {
@@ -1448,6 +1569,9 @@ impl CollectionGridCardCell {
     pub(super) fn clear(&self) {
         self.title.set_text("");
         self.title.set_tooltip_text(None);
+        if let Some(downloaded) = self.downloaded.borrow().as_ref() {
+            downloaded.set_visible(false);
+        }
         for field in self.fields.borrow().iter() {
             field.clear();
         }

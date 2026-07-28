@@ -95,13 +95,16 @@ where
 }
 
 pub(crate) fn present_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::General, false, false);
 }
 pub(crate) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false, false);
 }
 pub(crate) fn present_add_server_preferences_dialog(shell: &Rc<Shell>) {
-    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true);
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, true, false);
+}
+pub(crate) fn present_downloads_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesPageKind::Library, false, true);
 }
 
 impl Shell {
@@ -223,12 +226,19 @@ fn present_preferences_dialog_with_page(
     shell: &Rc<Shell>,
     initial_page: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
     if !open_add_server {
         shell.clear_retained_add_server_form();
     }
     if let Some(dialog) = shell.preferences.active_dialog() {
-        rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
+        rebuild_preferences_dialog(
+            shell,
+            &dialog,
+            initial_page,
+            open_add_server,
+            focus_download_queue,
+        );
         present_light_dismiss_dialog(&dialog, &shell.chrome.window);
         return;
     }
@@ -243,7 +253,13 @@ fn present_preferences_dialog_with_page(
         .build();
     dialog.add_css_class("preferences");
     shell.preferences.set_active_dialog(&dialog);
-    rebuild_preferences_dialog(shell, &dialog, initial_page, open_add_server);
+    rebuild_preferences_dialog(
+        shell,
+        &dialog,
+        initial_page,
+        open_add_server,
+        focus_download_queue,
+    );
 
     present_light_dismiss_dialog(&dialog, &shell.chrome.window);
 }
@@ -253,6 +269,7 @@ fn rebuild_preferences_dialog(
     dialog: &adw::Dialog,
     initial_page: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
     dialog.set_title(&tr("Preferences"));
 
@@ -299,6 +316,7 @@ fn rebuild_preferences_dialog(
         &navigation_controls,
         initial_page,
         open_add_server,
+        focus_download_queue,
     );
     stack.set_visible_child_name(initial_page.name());
     let page_shell = Rc::clone(shell);
@@ -323,6 +341,7 @@ fn rebuild_preferences_dialog(
             &navigation_controls_for_switch,
             kind,
             false,
+            false,
         );
     });
 
@@ -335,6 +354,7 @@ fn ensure_preferences_page(
     navigation_controls: &PreferencesNavigationControls,
     kind: PreferencesPageKind,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) {
     let Some((_, slot)) = page_slots.iter().find(|(slot_kind, _)| *slot_kind == kind) else {
         return;
@@ -348,6 +368,7 @@ fn ensure_preferences_page(
         dialog,
         navigation_controls,
         open_add_server,
+        focus_download_queue,
     ));
 }
 fn build_preferences_page(
@@ -356,15 +377,20 @@ fn build_preferences_page(
     dialog: &adw::Dialog,
     navigation_controls: &PreferencesNavigationControls,
     open_add_server: bool,
+    focus_download_queue: bool,
 ) -> gtk::Widget {
     match kind {
         PreferencesPageKind::General => general_page(shell, dialog).upcast(),
         PreferencesPageKind::Layout => layout_page(shell).upcast(),
         PreferencesPageKind::Scrobbling => scrobbling_page(shell).upcast(),
         PreferencesPageKind::Playback => playback_page(shell).upcast(),
-        PreferencesPageKind::Library => {
-            library::library_page(shell, dialog, navigation_controls, open_add_server)
-        }
+        PreferencesPageKind::Library => library::library_page(
+            shell,
+            dialog,
+            navigation_controls,
+            open_add_server,
+            focus_download_queue,
+        ),
     }
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
@@ -408,6 +434,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
                 &language_shell,
                 &dialog,
                 PreferencesPageKind::General,
+                false,
                 false,
             );
         }

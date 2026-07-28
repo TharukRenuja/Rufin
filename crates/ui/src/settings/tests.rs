@@ -1,8 +1,9 @@
 use super::{
-    LibraryField, LibraryLayout, LibraryListKey, MAX_RESTORED_WINDOW_HEIGHT,
-    MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarRouteItem, available_detail_track_fields,
-    available_sort_fields, sanitized_window_size,
+    DownloadRule, DownloadRules, LibraryField, LibraryLayout, LibraryListKey,
+    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarRouteItem,
+    available_detail_track_fields, available_sort_fields, sanitized_window_size,
 };
+use library::SourceId;
 
 #[test]
 fn private_mode_blocks_automatic_external_activity_but_keeps_passive_links() {
@@ -36,6 +37,82 @@ fn playback_modes_are_one_app_wide_settings_value() {
     assert!(restored.auto_dj_enabled);
     assert!(restored.shuffle_enabled);
     assert_eq!(restored.repeat_mode, playback::RepeatMode::All);
+}
+
+#[test]
+fn download_rules_are_saved_for_one_source() {
+    let mut settings = Settings::default();
+    let first = SourceId::new("jellyfin:first");
+    let second = SourceId::new("subsonic:second");
+    let rules = DownloadRules {
+        favorites: true,
+        latest_five_albums: true,
+        ..DownloadRules::default()
+    };
+
+    assert!(settings.set_download_rules(first.clone(), rules));
+    assert_eq!(settings.download_rules(&first), rules);
+    assert_eq!(settings.download_rules(&second), DownloadRules::default());
+
+    let restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize download rules"),
+    )
+    .expect("restore download rules");
+    assert_eq!(restored.download_rules(&first), rules);
+}
+
+#[test]
+fn download_rules_are_independent_addable_entries() {
+    let mut rules = DownloadRules::default();
+    rules.set(DownloadRule::AllPlaylists, true);
+    rules.set(DownloadRule::LatestFiveAlbums, true);
+
+    assert_eq!(
+        rules.active().collect::<Vec<_>>(),
+        vec![DownloadRule::AllPlaylists, DownloadRule::LatestFiveAlbums]
+    );
+
+    rules.set(DownloadRule::AllPlaylists, false);
+    assert!(!rules.contains(DownloadRule::AllPlaylists));
+    assert!(rules.contains(DownloadRule::LatestFiveAlbums));
+}
+
+#[test]
+fn native_download_quality_is_the_source_default() {
+    let mut settings = Settings::default();
+    let source_id = SourceId::new("jellyfin:quality");
+
+    assert_eq!(
+        settings.download_quality(&source_id),
+        downloads::DownloadQuality::Original
+    );
+    assert!(settings.set_download_quality(
+        source_id.clone(),
+        downloads::DownloadQuality::MaxBitrateKbps(192)
+    ));
+    assert_eq!(
+        settings.download_quality(&source_id),
+        downloads::DownloadQuality::MaxBitrateKbps(192)
+    );
+}
+
+#[test]
+fn download_folder_is_optional_and_source_scoped() {
+    let mut settings = Settings::default();
+    let first = SourceId::new("jellyfin:folder");
+    let second = SourceId::new("subsonic:folder");
+    let directory = std::path::PathBuf::from("/music/offline");
+
+    assert_eq!(settings.download_directory(&first), None);
+    assert!(settings.set_download_directory(first.clone(), Some(directory.clone())));
+    assert_eq!(settings.download_directory(&first), Some(directory.clone()));
+    assert_eq!(settings.download_directory(&second), None);
+
+    let restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(settings).expect("serialize download folder"),
+    )
+    .expect("restore download folder");
+    assert_eq!(restored.download_directory(&first), Some(directory));
 }
 
 #[test]

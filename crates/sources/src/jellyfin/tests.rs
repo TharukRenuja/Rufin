@@ -494,6 +494,38 @@ fn sparse_tracks_keep_the_relationships_the_server_did_provide() {
 }
 
 #[tokio::test]
+async fn music_folders_keep_the_jellyfin_library_cover() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Users/user-one/Views"))
+        .and(query_param("IncludeExternalContent", "false"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(query(serde_json::json!([{
+                "Id": "music-library",
+                "Name": "Music",
+                "CollectionType": "music",
+                "ImageTags": { "Primary": "library-cover" }
+            }]))),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = provider(&server, "secret-token");
+
+    let folders = source
+        .read_music_folders()
+        .await
+        .expect("read Jellyfin music folders");
+    let image = folders[0]
+        .image_ref
+        .as_ref()
+        .expect("Jellyfin library cover");
+
+    assert_eq!(image.item_id, "jellyfin:music-folder:music-library");
+    assert_eq!(image.tag.as_deref(), Some("library-cover"));
+}
+
+#[tokio::test]
 async fn audio_pages_request_the_jellyfin_field_that_returns_typed_genres() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

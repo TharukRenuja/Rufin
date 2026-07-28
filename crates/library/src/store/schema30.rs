@@ -2,7 +2,7 @@
 //!
 //! This module reads schema 30 without exposing a legacy Store API. Rufin
 //! merges its neutral configuration facts into Settings, then asks this handle
-//! to prepare a fresh schema-32 Store containing only Rufin-owned user data.
+//! to prepare a fresh current Store containing only Rufin-owned user data.
 //! Rebuildable source facts never participate in source recovery.
 
 use std::collections::{HashMap, HashSet};

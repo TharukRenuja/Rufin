@@ -2537,10 +2537,18 @@ fn write_music_folder(
     library_id: i64,
     folder: &MusicFolder,
 ) -> StoreResult<()> {
+    let (image_item_id, image_tag) = image_parts(folder.image_ref.as_ref());
     transaction.execute(
-        "INSERT INTO music_folders(library_id, folder_id, name)
-         VALUES (?1, ?2, ?3)",
-        params![library_id, folder.id.as_str(), folder.name],
+        "INSERT INTO music_folders(
+            library_id, folder_id, name, image_item_id, image_tag
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            library_id,
+            folder.id.as_str(),
+            folder.name,
+            image_item_id,
+            image_tag,
+        ],
     )?;
     Ok(())
 }
@@ -3604,13 +3612,17 @@ fn load_genres(connection: &Connection, library_id: i64) -> StoreResult<Vec<Genr
 }
 
 fn load_music_folders(connection: &Connection, library_id: i64) -> StoreResult<Vec<MusicFolder>> {
-    let mut statement =
-        connection.prepare("SELECT folder_id, name FROM music_folders WHERE library_id = ?1")?;
+    let mut statement = connection.prepare(
+        "SELECT folder_id, name, image_item_id, image_tag
+         FROM music_folders
+         WHERE library_id = ?1",
+    )?;
     Ok(statement
         .query_map([library_id], |row| {
             Ok(MusicFolder {
                 id: MusicFolderId::new(row.get::<_, String>(0)?),
                 name: row.get(1)?,
+                image_ref: image_from_parts(row.get(2)?, row.get(3)?),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?)

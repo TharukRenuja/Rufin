@@ -7,9 +7,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_channel::Receiver;
+use downloads::{DownloadRule, DownloadSubject};
 use library::{
     FavoriteItemId, FolderContents, FolderId, HomeSectionKind, MusicFolderId, PlaylistEdit,
-    PlaylistTrackAdd, SearchRequest as LibrarySearchRequest, SearchResults, SourceId,
+    PlaylistTrackAdd, SearchRequest as LibrarySearchRequest, SearchResults, SourceId, TrackId,
+    TrackSelection,
 };
 use secrets::SecretStorageMode;
 
@@ -214,6 +216,21 @@ pub struct SearchRequest {
     pub search: LibrarySearchRequest,
 }
 
+#[derive(Clone, Debug)]
+pub struct DownloadRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub subject: DownloadSubject,
+    pub tracks: TrackSelection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoveDownloadRequest {
+    pub source_id: SourceId,
+    pub source_session_epoch: playback::SourceSessionEpoch,
+    pub track_id: TrackId,
+}
+
 pub trait SourcePort: Send + Sync {
     fn configured_source(&self, source_id: &SourceId) -> Result<Option<EditableSource>, String>;
     fn discover_servers(&self);
@@ -234,6 +251,18 @@ pub trait SourcePort: Send + Sync {
     fn set_favorite(&self, item: FavoriteItemId, favorite: bool);
     fn add_playlist_tracks(&self, request: PlaylistTrackAdd) -> usize;
     fn edit_playlist(&self, edit: PlaylistEdit);
+    fn download(&self, request: DownloadRequest);
+    fn remove_download(&self, request: RemoveDownloadRequest);
+    fn remove_download_rule(&self, source_id: SourceId, rule: DownloadRule, delete_downloads: bool);
+    fn cancel_download(&self, source_id: SourceId, job_id: String);
+    fn move_download(
+        &self,
+        source_id: SourceId,
+        job_id: String,
+        target_job_id: String,
+        after: bool,
+    );
+    fn clear_downloads(&self, source_id: SourceId);
     fn folder(&self, request: FolderRequest) -> Receiver<Result<FolderContents, String>>;
     fn search(&self, request: SearchRequest) -> Receiver<Result<SearchResults, String>>;
 }

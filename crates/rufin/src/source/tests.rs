@@ -14,6 +14,33 @@ use sources::{LocalFilesystemChange, LocalFolderHostInput, SourceConfiguration, 
 use super::*;
 
 #[test]
+fn playback_activity_does_not_rebuild_download_policy() {
+    let change = AcceptedLibraryChange {
+        tracks: vec![library::AcceptedTrackReplacement {
+            id: library::TrackId::new("track"),
+            track: None,
+        }],
+        ..AcceptedLibraryChange::default()
+    };
+    let rules = ui::DownloadRules {
+        entire_library: true,
+        ..ui::DownloadRules::default()
+    };
+
+    assert!(should_reconcile_downloads(&change, &NextHome::Keep, rules));
+    assert!(!should_reconcile_downloads(
+        &change,
+        &NextHome::ActivityKeep,
+        rules
+    ));
+    assert!(!should_reconcile_downloads(
+        &change,
+        &NextHome::AcceptedPlay(library::TrackId::new("track")),
+        rules
+    ));
+}
+
+#[test]
 fn selected_local_lifecycle_keeps_cached_state_and_finishes_user_work_before_switch() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let music_root = directory.path().join("music");
@@ -83,6 +110,7 @@ fn selected_local_lifecycle_keeps_cached_state_and_finishes_user_work_before_swi
         .write(CandidateBatch::MusicFolders(vec![MusicFolder {
             id: available_folder,
             name: "Available".to_string(),
+            image_ref: None,
         }]))
         .expect("write available music folder");
     let accepted = candidate
@@ -165,6 +193,7 @@ fn selected_local_lifecycle_keeps_cached_state_and_finishes_user_work_before_swi
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings.clone(),
         secrets,
         Arc::clone(&scrobbler),
@@ -586,6 +615,7 @@ fn selected_same_account_update_keeps_playback_and_source_epoch() {
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings.clone(),
         secrets,
         Arc::clone(&scrobbler),
@@ -892,6 +922,7 @@ fn source_transition_releases_the_previous_library_before_publishing_the_target(
         })
         .expect("save previous source");
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .expect("build test runtime");
     let artwork = artwork::Artwork::new(directory.path().join("artwork"), runtime.handle().clone())
@@ -908,6 +939,7 @@ fn source_transition_releases_the_previous_library_before_publishing_the_target(
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings.clone(),
         secrets,
         Arc::clone(&scrobbler),
@@ -1095,6 +1127,7 @@ fn secret_storage_change_preserves_a_selected_remote_without_cached_facts() {
         })
         .expect("save configured source");
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .expect("build test runtime");
     let library = Library::open(directory.path().join("library.db")).expect("open test Library");
@@ -1112,6 +1145,7 @@ fn secret_storage_change_preserves_a_selected_remote_without_cached_facts() {
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library,
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings.clone(),
         secrets,
         scrobbler,
@@ -1267,6 +1301,7 @@ fn activity_mailbox_applies_and_publishes_recorded_updates_in_order() {
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings,
         secrets,
         scrobbler,
@@ -1746,6 +1781,7 @@ fn removing_the_selected_source_chooses_the_first_survivor() {
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library.clone(),
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings.clone(),
         secrets,
         Arc::clone(&scrobbler),
@@ -1852,6 +1888,7 @@ fn removing_the_selected_source_chooses_the_first_survivor() {
 fn first_local_folder_enters_the_source_add_transition() {
     let directory = tempfile::tempdir().expect("temporary Rufin data directory");
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .expect("build test runtime");
     let library = Library::open(directory.path().join("library.db")).expect("open test Library");
@@ -1871,6 +1908,7 @@ fn first_local_folder_enters_the_source_add_transition() {
     let bootstrap = SourceOwner::open_dormant(
         artwork,
         library,
+        test_downloads(directory.path().join("downloads"), runtime.handle().clone()),
         settings,
         secrets,
         scrobbler,
@@ -1935,6 +1973,11 @@ fn test_track(id: library::TrackId, title: &str, path: PathBuf) -> Track {
         bpm: None,
         relations: TrackRelations::default(),
     })
+}
+
+fn test_downloads(root: PathBuf, runtime: tokio::runtime::Handle) -> downloads::Downloads {
+    let (events, _receiver) = async_channel::unbounded();
+    downloads::Downloads::new(root, runtime, events)
 }
 
 fn attach_test_playback(
