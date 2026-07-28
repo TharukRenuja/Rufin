@@ -10,7 +10,7 @@ use crate::player::fullscreen::{FullscreenPlaybackRefresh, fullscreen_playback_r
 use crate::player::state::current_playback_media_id;
 use crate::player::{now_playing_notification_can_send, now_playing_notification_should_withdraw};
 use crate::preferences::dialogs::release_notes::apply_release_update;
-use crate::preferences::source::{selector::update_source_selector, source_operation_text};
+use crate::preferences::source::source_operation_text;
 use crate::routes::playlist_picker::refresh_context_playlist_picker;
 use crate::routes::route::Route;
 use crate::runtime::source::{DiscoveryStatus, DiscoveryUpdate, SourceOperation};
@@ -261,7 +261,6 @@ fn finish_source_assignment(
     }
 
     refresh_context_playlist_picker(shell);
-    update_source_selector(shell);
     shell.sync_bottom_player_favorite();
 
     if next.selected.is_none() {

@@ -26,7 +26,6 @@ use crate::player::{install_tray, present_initial_window};
 use crate::preferences::PreferencesState;
 use crate::preferences::dialogs::release_notes::schedule_release_check;
 use crate::preferences::source::SourceState;
-use crate::preferences::source::selector::{build_source_selector, update_source_selector};
 use crate::routes::LibraryState;
 use crate::routes::playlist_picker::PlaylistPickerState;
 use crate::routes::route::Route;
@@ -253,7 +252,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav_handle);
     compact_nav_slot.add_css_class("sidebar-pane");
     compact_nav_slot.add_css_class("compact-rail-slot");
-    let server_selector = build_source_selector();
     let normal_main_menu = gtk::Button::new();
     let compact_main_menu = gtk::Button::new();
 
@@ -354,8 +352,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     toast_overlay.set_child(Some(&quick_toast_overlay));
     window.set_content(Some(&toast_overlay));
 
-    let normal_main_menu_connection = normal_main_menu.clone();
-    let compact_main_menu_connection = compact_main_menu.clone();
     let chrome = WindowChrome {
         application: app.clone(),
         window,
@@ -377,7 +373,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         tiny_nav_button,
         normal_nav,
         compact_nav,
-        server_selector,
         normal_main_menu: PrimaryMenuWidgets {
             button: normal_main_menu,
             popover: RefCell::new(None),
@@ -449,7 +444,6 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
     shell.install_locale_bindings();
-    update_source_selector(&shell);
     {
         let split_view = shell.navigation_view.split_view.clone();
         shell
@@ -457,11 +451,7 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
             .tiny_nav_button
             .connect_clicked(move |_| split_view.set_show_sidebar(true));
     }
-    connect_shell_actions(
-        &shell,
-        normal_main_menu_connection,
-        compact_main_menu_connection,
-    );
+    connect_shell_actions(&shell);
     install_playback_shutdown(
         &shell.chrome.application,
         &shell.products.playback.transport,

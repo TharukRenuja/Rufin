@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::SidebarRouteItem;
-use crate::preferences::source::selector::{SourceSelector, update_source_selector};
+use crate::preferences::source::selector::source_submenu;
 use crate::routes::route::Route;
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
 
 use super::{
     Shell, chrome,
@@ -21,8 +21,6 @@ const MOUSE_FORWARD_BUTTON: u32 = 9;
 const ROUTE_ICON_PREFIX: &str = "rufin-route-";
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
-const PRIMARY_MENU_POPOVER_WIDTH: i32 = 236;
-const PRIMARY_MENU_POPOVER_ANCHOR_Y: i32 = 148;
 const NAV_SELECTED_CLASS: &str = "selected";
 const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
 const NAV_ROUTE_SEARCH_CLASS: &str = "nav-route-search";
@@ -37,6 +35,8 @@ const NAV_ROUTE_MOODS_CLASS: &str = "nav-route-moods";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
+const PRIMARY_MENU_CLASS: &str = "rufin-primary-menu";
+const SOURCE_MENU_COMMAND_CLASS: &str = "source-menu-command";
 const NAV_ROUTE_ICONS: [(&str, &str, &str); 13] = [
     (
         NAV_ROUTE_HOME_CLASS,
@@ -111,7 +111,7 @@ pub(crate) struct NavigationState {
 
 pub(super) struct PrimaryMenuWidgets {
     pub(super) button: gtk::Button,
-    pub(super) popover: RefCell<Option<gtk::Popover>>,
+    pub(super) popover: RefCell<Option<gtk::PopoverMenu>>,
     pub(super) click_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
@@ -123,7 +123,6 @@ pub(crate) struct NavigationWidgets {
     pub(super) tiny_nav_button: gtk::Button,
     pub(super) normal_nav: gtk::Box,
     pub(super) compact_nav: gtk::Box,
-    pub(crate) server_selector: SourceSelector,
     pub(super) normal_main_menu: PrimaryMenuWidgets,
     pub(super) compact_main_menu: PrimaryMenuWidgets,
 }
@@ -134,7 +133,6 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
         .normal_nav
         .append(&primary_menu_button(
             &shell.navigation_view.normal_main_menu.button,
-            &shell.navigation_view.server_selector.normal_button,
             &shell.navigation_view.normal_main_menu.popover,
             &shell.navigation_view.normal_main_menu.click_handler,
             shell,
@@ -159,7 +157,6 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
         .compact_nav
         .append(&primary_menu_button(
             &shell.navigation_view.compact_main_menu.button,
-            &shell.navigation_view.server_selector.compact_button,
             &shell.navigation_view.compact_main_menu.popover,
             &shell.navigation_view.compact_main_menu.click_handler,
             shell,
@@ -181,7 +178,6 @@ pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
     clear_box(&shell.navigation_view.compact_nav);
     build_normal_navigation(shell);
     build_compact_navigation(shell);
-    update_source_selector(shell);
     update_navigation_selection(shell.as_ref());
 }
 
@@ -200,8 +196,7 @@ pub(super) fn update_navigation_selection(shell: &Shell) {
 
 pub(super) fn relocalize_primary_menu_button(
     button: &gtk::Button,
-    source_button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
@@ -212,7 +207,8 @@ pub(super) fn relocalize_primary_menu_button(
         button,
         popover_slot,
         handler_slot,
-        primary_menu_popover(source_button, shell),
+        primary_menu_popover(shell),
+        shell,
     );
 }
 
@@ -233,7 +229,7 @@ fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Opti
     while let Some(widget) = child {
         child = widget.next_sibling();
 
-        if !widget.has_css_class("nav-button") || widget.has_css_class("source-selector") {
+        if !widget.has_css_class("nav-button") {
             continue;
         }
 
@@ -277,8 +273,7 @@ fn nav_route_icon_names(widget: &gtk::Widget) -> Option<(&'static str, &'static 
 
 fn primary_menu_button(
     button: &gtk::Button,
-    source_button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
     shell: &Rc<Shell>,
     compact: bool,
@@ -289,22 +284,16 @@ fn primary_menu_button(
     if compact {
         button.add_css_class("rail-button");
     }
-    relocalize_primary_menu_button(
-        button,
-        source_button,
-        popover_slot,
-        handler_slot,
-        shell,
-        compact,
-    );
+    relocalize_primary_menu_button(button, popover_slot, handler_slot, shell, compact);
     button.clone()
 }
 
 fn update_primary_menu_popover(
     button: &gtk::Button,
-    popover_slot: &RefCell<Option<gtk::Popover>>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
     handler_slot: &RefCell<Option<glib::SignalHandlerId>>,
-    popover: gtk::Popover,
+    popover: gtk::PopoverMenu,
+    shell: &Rc<Shell>,
 ) {
     if let Some(handler) = handler_slot.borrow_mut().take() {
         button.disconnect(handler);
@@ -317,168 +306,130 @@ fn update_primary_menu_popover(
     }
     popover.set_parent(button);
     let row_popover = popover.clone();
-    let handler = button.connect_clicked(move |button| {
-        set_primary_menu_pointing_to(&row_popover, button.width());
-        row_popover.popup();
+    let row_shell = Rc::downgrade(shell);
+    let handler = button.connect_clicked(move |_| {
+        if let Some(shell) = row_shell.upgrade() {
+            refresh_primary_menu(&row_popover, &shell);
+            row_popover.popup();
+        }
     });
     *handler_slot.borrow_mut() = Some(handler);
 }
 
-pub(super) fn popup_primary_menu(popover_slot: &RefCell<Option<gtk::Popover>>) {
+pub(super) fn popup_primary_menu(
+    shell: &Rc<Shell>,
+    popover_slot: &RefCell<Option<gtk::PopoverMenu>>,
+) {
     if let Some(popover) = popover_slot.borrow().as_ref() {
-        let anchor_width = popover
-            .parent()
-            .map(|parent| parent.width())
-            .unwrap_or_default();
-        set_primary_menu_pointing_to(popover, anchor_width);
+        refresh_primary_menu(popover, shell);
         popover.popup();
     }
 }
 
-fn set_primary_menu_pointing_to(popover: &gtk::Popover, anchor_width: i32) {
-    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-        anchor_width,
-        PRIMARY_MENU_POPOVER_ANCHOR_Y,
-        1,
-        1,
-    )));
+fn refresh_primary_menu(popover: &gtk::PopoverMenu, shell: &Rc<Shell>) {
+    popover.set_menu_model(Some(&primary_menu_model(shell)));
+    style_primary_menu(popover);
 }
 
-fn primary_menu_popover(source_button: &gtk::Button, shell: &Rc<Shell>) -> gtk::Popover {
-    let popover = gtk::Popover::new();
+fn primary_menu_popover(shell: &Rc<Shell>) -> gtk::PopoverMenu {
+    let popover = gtk::PopoverMenu::from_model_full(
+        &primary_menu_model(shell),
+        gtk::PopoverMenuFlags::NESTED,
+    );
     popover.set_autohide(true);
     popover.set_position(gtk::PositionType::Right);
-
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    wrapper.add_css_class("primary-menu-popover");
-    wrapper.set_width_request(PRIMARY_MENU_POPOVER_WIDTH);
-    detach_from_parent(source_button);
-    wrapper.append(source_button);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Preferences"),
-        "win.preferences",
-        "preferences-system-symbolic",
-    ));
-    let (private_mode_row, private_mode_label, _) = primary_menu_labeled_action_row(
-        &popover,
-        &primary_menu_private_mode_label(shell.as_ref()),
-        "win.toggle-private-mode",
-        "system-lock-screen-symbolic",
-    );
-    let private_mode_shell = Rc::clone(shell);
-    let private_mode_label_for_notify = private_mode_label.clone();
-    popover.connect_visible_notify(move |popover| {
-        if popover.is_visible() {
-            private_mode_label_for_notify.set_text(&primary_menu_private_mode_label(
-                private_mode_shell.as_ref(),
-            ));
-        }
-    });
-    wrapper.append(&private_mode_row);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Keyboard Shortcuts"),
-        "win.show-shortcuts",
-        "preferences-desktop-keyboard-shortcuts-symbolic",
-    ));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Toggle Fullscreen"),
-        "win.toggle-fullscreen",
-        "view-fullscreen-symbolic",
-    ));
-    let (sidebar_toggle_row, sidebar_toggle_label, sidebar_toggle_icon) =
-        primary_menu_labeled_action_row(
-            &popover,
-            &primary_menu_sidebar_toggle_label(shell.as_ref()),
-            "win.toggle-left-sidebar",
-            primary_menu_sidebar_toggle_icon(shell.as_ref()),
-        );
-    let label_shell = Rc::clone(shell);
-    let sidebar_toggle_label_for_notify = sidebar_toggle_label.clone();
-    let sidebar_toggle_icon_for_notify = sidebar_toggle_icon.clone();
-    popover.connect_visible_notify(move |popover| {
-        if popover.is_visible() {
-            sidebar_toggle_label_for_notify
-                .set_text(&primary_menu_sidebar_toggle_label(label_shell.as_ref()));
-            sidebar_toggle_icon_for_notify
-                .set_icon_name(Some(primary_menu_sidebar_toggle_icon(label_shell.as_ref())));
-        }
-    });
-    wrapper.append(&sidebar_toggle_row);
-    wrapper.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Version History"),
-        "win.show-release-notes",
-        "rufin-view-list-symbolic",
-    ));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("Troubleshooting"),
-        "win.troubleshooting",
-        "utilities-terminal-symbolic",
-    ));
-    wrapper.append(&primary_menu_action_row(
-        &popover,
-        &tr("About Rufin"),
-        "win.about",
-        "help-about-symbolic",
-    ));
-    popover.set_child(Some(&wrapper));
+    style_primary_menu(&popover);
     popover
 }
 
-fn detach_from_parent(widget: &impl IsA<gtk::Widget>) {
-    let widget = widget.as_ref();
-    if let Some(parent) = widget.parent() {
-        if let Ok(parent_box) = parent.downcast::<gtk::Box>() {
-            parent_box.remove(widget);
+fn style_primary_menu(popover: &gtk::PopoverMenu) {
+    popover.add_css_class(PRIMARY_MENU_CLASS);
+    style_source_submenu_from(popover.upcast_ref());
+}
+
+fn style_source_submenu_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if let Some(nested_popover) = generated_menu_popover(&widget) {
+            nested_popover.add_css_class(PRIMARY_MENU_CLASS);
+            style_source_menu_widgets(nested_popover.upcast_ref());
         } else {
-            widget.unparent();
+            style_source_submenu_from(&widget);
         }
     }
 }
 
-fn primary_menu_action_row(
-    popover: &gtk::Popover,
-    label: &str,
-    action_name: &'static str,
-    icon_name: &str,
-) -> gtk::Button {
-    primary_menu_labeled_action_row(popover, label, action_name, icon_name).0
+fn generated_menu_popover(widget: &gtk::Widget) -> Option<gtk::Popover> {
+    (widget.type_().name() == "GtkModelButton")
+        .then(|| widget.property::<Option<gtk::Popover>>("popover"))
+        .flatten()
 }
 
-fn primary_menu_labeled_action_row(
-    popover: &gtk::Popover,
-    label: &str,
-    action_name: &'static str,
-    icon_name: &str,
-) -> (gtk::Button, gtk::Label, gtk::Image) {
-    let row = gtk::Button::new();
-    row.add_css_class("flat");
-    row.add_css_class("primary-menu-row");
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    content.set_halign(gtk::Align::Fill);
-    let icon = gtk::Image::from_icon_name(icon_name);
-    content.append(&icon);
-    let text = gtk::Label::new(Some(label));
-    text.set_xalign(0.0);
-    text.set_hexpand(true);
-    content.append(&text);
-    row.set_child(Some(&content));
+fn style_source_menu_widgets(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
 
-    let row_popover = popover.downgrade();
-    row.connect_clicked(move |button| {
-        if let Some(popover) = row_popover.upgrade() {
-            popover.popdown();
+        if generated_menu_button_is_normal(&widget) {
+            widget.add_css_class(SOURCE_MENU_COMMAND_CLASS);
         }
-        let _ = button.activate_action(action_name, None);
-    });
-    (row, text, icon)
+        style_source_menu_widgets(&widget);
+    }
+}
+
+fn generated_menu_button_is_normal(widget: &gtk::Widget) -> bool {
+    if widget.type_().name() != "GtkModelButton" {
+        return false;
+    }
+
+    let role = widget.property_value("role");
+    glib::EnumValue::from_value(&role).is_some_and(|(_, role)| role.nick() == "normal")
+}
+
+fn primary_menu_model(shell: &Rc<Shell>) -> gio::Menu {
+    let menu = gio::Menu::new();
+
+    let source = gio::Menu::new();
+    let (source_name, source_menu) = source_submenu(shell);
+    source.append_submenu(Some(&source_name), &source_menu);
+    menu.append_section(None, &source);
+
+    let preferences = gio::Menu::new();
+    append_menu_action(&preferences, &tr("Preferences"), "win.preferences");
+    append_menu_action(
+        &preferences,
+        &primary_menu_private_mode_label(shell.as_ref()),
+        "win.toggle-private-mode",
+    );
+    menu.append_section(None, &preferences);
+
+    let window = gio::Menu::new();
+    append_menu_action(&window, &tr("Keyboard Shortcuts"), "win.show-shortcuts");
+    append_menu_action(&window, &tr("Toggle Fullscreen"), "win.toggle-fullscreen");
+    append_menu_action(
+        &window,
+        &primary_menu_sidebar_toggle_label(shell.as_ref()),
+        "win.toggle-left-sidebar",
+    );
+    menu.append_section(None, &window);
+
+    let information = gio::Menu::new();
+    append_menu_action(
+        &information,
+        &tr("Version History"),
+        "win.show-release-notes",
+    );
+    append_menu_action(&information, &tr("Troubleshooting"), "win.troubleshooting");
+    append_menu_action(&information, &tr("About Rufin"), "win.about");
+    menu.append_section(None, &information);
+
+    menu
+}
+
+fn append_menu_action(menu: &gio::Menu, label: &str, action: &str) {
+    menu.append(Some(label), Some(action));
 }
 
 fn primary_menu_sidebar_toggle_label(shell: &Shell) -> String {
@@ -486,14 +437,6 @@ fn primary_menu_sidebar_toggle_label(shell: &Shell) -> String {
         tr("Collapse sidebar")
     } else {
         tr("Expand sidebar")
-    }
-}
-
-fn primary_menu_sidebar_toggle_icon(shell: &Shell) -> &'static str {
-    if shell.left_sidebar_mode() == ResolvedLeftSidebarMode::Full {
-        "rufin-sidebar-hide-symbolic"
-    } else {
-        "sidebar-show-symbolic"
     }
 }
 

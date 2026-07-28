@@ -1077,6 +1077,9 @@ msgstr ""
 msgid "Privacy and Security"
 msgstr ""
 
+msgid "Private mode is off"
+msgstr ""
+
 msgid "Private mode is on"
 msgstr ""
 
@@ -1430,9 +1433,6 @@ msgid "Sort"
 msgstr ""
 
 msgid "Source to use for cover images and song/artist links"
-msgstr ""
-
-msgid "Source"
 msgstr ""
 
 msgid "Sources"

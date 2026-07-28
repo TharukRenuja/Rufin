@@ -4,6 +4,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::localization::{bind_widget_accessible_label, bind_widget_tooltip};
+use crate::preferences::source::selector::install_source_menu_actions;
 use crate::preferences::{
     dialogs::popup::present_light_dismiss_dialog, present_preferences_dialog,
 };
@@ -37,18 +38,16 @@ pub(crate) struct ControlFeedbackState {
     pub(crate) generation: Rc<Cell<u64>>,
 }
 
-pub(crate) fn connect_shell_actions(
-    shell: &Rc<Shell>,
-    normal_main_menu: gtk::Button,
-    compact_main_menu: gtk::Button,
-) {
+pub(crate) fn connect_shell_actions(shell: &Rc<Shell>) {
     install_window_actions(shell);
     navigation::install_mouse_history_buttons(shell);
-    install_main_menu_shortcut(shell, normal_main_menu, compact_main_menu);
+    install_main_menu_shortcut(shell);
     layout::connect_shell_layout(shell);
 }
 
 pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
+    install_source_menu_actions(shell);
+
     let go_back = gio::SimpleAction::new("go-back", None);
     let go_back_shell = Rc::clone(shell);
     go_back.connect_activate(move |_, _| go_back_shell.go_back());
@@ -83,6 +82,13 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
     toggle_private_mode.connect_activate(move |_, _| {
         let enabled = !private_mode_shell.settings.current.borrow().private_mode;
         private_mode_shell.set_private_mode(enabled);
+        if private_mode_shell.settings.current.borrow().private_mode == enabled {
+            private_mode_shell.show_control_feedback_toast(if enabled {
+                tr("Private mode is on")
+            } else {
+                tr("Private mode is off")
+            });
+        }
     });
     shell.chrome.window.add_action(&toggle_private_mode);
 
@@ -194,11 +200,7 @@ pub(crate) fn install_window_actions(shell: &Rc<Shell>) {
         .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
 }
 
-pub(crate) fn install_main_menu_shortcut(
-    shell: &Rc<Shell>,
-    normal_main_menu: gtk::Button,
-    compact_main_menu: gtk::Button,
-) {
+pub(crate) fn install_main_menu_shortcut(shell: &Rc<Shell>) {
     let key_controller = gtk::EventControllerKey::new();
     let shortcut_shell = Rc::clone(shell);
     key_controller.connect_key_pressed(move |_, key, _, state| {
@@ -206,15 +208,15 @@ pub(crate) fn install_main_menu_shortcut(
             match shortcut_shell.left_sidebar_mode() {
                 ResolvedLeftSidebarMode::Compact => {
                     navigation::popup_primary_menu(
+                        &shortcut_shell,
                         &shortcut_shell.navigation_view.compact_main_menu.popover,
                     );
-                    compact_main_menu.grab_focus();
                 }
                 _ => {
                     navigation::popup_primary_menu(
+                        &shortcut_shell,
                         &shortcut_shell.navigation_view.normal_main_menu.popover,
                     );
-                    normal_main_menu.grab_focus();
                 }
             }
             glib::Propagation::Stop

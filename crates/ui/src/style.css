@@ -321,7 +321,6 @@ row:focus {
 .artist-count-button:focus,
 .detail-external-link-button:focus,
 .context-menu-button:focus,
-.source-option:focus,
 .queue-link:focus,
 .queue-favorite-button:focus,
 .favorite-toggle:focus {
@@ -529,7 +528,7 @@ row:focus {
   color: var(--accent-color);
 }
 
-.nav-button:not(.source-selector):not(.selected):hover,
+.nav-button:not(.selected):hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
@@ -640,66 +639,6 @@ row.entry.password:focus-within {
   border-radius: 999px;
 }
 
-.source-selector {
-  margin: 0 8px 4px;
-}
-
-.primary-menu-popover {
-  padding: 1px 3px 3px;
-  font-weight: 400;
-}
-
-.primary-menu-row {
-  padding: 3px 7px;
-  border-radius: 6px;
-  min-height: 26px;
-}
-
-.primary-menu-row image {
-  -gtk-icon-size: 14px;
-}
-
-.primary-menu-row label {
-  font-weight: 400;
-}
-
-.primary-menu-row:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-
-.primary-menu-popover .source-selector {
-  margin: 0;
-}
-
-.primary-menu-popover button.source-selector.menu-source-button {
-  min-height: 40px;
-  padding: 6px 7px;
-  min-width: 0;
-}
-
-button.source-selector.menu-source-button,
-button.source-selector.menu-source-button:focus,
-button.source-selector.menu-source-button:checked {
-  border-radius: 9px;
-  background: transparent;
-  outline: none;
-  box-shadow: none;
-}
-
-button.source-selector.menu-source-button:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-
-button.source-selector.menu-source-button .source-selector-name {
-  font-size: 12px;
-  font-weight: 800;
-}
-
-button.source-selector.menu-source-button .source-selector-detail {
-  font-size: 10px;
-  font-weight: 500;
-}
-
 .source-choice-list {
   padding: 4px;
   border-radius: 8px;
@@ -727,71 +666,6 @@ button.source-selector.menu-source-button .source-selector-detail {
 
 .source-choice-button.active {
   background: color-mix(in srgb, var(--window-fg-color) 10%, transparent);
-}
-
-menubutton.source-selector > button,
-menubutton.source-selector > button:focus,
-menubutton.source-selector > button:checked {
-  border-radius: 9px;
-  background: transparent;
-  outline: none;
-  box-shadow: none;
-}
-
-menubutton.source-selector:not(.rail-button):not(.rail-source-button) > button {
-  padding: 7px 10px;
-}
-
-menubutton.source-selector.rail-button {
-  margin: 0 2px 4px;
-}
-
-menubutton.source-selector.rail-button > button {
-  padding: 3px 1px;
-  min-width: 48px;
-  min-height: 44px;
-}
-
-menubutton.source-selector.rail-source-button {
-  margin: 0 8px 4px;
-}
-
-menubutton.source-selector.rail-source-button > button {
-  padding: 0;
-  min-width: 40px;
-  min-height: 40px;
-}
-
-menubutton.source-selector > button:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-
-.source-selector-popover {
-  padding: 1px 3px 3px;
-  min-width: 236px;
-}
-
-.source-section-label {
-  color: color-mix(in srgb, var(--window-fg-color) 95%, var(--window-bg-color));
-  font-size: 0.9em;
-}
-
-.server-library-separator {
-  margin-bottom: 5px;
-}
-
-.source-option {
-  padding: 3px 7px;
-  border-radius: 6px;
-  min-height: 26px;
-}
-
-.source-selector-popover .source-option label {
-  font-weight: 400;
-}
-
-.server-add-option {
-  color: var(--destructive-color);
 }
 
 .seeded-gradient-showcase {
@@ -2082,4 +1956,17 @@ scale.fullscreen-player-equalizer-scale trough {
 .folder-tree-row.active,
 .folder-table-row:selected {
   background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+}
+
+popover.rufin-primary-menu label.title {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
+popover.rufin-primary-menu modelbutton.source-menu-command label:dir(ltr) {
+  margin-left: -20px;
+}
+
+popover.rufin-primary-menu modelbutton.source-menu-command label:dir(rtl) {
+  margin-right: -20px;
 }
