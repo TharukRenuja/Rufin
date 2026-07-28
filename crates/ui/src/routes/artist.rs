@@ -33,10 +33,10 @@ use super::collections::{
     library_route_inset,
 };
 use super::detail_showcase::{
-    DetailCoverProjection, MediaDetailShowcase, artist_external_links, detail_action_button,
-    detail_action_row, detail_cover_projection, detail_primary_action_button, detail_radio_button,
-    detail_showcase_frame_with_back, fit_detail_text, fitted_detail_title_label,
-    mark_tiny_detail_showcase, media_detail_showcase,
+    DetailCoverProjection, DetailExternalLinksProjection, MediaDetailShowcase,
+    artist_external_links, detail_action_button, detail_action_row, detail_cover_projection,
+    detail_primary_action_button, detail_radio_button, detail_showcase_frame_with_back,
+    fit_detail_text, fitted_detail_title_label, mark_tiny_detail_showcase, media_detail_showcase,
 };
 use super::models::sort_albums;
 use super::route::Route;
@@ -123,7 +123,7 @@ impl ArtistSummaryFacts {
 #[derive(Clone)]
 struct ArtistDetailHeaderProjection {
     root: gtk::Widget,
-    external_links: gtk::Box,
+    external_links: DetailExternalLinksProjection,
     artist: Rc<RefCell<Arc<Artist>>>,
     title: gtk::Label,
     album_count: gtk::Label,
@@ -139,12 +139,8 @@ impl ArtistDetailHeaderProjection {
     }
 
     fn apply_external_link_settings(&self, shell: &Rc<Shell>) {
-        while let Some(child) = self.external_links.first_child() {
-            self.external_links.remove(&child);
-        }
-        if let Some(links) = artist_external_links(shell, &self.artist.borrow()) {
-            self.external_links.append(&links);
-        }
+        self.external_links
+            .replace(artist_external_links(shell, &self.artist.borrow()));
     }
 
     fn replace(
@@ -210,13 +206,9 @@ impl Shell {
             appears_on,
         } = detail;
         let facts = ArtistSummaryFacts::new(summary.album_count, summary.track_count);
-        let applied_external_link_policy = {
-            let settings = self.settings.current.borrow();
-            Rc::new(RefCell::new((
-                settings.private_mode,
-                settings.external_site_links.clone(),
-            )))
-        };
+        let applied_external_link_settings = Rc::new(RefCell::new(
+            self.settings.current.borrow().external_site_links.clone(),
+        ));
         let wrapper = super::route_layout::detail_route_wrapper(0);
         let header = self.artist_detail_header(
             Arc::clone(&summary.artist),
@@ -393,7 +385,7 @@ impl Shell {
         }
         let resume = {
             let shell = Rc::clone(self);
-            let applied_external_link_policy = Rc::clone(&applied_external_link_policy);
+            let applied_external_link_settings = Rc::clone(&applied_external_link_settings);
             let header = header.clone();
             let favorite_projection = favorite_projection.clone();
             let favorite_toolbar = favorite_toolbar.clone();
@@ -401,13 +393,11 @@ impl Shell {
             let read = Rc::clone(&read);
             let identity = identity.clone();
             Rc::new(move || {
-                let external_link_policy = {
-                    let settings = shell.settings.current.borrow();
-                    (settings.private_mode, settings.external_site_links.clone())
-                };
-                if *applied_external_link_policy.borrow() != external_link_policy {
+                let external_link_settings =
+                    shell.settings.current.borrow().external_site_links.clone();
+                if *applied_external_link_settings.borrow() != external_link_settings {
                     header.apply_external_link_settings(&shell);
-                    applied_external_link_policy.replace(external_link_policy);
+                    applied_external_link_settings.replace(external_link_settings);
                 }
                 let track_settings = shell
                     .settings
@@ -912,10 +902,8 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        let external_links = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        if let Some(links) = artist_external_links(self, &artist) {
-            external_links.append(&links);
-        }
+        let external_links =
+            DetailExternalLinksProjection::new(None, artist_external_links(self, &artist));
         let root = media_detail_showcase(
             self,
             MediaDetailShowcase {
@@ -923,8 +911,7 @@ impl Shell {
                 seed,
                 initial_width: content_width,
                 cover: cover.clone(),
-                external_links: Some(external_links.clone().upcast()),
-                external_links_class: None,
+                external_links: external_links.clone(),
                 text_stack: text_stack.upcast(),
                 actions: actions.upcast(),
             },

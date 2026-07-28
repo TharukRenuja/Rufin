@@ -59,6 +59,7 @@ struct JobRecord {
     source: SourceImages,
     request: CandidateRequest,
     subscribers: HashSet<RequestId>,
+    foreground_subscribers: HashSet<RequestId>,
     preparations: Vec<PreparationSubscriber>,
     active: bool,
     source_epoch: u64,
@@ -104,6 +105,7 @@ enum JobPriority {
 struct ProjectionRecord {
     source: SourceImages,
     request: ArtworkRequest,
+    priority: JobPriority,
     candidate_index: usize,
     failures: Vec<Arc<str>>,
     job: JobKey,
@@ -178,6 +180,23 @@ impl Pipeline {
         source: SourceImages,
         request: ArtworkRequest,
     ) -> Result<ArtworkLoad, ArtworkError> {
+        self.request_with_priority(source, request, JobPriority::Foreground)
+    }
+
+    pub(crate) fn warm(
+        self: &Arc<Self>,
+        source: SourceImages,
+        request: ArtworkRequest,
+    ) -> Result<ArtworkLoad, ArtworkError> {
+        self.request_with_priority(source, request, JobPriority::Preparation)
+    }
+
+    fn request_with_priority(
+        self: &Arc<Self>,
+        source: SourceImages,
+        request: ArtworkRequest,
+        priority: JobPriority,
+    ) -> Result<ArtworkLoad, ArtworkError> {
         let mut state = lock_state(&self.shared);
         let request_id = RequestId(state.next_request);
         state.next_request = state.next_request.wrapping_add(1).max(1);
@@ -189,17 +208,19 @@ impl Pipeline {
             return Ok(ArtworkLoad::Missing);
         };
         let (completion, receiver) = oneshot::channel();
-        let job = enqueue_demand(
+        let job = enqueue_projection(
             &mut state,
             source.clone(),
             candidate_request(&request, candidate),
             request_id,
+            priority,
         );
         state.projections.insert(
             request_id,
             ProjectionRecord {
                 source,
                 request,
+                priority,
                 candidate_index: 0,
                 failures: Vec::new(),
                 job,
@@ -314,6 +335,7 @@ impl Pipeline {
         };
         if let Some(record) = state.jobs.get_mut(&projection.job) {
             record.subscribers.remove(&request_id);
+            record.foreground_subscribers.remove(&request_id);
         }
         reschedule_or_remove(&mut state, &projection.job, false);
         drop(state);
@@ -388,6 +410,9 @@ impl Pipeline {
             if record.source.source_id == *source_id {
                 record
                     .subscribers
+                    .retain(|request_id| !invalidated.contains(request_id));
+                record
+                    .foreground_subscribers
                     .retain(|request_id| !invalidated.contains(request_id));
             }
         }
@@ -699,7 +724,7 @@ impl JobRecord {
     }
 
     fn priority(&self) -> JobPriority {
-        if !self.subscribers.is_empty() {
+        if !self.foreground_subscribers.is_empty() {
             JobPriority::Foreground
         } else {
             JobPriority::Preparation
@@ -707,11 +732,12 @@ impl JobRecord {
     }
 }
 
-fn enqueue_demand(
+fn enqueue_projection(
     state: &mut State,
     source: SourceImages,
     request: CandidateRequest,
     subscriber: RequestId,
+    priority: JobPriority,
 ) -> JobKey {
     let source_epoch = source_epoch(state, &source.source_id);
     let external_epoch = request
@@ -725,19 +751,26 @@ fn enqueue_demand(
             record.source = source;
         }
         record.subscribers.insert(subscriber);
+        if matches!(priority, JobPriority::Foreground) {
+            record.foreground_subscribers.insert(subscriber);
+        }
         let active = record.active;
-        if !active {
+        if !active && matches!(priority, JobPriority::Foreground) {
             queue(state, key.clone(), true);
         }
         return key;
     }
     let subscribers = HashSet::from([subscriber]);
+    let foreground_subscribers = matches!(priority, JobPriority::Foreground)
+        .then(|| HashSet::from([subscriber]))
+        .unwrap_or_default();
     state.jobs.insert(
         key.clone(),
         JobRecord {
             source,
             request,
             subscribers,
+            foreground_subscribers,
             preparations: Vec::new(),
             active: false,
             source_epoch,
@@ -792,6 +825,7 @@ fn enqueue_background_candidate(
             source,
             request,
             subscribers: HashSet::new(),
+            foreground_subscribers: HashSet::new(),
             preparations: vec![subscriber],
             active: false,
             source_epoch,
@@ -1149,11 +1183,17 @@ fn finish(shared: &Shared, work: Work, resolution: Resolution) {
         && matches!(&resolution, Resolution::Missing | Resolution::Failed(_))
     {
         for request_id in record.subscribers {
-            let job = enqueue_demand(
+            let priority = state
+                .projections
+                .get(&request_id)
+                .map(|projection| projection.priority)
+                .unwrap_or(JobPriority::Preparation);
+            let job = enqueue_projection(
                 &mut state,
                 record.source.clone(),
                 record.request.clone(),
                 request_id,
+                priority,
             );
             if let Some(projection) = state.projections.get_mut(&request_id) {
                 projection.job = job;
@@ -1288,11 +1328,12 @@ fn continue_projection(
                 (
                     projection.source.clone(),
                     candidate_request(&projection.request, candidate),
+                    projection.priority,
                 )
             })
     });
-    if let Some((source, request)) = next {
-        let job = enqueue_demand(state, source, request, request_id);
+    if let Some((source, request, priority)) = next {
+        let job = enqueue_projection(state, source, request, request_id, priority);
         if let Some(projection) = state.projections.get_mut(&request_id) {
             projection.candidate_index = candidate_index;
             projection.job = job;
@@ -1350,6 +1391,50 @@ mod tests {
 
     fn family(value: &str) -> DecodedFamily {
         DecodedFamily(value.to_string())
+    }
+
+    #[test]
+    fn visible_request_promotes_matching_thumbnail_warm() {
+        let source = SourceImages::cache_only(SourceId::new("source"));
+        let binding = ArtworkBinding::source_artwork(&SourceArtwork::Native(
+            library::ImageRef::new("image", None),
+        ));
+        let request = ArtworkRequest::new(binding, 256, 48);
+        let candidate = candidate_request(
+            &request,
+            request
+                .binding
+                .candidates()
+                .first()
+                .cloned()
+                .expect("artwork candidate"),
+        );
+        let mut state = State::default();
+
+        let warm = enqueue_projection(
+            &mut state,
+            source.clone(),
+            candidate.clone(),
+            RequestId(1),
+            JobPriority::Preparation,
+        );
+        assert!(state.foreground.is_empty());
+        assert_eq!(state.preparations.front(), Some(&warm));
+
+        let visible = enqueue_projection(
+            &mut state,
+            source,
+            candidate,
+            RequestId(2),
+            JobPriority::Foreground,
+        );
+        assert_eq!(visible, warm);
+        assert_eq!(state.foreground.front(), Some(&visible));
+        assert!(state.preparations.is_empty());
+        assert_eq!(
+            state.jobs.get(&visible).map(JobRecord::priority),
+            Some(JobPriority::Foreground)
+        );
     }
 
     #[test]

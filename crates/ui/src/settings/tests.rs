@@ -5,7 +5,7 @@ use super::{
 };
 
 #[test]
-fn private_mode_blocks_external_ui_activity() {
+fn private_mode_blocks_automatic_external_activity_but_keeps_passive_links() {
     let settings = Settings {
         private_mode: true,
         notifications_enabled: true,
@@ -14,7 +14,7 @@ fn private_mode_blocks_external_ui_activity() {
     };
 
     assert!(settings.allows_notifications());
-    assert!(!settings.allows_external_site_links());
+    assert!(settings.shows_external_site_links());
     assert!(!settings.allows_external_album_lookup());
 }
 

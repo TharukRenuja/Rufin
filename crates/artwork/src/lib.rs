@@ -283,6 +283,10 @@ impl Artwork {
         self.pipeline.request(prepared.source, prepared.request)
     }
 
+    pub fn warm_prepared(&self, prepared: PreparedArtwork) -> Result<ArtworkLoad, ArtworkError> {
+        self.pipeline.warm(prepared.source, prepared.request)
+    }
+
     /// Caches the canonical source-owned images before publishing a new
     /// cacheless library.
     pub fn prepare_source_artwork(

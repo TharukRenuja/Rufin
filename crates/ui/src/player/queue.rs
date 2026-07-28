@@ -353,6 +353,23 @@ impl Shell {
         }
     }
 
+    pub(crate) fn position_startup_queue_for_reveal(&self) -> bool {
+        if !self.right_panel.root.is_visible() {
+            return false;
+        }
+        let Some(scroller) = queue_panel_scroller(&self.right_panel.queue_panel) else {
+            return false;
+        };
+        let current_row = self
+            .queue
+            .sidebar_render_state
+            .borrow()
+            .as_ref()
+            .and_then(|state| state.render.as_ref())
+            .and_then(|render| render.current_row);
+        reveal_queue_current_row(&scroller, current_row)
+    }
+
     pub(crate) fn invalidate_queue_panel_render_state(&self) {
         if let Some(state) = self.queue.sidebar_render_state.borrow_mut().as_mut() {
             state.invalidate_render();
@@ -1185,24 +1202,26 @@ fn reveal_queue_current_row_later(scroller: &gtk::ScrolledWindow, current_row: O
 
     let settled_scroller = scroller.clone();
     glib::timeout_add_local_once(Duration::from_millis(80), move || {
-        reveal_queue_current_row(&settled_scroller, current_row)
+        reveal_queue_current_row(&settled_scroller, current_row);
     });
 }
 
-fn reveal_queue_current_row(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) {
+fn reveal_queue_current_row(scroller: &gtk::ScrolledWindow, current_row: Option<usize>) -> bool {
     let Some(current_row) = current_row else {
-        return;
+        return false;
     };
     let adjustment = scroller.vadjustment();
     let page_size = adjustment.page_size();
     if page_size <= 1.0 {
-        return;
+        return false;
     }
     let Some(target) = queue_current_row_scroll_target(current_row, adjustment.value(), page_size)
     else {
-        return;
+        return false;
     };
+    let previous = adjustment.value();
     restore_queue_scroll_position(scroller, target);
+    adjustment.value() != previous
 }
 
 fn queue_current_row_scroll_target(

@@ -108,7 +108,6 @@ fn collection_grid_column_limit(
 pub(crate) struct FixedPageCollectionRow {
     row: gtk::FlowBox,
     page_size: Rc<Cell<usize>>,
-    refill: Rc<dyn Fn()>,
 }
 
 impl FixedPageCollectionRow {
@@ -125,7 +124,6 @@ impl FixedPageCollectionRow {
             .set_max_children_per_line(page_size.min(u32::MAX as usize) as u32);
         self.row
             .set_min_children_per_line(page_size.min(u32::MAX as usize) as u32);
-        (self.refill)();
     }
 }
 
@@ -302,11 +300,7 @@ where
     });
     refill();
 
-    FixedPageCollectionRow {
-        row,
-        page_size,
-        refill,
-    }
+    FixedPageCollectionRow { row, page_size }
 }
 
 fn collection_grid_with_column_bounds<T, Cell, Make, Activate, M>(
