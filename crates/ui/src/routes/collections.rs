@@ -1073,9 +1073,8 @@ where
     table.add_css_class("track-table");
     if single_click_activate {
         table.set_single_click_activate(true);
-        let pointer_table = table.clone();
-        restore_single_click_activation_on_primary_press(&table, move || {
-            pointer_table.set_single_click_activate(true);
+        restore_single_click_activation_on_primary_press(&table, |table| {
+            table.set_single_click_activate(true);
         });
     }
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);

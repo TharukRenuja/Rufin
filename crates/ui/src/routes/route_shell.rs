@@ -569,15 +569,30 @@ fn library_sort_title(key: LibraryListKey, field: LibraryField) -> &'static str 
     }
 }
 
-pub(super) fn restore_single_click_activation_on_primary_press(
-    target: &impl IsA<gtk::Widget>,
-    restore: impl Fn() + 'static,
-) {
+pub(super) fn restore_single_click_activation_on_primary_press<T>(
+    target: &T,
+    restore: impl Fn(&T) + 'static,
+) where
+    T: IsA<gtk::Widget> + Clone + 'static,
+{
     let pointer = gtk::GestureClick::new();
     pointer.set_button(gtk::gdk::BUTTON_PRIMARY);
     pointer.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let restore = weak_target_callback(target, restore);
     pointer.connect_pressed(move |_, _, _, _| restore());
     target.add_controller(pointer);
+}
+
+fn weak_target_callback<T>(target: &T, callback: impl Fn(&T) + 'static) -> impl Fn() + 'static
+where
+    T: glib::object::ObjectType,
+{
+    let weak_target = target.downgrade();
+    move || {
+        if let Some(target) = weak_target.upgrade() {
+            callback(&target);
+        }
+    }
 }
 
 fn key_should_bypass_type_to_search(state: gtk::gdk::ModifierType) -> bool {
@@ -727,4 +742,35 @@ pub(crate) fn non_propagating_width_scroller() -> gtk::ScrolledWindow {
     clip.set_hexpand(true);
     clip.set_halign(gtk::Align::Fill);
     clip
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc};
+
+    use adw::prelude::*;
+
+    use super::weak_target_callback;
+
+    #[test]
+    fn weak_target_callback_does_not_retain_its_target() {
+        let target = gtk::gio::SimpleAction::new("target", None);
+        let weak_target = target.downgrade();
+        let calls = Rc::new(Cell::new(0));
+        let callback_calls = Rc::clone(&calls);
+        let callback = weak_target_callback(&target, move |_| {
+            callback_calls.set(callback_calls.get() + 1);
+        });
+
+        callback();
+        assert_eq!(calls.get(), 1);
+        drop(target);
+        callback();
+
+        assert!(
+            weak_target.upgrade().is_none(),
+            "the callback must not retain its target"
+        );
+        assert_eq!(calls.get(), 1);
+    }
 }

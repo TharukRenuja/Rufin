@@ -385,9 +385,8 @@ where
     // minimum-width cards that can actually fit before the first allocation.
     grid.set_max_columns(min_columns.max(1));
     grid.set_single_click_activate(true);
-    let pointer_grid = grid.clone();
-    restore_single_click_activation_on_primary_press(&grid, move || {
-        pointer_grid.set_single_click_activate(true);
+    restore_single_click_activation_on_primary_press(&grid, |grid| {
+        grid.set_single_click_activate(true);
     });
     grid.set_hexpand(true);
     grid.set_vexpand(true);
