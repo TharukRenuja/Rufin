@@ -11,7 +11,7 @@ use adw::prelude::*;
 use gtk::glib;
 use localization::result_count_text;
 use localization::tr;
-use lyrics::LyricsSearchResult;
+use lyrics::{LyricsSearchResult, release_japanese_reader};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -20,21 +20,55 @@ use tracing::debug;
 
 const LYRICS_SEARCH_DEBOUNCE_MILLIS: u64 = 600;
 
+fn take_dirty_lyrics_pane(dirty: &std::cell::Cell<bool>, visible: bool) -> bool {
+    visible && dirty.replace(false)
+}
+
 impl Shell {
     pub(crate) fn render_lyrics_panel(self: &Rc<Self>) {
+        self.mark_lyrics_panes_dirty();
         self.render_lyrics_contents();
         self.update_lyrics_highlight();
     }
 
     pub(crate) fn render_lyrics_presentation(self: &Rc<Self>) {
+        self.mark_lyrics_panes_dirty();
         self.render_lyrics_contents();
         self.refocus_current_lyrics_highlight();
     }
 
+    pub(crate) fn sync_visible_lyrics_surfaces(self: &Rc<Self>) {
+        self.render_lyrics_contents();
+        self.refocus_current_lyrics_highlight();
+        self.update_lyrics_highlight();
+    }
+
+    fn mark_lyrics_panes_dirty(&self) {
+        self.lyrics.right_pane_dirty.set(true);
+        self.lyrics.fullscreen_pane_dirty.set(true);
+    }
+
     fn render_lyrics_contents(self: &Rc<Self>) {
+        let local_readings_enabled = {
+            let settings = self.settings.current.borrow();
+            settings.lyrics.show_furigana || settings.lyrics.show_romanization
+        };
+        if !local_readings_enabled {
+            release_japanese_reader();
+        }
         self.request_auto_lyrics_if_needed();
-        self.render_lyrics_pane(&self.right_panel.lyrics_pane);
-        self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
+        if take_dirty_lyrics_pane(
+            &self.lyrics.right_pane_dirty,
+            self.right_lyrics_surface_visible(),
+        ) {
+            self.render_lyrics_pane(&self.right_panel.lyrics_pane);
+        }
+        if take_dirty_lyrics_pane(
+            &self.lyrics.fullscreen_pane_dirty,
+            self.fullscreen_lyrics_surface_visible(),
+        ) {
+            self.render_lyrics_pane(&self.player_view.fullscreen_player.lyrics_pane);
+        }
     }
 
     fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
@@ -458,6 +492,24 @@ impl Shell {
         } else {
             self.show_notice_toast(&format!("{} {}", tr("Saved to"), path.display()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::take_dirty_lyrics_pane;
+
+    #[test]
+    fn hidden_lyrics_panes_keep_pending_content_without_rebuilding_on_every_open() {
+        let dirty = Cell::new(true);
+
+        assert!(!take_dirty_lyrics_pane(&dirty, false));
+        assert!(dirty.get());
+        assert!(take_dirty_lyrics_pane(&dirty, true));
+        assert!(!dirty.get());
+        assert!(!take_dirty_lyrics_pane(&dirty, true));
     }
 }
 

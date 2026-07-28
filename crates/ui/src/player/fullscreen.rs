@@ -1011,9 +1011,15 @@ pub(crate) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             }
             match stack.visible_child_name().as_deref() {
                 Some("queue") => queue_tab_shell.schedule_queue_panel_render(),
-                Some("lyrics") => queue_tab_shell.refresh_fullscreen_lyrics_position(),
+                Some("lyrics") => {
+                    queue_tab_shell.sync_visible_lyrics_surfaces();
+                    queue_tab_shell.refresh_fullscreen_lyrics_position();
+                }
                 Some("equalizer") => queue_tab_shell.refresh_fullscreen_player_layout(),
                 _ => {}
+            }
+            if stack.visible_child_name().as_deref() != Some("lyrics") {
+                queue_tab_shell.update_lyrics_highlight();
             }
             queue_tab_shell.sync_fullscreen_visualizer_state();
             if stack.visible_child_name().as_deref() == Some("visualizer") {
@@ -1146,6 +1152,7 @@ impl Shell {
             .as_deref()
             == Some("lyrics")
         {
+            self.sync_visible_lyrics_surfaces();
             let lyrics_shell = Rc::clone(self);
             glib::timeout_add_local_once(
                 Duration::from_millis(u64::from(FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)),
@@ -1164,6 +1171,7 @@ impl Shell {
         }
         self.animate_fullscreen_player(false);
         self.sync_fullscreen_visualizer_state();
+        self.update_lyrics_highlight();
     }
 
     pub(crate) fn toggle_fullscreen_player(self: &Rc<Self>) {

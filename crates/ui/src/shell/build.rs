@@ -151,6 +151,8 @@ pub fn build(app: &adw::Application, inputs: RuntimeInputs) {
         timing_generation: Cell::new(0),
         timing_source: RefCell::new(None),
         panel_visible: Cell::new(settings.lyrics_panel_visible),
+        right_pane_dirty: Cell::new(true),
+        fullscreen_pane_dirty: Cell::new(true),
         search_dialog: RefCell::new(None),
         settings_dialog: RefCell::new(None),
     };

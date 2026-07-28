@@ -367,6 +367,11 @@ pub(crate) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
             .set_height_request(queue_lyrics_initial_height(available_height, saved_height));
     }
     shell.schedule_queue_panel_render();
+    if visible {
+        shell.sync_visible_lyrics_surfaces();
+    } else {
+        shell.update_lyrics_highlight();
+    }
 }
 
 fn queue_lyrics_restore_available_height(shell: &Shell) -> i32 {

@@ -439,6 +439,12 @@ pub fn japanese_reading_for_language(
     })
 }
 
+pub fn release_japanese_reader() {
+    JAPANESE_READER.with(|reader| {
+        *reader.borrow_mut() = None;
+    });
+}
+
 pub fn contains_japanese_kana(text: &str) -> bool {
     text.chars().any(|character| {
         matches!(
@@ -754,6 +760,10 @@ mod tests {
         assert!(japanese_reading("中文歌词").is_none());
         assert!(japanese_reading_for_language("愛", Some("jpn")).is_some());
         assert!(japanese_reading_for_language("愛", Some("zh")).is_none());
+
+        JAPANESE_READER.with(|reader| assert!(reader.borrow().is_some()));
+        release_japanese_reader();
+        JAPANESE_READER.with(|reader| assert!(reader.borrow().is_none()));
     }
 
     fn document(role: LyricsRole, language: Option<&str>, text: &str) -> LyricsDocument {

@@ -491,6 +491,14 @@ impl Shell {
         if right_visibility_changed || previous_right_visible != right_visible {
             self.sync_library_toolbar_end_margin();
             self.update_right_panel_button();
+            let lyrics_shell = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                if lyrics_shell.right_lyrics_surface_visible() {
+                    lyrics_shell.sync_visible_lyrics_surfaces();
+                } else {
+                    lyrics_shell.update_lyrics_highlight();
+                }
+            });
         }
         if player_visibility_changed || root_changed {
             self.update_lyrics_panel_button();
