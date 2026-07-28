@@ -435,6 +435,9 @@ fn sanitize_field(name: &str, value: &str) -> String {
     {
         return summarize_path(value);
     }
+    if lower == "public_url" {
+        return summarize_public_url(value);
+    }
     if lower == "url" || lower.ends_with("_url") || lower == "uri" || lower.ends_with("_uri") {
         return summarize_url(value);
     }
@@ -465,6 +468,24 @@ fn summarize_url(value: &str) -> String {
         return summarize_path(url.path());
     }
     let mut summarized = format!("{}://<server>{}", url.scheme(), url.path());
+    let keys = url.query_pairs().map(|(key, _)| key).collect::<Vec<_>>();
+    if !keys.is_empty() {
+        summarized.push_str("?keys=");
+        summarized.push_str(&keys.join(","));
+    }
+    summarized
+}
+
+fn summarize_public_url(value: &str) -> String {
+    let value = value.trim().trim_matches('"');
+    let Ok(url) = url::Url::parse(value) else {
+        return "<url>".to_string();
+    };
+    let origin = url.origin().ascii_serialization();
+    if origin == "null" {
+        return summarize_url(value);
+    }
+    let mut summarized = format!("{origin}{}", url.path());
     let keys = url.query_pairs().map(|(key, _)| key).collect::<Vec<_>>();
     if !keys.is_empty() {
         summarized.push_str("?keys=");
@@ -716,7 +737,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn curated_debug_keeps_rufin_requests_and_suppresses_http2_frames() {
+    fn curated_debug_keeps_public_requests_private_and_suppresses_http2_frames() {
         let output = Arc::new(Mutex::new(DiagnosticOutput {
             entries: VecDeque::new(),
             bytes: 0,
@@ -741,6 +762,11 @@ mod tests {
                 url = "https://private.test/Users/abc/Views?api_key=secret",
                 "source URL"
             );
+            tracing::debug!(
+                target: "album_lookup",
+                public_url = "https://coverartarchive.org/release/abc/front?size=250&token=secret",
+                "public request"
+            );
         });
 
         let snapshot = output
@@ -749,6 +775,11 @@ mod tests {
             .snapshot();
         assert!(snapshot.contains("source request"));
         assert!(snapshot.contains("url=https://<server>/Users/abc/Views?keys=api_key"));
+        assert!(
+            snapshot.contains(
+                "public_url=https://coverartarchive.org/release/abc/front?keys=size,token"
+            )
+        );
         assert!(!snapshot.contains("transport frame"));
         assert!(!snapshot.contains("private.test"));
         assert!(!snapshot.contains("secret"));

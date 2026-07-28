@@ -126,7 +126,7 @@ fn fetch_flathub_release_update() -> Result<Option<FetchedReleaseUpdate>, String
     debug!(
         service = "flathub",
         method = "GET",
-        url = FLATHUB_APPSTREAM_URL,
+        public_url = FLATHUB_APPSTREAM_URL,
         "sending remote request"
     );
     let started = Instant::now();

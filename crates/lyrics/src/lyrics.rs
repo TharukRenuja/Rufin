@@ -1116,7 +1116,13 @@ fn send_get(
     url: reqwest::Url,
     context: &str,
 ) -> Result<reqwest::blocking::Response, reqwest::Error> {
-    debug!(service = "lyrics", method = "GET", %url, %context, "sending remote request");
+    debug!(
+        service = "lyrics",
+        method = "GET",
+        public_url = %url,
+        %context,
+        "sending remote request"
+    );
     let started = Instant::now();
     let response = client.get(url).send()?;
     debug!(
