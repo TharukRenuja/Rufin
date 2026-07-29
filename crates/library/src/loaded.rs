@@ -391,6 +391,7 @@ pub(crate) struct LoadedState {
     pub(crate) local_access_paths: HashSet<String>,
     pub(crate) local_access_index: HashMap<LocalMatchKey, Vec<usize>>,
     pub(crate) downloaded_files: HashMap<TrackId, PathBuf>,
+    pub(crate) download_coverage: crate::download_coverage::DownloadCoverage,
     pub(crate) home_facts: HomeFacts,
     pub(crate) activity: HashMap<TrackId, TrackActivity>,
     pub(crate) recent_plays: Vec<RecentPlay>,
@@ -512,6 +513,7 @@ impl LoadedLibrary {
             local_access_paths,
             local_access_index,
             downloaded_files: HashMap::new(),
+            download_coverage: crate::download_coverage::DownloadCoverage::default(),
             home_facts,
             activity,
             recent_plays: input.recent_plays,
@@ -596,6 +598,7 @@ impl LoadedLibrary {
         }
         state.artwork_items = index_local_artwork(&state.albums, &state.tracks, &state.artists);
         apply_sparse_favorites(&mut state, local_favorites);
+        crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(Arc::new(Self {
             source_id,
             library_id: input.library_id,
@@ -900,7 +903,7 @@ impl LoadedLibrary {
         favorite: bool,
     ) -> LoadedLibraryResult<AcceptedLibraryChange> {
         let mut state = self.write()?;
-        match item_id {
+        let accepted = match item_id {
             FavoriteItemId::Track(id) => replace_track_favorite(&mut state, id, favorite),
             FavoriteItemId::Album(id) => {
                 let current = state
@@ -972,7 +975,11 @@ impl LoadedLibrary {
                     ..AcceptedLibraryChange::default()
                 })
             }
+        }?;
+        if matches!(item_id, FavoriteItemId::Track(_)) {
+            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         }
+        Ok(accepted)
     }
 
     pub(crate) fn replace_track_activity(
@@ -1018,6 +1025,9 @@ impl LoadedLibrary {
         if state.home_facts.is_rufin_defined() {
             apply_track_activity_value(&mut replacement, &activity);
             state.tracks.insert(track_id.clone(), replacement.clone());
+        }
+        if activity_changed {
+            crate::download_coverage::rebuild_smart_playlist_download_coverage(&mut state);
         }
 
         Ok(Some(AcceptedLibraryChange {
@@ -1122,7 +1132,9 @@ impl LoadedLibrary {
         snapshot: PlaylistSnapshot,
     ) -> LoadedLibraryResult<Arc<LoadedPlaylist>> {
         let mut state = self.write()?;
-        Ok(replace_playlist_in_state(&mut state, snapshot))
+        let playlist = replace_playlist_in_state(&mut state, snapshot);
+        crate::download_coverage::rebuild_download_coverage(&mut state);
+        Ok(playlist)
     }
 
     pub(crate) fn remove_playlist(
@@ -1130,7 +1142,11 @@ impl LoadedLibrary {
         id: &PlaylistId,
     ) -> LoadedLibraryResult<Option<Arc<LoadedPlaylist>>> {
         let mut state = self.write()?;
-        Ok(remove_playlist_in_state(&mut state, id))
+        let playlist = remove_playlist_in_state(&mut state, id);
+        if playlist.is_some() {
+            crate::download_coverage::rebuild_download_coverage(&mut state);
+        }
+        Ok(playlist)
     }
 
     pub(crate) fn replace_source_update(
@@ -1153,6 +1169,7 @@ impl LoadedLibrary {
         let mut accepted =
             apply_item_replacement(&mut state, replacement, unresolved_album_releases)?;
         accepted.playlists.extend(sorted_set(explicit_playlists));
+        crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(accepted)
     }
 
@@ -1251,6 +1268,7 @@ impl LoadedLibrary {
         }
         accepted.local_folders_changed |= !affected_local_folders.is_empty();
         apply_sparse_favorites(&mut state, favorites);
+        crate::download_coverage::rebuild_download_coverage(&mut state);
         Ok(accepted)
     }
 

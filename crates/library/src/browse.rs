@@ -929,11 +929,7 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        Ok(track_slots_downloaded(
-            &state,
-            album_track_slots(&state, album_id),
-            music_folder_id,
-        ))
+        Ok(state.download_coverage.album(album_id, music_folder_id))
     }
 
     pub fn is_artist_downloaded(
@@ -942,11 +938,7 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        Ok(track_slots_downloaded(
-            &state,
-            artist_track_slots(&state, artist_id),
-            music_folder_id,
-        ))
+        Ok(state.download_coverage.artist(artist_id, music_folder_id))
     }
 
     pub fn is_genre_downloaded(
@@ -955,11 +947,7 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        Ok(track_slots_downloaded(
-            &state,
-            genre_track_slots(&state, genre_id),
-            music_folder_id,
-        ))
+        Ok(state.download_coverage.genre(genre_id, music_folder_id))
     }
 
     pub fn is_mood_downloaded(
@@ -968,23 +956,12 @@ impl LoadedLibrary {
         music_folder_id: Option<&MusicFolderId>,
     ) -> LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        Ok(track_slots_downloaded(
-            &state,
-            mood_track_slots(&state, mood_id),
-            music_folder_id,
-        ))
+        Ok(state.download_coverage.mood(mood_id, music_folder_id))
     }
 
     pub fn is_playlist_downloaded(&self, playlist_id: &PlaylistId) -> LoadedLibraryResult<bool> {
         let state = self.read_state()?;
-        let slots = state
-            .playlists
-            .get(playlist_id)
-            .into_iter()
-            .flat_map(|playlist| playlist.entries.iter())
-            .filter_map(|entry| state.tracks.slot(&entry.track_id))
-            .collect::<Vec<_>>();
-        Ok(track_slots_downloaded(&state, slots, None))
+        Ok(state.download_coverage.playlist(playlist_id))
     }
 
     fn album_tracks(
@@ -1549,27 +1526,6 @@ fn mood_track_slots(state: &LoadedState, mood_id: &MoodId) -> Vec<TrackSlot> {
         state,
         TrackSort::Album,
     )
-}
-
-pub(crate) fn track_slots_downloaded(
-    state: &LoadedState,
-    slots: impl IntoIterator<Item = TrackSlot>,
-    music_folder_id: Option<&MusicFolderId>,
-) -> bool {
-    let mut found = false;
-    for slot in slots {
-        let Some(track) = state.tracks.get_slot(slot) else {
-            continue;
-        };
-        if !track_in_scope(track, music_folder_id) {
-            continue;
-        }
-        found = true;
-        if !state.downloaded_files.contains_key(&track.id) {
-            return false;
-        }
-    }
-    found
 }
 
 fn mood_relationship_track_slots(state: &LoadedState, mood_id: &MoodId) -> Vec<TrackSlot> {

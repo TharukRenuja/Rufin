@@ -67,6 +67,7 @@ macro_rules! opaque_id {
 mod activity;
 mod album_release;
 mod browse;
+mod download_coverage;
 mod favorites;
 mod home;
 mod items;

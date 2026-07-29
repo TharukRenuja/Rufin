@@ -788,6 +788,7 @@ dependencies = [
  "async-channel",
  "blake3",
  "library",
+ "proptest",
  "serde",
  "serde_json",
  "sources",
