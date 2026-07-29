@@ -147,14 +147,14 @@ fn build_lyrics_settings(shell: &Rc<Shell>) -> (adw::PreferencesPage, adw::Switc
         }
     });
 
-    let furigana = switch_row(msgid("Furigana"), settings.show_furigana);
+    let furigana = reading_switch_row(msgid("Furigana"), settings.show_furigana);
     let furigana_shell = Rc::clone(shell);
     furigana.connect_active_notify(move |row| {
         furigana_shell.set_lyrics_furigana(row.is_active());
     });
     language_and_readings.add(&furigana);
 
-    let romanization = switch_row(msgid("Romanization"), settings.show_romanization);
+    let romanization = reading_switch_row(msgid("Romaji"), settings.show_romanization);
     let romanization_shell = Rc::clone(shell);
     romanization.connect_active_notify(move |row| {
         romanization_shell.set_lyrics_romanization(row.is_active());
@@ -311,6 +311,14 @@ fn switch_row(title: &str, active: bool) -> adw::SwitchRow {
         .build()
 }
 
+fn reading_switch_row(title: &str, active: bool) -> adw::SwitchRow {
+    adw::SwitchRow::builder()
+        .title(tr(title))
+        .subtitle(tr(msgid("Increases memory usage")))
+        .active(active)
+        .build()
+}
+
 fn small_icon_button(icon: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon);
     button.add_css_class("flat");
@@ -414,7 +422,7 @@ impl Shell {
     }
 
     pub(crate) fn set_lyrics_romanization(self: &Rc<Self>, enabled: bool) {
-        self.update_lyrics_settings("lyrics romanization setting", true, |settings| {
+        self.update_lyrics_settings("lyrics Romaji setting", true, |settings| {
             if settings.show_romanization == enabled {
                 return false;
             }

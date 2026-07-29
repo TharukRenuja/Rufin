@@ -11,8 +11,7 @@
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": {
-      "CARGO_NET_OFFLINE": "true",
-      "LINDERA_DICTIONARIES_PATH": "/run/build/rufin/lindera-dictionaries"
+      "CARGO_NET_OFFLINE": "true"
     }
   },
   "finish-args": [
@@ -37,6 +36,8 @@
         "cargo build --release --locked --offline -p rufin",
         "install -Dm755 target/release/rufin /app/bin/rufin.bin",
         "install -Dm755 packaging/flatpak/rufin-flatpak /app/bin/rufin",
+        "install -Dm644 data/japanese-readings.dic /app/share/rufin/japanese-readings.dic",
+        "install -Dm644 data/japanese-readings.LICENSE /app/share/licenses/rufin/japanese-readings.LICENSE",
         "install -Dm644 data/io.github.screwys.Rufin.desktop /app/share/applications/io.github.screwys.Rufin.desktop",
         "install -Dm644 data/io.github.screwys.Rufin.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml",
         "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
@@ -95,6 +96,8 @@
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.jellyfin.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.navidrome.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.source.opensubsonic.png",
+        "test -f /app/share/rufin/japanese-readings.dic",
+        "test -f /app/share/licenses/rufin/japanese-readings.LICENSE",
         "gtk4-update-icon-cache -f -t /app/share/icons/hicolor || true",
         "for po_file in crates/localization/locales/*.po; do if [ -f \"$po_file\" ]; then lang=\"$(basename \"$po_file\" .po)\"; mkdir -p \"/app/share/locale/$lang/LC_MESSAGES\"; msgfmt \"$po_file\" -o \"/app/share/locale/$lang/LC_MESSAGES/rufin.mo\"; fi; done"
       ],

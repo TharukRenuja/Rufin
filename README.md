@@ -24,7 +24,7 @@
 - Supports server-owned recommendation API for artists/tracks/albums/playlists/genres radios, so your plugins work
 - Optimized for quick startup and navigation, smooth full library browsing
 - Automatic metadata, artwork and lyrics caching
-- Synchronized lyrics, built-in lyrics finder, adjustable offset, Furigana/Romanization overlay, and karaoke support
+- Synchronized lyrics, built-in lyrics finder, adjustable offset, Furigana/Romaji overlay, and karaoke support
 - Local library support with multiple folders and CUE support with separate playable tracks
 - Moods tab, with ability to create smart playlists based on moods/BPM metadata for Navidrome, Subsonic and local libraries
 - Built-in Last.fm, Libre.fm, and ListenBrainz integration that can store offline scrobbles and retry when network is available

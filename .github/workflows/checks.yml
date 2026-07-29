@@ -22,7 +22,6 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      aur_release_tag: ${{ steps.classify.outputs.aur_release_tag }}
       aur_required: ${{ steps.classify.outputs.aur_required }}
       container_required: ${{ steps.classify.outputs.container_required }}
       current_nix_required: ${{ steps.classify.outputs.current_nix_required }}
@@ -53,7 +52,6 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             {
-              echo "aur_release_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
               echo "aur_required=true"
               echo "container_required=true"
               echo "current_nix_required=true"
@@ -183,9 +181,7 @@ jobs:
 
           printf 'Changed paths:\n'
           printf '  %s\n' "${changed_paths[@]}"
-          aur_release_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
           {
-            echo "aur_release_tag=$aur_release_tag"
             echo "aur_required=$aur_required"
             echo "container_required=$container_required"
             echo "current_nix_required=$current_nix_required"
@@ -224,7 +220,6 @@ jobs:
     uses: ./.github/workflows/aur-build.yml
     with:
       package: both
-      release_tag: ${{ needs.changes.outputs.aur_release_tag }}
       publish: false
 
   rpm-package:

@@ -3,11 +3,10 @@ Version:        0.11.0
 Release:        1%{?dist}
 Summary:        Native GTK4/libadwaita music client written in Rust
 
-License:        GPL-3.0-or-later AND Apache-2.0 AND BSD-3-Clause AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MIT AND MPL-2.0 AND Unicode-3.0 AND Unlicense AND Zlib
+License:        GPL-3.0-or-later AND Apache-2.0 AND BSD-3-Clause AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MIT AND MPL-2.0 AND NAIST-2003 AND Unicode-3.0 AND Unlicense AND Zlib
 URL:            https://github.com/screwys/Rufin
 Source0:        Rufin-%{version}.tar.xz
 Source1:        Rufin-%{version}-vendor.tar.xz
-Source2:        mecab-ipadic-2.7.0-20250920.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 
@@ -40,13 +39,10 @@ Navidrome, and local music libraries.
 %prep
 %autosetup -n Rufin-%{version} -a1
 %cargo_prep -v vendor
-install -Dpm0644 %{SOURCE2} \
-  lindera-dictionaries/3.0.7/mecab-ipadic-2.7.0-20250920.tar.gz
 
 %build
 # aws-lc-sys omits CFLAGS from one compiler probe, so pair Fedora's hardened
 # linker flags with the PIE compile flag that probe still needs.
-LINDERA_DICTIONARIES_PATH="$PWD/lindera-dictionaries" \
 LDFLAGS="%{build_ldflags} -fPIE" \
   %{__cargo} build %{__cargo_common_opts} --profile rpm --package rufin
 CARGO_HOME=.cargo RUSTC_BOOTSTRAP=1 cargo tree \
@@ -61,6 +57,8 @@ CARGO_HOME=.cargo RUSTC_BOOTSTRAP=1 cargo tree \
 
 %install
 install -Dpm0755 target/rpm/rufin %{buildroot}%{_bindir}/rufin
+install -Dpm0644 data/japanese-readings.dic \
+  %{buildroot}%{_datadir}/rufin/japanese-readings.dic
 desktop-file-install \
   --dir=%{buildroot}%{_datadir}/applications \
   data/io.github.screwys.Rufin.desktop
@@ -88,8 +86,10 @@ appstreamcli validate --no-net data/io.github.screwys.Rufin.metainfo.xml
 %license LICENSE
 %license LICENSE.dependencies
 %license cargo-vendor.txt
+%license data/japanese-readings.LICENSE
 %doc README.md
 %{_bindir}/rufin
+%{_datadir}/rufin/japanese-readings.dic
 %{_datadir}/applications/io.github.screwys.Rufin.desktop
 %{_metainfodir}/io.github.screwys.Rufin.metainfo.xml
 %{_datadir}/icons/hicolor/512x512/apps/*.png

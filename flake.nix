@@ -19,19 +19,6 @@
           pkgs = import nixpkgs { inherit system; };
           inherit (pkgs) lib;
           workspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          flatpakSources =
-            builtins.fromJSON (builtins.readFile ./packaging/flatpak/cargo-sources.json);
-          ipadicSourceSpec =
-            builtins.head (
-              builtins.filter (
-                source:
-                source ? "dest-filename"
-                && source."dest-filename" == "mecab-ipadic-2.7.0-20250920.tar.gz"
-              ) flatpakSources
-            );
-          ipadicSource = pkgs.fetchurl {
-            inherit (ipadicSourceSpec) url sha256;
-          };
         in
         rec {
           rufin = pkgs.rustPlatform.buildRustPackage {
@@ -47,6 +34,8 @@
                 ./README.md
                 ./crates
                 ./data/icons/hicolor
+                ./data/japanese-readings.dic
+                ./data/japanese-readings.LICENSE
                 ./data/io.github.screwys.Rufin.desktop
                 ./data/io.github.screwys.Rufin.metainfo.xml
               ];
@@ -91,14 +80,11 @@
 
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
-            preBuild = ''
-              export LINDERA_DICTIONARIES_PATH="$NIX_BUILD_TOP/lindera-dictionaries"
-              mkdir -p "$LINDERA_DICTIONARIES_PATH/3.0.7"
-              cp ${ipadicSource} \
-                "$LINDERA_DICTIONARIES_PATH/3.0.7/mecab-ipadic-2.7.0-20250920.tar.gz"
-            '';
-
             postInstall = ''
+              install -Dm644 data/japanese-readings.dic \
+                "$out/share/rufin/japanese-readings.dic"
+              install -Dm644 data/japanese-readings.LICENSE \
+                "$out/share/licenses/rufin/japanese-readings.LICENSE"
               install -Dm644 data/io.github.screwys.Rufin.desktop \
                 "$out/share/applications/io.github.screwys.Rufin.desktop"
               substituteInPlace "$out/share/applications/io.github.screwys.Rufin.desktop" \

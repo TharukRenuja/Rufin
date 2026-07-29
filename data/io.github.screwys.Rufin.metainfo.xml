@@ -102,7 +102,7 @@
       <description>
         <p>This release brings many exciting features and several bug fixes. And starting from the last release, we now release native AUR/Fedora binaries, with more packaging alternatives to come!</p>
         <ul>
-          <li>Rufin now supports furigana/romanization in lyrics panel, these settings can be accessed from the new settings button inside lyrics panel.</li>
+          <li>Rufin now supports Furigana and Romaji in the lyrics panel. These settings can be accessed from the new settings button inside the lyrics panel.</li>
         </ul>
         <ul>
           <li>You can also prefer translated lyrics. This is highly dependent on how lyrics are tagged.</li>
