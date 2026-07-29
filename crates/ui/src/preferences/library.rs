@@ -540,13 +540,13 @@ fn add_download_rules(
     }
     let add = gtk::MenuButton::new();
     add.set_child(Some(&row_action_content(
-        "Add a new download rule",
+        "New download rule",
         "list-add-symbolic",
     )));
     add.add_css_class("flat");
     add.set_halign(gtk::Align::Fill);
     add.set_hexpand(true);
-    add.set_tooltip_text(Some(&tr("Add a new download rule")));
+    add.set_tooltip_text(Some(&tr("New download rule")));
     add.insert_action_group("download-rules", Some(&actions));
     add.set_popover(Some(&gtk::PopoverMenu::from_model(Some(&menu))));
     add
