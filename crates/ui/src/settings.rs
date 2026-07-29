@@ -1,4 +1,5 @@
 mod app;
+mod context_menu;
 mod layout;
 mod persistence;
 mod sidebar;
@@ -7,6 +8,7 @@ pub use app::{
     DownloadRules, Settings, SettingsHandle, SettingsPort, SourceDownloadSettings,
     default_home_blocks,
 };
+pub use context_menu::{ContextMenuItem, ContextMenuItemSettings, ContextMenuSettings};
 pub use downloads::DownloadRule;
 pub use layout::{
     DEFAULT_LEFT_SIDEBAR_WIDTH, DEFAULT_RIGHT_SIDEBAR_WIDTH, DEFAULT_WINDOW_HEIGHT,

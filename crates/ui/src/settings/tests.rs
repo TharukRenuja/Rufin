@@ -1,7 +1,8 @@
 use super::{
-    DownloadRule, DownloadRules, LibraryField, LibraryLayout, LibraryListKey,
-    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings, SidebarPin, SidebarRouteItem,
-    available_detail_track_fields, available_sort_fields, sanitized_window_size,
+    ContextMenuItem, ContextMenuItemSettings, DownloadRule, DownloadRules, LibraryField,
+    LibraryLayout, LibraryListKey, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, Settings,
+    SidebarPin, SidebarRouteItem, available_detail_track_fields, available_sort_fields,
+    sanitized_window_size,
 };
 use library::{AlbumId, GenreId, PlaylistId, SourceId};
 
@@ -37,6 +38,84 @@ fn playback_modes_are_one_app_wide_settings_value() {
     assert!(restored.auto_dj_enabled);
     assert!(restored.shuffle_enabled);
     assert_eq!(restored.repeat_mode, playback::RepeatMode::All);
+}
+
+#[test]
+fn context_menu_settings_migrate_and_restore_custom_order() {
+    let mut legacy = serde_json::to_value(Settings::default()).expect("serialize settings");
+    legacy
+        .as_object_mut()
+        .expect("settings object")
+        .remove("context_menu");
+    let restored = serde_json::from_value::<Settings>(legacy).expect("restore older settings");
+    assert_eq!(
+        restored
+            .context_menu
+            .items
+            .iter()
+            .map(|entry| entry.item)
+            .collect::<Vec<_>>(),
+        ContextMenuItem::all()
+    );
+    assert!(
+        restored
+            .context_menu
+            .items
+            .iter()
+            .all(|entry| entry.visible)
+    );
+
+    let mut settings = Settings::default();
+    settings.context_menu.items.swap(0, 9);
+    settings
+        .context_menu
+        .items
+        .iter_mut()
+        .find(|entry| entry.item == ContextMenuItem::PlayRadio)
+        .expect("radio setting")
+        .visible = false;
+    let restored = serde_json::from_value::<Settings>(
+        serde_json::to_value(&settings).expect("serialize context menu settings"),
+    )
+    .expect("restore context menu settings");
+
+    assert_eq!(restored.context_menu, settings.context_menu);
+}
+
+#[test]
+fn settings_sanitize_repairs_partial_context_menu_settings() {
+    let mut settings = Settings::default();
+    settings.context_menu.items = vec![
+        ContextMenuItemSettings {
+            item: ContextMenuItem::Download,
+            visible: false,
+        },
+        ContextMenuItemSettings {
+            item: ContextMenuItem::Download,
+            visible: true,
+        },
+    ];
+
+    settings.sanitize();
+
+    assert_eq!(
+        settings.context_menu.items.len(),
+        ContextMenuItem::all().len()
+    );
+    assert_eq!(
+        settings.context_menu.items[0],
+        ContextMenuItemSettings {
+            item: ContextMenuItem::Download,
+            visible: false,
+        }
+    );
+    let download = settings
+        .context_menu
+        .items
+        .iter()
+        .find(|entry| entry.item == ContextMenuItem::Download)
+        .expect("download setting");
+    assert!(!download.visible);
 }
 
 #[test]

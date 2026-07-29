@@ -373,6 +373,9 @@ msgstr ""
 msgid "Connection"
 msgstr ""
 
+msgid "Context Menus"
+msgstr ""
+
 msgid "Control notifications"
 msgstr ""
 

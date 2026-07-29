@@ -4,8 +4,9 @@ use std::{
 };
 
 use super::{
-    LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME, interface_group,
-    layout::populate_home_block_rows, selection_row, sidebar_items_group,
+    LASTFM_API_CREATE_URL, LISTENBRAINZ_TOKEN_URL, SCROBBLING_ICON_NAME,
+    context_menu::context_menus_expander, interface_group, layout::populate_home_block_rows,
+    selection_row, sidebar_items_expander,
 };
 use crate::player::{
     build_equalizer_preset_row, connect_equalizer_scale_commit, equalizer_band_title,
@@ -741,14 +742,24 @@ pub(crate) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .build();
 
     page.add(&interface_group(shell));
-    page.add(&sidebar_items_group(shell));
 
-    let block_group = adw::PreferencesGroup::builder()
+    let sidebar_items_group = adw::PreferencesGroup::new();
+    sidebar_items_group.add(&sidebar_items_expander(shell));
+    page.add(&sidebar_items_group);
+
+    let home_blocks = adw::ExpanderRow::builder()
         .title(tr("Home Blocks"))
+        .expanded(false)
         .build();
     let rows = Rc::new(std::cell::RefCell::new(Vec::new()));
-    populate_home_block_rows(shell, &block_group, &rows);
-    page.add(&block_group);
+    populate_home_block_rows(shell, &home_blocks, &rows);
+    let home_blocks_group = adw::PreferencesGroup::new();
+    home_blocks_group.add(&home_blocks);
+    page.add(&home_blocks_group);
+
+    let context_menus_group = adw::PreferencesGroup::new();
+    context_menus_group.add(&context_menus_expander(shell));
+    page.add(&context_menus_group);
 
     page
 }
