@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::interactions::{
-    install_context_menu_openers, popdown_on_anchor_unmap, replace_native_menu_checkmarks,
-    show_native_menu_icons,
+    install_context_menu_openers, popdown_native_menu, popdown_on_anchor_unmap,
+    replace_native_menu_checkmarks, show_native_menu_icons,
 };
 use crate::preferences::source::selector::source_submenu;
 use crate::routes::collection_context::{
@@ -403,7 +403,7 @@ fn update_primary_menu_popover(
     }
     if let Some(current) = popover_slot.borrow_mut().replace(popover.clone()) {
         if current.is_visible() {
-            current.popdown();
+            popdown_native_menu(&current);
         }
         current.unparent();
     }
@@ -442,7 +442,7 @@ fn primary_menu_popover(shell: &Rc<Shell>) -> gtk::PopoverMenu {
         gtk::PopoverMenuFlags::NESTED,
     );
     popover.set_autohide(true);
-    popover.set_position(gtk::PositionType::Right);
+    popover.set_position(gtk::PositionType::Bottom);
     style_primary_menu(&popover);
     popover
 }

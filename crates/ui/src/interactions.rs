@@ -112,7 +112,7 @@ impl ContextMenuSurface {
         let popover = self.popover.downgrade();
         action.connect_activate(move |_, _| {
             if let Some(popover) = popover.upgrade() {
-                popover.popdown();
+                popdown_native_menu(&popover);
             }
             run();
         });
@@ -129,6 +129,7 @@ impl ContextMenuSurface {
         ))));
         let target = self.target.downgrade();
         self.popover.connect_closed(move |popover| {
+            popdown_nested_native_menus_from(popover.upcast_ref());
             let popover = popover.clone();
             let target = target.clone();
             let unmap_handler = Rc::clone(&unmap_handler);
@@ -172,7 +173,7 @@ pub(crate) fn close_context_surface(widget: &impl IsA<gtk::Widget>) {
         .ancestor(gtk::Popover::static_type())
         .and_then(|widget| widget.downcast::<gtk::Popover>().ok())
     {
-        popover.popdown();
+        popdown_popover(&popover);
         return;
     }
     if let Some(dialog) = widget
@@ -209,6 +210,11 @@ pub(crate) fn replace_native_menu_checkmarks(popover: &gtk::PopoverMenu) {
     replace_native_menu_checkmarks_from(popover.upcast_ref());
 }
 
+pub(crate) fn popdown_native_menu(popover: &gtk::PopoverMenu) {
+    popdown_nested_native_menus_from(popover.upcast_ref());
+    popover.popdown();
+}
+
 pub(crate) fn popdown_on_anchor_unmap(
     anchor: &impl IsA<gtk::Widget>,
     popover: &impl IsA<gtk::Popover>,
@@ -216,9 +222,33 @@ pub(crate) fn popdown_on_anchor_unmap(
     let popover = popover.as_ref().downgrade();
     anchor.as_ref().connect_unmap(move |_| {
         if let Some(popover) = popover.upgrade() {
-            popover.popdown();
+            popdown_popover(&popover);
         }
     })
+}
+
+fn popdown_popover(popover: &gtk::Popover) {
+    if let Ok(menu) = popover.clone().downcast::<gtk::PopoverMenu>() {
+        popdown_native_menu(&menu);
+    } else {
+        popover.popdown();
+    }
+}
+
+fn popdown_nested_native_menus_from(container: &gtk::Widget) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if widget.type_().name() == "GtkModelButton"
+            && let Some(nested_popover) = widget
+                .property::<Option<gtk::Popover>>("popover")
+                .and_then(|popover| popover.downcast::<gtk::PopoverMenu>().ok())
+        {
+            popdown_native_menu(&nested_popover);
+        }
+        popdown_nested_native_menus_from(&widget);
+    }
 }
 
 fn replace_native_menu_checkmarks_from(container: &gtk::Widget) {
